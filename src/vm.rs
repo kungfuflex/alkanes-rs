@@ -880,3 +880,182 @@ pub fn send_to_arraybuffer<'a>(
         .map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
     Ok(ptr.try_into()?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use wasmi::{Caller, Engine, Linker, Module, Store};
+
+    fn setup() -> (
+        Store<AlkanesState>,
+        Linker<AlkanesState>,
+        AlkanesRuntimeContext,
+        Engine,
+    ) {
+        // Set up initial `AlkanesState` and mock context.
+        let context = AlkanesRuntimeContext::default(); // Create a mock or default context.
+        let state = AlkanesState {
+            had_failure: false,
+            context: Arc::new(Mutex::new(context.clone())),
+            limiter: StoreLimits::default(), // Assuming StoreLimits::default() exists for simplicity
+        };
+
+        // Configure engine and store
+        let engine = Engine::default();
+        let mut store = Store::new(&engine, state);
+
+        // Set up the linker
+        let linker = Linker::new(&engine);
+
+        (store, linker, context, engine)
+    }
+
+    #[test]
+    fn test_load_storage() {
+        let (mut store, mut linker, _context, engine) = setup();
+
+        linker
+            .func_wrap(
+                "env",
+                "__load_storage",
+                |mut caller: Caller<'_, AlkanesState>, k: i32, v: i32| {
+                    match AlkanesHostFunctionsImpl::load_storage(&mut caller, k, v) {
+                        Ok(result) => result,
+                        Err(_e) => -1,
+                    }
+                },
+            )
+            .unwrap();
+
+        let wasm_binary: Vec<u8> = wabt::wat2wasm(
+            r#"
+            (module
+                (import "env" "__load_storage" (func $__load_storage (param i32 i32) (result i32)))
+                
+                ;; Exported `test` function that just calls `__load_storage` with provided params
+                (func (export "test") (param i32 i32) (result i32)
+                    local.get 0   ;; First parameter for __load_storage
+                    local.get 1   ;; Second parameter for __load_storage
+                    call $__load_storage
+                )
+            )
+            "#,
+        )
+        .expect("failed to parse wat");
+
+        // Load wasm binary and prepare it for instantiation.
+        let module = wasmi::Module::from_buffer(&wasm_binary).expect("failed to load wasm");
+
+        // Load storage test
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .unwrap()
+            .ensure_no_start(&mut store)
+            .unwrap();
+        let result = match instance.get_export(&mut store, "test") {
+            Some(Extern::Func(func)) => {
+                // Cast the function to the expected type
+                let typed_func = func.typed::<(i32, i32), i32>(&store).unwrap();
+                typed_func.call(&mut store, (123, 456)).unwrap()
+            }
+            _ => panic!("Exported function 'test' not found or is not a function"),
+        };
+
+        assert_eq!(result, 0); // Replace with the expected result based on your mock behavior
+    }
+
+    // #[test]
+    // fn test_request_storage() {
+    //     let (mut store, mut linker, _context) = setup();
+
+    //     linker
+    //         .func_wrap(
+    //             "env",
+    //             "__request_storage",
+    //             |mut caller: Caller<'_, AlkanesState>, k: i32| {
+    //                 match AlkanesHostFunctionsImpl::request_storage(&mut caller, k) {
+    //                     Ok(result) => result,
+    //                     Err(_e) => -1,
+    //                 }
+    //             },
+    //         )
+    //         .unwrap();
+
+    //     // Request storage test
+    //     let instance = linker
+    //         .instantiate(&mut store, &Module::new(&store.engine(), b"test").unwrap())
+    //         .unwrap();
+    //     let result = instance
+    //         .get_export(&mut store, "__request_storage")
+    //         .unwrap()
+    //         .typed::<i32, i32>(&store)
+    //         .unwrap()
+    //         .call(&mut store, 123)
+    //         .unwrap();
+
+    //     assert_eq!(result, 0); // Replace with the expected result based on your mock behavior
+    // }
+
+    // #[test]
+    // fn test_log() {
+    //     let (mut store, mut linker, _context) = setup();
+
+    //     linker
+    //         .func_wrap(
+    //             "env",
+    //             "__log",
+    //             |mut caller: Caller<'_, AlkanesState>, v: i32| {
+    //                 if let Err(_e) = AlkanesHostFunctionsImpl::log(&mut caller, v) {
+    //                     AlkanesHostFunctionsImpl::_abort(caller);
+    //                 }
+    //             },
+    //         )
+    //         .unwrap();
+
+    //     // Log test
+    //     let instance = linker
+    //         .instantiate(&mut store, &Module::new(&store.engine(), b"test").unwrap())
+    //         .unwrap();
+    //     let _ = instance
+    //         .get_export(&mut store, "__log")
+    //         .unwrap()
+    //         .typed::<i32, ()>(&store)
+    //         .unwrap()
+    //         .call(&mut store, 123);
+
+    //     // Check if an expected log effect occurs; depends on your `log` implementation.
+    // }
+
+    // #[test]
+    // fn test_balance() {
+    //     let (mut store, mut linker, _context) = setup();
+
+    //     linker
+    //         .func_wrap(
+    //             "env",
+    //             "__balance",
+    //             |mut caller: Caller<'_, AlkanesState>, who: i32, what: i32, output: i32| {
+    //                 if let Err(_e) =
+    //                     AlkanesHostFunctionsImpl::balance(&mut caller, who, what, output)
+    //                 {
+    //                     AlkanesHostFunctionsImpl::_abort(caller);
+    //                 }
+    //             },
+    //         )
+    //         .unwrap();
+
+    //     // Balance test
+    //     let instance = linker
+    //         .instantiate(&mut store, &Module::new(&store.engine(), b"test").unwrap())
+    //         .unwrap();
+    //     let _ = instance
+    //         .get_export(&mut store, "__balance")
+    //         .unwrap()
+    //         .typed::<(i32, i32, i32), ()>(&store)
+    //         .unwrap()
+    //         .call(&mut store, (1, 2, 3));
+
+    //     // Verify the balance operation result here
+    // }
+}

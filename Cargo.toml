@@ -38,6 +38,7 @@ wasm-bindgen-futures = "0.4.45"
 web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
 hex_lit = "0.1.1"
+wabt = "0.10.0"
 
 [dev-dependencies]
 metashrew = { path = "crates/metashrew", features = ["mock"] }
