@@ -186,8 +186,10 @@ mod tests {
         tables::OUTPOINTS_FOR_ADDRESS
             .keyword(&config.address1)
             .set(Arc::new(Vec::new()));
-        let _ =
-            Protorune::index_block::<MyMessageContext>(test_block.clone(), config.rune_etch_height);
+        assert!(Protorune::index_block::<MyMessageContext>(
+            test_block.clone(),
+            config.rune_etch_height
+        ).is_ok());
         let rune_id = ProtoruneRuneId::new(
             config.rune_etch_height as u128,
             config.rune_etch_vout as u128,

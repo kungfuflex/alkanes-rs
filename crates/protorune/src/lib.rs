@@ -35,8 +35,6 @@ use std::io::Cursor;
 use std::ops::Sub;
 use std::sync::Arc;
 
-// use std::fmt::Write;
-
 pub mod balance_sheet;
 pub mod message;
 pub mod proto;
@@ -298,7 +296,7 @@ impl Protorune {
     ) -> Result<()> {
         let name = tables::RUNES
             .RUNE_ID_TO_ETCHING
-            .select(&mint.to_string().into_bytes())
+            .select(&mint.clone().into())
             .get();
         let remaining: u128 = tables::RUNES.MINTS_REMAINING.select(&name).get_value();
         let amount: u128 = tables::RUNES.AMOUNT.select(&name).get_value();
@@ -341,9 +339,9 @@ impl Protorune {
         if let Some(name) = etching.rune {
             let _name = field_to_name(&name.0);
             //Self::get_reserved_name(height, index, name);
-            let rune_id = Self::build_rune_id(height, index);
+            let rune_id = ProtoruneRuneId::new(height.into(), index.into());
             atomic
-                .derive(&tables::RUNES.RUNE_ID_TO_ETCHING.select(&rune_id.clone()))
+                .derive(&tables::RUNES.RUNE_ID_TO_ETCHING.select(&rune_id.into()))
                 .set(Arc::new(name.0.to_string().into_bytes()));
             atomic
                 .derive(
@@ -351,9 +349,9 @@ impl Protorune {
                         .ETCHING_TO_RUNE_ID
                         .select(&_name.as_bytes().to_vec()),
                 )
-                .set(rune_id.clone());
+                .set(rune_id.into());
             atomic
-                .derive(&tables::RUNES.RUNE_ID_TO_HEIGHT.select(&rune_id.clone()))
+                .derive(&tables::RUNES.RUNE_ID_TO_HEIGHT.select(&rune_id.into()))
                 .set_value(height);
 
             if let Some(divisibility) = etching.divisibility {
