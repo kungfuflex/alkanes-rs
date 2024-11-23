@@ -18,7 +18,7 @@ impl KeyValuePointer for IndexPointer {
     fn set(&mut self, v: Arc<Vec<u8>>) {
         set(self.unwrap(), v)
     }
-    fn get(&self) -> Arc<Vec<u8>> {
+    fn _get(&self) -> Arc<Vec<u8>> {
         get(self.unwrap())
     }
 }
@@ -72,7 +72,7 @@ impl KeyValuePointer for AtomicPointer {
             .0
             .insert(self.unwrap(), v.clone());
     }
-    fn get(&self) -> Arc<Vec<u8>> {
+    fn _get(&self) -> Arc<Vec<u8>> {
         let unwrapped = self.unwrap();
         match self
             .store

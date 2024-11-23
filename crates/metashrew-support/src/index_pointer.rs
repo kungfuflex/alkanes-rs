@@ -1,18 +1,27 @@
 use crate::byte_view::ByteView;
 use std::sync::Arc;
 
+use hex;
+
 pub trait KeyValuePointer {
     fn wrap(word: &Vec<u8>) -> Self;
     fn unwrap(&self) -> Arc<Vec<u8>>;
     fn set(&mut self, v: Arc<Vec<u8>>);
-    fn get(&self) -> Arc<Vec<u8>>;
+    fn _get(&self) -> Arc<Vec<u8>>;
+    fn get(&self) -> Arc<Vec<u8>> {
+      Arc::new(hex::decode(self._get().as_ref()).unwrap())
+    }
     fn inherits(&mut self, from: &Self);
+    fn _set(&mut self, v: Arc<Vec<u8>>) {
+      self.set(Arc::new(hex::encode(v.as_ref()).as_bytes().to_vec()))
+    }
     fn select(&self, word: &Vec<u8>) -> Self
     where
         Self: Sized,
     {
         let mut key = (*self.unwrap()).clone();
-        key.extend(word);
+        key.extend(&hex::encode(word).as_bytes().to_vec());
+//        key.extend(word);
         let mut ptr = Self::wrap(&key);
         ptr.inherits(self);
         ptr
@@ -35,7 +44,7 @@ pub trait KeyValuePointer {
     }
 
     fn set_value<T: ByteView>(&mut self, v: T) {
-        self.set(Arc::new(v.to_bytes()));
+        self._set(Arc::new(v.to_bytes()));
     }
 
     fn get_value<T: ByteView>(&self) -> T {
@@ -93,14 +102,14 @@ pub trait KeyValuePointer {
         result
     }
     fn nullify(&mut self) {
-        self.set(Arc::from(vec![0]))
+        self._set(Arc::from(vec![0]))
     }
     fn set_or_nullify(&mut self, v: Arc<Vec<u8>>) {
         let val = Arc::try_unwrap(v).unwrap();
         if <usize>::from_bytes(val.clone()) == 0 {
             self.nullify();
         } else {
-            self.set(Arc::from(val));
+            self._set(Arc::from(val));
         }
     }
 
@@ -141,7 +150,7 @@ pub trait KeyValuePointer {
         Self: Sized,
     {
         let mut new_index = self.extend();
-        new_index.set(v);
+        new_index._set(v);
     }
 
     fn append_value<T: ByteView>(&self, v: T)
