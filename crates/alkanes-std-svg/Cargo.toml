@@ -1,0 +1,20 @@
+[package]
+name = "alkanes-std-svg"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+alkanes-runtime = { path = "../alkanes-runtime" }
+alkanes-support = { path = "../alkanes-support" }
+metashrew-support = { path = "../metashrew-support" }
+anyhow = "1.0.91"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+default = []
+native = []
