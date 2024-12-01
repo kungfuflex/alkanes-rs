@@ -141,12 +141,11 @@ fn assert_contracts_correct_ids(deployment_ids: &AmmTestDeploymentIds) -> Result
     Ok(())
 }
 
-fn insert_add_liquidity_split_tx(
-    amount1: u128,
-    amount2: u128,
+fn insert_split_tx(
     test_block: &mut Block,
     deployment_ids: &AmmTestDeploymentIds,
     input_outpoint: OutPoint,
+    protostone_edicts: Vec<ProtostoneEdict>,
 ) {
     let address: Address<NetworkChecked> =
         protorune::test_helpers::get_address(&protorune::test_helpers::ADDRESS1);
@@ -175,21 +174,55 @@ fn insert_add_liquidity_split_tx(
             message: vec![],
             pointer: Some(1),
             refund: None,
-            edicts: vec![
-                ProtostoneEdict {
-                    id: deployment_ids.owned_token_1_deployment.into(),
-                    amount: amount1,
-                    output: 0,
-                },
-                ProtostoneEdict {
-                    id: deployment_ids.owned_token_2_deployment.into(),
-                    amount: amount2,
-                    output: 0,
-                },
-            ],
+            edicts: protostone_edicts,
         },
     );
     test_block.txdata.push(split);
+}
+
+fn insert_single_edict_split_tx(
+    amount: u128,
+    target: AlkaneId,
+    test_block: &mut Block,
+    deployment_ids: &AmmTestDeploymentIds,
+    input_outpoint: OutPoint,
+) {
+    insert_split_tx(
+        test_block,
+        deployment_ids,
+        input_outpoint,
+        vec![ProtostoneEdict {
+            id: target.into(),
+            amount: amount,
+            output: 0,
+        }],
+    );
+}
+
+fn insert_two_edict_split_tx(
+    amount1: u128,
+    amount2: u128,
+    test_block: &mut Block,
+    deployment_ids: &AmmTestDeploymentIds,
+    input_outpoint: OutPoint,
+) {
+    insert_split_tx(
+        test_block,
+        deployment_ids,
+        input_outpoint,
+        vec![
+            ProtostoneEdict {
+                id: deployment_ids.owned_token_1_deployment.into(),
+                amount: amount1,
+                output: 0,
+            },
+            ProtostoneEdict {
+                id: deployment_ids.owned_token_2_deployment.into(),
+                amount: amount2,
+                output: 0,
+            },
+        ],
+    );
 }
 
 fn insert_init_pool_liquidity_txs(
@@ -198,7 +231,7 @@ fn insert_init_pool_liquidity_txs(
     test_block: &mut Block,
     deployment_ids: &AmmTestDeploymentIds,
 ) {
-    insert_add_liquidity_split_tx(
+    insert_two_edict_split_tx(
         amount1,
         amount2,
         test_block,
@@ -231,7 +264,7 @@ fn insert_add_liquidity_txs(
     deployment_ids: &AmmTestDeploymentIds,
     input_outpoint: OutPoint,
 ) {
-    insert_add_liquidity_split_tx(amount1, amount2, test_block, deployment_ids, input_outpoint);
+    insert_two_edict_split_tx(amount1, amount2, test_block, deployment_ids, input_outpoint);
     test_block.txdata.push(
         alkane_helpers::create_multiple_cellpack_with_witness_and_in(
             Witness::new(),
@@ -254,47 +287,44 @@ fn insert_remove_liquidity_txs(
     deployment_ids: &AmmTestDeploymentIds,
     input_outpoint: OutPoint,
 ) {
-    let address: Address<NetworkChecked> =
-        protorune::test_helpers::get_address(&protorune::test_helpers::ADDRESS1);
-    let script_pubkey = address.script_pubkey();
-    let split = alkane_helpers::create_protostone_tx_with_inputs(
-        vec![TxIn {
-            previous_output: input_outpoint,
-            script_sig: ScriptBuf::new(),
-            sequence: Sequence::MAX,
-            witness: Witness::new(),
-        }],
-        vec![
-            TxOut {
-                value: Amount::from_sat(546),
-                script_pubkey: script_pubkey.clone(),
-            },
-            TxOut {
-                value: Amount::from_sat(546),
-                script_pubkey: script_pubkey.clone(),
-            },
-        ],
-        Protostone {
-            from: None,
-            burn: None,
-            protocol_tag: 1,
-            message: vec![],
-            pointer: Some(1),
-            refund: None,
-            edicts: vec![ProtostoneEdict {
-                id: deployment_ids.amm_pool_deployment.into(),
-                amount,
-                output: 0,
-            }],
-        },
+    insert_single_edict_split_tx(
+        amount,
+        deployment_ids.amm_pool_deployment,
+        test_block,
+        deployment_ids,
+        input_outpoint,
     );
-    test_block.txdata.push(split);
     test_block.txdata.push(
         alkane_helpers::create_multiple_cellpack_with_witness_and_in(
             Witness::new(),
             vec![Cellpack {
                 target: deployment_ids.amm_pool_deployment,
                 inputs: vec![2],
+            }],
+            OutPoint {
+                txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
+                vout: 0,
+            },
+            false,
+        ),
+    );
+}
+
+fn insert_swap_txs(
+    amount: u128,
+    target: AlkaneId,
+    min_out: u128,
+    test_block: &mut Block,
+    deployment_ids: &AmmTestDeploymentIds,
+    input_outpoint: OutPoint,
+) {
+    insert_single_edict_split_tx(amount, target, test_block, deployment_ids, input_outpoint);
+    test_block.txdata.push(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![Cellpack {
+                target: deployment_ids.amm_pool_deployment,
+                inputs: vec![3, min_out],
             }],
             OutPoint {
                 txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
@@ -324,6 +354,10 @@ fn calc_lp_balance_from_add_liquidity(
     let numerator = total_supply * (root_k - root_k_last);
     let denominator = root_k * 5 + root_k_last;
     numerator / denominator
+}
+
+fn calc_swapped_balance(amount: u128, reserve_from: u128, reserve_to: u128) -> Result<u128> {
+    Ok((amount * reserve_to * 997 / (reserve_from * 1000)))
 }
 
 fn get_sheet_for_outpoint(test_block: &Block, tx_num: usize, vout: u32) -> Result<BalanceSheet> {
@@ -390,6 +424,21 @@ fn check_add_liquidity_lp_balance(
         sheet.get(&deployment_ids.amm_pool_deployment.into()),
         expected_amount
     );
+    Ok(())
+}
+
+fn check_swap_lp_balance(
+    prev_reserve_from: u128,
+    prev_reserve_to: u128,
+    swap_amount: u128,
+    swap_target_token: AlkaneId,
+    test_block: &Block,
+    deployment_ids: &AmmTestDeploymentIds,
+) -> Result<()> {
+    let sheet = get_last_outpoint_sheet(test_block)?;
+    let expected_amount = calc_swapped_balance(swap_amount, prev_reserve_from, prev_reserve_to)?;
+    println!("expected amt from swapping {:?}", expected_amount);
+    assert_eq!(sheet.get(&swap_target_token.into()), expected_amount);
     Ok(())
 }
 
@@ -533,6 +582,41 @@ fn test_amm_pool_add_more_liquidity() -> Result<()> {
         amount2,
         total_supply,
         &add_liquidity_block,
+        &deployment_ids,
+    )?;
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_amm_pool_swap() -> Result<()> {
+    clear();
+    let (amount1, amount2) = (500000, 500000);
+    let total_supply = (amount1 * amount2).sqrt();
+    let (init_block, deployment_ids) = test_amm_pool_init_fixture(amount1, amount2)?;
+    let block_height = 840_001;
+    let mut swap_block = create_block_with_coinbase_tx(block_height);
+    // split init tx puts 1000000 / 2 in vout 0, and the other is unspent at vout 1. The split tx is now 2 from the tail
+    let input_outpoint = OutPoint {
+        txid: init_block.txdata[init_block.txdata.len() - 2].compute_txid(),
+        vout: 1,
+    };
+    let amount_to_swap = 10000;
+    insert_swap_txs(
+        amount_to_swap,
+        deployment_ids.owned_token_1_deployment,
+        0,
+        &mut swap_block,
+        &deployment_ids,
+        input_outpoint,
+    );
+    index_block(&swap_block, block_height)?;
+
+    check_swap_lp_balance(
+        amount1,
+        amount2,
+        amount_to_swap,
+        deployment_ids.owned_token_2_deployment,
+        &swap_block,
         &deployment_ids,
     )?;
     Ok(())
