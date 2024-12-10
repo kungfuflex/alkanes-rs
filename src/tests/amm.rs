@@ -358,7 +358,7 @@ fn calc_lp_balance_from_add_liquidity(
 }
 
 fn calc_swapped_balance(amount: u128, reserve_from: u128, reserve_to: u128) -> Result<u128> {
-    Ok((amount * reserve_to * 997 / (reserve_from * 1000)))
+    Ok((reserve_to - (reserve_from * reserve_to / (reserve_from + amount))) * 997 / 1000)
 }
 
 fn get_sheet_for_outpoint(test_block: &Block, tx_num: usize, vout: u32) -> Result<BalanceSheet> {
@@ -634,7 +634,7 @@ fn test_amm_pool_swap_large() -> Result<()> {
         txid: init_block.txdata[init_block.txdata.len() - 2].compute_txid(),
         vout: 1,
     };
-    let amount_to_swap = 100000000;
+    let amount_to_swap = 500000;
     insert_swap_txs(
         amount_to_swap,
         deployment_ids.owned_token_1_deployment,

@@ -178,7 +178,13 @@ impl AMMPool {
         reserve_from: u128,
         reserve_to: u128,
     ) -> Result<u128> {
-        Ok((U256::from(amount) * U256::from(reserve_to) / U256::from(reserve_from)).try_into()?)
+        Ok(overflow_error(
+            reserve_to.checked_sub(
+                (U256::from(reserve_from) * U256::from(reserve_to)
+                    / (U256::from(reserve_from) + U256::from(amount)))
+                .try_into()?,
+            ),
+        )?)
     }
     pub fn swap(
         &self,
@@ -199,8 +205,8 @@ impl AMMPool {
                 id: reserve_b.id,
                 value: sub_fees(self.get_amount_out(
                     transfer.value,
-                    previous_b.value,
                     previous_a.value,
+                    previous_b.value,
                 )?)?,
             }
         } else {
@@ -208,8 +214,8 @@ impl AMMPool {
                 id: reserve_a.id,
                 value: sub_fees(self.get_amount_out(
                     transfer.value,
-                    previous_a.value,
                     previous_b.value,
+                    previous_a.value,
                 )?)?,
             }
         };
