@@ -108,18 +108,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alkanes-std-free-mint"
-version = "0.1.0"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.4",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
 name = "alkanes-std-genesis-alkane"
 version = "0.1.0"
 dependencies = [
@@ -183,18 +171,6 @@ dependencies = [
  "bitcoin 0.32.4",
  "hex",
  "hex_lit",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-owned-token"
-version = "0.1.0"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.4",
  "metashrew-support",
  "protorune-support",
 ]

@@ -21,6 +21,7 @@ auth_token = ["owned_token"]
 genesis_alkane = []
 genesis_protorune = []
 all = []
+doge = []
 
 [dependencies]
 anyhow = "1.0.90"

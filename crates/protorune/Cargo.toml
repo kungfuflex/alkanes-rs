@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 test-utils = []
+doge = []
 
 [dependencies]
 anyhow = "1.0.89"
