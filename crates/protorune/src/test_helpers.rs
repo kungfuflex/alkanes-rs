@@ -1,4 +1,6 @@
+use crate::balance_sheet::load_sheet;
 use crate::protostone::Protostones;
+use crate::tables;
 use bitcoin::address::NetworkChecked;
 use bitcoin::blockdata::block::{Block, Header};
 use bitcoin::blockdata::script::ScriptBuf;
@@ -10,10 +12,13 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::str::FromStr;
 use hex::decode;
 use metashrew::{get_cache, println, stdio::stdout};
+use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::format_key;
 use ordinals::{Edict, Etching, Rune, RuneId, Runestone};
+use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::network::{set_network, to_address_str, NetworkParams};
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
+use protorune_support::utils::consensus_encode;
 use std::fmt::Write;
 use std::sync::Arc;
 
@@ -249,14 +254,28 @@ pub fn get_address(address: &str) -> Address<NetworkChecked> {
         .unwrap()
 }
 
-/// TODO: Convert all these create_*_transaction functions into sdk functions
-/// Create a rune etching, transferring all runes to vout 0 in the tx
-/// Mocks a dummy outpoint for the previous outpoint
-pub fn create_rune_etching_transaction(config: &RunesTestingConfig) -> Transaction {
+pub fn get_rune_balance_by_outpoint(
+    outpoint: OutPoint,
+    protorune_ids: Vec<ProtoruneRuneId>,
+) -> Vec<u128> {
+    let mint_sheet = load_sheet(
+        &tables::RUNES
+            .OUTPOINT_TO_RUNES
+            .select(&consensus_encode(&outpoint).unwrap()),
+    );
+    let stored_amount = protorune_ids
+        .into_iter()
+        .map(|id| mint_sheet.get(&id))
+        .collect();
+    return stored_amount;
+}
+
+pub fn get_mock_txin(n: u32) -> TxIn {
     let previous_output = OutPoint {
-        txid: bitcoin::Txid::from_str(
-            "0000000000000000000000000000000000000000000000000000000000000000",
-        )
+        txid: bitcoin::Txid::from_str(&format!(
+            "000000000000000000000000000000000000000000000000000000000000000{}",
+            n
+        ))
         .unwrap(),
         vout: 0,
     };
@@ -269,6 +288,50 @@ pub fn create_rune_etching_transaction(config: &RunesTestingConfig) -> Transacti
         sequence: Sequence::MAX,
         witness: Witness::new(),
     };
+
+    return txin;
+}
+
+pub fn get_txout_transfer_to_address(address: &String, amount: u64) -> TxOut {
+    let _address: Address<NetworkChecked> = get_address(address);
+
+    let script_pubkey = _address.script_pubkey();
+
+    TxOut {
+        value: Amount::from_sat(amount),
+        script_pubkey,
+    }
+}
+
+pub fn create_tx_from_runestone(
+    runestone: Runestone,
+    txins: Vec<TxIn>,
+    additional_txouts: Vec<TxOut>,
+) -> Transaction {
+    let runestone_script: ScriptBuf = runestone.encipher();
+
+    let op_return = TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: runestone_script,
+    };
+
+    let mut txouts = additional_txouts.clone();
+    txouts.push(op_return);
+
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: txins,
+        output: txouts,
+    }
+}
+
+/// TODO: Convert all these create_*_transaction functions into sdk functions
+/// Create a rune etching, transferring all runes to vout 0 in the tx
+/// Mocks a dummy outpoint for the previous outpoint
+pub fn create_rune_etching_transaction(config: &RunesTestingConfig) -> Transaction {
+    // Create a transaction input
+    let txin = get_mock_txin(0);
 
     let address: Address<NetworkChecked> = get_address(&config.address1);
 
@@ -422,10 +485,41 @@ pub fn create_block_with_rune_tx(
         840001,
         0,
     ));
-    return (
-        create_block_with_txs(vec![create_rune_etching_transaction(&final_config)]),
-        final_config,
+
+    let rune = match &final_config.rune_name {
+        Some(rune_name) => Some(Rune::from_str(rune_name).unwrap()),
+        None => None,
+    };
+
+    let symbol = match &final_config.rune_symbol {
+        Some(rune_symbol) => Some(char::from_str(rune_symbol).unwrap()),
+        None => None,
+    };
+
+    let tx = create_tx_from_runestone(
+        Runestone {
+            etching: Some(Etching {
+                divisibility: Some(2),
+                premine: Some(1000),
+                rune,
+                spacers: Some(0),
+                symbol,
+                turbo: true,
+                terms: None,
+            }),
+            pointer: Some(0),
+            edicts: Vec::new(),
+            mint: None,
+            protocol: None,
+        },
+        vec![get_mock_txin(0)],
+        vec![get_txout_transfer_to_address(
+            &final_config.address1,
+            100_000_000,
+        )],
     );
+    let test_block = create_block_with_txs(vec![tx]);
+    return (test_block, final_config);
 }
 
 pub fn create_block_with_coinbase_tx(height: u32) -> Block {

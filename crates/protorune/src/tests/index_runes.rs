@@ -27,7 +27,7 @@ mod tests {
         stdio::{stdout, Write},
     };
     use metashrew_support::index_pointer::KeyValuePointer;
-    use ordinals::{Edict, Rune, RuneId};
+    use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
 
     use protobuf::{Message, SpecialFields};
 

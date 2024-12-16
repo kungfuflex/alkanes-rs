@@ -123,6 +123,10 @@ impl Protorune {
         Self::handle_leftover_runes(&mut balance_sheet, &mut balances_by_output, unallocated_to)?;
         for (vout, sheet) in balances_by_output.clone() {
             let outpoint = OutPoint::new(tx.compute_txid(), vout);
+            // println!(
+            //     "Saving balance sheet {:?} to outpoint {:?}",
+            //     sheet, outpoint
+            // );
             sheet.save(
                 &mut atomic.derive(
                     &tables::RUNES
@@ -269,13 +273,24 @@ impl Protorune {
             .get();
         let remaining: u128 = tables::RUNES.MINTS_REMAINING.select(&name).get_value();
         let amount: u128 = tables::RUNES.AMOUNT.select(&name).get_value();
-        if remaining != 0 {
+
+        if remaining <= 0 {
+            // 2 ways we can reach this error:
+            //   - etching and mint are in the same runestone
+            //   - the rune has reached the cap of mints
+            return Err(anyhow!("No remaining mints left!"));
+        }
+        if remaining > 0 {
             let height_start: u64 = tables::RUNES.HEIGHTSTART.select(&name).get_value();
             let height_end: u64 = tables::RUNES.HEIGHTEND.select(&name).get_value();
             let offset_start: u64 = tables::RUNES.OFFSETSTART.select(&name).get_value();
             let offset_end: u64 = tables::RUNES.OFFSETEND.select(&name).get_value();
-            let etching_height: u64 = tables::RUNES.RUNE_ID_TO_HEIGHT.select(&name).get_value();
-
+            // the other mint terms are stored from the rune name, the etching height is
+            // stored by the rune id
+            let etching_height: u64 = tables::RUNES
+                .RUNE_ID_TO_HEIGHT
+                .select(&mint.to_owned().into())
+                .get_value();
             if (height_start == 0 || height >= height_start)
                 && (height_end == 0 || height < height_end)
                 && (offset_start == 0 || height >= offset_start + etching_height)
@@ -292,6 +307,8 @@ impl Protorune {
                     }),
                     amount,
                 );
+            } else {
+                return Err(anyhow!("Mint is outside expected block ranges!"));
             }
         }
         Ok(())
