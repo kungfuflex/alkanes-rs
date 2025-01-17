@@ -41,7 +41,6 @@ impl AlkanesHostFunctionsSafe {
             IndexerError::IntegerConversion(format!("Length conversion failed: {}", e))
         })
     }
-
     pub fn load_storage(
         caller: &mut Caller<'_, AlkanesStateSafe>,
         k: i32,
@@ -56,16 +55,18 @@ impl AlkanesHostFunctionsSafe {
             ctx.read_arraybuffer(caller, k)?
         };
 
-        let context = caller.data().get_context()?;
-        let myself = context.myself.clone();
-        let value = context
-            .message
-            .atomic
-            .keyword("/alkanes/")
-            .select(&myself.into())
-            .keyword("/storage/")
-            .select(&key)
-            .get();
+        let value = {
+            let context = caller.data().get_context()?;
+            let myself = context.myself.clone();
+            context
+                .message
+                .atomic
+                .keyword("/alkanes/")
+                .select(&myself.into())
+                .keyword("/storage/")
+                .select(&key)
+                .get()
+        };
 
         caller.data().track_instruction(1)?;
         caller.data().track_memory(value.len())?;
@@ -74,9 +75,8 @@ impl AlkanesHostFunctionsSafe {
             .and_then(|ext| ext.into_memory())
             .ok_or_else(|| IndexerError::MemoryAccess("Failed to get memory export".to_string()))?;
         
-        let ctx = HostMemoryContext::new(&memory, &caller.data().validation.memory_validator);
-        ctx.write_arraybuffer(caller, v, &value)
+        // Extract validator reference before creating ctx
+        let validator = caller.data().validation.memory_validator.clone();
+        HostMemoryContext::new(&memory, &validator).write_arraybuffer(caller, v, &value)
     }
-
-    // TODO: Implement other host functions similarly
 }

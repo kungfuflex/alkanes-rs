@@ -30,19 +30,19 @@ impl AlkanesStateSafe {
     pub fn track_memory(&self, size: usize) -> IndexerResult<()> {
         self.metrics
             .lock()
-            .map_err(|e| lock_error::<ResourceTracker>(e))?
+            .map_err(lock_error)?
             .track_memory_allocation(size)
     }
 
     pub fn track_instruction(&self, count: u64) -> IndexerResult<()> {
         self.metrics
             .lock()
-            .map_err(|e| lock_error::<ResourceTracker>(e))?
+            .map_err(lock_error)?
             .track_instruction(count)
     }
 
     pub fn get_context(&self) -> IndexerResult<std::sync::MutexGuard<AlkanesRuntimeContext>> {
-        self.context.lock().map_err(|e| lock_error::<AlkanesRuntimeContext>(e))
+        self.context.lock().map_err(lock_error)
     }
 
     pub fn record_error(&self) {

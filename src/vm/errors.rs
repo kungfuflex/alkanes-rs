@@ -1,4 +1,4 @@
-use std::fmt;
+
 use thiserror::Error;
 use wasmi::errors::LinkerError;
 
@@ -32,10 +32,7 @@ pub enum IndexerError {
 pub type IndexerResult<T> = Result<T, IndexerError>;
 
 /// Helper function to convert mutex poison errors to IndexerError
-pub fn lock_error<T, E>(e: E) -> IndexerError 
-where
-    E: fmt::Display,
-{
+pub fn lock_error<T>(e: std::sync::PoisonError<T>) -> IndexerError {
     IndexerError::MutexLock(e.to_string())
 }
 

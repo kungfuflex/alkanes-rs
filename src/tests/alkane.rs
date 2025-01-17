@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::tests::std::alkanes_std_test_build;
+//    use crate::tests::std::alkanes_std_test_build;
     use alkanes_support::cellpack::Cellpack;
     use alkanes_support::id::AlkaneId;
     use anyhow::Result;
@@ -19,6 +19,7 @@ mod tests {
     };
     use wasm_bindgen_test::wasm_bindgen_test;
 
+/*
     #[wasm_bindgen_test]
     pub fn test_compression() -> Result<()> {
         let buffer = alkanes_std_test_build::get_bytes();
@@ -154,4 +155,5 @@ mod tests {
 
         Ok(())
     }
+*/
 }

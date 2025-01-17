@@ -19,12 +19,15 @@ use protorune::protostone::Protostones;
 use protorune::test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1};
 use protorune_support::network::{set_network, NetworkParams};
 use protorune_support::protostone::Protostone;
+use crate::precompiled::alkanes_std_owned_token_build;
 
 use ordinals::{Etching, Rune, Runestone};
 use std::str::FromStr;
 
+/*
 #[cfg(not(feature = "test-utils"))]
 use super::std::alkanes_std_test_build;
+*/
 
 #[cfg(not(all(
     feature = "mainnet",
@@ -92,7 +95,7 @@ pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
     let block_height = 840000;
     let mut test_block = create_block_with_coinbase_tx(block_height);
 
-    let wasm_binary = alkanes_std_test_build::get_bytes();
+    let wasm_binary = alkanes_std_owned_token_build::get_bytes();
     let raw_envelope = RawEnvelope::from(wasm_binary);
 
     let witness = raw_envelope.to_gzipped_witness();
