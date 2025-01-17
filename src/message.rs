@@ -54,7 +54,7 @@ pub fn handle_message(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer
         FuelTank::fuel_transaction(txsize, parcel.txindex);
     }
     let fuel = FuelTank::start_fuel();
-    let inner = context.lock().unwrap().flat();
+    let inner = (&context.lock().unwrap()).to_context();
     let trace = context.lock().unwrap().trace.clone();
     trace.clock(TraceEvent::EnterCall(TraceContext {
         inner,

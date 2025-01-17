@@ -1,5 +1,6 @@
 use crate::parcel::AlkaneTransferParcel;
 use crate::storage::StorageMap;
+use crate::context::{Context};
 use anyhow::Result;
 use metashrew_support::utils::consume_to_end;
 
@@ -67,6 +68,14 @@ impl Into<CallResponse> for ExtendedCallResponse {
 }
 
 impl ExtendedCallResponse {
+    pub fn from_context(context: &Context) -> Self {
+        Self {
+            alkanes: context.incoming_alkanes.clone(),
+            storage: StorageMap::default(),
+            data: Vec::new(),
+        }
+    }
+
     pub fn serialize(&self) -> Vec<u8> {
         let mut list = Vec::<Vec<u128>>::new();
         list.push(vec![self.alkanes.0.len() as u128]);
@@ -84,6 +93,7 @@ impl ExtendedCallResponse {
         result.extend(&self.data);
         result
     }
+
     pub fn parse(cursor: &mut std::io::Cursor<Vec<u8>>) -> Result<Self> {
         let alkanes = AlkaneTransferParcel::parse(cursor)?;
         let storage = StorageMap::parse(cursor)?;

@@ -51,6 +51,9 @@ impl AlkanesRuntimeContext {
             inputs: cloned.inputs,
         }
     }
+    pub fn to_context(&self) -> Context {
+      <Self as Into<Context>>::into(self.clone())
+    }
     pub fn flatten(&self) -> Vec<u128> {
         let mut result = Vec::<u128>::new();
         result.push(self.myself.block);
@@ -81,13 +84,33 @@ impl AlkanesRuntimeContext {
             .collect::<Vec<u8>>();
         result
     }
-    pub fn flat(&self) -> Context {
+}
+
+impl From<AlkanesRuntimeContext> for Context {
+    fn from(value: AlkanesRuntimeContext) -> Self {
         Context {
-            myself: self.myself.clone(),
-            caller: self.caller.clone(),
-            vout: self.message.vout,
-            incoming_alkanes: self.incoming_alkanes.clone(),
-            inputs: self.inputs.clone(),
+            myself: value.myself,
+            caller: value.caller,
+            vout: value.message.vout,
+            incoming_alkanes: value.incoming_alkanes,
+            inputs: value.inputs,
+        }
+    }
+}
+
+impl From<Context> for AlkanesRuntimeContext {
+    fn from(value: Context) -> Self {
+        AlkanesRuntimeContext {
+            myself: value.myself,
+            caller: value.caller,
+            incoming_alkanes: value.incoming_alkanes,
+            inputs: value.inputs,
+            message: Box::new(MessageContextParcel {
+                vout: value.vout,
+                ..Default::default()
+            }),
+            returndata: vec![],
+            trace: Trace::default(),
         }
     }
 }

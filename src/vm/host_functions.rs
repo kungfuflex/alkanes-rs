@@ -354,7 +354,7 @@ impl AlkanesHostFunctionsImpl {
                 FUEL_PER_STORE_BYTE.checked_mul(storage_map_len),
             )?))?,
         )?;
-        let mut trace_context: TraceContext = subcontext.flat().into();
+        let mut trace_context: TraceContext = subcontext.to_context().into();
         trace_context.fuel = start_fuel;
         let event: TraceEvent = T::event(trace_context);
         subcontext.trace.clock(event);

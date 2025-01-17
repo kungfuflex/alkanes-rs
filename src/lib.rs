@@ -1,5 +1,5 @@
 use crate::indexer::configure_network;
-use crate::view::{parcel_from_protobuf, simulate_safe, simulate_parcel};
+use crate::view::{parcel_from_protobuf, simulate_safe};
 use alkanes_support::proto;
 use bitcoin::{Block, OutPoint};
 #[allow(unused_imports)]
