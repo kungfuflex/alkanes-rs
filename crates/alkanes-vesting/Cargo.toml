@@ -1,0 +1,13 @@
+[package]
+name = "alkanes-vesting"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alkanes-runtime = { path = "../alkanes-runtime" }
+alkanes-support = { path = "../alkanes-support" }
+alkanes-std-owned-token = { path = "../alkanes-std-owned-token" }
+metashrew-support = { path = "../metashrew-support" }
+anyhow = "1.0"
+bitcoin = { version = "0.32.4" }
+rs_merkle = "1.4" 

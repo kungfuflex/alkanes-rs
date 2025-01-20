@@ -209,6 +209,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-vesting"
+version = "0.1.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-std-owned-token",
+ "alkanes-support",
+ "anyhow",
+ "bitcoin 0.32.4",
+ "metashrew-support",
+ "rs_merkle",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
