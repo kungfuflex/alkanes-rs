@@ -1,5 +1,5 @@
 use crate::indexer::configure_network;
-use crate::view::{parcel_from_protobuf, simulate_safe, simulate_parcel};
+use crate::view::{parcel_from_protobuf, simulate_safe};
 use alkanes_support::proto;
 use bitcoin::{Block, OutPoint};
 #[allow(unused_imports)]
@@ -9,7 +9,7 @@ use metashrew::{
 };
 #[allow(unused_imports)]
 use metashrew_support::block::AuxpowBlock;
-use metashrew_support::compat::{export_bytes, to_arraybuffer_layout, to_passback_ptr};
+use metashrew_support::compat::{export_bytes};
 use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
 use protobuf::{Message, MessageField};
 use std::io::Cursor;
@@ -48,9 +48,7 @@ pub fn simulate() -> i32 {
             result.error = e.to_string();
         }
     }
-    to_passback_ptr(&mut to_arraybuffer_layout::<&[u8]>(
-        result.write_to_bytes().unwrap().as_ref(),
-    ))
+    export_bytes(result.write_to_bytes().unwrap())
 }
 
 #[no_mangle]
@@ -61,9 +59,18 @@ pub fn runesbyaddress() -> i32 {
     let result: protorune_support::proto::protorune::WalletResponse =
         protorune::view::runes_by_address(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
-    to_passback_ptr(&mut to_arraybuffer_layout::<&[u8]>(
-        result.write_to_bytes().unwrap().as_ref(),
-    ))
+    export_bytes(result.write_to_bytes().unwrap())
+}
+
+#[no_mangle]
+pub fn runesbyoutpoint() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let result: protorune_support::proto::protorune::OutpointResponse =
+        protorune::view::runes_by_outpoint(&consume_to_end(&mut data).unwrap())
+            .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::new());
+    export_bytes(result.write_to_bytes().unwrap())
 }
 
 #[no_mangle]
@@ -127,7 +134,7 @@ pub fn trace() -> i32 {
     .unwrap()
     .try_into()
     .unwrap();
-    export_bytes(view::trace(&outpoint).unwrap()) //.unwrap_or_else(|_| alkanes_support::proto::alkanes::AlkanesTrace::new().write_to_bytes().unwrap()))
+    export_bytes(view::trace(&outpoint).unwrap())
 }
 
 #[no_mangle]
@@ -150,8 +157,7 @@ pub fn runesbyheight() -> i32 {
     let result: protorune_support::proto::protorune::RunesResponse =
         protorune::view::runes_by_height(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::new());
-    let buffer: Vec<u8> = result.write_to_bytes().unwrap();
-    to_passback_ptr(&mut to_arraybuffer_layout::<&[u8]>(buffer.as_ref()))
+    export_bytes(result.write_to_bytes().unwrap())
 }
 
 // #[no_mangle]

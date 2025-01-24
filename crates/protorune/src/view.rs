@@ -82,6 +82,49 @@ pub fn protorune_outpoint_to_outpoint_response(
     })
 }
 
+pub fn rune_outpoint_to_outpoint_response(
+    outpoint: &OutPoint
+) -> Result<OutpointResponse> {
+    let outpoint_bytes = outpoint_to_bytes(outpoint)?;
+    let balance_sheet: BalanceSheet = load_sheet(
+        &tables::RUNES.OUTPOINT_TO_RUNES
+            .select(&outpoint_bytes),
+    );
+
+    let mut height: u128 = tables::RUNES
+        .OUTPOINT_TO_HEIGHT
+        .select(&outpoint_bytes)
+        .get_value::<u64>()
+        .into();
+    let mut txindex: u128 = tables::RUNES
+        .HEIGHT_TO_TRANSACTION_IDS
+        .select_value::<u64>(height as u64)
+        .get_list()
+        .into_iter()
+        .position(|v| v.as_ref().to_vec() == outpoint.txid.as_byte_array().to_vec())
+        .ok_or("")
+        .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
+
+    if let Some((rune_id, _)) = balance_sheet.clone().balances.iter().next() {
+        height = rune_id.block.into();
+        txindex = rune_id.tx.into();
+    }
+    let decoded_output: Output = Output::parse_from_bytes(
+        &tables::OUTPOINT_TO_OUTPUT
+            .select(&outpoint_bytes)
+            .get()
+            .as_ref(),
+    )?;
+    Ok(OutpointResponse {
+        balances: MessageField::some(balance_sheet.into()),
+        outpoint: MessageField::some(core_outpoint_to_proto(&outpoint)),
+        output: MessageField::some(decoded_output),
+        height: height as u32,
+        txindex: txindex as u32,
+        special_fields: SpecialFields::new(),
+    })
+}
+
 pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
     let balance_sheet: BalanceSheet =
@@ -120,6 +163,7 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
     })
 }
 
+
 pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::WalletRequest::parse_from_bytes(input).ok() {
@@ -152,6 +196,7 @@ pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     Ok(result)
 }
 
+
 pub fn protorunes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
     match proto::protorune::OutpointWithProtocol::parse_from_bytes(input).ok() {
         Some(req) => {
@@ -164,6 +209,21 @@ pub fn protorunes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
                 vout: req.vout,
             };
             protorune_outpoint_to_outpoint_response(&outpoint, protocol_tag)
+        }
+        None => Err(anyhow!("malformed request")),
+    }
+}
+
+pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
+    match proto::protorune::Outpoint::parse_from_bytes(input).ok() {
+        Some(req) => {
+            let outpoint = OutPoint {
+                txid: bitcoin::blockdata::transaction::Txid::from_byte_array(
+                    <Vec<u8> as AsRef<[u8]>>::as_ref(&req.txid).try_into()?,
+                ),
+                vout: req.vout,
+            };
+            rune_outpoint_to_outpoint_response(&outpoint)
         }
         None => Err(anyhow!("malformed request")),
     }
