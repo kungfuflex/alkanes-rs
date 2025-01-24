@@ -8,6 +8,10 @@ repository = "https://github.com/ordinals/ord"
 license = "CC0-1.0"
 rust-version = "1.74.0"
 
+[features]
+default = ["dogecoin"]
+dogecoin = []
+
 [dependencies]
 bitcoin = { version = "0.32.4", features = ["rand"] }
 derive_more = { version = "1.0.0", features = ["display", "from_str"] }
