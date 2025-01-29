@@ -631,7 +631,9 @@ impl Protorune {
             .HEIGHT_TO_TRANSACTION_IDS
             .select_value::<u64>(height);
         for tx in &block.txdata {
-            ptr.append(Arc::new(tx.compute_txid().as_byte_array().to_vec()));
+            let txid = tx.compute_txid().as_byte_array().to_vec();
+            tables::TRANSACTION_ID_TO_TRANSACTIONS.select(&txid).set(Arc::new(consensus_encode(tx)));
+            ptr.append(Arc::new(txid.clone()));
         }
         Ok(())
     }

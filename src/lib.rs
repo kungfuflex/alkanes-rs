@@ -63,6 +63,14 @@ pub fn runesbyaddress() -> i32 {
 }
 
 #[no_mangle]
+pub fn transactionbyid() -> i32 {
+  configure_network();
+  let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+  let _height = consume_sized_int::<u32>(&mut data).unwrap();
+  export_bytes(protorune::view::txid_to_transaction(consume_to_end(&mut data).unwrap()))
+}
+
+#[no_mangle]
 pub fn runesbyoutpoint() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());

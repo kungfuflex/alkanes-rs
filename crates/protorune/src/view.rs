@@ -36,6 +36,10 @@ pub fn core_outpoint_to_proto(outpoint: &OutPoint) -> Outpoint {
     }
 }
 
+pub fn txid_to_transaction(txid: Vec<u8>) -> Vec<u8> {
+  tables::TRANSACTION_ID_TO_TRANSACTION.select(&txid).get().as_ref().clone()
+}
+
 pub fn protorune_outpoint_to_outpoint_response(
     outpoint: &OutPoint,
     protocol_id: u128,
