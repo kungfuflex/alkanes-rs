@@ -632,7 +632,9 @@ impl Protorune {
             .select_value::<u64>(height);
         for tx in &block.txdata {
             let txid = tx.compute_txid().as_byte_array().to_vec();
-            tables::TRANSACTION_ID_TO_TRANSACTIONS.select(&txid).set(Arc::new(consensus_encode(tx)));
+            let transaction_pointer = tables::TRANSACTION_ID_TO_TRANSACTION.select(&txid);
+            transaction_pointer.keyword("/raw").set(Arc::new(consensus_encode(tx)?));
+            transaction_pointer.keyword("/height").set_value::<u64>(height);
             ptr.append(Arc::new(txid.clone()));
         }
         Ok(())

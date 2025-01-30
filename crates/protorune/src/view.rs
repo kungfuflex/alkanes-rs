@@ -36,8 +36,12 @@ pub fn core_outpoint_to_proto(outpoint: &OutPoint) -> Outpoint {
     }
 }
 
-pub fn txid_to_transaction(txid: Vec<u8>) -> Vec<u8> {
-  tables::TRANSACTION_ID_TO_TRANSACTION.select(&txid).get().as_ref().clone()
+pub fn txid_to_transaction(txid: Vec<u8>) -> protorune_support::proto::protorune::TransactionRecord {
+  let mut record = protorune_support::proto::protorune::TransactionRecord::new();
+  let pointer = tables::TRANSACTION_ID_TO_TRANSACTION.select(&txid);
+  record.transaction = pointer.keyword("/raw").get().as_ref().clone();
+  record.height = pointer.keyword("/height").get_value::<u64>();
+  record
 }
 
 pub fn protorune_outpoint_to_outpoint_response(

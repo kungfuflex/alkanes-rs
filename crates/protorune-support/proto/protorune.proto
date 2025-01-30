@@ -7,6 +7,11 @@ message RuneId {
   uint32 txindex = 2;
 }
 
+message TransactionRecord {
+  uint64 height = 1;
+  bytes transaction = 2;
+}
+
 message ProtoruneRuneId {
   uint128 height = 1;
   uint128 txindex = 2;
