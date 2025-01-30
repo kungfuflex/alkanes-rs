@@ -288,8 +288,6 @@ pub fn runes_by_height(input: &Vec<u8>) -> Result<RunesResponse> {
                 symbol_bytes[3],
             ]);
 
-            println!("ne unicode {}", symbol_unicode);
-
             _rune.symbol = char::from_u32(symbol_unicode).unwrap().to_string();
             _rune.divisibility = tables::RUNES.DIVISIBILITY.select(&rune).get_value::<u8>() as u32;
             result.runes.push(_rune);

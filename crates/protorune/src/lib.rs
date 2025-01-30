@@ -599,7 +599,6 @@ impl Protorune {
                 clear_balances(&mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key));
             }
         }
-        println!("Finished index_unspendables");
         Ok(())
     }
     pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<()> {
@@ -881,12 +880,9 @@ impl Protorune {
     }
 
     pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<()> {
-        println!("Starting index_block");
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
-        println!("After initialized_protocol_index: {:?}", init_result);
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));
-        println!("After add_to_indexable_protocols: {:?}", add_result);
         init_result?;
         add_result?;
         tables::RUNES
@@ -897,16 +893,11 @@ impl Protorune {
             .BLOCKHASH_TO_HEIGHT
             .select(&consensus_encode(&block.block_hash())?)
             .set_value::<u64>(height);
-        println!("Starting index_spendables");
         Self::index_spendables(&block.txdata)?;
-        println!("Starting index_transaction_ids");
         Self::index_transaction_ids(&block, height)?;
-        println!("Starting index_outpoints");
         Self::index_outpoints(&block, height)?;
-        println!("Starting index_unspendables");
         Self::index_unspendables::<T>(&block, height)?;
         flush();
-        println!("Finished index_block");
         Ok(())
     }
 }

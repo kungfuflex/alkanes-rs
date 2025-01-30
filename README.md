@@ -71,6 +71,11 @@ A sample command may look like:
 To run all tests in the monorepo
 
 ```
+# this might be necessary if running into: could not execute process `wasm-bindgen-test-runner...
+cargo install -f wasm-bindgen-cli --version 0.2.99
+```
+
+```
 cargo test --all
 ```
 
@@ -102,6 +107,7 @@ Unit testing
 - Do not compile to wasm, instead unit test the native rust. Therefore, you need to find the correct target for your local machine to properly run these tests. Below are some common targets for some architectures:
   - Macbook intel x86: x86_64-apple-darwin
   - Macbook Apple silicon: aarch64-apple-darwin
+  - Ubuntu 20.04 LTS: x86_64-unknown-linux-gnu
 
 ```
 cargo test -p protorune --target TARGET

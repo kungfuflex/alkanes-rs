@@ -132,9 +132,9 @@ fn main() {
                 for (network, features) in networks {
                     // Build with specific features
                     build_alkane(wasm_str, features)?;
-                   
+
                     let subbed = v.clone().replace("-", "_");
-                    
+
                     // Read the built wasm
                     let f: Vec<u8> = fs::read(
                         &Path::new(&wasm_str)
@@ -152,7 +152,7 @@ fn main() {
                             .join(format!("{}_{}.wasm.gz", subbed, network)),
                         &compressed
                     )?;
-                    
+
                     // Write network-specific build file
                 }
 

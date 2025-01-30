@@ -23,8 +23,8 @@ use protorune_support::protostone::Protostone;
 use ordinals::{Etching, Rune, Runestone};
 use std::str::FromStr;
 
-#[cfg(not(feature = "test-utils"))]
-use super::std::alkanes_std_test_build;
+#[cfg(test)]
+use crate::tests::std::alkanes_std_test_build;
 
 #[cfg(not(all(
     feature = "mainnet",
@@ -87,7 +87,7 @@ pub fn clear() {
     configure_network();
 }
 
-#[cfg(not(feature = "test-utils"))]
+#[cfg(test)]
 pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
     let block_height = 840000;
     let mut test_block = create_block_with_coinbase_tx(block_height);
