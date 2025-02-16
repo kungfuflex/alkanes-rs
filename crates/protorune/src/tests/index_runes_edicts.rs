@@ -69,25 +69,26 @@ mod tests {
                 vout: 0,
             },
             vec![protorune_id],
-        );
+        )[0];
         let stored_balance_address1 = helpers::get_rune_balance_by_outpoint(
             OutPoint {
                 txid: test_block.txdata[1].compute_txid(),
                 vout: 1,
             },
             vec![protorune_id],
-        );
-        assert_eq!(stored_balance_address1[0], expected_address1_amount);
-        assert_eq!(stored_balance_address2[0], expected_address2_amount);
+        )[0];
+        assert_eq!(stored_balance_address1, expected_address1_amount);
+        assert_eq!(stored_balance_address2, expected_address2_amount);
 
+        // assert that original outpoint where runes were minted are not spenable anymore
         let stored_balance_address1_original = helpers::get_rune_balance_by_outpoint(
             OutPoint {
                 txid: test_block.txdata[0].compute_txid(),
                 vout: 0,
             },
             vec![protorune_id],
-        );
-        assert_eq!(0, stored_balance_address1_original[0]); //assert that original outpoint runes are all spent
+        )[0];
+        assert_eq!(0, stored_balance_address1_original);
     }
 
     /// normal transfer works

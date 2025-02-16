@@ -148,6 +148,7 @@ mod tests {
             helpers::get_rune_balance_by_outpoint(tx1_outpoint, vec![protorune_id]);
         assert_eq!(protoburn_rune_balances[0], 0);
 
+        // ensures protorunes from tx1 outpoint are no longer usable
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx1_outpoint,
