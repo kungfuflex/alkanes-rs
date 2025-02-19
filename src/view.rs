@@ -106,6 +106,29 @@ pub fn call_view(id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>
     Ok(response.data)
 }
 
+pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> Result<Vec<u8>> {
+    let calldata: Vec<_> = ids
+        .into_iter()
+        .enumerate()
+        .map(|(i, id)| {
+            plain_parcel_from_cellpack(Cellpack {
+                target: id.clone(),
+                inputs: inputs[i].clone(),
+            })
+        })
+        .collect();
+
+    let (results, _) = multi_simulate(&calldata, fuel)?;
+    let mut response: Vec<u8> = vec![];
+
+    for result in results {
+        response.extend_from_slice(&result.data.len().to_le_bytes());
+        response.extend_from_slice(&result.data)
+    }
+
+    Ok(response)
+}
+
 pub const STATIC_FUEL: u64 = 100_000;
 pub const NAME_OPCODE: u128 = 99;
 pub const SYMBOL_OPCODE: u128 = 100;
@@ -341,4 +364,19 @@ pub fn simulate_parcel(
     combined.debit_mintable(&sheet, &mut atomic)?;
     debit_balances(&mut atomic, &myself, &response.alkanes)?;
     Ok((response, gas_used))
+}
+
+pub fn multi_simulate(
+    parcels: &[MessageContextParcel],
+    fuel: u64,
+) -> Result<(Vec<ExtendedCallResponse>, u64)> {
+    let mut gas = 0;
+    let mut responses: Vec<ExtendedCallResponse> = vec![];
+    for parcel in parcels {
+        let (response, gas_used) = simulate_parcel(parcel, fuel)?;
+        gas += gas_used;
+        responses.push(response);
+    }
+
+    Ok((responses, gas))
 }
