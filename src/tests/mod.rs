@@ -6,7 +6,8 @@ pub mod std;
 pub mod utils;
 //pub mod index_alkanes;
 #[cfg(test)]
-//pub mod address;
+pub mod address;
+/*
 #[cfg(test)]
 pub mod alkane;
 #[cfg(test)]
@@ -21,3 +22,4 @@ pub mod networks;
 pub mod serialization;
 #[cfg(test)]
 pub mod forge;
+*/

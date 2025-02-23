@@ -118,6 +118,8 @@ pub fn protorunesbyaddress() -> i32 {
     let mut result: protorune_support::proto::protorune::WalletResponse =
         view::protorunes_by_address(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
+    println!("final result: {:?}", &result);
+/*
     result.outpoints = result
         .outpoints
         .into_iter()
@@ -135,6 +137,7 @@ pub fn protorunesbyaddress() -> i32 {
             }
         })
         .collect::<Vec<protorune_support::proto::protorune::OutpointResponse>>();
+*/
     export_bytes(result.write_to_bytes().unwrap())
 }
 

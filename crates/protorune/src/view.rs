@@ -180,6 +180,8 @@ pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
                     }
                 };
                 let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+                println!("req.wallet: {:?}", req.wallet.to_vec());
+                println!("_address: {:?}", _address.to_vec());
                 if req.wallet.len() == _address.len() {
                     Some(outpoint_to_outpoint_response(&v))
                 } else {
@@ -231,6 +233,7 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
             .get_list()
             .into_iter()
             .map(|v| -> Result<OutPoint> {
+                println!("protorunesbyaddress/OutPoint: {:?}", v);
                 let mut cursor = Cursor::new(v.as_ref().clone());
                 Ok(consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?)
             })
@@ -243,7 +246,11 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
                         return Some(Err(e));
                     }
                 };
+                println!("protorunesbyaddress/outpoint_bytes: {:?}", &outpoint_bytes);
                 let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+                println!("protorunesbyaddress/OUTPOINT_SPENDABLE_BY: {:?}", &_address);
+                println!("req.wallet: {}", hex::encode(&req.wallet.to_vec()));
+                println!("_address: {}", hex::encode(&_address.to_vec()));
                 if req.wallet.len() == _address.len() {
                     Some(protorune_outpoint_to_outpoint_response(
                         &v,

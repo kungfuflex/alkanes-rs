@@ -124,27 +124,25 @@ pub fn get_statics(id: &AlkaneId) -> (String, String) {
 
 pub fn to_alkanes_balances(
     balances: protorune_support::proto::protorune::BalanceSheet,
-) -> protorune_support::proto::protorune::BalanceSheet {
+) -> Option<protorune_support::proto::protorune::BalanceSheet> {
     let mut clone = balances.clone();
     for entry in &mut clone.entries {
         let block: u128 = entry
             .rune
-            .clone()
-            .unwrap()
+            .clone().into_option()?
             .runeId
             .height
-            .clone()
-            .unwrap()
+            .clone().into_option()?
             .into();
         if block == 2 || block == 4 {
             (
-                entry.rune.as_mut().unwrap().name,
-                entry.rune.as_mut().unwrap().symbol,
-            ) = get_statics(&from_protobuf(entry.rune.runeId.clone().unwrap()));
-            entry.rune.as_mut().unwrap().spacers = 0;
+                entry.rune.clone().into_option()?.name,
+                entry.rune.clone().into_option()?.symbol,
+            ) = get_statics(&from_protobuf(entry.rune.runeId.clone().into_option()?));
+            entry.rune.as_mut()?.spacers = 0;
         }
     }
-    clone
+    Some(clone)
 }
 
 pub fn to_alkanes_from_runes(
@@ -186,7 +184,7 @@ pub fn protorunes_by_outpoint(
                 MessageField::some(
                     to_alkanes_balances(response.balances.unwrap_or_else(|| {
                         protorune_support::proto::protorune::BalanceSheet::new()
-                    }))
+                    })).unwrap()
                     .clone(),
                 );
         }
@@ -199,14 +197,12 @@ pub fn to_alkanes_outpoints(
 ) -> Vec<protorune_support::proto::protorune::OutpointResponse> {
     let mut cloned = v.clone();
     for item in &mut cloned {
-        item.balances = MessageField::some(
-            to_alkanes_balances(
-                item.balances
-                    .clone()
-                    .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new()),
-            )
-            .clone(),
-        );
+
+        let balances = item.balances.clone().unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new());
+        item.balances = match to_alkanes_balances(balances.clone()) {
+          Some(v) => MessageField::some(v),
+          None => MessageField::some(balances.clone())
+        };
     }
     cloned
 }
@@ -217,6 +213,7 @@ pub fn protorunes_by_address(
     let request =
         protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input)?;
     view::protorunes_by_address(input).and_then(|mut response| {
+        println!("response: {:?}", &response);
         if into_u128(request.protocol_tag.unwrap_or_else(|| {
             <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
         })) == AlkaneMessageContext::protocol_tag()

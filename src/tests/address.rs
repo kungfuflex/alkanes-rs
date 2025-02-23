@@ -15,9 +15,9 @@ pub fn test_address_generation() {
         p2sh_prefix: 0xc4,
     });
     assert_eq!(
-        "bcrt1qzr9vhs60g6qlmk7x3dd7g3ja30wyts48sxuemv",
+        "bcrt1pys2f8u8yx7nu08txn9kzrstrmlmpvfprdazz9se5qr5rgtuz8htsaz3chd",
         to_address_str(&Script::from_bytes(&hex!(
-            "001410cacbc34f4681fddbc68b5be4465d8bdc45c2a7"
+            "5120241493f0e437a7c79d66996c21c163dff61624236f4422c33400e8342f823dd7"
         )))
         .unwrap()
     );
