@@ -30,6 +30,7 @@ pub struct RuneTable {
     pub RUNE_ID_TO_INITIALIZED: IndexPointer,
     pub INTERNAL_MINT: IndexPointer,
     pub TXID_TO_TXINDEX: IndexPointer,
+    pub RUNE_OUTPOINT_MAPPING: IndexPointer,
     /*
     pub HEIGHT_TO_BLOCKHASH: IndexPointer::from_keyword("/blockhash/byheight/"),
     pub BLOCKHASH_TO_HEIGHT: IndexPointer::from_keyword("/height/byblockhash/"),
@@ -82,6 +83,7 @@ impl RuneTable {
             RUNE_ID_TO_INITIALIZED: IndexPointer::from_keyword("/runes/null"),
             INTERNAL_MINT: IndexPointer::from_keyword("/runes/null"),
             TXID_TO_TXINDEX: IndexPointer::from_keyword("/txindex/byid"),
+            RUNE_OUTPOINT_MAPPING: IndexPointer::from_keyword("/runes/outpoints/byruneid/"),
         }
     }
     pub fn for_protocol(tag: u128) -> Self {
@@ -89,17 +91,17 @@ impl RuneTable {
             HEIGHT_TO_BLOCKHASH: IndexPointer::from_keyword("/runes/null"),
             BLOCKHASH_TO_HEIGHT: IndexPointer::from_keyword("/runes/null"),
             HEIGHT_TO_RUNE_ID: IndexPointer::from_keyword(
-                format!("/runes/proto/{tag}/byheight/").as_str(),
+                format!("/runes/proto/{tag}/byheight/").as_str()
             ),
             RUNE_ID_TO_INITIALIZED: IndexPointer::from_keyword(
-                format!("/runes/proto/{tag}/initialized/").as_str(),
+                format!("/runes/proto/{tag}/initialized/").as_str()
             ),
             OUTPOINT_TO_RUNES: IndexPointer::from_keyword(
-                format!("/runes/proto/{tag}/byoutpoint/").as_str(),
+                format!("/runes/proto/{tag}/byoutpoint/").as_str()
             ),
             OUTPOINT_TO_HEIGHT: IndexPointer::from_keyword("/runes/null"),
             HEIGHT_TO_TRANSACTION_IDS: IndexPointer::from_keyword(
-                format!("/runes/proto/{tag}/txids/byheight").as_str(),
+                format!("/runes/proto/{tag}/txids/byheight").as_str()
             ),
             SYMBOL: IndexPointer::from_keyword(format!("/runes/proto/{tag}/symbol/").as_str()),
             CAP: IndexPointer::from_keyword(format!("/runes/proto/{tag}/cap/").as_str()),
@@ -112,36 +114,43 @@ impl RuneTable {
             MINTS_REMAINING: IndexPointer::from_keyword(format!("/runes/null").as_str()),
             PREMINE: IndexPointer::from_keyword(format!("/runes/null").as_str()),
             DIVISIBILITY: IndexPointer::from_keyword(
-                format!("/runes/proto/{tag}/divisibility/").as_str(),
+                format!("/runes/proto/{tag}/divisibility/").as_str()
             ),
             RUNE_ID_TO_HEIGHT: IndexPointer::from_keyword(format!("/rune/null").as_str()),
             ETCHINGS: IndexPointer::from_keyword(format!("/runes/proto/{tag}/names").as_str()),
             RUNE_ID_TO_ETCHING: IndexPointer::from_keyword(
-                format!("/runes/proto/{tag}/etching/byruneid/").as_str(),
+                format!("/runes/proto/{tag}/etching/byruneid/").as_str()
             ),
             ETCHING_TO_RUNE_ID: IndexPointer::from_keyword(
-                format!("/runes/proto/{tag}/runeid/byetching/").as_str(),
+                format!("/runes/proto/{tag}/runeid/byetching/").as_str()
             ),
             RUNTIME_BALANCE: IndexPointer::from_keyword(
-                format!("/runes/proto/{tag}/runtime/balance").as_str(),
+                format!("/runes/proto/{tag}/runtime/balance").as_str()
             ),
             INTERNAL_MINT: IndexPointer::from_keyword(
-                format!("/runes/proto/{tag}/mint/isinternal").as_str(),
+                format!("/runes/proto/{tag}/mint/isinternal").as_str()
             ),
             TXID_TO_TXINDEX: IndexPointer::from_keyword("/txindex/byid"),
+            RUNE_OUTPOINT_MAPPING: IndexPointer::from_keyword(
+                format!("/runes/proto/{tag}/outpoints/byruneid/").as_str()
+            ),
         }
     }
 }
 
 pub static RUNES: Lazy<RuneTable> = Lazy::new(|| RuneTable::new());
 
-pub static HEIGHT_TO_RUNES: Lazy<IndexPointer> =
-    Lazy::new(|| IndexPointer::from_keyword("/runes/byheight/"));
+pub static HEIGHT_TO_RUNES: Lazy<IndexPointer> = Lazy::new(||
+    IndexPointer::from_keyword("/runes/byheight/")
+);
 
-pub static OUTPOINTS_FOR_ADDRESS: Lazy<IndexPointer> =
-    Lazy::new(|| IndexPointer::from_keyword("/outpoint/byaddress/"));
+pub static OUTPOINTS_FOR_ADDRESS: Lazy<IndexPointer> = Lazy::new(||
+    IndexPointer::from_keyword("/outpoint/byaddress/")
+);
 
-pub static OUTPOINT_SPENDABLE_BY: Lazy<IndexPointer> =
-    Lazy::new(|| IndexPointer::from_keyword("/outpoint/spendableby/"));
-pub static OUTPOINT_TO_OUTPUT: Lazy<IndexPointer> =
-    Lazy::new(|| IndexPointer::from_keyword("/output/byoutpoint/"));
+pub static OUTPOINT_SPENDABLE_BY: Lazy<IndexPointer> = Lazy::new(||
+    IndexPointer::from_keyword("/outpoint/spendableby/")
+);
+pub static OUTPOINT_TO_OUTPUT: Lazy<IndexPointer> = Lazy::new(||
+    IndexPointer::from_keyword("/output/byoutpoint/")
+);
