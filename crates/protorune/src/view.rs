@@ -10,7 +10,7 @@ use protorune_support::proto::protorune::{
     OutpointResponse,
     Output,
     Rune,
-    //RunesByHeightRequest,
+    RuneId,
     RunesResponse,
     WalletResponse,
 };
@@ -24,6 +24,7 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protobuf::{ Message, MessageField, SpecialFields };
 use std::fmt::Write;
 use std::io::Cursor;
+use std::sync::Arc;
 
 pub fn outpoint_to_bytes(outpoint: &OutPoint) -> Result<Vec<u8>> {
     Ok(outpoint_encode(outpoint)?)
@@ -260,8 +261,6 @@ pub fn protorune_holders(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
 
     if let Some(req) = proto::protorune::ProtoruneHoldersRequest::parse_from_bytes(input).ok() {
-        let rune_id = &req.id;
-        let rune_id_str = rune_id.to_string();
         let protocol_tag: u128 = req.clone().protocol_tag.into_option().unwrap().into();
 
         // Select appropriate table
@@ -271,9 +270,16 @@ pub fn protorune_holders(input: &Vec<u8>) -> Result<WalletResponse> {
             tables::RUNES.clone()
         };
 
-        let outpoints_list = table.RUNE_OUTPOINT_MAPPING
-            .select(&rune_id_str.into_bytes())
-            .get_list();
+        let rune_id = <ProtoruneRuneId as Into<Vec<u8>>>::into(
+            ProtoruneRuneId::new(
+                req.clone().height.into_option().unwrap().into(),
+                req.clone().txindex.into_option().unwrap().into()
+            )
+        );
+
+        let outpoints_list = table.RUNE_ID_TO_OUTPOINTS.select(&Arc::new(rune_id)).get_list();
+
+        println!("outpoints_list: {:?}", outpoints_list);
 
         result.outpoints = outpoints_list
             .into_iter()
@@ -291,12 +297,13 @@ pub fn protorune_holders(input: &Vec<u8>) -> Result<WalletResponse> {
                                 );
 
                                 let protorune_id = ProtoruneRuneId {
-                                    block: u128::from(rune_id.height),
-                                    tx: u128::from(rune_id.txindex),
+                                    block: req.clone().height.into_option().unwrap().into(),
+                                    tx: req.clone().txindex.into_option().unwrap().into(),
                                 };
                                 let balance = sheet.get(&protorune_id);
 
                                 if balance > 0 {
+                                    println!("balance: {}, entered found balance condition", balance);
                                     let address = tables::OUTPOINT_SPENDABLE_BY
                                         .select(&outpoint_bytes)
                                         .get();
@@ -313,6 +320,7 @@ pub fn protorune_holders(input: &Vec<u8>) -> Result<WalletResponse> {
                                                     address.as_ref().clone()
                                                 )
                                             {
+                                                println!("address: {}", address_str);
                                                 resp.address = address_str.into_bytes();
                                             }
                                         }

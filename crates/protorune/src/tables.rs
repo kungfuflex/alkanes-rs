@@ -30,7 +30,7 @@ pub struct RuneTable {
     pub RUNE_ID_TO_INITIALIZED: IndexPointer,
     pub INTERNAL_MINT: IndexPointer,
     pub TXID_TO_TXINDEX: IndexPointer,
-    pub RUNE_OUTPOINT_MAPPING: IndexPointer,
+    pub RUNE_ID_TO_OUTPOINTS: IndexPointer,
     /*
     pub HEIGHT_TO_BLOCKHASH: IndexPointer::from_keyword("/blockhash/byheight/"),
     pub BLOCKHASH_TO_HEIGHT: IndexPointer::from_keyword("/height/byblockhash/"),
@@ -83,7 +83,7 @@ impl RuneTable {
             RUNE_ID_TO_INITIALIZED: IndexPointer::from_keyword("/runes/null"),
             INTERNAL_MINT: IndexPointer::from_keyword("/runes/null"),
             TXID_TO_TXINDEX: IndexPointer::from_keyword("/txindex/byid"),
-            RUNE_OUTPOINT_MAPPING: IndexPointer::from_keyword("/runes/outpoints/byruneid/"),
+            RUNE_ID_TO_OUTPOINTS: IndexPointer::from_keyword("/runes/outpoints/byruneid/"),
         }
     }
     pub fn for_protocol(tag: u128) -> Self {
@@ -131,7 +131,7 @@ impl RuneTable {
                 format!("/runes/proto/{tag}/mint/isinternal").as_str()
             ),
             TXID_TO_TXINDEX: IndexPointer::from_keyword("/txindex/byid"),
-            RUNE_OUTPOINT_MAPPING: IndexPointer::from_keyword(
+            RUNE_ID_TO_OUTPOINTS: IndexPointer::from_keyword(
                 format!("/runes/proto/{tag}/outpoints/byruneid/").as_str()
             ),
         }

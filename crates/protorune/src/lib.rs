@@ -245,14 +245,7 @@ impl Protorune {
 
             for (rune, amount) in sheet.balances.iter() {
                 if *amount > 0 {
-                    let compound_key = Self::create_compound_key(rune, &outpoint)?;
-                    atomic
-                        .derive(
-                            &tables::RUNES.RUNE_OUTPOINT_MAPPING.select(
-                                &compound_key.to_string().into_bytes()
-                            )
-                        )
-                        .set_value(1u8);
+                    Self::add_rune_outpoint(rune, &outpoint)?;
                 }
             }
         }
@@ -269,12 +262,11 @@ impl Protorune {
         )?;
         Ok(())
     }
-    pub fn add_rune_outpoint_mapping(rune: &ProtoruneRuneId, outpoint: &OutPoint) -> Result<()> {
-        let compound_key = Self::create_compound_key(rune, &outpoint)?;
-
-        tables::RUNES.RUNE_OUTPOINT_MAPPING
-            .select(&compound_key.to_string().into_bytes())
-            .set_value(1u8);
+    pub fn add_rune_outpoint(rune: &ProtoruneRuneId, outpoint: &OutPoint) -> Result<()> {
+        let id = Self::build_rune_id(rune.block, rune.tx);
+        tables::RUNES.RUNE_ID_TO_OUTPOINTS
+            .select(&id)
+            .append(Arc::new(consensus_encode(outpoint)?));
 
         Ok(())
     }
@@ -303,7 +295,7 @@ impl Protorune {
 
         if amount > 0 {
             let new_outpoint = OutPoint::new(*tx_id, edict_output);
-            Self::add_rune_outpoint_mapping(rune_id, &new_outpoint)?;
+            Self::add_rune_outpoint(rune_id, &new_outpoint)?;
         }
 
         sheet.increase(rune_id, amount);
@@ -562,10 +554,8 @@ impl Protorune {
         Ok(())
     }
 
-    pub fn build_rune_id(height: u64, tx: u32) -> Arc<Vec<u8>> {
-        let rune_id = <ProtoruneRuneId as Into<Vec<u8>>>::into(
-            ProtoruneRuneId::new(height as u128, tx as u128)
-        );
+    pub fn build_rune_id(height: u128, tx: u128) -> Arc<Vec<u8>> {
+        let rune_id = <ProtoruneRuneId as Into<Vec<u8>>>::into(ProtoruneRuneId::new(height, tx));
         return Arc::new(rune_id);
     }
 
@@ -627,16 +617,7 @@ impl Protorune {
         Ok(())
     }
 
-    fn create_compound_key(rune: &ProtoruneRuneId, outpoint: &OutPoint) -> Result<String> {
-        let rune_block_str = rune.block.to_string();
-        let rune_tx_str: String = rune.tx.to_string();
-
-        let outpoint_bytes = consensus_encode(outpoint)?;
-        let outpoint_hex = hex::encode(&outpoint_bytes);
-
-        Ok(format!("{}:{}:{}", rune_block_str, rune_tx_str, outpoint_hex))
-    }
-
+    // ... existing code ...
     pub fn remove_rune_outpoint_mapping(
         atomic: &mut AtomicPointer,
         outpoint: &OutPoint
@@ -648,11 +629,22 @@ impl Protorune {
         );
 
         for (rune, _) in sheet.balances.iter() {
-            let key = Self::create_compound_key(rune, outpoint)?;
+            let id = Self::build_rune_id(rune.block, rune.tx);
+            let current_outpoints = atomic
+                .derive(&tables::RUNES.RUNE_ID_TO_OUTPOINTS.select(&id))
+                .get()
+                .to_vec();
+
+            let updated_outpoints: Vec<u8> = current_outpoints
+                .chunks(outpoint_bytes.len())
+                .filter(|op| *op != outpoint_bytes)
+                .flatten()
+                .copied()
+                .collect();
 
             atomic
-                .derive(&tables::RUNES.RUNE_OUTPOINT_MAPPING.select(&key.to_string().into_bytes()))
-                .set_value(0u8);
+                .derive(&tables::RUNES.RUNE_ID_TO_OUTPOINTS.select(&id))
+                .set(Arc::new(updated_outpoints));
         }
 
         let empty_sheet = BalanceSheet::default();
@@ -663,7 +655,7 @@ impl Protorune {
 
         Ok(())
     }
-
+    // ... existing code ...
     pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<()> {
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();

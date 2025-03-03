@@ -1969,10 +1969,12 @@ impl ::protobuf::reflect::ProtobufValue for ProtorunesWalletRequest {
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct ProtoruneHoldersRequest {
     // message fields
-    // @@protoc_insertion_point(field:protorune.ProtoruneHoldersRequest.id)
-    pub id: ::protobuf::MessageField<RuneId>,
     // @@protoc_insertion_point(field:protorune.ProtoruneHoldersRequest.protocol_tag)
     pub protocol_tag: ::protobuf::MessageField<Uint128>,
+    // @@protoc_insertion_point(field:protorune.ProtoruneHoldersRequest.height)
+    pub height: ::protobuf::MessageField<Uint128>,
+    // @@protoc_insertion_point(field:protorune.ProtoruneHoldersRequest.txindex)
+    pub txindex: ::protobuf::MessageField<Uint128>,
     // special fields
     // @@protoc_insertion_point(special_field:protorune.ProtoruneHoldersRequest.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -1990,17 +1992,22 @@ impl ProtoruneHoldersRequest {
     }
 
     fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
-        let mut fields = ::std::vec::Vec::with_capacity(2);
+        let mut fields = ::std::vec::Vec::with_capacity(3);
         let mut oneofs = ::std::vec::Vec::with_capacity(0);
-        fields.push(::protobuf::reflect::rt::v2::make_message_field_accessor::<_, RuneId>(
-            "id",
-            |m: &ProtoruneHoldersRequest| { &m.id },
-            |m: &mut ProtoruneHoldersRequest| { &mut m.id },
-        ));
         fields.push(::protobuf::reflect::rt::v2::make_message_field_accessor::<_, Uint128>(
             "protocol_tag",
             |m: &ProtoruneHoldersRequest| { &m.protocol_tag },
             |m: &mut ProtoruneHoldersRequest| { &mut m.protocol_tag },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_message_field_accessor::<_, Uint128>(
+            "height",
+            |m: &ProtoruneHoldersRequest| { &m.height },
+            |m: &mut ProtoruneHoldersRequest| { &mut m.height },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_message_field_accessor::<_, Uint128>(
+            "txindex",
+            |m: &ProtoruneHoldersRequest| { &m.txindex },
+            |m: &mut ProtoruneHoldersRequest| { &mut m.txindex },
         ));
         ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<ProtoruneHoldersRequest>(
             "ProtoruneHoldersRequest",
@@ -2021,10 +2028,13 @@ impl ::protobuf::Message for ProtoruneHoldersRequest {
         while let Some(tag) = is.read_raw_tag_or_eof()? {
             match tag {
                 10 => {
-                    ::protobuf::rt::read_singular_message_into_field(is, &mut self.id)?;
+                    ::protobuf::rt::read_singular_message_into_field(is, &mut self.protocol_tag)?;
                 },
                 18 => {
-                    ::protobuf::rt::read_singular_message_into_field(is, &mut self.protocol_tag)?;
+                    ::protobuf::rt::read_singular_message_into_field(is, &mut self.height)?;
+                },
+                26 => {
+                    ::protobuf::rt::read_singular_message_into_field(is, &mut self.txindex)?;
                 },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
@@ -2038,11 +2048,15 @@ impl ::protobuf::Message for ProtoruneHoldersRequest {
     #[allow(unused_variables)]
     fn compute_size(&self) -> u64 {
         let mut my_size = 0;
-        if let Some(v) = self.id.as_ref() {
+        if let Some(v) = self.protocol_tag.as_ref() {
             let len = v.compute_size();
             my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
         }
-        if let Some(v) = self.protocol_tag.as_ref() {
+        if let Some(v) = self.height.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        }
+        if let Some(v) = self.txindex.as_ref() {
             let len = v.compute_size();
             my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
         }
@@ -2052,11 +2066,14 @@ impl ::protobuf::Message for ProtoruneHoldersRequest {
     }
 
     fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
-        if let Some(v) = self.id.as_ref() {
+        if let Some(v) = self.protocol_tag.as_ref() {
             ::protobuf::rt::write_message_field_with_cached_size(1, v, os)?;
         }
-        if let Some(v) = self.protocol_tag.as_ref() {
+        if let Some(v) = self.height.as_ref() {
             ::protobuf::rt::write_message_field_with_cached_size(2, v, os)?;
+        }
+        if let Some(v) = self.txindex.as_ref() {
+            ::protobuf::rt::write_message_field_with_cached_size(3, v, os)?;
         }
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -2075,15 +2092,17 @@ impl ::protobuf::Message for ProtoruneHoldersRequest {
     }
 
     fn clear(&mut self) {
-        self.id.clear();
         self.protocol_tag.clear();
+        self.height.clear();
+        self.txindex.clear();
         self.special_fields.clear();
     }
 
     fn default_instance() -> &'static ProtoruneHoldersRequest {
         static instance: ProtoruneHoldersRequest = ProtoruneHoldersRequest {
-            id: ::protobuf::MessageField::none(),
             protocol_tag: ::protobuf::MessageField::none(),
+            height: ::protobuf::MessageField::none(),
+            txindex: ::protobuf::MessageField::none(),
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -3495,28 +3514,29 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     \x18\x02\x20\x01(\x0b2\x17.protorune.BalanceSheetR\x08balances\"h\n\x17P\
     rotorunesWalletRequest\x12\x16\n\x06wallet\x18\x01\x20\x01(\x0cR\x06wall\
     et\x125\n\x0cprotocol_tag\x18\x02\x20\x01(\x0b2\x12.protorune.uint128R\
-    \x0bprotocolTag\"s\n\x17ProtoruneHoldersRequest\x12!\n\x02id\x18\x01\x20\
-    \x01(\x0b2\x11.protorune.RuneIdR\x02id\x125\n\x0cprotocol_tag\x18\x02\
-    \x20\x01(\x0b2\x12.protorune.uint128R\x0bprotocolTag\".\n\x14RunesByHeig\
-    htRequest\x12\x16\n\x06height\x18\x01\x20\x01(\x04R\x06height\"j\n\x19Pr\
-    otorunesByHeightRequest\x12\x16\n\x06height\x18\x01\x20\x01(\x04R\x06hei\
-    ght\x125\n\x0cprotocol_tag\x18\x02\x20\x01(\x0b2\x12.protorune.uint128R\
-    \x0bprotocolTag\"6\n\rRunesResponse\x12%\n\x05runes\x18\x01\x20\x03(\x0b\
-    2\x0f.protorune.RuneR\x05runes\"\\\n\tProtoBurn\x125\n\x0cprotocol_tag\
-    \x18\x01\x20\x01(\x0b2\x12.protorune.uint128R\x0bprotocolTag\x12\x18\n\
-    \x07pointer\x18\x02\x20\x01(\rR\x07pointer\")\n\x07uint128\x12\x0e\n\x02\
-    lo\x18\x01\x20\x01(\x04R\x02lo\x12\x0e\n\x02hi\x18\x02\x20\x01(\x04R\x02\
-    hi\"d\n\x06Clause\x12.\n\x04rune\x18\x01\x20\x01(\x0b2\x1a.protorune.Pro\
-    toruneRuneIdR\x04rune\x12*\n\x06amount\x18\x02\x20\x01(\x0b2\x12.protoru\
-    ne.uint128R\x06amount\"8\n\tPredicate\x12+\n\x07clauses\x18\x01\x20\x03(\
-    \x0b2\x11.protorune.ClauseR\x07clauses\"\x9f\x01\n\x0cProtoMessage\x12\
-    \x1a\n\x08calldata\x18\x01\x20\x01(\x0cR\x08calldata\x122\n\tpredicate\
-    \x18\x02\x20\x01(\x0b2\x14.protorune.PredicateR\tpredicate\x12\x18\n\x07\
-    pointer\x18\x03\x20\x01(\rR\x07pointer\x12%\n\x0erefund_pointer\x18\x04\
-    \x20\x01(\rR\rrefundPointer\"E\n\x0cRuntimeInput\x125\n\x0cprotocol_tag\
-    \x18\x01\x20\x01(\x0b2\x12.protorune.uint128R\x0bprotocolTag\">\n\x07Run\
-    time\x123\n\x08balances\x18\x01\x20\x01(\x0b2\x17.protorune.BalanceSheet\
-    R\x08balancesb\x06proto3\
+    \x0bprotocolTag\"\xaa\x01\n\x17ProtoruneHoldersRequest\x125\n\x0cprotoco\
+    l_tag\x18\x01\x20\x01(\x0b2\x12.protorune.uint128R\x0bprotocolTag\x12*\n\
+    \x06height\x18\x02\x20\x01(\x0b2\x12.protorune.uint128R\x06height\x12,\n\
+    \x07txindex\x18\x03\x20\x01(\x0b2\x12.protorune.uint128R\x07txindex\".\n\
+    \x14RunesByHeightRequest\x12\x16\n\x06height\x18\x01\x20\x01(\x04R\x06he\
+    ight\"j\n\x19ProtorunesByHeightRequest\x12\x16\n\x06height\x18\x01\x20\
+    \x01(\x04R\x06height\x125\n\x0cprotocol_tag\x18\x02\x20\x01(\x0b2\x12.pr\
+    otorune.uint128R\x0bprotocolTag\"6\n\rRunesResponse\x12%\n\x05runes\x18\
+    \x01\x20\x03(\x0b2\x0f.protorune.RuneR\x05runes\"\\\n\tProtoBurn\x125\n\
+    \x0cprotocol_tag\x18\x01\x20\x01(\x0b2\x12.protorune.uint128R\x0bprotoco\
+    lTag\x12\x18\n\x07pointer\x18\x02\x20\x01(\rR\x07pointer\")\n\x07uint128\
+    \x12\x0e\n\x02lo\x18\x01\x20\x01(\x04R\x02lo\x12\x0e\n\x02hi\x18\x02\x20\
+    \x01(\x04R\x02hi\"d\n\x06Clause\x12.\n\x04rune\x18\x01\x20\x01(\x0b2\x1a\
+    .protorune.ProtoruneRuneIdR\x04rune\x12*\n\x06amount\x18\x02\x20\x01(\
+    \x0b2\x12.protorune.uint128R\x06amount\"8\n\tPredicate\x12+\n\x07clauses\
+    \x18\x01\x20\x03(\x0b2\x11.protorune.ClauseR\x07clauses\"\x9f\x01\n\x0cP\
+    rotoMessage\x12\x1a\n\x08calldata\x18\x01\x20\x01(\x0cR\x08calldata\x122\
+    \n\tpredicate\x18\x02\x20\x01(\x0b2\x14.protorune.PredicateR\tpredicate\
+    \x12\x18\n\x07pointer\x18\x03\x20\x01(\rR\x07pointer\x12%\n\x0erefund_po\
+    inter\x18\x04\x20\x01(\rR\rrefundPointer\"E\n\x0cRuntimeInput\x125\n\x0c\
+    protocol_tag\x18\x01\x20\x01(\x0b2\x12.protorune.uint128R\x0bprotocolTag\
+    \">\n\x07Runtime\x123\n\x08balances\x18\x01\x20\x01(\x0b2\x17.protorune.\
+    BalanceSheetR\x08balancesb\x06proto3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file

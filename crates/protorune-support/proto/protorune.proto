@@ -73,8 +73,9 @@ message ProtorunesWalletRequest {
 }
 
 message ProtoruneHoldersRequest {
-  RuneId id = 1;
-  uint128 protocol_tag = 2;
+  uint128 protocol_tag = 1;
+  uint128 height = 2;
+  uint128 txindex = 3;
 }
 
 message RunesByHeightRequest {
