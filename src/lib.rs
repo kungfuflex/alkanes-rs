@@ -141,7 +141,10 @@ pub fn protorunesbyaddress() -> i32 {
 #[no_mangle]
 pub fn protoruneholders() -> i32 {
     configure_network();
+    println!("protoruneholders input in src/lib.rs: {:?}", input());
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    println!("protoruneholders data in src/lib.rs: {:?}", data);
+    println!("protoruneholders in src/lib.rs about to call consume_to_end");
     let result: protorune_support::proto::protorune::WalletResponse = view
         ::protorune_holders(&consume_to_end(&mut data).unwrap())
         .unwrap();

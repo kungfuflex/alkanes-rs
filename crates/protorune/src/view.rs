@@ -260,7 +260,7 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
 }
 pub fn protorune_holders(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
-
+    println!("protorune_holders input in crates/protorune/src/view.rs: {:?}", input);
     if let Some(req) = proto::protorune::ProtoruneHoldersRequest::parse_from_bytes(input).ok() {
         let table = if req.clone().protocol_tag.is_some() {
             tables::RuneTable::for_protocol(req.clone().protocol_tag.unwrap().into())
