@@ -617,7 +617,6 @@ impl Protorune {
         Ok(())
     }
 
-    // ... existing code ...
     pub fn remove_rune_outpoint_mapping(
         atomic: &mut AtomicPointer,
         outpoint: &OutPoint

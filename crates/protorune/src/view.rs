@@ -1,4 +1,5 @@
 use crate::tables::RuneTable;
+use crate::Protorune;
 use crate::{ balance_sheet::load_sheet, tables };
 use anyhow::{ anyhow, Result };
 use bitcoin;
@@ -261,25 +262,18 @@ pub fn protorune_holders(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
 
     if let Some(req) = proto::protorune::ProtoruneHoldersRequest::parse_from_bytes(input).ok() {
-        let protocol_tag: u128 = req.clone().protocol_tag.into_option().unwrap().into();
-
-        // Select appropriate table
-        let table = if protocol_tag != 0 {
-            tables::RuneTable::for_protocol(protocol_tag)
+        let table = if req.clone().protocol_tag.is_some() {
+            tables::RuneTable::for_protocol(req.clone().protocol_tag.unwrap().into())
         } else {
             tables::RUNES.clone()
         };
 
-        let rune_id = <ProtoruneRuneId as Into<Vec<u8>>>::into(
-            ProtoruneRuneId::new(
-                req.clone().height.into_option().unwrap().into(),
-                req.clone().txindex.into_option().unwrap().into()
-            )
+        let rune_id = Protorune::build_rune_id(
+            req.clone().height.into_option().unwrap().into(),
+            req.clone().txindex.into_option().unwrap().into()
         );
 
-        let outpoints_list = table.RUNE_ID_TO_OUTPOINTS.select(&Arc::new(rune_id)).get_list();
-
-        println!("outpoints_list: {:?}", outpoints_list);
+        let outpoints_list = table.RUNE_ID_TO_OUTPOINTS.select(&rune_id).get_list();
 
         result.outpoints = outpoints_list
             .into_iter()
@@ -303,14 +297,17 @@ pub fn protorune_holders(input: &Vec<u8>) -> Result<WalletResponse> {
                                 let balance = sheet.get(&protorune_id);
 
                                 if balance > 0 {
-                                    println!("balance: {}, entered found balance condition", balance);
                                     let address = tables::OUTPOINT_SPENDABLE_BY
                                         .select(&outpoint_bytes)
                                         .get();
 
                                     let response = protorune_outpoint_to_outpoint_response(
                                         &outpoint,
-                                        protocol_tag
+                                        req
+                                            .clone()
+                                            .protocol_tag.is_some()
+                                            .then(|| req.clone().protocol_tag.unwrap().into())
+                                            .unwrap_or(1)
                                     );
 
                                     if let Ok(mut resp) = response {
@@ -320,7 +317,6 @@ pub fn protorune_holders(input: &Vec<u8>) -> Result<WalletResponse> {
                                                     address.as_ref().clone()
                                                 )
                                             {
-                                                println!("address: {}", address_str);
                                                 resp.address = address_str.into_bytes();
                                             }
                                         }
