@@ -71,33 +71,24 @@ mod tests {
     fn test_protoruneholders() {
         clear();
         let config = RunesTestingConfig::default();
-        let rune_id = RuneId::new(config.rune_etch_height, config.rune_etch_vout).unwrap();
 
-        // Create a block with a rune transfer of 200 to ADDRESS2
-        let edicts = vec![Edict {
-            id: rune_id,
-            amount: 200,
-            output: 0,
-        }];
-
-        let test_block = helpers::create_block_with_rune_transfer(&config, edicts);
+        let test_block = helpers::create_block_with_protostone_tx(None);
         let _ = Protorune::index_block::<MyMessageContext>(
-            test_block.clone(),
+            test_block.clone().0,
             config.rune_etch_height
         );
 
         // Create the request input
         let mut request = ProtoruneHoldersRequest::new();
-        request.protocol_tag = MessageField::default();
+        request.protocol_tag = MessageField::some((1u128).into());
         request.height = MessageField::some((config.rune_etch_height as u128).into());
         request.txindex = MessageField::some((config.rune_etch_vout as u128).into());
 
         let input = request.write_to_bytes().unwrap();
 
-        if let Some(req) = proto::protorune::ProtoruneHoldersRequest::parse_from_bytes(&input).ok() {
-            let holders = view::protorune_holders(&input).unwrap();
-            assert_eq!(holders.outpoints.len(), 3);
-        }
+        let holders = view::protorune_holders(&input).unwrap();
+        println!("Found holders: {:?}", holders);
+        assert_eq!(holders.outpoints.len(), 1);
     }
 
     #[wasm_bindgen_test]

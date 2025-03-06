@@ -258,16 +258,15 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     }
     Ok(result)
 }
+
 pub fn protorune_holders(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
 
     if let Some(req) = proto::protorune::ProtoruneHoldersRequest::parse_from_bytes(input).ok() {
-        let table = if req.clone().protocol_tag.is_some() {
-            tables::RuneTable::for_protocol(req.clone().protocol_tag.unwrap().into())
-        } else {
-            tables::RUNES.clone()
+        let table = match req.clone().protocol_tag.into_option() {
+            Some(tag) => tables::RuneTable::for_protocol(tag.into()),
+            None => tables::RUNES.clone(),
         };
-
         let rune_id = Protorune::build_rune_id(
             req.clone().height.into_option().unwrap().into(),
             req.clone().txindex.into_option().unwrap().into()

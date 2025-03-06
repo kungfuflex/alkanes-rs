@@ -225,27 +225,36 @@ impl Protorune {
                 Self::index_mint(&mint.into(), height, &mut balance_sheet)?;
             }
         }
+        let table = if runestone.protocol.is_some() {
+            let protostones = Protostone::decipher(runestone.protocol.as_ref().unwrap()).expect(
+                "Failed to decipher protostone"
+            );
+            tables::RuneTable::for_protocol(
+                protostones.first().expect("Expected at least one protostone").protocol_tag
+            )
+        } else {
+            tables::RUNES.clone()
+        };
         Self::process_edicts(
             tx,
             &into_protostone_edicts(runestone.edicts.clone()),
             &mut balances_by_output,
             &mut balance_sheet,
-            &tx.output
+            &tx.output,
+            &table
         )?;
         Self::handle_leftover_runes(&mut balance_sheet, &mut balances_by_output, unallocated_to)?;
         for (vout, sheet) in balances_by_output.clone() {
             let outpoint = OutPoint::new(tx.compute_txid(), vout);
 
             sheet.save(
-                &mut atomic.derive(
-                    &tables::RUNES.OUTPOINT_TO_RUNES.select(&consensus_encode(&outpoint)?)
-                ),
+                &mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&outpoint)?)),
                 false
             );
 
             for (rune, amount) in sheet.balances.iter() {
                 if *amount > 0 {
-                    Self::add_rune_outpoint(rune, &outpoint)?;
+                    Self::add_rune_outpoint(rune, &outpoint, &table)?;
                 }
             }
         }
@@ -262,12 +271,13 @@ impl Protorune {
         )?;
         Ok(())
     }
-    pub fn add_rune_outpoint(rune: &ProtoruneRuneId, outpoint: &OutPoint) -> Result<()> {
+    pub fn add_rune_outpoint(
+        rune: &ProtoruneRuneId,
+        outpoint: &OutPoint,
+        table: &RuneTable
+    ) -> Result<()> {
         let id = Self::build_rune_id(rune.block, rune.tx);
-        tables::RUNES.RUNE_ID_TO_OUTPOINTS
-            .select(&id)
-            .append(Arc::new(consensus_encode(outpoint)?));
-
+        table.RUNE_ID_TO_OUTPOINTS.select(&id).append(Arc::new(consensus_encode(outpoint)?));
         Ok(())
     }
     pub fn update_balances_for_edict(
@@ -276,7 +286,8 @@ impl Protorune {
         edict_amount: u128,
         edict_output: u32,
         tx_id: &bitcoin::Txid,
-        rune_id: &ProtoruneRuneId
+        rune_id: &ProtoruneRuneId,
+        table: &RuneTable
     ) -> Result<()> {
         if !balances_by_output.contains_key(&edict_output) {
             balances_by_output.insert(edict_output, BalanceSheet::default());
@@ -294,8 +305,9 @@ impl Protorune {
         balance_sheet.decrease(rune_id, amount);
 
         if amount > 0 {
+            println!("adding rune outpoint: {:?}", rune_id);
             let new_outpoint = OutPoint::new(*tx_id, edict_output);
-            Self::add_rune_outpoint(rune_id, &new_outpoint)?;
+            Self::add_rune_outpoint(rune_id, &new_outpoint, table)?;
         }
 
         sheet.increase(rune_id, amount);
@@ -307,7 +319,8 @@ impl Protorune {
         balances_by_output: &mut HashMap<u32, BalanceSheet>,
         balances: &mut BalanceSheet,
         _outs: &Vec<TxOut>,
-        rune_id: &ProtoruneRuneId
+        rune_id: &ProtoruneRuneId,
+        table: &RuneTable
     ) -> Result<()> {
         if edict.id.block == 0 && edict.id.tx != 0 {
             Err(anyhow!("invalid edict"))
@@ -328,7 +341,8 @@ impl Protorune {
                     *amount,
                     *vout,
                     &tx.compute_txid(),
-                    rune_id
+                    rune_id,
+                    table
                 )?;
                 Ok(())
             })?;
@@ -340,10 +354,11 @@ impl Protorune {
         edicts: &Vec<ProtostoneEdict>,
         balances_by_output: &mut HashMap<u32, BalanceSheet>,
         balances: &mut BalanceSheet,
-        outs: &Vec<TxOut>
+        outs: &Vec<TxOut>,
+        table: &RuneTable
     ) -> Result<()> {
         for edict in edicts {
-            Self::process_edict(tx, edict, balances_by_output, balances, outs, &edict.id)?;
+            Self::process_edict(tx, edict, balances_by_output, balances, outs, &edict.id, table)?;
         }
         Ok(())
     }
@@ -580,6 +595,7 @@ impl Protorune {
     pub fn index_unspendables<T: MessageContext>(block: &Block, height: u64) -> Result<()> {
         for (index, tx) in block.txdata.iter().enumerate() {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
+                println!("emtered runestone: {:?}", runestone);
                 let mut atomic = AtomicPointer::default();
                 let runestone_output_index: u32 = Self::get_runestone_output_index(tx)?;
                 for input in &tx.input {
@@ -654,7 +670,7 @@ impl Protorune {
 
         Ok(())
     }
-    // ... existing code ...
+
     pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<()> {
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
@@ -743,6 +759,12 @@ impl Protorune {
                 &mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&outpoint)?)),
                 false
             );
+            for (rune, amount) in sheet.balances.iter() {
+                if *amount > 0 {
+                    println!("adding rune outpoint: {:?}", rune);
+                    Self::add_rune_outpoint(rune, &outpoint, table)?;
+                }
+            }
         }
         if map.contains_key(&u32::MAX) {
             map.get(&u32::MAX)
@@ -784,7 +806,6 @@ impl Protorune {
             let mut proto_balances_by_output = HashMap::<u32, BalanceSheet>::new();
             let table = tables::RuneTable::for_protocol(T::protocol_tag());
 
-            // set the starting runtime balance
             proto_balances_by_output.insert(
                 u32::MAX,
                 load_sheet(&mut atomic.derive(&table.RUNTIME_BALANCE))
@@ -884,7 +905,8 @@ impl Protorune {
                         &stone.edicts,
                         &mut proto_balances_by_output,
                         &mut prior_balance_sheet,
-                        &tx.output
+                        &tx.output,
+                        &table
                     )?;
 
                     // Handle any remaining balance

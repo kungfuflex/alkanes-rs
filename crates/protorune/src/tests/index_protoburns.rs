@@ -1,22 +1,19 @@
 #[cfg(test)]
 mod tests {
     use crate::balance_sheet::load_sheet;
-    use crate::message::{MessageContext, MessageContextParcel};
-    use crate::test_helpers::{self as helpers};
-    use crate::{tables, Protorune};
+    use crate::message::{ MessageContext, MessageContextParcel };
+    use crate::test_helpers::{ self as helpers };
+    use crate::{ tables, Protorune };
     use anyhow::Result;
-    use bitcoin::{OutPoint, Transaction};
-    use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
-    use protorune_support::proto::{self, protorune};
-    use protorune_support::protostone::{Protostone, ProtostoneEdict};
+    use bitcoin::{ OutPoint, Transaction };
+    use protorune_support::balance_sheet::{ BalanceSheet, ProtoruneRuneId };
+    use protorune_support::proto::{ self, protorune };
+    use protorune_support::protostone::{ Protostone, ProtostoneEdict };
     use protorune_support::rune_transfer::RuneTransfer;
     use protorune_support::utils::consensus_encode;
 
     use helpers::clear;
-    use metashrew::{
-        println,
-        stdio::{stdout, Write},
-    };
+    use metashrew::{ println, stdio::{ stdout, Write } };
     use metashrew_support::index_pointer::KeyValuePointer;
     use std::str::FromStr;
     use wasm_bindgen_test::*;
@@ -36,7 +33,8 @@ mod tests {
             let mut runes = parcel.runes.clone();
             runes[0].value = runes[0].value / 2;
             let transfer = runes[0].clone();
-            <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(runes)?
+            <BalanceSheet as TryFrom<Vec<RuneTransfer>>>
+                ::try_from(runes)?
                 .pipe(&mut new_runtime_balances);
             // transfer protorunes to the pointer
             Ok((vec![transfer], *new_runtime_balances))
@@ -50,22 +48,24 @@ mod tests {
         let mut test_block = helpers::create_block_with_coinbase_tx(BLOCK_HEIGHT);
 
         let previous_output = OutPoint {
-            txid: bitcoin::Txid::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000000",
-            )
-            .unwrap(),
+            txid: bitcoin::Txid
+                ::from_str("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap(),
             vout: 0,
         };
 
-        let protoburn_tx =
-            helpers::create_default_protoburn_transaction(previous_output, PROTOCOL_ID);
+        let protoburn_tx = helpers::create_default_protoburn_transaction(
+            previous_output,
+            PROTOCOL_ID
+        );
 
         test_block.txdata.push(protoburn_tx);
-        assert!(Protorune::index_block::<TestMessageContext>(
-            test_block.clone(),
-            BLOCK_HEIGHT as u64
-        )
-        .is_ok());
+        assert!(
+            Protorune::index_block::<TestMessageContext>(
+                test_block.clone(),
+                BLOCK_HEIGHT as u64
+            ).is_ok()
+        );
 
         // tx 0 is coinbase, tx 1 is runestone
         let outpoint_address: OutPoint = OutPoint {
@@ -74,15 +74,13 @@ mod tests {
         };
         // check runes balance
         let sheet = load_sheet(
-            &tables::RUNES
-                .OUTPOINT_TO_RUNES
-                .select(&consensus_encode(&outpoint_address).unwrap()),
+            &tables::RUNES.OUTPOINT_TO_RUNES.select(&consensus_encode(&outpoint_address).unwrap())
         );
 
         let protorunes_sheet = load_sheet(
-            &tables::RuneTable::for_protocol(PROTOCOL_ID.into())
-                .OUTPOINT_TO_RUNES
-                .select(&consensus_encode(&outpoint_address).unwrap()),
+            &tables::RuneTable
+                ::for_protocol(PROTOCOL_ID.into())
+                .OUTPOINT_TO_RUNES.select(&consensus_encode(&outpoint_address).unwrap())
         );
 
         let protorune_id = ProtoruneRuneId {
@@ -98,7 +96,7 @@ mod tests {
 
     fn protostone_transfer_test_template(
         output_protostone_pointer: u32,
-        protostone_edicts: Vec<ProtostoneEdict>,
+        protostone_edicts: Vec<ProtostoneEdict>
     ) -> bitcoin::Block {
         clear();
         // tx0: coinbase
@@ -106,8 +104,10 @@ mod tests {
         let previous_output = helpers::get_mock_outpoint(0);
 
         // tx1: protoburn. This also etches the rune, immediately protoburns
-        let protoburn_tx =
-            helpers::create_default_protoburn_transaction(previous_output, PROTOCOL_ID);
+        let protoburn_tx = helpers::create_default_protoburn_transaction(
+            previous_output,
+            PROTOCOL_ID
+        );
         test_block.txdata.push(protoburn_tx.clone());
 
         let previous_output = OutPoint {
@@ -124,15 +124,16 @@ mod tests {
             1,
             output_protostone_pointer,
             PROTOCOL_ID,
-            protostone_edicts,
+            protostone_edicts
         );
         test_block.txdata.push(transfer_tx);
 
-        assert!(Protorune::index_block::<TestMessageContext>(
-            test_block.clone(),
-            BLOCK_HEIGHT as u64
-        )
-        .is_ok());
+        assert!(
+            Protorune::index_block::<TestMessageContext>(
+                test_block.clone(),
+                BLOCK_HEIGHT as u64
+            ).is_ok()
+        );
 
         // tx 0 is coinbase, tx 1 is protoburn, tx 2 is transfer
         let tx1_outpoint: OutPoint = OutPoint {
@@ -144,15 +145,17 @@ mod tests {
             tx: 1,
         };
         // check runes balance
-        let protoburn_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx1_outpoint, vec![protorune_id]);
+        let protoburn_rune_balances = helpers::get_rune_balance_by_outpoint(
+            tx1_outpoint,
+            vec![protorune_id]
+        );
         assert_eq!(protoburn_rune_balances[0], 0);
 
         // ensures protorunes from tx1 outpoint are no longer usable
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx1_outpoint,
-            vec![protorune_id],
+            vec![protorune_id]
         );
         assert_eq!(protoburn_protorunes_balances[0], 0);
 
@@ -173,14 +176,16 @@ mod tests {
             tx: 1,
         };
 
-        let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
+        let tx2_rune_balances = helpers::get_rune_balance_by_outpoint(
+            tx2_outpoint,
+            vec![protorune_id]
+        );
         assert_eq!(tx2_rune_balances[0], 0);
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
-            vec![protorune_id],
+            vec![protorune_id]
         );
         assert_eq!(protoburn_protorunes_balances[0], 1000);
     }
@@ -199,14 +204,16 @@ mod tests {
             tx: 1,
         };
 
-        let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
+        let tx2_rune_balances = helpers::get_rune_balance_by_outpoint(
+            tx2_outpoint,
+            vec![protorune_id]
+        );
         assert_eq!(tx2_rune_balances[0], 0);
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
-            vec![protorune_id],
+            vec![protorune_id]
         );
         assert_eq!(protoburn_protorunes_balances[0], 0);
     }
@@ -226,14 +233,16 @@ mod tests {
             tx: 1,
         };
 
-        let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
+        let tx2_rune_balances = helpers::get_rune_balance_by_outpoint(
+            tx2_outpoint,
+            vec![protorune_id]
+        );
         assert_eq!(tx2_rune_balances[0], 0);
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
-            vec![protorune_id],
+            vec![protorune_id]
         );
         assert_eq!(protoburn_protorunes_balances[0], 0);
     }
@@ -253,21 +262,23 @@ mod tests {
                 id: protorune_id,
                 amount: 222,
                 output: 0,
-            }],
+            }]
         );
         let tx2_outpoint: OutPoint = OutPoint {
             txid: test_block.txdata[2].compute_txid(),
             vout: 0,
         };
 
-        let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
+        let tx2_rune_balances = helpers::get_rune_balance_by_outpoint(
+            tx2_outpoint,
+            vec![protorune_id]
+        );
         assert_eq!(tx2_rune_balances[0], 0);
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
-            vec![protorune_id],
+            vec![protorune_id]
         );
         assert_eq!(protoburn_protorunes_balances[0], 222);
     }
@@ -287,21 +298,23 @@ mod tests {
                 id: protorune_id,
                 amount: 222,
                 output: 1,
-            }],
+            }]
         );
         let tx2_outpoint: OutPoint = OutPoint {
             txid: test_block.txdata[2].compute_txid(),
             vout: 0,
         };
 
-        let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
+        let tx2_rune_balances = helpers::get_rune_balance_by_outpoint(
+            tx2_outpoint,
+            vec![protorune_id]
+        );
         assert_eq!(tx2_rune_balances[0], 0);
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
-            vec![protorune_id],
+            vec![protorune_id]
         );
         assert_eq!(protoburn_protorunes_balances[0], 0);
     }
@@ -322,21 +335,23 @@ mod tests {
                 id: protorune_id,
                 amount: 222,
                 output: 2,
-            }],
+            }]
         );
         let tx2_outpoint: OutPoint = OutPoint {
             txid: test_block.txdata[2].compute_txid(),
             vout: 0,
         };
 
-        let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
+        let tx2_rune_balances = helpers::get_rune_balance_by_outpoint(
+            tx2_outpoint,
+            vec![protorune_id]
+        );
         assert_eq!(tx2_rune_balances[0], 0);
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
-            vec![protorune_id],
+            vec![protorune_id]
         );
         assert_eq!(protoburn_protorunes_balances[0], 222);
     }

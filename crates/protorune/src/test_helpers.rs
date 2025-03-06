@@ -501,6 +501,29 @@ pub fn create_block_with_sample_tx() -> Block {
     return create_block_with_txs(vec![create_test_transaction()]);
 }
 
+pub fn create_block_with_protostone_tx(
+    config: Option<RunesTestingConfig>
+) -> (Block, RunesTestingConfig) {
+    let final_config = config.unwrap_or(RunesTestingConfig::default());
+
+    // Create mock outpoint for the transaction
+    let previous_output = get_mock_outpoint(0);
+
+    // Create a protostone transaction with default parameters
+    let tx = create_protostone_transaction(
+        previous_output,
+        Some(1), // No burn protocol ID
+        true, // Etch new runes
+        0, // Output rune pointer
+        0, // Output protostone pointer
+        1,
+        vec![] // No protostone edicts
+    );
+
+    let test_block = create_block_with_txs(vec![tx]);
+    return (test_block, final_config);
+}
+
 pub fn create_block_with_rune_tx(
     config: Option<RunesTestingConfig>
 ) -> (Block, RunesTestingConfig) {
