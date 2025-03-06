@@ -140,15 +140,125 @@ pub fn protorunesbyaddress() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn protoruneholders() -> i32 {
+    println!("protoruneholders: Starting function");
+    // Log before configuring network
+    println!("protoruneholders: About to configure network");
     configure_network();
-    println!("protoruneholders input in src/lib.rs: {:?}", input());
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    println!("protoruneholders data in src/lib.rs: {:?}", data);
-    println!("protoruneholders in src/lib.rs about to call consume_to_end");
-    let result: protorune_support::proto::protorune::WalletResponse = view
-        ::protorune_holders(&consume_to_end(&mut data).unwrap())
-        .unwrap();
-    export_bytes(result.write_to_bytes().unwrap())}
+    println!("protoruneholders: Network configured");
+    // Log before getting input data
+    println!("protoruneholders: About to get input data");
+    let input_data = input();
+    println!("protoruneholders: Got input data of length {}", input_data.len());
+    // Create cursor and log
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input_data);
+    println!("protoruneholders: Created cursor");
+    // Log before consuming data
+    println!("protoruneholders: About to consume data from cursor");
+    let consumed_data = match consume_to_end(&mut data) {
+        Ok(data) => {
+            println!("protoruneholders: Successfully consumed data, length: {}", data.len());
+            data
+        },
+        Err(e) => {
+            println!("protoruneholders: ERROR - Failed to consume data: {}", e);
+            return -1;
+        }
+    };
+
+    // Log input data in hex format for debugging
+    println!("protoruneholders: Input data in hex: {}", consumed_data.iter().map(|b| format!("{:02x}", b)).collect::<Vec<String>>().join(""));
+    // Check if the data has a 4-byte prefix and if the 5th byte is 0x0a (which indicates the start of a protobuf message)
+    let protobuf_data = if consumed_data.len() > 4 && consumed_data[4] == 0x0a {
+        println!("protoruneholders: Detected 4-byte prefix {:02x}{:02x}{:02x}{:02x}, stripping first 4 bytes",
+            consumed_data[0], consumed_data[1], consumed_data[2], consumed_data[3]);
+        consumed_data[4..].to_vec()
+    } else {
+        println!("protoruneholders: No prefix detected, using data as is");
+        consumed_data
+    };
+    // Log the processed data
+    println!("protoruneholders: Processed data in hex: {}", protobuf_data.iter().map(|b| format!("{:02x}", b)).collect::<Vec<String>>().join(""));
+
+    // Try to parse the input as ProtoruneHoldersRequest to see what's in it
+
+    match protorune_support::proto::protorune::ProtoruneHoldersRequest::parse_from_bytes(&protobuf_data) {
+        Ok(req) => {
+            println!("protoruneholders: Successfully parsed input as ProtoruneHoldersRequest");
+            // Log protocol_tag details
+            if let Some(protocol_tag) = req.protocol_tag.into_option() {
+                println!("protoruneholders: Protocol tag present: lo={}, hi={}", protocol_tag.lo, protocol_tag.hi);
+                let protocol_value: u128 = (protocol_tag.hi as u128) << 64 | (protocol_tag.lo as u128);
+                println!("protoruneholders: Protocol tag value: {}", protocol_value);
+            } else {
+                println!("protoruneholders: Protocol tag is NOT present in request");
+            }
+            // Log height details
+            if let Some(height) = req.height.into_option() {
+                println!("protoruneholders: Height present: lo={}, hi={}", height.lo, height.hi);
+                let height_value: u128 = (height.hi as u128) << 64 | (height.lo as u128);
+                println!("protoruneholders: Height value: {}", height_value);
+            } else {
+                println!("protoruneholders: Height is NOT present in request");
+            }
+            // Log txindex details
+            if let Some(txindex) = req.txindex.into_option() {
+                println!("protoruneholders: TxIndex present: lo={}, hi={}", txindex.lo, txindex.hi);
+                let txindex_value: u128 = (txindex.hi as u128) << 64 | (txindex.lo as u128);
+                println!("protoruneholders: TxIndex value: {}", txindex_value);
+            } else {
+                println!("protoruneholders: TxIndex is NOT present in request");
+            }
+        },
+        Err(e) => {
+            println!("protoruneholders: ERROR - Failed to parse input as ProtoruneHoldersRequest: {}", e);
+        }
+    }
+
+    // Log before calling protorune_holders
+
+    println!("protoruneholders: About to call protorune_holders function");
+    let result: protorune_support::proto::protorune::WalletResponse = match view::protorune_holders(&protobuf_data) {
+        Ok(response) => {
+            println!("protoruneholders: Successfully got response from protorune_holders");
+            println!("protoruneholders: Response contains {} outpoints", response.outpoints.len());
+            response
+        },
+
+        Err(e) => {
+            println!("protoruneholders: ERROR - protorune_holders function failed: {}", e);
+            println!("protoruneholders: Error type: {}", std::any::type_name_of_val(&e));
+            return -1;
+        }
+    };
+
+
+    // Log before serializing result
+    println!("protoruneholders: About to serialize result");
+    let bytes = match result.write_to_bytes() {
+        Ok(bytes) => {
+            println!("protoruneholders: Successfully serialized result, length: {}", bytes.len());
+
+            bytes
+
+        },
+
+        Err(e) => {
+            println!("protoruneholders: ERROR - Failed to serialize result: {}", e);
+
+            return -1;
+
+        }
+    };
+
+
+    // Log before exporting bytes
+
+    println!("protoruneholders: About to export bytes");
+    let result = export_bytes(bytes);
+    println!("protoruneholders: Function completed successfully");
+
+    result
+}
 
 #[cfg(not(test))]
 #[no_mangle]
