@@ -11,7 +11,6 @@ use protorune_support::proto::protorune::{
     OutpointResponse,
     Output,
     Rune,
-    RuneId,
     RunesResponse,
     WalletResponse,
 };
@@ -25,7 +24,6 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protobuf::{ Message, MessageField, SpecialFields };
 use std::fmt::Write;
 use std::io::Cursor;
-use std::sync::Arc;
 
 pub fn outpoint_to_bytes(outpoint: &OutPoint) -> Result<Vec<u8>> {
     Ok(outpoint_encode(outpoint)?)
