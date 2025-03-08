@@ -294,6 +294,17 @@ pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryR
 }
 
 pub fn traceblock(height: u32) -> Result<Vec<u8>> {
+    use crate::tables::BLOCK_TRACES_CACHE;
+    
+    // First check if we have a cached version
+    if let Some(cached_bytes) = BLOCK_TRACES_CACHE.read().unwrap().get(&(height as u64)) {
+        // Return the cached serialized representation directly
+        return Ok(cached_bytes.clone());
+    }
+    
+    // If not in cache, rebuild it (fallback - this shouldn't happen if indexer is working correctly)
+    println!("Warning: BlockTrace for height {} not found in cache, rebuilding...", height);
+    
     let mut block_events: Vec<proto::alkanes::AlkanesBlockEvent> = vec![];
     for outpoint in TRACES_BY_HEIGHT.select_value(height as u64).get_list() {
         let op = outpoint.clone().to_vec();
@@ -320,7 +331,13 @@ pub fn traceblock(height: u32) -> Result<Vec<u8>> {
         ..Default::default()
     };
 
-    result.write_to_bytes().map_err(|e| anyhow!("{:?}", e))
+    // Serialize the result
+    let serialized = result.write_to_bytes().map_err(|e| anyhow!("{:?}", e))?;
+    
+    // Store in cache for future use
+    BLOCK_TRACES_CACHE.write().unwrap().insert(height as u64, serialized.clone());
+    
+    Ok(serialized)
 }
 
 pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
