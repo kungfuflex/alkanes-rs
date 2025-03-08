@@ -36,6 +36,10 @@ use std::fmt::Write;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
+pub fn parcels_from_protobuf(v: proto::alkanes::MultiSimulateRequest) -> Vec<MessageContextParcel> {
+    v.parcels.into_iter().map(parcel_from_protobuf).collect()
+}
+
 pub fn parcel_from_protobuf(v: proto::alkanes::MessageContextParcel) -> MessageContextParcel {
     let mut result = MessageContextParcel::default();
     result.height = v.height;
@@ -118,10 +122,11 @@ pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> R
         })
         .collect();
 
-    let (results, _) = multi_simulate(&calldata, fuel)?;
+    let results = multi_simulate(&calldata, fuel);
     let mut response: Vec<u8> = vec![];
 
     for result in results {
+        let (result, gas_used) = result.unwrap();
         response.extend_from_slice(&result.data.len().to_le_bytes());
         response.extend_from_slice(&result.data)
     }
@@ -369,14 +374,18 @@ pub fn simulate_parcel(
 pub fn multi_simulate(
     parcels: &[MessageContextParcel],
     fuel: u64,
-) -> Result<(Vec<ExtendedCallResponse>, u64)> {
-    let mut gas = 0;
-    let mut responses: Vec<ExtendedCallResponse> = vec![];
+) -> Vec<(Result<(ExtendedCallResponse, u64)>)> {
+    let mut responses: Vec<(Result<(ExtendedCallResponse, u64)>)> = vec![];
     for parcel in parcels {
-        let (response, gas_used) = simulate_parcel(parcel, fuel)?;
-        gas += gas_used;
-        responses.push(response);
+        responses.push(simulate_parcel(parcel, fuel));
     }
+    responses
+}
 
-    Ok((responses, gas))
+pub fn multi_simulate_safe(
+    parcels: &[MessageContextParcel],
+    fuel: u64,
+) -> Vec<(Result<(ExtendedCallResponse, u64)>)> {
+    set_view_mode();
+    multi_simulate(parcels, fuel)
 }

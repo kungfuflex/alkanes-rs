@@ -448,6 +448,129 @@ impl ::protobuf::reflect::ProtobufValue for AlkaneTransfer {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+// @@protoc_insertion_point(message:alkanes.MultiSimulateRequest)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct MultiSimulateRequest {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.MultiSimulateRequest.parcels)
+    pub parcels: ::std::vec::Vec<MessageContextParcel>,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.MultiSimulateRequest.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a MultiSimulateRequest {
+    fn default() -> &'a MultiSimulateRequest {
+        <MultiSimulateRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl MultiSimulateRequest {
+    pub fn new() -> MultiSimulateRequest {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(1);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
+            "parcels",
+            |m: &MultiSimulateRequest| { &m.parcels },
+            |m: &mut MultiSimulateRequest| { &mut m.parcels },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<MultiSimulateRequest>(
+            "MultiSimulateRequest",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for MultiSimulateRequest {
+    const NAME: &'static str = "MultiSimulateRequest";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.parcels.push(is.read_message()?);
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        for value in &self.parcels {
+            let len = value.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        };
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        for v in &self.parcels {
+            ::protobuf::rt::write_message_field_with_cached_size(1, v, os)?;
+        };
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> MultiSimulateRequest {
+        MultiSimulateRequest::new()
+    }
+
+    fn clear(&mut self) {
+        self.parcels.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static MultiSimulateRequest {
+        static instance: MultiSimulateRequest = MultiSimulateRequest {
+            parcels: ::std::vec::Vec::new(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for MultiSimulateRequest {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("MultiSimulateRequest").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for MultiSimulateRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for MultiSimulateRequest {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
 // @@protoc_insertion_point(message:alkanes.MessageContextParcel)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct MessageContextParcel {
@@ -2672,6 +2795,147 @@ impl ::protobuf::reflect::ProtobufValue for SimulateResponse {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+// @@protoc_insertion_point(message:alkanes.MultiSimulateResponse)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct MultiSimulateResponse {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.MultiSimulateResponse.responses)
+    pub responses: ::std::vec::Vec<SimulateResponse>,
+    // @@protoc_insertion_point(field:alkanes.MultiSimulateResponse.error)
+    pub error: ::std::string::String,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.MultiSimulateResponse.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a MultiSimulateResponse {
+    fn default() -> &'a MultiSimulateResponse {
+        <MultiSimulateResponse as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl MultiSimulateResponse {
+    pub fn new() -> MultiSimulateResponse {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(2);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
+            "responses",
+            |m: &MultiSimulateResponse| { &m.responses },
+            |m: &mut MultiSimulateResponse| { &mut m.responses },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "error",
+            |m: &MultiSimulateResponse| { &m.error },
+            |m: &mut MultiSimulateResponse| { &mut m.error },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<MultiSimulateResponse>(
+            "MultiSimulateResponse",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for MultiSimulateResponse {
+    const NAME: &'static str = "MultiSimulateResponse";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.responses.push(is.read_message()?);
+                },
+                18 => {
+                    self.error = is.read_string()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        for value in &self.responses {
+            let len = value.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        };
+        if !self.error.is_empty() {
+            my_size += ::protobuf::rt::string_size(2, &self.error);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        for v in &self.responses {
+            ::protobuf::rt::write_message_field_with_cached_size(1, v, os)?;
+        };
+        if !self.error.is_empty() {
+            os.write_string(2, &self.error)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> MultiSimulateResponse {
+        MultiSimulateResponse::new()
+    }
+
+    fn clear(&mut self) {
+        self.responses.clear();
+        self.error.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static MultiSimulateResponse {
+        static instance: MultiSimulateResponse = MultiSimulateResponse {
+            responses: ::std::vec::Vec::new(),
+            error: ::std::string::String::new(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for MultiSimulateResponse {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("MultiSimulateResponse").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for MultiSimulateResponse {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for MultiSimulateResponse {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
 // @@protoc_insertion_point(message:alkanes.AlkaneInventoryRequest)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct AlkaneInventoryRequest {
@@ -3586,51 +3850,55 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     \x05block\x12\x20\n\x02tx\x18\x02\x20\x01(\x0b2\x10.alkanes.uint128R\x02\
     tx\"[\n\x0eAlkaneTransfer\x12!\n\x02id\x18\x01\x20\x01(\x0b2\x11.alkanes\
     .AlkaneIdR\x02id\x12&\n\x05value\x18\x02\x20\x01(\x0b2\x10.alkanes.uint1\
-    28R\x05value\"\xa4\x02\n\x14MessageContextParcel\x121\n\x07alkanes\x18\
-    \x01\x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x07alkanes\x12\x20\n\x0bt\
-    ransaction\x18\x02\x20\x01(\x0cR\x0btransaction\x12\x14\n\x05block\x18\
-    \x03\x20\x01(\x0cR\x05block\x12\x16\n\x06height\x18\x04\x20\x01(\x04R\
-    \x06height\x12\x18\n\x07txindex\x18\x06\x20\x01(\rR\x07txindex\x12\x1a\n\
-    \x08calldata\x18\x05\x20\x01(\x0cR\x08calldata\x12\x12\n\x04vout\x18\x07\
-    \x20\x01(\rR\x04vout\x12\x18\n\x07pointer\x18\x08\x20\x01(\rR\x07pointer\
-    \x12%\n\x0erefund_pointer\x18\t\x20\x01(\rR\rrefundPointer\"6\n\x0cKeyVa\
-    luePair\x12\x10\n\x03key\x18\x01\x20\x01(\x0cR\x03key\x12\x14\n\x05value\
-    \x18\x02\x20\x01(\x0cR\x05value\"\x8e\x01\n\x14ExtendedCallResponse\x121\
-    \n\x07alkanes\x18\x01\x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x07alkan\
-    es\x12/\n\x07storage\x18\x02\x20\x03(\x0b2\x15.alkanes.KeyValuePairR\x07\
-    storage\x12\x12\n\x04data\x18\x03\x20\x01(\x0cR\x04data\"\xe1\x01\n\x07C\
-    ontext\x12)\n\x06myself\x18\x01\x20\x01(\x0b2\x11.alkanes.AlkaneIdR\x06m\
-    yself\x12)\n\x06caller\x18\x02\x20\x01(\x0b2\x11.alkanes.AlkaneIdR\x06ca\
-    ller\x12(\n\x06inputs\x18\x03\x20\x03(\x0b2\x10.alkanes.uint128R\x06inpu\
-    ts\x12\x12\n\x04vout\x18\x04\x20\x01(\rR\x04vout\x12B\n\x10incoming_alka\
-    nes\x18\x05\x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x0fincomingAlkanes\
-    \"J\n\x0cTraceContext\x12&\n\x05inner\x18\x01\x20\x01(\x0b2\x10.alkanes.\
-    ContextR\x05inner\x12\x12\n\x04fuel\x18\x02\x20\x01(\x04R\x04fuel\"\x82\
-    \x01\n\x13AlkanesEnterContext\x12:\n\tcall_type\x18\x01\x20\x01(\x0e2\
-    \x1d.alkanes.AlkanesTraceCallTypeR\x08callType\x12/\n\x07context\x18\x02\
-    \x20\x01(\x0b2\x15.alkanes.TraceContextR\x07context\"\x88\x01\n\x12Alkan\
-    esExitContext\x127\n\x06status\x18\x01\x20\x01(\x0e2\x1f.alkanes.Alkanes\
-    TraceStatusFlagR\x06status\x129\n\x08response\x18\x02\x20\x01(\x0b2\x1d.\
-    alkanes.ExtendedCallResponseR\x08response\"A\n\rAlkanesCreate\x120\n\nne\
-    w_alkane\x18\x01\x20\x01(\x0b2\x11.alkanes.AlkaneIdR\tnewAlkane\"\xe2\
-    \x01\n\x11AlkanesTraceEvent\x12C\n\renter_context\x18\x01\x20\x01(\x0b2\
-    \x1c.alkanes.AlkanesEnterContextH\0R\x0centerContext\x12@\n\x0cexit_cont\
-    ext\x18\x02\x20\x01(\x0b2\x1b.alkanes.AlkanesExitContextH\0R\x0bexitCont\
-    ext\x12=\n\rcreate_alkane\x18\x03\x20\x01(\x0b2\x16.alkanes.AlkanesCreat\
-    eH\0R\x0ccreateAlkaneB\x07\n\x05event\"\x8b\x01\n\x11AlkanesBlockEvent\
-    \x12-\n\x06traces\x18\x01\x20\x01(\x0b2\x15.alkanes.AlkanesTraceR\x06tra\
-    ces\x12-\n\x08outpoint\x18\x02\x20\x01(\x0b2\x11.alkanes.OutpointR\x08ou\
-    tpoint\x12\x18\n\x07txindex\x18\x03\x20\x01(\x04R\x07txindex\"L\n\x16Alk\
-    anesBlockTraceEvent\x122\n\x06events\x18\x01\x20\x03(\x0b2\x1a.alkanes.A\
-    lkanesBlockEventR\x06events\"B\n\x0cAlkanesTrace\x122\n\x06events\x18\
-    \x01\x20\x03(\x0b2\x1a.alkanes.AlkanesTraceEventR\x06events\"\x80\x01\n\
-    \x10SimulateResponse\x12;\n\texecution\x18\x01\x20\x01(\x0b2\x1d.alkanes\
-    .ExtendedCallResponseR\texecution\x12\x19\n\x08gas_used\x18\x02\x20\x01(\
-    \x04R\x07gasUsed\x12\x14\n\x05error\x18\x03\x20\x01(\tR\x05error\";\n\
-    \x16AlkaneInventoryRequest\x12!\n\x02id\x18\x01\x20\x01(\x0b2\x11.alkane\
-    s.AlkaneIdR\x02id\"L\n\x17AlkaneInventoryResponse\x121\n\x07alkanes\x18\
-    \x01\x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x07alkanes\"2\n\x08Outpoi\
-    nt\x12\x12\n\x04txid\x18\x01\x20\x01(\x0cR\x04txid\x12\x12\n\x04vout\x18\
+    28R\x05value\"O\n\x14MultiSimulateRequest\x127\n\x07parcels\x18\x01\x20\
+    \x03(\x0b2\x1d.alkanes.MessageContextParcelR\x07parcels\"\xa4\x02\n\x14M\
+    essageContextParcel\x121\n\x07alkanes\x18\x01\x20\x03(\x0b2\x17.alkanes.\
+    AlkaneTransferR\x07alkanes\x12\x20\n\x0btransaction\x18\x02\x20\x01(\x0c\
+    R\x0btransaction\x12\x14\n\x05block\x18\x03\x20\x01(\x0cR\x05block\x12\
+    \x16\n\x06height\x18\x04\x20\x01(\x04R\x06height\x12\x18\n\x07txindex\
+    \x18\x06\x20\x01(\rR\x07txindex\x12\x1a\n\x08calldata\x18\x05\x20\x01(\
+    \x0cR\x08calldata\x12\x12\n\x04vout\x18\x07\x20\x01(\rR\x04vout\x12\x18\
+    \n\x07pointer\x18\x08\x20\x01(\rR\x07pointer\x12%\n\x0erefund_pointer\
+    \x18\t\x20\x01(\rR\rrefundPointer\"6\n\x0cKeyValuePair\x12\x10\n\x03key\
+    \x18\x01\x20\x01(\x0cR\x03key\x12\x14\n\x05value\x18\x02\x20\x01(\x0cR\
+    \x05value\"\x8e\x01\n\x14ExtendedCallResponse\x121\n\x07alkanes\x18\x01\
+    \x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x07alkanes\x12/\n\x07storage\
+    \x18\x02\x20\x03(\x0b2\x15.alkanes.KeyValuePairR\x07storage\x12\x12\n\
+    \x04data\x18\x03\x20\x01(\x0cR\x04data\"\xe1\x01\n\x07Context\x12)\n\x06\
+    myself\x18\x01\x20\x01(\x0b2\x11.alkanes.AlkaneIdR\x06myself\x12)\n\x06c\
+    aller\x18\x02\x20\x01(\x0b2\x11.alkanes.AlkaneIdR\x06caller\x12(\n\x06in\
+    puts\x18\x03\x20\x03(\x0b2\x10.alkanes.uint128R\x06inputs\x12\x12\n\x04v\
+    out\x18\x04\x20\x01(\rR\x04vout\x12B\n\x10incoming_alkanes\x18\x05\x20\
+    \x03(\x0b2\x17.alkanes.AlkaneTransferR\x0fincomingAlkanes\"J\n\x0cTraceC\
+    ontext\x12&\n\x05inner\x18\x01\x20\x01(\x0b2\x10.alkanes.ContextR\x05inn\
+    er\x12\x12\n\x04fuel\x18\x02\x20\x01(\x04R\x04fuel\"\x82\x01\n\x13Alkane\
+    sEnterContext\x12:\n\tcall_type\x18\x01\x20\x01(\x0e2\x1d.alkanes.Alkane\
+    sTraceCallTypeR\x08callType\x12/\n\x07context\x18\x02\x20\x01(\x0b2\x15.\
+    alkanes.TraceContextR\x07context\"\x88\x01\n\x12AlkanesExitContext\x127\
+    \n\x06status\x18\x01\x20\x01(\x0e2\x1f.alkanes.AlkanesTraceStatusFlagR\
+    \x06status\x129\n\x08response\x18\x02\x20\x01(\x0b2\x1d.alkanes.Extended\
+    CallResponseR\x08response\"A\n\rAlkanesCreate\x120\n\nnew_alkane\x18\x01\
+    \x20\x01(\x0b2\x11.alkanes.AlkaneIdR\tnewAlkane\"\xe2\x01\n\x11AlkanesTr\
+    aceEvent\x12C\n\renter_context\x18\x01\x20\x01(\x0b2\x1c.alkanes.Alkanes\
+    EnterContextH\0R\x0centerContext\x12@\n\x0cexit_context\x18\x02\x20\x01(\
+    \x0b2\x1b.alkanes.AlkanesExitContextH\0R\x0bexitContext\x12=\n\rcreate_a\
+    lkane\x18\x03\x20\x01(\x0b2\x16.alkanes.AlkanesCreateH\0R\x0ccreateAlkan\
+    eB\x07\n\x05event\"\x8b\x01\n\x11AlkanesBlockEvent\x12-\n\x06traces\x18\
+    \x01\x20\x01(\x0b2\x15.alkanes.AlkanesTraceR\x06traces\x12-\n\x08outpoin\
+    t\x18\x02\x20\x01(\x0b2\x11.alkanes.OutpointR\x08outpoint\x12\x18\n\x07t\
+    xindex\x18\x03\x20\x01(\x04R\x07txindex\"L\n\x16AlkanesBlockTraceEvent\
+    \x122\n\x06events\x18\x01\x20\x03(\x0b2\x1a.alkanes.AlkanesBlockEventR\
+    \x06events\"B\n\x0cAlkanesTrace\x122\n\x06events\x18\x01\x20\x03(\x0b2\
+    \x1a.alkanes.AlkanesTraceEventR\x06events\"\x80\x01\n\x10SimulateRespons\
+    e\x12;\n\texecution\x18\x01\x20\x01(\x0b2\x1d.alkanes.ExtendedCallRespon\
+    seR\texecution\x12\x19\n\x08gas_used\x18\x02\x20\x01(\x04R\x07gasUsed\
+    \x12\x14\n\x05error\x18\x03\x20\x01(\tR\x05error\"f\n\x15MultiSimulateRe\
+    sponse\x127\n\tresponses\x18\x01\x20\x03(\x0b2\x19.alkanes.SimulateRespo\
+    nseR\tresponses\x12\x14\n\x05error\x18\x02\x20\x01(\tR\x05error\";\n\x16\
+    AlkaneInventoryRequest\x12!\n\x02id\x18\x01\x20\x01(\x0b2\x11.alkanes.Al\
+    kaneIdR\x02id\"L\n\x17AlkaneInventoryResponse\x121\n\x07alkanes\x18\x01\
+    \x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x07alkanes\"2\n\x08Outpoint\
+    \x12\x12\n\x04txid\x18\x01\x20\x01(\x0cR\x04txid\x12\x12\n\x04vout\x18\
     \x02\x20\x01(\rR\x04vout\"c\n\x05Trace\x12-\n\x08outpoint\x18\x01\x20\
     \x01(\x0b2\x11.alkanes.OutpointR\x08outpoint\x12+\n\x05trace\x18\x02\x20\
     \x01(\x0b2\x15.alkanes.AlkanesTraceR\x05trace\")\n\x11TraceBlockRequest\
@@ -3657,10 +3925,11 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
     file_descriptor.get(|| {
         let generated_file_descriptor = generated_file_descriptor_lazy.get(|| {
             let mut deps = ::std::vec::Vec::with_capacity(0);
-            let mut messages = ::std::vec::Vec::with_capacity(22);
+            let mut messages = ::std::vec::Vec::with_capacity(24);
             messages.push(Uint128::generated_message_descriptor_data());
             messages.push(AlkaneId::generated_message_descriptor_data());
             messages.push(AlkaneTransfer::generated_message_descriptor_data());
+            messages.push(MultiSimulateRequest::generated_message_descriptor_data());
             messages.push(MessageContextParcel::generated_message_descriptor_data());
             messages.push(KeyValuePair::generated_message_descriptor_data());
             messages.push(ExtendedCallResponse::generated_message_descriptor_data());
@@ -3674,6 +3943,7 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
             messages.push(AlkanesBlockTraceEvent::generated_message_descriptor_data());
             messages.push(AlkanesTrace::generated_message_descriptor_data());
             messages.push(SimulateResponse::generated_message_descriptor_data());
+            messages.push(MultiSimulateResponse::generated_message_descriptor_data());
             messages.push(AlkaneInventoryRequest::generated_message_descriptor_data());
             messages.push(AlkaneInventoryResponse::generated_message_descriptor_data());
             messages.push(Outpoint::generated_message_descriptor_data());
