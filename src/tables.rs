@@ -11,6 +11,10 @@ pub static TRACES: Lazy<IndexPointer> = Lazy::new(|| IndexPointer::from_keyword(
 pub static TRACES_BY_HEIGHT: Lazy<IndexPointer> =
     Lazy::new(|| IndexPointer::from_keyword("/trace/"));
 
+// New table for storing complete BlockTrace structures by height
+pub static BLOCK_TRACES: Lazy<IndexPointer> = 
+    Lazy::new(|| IndexPointer::from_keyword("/traces/byblock/"));
+
 // Cache for storing complete BlockTrace structures by height
 pub static BLOCK_TRACES_CACHE: Lazy<RwLock<HashMap<u64, Vec<u8>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));

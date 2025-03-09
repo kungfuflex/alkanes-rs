@@ -29,13 +29,13 @@ pub fn save_trace(outpoint: &OutPoint, height: u64, trace: Trace) -> Result<()> 
         .append(Arc::new(buffer.clone()));
     
     // Update or create BlockTrace in cache
-    update_block_trace_cache(outpoint, height, alkanes_trace, &buffer)?;
+    update_block_trace_cache(outpoint, height, alkanes_trace)?;
     
     Ok(())
 }
 
 // Helper function to update the block trace cache
-fn update_block_trace_cache(outpoint: &OutPoint, height: u64, trace: proto::alkanes::AlkanesTrace, buffer: &Vec<u8>) -> Result<()> {
+fn update_block_trace_cache(outpoint: &OutPoint, height: u64, trace: proto::alkanes::AlkanesTrace) -> Result<()> {
     let txid = outpoint.txid.as_byte_array().to_vec();
     let txindex: u32 = RUNES.TXID_TO_TXINDEX.select(&txid).get_value();
     
