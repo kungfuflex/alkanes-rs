@@ -10,6 +10,10 @@ use metashrew::{
 };
 use protorune::Protorune;
 use protorune_support::network::{set_network, NetworkParams};
+use crate::tables::BLOCK_TRACES_CACHE;
+use crate::tables::BLOCK_TRACES;
+use std::sync::Arc;
+use metashrew_support::index_pointer::KeyValuePointer;
 
 #[cfg(all(
     not(feature = "mainnet"),
@@ -68,6 +72,9 @@ pub fn configure_network() {
 }
 
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
+    // Reset the BlockTrace cache at the beginning of each block
+    BLOCK_TRACES_CACHE.write().unwrap().clear();
+    
     configure_network();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
@@ -75,5 +82,32 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     }
     FuelTank::initialize(&block);
     Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
+    
+    // Save the complete BlockTrace to persistent storage
+    save_trace_block(height.into())?;
+    
+    Ok(())
+}
+
+// Function to save the complete BlockTrace to persistent storage
+fn save_trace_block(height: u64) -> Result<()> {
+    // Get the cached BlockTrace
+    let cached_bytes = {
+        let cache = BLOCK_TRACES_CACHE.read().unwrap();
+        if let Some(bytes) = cache.get(&height) {
+            bytes.clone()
+        } else {
+            // If no events were processed for this block, create an empty BlockTrace
+            use alkanes_support::proto::alkanes::AlkanesBlockTraceEvent;
+            use protobuf::Message;
+            
+            let empty_trace = AlkanesBlockTraceEvent::new();
+            empty_trace.write_to_bytes()?
+        }
+    };
+    
+    // Store in the persistent BLOCK_TRACES table
+    BLOCK_TRACES.select_value::<u64>(height).set(Arc::new(cached_bytes));
+    
     Ok(())
 }
