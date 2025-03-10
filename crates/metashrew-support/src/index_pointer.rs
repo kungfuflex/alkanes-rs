@@ -241,7 +241,7 @@ pub trait KeyValuePointer {
         let length_key = self.length_key();
         let length = length_key.get_value::<u32>();
         let mut result = Vec::new();
-        let mut i: u32 = 0;
+        let mut i: u32 = self.head_key().get_value();
         while i < length {
             let item = self.select_index(i);
             let mut item_mut = item.clone();
