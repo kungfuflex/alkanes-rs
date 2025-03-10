@@ -1,5 +1,5 @@
 use crate::indexer::configure_network;
-use crate::view::{parcel_from_protobuf, simulate_safe};
+use crate::view::{multi_simulate_safe, parcel_from_protobuf, simulate_safe};
 use alkanes_support::proto;
 use bitcoin::{Block, OutPoint};
 #[allow(unused_imports)]
@@ -13,6 +13,7 @@ use metashrew_support::compat::export_bytes;
 use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
 use protobuf::{Message, MessageField};
 use std::io::Cursor;
+use view::parcels_from_protobuf;
 pub mod block;
 pub mod indexer;
 pub mod message;
@@ -47,6 +48,39 @@ Then links everything together, leading to duplicate symbols
 
 Thus, going to add not(test) to all these functions
 */
+
+#[cfg(not(test))]
+#[no_mangle]
+pub fn multisimluate() -> i32 {
+    configure_network();
+    let data = input();
+    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
+    let reader = &data[4..];
+    let mut result: proto::alkanes::MultiSimulateResponse =
+        proto::alkanes::MultiSimulateResponse::new();
+    let responses = multi_simulate_safe(
+        &parcels_from_protobuf(
+            proto::alkanes::MultiSimulateRequest::parse_from_bytes(reader).unwrap(),
+        ),
+        u64::MAX,
+    );
+
+    for response in responses {
+        let mut res = proto::alkanes::SimulateResponse::new();
+        match response {
+            Ok((response, gas_used)) => {
+                res.execution = MessageField::some(response.into());
+                res.gas_used = gas_used;
+            }
+            Err(e) => {
+                result.error = e.to_string();
+            }
+        }
+        result.responses.push(res);
+    }
+
+    export_bytes(result.write_to_bytes().unwrap())
+}
 
 #[cfg(not(test))]
 #[no_mangle]
