@@ -196,6 +196,9 @@ impl Protorune {
                 let pos: u32 = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
                     .select(&outpoint_bytes)
                     .get_value();
+                tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                    .select(&outpoint_bytes)
+                    .nullify();
                 let address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
                 tables::OUTPOINT_SPENDABLE_BY_ADDRESS
                     .select(&address)
