@@ -431,6 +431,64 @@ This pattern allows:
 - Maintaining compatibility with the base protocol
 - Adding specialized functionality while preserving core behavior
 
+### 7. Message Dispatch Framework
+
+The Message Dispatch Framework provides a unified way to develop contracts and expose their ABIs:
+
+```rust
+#[derive(MessageDispatch)]
+enum OwnedTokenMessage {
+    #[opcode(0)]
+    #[method("initialize")]
+    Initialize(u128, u128),
+
+    #[opcode(77)]
+    #[method("mint")]
+    Mint(u128),
+
+    #[opcode(99)]
+    #[method("get_name")]
+    GetName,
+    
+    // Additional methods...
+}
+```
+
+Key components:
+
+- **MessageDispatch trait**: Defines the interface for dispatching messages to contracts
+  ```rust
+  pub trait MessageDispatch<T> {
+      fn from_opcode(opcode: u128, inputs: Vec<u128>) -> Result<Self, anyhow::Error>;
+      fn dispatch(&self, responder: &T) -> Result<CallResponse, anyhow::Error>;
+      fn export_abi() -> Vec<u8>;
+  }
+  ```
+
+- **Derive macro**: Automatically implements the trait for enums with method and opcode attributes
+  - Extracts method names and opcodes from enum variants
+  - Generates match arms for opcode-based dispatch
+  - Creates parameter extraction and validation logic
+  - Builds a JSON representation of the contract ABI
+
+- **ABI generation**: Exposes contract methods, opcodes, and parameter types in a standardized JSON format
+  ```json
+  {
+    "contract": "OwnedToken",
+    "methods": [
+      { "name": "initialize", "opcode": 0, "params": ["u128", "u128"] },
+      { "name": "mint", "opcode": 77, "params": ["u128"] },
+      { "name": "get_name", "opcode": 99, "params": [] }
+    ]
+  }
+  ```
+
+This framework simplifies contract development by:
+- Automating the boilerplate code for message dispatch
+- Providing a standardized way to expose contract ABIs
+- Ensuring consistent parameter handling across contracts
+- Enabling better tooling and client integration through standardized ABIs
+
 ## Component Relationships
 
 ### Indexer and Runtime Interaction

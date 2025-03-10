@@ -22,6 +22,8 @@ pub mod genesis;
 #[cfg(test)]
 pub mod networks;
 #[cfg(test)]
+pub mod owned_token_abi;
+#[cfg(test)]
 pub mod serialization;
 #[cfg(test)]
 pub mod view;

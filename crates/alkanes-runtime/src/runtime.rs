@@ -46,6 +46,41 @@ pub fn initialize_cache() {
     }
 }
 
+#[allow(static_mut_refs)]
+pub fn get_cache() -> StorageMap {
+    unsafe {
+        initialize_cache();
+        _CACHE.as_ref().unwrap().clone()
+    }
+}
+
+#[allow(static_mut_refs)]
+pub fn handle_success(response: CallResponse) -> ExtendedCallResponse {
+    let mut extended: ExtendedCallResponse = response.into();
+    initialize_cache();
+    extended.storage = get_cache();
+    extended
+}
+
+pub fn handle_error(error: &str) -> ExtendedCallResponse {
+    let mut response = CallResponse::default();
+    let mut data: Vec<u8> = vec![0x08, 0xc3, 0x79, 0xa0];
+    data.extend(error.as_bytes());
+    response.data = data;
+    _abort();
+    response.into()
+}
+
+pub fn prepare_response(response: ExtendedCallResponse) -> Vec<u8> {
+    response.serialize()
+}
+
+pub fn response_to_i32(response: ExtendedCallResponse) -> i32 {
+    let serialized = prepare_response(response);
+    let response_bytes = to_arraybuffer_layout(&serialized);
+    Box::leak(Box::new(response_bytes)).as_mut_ptr() as usize as i32 + 4
+}
+
 pub trait Extcall {
     fn __call(cellpack: i32, outgoing_alkanes: i32, checkpoint: i32, fuel: u64) -> i32;
     #[allow(static_mut_refs)]
@@ -104,7 +139,7 @@ impl Extcall for Staticcall {
     }
 }
 
-pub trait AlkaneResponder {
+pub trait AlkaneResponder: 'static {
     fn context(&self) -> Result<Context> {
         unsafe {
             let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; __request_context() as usize]);
@@ -252,20 +287,8 @@ pub trait AlkaneResponder {
     #[allow(static_mut_refs)]
     fn run(&self) -> Vec<u8> {
         let extended: ExtendedCallResponse = match self.initialize().execute() {
-            Ok(v) => {
-                let mut response: ExtendedCallResponse = v.into();
-                initialize_cache();
-                response.storage = unsafe { _CACHE.as_ref().unwrap().clone() };
-                response
-            }
-            Err(e) => {
-                let mut response = CallResponse::default();
-                let mut data: Vec<u8> = vec![0x08, 0xc3, 0x79, 0xa0];
-                data.extend(e.to_string().as_bytes());
-                response.data = data;
-                _abort();
-                response.into()
-            }
+            Ok(v) => handle_success(v),
+            Err(e) => handle_error(&e.to_string()),
         };
         extended.serialize()
     }

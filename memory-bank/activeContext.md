@@ -1,111 +1,42 @@
-# ALKANES-RS Active Context
+# Active Context
 
-## Current Work Focus
+## Current Focus: Message Dispatch Framework
 
-Based on the repository analysis, the current focus appears to be on developing and stabilizing the ALKANES metaprotocol for Bitcoin-based DeFi. The project is structured as a Rust workspace with multiple crates, each serving a specific purpose in the overall system.
+We're currently working on improving the message dispatch framework for Alkanes contracts. This framework provides a unified way to develop contracts and expose their ABIs.
 
-The main components under active development include:
+### Recent Changes
 
-1. **Core Indexer**: The main ALKANES indexer implementation for the METASHREW environment.
-2. **Runtime Environment**: The execution environment for ALKANES smart contracts.
-3. **Standard Library Contracts**: Pre-built smart contracts for common use cases.
-4. **Cross-Network Support**: Support for multiple Bitcoin-based networks.
+We've enhanced the `MessageDispatch` derive macro to automatically generate:
 
-## Recent Changes
+1. Method dispatch logic based on opcodes
+2. Parameter extraction and validation
+3. JSON ABI generation with contract name, methods, opcodes, and parameter types
 
-From the repository analysis, we can observe:
+The framework now uses `serde_json` for proper JSON serialization instead of manual string construction, making it more robust and maintainable.
 
-1. **Multi-Network Support**: The codebase includes configuration for multiple networks (mainnet, testnet, regtest, dogecoin, luckycoin, bellscoin).
-2. **Standard Library Development**: Several standard library contracts have been implemented, including:
-   - Authentication token
-   - Genesis contracts for different networks
-   - Proxy contracts
-   - Owned token contracts
-   - Merkle distributor
-3. **Testing Infrastructure**: Comprehensive testing infrastructure for both the indexer and smart contracts.
-4. **Documentation**: Initial documentation in the README and project wiki.
+### Key Components
 
-## Next Steps
+- **MessageDispatch trait**: Defines the interface for dispatching messages to contracts
+- **Derive macro**: Automatically implements the trait for enums with method and opcode attributes
+- **ABI generation**: Exposes contract methods, opcodes, and parameter types in a standardized JSON format
 
-Based on the current state of the repository, potential next steps could include:
+### Implementation Details
 
-1. **Enhanced Documentation**:
-   - Complete the memory bank documentation
-   - Add more examples and tutorials
-   - Improve API documentation
+The `MessageDispatch` derive macro:
+- Extracts method names and opcodes from enum variants
+- Generates match arms for opcode-based dispatch
+- Creates parameter extraction and validation logic
+- Builds a JSON representation of the contract ABI
 
-2. **Additional Standard Library Contracts**:
-   - Implement more DeFi primitives
-   - Add more utility contracts
-   - Develop advanced financial instruments
+### Next Steps
 
-3. **Tooling Improvements**:
-   - Develop better development tools
-   - Create deployment utilities
-   - Build monitoring and debugging tools
+1. Ensure the contract name is correctly extracted and included in the ABI
+2. Add comprehensive tests for the ABI generation
+3. Document the framework for developers
+4. Consider adding support for return type information in the ABI
 
-4. **Performance Optimization**:
-   - Optimize indexer performance
-   - Reduce contract execution overhead
-   - Improve state management efficiency
+### Active Decisions
 
-5. **Testing Expansion**:
-   - Add more comprehensive test cases
-   - Implement stress testing
-   - Create benchmarking tools
-
-## Active Decisions and Considerations
-
-Several key decisions and considerations appear to be active in the project:
-
-### 1. Architecture Decisions
-
-- **WASM-Based Execution**: The decision to use WebAssembly for smart contract execution provides portability and security but comes with certain limitations.
-- **Trait-Based Abstraction**: The use of Rust traits for defining interfaces enables polymorphism and code reuse.
-- **Message Context Pattern**: The system uses a message context pattern to encapsulate transaction data and execution environment.
-
-### 2. Technical Considerations
-
-- **Fuel Metering**: The implementation of a fuel system for metering computation is crucial for preventing DoS attacks.
-- **State Management**: Efficient state management is essential for contract execution and data persistence.
-- **Cross-Network Compatibility**: Supporting multiple Bitcoin-based networks requires careful handling of network-specific parameters.
-
-### 3. Development Workflow
-
-- **Testing Strategy**: The project employs multiple testing approaches, including unit tests, integration tests, and WASM tests.
-- **Build System**: The build system needs to handle both the indexer and smart contracts, with different compilation targets.
-- **Dependency Management**: Managing dependencies across multiple crates requires careful coordination.
-
-### 4. Protocol Design
-
-- **Protorunes Compatibility**: ALKANES is designed as a subprotocol of runes that is compatible with protorunes.
-- **Genesis Block**: The ALKANES genesis block is set at 880000, which affects activation and deployment.
-- **Fee Structure**: Protocol fees are accepted in terms of Bitcoin, with computation metered using the wasmi fuel implementation.
-
-## Current Challenges
-
-Based on the codebase analysis, some current challenges might include:
-
-1. **Complexity Management**: The system has multiple interacting components, which increases complexity.
-2. **Performance Optimization**: Ensuring efficient execution of smart contracts within the WASM environment.
-3. **Cross-Network Testing**: Testing across multiple Bitcoin-based networks requires significant resources.
-4. **Documentation Completeness**: Ensuring comprehensive documentation for developers and users.
-5. **Adoption Strategy**: Encouraging adoption of the ALKANES protocol in the Bitcoin ecosystem.
-
-
-### Current Debugging Focus
-
-## Integration Points
-
-The system integrates with several external components:
-
-1. **METASHREW Indexer Stack**: The underlying infrastructure for processing blockchain data.
-2. **Bitcoin Node**: The source of blockchain data for the indexer.
-3. **WebAssembly Runtime**: The execution environment for smart contracts.
-4. **Protorunes Protocol**: The base protocol that ALKANES extends.
-
-## Current Status
-
-The project appears to be in active development, with a functional core system and several standard library contracts implemented. The README indicates that the project is intended for use on both mainnet and test networks, suggesting a certain level of maturity.
-
-The presence of comprehensive testing infrastructure and documentation suggests a focus on quality and usability. However, the project may still be evolving, with new features and improvements being added.
+- Using `serde_json` for JSON serialization instead of manual string construction
+- Keeping parameter types simple (currently just "u128") for the initial implementation
+- Using runtime type information to extract the concrete contract name

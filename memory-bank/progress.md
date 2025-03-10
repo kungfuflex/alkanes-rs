@@ -77,7 +77,31 @@ pub fn test_decode_block() {
 }
 ```
 
-### 5. Build System
+### 5. Message Dispatch Framework
+
+- **MessageDispatch Trait**: A unified interface for contract message handling.
+- **Derive Macro**: Automatically implements message dispatch logic for enums.
+- **ABI Generation**: Dynamically generates JSON ABI for contracts.
+- **Parameter Handling**: Standardized parameter extraction and validation.
+
+```rust
+#[derive(MessageDispatch)]
+enum OwnedTokenMessage {
+    #[opcode(0)]
+    #[method("initialize")]
+    Initialize(u128, u128),
+
+    #[opcode(77)]
+    #[method("mint")]
+    Mint(u128),
+    
+    // Additional methods...
+}
+```
+
+The framework simplifies contract development by automating boilerplate code and providing a standardized way to expose contract ABIs, which enables better tooling and client integration.
+
+### 6. Build System
 
 - **Cargo Workspace**: The project is organized as a Cargo workspace with multiple crates.
 - **Feature Flags**: Feature flags control compilation for different networks and components.
@@ -136,8 +160,15 @@ The project appears to be in active development, with a functional core system a
 
 - **Core Functionality**: Implemented and functional.
 - **Standard Library**: Partially implemented, with several key contracts available.
+- **Message Dispatch Framework**: Recently enhanced with improved ABI generation and standardized parameter handling.
 - **Testing**: Comprehensive testing infrastructure in place.
 - **Documentation**: Basic documentation available, with room for expansion.
+
+### Recent Improvements
+
+- **Enhanced ABI Generation**: The Message Dispatch Framework now uses serde_json for proper JSON serialization, making it more robust and maintainable.
+- **Standardized Parameter Handling**: Improved parameter extraction and validation in the MessageDispatch trait implementation.
+- **Contract Development Simplification**: Reduced boilerplate code for implementing new contracts through the MessageDispatch derive macro.
 
 ### Deployment Status
 
@@ -183,6 +214,9 @@ Based on the current state, potential next milestones could include:
 - Add more standard library contracts
 - Improve developer tools and examples
 - Optimize performance for common operations
+- Extend the Message Dispatch Framework with return type information in the ABI
+- Utilize standardized packages like serde-json
+- Extend for parameter types that are not u256
 
 ### 2. Medium-term (3-6 months)
 

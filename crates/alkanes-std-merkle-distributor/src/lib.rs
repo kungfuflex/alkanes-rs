@@ -1,5 +1,10 @@
 use alkanes_runtime::storage::StoragePointer;
-use alkanes_runtime::{declare_alkane, runtime::AlkaneResponder};
+use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
+#[allow(unused_imports)]
+use alkanes_runtime::{
+    println,
+    stdio::{stdout, Write},
+};
 use alkanes_support::{
     id::AlkaneId,
     parcel::AlkaneTransfer,
@@ -21,7 +26,18 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 #[derive(Default)]
-struct MerkleDistributor(());
+pub struct MerkleDistributor(());
+
+#[derive(MessageDispatch)]
+enum MerkleDistributorMessage {
+    #[opcode(0)]
+    #[method("initialize")]
+    Initialize(u128, u128),
+
+    #[opcode(1)]
+    #[method("claim")]
+    Claim,
+}
 
 pub fn overflow_error(v: Option<u128>) -> Result<u128> {
     v.ok_or("").map_err(|_| anyhow!("overflow error"))
@@ -82,21 +98,27 @@ impl MerkleDistributor {
             Err(anyhow!("runestone decipher failed"))
         }
     }
+
     pub fn length_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/length")
     }
+
     pub fn root_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/root")
     }
+
     pub fn set_length(&self, v: usize) {
         self.length_pointer().set_value::<usize>(v);
     }
+
     pub fn set_root(&self, v: Vec<u8>) {
         self.root_pointer().set(Arc::new(v))
     }
+
     pub fn length(&self) -> usize {
         self.length_pointer().get_value::<usize>()
     }
+
     pub fn root(&self) -> Result<[u8; 32]> {
         let root_vec: Vec<u8> = self.root_pointer().get().as_ref().clone();
         let root_bytes: &[u8] = root_vec.as_ref();
@@ -104,48 +126,68 @@ impl MerkleDistributor {
             .try_into()
             .map_err(|_| anyhow!("root bytes in storage are not of length 32"))
     }
+
     pub fn alkane_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/alkane")
     }
+
     pub fn alkane(&self) -> Result<AlkaneId> {
         Ok(self.alkane_pointer().get().as_ref().clone().try_into()?)
     }
+
     pub fn set_alkane(&self, v: AlkaneId) {
         self.alkane_pointer().set(Arc::<Vec<u8>>::new(v.into()));
+    }
+
+    fn initialize(&self, length: u128, root_bytes: u128) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut inputs = context.inputs.clone();
+
+        let mut pointer = StoragePointer::from_keyword("/initialized");
+        if pointer.get().len() == 0 {
+            pointer.set(Arc::new(vec![0x01]));
+            if context.incoming_alkanes.0.len() != 1 {
+                panic!("must send 1 alkane to lock for distribution");
+            }
+            self.set_alkane(context.incoming_alkanes.0[0].id.clone());
+
+            // Extract the remaining parameters from inputs
+            self.set_length(length.try_into().unwrap());
+            self.set_root(shift_bytes32_or_err(&mut inputs)?);
+
+            Ok(CallResponse::default())
+        } else {
+            Err(anyhow!("already initialized"))
+        }
+    }
+
+    fn claim(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        response.alkanes.0.push(AlkaneTransfer {
+            value: self.verify_output(context.vout)?,
+            id: self.alkane()?,
+        });
+
+        Ok(response)
     }
 }
 
 impl AlkaneResponder for MerkleDistributor {
     fn execute(&self) -> Result<CallResponse> {
-        let context = self.context()?;
-        let mut inputs = context.inputs.clone();
-        match shift_or_err(&mut inputs)? {
-            0 => {
-                let mut pointer = StoragePointer::from_keyword("/initialized");
-                if pointer.get().len() == 0 {
-                    pointer.set(Arc::new(vec![0x01]));
-                    if context.incoming_alkanes.0.len() != 1 {
-                        panic!("must send 1 alkane to lock for distribution");
-                    }
-                    self.set_alkane(context.incoming_alkanes.0[0].id.clone());
-                    self.set_length(shift_or_err(&mut inputs)?.try_into().unwrap());
-                    self.set_root(shift_bytes32_or_err(&mut inputs)?);
-                    Ok(CallResponse::default())
-                } else {
-                    Err(anyhow!("already initialized"))
-                }
-            }
-            1 => {
-                let mut response = CallResponse::forward(&context.incoming_alkanes);
-                response.alkanes.0.push(AlkaneTransfer {
-                    value: self.verify_output(context.vout)?,
-                    id: self.alkane()?,
-                });
-                Ok(response)
-            }
-            _ => Err(anyhow!("opcode not recognized")),
-        }
+        // The opcode extraction and dispatch logic is now handled by the declare_alkane macro
+        // This method is still required by the AlkaneResponder trait, but we can just return an error
+        // indicating that it should not be called directly
+        Err(anyhow!(
+            "This method should not be called directly. Use the declare_alkane macro instead."
+        ))
     }
 }
 
-declare_alkane! {MerkleDistributor}
+// Use the new macro format
+declare_alkane! {
+    impl AlkaneResponder for MerkleDistributor {
+        type Message = MerkleDistributorMessage;
+    }
+}

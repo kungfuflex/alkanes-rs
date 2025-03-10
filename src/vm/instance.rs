@@ -385,4 +385,9 @@ impl AlkanesInstance {
             Ok(call_response)
         }
     }
+
+    pub fn call_meta(&mut self) -> Result<Vec<u8>> {
+        // Call the __meta function to get the ABI
+        AlkanesExportsImpl::call_meta(self)
+    }
 }
