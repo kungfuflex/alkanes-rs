@@ -196,13 +196,15 @@ impl Protorune {
                 let pos: u32 = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
                     .select(&outpoint_bytes)
                     .get_value();
-                tables::OUTPOINT_SPENDABLE_BY_ADDRESS
-                    .select(&outpoint_bytes)
-                    .nullify();
                 let address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
                 tables::OUTPOINT_SPENDABLE_BY_ADDRESS
                     .select(&address)
                     .delete_value(pos);
+                if pos > 0 {
+                    tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        .select(&outpoint_bytes)
+                        .nullify();
+                }
                 Ok(load_sheet(&mut atomic.derive(
                     &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
                 )))
