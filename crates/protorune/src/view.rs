@@ -226,14 +226,13 @@ pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
 pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input).ok() {
-        result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
+        result.outpoints = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
             .select(&req.wallet)
-            .get_list()
-            .into_iter()
-            .map(|v| -> Result<OutPoint> {
-                let mut cursor = Cursor::new(v.as_ref().clone());
+            .map_ll(|ptr, _| -> Result<OutPoint> {
+                let mut cursor = Cursor::new(ptr.get().as_ref().clone());
                 Ok(consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?)
             })
+            .into_iter()
             .collect::<Result<Vec<OutPoint>>>()?
             .into_iter()
             .filter_map(|v| -> Option<Result<OutpointResponse>> {

@@ -87,6 +87,13 @@ pub trait KeyValuePointer {
         self.keyword(&format!("/{}", index))
     }
 
+    fn drop_index(&self, index: u32) -> ()
+    where
+        Self: Sized,
+    {
+        let mut idx = self.keyword(&format!("/{}", index));
+        idx.nullify();
+    }
     fn get_list(&self) -> Vec<Arc<Vec<u8>>>
     where
         Self: Sized,
@@ -225,22 +232,25 @@ pub trait KeyValuePointer {
             let next = self.next_key(i).get_value::<u32>();
             prev.set_value(next);
         }
+        self.drop_index(i);
     }
-    fn map_ll(&self, mut f: impl FnMut(&mut Self, u32) -> ()) -> ()
+    fn map_ll<T>(&self, mut f: impl FnMut(&mut Self, u32) -> T) -> Vec<T>
     where
         Self: Sized + Clone,
     {
         let length_key = self.length_key();
         let length = length_key.get_value::<u32>();
+        let mut result = Vec::new();
         let mut i: u32 = 0;
         while i < length {
             let item = self.select_index(i);
             let mut item_mut = item.clone();
-            f(&mut item_mut, i);
+            result.push(f(&mut item_mut, i));
             i = self.next_key(i).get_value::<u32>();
             if i == 0 {
                 break;
             }
         }
+        result
     }
 }
