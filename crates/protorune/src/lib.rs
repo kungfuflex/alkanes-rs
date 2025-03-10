@@ -192,13 +192,17 @@ impl Protorune {
             .input
             .iter()
             .map(|input| {
-                Ok(load_sheet(
-                    &mut atomic.derive(
-                        &tables::RUNES
-                            .OUTPOINT_TO_RUNES
-                            .select(&consensus_encode(&input.previous_output)?),
-                    ),
-                ))
+                let outpoint_bytes = consensus_encode(&input.previous_output)?;
+                let pos: u32 = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                    .select(&outpoint_bytes)
+                    .get_value();
+                let address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+                tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                    .select(&address)
+                    .delete_value(pos);
+                Ok(load_sheet(&mut atomic.derive(
+                    &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
+                )))
             })
             .collect::<Result<Vec<BalanceSheet>>>()?;
         let mut balance_sheet = BalanceSheet::concat(sheets);
@@ -625,6 +629,16 @@ impl Protorune {
                     tables::OUTPOINTS_FOR_ADDRESS
                         .select(&address.clone())
                         .append(Arc::new(outpoint_bytes.clone()));
+                    tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        .select(&address.clone())
+                        .append_ll(Arc::new(outpoint_bytes.clone()));
+                    let pos = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        .select(&address.clone())
+                        .length()
+                        - 1;
+                    tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        .select(&outpoint_bytes.clone())
+                        .set_value(pos);
                     tables::OUTPOINT_SPENDABLE_BY
                         .select(&outpoint_bytes.clone())
                         .set(Arc::new(address.clone()))

@@ -1,4 +1,7 @@
+use bitcoin::sighash::Prevouts;
+
 use crate::byte_view::ByteView;
+use core::prelude;
 use std::sync::Arc;
 
 pub trait KeyValuePointer {
@@ -58,6 +61,12 @@ pub trait KeyValuePointer {
         Self: Sized,
     {
         self.keyword(&"/length".to_string())
+    }
+    fn head_key(&self) -> Self
+    where
+        Self: Sized,
+    {
+        self.keyword(&"/head".to_string())
     }
     fn next_key(&self, i: u32) -> Self
     where
@@ -149,6 +158,13 @@ pub trait KeyValuePointer {
         let mut new_index = self.extend();
         new_index.set(v);
     }
+    fn append_ll(&self, v: Arc<Vec<u8>>)
+    where
+        Self: Sized,
+    {
+        let mut new_index = self.extend_ll();
+        new_index.set(v);
+    }
     fn append_value<T: ByteView>(&self, v: T)
     where
         Self: Sized,
@@ -158,6 +174,15 @@ pub trait KeyValuePointer {
     }
 
     fn extend(&self) -> Self
+    where
+        Self: Sized,
+    {
+        let mut length_key = self.length_key();
+        let length = length_key.get_value::<u32>();
+        length_key.set_value::<u32>(length + 1);
+        self.select_index(length)
+    }
+    fn extend_ll(&self) -> Self
     where
         Self: Sized,
     {
@@ -187,7 +212,21 @@ pub trait KeyValuePointer {
         let mut next_key = self.next_key(i);
         next_key.set_value(v);
     }
-    fn map(&self, mut f: impl FnMut(&mut Self, u32) -> ()) -> ()
+    fn delete_value(&self, i: u32) -> ()
+    where
+        Self: Sized,
+    {
+        let mut head_key = self.head_key();
+        if i == head_key.get_value() {
+            let next = self.next_key(i).get_value::<u32>();
+            head_key.set_value(next);
+        } else {
+            let mut prev = self.next_key(i - 1);
+            let next = self.next_key(i).get_value::<u32>();
+            prev.set_value(next);
+        }
+    }
+    fn map_ll(&self, mut f: impl FnMut(&mut Self, u32) -> ()) -> ()
     where
         Self: Sized + Clone,
     {
