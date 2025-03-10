@@ -192,13 +192,22 @@ impl Protorune {
             .input
             .iter()
             .map(|input| {
-                Ok(load_sheet(
-                    &mut atomic.derive(
-                        &tables::RUNES
-                            .OUTPOINT_TO_RUNES
-                            .select(&consensus_encode(&input.previous_output)?),
-                    ),
-                ))
+                let outpoint_bytes = consensus_encode(&input.previous_output)?;
+                let pos: u32 = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                    .select(&outpoint_bytes)
+                    .get_value();
+                let address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+                tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                    .select(&address)
+                    .delete_value(pos);
+                if pos > 0 {
+                    tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        .select(&outpoint_bytes)
+                        .nullify();
+                }
+                Ok(load_sheet(&mut atomic.derive(
+                    &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
+                )))
             })
             .collect::<Result<Vec<BalanceSheet>>>()?;
         let mut balance_sheet = BalanceSheet::concat(sheets);
@@ -617,6 +626,7 @@ impl Protorune {
                     txid: tx_id.clone(),
                     vout: index as u32,
                 };
+
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
@@ -624,6 +634,16 @@ impl Protorune {
                     tables::OUTPOINTS_FOR_ADDRESS
                         .select(&address.clone())
                         .append(Arc::new(outpoint_bytes.clone()));
+                    tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        .select(&address.clone())
+                        .append_ll(Arc::new(outpoint_bytes.clone()));
+                    let pos = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        .select(&address.clone())
+                        .length()
+                        - 1;
+                    tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        .select(&outpoint_bytes.clone())
+                        .set_value(pos);
                     tables::OUTPOINT_SPENDABLE_BY
                         .select(&outpoint_bytes.clone())
                         .set(Arc::new(address.clone()))
@@ -889,10 +909,10 @@ impl Protorune {
             .BLOCKHASH_TO_HEIGHT
             .select(&consensus_encode(&block.block_hash())?)
             .set_value::<u64>(height);
-        Self::index_spendables(&block.txdata)?;
         Self::index_transaction_ids(&block, height)?;
         Self::index_outpoints(&block, height)?;
         Self::index_unspendables::<T>(&block, height)?;
+        Self::index_spendables(&block.txdata)?;
         flush();
         Ok(())
     }

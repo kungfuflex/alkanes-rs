@@ -1,4 +1,7 @@
+use bitcoin::sighash::Prevouts;
+
 use crate::byte_view::ByteView;
+use core::prelude;
 use std::sync::Arc;
 
 pub trait KeyValuePointer {
@@ -59,6 +62,18 @@ pub trait KeyValuePointer {
     {
         self.keyword(&"/length".to_string())
     }
+    fn head_key(&self) -> Self
+    where
+        Self: Sized,
+    {
+        self.keyword(&"/head".to_string())
+    }
+    fn next_key(&self, i: u32) -> Self
+    where
+        Self: Sized,
+    {
+        self.keyword(&"/next".to_string()).select_value(i)
+    }
     fn length(&self) -> u32
     where
         Self: Sized,
@@ -72,6 +87,13 @@ pub trait KeyValuePointer {
         self.keyword(&format!("/{}", index))
     }
 
+    fn drop_index(&self, index: u32) -> ()
+    where
+        Self: Sized,
+    {
+        let mut idx = self.keyword(&format!("/{}", index));
+        idx.nullify();
+    }
     fn get_list(&self) -> Vec<Arc<Vec<u8>>>
     where
         Self: Sized,
@@ -143,7 +165,13 @@ pub trait KeyValuePointer {
         let mut new_index = self.extend();
         new_index.set(v);
     }
-
+    fn append_ll(&self, v: Arc<Vec<u8>>)
+    where
+        Self: Sized,
+    {
+        let mut new_index = self.extend_ll();
+        new_index.set(v);
+    }
     fn append_value<T: ByteView>(&self, v: T)
     where
         Self: Sized,
@@ -161,6 +189,19 @@ pub trait KeyValuePointer {
         length_key.set_value::<u32>(length + 1);
         self.select_index(length)
     }
+    fn extend_ll(&self) -> Self
+    where
+        Self: Sized,
+    {
+        let mut length_key = self.length_key();
+        let length = length_key.get_value::<u32>();
+        if length > 0 {
+            let mut next_key = self.next_key(length - 1);
+            next_key.set_value(length);
+        }
+        length_key.set_value::<u32>(length + 1);
+        self.select_index(length)
+    }
     fn prefix(&self, keyword: &str) -> Self
     where
         Self: Sized,
@@ -170,5 +211,46 @@ pub trait KeyValuePointer {
         let mut ptr = Self::wrap(&val);
         ptr.inherits(self);
         ptr
+    }
+    fn set_next_for(&self, i: u32, v: u32) -> ()
+    where
+        Self: Sized,
+    {
+        let mut next_key = self.next_key(i);
+        next_key.set_value(v);
+    }
+    fn delete_value(&self, i: u32) -> ()
+    where
+        Self: Sized,
+    {
+        let mut head_key = self.head_key();
+        if i == head_key.get_value() {
+            let next = self.next_key(i).get_value::<u32>();
+            head_key.set_value(next);
+        } else {
+            let mut prev = self.next_key(i - 1);
+            let next = self.next_key(i).get_value::<u32>();
+            prev.set_value(next);
+        }
+        self.drop_index(i);
+    }
+    fn map_ll<T>(&self, mut f: impl FnMut(&mut Self, u32) -> T) -> Vec<T>
+    where
+        Self: Sized + Clone,
+    {
+        let length_key = self.length_key();
+        let length = length_key.get_value::<u32>();
+        let mut result = Vec::new();
+        let mut i: u32 = self.head_key().get_value();
+        while i < length {
+            let item = self.select_index(i);
+            let mut item_mut = item.clone();
+            result.push(f(&mut item_mut, i));
+            i = self.next_key(i).get_value::<u32>();
+            if i == 0 {
+                break;
+            }
+        }
+        result
     }
 }
