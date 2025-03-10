@@ -617,6 +617,7 @@ impl Protorune {
                     txid: tx_id.clone(),
                     vout: index as u32,
                 };
+
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
@@ -889,10 +890,10 @@ impl Protorune {
             .BLOCKHASH_TO_HEIGHT
             .select(&consensus_encode(&block.block_hash())?)
             .set_value::<u64>(height);
-        Self::index_spendables(&block.txdata)?;
         Self::index_transaction_ids(&block, height)?;
         Self::index_outpoints(&block, height)?;
         Self::index_unspendables::<T>(&block, height)?;
+        Self::index_spendables(&block.txdata)?;
         flush();
         Ok(())
     }

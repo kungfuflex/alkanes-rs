@@ -143,5 +143,7 @@ pub static OUTPOINTS_FOR_ADDRESS: Lazy<IndexPointer> =
 
 pub static OUTPOINT_SPENDABLE_BY: Lazy<IndexPointer> =
     Lazy::new(|| IndexPointer::from_keyword("/outpoint/spendableby/"));
+pub static OUTPOINT_SPENDABLE_BY_ADDRESS: Lazy<IndexPointer> =
+    Lazy::new(|| IndexPointer::from_keyword("/outpoint/spendablebyaddress/"));
 pub static OUTPOINT_TO_OUTPUT: Lazy<IndexPointer> =
     Lazy::new(|| IndexPointer::from_keyword("/output/byoutpoint/"));

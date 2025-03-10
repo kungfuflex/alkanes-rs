@@ -59,6 +59,12 @@ pub trait KeyValuePointer {
     {
         self.keyword(&"/length".to_string())
     }
+    fn next_key(&self, i: u32) -> Self
+    where
+        Self: Sized,
+    {
+        self.keyword(&"/next".to_string()).select_value(i)
+    }
     fn length(&self) -> u32
     where
         Self: Sized,
@@ -143,7 +149,6 @@ pub trait KeyValuePointer {
         let mut new_index = self.extend();
         new_index.set(v);
     }
-
     fn append_value<T: ByteView>(&self, v: T)
     where
         Self: Sized,
@@ -158,6 +163,10 @@ pub trait KeyValuePointer {
     {
         let mut length_key = self.length_key();
         let length = length_key.get_value::<u32>();
+        if length > 0 {
+            let mut next_key = self.next_key(length - 1);
+            next_key.set_value(length);
+        }
         length_key.set_value::<u32>(length + 1);
         self.select_index(length)
     }
@@ -170,5 +179,29 @@ pub trait KeyValuePointer {
         let mut ptr = Self::wrap(&val);
         ptr.inherits(self);
         ptr
+    }
+    fn set_next_for(&self, i: u32, v: u32) -> ()
+    where
+        Self: Sized,
+    {
+        let mut next_key = self.next_key(i);
+        next_key.set_value(v);
+    }
+    fn map(&self, mut f: impl FnMut(&mut Self, u32) -> ()) -> ()
+    where
+        Self: Sized + Clone,
+    {
+        let length_key = self.length_key();
+        let length = length_key.get_value::<u32>();
+        let mut i: u32 = 0;
+        while i < length {
+            let item = self.select_index(i);
+            let mut item_mut = item.clone();
+            f(&mut item_mut, i);
+            i = self.next_key(i).get_value::<u32>();
+            if i == 0 {
+                break;
+            }
+        }
     }
 }
