@@ -1,42 +1,65 @@
-# Active Context
+# ALKANES-RS Active Context
 
-## Current Focus: Message Dispatch Framework
+## Current Work Focus
 
-We're currently working on improving the message dispatch framework for Alkanes contracts. This framework provides a unified way to develop contracts and expose their ABIs.
+The ALKANES-RS project is focused on implementing a metaprotocol for DeFi operations on Bitcoin. The current work centers around:
 
-### Recent Changes
+1. **Core Protocol Implementation**: Developing and refining the ALKANES metaprotocol as a subprotocol of runes that is compatible with protorunes.
+2. **Smart Contract Runtime**: Enhancing the WebAssembly-based execution environment for smart contracts.
+3. **Standard Library Development**: Expanding the set of standard contracts for common DeFi patterns.
+4. **Cross-Network Support**: Ensuring compatibility across multiple Bitcoin-based networks.
 
-We've enhanced the `MessageDispatch` derive macro to automatically generate:
+## Recent Changes
 
-1. Method dispatch logic based on opcodes
-2. Parameter extraction and validation
-3. JSON ABI generation with contract name, methods, opcodes, and parameter types
+Based on the project structure and documentation, recent development appears to have focused on:
 
-The framework now uses `serde_json` for proper JSON serialization instead of manual string construction, making it more robust and maintainable.
+1. **Standard Contract Implementation**: Development of various standard contracts including:
+   - Authentication token contracts
+   - Owned token contracts
+   - Genesis contracts for different networks
+   - Proxy contracts for upgradeable functionality
+   - AMM (Automated Market Maker) contracts
 
-### Key Components
+2. **Message Dispatch Framework**: Implementation of a framework for contract ABI exposure and message handling.
 
-- **MessageDispatch trait**: Defines the interface for dispatching messages to contracts
-- **Derive macro**: Automatically implements the trait for enums with method and opcode attributes
-- **ABI generation**: Exposes contract methods, opcodes, and parameter types in a standardized JSON format
+3. **Multi-Network Support**: Adding support for various Bitcoin-based networks including mainnet, testnet, regtest, dogecoin, luckycoin, and bellscoin.
 
-### Implementation Details
+## Next Steps
 
-The `MessageDispatch` derive macro:
-- Extracts method names and opcodes from enum variants
-- Generates match arms for opcode-based dispatch
-- Creates parameter extraction and validation logic
-- Builds a JSON representation of the contract ABI
+The following areas have been identified as priorities for continued development:
 
-### Next Steps
+1. **Expanded Standard Library**: Continue developing standard contracts for common DeFi patterns.
+2. **Improved Tooling**: Enhance development, testing, and deployment tools.
+3. **Performance Optimization**: Improve execution efficiency and state management.
+4. **Documentation**: Expand documentation for developers building on ALKANES.
+5. **Testing Infrastructure**: Enhance testing capabilities for contracts and protocol features.
 
-1. Ensure the contract name is correctly extracted and included in the ABI
-2. Add comprehensive tests for the ABI generation
-3. Document the framework for developers
-4. Consider adding support for return type information in the ABI
+## Active Decisions and Considerations
 
-### Active Decisions
+Several key decisions and considerations are currently guiding development:
 
-- Using `serde_json` for JSON serialization instead of manual string construction
-- Keeping parameter types simple (currently just "u128") for the initial implementation
-- Using runtime type information to extract the concrete contract name
+1. **Trait-Based Abstraction**: Using Rust traits to define interfaces and behavior for contracts and protocol components.
+2. **WASM-Based Execution**: Continuing to refine the WebAssembly execution environment for smart contracts.
+3. **Table Relationship Management**: Ensuring proper relationships between database tables for consistent state management.
+4. **Fuel Metering**: Refining the fuel system to prevent DoS attacks while allowing efficient contract execution.
+5. **Cross-Network Compatibility**: Balancing network-specific features with a consistent core protocol.
+6. **Message Context Pattern**: Using a message context pattern to encapsulate transaction data and execution environment.
+
+## Integration Points
+
+Key integration points in the current development include:
+
+1. **METASHREW Indexer Stack**: Integration with the underlying infrastructure for processing blockchain data.
+2. **Protorunes Protocol**: Building on and extending the protorunes protocol for token functionality.
+3. **Bitcoin Blockchain**: Ensuring compatibility with Bitcoin's transaction model and consensus rules.
+4. **WebAssembly Runtime**: Integration with the wasmi interpreter for contract execution.
+
+## Current Challenges
+
+The development team is addressing several challenges:
+
+1. **Bitcoin Compatibility**: Working within the constraints of Bitcoin's limited scripting capabilities.
+2. **WebAssembly Limitations**: Managing the constraints of the WebAssembly execution environment.
+3. **Indexer Performance**: Ensuring efficient processing of blockchain data and state management.
+4. **Cross-Network Support**: Handling differences between various Bitcoin-based networks.
+5. **Contract Security**: Ensuring secure execution and proper isolation of smart contracts.

@@ -2,243 +2,124 @@
 
 ## What Works
 
-Based on the repository analysis, the following components appear to be functional:
+Based on the project documentation and structure, the following components appear to be implemented and functional:
 
-### 1. Core Indexer
+1. **Core Protocol Implementation**:
+   - ALKANES metaprotocol as a subprotocol of runes
+   - Integration with the METASHREW indexer stack
+   - Block processing and transaction validation
+   - Message extraction and handling
 
-- **Block Processing**: The system can process Bitcoin blocks and extract ALKANES protocol messages.
-- **State Management**: The indexer maintains the state of the ALKANES ecosystem.
-- **Multi-Network Support**: Configuration for multiple Bitcoin-based networks is implemented.
+2. **Runtime Environment**:
+   - WebAssembly-based execution environment
+   - Fuel metering system for computation
+   - Context management for contract execution
+   - Storage abstraction for state management
 
-```rust
-pub fn index_block(block: &Block, height: u32) -> Result<()> {
-    configure_network();
-    let really_is_genesis = is_genesis(height.into());
-    if really_is_genesis {
-        genesis(&block).unwrap();
-    }
-    FuelTank::initialize(&block);
-    Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
-    Ok(())
-}
-```
+3. **Standard Library Contracts**:
+   - Authentication token implementation
+   - Owned token contracts
+   - Genesis contracts for different networks
+   - Proxy contracts for upgradeable functionality
+   - Merkle distributor for token distribution
 
-### 2. Runtime Environment
+4. **View Functions**:
+   - Query interface for the ALKANES state
+   - RPC methods for external access
+   - Simulation capabilities for transactions
 
-- **WebAssembly Execution**: The system can execute WebAssembly smart contracts.
-- **Fuel Metering**: Computation is metered to prevent DoS attacks.
-- **Context Management**: Execution context is provided to smart contracts.
-
-```rust
-pub trait AlkaneResponder {
-    fn context(&self) -> Result<Context>;
-    fn execute(&self) -> Result<CallResponse>;
-    // Additional methods...
-}
-```
-
-### 3. Standard Library Contracts
-
-Several standard library contracts have been implemented:
-
-- **Authentication Token**: Access control mechanism for contracts.
-- **Genesis Contracts**: Network-specific initialization contracts.
-- **Proxy Contracts**: Contract delegation and upgradeability.
-- **Owned Token**: Token ownership and transfer functionality.
-- **Merkle Distributor**: Token distribution mechanism.
-
-```rust
-impl Token for AuthToken {
-    fn name(&self) -> String {
-        String::from("AUTH")
-    }
-    fn symbol(&self) -> String {
-        String::from("AUTH")
-    }
-}
-
-impl AlkaneResponder for AuthToken {
-    fn execute(&self) -> Result<CallResponse> {
-        // Implementation...
-    }
-}
-```
-
-### 4. Testing Infrastructure
-
-- **Unit Tests**: Tests for individual components.
-- **Integration Tests**: Tests for interactions between components.
-- **WASM Tests**: Tests for the compiled WebAssembly.
-
-```rust
-#[test]
-pub fn test_decode_block() {
-    // Test implementation...
-}
-```
-
-### 5. Message Dispatch Framework
-
-- **MessageDispatch Trait**: A unified interface for contract message handling.
-- **Derive Macro**: Automatically implements message dispatch logic for enums.
-- **ABI Generation**: Dynamically generates JSON ABI for contracts.
-- **Parameter Handling**: Standardized parameter extraction and validation.
-
-```rust
-#[derive(MessageDispatch)]
-enum OwnedTokenMessage {
-    #[opcode(0)]
-    #[method("initialize")]
-    Initialize(u128, u128),
-
-    #[opcode(77)]
-    #[method("mint")]
-    Mint(u128),
-    
-    // Additional methods...
-}
-```
-
-The framework simplifies contract development by automating boilerplate code and providing a standardized way to expose contract ABIs, which enables better tooling and client integration.
-
-### 6. Build System
-
-- **Cargo Workspace**: The project is organized as a Cargo workspace with multiple crates.
-- **Feature Flags**: Feature flags control compilation for different networks and components.
-- **WASM Compilation**: The build system can compile both the indexer and smart contracts to WebAssembly.
-
-```toml
-[features]
-testnet = []
-dogecoin = []
-luckycoin = []
-bellscoin = []
-fractal = []
-mainnet = []
-# Additional features...
-```
+5. **Cross-Network Support**:
+   - Support for multiple Bitcoin-based networks
+   - Network-specific parameters and genesis configurations
+   - Feature flags for different network targets
 
 ## What's Left to Build
 
-Based on the repository analysis and common patterns in blockchain projects, the following components may still need development or enhancement:
+The following areas appear to be targets for continued development:
 
-### 1. Additional Standard Library Contracts
+1. **Enhanced Standard Library**:
+   - Additional DeFi primitives
+   - More sophisticated financial instruments
+   - Advanced governance mechanisms
 
-- **More DeFi Primitives**: Additional financial instruments and protocols.
-- **Advanced Governance**: Mechanisms for protocol governance and upgrades.
-- **Cross-Chain Bridges**: Interoperability with other blockchain systems.
+2. **Developer Tooling**:
+   - Improved contract development workflow
+   - Better testing frameworks
+   - Deployment and monitoring tools
 
-### 2. Developer Tools
+3. **Documentation and Examples**:
+   - Comprehensive developer documentation
+   - Example applications and use cases
+   - Tutorials and guides
 
-- **Contract Development Framework**: Simplified tools for contract development.
-- **Testing Utilities**: More comprehensive testing tools.
-- **Deployment Tools**: Streamlined deployment process for contracts.
+4. **Performance Optimizations**:
+   - More efficient state management
+   - Reduced computational overhead
+   - Optimized storage access patterns
 
-### 3. Documentation and Examples
-
-- **API Documentation**: More detailed documentation of the API.
-- **Tutorials**: Step-by-step guides for developers.
-- **Example Applications**: Complete example applications built on ALKANES.
-
-### 4. Performance Optimizations
-
-- **Indexer Efficiency**: Optimizations for faster block processing.
-- **State Management**: More efficient state storage and retrieval.
-- **Contract Execution**: Reduced overhead for contract calls.
-
-### 5. User Interfaces
-
-- **Web Interface**: User-friendly interface for interacting with ALKANES.
-- **Wallet Integration**: Integration with popular Bitcoin wallets.
-- **Block Explorer**: Specialized explorer for ALKANES transactions and contracts.
+5. **Cross-Protocol Interoperability**:
+   - Better integration with other Bitcoin layer 2 solutions
+   - Bridges to other blockchain ecosystems
+   - Standardized interfaces for interoperability
 
 ## Current Status
 
-The project appears to be in active development, with a functional core system and several standard library contracts implemented. The README indicates that the project is intended for use on both mainnet and test networks, suggesting a certain level of maturity.
+The project appears to be in active development with a functional core implementation. The current status can be summarized as:
 
-### Development Status
+1. **Core Protocol**: Implemented and functional
+2. **Runtime Environment**: Implemented and functional
+3. **Standard Library**: Partially implemented with key contracts available
+4. **Cross-Network Support**: Implemented for multiple networks
+5. **Developer Tooling**: Basic functionality available, room for improvement
+6. **Documentation**: Initial documentation available, needs expansion
+7. **Testing Infrastructure**: Basic testing framework in place
 
-- **Core Functionality**: Implemented and functional.
-- **Standard Library**: Partially implemented, with several key contracts available.
-- **Message Dispatch Framework**: Recently enhanced with improved ABI generation and standardized parameter handling.
-- **Testing**: Comprehensive testing infrastructure in place.
-- **Documentation**: Basic documentation available, with room for expansion.
+The project has established a solid foundation with the core protocol and runtime environment, and is now expanding its capabilities through additional standard library contracts and improved tooling.
 
-### Recent Improvements
-
-- **Enhanced ABI Generation**: The Message Dispatch Framework now uses serde_json for proper JSON serialization, making it more robust and maintainable.
-- **Standardized Parameter Handling**: Improved parameter extraction and validation in the MessageDispatch trait implementation.
-- **Contract Development Simplification**: Reduced boilerplate code for implementing new contracts through the MessageDispatch derive macro.
-
-### Deployment Status
-
-The project can be deployed using the METASHREW indexer stack:
-
-```sh
-metashrew-keydb --redis <redis-url> --rpc-url <bitcoin-rpc> --auth <auth> --indexer <path-to-alkanes.wasm>
-```
-
-The ALKANES genesis block is set at 880000, indicating that the protocol is active on the Bitcoin blockchain.
 ## Known Issues
 
-Based on the repository analysis, the following issues or limitations may exist:
+Based on the documentation, the following issues or limitations have been identified:
 
-### 1. Technical Limitations
+1. **Table Relationship Management**:
+   - Double indexing can lead to inconsistent state
+   - Careful management of table relationships is required
+   - Testing must ensure proper table population
 
-- **WebAssembly Constraints**: WebAssembly imposes certain limitations on contract execution.
-- **Bitcoin Transaction Size**: Bitcoin's transaction size limits constrain the complexity of contract interactions.
-- **Indexer Performance**: Processing large blocks or complex transactions may impact performance.
+2. **WebAssembly Limitations**:
+   - Limited memory model
+   - No direct system access
+   - Limited floating-point precision
 
-### 2. Development Challenges
+3. **Bitcoin Compatibility Constraints**:
+   - Limited transaction size
+   - Limited script capabilities
+   - No native smart contract support
 
-- **Complex Architecture**: The system has multiple interacting components, increasing complexity.
-- **Cross-Network Testing**: Testing across multiple networks requires significant resources.
-- **Dependency Management**: Managing dependencies across multiple crates requires careful coordination.
+4. **Indexer Performance**:
+   - Handling large blocks and transactions
+   - Maintaining state consistency
+   - Scaling with blockchain growth
 
-### 3. Potential Issues
-
-- **Error Handling**: Some error handling may need refinement for better user experience.
-- **Edge Cases**: Certain edge cases in contract execution may not be fully handled.
-- **Compatibility**: Changes to the Bitcoin protocol or METASHREW indexer could impact compatibility.
-
-#### Current Debugging Progress
-
+5. **Cross-Network Differences**:
+   - Different address formats
+   - Different block structures
+   - Different activation heights
 
 ## Next Milestones
 
-Based on the current state, potential next milestones could include:
+The following milestones appear to be on the horizon for the project:
 
-### 1. Short-term (1-3 months)
+1. **Expanded Standard Library**: Complete implementation of common DeFi patterns
+2. **Improved Developer Experience**: Enhanced tooling and documentation
+3. **Performance Optimization**: Improved execution efficiency
+4. **Community Adoption**: Increased usage by developers and projects
+5. **Cross-Protocol Integration**: Better interoperability with other Bitcoin solutions
 
-- Complete and enhance documentation
-- Add more standard library contracts
-- Improve developer tools and examples
-- Optimize performance for common operations
-- Extend the Message Dispatch Framework with return type information in the ABI
-- Utilize standardized packages like serde-json
-- Extend for parameter types that are not u256
+## Recent Achievements
 
-### 2. Medium-term (3-6 months)
+Recent achievements in the project include:
 
-- Develop more advanced DeFi primitives
-- Create user interfaces and wallet integrations
-- Expand cross-network support
-- Implement more comprehensive testing
-
-### 3. Long-term (6+ months)
-
-- Explore cross-chain interoperability
-- Develop governance mechanisms
-- Build a community of developers and users
-- Establish ALKANES as a standard for Bitcoin DeFi
-
-## Metrics and Monitoring
-
-To track progress and ensure system health, the following metrics and monitoring could be implemented:
-
-- **Block Processing Time**: Time taken to process each block
-- **Contract Execution Metrics**: Gas usage, execution time, error rates
-- **State Size**: Growth of the state database over time
-- **Transaction Volume**: Number and complexity of ALKANES transactions
-- **Contract Deployments**: Number and types of contracts deployed
-- **User Adoption**: Number of unique addresses interacting with ALKANES contracts
+1. **Message Dispatch Framework**: Implementation of a framework for contract ABI exposure
+2. **Multi-Network Support**: Support for various Bitcoin-based networks
+3. **Standard Contract Implementation**: Development of various standard contracts
+4. **Fuel Metering System**: Implementation of a system to prevent DoS attacks

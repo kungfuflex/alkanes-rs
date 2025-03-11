@@ -106,6 +106,7 @@ pub struct FuelTank {
     pub block_fuel: u64,
     pub transaction_fuel: u64,
     pub block_metered_fuel: u64,
+    pub fuel_consumed: u64, // Track how much fuel has been consumed in the current transaction
 }
 
 static mut _FUEL_TANK: Option<FuelTank> = None;
@@ -127,6 +128,7 @@ impl FuelTank {
                 block_fuel: TOTAL_FUEL,
                 transaction_fuel: 0,
                 block_metered_fuel: 0,
+                fuel_consumed: 0,
             });
         }
     }
@@ -136,34 +138,53 @@ impl FuelTank {
             tank.current_txindex = txindex;
             tank.block_metered_fuel = tank.block_fuel * txsize / tank.size;
             tank.transaction_fuel = std::cmp::max(MINIMUM_FUEL, tank.block_metered_fuel);
+            // Deduct the actual allocated fuel (transaction_fuel), not just block_metered_fuel
             tank.block_fuel =
-                tank.block_fuel - std::cmp::min(tank.block_fuel, tank.block_metered_fuel);
+                tank.block_fuel - std::cmp::min(tank.block_fuel, tank.transaction_fuel);
             tank.txsize = txsize;
+            tank.fuel_consumed = 0; // Reset fuel consumed for new transaction
         }
     }
     pub fn refuel_block() {
         unsafe {
             let tank: &'static mut FuelTank = _FUEL_TANK.as_mut().unwrap();
-            tank.block_fuel = tank.block_fuel + tank.block_metered_fuel;
+            // Only refund unused fuel based on actual consumption
+            let unused_fuel = tank.transaction_fuel - tank.fuel_consumed;
+            tank.block_fuel = tank.block_fuel + unused_fuel;
             tank.size = tank.size - tank.txsize;
         }
     }
     pub fn consume_fuel(n: u64) -> Result<()> {
         unsafe {
             let tank: &'static mut FuelTank = _FUEL_TANK.as_mut().unwrap();
+            // Deduct from transaction_fuel (this is the actual fuel available)
             tank.transaction_fuel = overflow_error(tank.transaction_fuel.checked_sub(n))?;
-            tank.block_metered_fuel =
-                overflow_error(tank.block_metered_fuel.checked_sub(n)).unwrap_or_else(|_| 0);
+            
+            // Track total fuel consumed for proper refunding
+            tank.fuel_consumed = tank.fuel_consumed + n;
+            
+            // We still update block_metered_fuel for backward compatibility,
+            // but we don't rely on it for critical accounting
+            if tank.block_metered_fuel > 0 {
+                tank.block_metered_fuel =
+                    overflow_error(tank.block_metered_fuel.checked_sub(n)).unwrap_or_else(|_| 0);
+            }
+            
             Ok(())
         }
     }
     pub fn drain_fuel() {
         unsafe {
-            let transaction_fuel = _FUEL_TANK.as_ref().unwrap().block_metered_fuel;
             let tank: &'static mut FuelTank = _FUEL_TANK.as_mut().unwrap();
-            tank.block_fuel = tank.block_fuel - std::cmp::min(tank.block_fuel, transaction_fuel);
-            tank.transaction_fuel = 0;
+            // No need to deduct from block_fuel as we've already accounted for the full
+            // transaction_fuel allocation in fuel_transaction()
+            
+            // Set transaction_fuel to MINIMUM_FUEL for subsequent protomessages
+            // as per the fueling rules
+            tank.transaction_fuel = MINIMUM_FUEL;
             tank.block_metered_fuel = 0;
+            // Reset fuel_consumed since we're starting fresh with MINIMUM_FUEL
+            tank.fuel_consumed = 0;
         }
     }
     pub fn start_fuel() -> u64 {
