@@ -258,11 +258,29 @@ pub fn protorunes_by_address(
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
     let request =
         protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input)?;
+    
+    // Try to get the pre-computed wallet response for this address
+    let cached_response = protorune::tables::ADDRESS_TO_PROTORUNES.select(&request.wallet).get();
+    
+    if !cached_response.is_empty() {
+        // Parse the cached response
+        let mut response = protorune_support::proto::protorune::WalletResponse::parse_from_bytes(&cached_response)?;
+        
+        // If this is for ALKANES, we need to transform the response
+        if into_u128(request.protocol_tag.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag() {
+            response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
+        }
+        
+        return Ok(response);
+    }
+    
+    // Fall back to the original implementation
     view::protorunes_by_address(input).and_then(|mut response| {
         if into_u128(request.protocol_tag.unwrap_or_else(|| {
             <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
-        })) == AlkaneMessageContext::protocol_tag()
-        {
+        })) == AlkaneMessageContext::protocol_tag() {
             response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
         }
         Ok(response)

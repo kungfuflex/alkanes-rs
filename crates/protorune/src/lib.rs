@@ -5,7 +5,7 @@ use crate::protostone::{
     add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
 };
 use crate::tables::RuneTable;
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{anyhow, Result};
 use balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
@@ -21,18 +21,19 @@ use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
 use ordinals::{Etching, Rune};
-use protobuf::{Message, SpecialFields};
+use protobuf::{Message, MessageField, SpecialFields};
 use protorune_support::constants;
 use protorune_support::network::to_address_str;
 use protorune_support::proto;
 use protorune_support::{
     balance_sheet::{BalanceSheet, ProtoruneRuneId},
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
-    utils::{consensus_encode, field_to_name, outpoint_encode},
+    utils::{consensus_decode, consensus_encode, field_to_name, outpoint_encode},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Sub;
 use std::sync::Arc;
+use std::io::Cursor;
 
 pub mod balance_sheet;
 pub mod message;
@@ -45,9 +46,103 @@ pub mod test_helpers;
 #[cfg(test)]
 pub mod tests;
 pub mod view;
-
 pub struct Protorune(());
 
+// Helper function to get all known protocol tags
+fn get_all_protocol_tags() -> Vec<u128> {
+    // This would need to be implemented based on how protocol tags are stored
+    // For now, we'll just return a vector with the ALKANES protocol tag
+    vec![1] // ALKANES protocol tag is 1
+}
+
+// Function to update the address protorunes cache
+pub fn update_address_protorunes(
+    atomic: &mut AtomicPointer,
+    address: &Vec<u8>,
+    protocol_tag: u128,
+) -> Result<()> {
+    // Get all outpoints for this address
+    let outpoints = tables::OUTPOINTS_FOR_ADDRESS
+        .select(address)
+        .get_list()
+        .into_iter()
+        .map(|v| {
+            let mut cursor = Cursor::new(v.as_ref().clone());
+            consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)
+        })
+        .collect::<Result<Vec<OutPoint>>>()?;
+    
+    // Create a combined WalletResponse
+    let mut wallet_response = proto::protorune::WalletResponse::new();
+    
+    // Process each outpoint
+    for outpoint in outpoints {
+        let outpoint_bytes = outpoint_encode(&outpoint)?;
+        let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+        
+        // Only include outpoints spendable by this address
+        if address.len() == _address.len() {
+            // Get the balance sheet for this outpoint
+            let balance_sheet: BalanceSheet = load_sheet(
+                &RuneTable::for_protocol(protocol_tag)
+                    .OUTPOINT_TO_RUNES
+                    .select(&outpoint_bytes),
+            );
+            
+            // Only include if there are balances for this protocol
+            if !balance_sheet.balances.is_empty() {
+                let mut outpoint_response = proto::protorune::OutpointResponse::new();
+                outpoint_response.balances = MessageField::some(balance_sheet.into());
+                outpoint_response.outpoint = MessageField::some(crate::view::core_outpoint_to_proto(&outpoint));
+                
+                // Get output information
+                if let Ok(decoded_output) = proto::protorune::Output::parse_from_bytes(
+                    &tables::OUTPOINT_TO_OUTPUT
+                        .select(&outpoint_bytes)
+                        .get()
+                        .as_ref(),
+                ) {
+                    outpoint_response.output = MessageField::some(decoded_output);
+                }
+                
+                // Get height and txindex
+                let height: u128 = tables::RUNES
+                    .OUTPOINT_TO_HEIGHT
+                    .select(&outpoint_bytes)
+                    .get_value::<u64>()
+                    .into();
+                
+                let txindex: u128 = match tables::RUNES
+                    .HEIGHT_TO_TRANSACTION_IDS
+                    .select_value::<u64>(height as u64)
+                    .get_list()
+                    .into_iter()
+                    .position(|v| v.as_ref().to_vec() == outpoint.txid.as_byte_array().to_vec())
+                {
+                    Some(pos) => pos as u128,
+                    None => 0,
+                };
+                
+                outpoint_response.height = height as u32;
+                outpoint_response.txindex = txindex as u32;
+                
+                wallet_response.outpoints.push(outpoint_response);
+            }
+        }
+    }
+    
+    // Serialize the wallet response to bytes
+    let serialized = wallet_response.write_to_bytes()?;
+    
+    // Store the serialized wallet response in the new table
+    atomic
+        .derive(&tables::ADDRESS_TO_PROTORUNES.select(address))
+        .set(Arc::new(serialized));
+    
+    Ok(())
+}
+
+// TODO: these library functions could move to support modules (ie protorune-support)
 // TODO: these library functions could move to support modules (ie protorune-support)
 
 pub fn default_output(tx: &Transaction) -> u32 {
@@ -299,7 +394,7 @@ impl Protorune {
             let transfer_targets =
                 handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx);
 
-            transfer_targets.iter().try_for_each(|(vout, amount)| {
+            transfer_targets.iter().try_for_each(|(vout, amount)| -> anyhow::Result<()> {
                 Self::update_balances_for_edict(
                     balances_by_output,
                     balances,
@@ -575,6 +670,9 @@ impl Protorune {
     }
 
     pub fn index_unspendables<T: MessageContext>(block: &Block, height: u64) -> Result<()> {
+        // Create a set to track dirty addresses
+        let mut dirty_addresses = HashSet::new();
+        
         for (index, tx) in block.txdata.iter().enumerate() {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
                 let mut atomic = AtomicPointer::default();
@@ -598,14 +696,35 @@ impl Protorune {
                 };
             }
             for input in &tx.input {
-                //all inputs must be used up, even in cenotaphs
-                let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key));
+                // Get the address associated with this input
+                let outpoint_bytes = consensus_encode(&input.previous_output)?;
+                let address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+                
+                // Add address to dirty set
+                dirty_addresses.insert(address.as_ref().clone());
+                
+                // Clear the balance for this outpoint
+                clear_balances(&mut tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
             }
         }
+        
+        // Process dirty addresses for all known protocol tags
+        let protocol_tags = get_all_protocol_tags();
+        let mut atomic = AtomicPointer::default();
+        
+        for address in dirty_addresses {
+            for protocol_tag in &protocol_tags {
+                update_address_protorunes(&mut atomic, &address, *protocol_tag)?;
+            }
+        }
+        
+        atomic.commit();
         Ok(())
     }
     pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<()> {
+        // Create a set to track dirty addresses
+        let mut dirty_addresses = HashSet::new();
+        
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
             tables::RUNES
@@ -621,6 +740,10 @@ impl Protorune {
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
                     let address = to_address_str(output_script_pubkey).unwrap().into_bytes();
+                    
+                    // Add address to dirty set
+                    dirty_addresses.insert(address.clone());
+                    
                     tables::OUTPOINTS_FOR_ADDRESS
                         .select(&address.clone())
                         .append(Arc::new(outpoint_bytes.clone()));
@@ -630,6 +753,18 @@ impl Protorune {
                 }
             }
         }
+        
+        // Process dirty addresses for all known protocol tags
+        let protocol_tags = get_all_protocol_tags();
+        let mut atomic = AtomicPointer::default();
+        
+        for address in dirty_addresses {
+            for protocol_tag in &protocol_tags {
+                update_address_protorunes(&mut atomic, &address, *protocol_tag)?;
+            }
+        }
+        
+        atomic.commit();
         Ok(())
     }
 

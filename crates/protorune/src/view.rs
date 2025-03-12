@@ -224,8 +224,17 @@ pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
 }
 
 pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
-    let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input).ok() {
+        // Try to get the pre-computed wallet response for this address
+        let cached_response = tables::ADDRESS_TO_PROTORUNES.select(&req.wallet).get();
+        
+        if !cached_response.is_empty() {
+            // Parse the cached response
+            return WalletResponse::parse_from_bytes(&cached_response).map_err(|e| anyhow!("{:?}", e));
+        }
+        
+        // Fall back to the original implementation if no cached data is available
+        let mut result: WalletResponse = WalletResponse::new();
         result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
             .select(&req.wallet)
             .get_list()
@@ -254,8 +263,11 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
                 }
             })
             .collect::<Result<Vec<OutpointResponse>>>()?;
+        
+        return Ok(result);
     }
-    Ok(result)
+    
+    Ok(WalletResponse::new())
 }
 
 pub fn runes_by_height(input: &Vec<u8>) -> Result<RunesResponse> {
