@@ -36,7 +36,11 @@ fn extract_method_attr(attrs: &[Attribute]) -> String {
 }
 
 /// Extracts the param_names attribute from a variant's attributes
-fn extract_param_names_attr(attrs: &[Attribute]) -> Option<Vec<String>> {
+fn extract_param_names_attr(
+    attrs: &[Attribute],
+    expected_count: usize,
+    variant_name: &str,
+) -> Option<Vec<String>> {
     for attr in attrs {
         if attr.path.is_ident("param_names") {
             if let Ok(Meta::List(meta_list)) = attr.parse_meta() {
@@ -53,6 +57,16 @@ fn extract_param_names_attr(attrs: &[Attribute]) -> Option<Vec<String>> {
                     .collect::<Vec<_>>();
 
                 if !param_names.is_empty() {
+                    // Validate that the number of parameter names matches the expected count
+                    if param_names.len() != expected_count {
+                        panic!(
+                            "Number of parameter names ({}) in #[param_names] for variant {} does not match the number of fields ({})",
+                            param_names.len(),
+                            variant_name,
+                            expected_count
+                        );
+                    }
+
                     return Some(param_names);
                 }
             }
@@ -161,6 +175,7 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
     let mut first = true;
 
     for variant in variants.iter() {
+        let variant_name = &variant.ident;
         let method_name = extract_method_attr(&variant.attrs);
         let opcode = extract_opcode_attr(&variant.attrs);
 
@@ -171,8 +186,9 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
             _ => panic!("Named fields are not supported"),
         };
 
-        // Get parameter names if provided
-        let param_names_opt = extract_param_names_attr(&variant.attrs);
+        // Get parameter names if provided, with validation
+        let param_names_opt =
+            extract_param_names_attr(&variant.attrs, field_count, &variant_name.to_string());
 
         // Generate parameter JSON
         let mut params_json = String::new();
