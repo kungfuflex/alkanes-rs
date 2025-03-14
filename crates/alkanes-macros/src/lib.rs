@@ -34,6 +34,46 @@ fn extract_method_attr(attrs: &[Attribute]) -> String {
     panic!("Missing or invalid #[method(\"name\")] attribute");
 }
 
+/// Extracts the param_names attribute from a variant's attributes
+fn extract_param_names_attr(
+    attrs: &[Attribute],
+    expected_count: usize,
+    variant_name: &str,
+) -> Option<Vec<String>> {
+    for attr in attrs {
+        if attr.path.is_ident("param_names") {
+            if let Ok(Meta::List(meta_list)) = attr.parse_meta() {
+                let param_names = meta_list
+                    .nested
+                    .iter()
+                    .filter_map(|nested_meta| {
+                        if let NestedMeta::Lit(Lit::Str(lit_str)) = nested_meta {
+                            Some(lit_str.value())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                if !param_names.is_empty() {
+                    // Validate that the number of parameter names matches the expected count
+                    if param_names.len() != expected_count {
+                        panic!(
+                            "Number of parameter names ({}) in #[param_names] for variant {} does not match the number of fields ({})",
+                            param_names.len(),
+                            variant_name,
+                            expected_count
+                        );
+                    }
+
+                    return Some(param_names);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Derive macro for MessageDispatch trait
 #[proc_macro_derive(MessageDispatch, attributes(opcode, method))]
 pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
@@ -132,6 +172,7 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
     let mut first = true;
 
     for variant in variants.iter() {
+        let variant_name = &variant.ident;
         let method_name = extract_method_attr(&variant.attrs);
         let opcode = extract_opcode_attr(&variant.attrs);
 
@@ -142,9 +183,35 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
             _ => panic!("Named fields are not supported"),
         };
 
-        // Generate parameter types as a simple array
-        let params_types = if field_count == 0 {
-            "[]".to_string()
+        // Get parameter names if provided, with validation
+        let param_names_opt =
+            extract_param_names_attr(&variant.attrs, field_count, &variant_name.to_string());
+
+        // Generate parameter JSON
+        let mut params_json = String::new();
+        if field_count > 0 {
+            params_json.push_str("[");
+            for i in 0..field_count {
+                if i > 0 {
+                    params_json.push_str(", ");
+                }
+
+                let param_name = if let Some(ref names) = param_names_opt {
+                    if i < names.len() {
+                        names[i].clone()
+                    } else {
+                        format!("param{}", i)
+                    }
+                } else {
+                    format!("param{}", i)
+                };
+
+                params_json.push_str(&format!(
+                    "{{ \"type\": \"u128\", \"name\": \"{}\" }}",
+                    param_name
+                ));
+            }
+            params_json.push_str("]");
         } else {
             let mut types = Vec::new();
             for _ in 0..field_count {
