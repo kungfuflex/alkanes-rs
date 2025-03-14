@@ -1,6 +1,6 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::set_view_mode;
-use crate::tables::{TRACES, TRACES_BY_HEIGHT};
+use crate::tables::{BLOCK_TRACES, BLOCK_TRACES_CACHE, TRACES, TRACES_BY_HEIGHT};
 use crate::utils::{
     alkane_inventory_pointer, balance_pointer, credit_balances, debit_balances, pipe_storagemap_to,
 };
@@ -329,8 +329,29 @@ pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryR
 }
 
 pub fn traceblock(height: u32) -> Result<Vec<u8>> {
+    use crate::tables::{BLOCK_TRACES, BLOCK_TRACES_CACHE};
+    
+    // First check if we have the data in the persistent storage
+    let height_u64 = height as u64;
+    
+    // Try to get data from the persistent BLOCK_TRACES table
+    let pointer = BLOCK_TRACES.select_value::<u64>(height_u64);
+    // We'll use the get() method which returns Arc<Vec<u8>> and check if it's empty or not
+    let stored_data = pointer.get();
+    if !stored_data.as_ref().is_empty() {
+        return Ok(stored_data.as_ref().clone());
+    }
+    
+    // Then check if we have a cached version (fallback)
+    if let Some(cached_bytes) = BLOCK_TRACES_CACHE.read().unwrap().get(&height_u64) {
+        return Ok(cached_bytes.clone());
+    }
+    
+    // If not found in storage or cache, rebuild it (fallback - this shouldn't happen if indexer is working correctly)
+    println!("Warning: BlockTrace for height {} not found in storage or cache, rebuilding...", height);
+    
     let mut block_events: Vec<proto::alkanes::AlkanesBlockEvent> = vec![];
-    for outpoint in TRACES_BY_HEIGHT.select_value(height as u64).get_list() {
+    for outpoint in TRACES_BY_HEIGHT.select_value(height_u64).get_list() {
         let op = outpoint.clone().to_vec();
         let outpoint_decoded = consensus_decode::<OutPoint>(&mut Cursor::new(op))?;
         let txid = outpoint_decoded.txid.as_byte_array().to_vec();
@@ -355,7 +376,16 @@ pub fn traceblock(height: u32) -> Result<Vec<u8>> {
         ..Default::default()
     };
 
-    result.write_to_bytes().map_err(|e| anyhow!("{:?}", e))
+    // Serialize the result
+    let serialized = result.write_to_bytes().map_err(|e| anyhow!("{:?}", e))?;
+    
+    // Store in cache for future use
+    BLOCK_TRACES_CACHE.write().unwrap().insert(height_u64, serialized.clone());
+    
+    // Also store in persistent storage
+    BLOCK_TRACES.select_value::<u64>(height_u64).set(Arc::new(serialized.clone()));
+    
+    Ok(serialized)
 }
 
 pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
