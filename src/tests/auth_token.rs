@@ -10,6 +10,8 @@ use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
 use crate::tests::std::alkanes_std_owned_token_build;
 use alkane_helpers::clear;
+use alkanes::view;
+use bitcoin::Witness;
 #[allow(unused_imports)]
 use metashrew::{
     println,
@@ -212,6 +214,136 @@ fn test_auth_and_owned_token() -> Result<()> {
     let _ = assert_binary_deployed_to_id(
         auth_token_id_deployment.clone(),
         alkanes_std_auth_token_build::get_bytes(),
+    );
+
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_owned_token_set_name_and_symbol() -> Result<()> {
+    clear();
+    let block_height = 840_000;
+
+    // Initialize the OwnedToken contract
+    let auth_cellpack = Cellpack {
+        target: AlkaneId {
+            block: 3,
+            tx: AUTH_TOKEN_FACTORY_ID,
+        },
+        inputs: vec![100],
+    };
+
+    // Initialize the OwnedToken with auth token and token units
+    let init_cellpack = Cellpack {
+        target: AlkaneId { block: 1, tx: 0 },
+        inputs: vec![
+            0,    /* opcode (to init new auth token) */
+            1,    /* auth_token units */
+            1000, /* owned_token token_units */
+        ],
+    };
+
+    // Create a cellpack to set the name and symbol
+    // For the set_name_and_symbol method (opcode 88)
+    // The format for string parameters is now null-terminated strings
+
+    // For a long name that spans multiple u128s
+    // "SuperLongCustomTokenNameThatSpansMultipleU128Values" (49 characters)
+    let name_data1 = u128::from_le_bytes(*b"SuperLongCustomT");
+    let name_data2 = u128::from_le_bytes(*b"okenNameThatSpan");
+    let name_data3 = u128::from_le_bytes(*b"nsMultipleU128Va");
+    let name_data4 = u128::from_le_bytes(*b"alues\0\0\0\0\0\0\0\0\0\0\0");
+
+    // For "SLCT" symbol (4 characters)
+    let symbol_data = u128::from_le_bytes(*b"SLCT\0\0\0\0\0\0\0\0\0\0\0\0");
+
+    let set_name_symbol_cellpack = Cellpack {
+        target: AlkaneId { block: 2, tx: 1 }, // This will be the OwnedToken ID
+        inputs: vec![
+            88,          // opcode for set_name_and_symbol
+            name_data1,  // first part of the name
+            name_data2,  // second part of the name
+            name_data3,  // third part of the name
+            name_data4,  // fourth part of the name with null terminator
+            symbol_data, // null-terminated symbol data
+        ],
+    };
+
+    // Create a cellpack to get the name
+    let get_name_cellpack = Cellpack {
+        target: AlkaneId { block: 2, tx: 1 }, // OwnedToken ID
+        inputs: vec![99],                     // opcode for get_name
+    };
+
+    // Create a cellpack to get the symbol
+    let get_symbol_cellpack = Cellpack {
+        target: AlkaneId { block: 2, tx: 1 }, // OwnedToken ID
+        inputs: vec![100],                    // opcode for get_symbol
+    };
+
+    // Initialize the contracts and execute the cellpacks
+    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        [
+            alkanes_std_auth_token_build::get_bytes(),
+            alkanes_std_owned_token_build::get_bytes(),
+        ]
+        .into(),
+        [auth_cellpack, init_cellpack].into(),
+    );
+
+    test_block.txdata.push(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![
+                set_name_symbol_cellpack,
+                get_name_cellpack,
+                get_symbol_cellpack,
+            ],
+            OutPoint {
+                txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
+                vout: 0,
+            },
+            false,
+        ),
+    );
+
+    index_block(&test_block, block_height)?;
+
+    // Get the OwnedToken ID
+    let owned_token_id = AlkaneId { block: 2, tx: 1 };
+
+    // Verify the binary was deployed correctly
+    let _ = assert_binary_deployed_to_id(
+        owned_token_id.clone(),
+        alkanes_std_owned_token_build::get_bytes(),
+    );
+
+    // Get the trace data from the transaction
+    let outpoint = OutPoint {
+        txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
+        vout: 3,
+    };
+
+    let trace_data = view::trace(&outpoint)?;
+
+    // Convert trace data to string for easier searching
+    let trace_str = String::from_utf8_lossy(&trace_data);
+
+    println!("trace {:?}", trace_str);
+
+    let expected_name = "SuperLongCustomTokenNameThatSpannsMultipleU128Vaalues";
+    let expected_symbol = "SLCT";
+
+    // Check if the trace data contains the expected name
+    assert!(
+        trace_str.contains(expected_name),
+        "Trace data should contain the name '{}', but it doesn't",
+        expected_name
+    );
+    assert!(
+        trace_str.contains(expected_symbol),
+        "Trace data should contain the symbol '{}', but it doesn't",
+        expected_symbol
     );
 
     Ok(())

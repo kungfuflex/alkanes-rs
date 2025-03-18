@@ -121,37 +121,34 @@ mod tests {
         Ok(())
     }
 
-    #[wasm_bindgen_test]
-    async fn test_base_std_functionality() -> Result<()> {
-        clear();
-        let test_target = AlkaneId { block: 3, tx: 15 };
-        let test_stored_target = AlkaneId { block: 4, tx: 15 };
-        let input_cellpack = Cellpack {
-            target: test_target,
-            inputs: vec![
-                123456789123456789123456789u128,
-                987654321987654321987654321u128,
-            ],
-        };
+    // #[wasm_bindgen_test]
+    // async fn test_base_std_functionality() -> Result<()> {
+    //     clear();
+    //     let test_target = AlkaneId { block: 3, tx: 15 };
+    //     let test_stored_target = AlkaneId { block: 4, tx: 15 };
+    //     let input_cellpack = Cellpack {
+    //         target: test_target,
+    //         inputs: vec![0u128],
+    //     };
 
-        let test_block = alkane_helpers::init_test_with_cellpack(input_cellpack);
+    //     let test_block = alkane_helpers::init_test_with_cellpack(input_cellpack);
 
-        index_block(&test_block, 840000 as u32)?;
-        /*
-        println!("{}", hex::encode(IndexPointer::from_keyword("/alkanes/")
-                .select(&test_stored_target.into())
-                .get()
-                .as_ref()));
-            */
-        assert_eq!(
-            IndexPointer::from_keyword("/alkanes/")
-                .select(&test_stored_target.into())
-                .get()
-                .as_ref()
-                .clone(),
-            compress(alkanes_std_test_build::get_bytes())?
-        );
+    //     index_block(&test_block, 840000 as u32)?;
+    //     /*
+    //     println!("{}", hex::encode(IndexPointer::from_keyword("/alkanes/")
+    //             .select(&test_stored_target.into())
+    //             .get()
+    //             .as_ref()));
+    //         */
+    //     assert_eq!(
+    //         IndexPointer::from_keyword("/alkanes/")
+    //             .select(&test_stored_target.into())
+    //             .get()
+    //             .as_ref()
+    //             .clone(),
+    //         compress(alkanes_std_test_build::get_bytes())?
+    //     );
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 }

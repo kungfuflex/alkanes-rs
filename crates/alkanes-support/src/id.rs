@@ -1,6 +1,7 @@
 use anyhow::Result;
 use metashrew_support::utils::consume_sized_int;
 use protorune_support::balance_sheet::ProtoruneRuneId;
+use std::hash::{Hash, Hasher};
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AlkaneId {
@@ -114,5 +115,13 @@ impl From<&AlkaneId> for Vec<u8> {
         bytes.extend(&rune_id.block.to_le_bytes());
         bytes.extend(&rune_id.tx.to_le_bytes());
         bytes
+    }
+}
+
+// Implement Hash trait for AlkaneId
+impl Hash for AlkaneId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.block.hash(state);
+        self.tx.hash(state);
     }
 }

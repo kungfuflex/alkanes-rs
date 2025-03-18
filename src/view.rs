@@ -31,10 +31,15 @@ use protorune_support::balance_sheet::BalanceSheet;
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::{consensus_decode, decode_varint_list};
+use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::fmt::Write;
 use std::io::Cursor;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
+
+pub fn parcels_from_protobuf(v: proto::alkanes::MultiSimulateRequest) -> Vec<MessageContextParcel> {
+    v.parcels.into_iter().map(parcel_from_protobuf).collect()
+}
 
 pub fn parcel_from_protobuf(v: proto::alkanes::MessageContextParcel) -> MessageContextParcel {
     let mut result = MessageContextParcel::default();
@@ -118,10 +123,11 @@ pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> R
         })
         .collect();
 
-    let (results, _) = multi_simulate(&calldata, fuel)?;
+    let results = multi_simulate(&calldata, fuel);
     let mut response: Vec<u8> = vec![];
 
     for result in results {
+        let (result, gas_used) = result.unwrap();
         response.extend_from_slice(&result.data.len().to_le_bytes());
         response.extend_from_slice(&result.data)
     }
@@ -133,7 +139,19 @@ pub const STATIC_FUEL: u64 = 100_000;
 pub const NAME_OPCODE: u128 = 99;
 pub const SYMBOL_OPCODE: u128 = 100;
 
+// Cache for storing name and symbol values for AlkaneIds
+static STATICS_CACHE: LazyLock<Mutex<HashMap<AlkaneId, (String, String)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 pub fn get_statics(id: &AlkaneId) -> (String, String) {
+    // Try to get from cache first
+    if let Ok(cache) = STATICS_CACHE.lock() {
+        if let Some(cached_values) = cache.get(id) {
+            return cached_values.clone();
+        }
+    }
+
+    // If not in cache, fetch the values
     let name = call_view(id, &vec![NAME_OPCODE], STATIC_FUEL)
         .and_then(|v| Ok(String::from_utf8(v)))
         .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
@@ -142,6 +160,12 @@ pub fn get_statics(id: &AlkaneId) -> (String, String) {
         .and_then(|v| Ok(String::from_utf8(v)))
         .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
         .unwrap();
+
+    // Store in cache
+    if let Ok(mut cache) = STATICS_CACHE.lock() {
+        cache.insert(id.clone(), (name.clone(), symbol.clone()));
+    }
+
     (name, symbol)
 }
 
@@ -239,7 +263,65 @@ pub fn protorunes_by_address(
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
     let request =
         protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input)?;
+    
+    #[cfg(feature = "cache")]
+    {
+        // Check if we have a cached response for this address
+        let cached_response = protorune::tables::CACHED_WALLET_RESPONSE.select(&request.wallet).get();
+        
+        if !cached_response.is_empty() {
+            // Use the cached response if available
+            match protorune_support::proto::protorune::WalletResponse::parse_from_bytes(&cached_response) {
+                Ok(response) => {
+                    return Ok(response);
+                },
+                Err(e) => {
+                    println!("Error parsing cached wallet response: {:?}", e);
+                    // Fall back to computing the response if parsing fails
+                }
+            }
+        }
+    }
+    
+    // If no cached response or parsing failed, compute it
     view::protorunes_by_address(input).and_then(|mut response| {
+        if into_u128(request.protocol_tag.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
+        {
+            response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
+        }
+        Ok(response)
+    })
+}
+
+pub fn protorunes_by_address2(
+    input: &Vec<u8>,
+) -> Result<protorune_support::proto::protorune::WalletResponse> {
+    let request =
+        protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input)?;
+    
+    #[cfg(feature = "cache")]
+    {
+        // Check if we have a cached response for this address
+        let cached_response = protorune::tables::CACHED_WALLET_RESPONSE.select(&request.wallet).get();
+        
+        if !cached_response.is_empty() {
+            // Use the cached response if available
+            match protorune_support::proto::protorune::WalletResponse::parse_from_bytes(&cached_response) {
+                Ok(response) => {
+                    return Ok(response);
+                },
+                Err(e) => {
+                    println!("Error parsing cached wallet response: {:?}", e);
+                    // Fall back to computing the response if parsing fails
+                }
+            }
+        }
+    }
+    
+    // If no cached response or parsing failed, compute it
+    view::protorunes_by_address2(input).and_then(|mut response| {
         if into_u128(request.protocol_tag.unwrap_or_else(|| {
             <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
         })) == AlkaneMessageContext::protocol_tag()
@@ -369,14 +451,36 @@ pub fn simulate_parcel(
 pub fn multi_simulate(
     parcels: &[MessageContextParcel],
     fuel: u64,
-) -> Result<(Vec<ExtendedCallResponse>, u64)> {
-    let mut gas = 0;
-    let mut responses: Vec<ExtendedCallResponse> = vec![];
+) -> Vec<(Result<(ExtendedCallResponse, u64)>)> {
+    let mut responses: Vec<(Result<(ExtendedCallResponse, u64)>)> = vec![];
     for parcel in parcels {
-        let (response, gas_used) = simulate_parcel(parcel, fuel)?;
-        gas += gas_used;
-        responses.push(response);
+        responses.push(simulate_parcel(parcel, fuel));
     }
+    responses
+}
 
-    Ok((responses, gas))
+pub fn multi_simulate_safe(
+    parcels: &[MessageContextParcel],
+    fuel: u64,
+) -> Vec<(Result<(ExtendedCallResponse, u64)>)> {
+    set_view_mode();
+    multi_simulate(parcels, fuel)
+}
+
+pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
+    let request = alkanes_support::proto::alkanes::BytecodeRequest::parse_from_bytes(input)?;
+    let alkane_id = request.id.unwrap();
+    let alkane_id = crate::utils::from_protobuf(alkane_id);
+    
+    // Get the bytecode from the storage
+    let bytecode = metashrew::index_pointer::IndexPointer::from_keyword("/alkanes/")
+        .select(&alkane_id.into())
+        .get();
+    
+    // Return the uncompressed bytecode
+    if bytecode.len() > 0 {
+        Ok(alkanes_support::gz::decompress(bytecode.to_vec())?)
+    } else {
+        Err(anyhow!("No bytecode found for the given AlkaneId"))
+    }
 }

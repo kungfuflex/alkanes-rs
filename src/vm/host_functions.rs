@@ -13,7 +13,7 @@ use alkanes_support::{
     trace::{TraceContext, TraceEvent, TraceResponse},
     utils::overflow_error,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use metashrew::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew::{
@@ -23,7 +23,7 @@ use metashrew::{
 use metashrew_support::index_pointer::KeyValuePointer;
 
 use crate::vm::fuel::{
-    consume_fuel, Fuelable, FUEL_BALANCE, FUEL_EXTCALL, FUEL_EXTCALL_DEPLOY, FUEL_FUEL,
+    consume_fuel, Fuelable, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_BALANCE, FUEL_EXTCALL, FUEL_EXTCALL_DEPLOY, FUEL_FUEL,
     FUEL_HEIGHT, FUEL_PER_LOAD_BYTE, FUEL_PER_REQUEST_BYTE, FUEL_PER_STORE_BYTE, FUEL_SEQUENCE,
 };
 use protorune_support::utils::consensus_encode;
@@ -88,10 +88,12 @@ impl AlkanesHostFunctionsImpl {
                 .try_into()?;
             ((result as u64) + (key.len() as u64), result)
         };
-        consume_fuel(
-            caller,
-            overflow_error((bytes_processed as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?,
-        )?;
+        
+        let fuel_cost = overflow_error((bytes_processed as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?;
+        println!("request_storage: key_size={} bytes, result_size={} bytes, fuel_cost={}",
+            bytes_processed - (result as u64), result, fuel_cost);
+            
+        consume_fuel(caller, fuel_cost)?;
         Ok(result)
     }
     pub(super) fn load_storage<'a>(
@@ -119,10 +121,12 @@ impl AlkanesHostFunctionsImpl {
             };
             (key.len() + value.len(), value)
         };
-        consume_fuel(
-            caller,
-            overflow_error((bytes_processed as u64).checked_mul(FUEL_PER_LOAD_BYTE))?,
-        )?;
+        
+        let fuel_cost = overflow_error((bytes_processed as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
+        println!("load_storage: key_size={} bytes, value_size={} bytes, total_size={} bytes, fuel_cost={}",
+            bytes_processed - value.len(), value.len(), bytes_processed, fuel_cost);
+            
+        consume_fuel(caller, fuel_cost)?;
 
         Self::restore_context(caller);
         send_to_arraybuffer(caller, v.try_into()?, value.as_ref())
@@ -138,10 +142,12 @@ impl AlkanesHostFunctionsImpl {
             .serialize()
             .len()
             .try_into()?;
-        consume_fuel(
-            caller,
-            overflow_error((result as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?,
-        )?;
+            
+        let fuel_cost = overflow_error((result as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?;
+        println!("request_context: context_size={} bytes, fuel_cost={}",
+            result, fuel_cost);
+            
+        consume_fuel(caller, fuel_cost)?;
 
         Self::restore_context(caller);
         Ok(result)
@@ -150,16 +156,18 @@ impl AlkanesHostFunctionsImpl {
         Self::preserve_context(caller);
 
         let result: Vec<u8> = caller.data_mut().context.lock().unwrap().serialize();
-        consume_fuel(
-            caller,
-            overflow_error((result.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?,
-        )?;
+        
+        let fuel_cost = overflow_error((result.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
+        println!("load_context: context_size={} bytes, fuel_cost={}",
+            result.len(), fuel_cost);
+            
+        consume_fuel(caller, fuel_cost)?;
 
         Self::restore_context(caller);
         send_to_arraybuffer(caller, v.try_into()?, &result)
     }
     pub(super) fn request_transaction(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
-        let result: i32 = consensus_encode(
+        let tx_data = consensus_encode(
             &caller
                 .data_mut()
                 .context
@@ -167,13 +175,17 @@ impl AlkanesHostFunctionsImpl {
                 .unwrap()
                 .message
                 .transaction,
-        )?
-        .len()
-        .try_into()?;
-        consume_fuel(
-            caller,
-            overflow_error((result as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?,
         )?;
+        let result: i32 = tx_data.len().try_into()?;
+        
+        // Use a small fixed cost for requesting transaction size
+        // This is just getting the size, not loading the full transaction
+        let request_fuel = std::cmp::min(50, FUEL_LOAD_TRANSACTION / 10);
+        consume_fuel(caller, request_fuel)?;
+        
+        println!("Requesting transaction size: {} bytes, fuel cost={} (fixed)",
+            result, request_fuel);
+            
         Ok(result)
     }
     /*
@@ -214,10 +226,12 @@ impl AlkanesHostFunctionsImpl {
         Self::preserve_context(caller);
 
         let returndata: Vec<u8> = caller.data_mut().context.lock().unwrap().returndata.clone();
-        consume_fuel(
-            caller,
-            overflow_error((returndata.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?,
-        )?;
+        
+        let fuel_cost = overflow_error((returndata.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
+        println!("returndatacopy: data_size={} bytes, fuel_cost={}",
+            returndata.len(), fuel_cost);
+            
+        consume_fuel(caller, fuel_cost)?;
 
         Self::restore_context(caller);
         send_to_arraybuffer(caller, output.try_into()?, &returndata)?;
@@ -233,23 +247,30 @@ impl AlkanesHostFunctionsImpl {
                 .message
                 .transaction,
         )?;
-        consume_fuel(
-            caller,
-            overflow_error((transaction.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?,
-        )?;
+        
+        // Use fixed fuel cost instead of scaling with transaction size
+        consume_fuel(caller, FUEL_LOAD_TRANSACTION)?;
+        
+        // Log transaction size and fuel cost
+        println!("Loading transaction: size={} bytes, fuel cost={} (fixed)",
+            transaction.len(), FUEL_LOAD_TRANSACTION);
+            
         send_to_arraybuffer(caller, v.try_into()?, &transaction)?;
         Ok(())
     }
     pub(super) fn request_block(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
         Self::preserve_context(caller);
 
-        let len: i32 = consensus_encode(&caller.data_mut().context.lock().unwrap().message.block)?
-            .len()
-            .try_into()?;
-        consume_fuel(
-            caller,
-            overflow_error((len as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?,
-        )?;
+        let block_data = consensus_encode(&caller.data_mut().context.lock().unwrap().message.block)?;
+        let len: i32 = block_data.len().try_into()?;
+        
+        // Use a small fixed cost for requesting block size
+        // This is just getting the size, not loading the full block
+        let request_fuel = std::cmp::min(100, FUEL_LOAD_BLOCK / 10);
+        consume_fuel(caller, request_fuel)?;
+        
+        println!("Requesting block size: {} bytes, fuel cost={} (fixed)",
+            len, request_fuel);
 
         Self::restore_context(caller);
         Ok(len)
@@ -259,10 +280,13 @@ impl AlkanesHostFunctionsImpl {
 
         let block: Vec<u8> =
             consensus_encode(&caller.data_mut().context.lock().unwrap().message.block)?;
-        consume_fuel(
-            caller,
-            overflow_error((block.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?,
-        )?;
+            
+        // Use fixed fuel cost instead of scaling with block size
+        consume_fuel(caller, FUEL_LOAD_BLOCK)?;
+        
+        // Log block size and fuel cost
+        println!("Loading block: size={} bytes, fuel cost={} (fixed)",
+            block.len(), FUEL_LOAD_BLOCK);
 
         Self::restore_context(caller);
         send_to_arraybuffer(caller, v.try_into()?, &block)?;
@@ -274,27 +298,38 @@ impl AlkanesHostFunctionsImpl {
                 .get_value::<u128>()
                 .to_le_bytes())
                 .to_vec();
+                
+        println!("sequence: fuel_cost={}", FUEL_SEQUENCE);
         consume_fuel(caller, FUEL_SEQUENCE)?;
+        
         send_to_arraybuffer(caller, output.try_into()?, &buffer)?;
         Ok(())
     }
     pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
-        let buffer: Vec<u8> = (&caller.get_fuel().unwrap().to_le_bytes()).to_vec();
+        let remaining_fuel = caller.get_fuel().unwrap();
+        let buffer: Vec<u8> = (&remaining_fuel.to_le_bytes()).to_vec();
+        
+        println!("fuel: remaining_fuel={}, fuel_cost={}",
+            remaining_fuel, FUEL_FUEL);
         consume_fuel(caller, FUEL_FUEL)?;
+        
         send_to_arraybuffer(caller, output.try_into()?, &buffer)?;
         Ok(())
     }
     pub(super) fn height(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
-        let height = (&caller
+        let height_value = caller
             .data_mut()
             .context
             .lock()
             .unwrap()
             .message
-            .height
-            .to_le_bytes())
-            .to_vec();
+            .height;
+        let height = (&height_value.to_le_bytes()).to_vec();
+        
+        println!("height: block_height={}, fuel_cost={}",
+            height_value, FUEL_HEIGHT);
         consume_fuel(caller, FUEL_HEIGHT)?;
+        
         send_to_arraybuffer(caller, output.try_into()?, &height)?;
         Ok(())
     }
@@ -320,7 +355,11 @@ impl AlkanesHostFunctionsImpl {
         .get()
         .as_ref()
         .clone();
+        
+        println!("balance: who=[{},{}], what=[{},{}], balance_size={} bytes, fuel_cost={}",
+            who.block, who.tx, what.block, what.tx, balance.len(), FUEL_BALANCE);
         consume_fuel(caller, FUEL_BALANCE)?;
+        
         send_to_arraybuffer(caller, output.try_into()?, &balance)?;
         Ok(())
     }
@@ -354,6 +393,7 @@ impl AlkanesHostFunctionsImpl {
 
         // Handle deployment fuel first
         if cellpack.target.is_deployment() {
+            println!("extcall: deployment detected, additional fuel_cost={}", FUEL_EXTCALL_DEPLOY);
             caller.consume_fuel(FUEL_EXTCALL_DEPLOY)?;
         }
 
@@ -414,12 +454,17 @@ impl AlkanesHostFunctionsImpl {
             (subbed, binary)
         };
 
-        consume_fuel(
-            caller,
-            overflow_error(FUEL_EXTCALL.checked_add(overflow_error(
-                FUEL_PER_STORE_BYTE.checked_mul(storage_map_len),
-            )?))?,
-        )?;
+        let base_fuel = FUEL_EXTCALL;
+        let storage_fuel = overflow_error(FUEL_PER_STORE_BYTE.checked_mul(storage_map_len))?;
+        let total_fuel = overflow_error(base_fuel.checked_add(storage_fuel))?;
+        
+        println!("extcall: target=[{},{}], inputs={}, storage_size={} bytes, base_fuel={}, storage_fuel={}, total_fuel={}, deployment={}",
+            cellpack.target.block, cellpack.target.tx,
+            cellpack.inputs.len(), storage_map_len,
+            base_fuel, storage_fuel, total_fuel,
+            cellpack.target.is_deployment());
+            
+        consume_fuel(caller, total_fuel)?;
 
         let mut trace_context: TraceContext = subcontext.flat().into();
         trace_context.fuel = start_fuel;

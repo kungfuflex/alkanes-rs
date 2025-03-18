@@ -13,6 +13,13 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::rune_transfer::RuneTransfer;
 use std::sync::Arc;
 
+pub fn from_protobuf(v: alkanes_support::proto::alkanes::AlkaneId) -> AlkaneId {
+    AlkaneId {
+        block: v.block.unwrap().into(),
+        tx: v.tx.unwrap().into(),
+    }
+}
+
 pub fn balance_pointer(
     atomic: &mut AtomicPointer,
     who: &AlkaneId,

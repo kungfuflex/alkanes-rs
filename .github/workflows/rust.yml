@@ -10,9 +10,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-config:
+          - name: "WASM Tests"
+            command: "cargo test --target wasm32-unknown-unknown --features test-utils"
+          - name: "Unit Tests"
+            command: "cargo test --target x86_64-unknown-linux-gnu --features test-utils"
+          - name: "Protorunes WASM Tests"
+            command: "cargo test -p protorune --features test-utils"
+          - name: "Protorune Unit Tests"
+            command: "cargo test -p protorune --target x86_64-unknown-linux-gnu"
+      fail-fast: false # Allows all tests to run even if one fails
 
+    name: ${{ matrix.test-config.name }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -21,11 +34,5 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Install test runner
         run: cargo install wasm-bindgen-cli --version 0.2.100
-      - name: Run wasm tests
-        run: cargo test --target wasm32-unknown-unknown --features test-utils
-      - name: Run unit tests
-        run: cargo test --target x86_64-unknown-linux-gnu  --features test-utils
-      - name: Run protorunes wasm tests
-        run: cargo test -p protorune --features test-utils
-      - name: Run protorune unit tests
-        run: cargo test -p protorune --target x86_64-unknown-linux-gnu
+      - name: ${{ matrix.test-config.name }}
+        run: ${{ matrix.test-config.command }}

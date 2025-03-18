@@ -216,18 +216,36 @@ pub fn run_after_special(
     binary: Arc<Vec<u8>>,
     start_fuel: u64,
 ) -> Result<(ExtendedCallResponse, u64)> {
+    // Log initial fuel allocation
+    println!("Starting WebAssembly execution with {} fuel units", start_fuel);
+    
     let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
     let response = instance.execute()?;
+    
+    let remaining_fuel = instance.store.get_fuel().unwrap();
     let storage_len = response.storage.serialize().len() as u64;
+    
+    // Log fuel usage details
+    println!("WebAssembly execution completed:");
+    println!("  - Initial fuel: {}", start_fuel);
+    println!("  - Remaining fuel: {}", remaining_fuel);
+    println!("  - Direct consumption: {}", start_fuel - remaining_fuel);
+    println!("  - Storage size: {} bytes", storage_len);
+    
+    let computed_storage_fuel = compute_extcall_fuel(storage_len).unwrap_or(0);
+    println!("  - Storage fuel cost: {}", computed_storage_fuel);
+    
     let fuel_used = overflow_error(
         start_fuel
-            .checked_sub(instance.store.get_fuel().unwrap())
+            .checked_sub(remaining_fuel)
             .and_then(|v: u64| -> Option<u64> {
                 let computed_fuel = compute_extcall_fuel(storage_len).ok()?;
                 let opt = v.checked_add(computed_fuel);
+                println!("  - Total fuel used: {}", opt.unwrap_or(u64::MAX));
                 opt
             }),
     )?;
+    
     Ok((response, fuel_used))
 }
 pub fn prepare_context(

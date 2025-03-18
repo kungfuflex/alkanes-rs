@@ -72,7 +72,7 @@ To run all tests in the monorepo
 
 ```
 # this might be necessary if running into: could not execute process `wasm-bindgen-test-runner...
-cargo install -f wasm-bindgen-cli --version 0.2.99
+cargo install -f wasm-bindgen-cli --version 0.2.100
 ```
 
 ```
@@ -101,7 +101,7 @@ This will provide a stub environment to test a METASHREW indexer program, and it
 
 Features are provided within the Cargo.toml at the root of the monorepo to declare alkanes which should be built with `cargo build` or `cargo test`.
 
-Unit testing
+### Unit testing
 
 - These are written inside the library rust code
 - Do not compile to wasm, instead unit test the native rust. Therefore, you need to find the correct target for your local machine to properly run these tests. Below are some common targets for some architectures:

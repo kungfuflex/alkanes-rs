@@ -1,9 +1,13 @@
 use alkanes_runtime::declare_alkane;
+use alkanes_runtime::message::MessageDispatch;
+#[allow(unused_imports)]
+use alkanes_runtime::{
+    println,
+    stdio::{stdout, Write},
+};
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
 use alkanes_support::utils::overflow_error;
-use alkanes_support::{
-    context::Context, parcel::AlkaneTransfer, response::CallResponse, utils::shift_or_err,
-};
+use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash;
 use bitcoin::Block;
@@ -17,6 +21,27 @@ use crate::chain::{ChainConfiguration, CONTEXT_HANDLE};
 
 #[derive(Default)]
 pub struct GenesisAlkane(());
+
+#[derive(MessageDispatch)]
+enum GenesisAlkaneMessage {
+    #[opcode(0)]
+    Initialize,
+
+    #[opcode(77)]
+    Mint,
+
+    #[opcode(99)]
+    #[returns(String)]
+    GetName,
+
+    #[opcode(100)]
+    #[returns(String)]
+    GetSymbol,
+
+    #[opcode(101)]
+    #[returns(u128)]
+    GetTotalSupply,
+}
 
 impl Token for GenesisAlkane {
     fn name(&self) -> String {
@@ -134,27 +159,34 @@ impl GenesisAlkane {
     fn block(&self) -> Result<Block> {
         Ok(AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(CONTEXT_HANDLE.block()))?.to_consensus())
     }
+
     pub fn seen_pointer(&self, hash: &Vec<u8>) -> StoragePointer {
         StoragePointer::from_keyword("/seen/").select(&hash)
     }
+
     pub fn hash(&self, block: &Block) -> Vec<u8> {
         block.block_hash().as_byte_array().to_vec()
     }
+
     pub fn total_supply_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/totalsupply")
     }
+
     pub fn total_supply(&self) -> u128 {
         self.total_supply_pointer().get_value::<u128>()
     }
+
     pub fn increase_total_supply(&self, v: u128) -> Result<()> {
         self.set_total_supply(overflow_error(self.total_supply().checked_add(v))?);
         Ok(())
     }
+
     pub fn set_total_supply(&self, v: u128) {
         self.total_supply_pointer().set_value::<u128>(v);
     }
-    pub fn observe_mint(&self, block: &Block) -> Result<()> {
-        let hash = self.hash(block);
+
+    pub fn observe_mint(&self) -> Result<()> {
+        let hash = self.height().to_le_bytes().to_vec();
         let mut pointer = self.seen_pointer(&hash);
         if pointer.get().len() == 0 {
             pointer.set_value::<u32>(1);
@@ -166,8 +198,11 @@ impl GenesisAlkane {
             )))
         }
     }
-    pub fn mint(&self, context: &Context) -> Result<AlkaneTransfer> {
-        self.observe_mint(&self.block()?)?;
+
+    // Helper method that creates a mint transfer
+    pub fn create_mint_transfer(&self) -> Result<AlkaneTransfer> {
+        let context = self.context()?;
+        self.observe_mint()?;
         let value = self.current_block_reward();
         let mut total_supply_pointer = self.total_supply_pointer();
         let total_supply = total_supply_pointer.get_value::<u128>();
@@ -180,8 +215,9 @@ impl GenesisAlkane {
             value,
         })
     }
+
     pub fn observe_initialization(&self) -> Result<()> {
-        self.observe_mint(&self.block()?)?;
+        self.observe_mint()?;
         let mut initialized_pointer = StoragePointer::from_keyword("/initialized");
         if initialized_pointer.get().len() == 0 {
             initialized_pointer.set_value::<u32>(1);
@@ -190,41 +226,74 @@ impl GenesisAlkane {
             Err(anyhow!("already initialized"))
         }
     }
-}
 
-impl AlkaneResponder for GenesisAlkane {
-    fn execute(&self) -> Result<CallResponse> {
+    fn initialize(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut inputs = context.inputs.clone();
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        match shift_or_err(&mut inputs)? {
-            0 => {
-                self.observe_initialization()?;
-                let premine = self.premine()?;
-                response.alkanes.0.push(AlkaneTransfer {
-                    id: context.myself.clone(),
-                    value: premine,
-                });
-                self.increase_total_supply(premine)?;
-            }
-            77 => {
-                response.alkanes.0.push(self.mint(&context)?);
-            }
-            99 => {
-                response.data = self.name().into_bytes().to_vec();
-            }
-            100 => {
-                response.data = self.symbol().into_bytes().to_vec();
-            }
-            101 => {
-                response.data = (&self.total_supply().to_le_bytes()).to_vec();
-            }
-            _ => {
-                return Err(anyhow!("unrecognized opcode"));
-            }
-        }
+
+        self.observe_initialization()?;
+        let premine = self.premine()?;
+        response.alkanes.0.push(AlkaneTransfer {
+            id: context.myself.clone(),
+            value: premine,
+        });
+        self.increase_total_supply(premine)?;
+
+        Ok(response)
+    }
+
+    // Method that matches the MessageDispatch enum
+    fn mint(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        response.alkanes.0.push(self.create_mint_transfer()?);
+
+        Ok(response)
+    }
+
+    fn get_name(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        response.data = self.name().into_bytes().to_vec();
+
+        Ok(response)
+    }
+
+    fn get_symbol(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        response.data = self.symbol().into_bytes().to_vec();
+
+        Ok(response)
+    }
+
+    fn get_total_supply(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        response.data = (&self.total_supply().to_le_bytes()).to_vec();
+
         Ok(response)
     }
 }
 
-declare_alkane! {GenesisAlkane}
+impl AlkaneResponder for GenesisAlkane {
+    fn execute(&self) -> Result<CallResponse> {
+        // The opcode extraction and dispatch logic is now handled by the declare_alkane macro
+        // This method is still required by the AlkaneResponder trait, but we can just return an error
+        // indicating that it should not be called directly
+        Err(anyhow!(
+            "This method should not be called directly. Use the declare_alkane macro instead."
+        ))
+    }
+}
+
+// Use the new macro format
+declare_alkane! {
+    impl AlkaneResponder for GenesisAlkane {
+        type Message = GenesisAlkaneMessage;
+    }
+}

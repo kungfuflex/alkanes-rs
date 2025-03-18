@@ -336,12 +336,24 @@ impl AlkanesInstance {
                 )
             },
         )?;
-        Ok(AlkanesInstance {
+        let mut alkanes_instance = AlkanesInstance {
             instance: linker
                 .instantiate(&mut store, &module)?
                 .ensure_no_start(&mut store)?,
             store,
-        })
+        };
+
+        let memory = alkanes_instance.get_memory()?;
+
+        let current_pages = memory.size(&alkanes_instance.store);
+
+        if current_pages < 512 {
+            memory
+                .grow(&mut alkanes_instance.store, 512 - current_pages)
+                .map_err(|e| anyhow::Error::new(e).context("Failed to grow memory"))?;
+        }
+
+        Ok(alkanes_instance)
     }
     pub fn reset(&mut self) {
         self.store.data_mut().had_failure = false;
@@ -384,5 +396,10 @@ impl AlkanesInstance {
             self.commit();
             Ok(call_response)
         }
+    }
+
+    pub fn call_meta(&mut self) -> Result<Vec<u8>> {
+        // Call the __meta function to get the ABI
+        AlkanesExportsImpl::call_meta(self)
     }
 }

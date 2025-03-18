@@ -38,12 +38,31 @@ pub struct AlkaneMessageContext(());
 pub fn handle_message(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
     let cellpack: Cellpack =
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
+    
+    // Log cellpack information at the beginning of transaction processing
+    println!("=== TRANSACTION CELLPACK INFO ===");
+    println!("Transaction index: {}", parcel.txindex);
+    println!("Target contract: [block={}, tx={}]", cellpack.target.block, cellpack.target.tx);
+    println!("Input count: {}", cellpack.inputs.len());
+    if !cellpack.inputs.is_empty() {
+        println!("First opcode: {}", cellpack.inputs[0]);
+        
+        // Print all inputs for detailed debugging
+        println!("All inputs: {:?}", cellpack.inputs);
+    }
+    println!("================================");
+    
     let target = cellpack.target.clone();
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
         parcel, &cellpack,
     )));
     let mut atomic = parcel.atomic.derive(&IndexPointer::default());
     let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
+    
+    // Log the resolved contract addresses
+    println!("Caller: [block={}, tx={}]", caller.block, caller.tx);
+    println!("Target resolved to: [block={}, tx={}]", myself.block, myself.tx);
+    
     credit_balances(&mut atomic, &myself, &parcel.runes);
     prepare_context(context.clone(), &caller, &myself, false);
     let txsize = parcel.transaction.vfsize() as u64;
@@ -95,6 +114,22 @@ pub fn handle_message(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer
             Ok((response_alkanes.into(), combined))
         })
         .or_else(|e| {
+            // Log detailed error information
+            println!("=== TRANSACTION ERROR ===");
+            println!("Transaction index: {}", parcel.txindex);
+            println!("Target contract: [block={}, tx={}]", cellpack.target.block, cellpack.target.tx);
+            println!("Resolved target: [block={}, tx={}]", myself.block, myself.tx);
+            println!("Error: {}", e);
+            
+            // If it's a fuel-related error, provide more context
+            if e.to_string().contains("fuel") || e.to_string().contains("gas") {
+                println!("This appears to be a fuel-related error.");
+                println!("Contract at [block={}, tx={}] with opcode {} consumed too much fuel.",
+                    myself.block, myself.tx,
+                    if !cellpack.inputs.is_empty() { cellpack.inputs[0].to_string() } else { "unknown".to_string() });
+            }
+            println!("========================");
+            
             FuelTank::drain_fuel();
             let mut response = ExtendedCallResponse::default();
 

@@ -60,4 +60,11 @@ impl AlkanesExportsImpl {
         )?))?;
         Ok(response)
     }
+
+    pub fn call_meta(vm: &mut AlkanesInstance) -> Result<Vec<u8>> {
+        let mut result = [Val::I32(0)];
+        let func = Self::_get_export(vm, "__meta")?;
+        func.call(&mut vm.store, &[], &mut result)?;
+        Self::_get_result(vm, &result)
+    }
 }

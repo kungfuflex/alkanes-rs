@@ -42,12 +42,18 @@ pub const CONTEXT: ContextHandle = ContextHandle(());
 
 pub trait MintableToken {
     fn name(&self) -> String {
-        String::from("OWNED")
+        String::from_utf8(self.name_pointer().get().as_ref().clone())
+            .expect("name not saved as utf-8, did this deployment revert?")
     }
     fn symbol(&self) -> String {
-        String::from("OWNED")
+        String::from_utf8(self.symbol_pointer().get().as_ref().clone())
+            .expect("symbol not saved as utf-8, did this deployment revert?")
     }
     fn set_name_and_symbol(&self, name: u128, symbol: u128) {
+        self.set_string_field_from_u128(self.name_pointer(), name);
+        self.set_string_field_from_u128(self.symbol_pointer(), symbol);
+    }
+    fn set_name_and_symbol_str(&self, name: String, symbol: String) {
         self.set_string_field(self.name_pointer(), name);
         self.set_string_field(self.symbol_pointer(), symbol);
     }
@@ -57,8 +63,11 @@ pub trait MintableToken {
     fn symbol_pointer(&self) -> StoragePointer {
         symbol_pointer()
     }
-    fn set_string_field(&self, mut pointer: StoragePointer, v: u128) {
+    fn set_string_field_from_u128(&self, mut pointer: StoragePointer, v: u128) {
         pointer.set(Arc::new(trim(v).as_bytes().to_vec()));
+    }
+    fn set_string_field(&self, mut pointer: StoragePointer, v: String) {
+        pointer.set(Arc::new(v.as_bytes().to_vec()));
     }
     fn total_supply_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/totalsupply")

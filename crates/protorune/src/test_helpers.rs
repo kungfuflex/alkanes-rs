@@ -506,6 +506,83 @@ pub fn create_block_with_txs(txdata: Vec<Transaction>) -> Block {
     Block { header, txdata }
 }
 
+/// Create a transaction with OP_RETURN in the middle (output index 1)
+/// Output 0: Normal output
+/// Output 1: OP_RETURN with runestone
+/// Output 2: Normal output
+pub fn create_transaction_with_middle_op_return(
+    previous_output: OutPoint,
+    protocol_id: u128,
+) -> Transaction {
+    let input_script = ScriptBuf::new();
+
+    // Create a transaction input
+    let txin = TxIn {
+        previous_output,
+        script_sig: input_script,
+        sequence: Sequence::MAX,
+        witness: Witness::new(),
+    };
+
+    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+    let script_pubkey = address.script_pubkey();
+
+    // Output 0: Normal output
+    let txout0 = TxOut {
+        value: Amount::from_sat(50_000_000),
+        script_pubkey: script_pubkey.clone(),
+    };
+
+    // Output 1: OP_RETURN with runestone
+    let runestone: ScriptBuf = (Runestone {
+        etching: Some(Etching {
+            divisibility: Some(2),
+            premine: Some(1000),
+            rune: Some(Rune::from_str("MIDDLERUNEOPRET").unwrap()),
+            spacers: Some(0),
+            symbol: Some(char::from_str("A").unwrap()),
+            turbo: true,
+            terms: None,
+        }),
+        pointer: Some(0), // Point to output 0 (before OP_RETURN)
+        edicts: Vec::new(),
+        mint: None,
+        protocol: match vec![Protostone {
+            burn: Some(protocol_id),
+            edicts: vec![],
+            pointer: Some(0), // Point to output 0 (before OP_RETURN)
+            refund: None,
+            from: None,
+            protocol_tag: protocol_id,
+            message: vec![],
+        }]
+        .encipher()
+        {
+            Ok(v) => Some(v),
+            Err(_) => None,
+        },
+    })
+    .encipher();
+
+    let op_return = TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: runestone,
+    };
+
+    // Output 2: Another normal output
+    let txout2 = TxOut {
+        value: Amount::from_sat(40_000_000),
+        script_pubkey: script_pubkey.clone(),
+    };
+
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![txin],
+        output: vec![txout0, op_return, txout2], // OP_RETURN in the middle
+    }
+}
+
 pub fn create_block_with_sample_tx() -> Block {
     return create_block_with_txs(vec![create_test_transaction()]);
 }
@@ -766,7 +843,7 @@ pub fn create_protostone_transaction(
         Some(Etching {
             divisibility: Some(2),
             premine: Some(1000),
-            rune: Some(Rune::from_str("TESTTESTTESTTEST").unwrap()),
+            rune: Some(Rune::from_str("ENDRUNEOPRETURN").unwrap()),
             spacers: Some(0),
             symbol: Some(char::from_str("A").unwrap()),
             turbo: true,

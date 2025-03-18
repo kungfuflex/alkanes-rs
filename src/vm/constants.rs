@@ -1,1 +1,1 @@
-pub(super) const MEMORY_LIMIT: usize = 33554432;
+pub(super) const MEMORY_LIMIT: usize = 43554432;
