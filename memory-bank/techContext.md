@@ -285,6 +285,7 @@ The project uses feature flags to control compilation:
 - `amm_pool`: Include AMM pool contract
 - `amm_factory`: Include AMM factory contract
 - `orbital`: Include orbital functionality
+- `pixel`: Include pixel NFT contract with randomized attributes
 - `minimal`: Include a minimal set of contracts
 - `all`: Include all contracts
 

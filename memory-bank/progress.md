@@ -18,6 +18,7 @@ Based on the existing codebase and documentation, the following components appea
    - Upgradeable contract (alkanes-std-upgradeable): Support for contract upgrades
    - Merkle distributor (alkanes-std-merkle-distributor): Token distribution mechanism
    - Orbital functionality (alkanes-std-orbital): Additional protocol features
+   - Pixel contract (alkanes-std-pixel): NFT implementation with randomized attributes for digital art and collectibles
 
 3. **View Functions**:
    - protorunes_by_address: Returns all protorunes held by a specific address

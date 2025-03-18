@@ -22,6 +22,7 @@ Based on the existing codebase, the project appears to have established:
    - Upgradeable contract support (alkanes-std-upgradeable)
    - Merkle distributor for token distribution (alkanes-std-merkle-distributor)
    - Orbital functionality (alkanes-std-orbital)
+   - Pixel NFT contract (alkanes-std-pixel) with randomized attributes for digital art and collectibles
 
 3. **Multi-Network Support**: The system supports multiple Bitcoin-based networks through feature flags:
    - Bitcoin mainnet, testnet, and regtest
@@ -130,3 +131,9 @@ The ALKANES-RS project integrates with several external systems:
 2. **METASHREW Indexer Stack**: The underlying infrastructure for processing blockchain data
 3. **Protorunes Protocol**: The token standard that ALKANES extends
 4. **WebAssembly Runtime**: The execution environment for smart contracts
+
+## Additional Resources
+
+For detailed information on specific components, refer to these resources:
+
+1. **PIXEL_ALKANE.md**: Comprehensive documentation on the Pixel Alkane NFT contract, including implementation details, common pitfalls, testing best practices, and performance considerations.

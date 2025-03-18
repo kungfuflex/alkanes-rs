@@ -27,3 +27,5 @@ pub mod networks;
 pub mod serialization;
 #[cfg(test)]
 pub mod view;
+#[cfg(test)]
+pub mod pixel;
