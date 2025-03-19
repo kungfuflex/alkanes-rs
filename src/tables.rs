@@ -6,3 +6,7 @@ pub static TRACES: Lazy<IndexPointer> = Lazy::new(|| IndexPointer::from_keyword(
 
 pub static TRACES_BY_HEIGHT: Lazy<IndexPointer> =
     Lazy::new(|| IndexPointer::from_keyword("/trace/"));
+
+pub static CREATED: Lazy<IndexPointer> =
+    Lazy::new(|| IndexPointer::from_keyword("/created/"));
+

@@ -282,6 +282,15 @@ pub fn protorunesbyheight() -> i32 {
 
 #[cfg(not(test))]
 #[no_mangle]
+pub fn created() -> i32 {
+    configure_network();
+    let data = input();
+    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
+    let reader = &data[4..];
+    export_bytes(view::created(&reader.to_vec()))
+}
+#[cfg(not(test))]
+#[no_mangle]
 pub fn traceblock() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());

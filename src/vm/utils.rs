@@ -1,12 +1,16 @@
 use super::{AlkanesInstance, AlkanesRuntimeContext, AlkanesState};
+use crate::tables::{CREATED};
 use crate::utils::{pipe_storagemap_to, transfer_from};
 use crate::vm::fuel::compute_extcall_fuel;
+use crate::proto::alkanes::Outpoint;    
 use alkanes_support::trace::TraceEvent;
+use protobuf::{Message, MessageField};
 use alkanes_support::{
     cellpack::Cellpack, gz::decompress, id::AlkaneId, parcel::AlkaneTransferParcel,
     response::ExtendedCallResponse, storage::StorageMap, utils::overflow_error,
     witness::find_witness_payload,
 };
+use bitcoin::hashes::{Hash};
 use anyhow::{anyhow, Result};
 use metashrew::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
@@ -145,6 +149,12 @@ pub fn run_special_cellpacks(
             .unwrap()
             .trace
             .clock(TraceEvent::CreateAlkane(payload.target.clone()));
+        let mut outpoint = Outpoint::new();
+        let txid = context.lock().unwrap().message.transaction.clone().compute_txid().as_byte_array().to_vec();
+        let vout = context.lock().unwrap().message.vout;
+        outpoint.txid = txid.clone();
+        outpoint.vout = vout;
+        CREATED.select(&payload.target.clone().into()).set(Arc::new(outpoint.write_to_bytes().unwrap()))
     }
     Ok((
         context.lock().unwrap().myself.clone(),

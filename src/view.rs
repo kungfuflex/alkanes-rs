@@ -1,6 +1,6 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::set_view_mode;
-use crate::tables::{TRACES, TRACES_BY_HEIGHT};
+use crate::tables::{TRACES, TRACES_BY_HEIGHT, CREATED};
 use crate::utils::{
     alkane_inventory_pointer, balance_pointer, credit_balances, debit_balances, pipe_storagemap_to,
 };
@@ -10,7 +10,7 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransfer;
 use alkanes_support::proto;
-use alkanes_support::proto::alkanes::{AlkaneInventoryRequest, AlkaneInventoryResponse};
+use alkanes_support::proto::alkanes::{Outpoint, AlkaneInventoryRequest, AlkaneInventoryResponse};
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Version;
@@ -419,6 +419,10 @@ pub fn simulate_safe(
 ) -> Result<(ExtendedCallResponse, u64)> {
     set_view_mode();
     simulate_parcel(parcel, fuel)
+}
+
+pub fn created(input: &Vec<u8>) -> Vec<u8> {
+  CREATED.select(input).get().as_ref().clone()
 }
 
 pub fn simulate_parcel(
