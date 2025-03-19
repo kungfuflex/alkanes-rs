@@ -230,12 +230,26 @@ impl AlkanePixel {
             return Err(anyhow!("Maximum supply of {} pixels reached", MAX_SUPPLY));
         }
         
+        // Get the caller's address
+        let caller_bytes: Vec<u8> = (&context.caller).into();
+        
+        // Check if the caller already owns a pixel
+        let owned_pixels = self.get_pixels_by_owner_internal(&caller_bytes);
+        if !owned_pixels.is_empty() {
+            return Err(anyhow!("Each user can only mint one pixel"));
+        }
+        
         // Generate random color and pattern
         let color = self.generate_random_color(&context);
         let pattern = self.generate_random_pattern(&context);
         
-        // Get the next pixel ID
+        // Get the next pixel ID (always auto-increment)
         let next_id = current_supply + 1;
+        
+        // Final safety check to prevent overflow
+        if next_id > MAX_SUPPLY {
+            return Err(anyhow!("Pixel ID exceeds maximum supply"));
+        }
         
         // Calculate rarity
         let rarity = self.calculate_rarity(color, pattern);
@@ -292,6 +306,11 @@ impl AlkanePixel {
             return Err(anyhow!("Invalid pixel ID: cannot be zero"));
         }
         
+        // Validate pixel ID is within reasonable bounds
+        if pixel_id > MAX_SUPPLY as u64 {
+            return Err(anyhow!("Pixel ID exceeds maximum supply"));
+        }
+        
         let to_address = inputs.clone();
         
         // Validate that the recipient address is not empty
@@ -342,6 +361,11 @@ impl AlkanePixel {
             return Err(anyhow!("Invalid pixel ID: cannot be zero"));
         }
         
+        // Validate pixel ID is within reasonable bounds
+        if pixel_id > MAX_SUPPLY as u64 {
+            return Err(anyhow!("Pixel ID exceeds maximum supply"));
+        }
+        
         let pixel = self.get_pixel(pixel_id).ok_or_else(|| anyhow!("Pixel not found"))?;
         
         response.data = serde_json::to_vec(&pixel).unwrap();
@@ -368,6 +392,11 @@ impl AlkanePixel {
         // Validate pixel ID is not zero
         if pixel_id == 0 {
             return Err(anyhow!("Invalid pixel ID: cannot be zero"));
+        }
+        
+        // Validate pixel ID is within reasonable bounds
+        if pixel_id > MAX_SUPPLY as u64 {
+            return Err(anyhow!("Pixel ID exceeds maximum supply"));
         }
         
         let pixel = self.get_pixel(pixel_id).ok_or_else(|| anyhow!("Pixel not found"))?;
