@@ -74,10 +74,7 @@ mod tests {
         // Note: We can't specify a custom caller with the current helpers, but in a real
         // environment, each mint would be from a different user address
         let mint_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-            [
-                [].into(),
-            ]
-            .into(),
+            Vec::new(), // Empty binaries vector
             [mint_cellpack].into(),
         );
         
@@ -107,10 +104,7 @@ mod tests {
         
         // Create a block for the metadata operation
         let metadata_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-            [
-                [].into(),
-            ]
-            .into(),
+            Vec::new(), // Empty binaries vector
             [metadata_cellpack].into(),
         );
         
@@ -180,10 +174,7 @@ mod tests {
         
         // Create a block for the transfer operation
         let transfer_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-            [
-                [].into(),
-            ]
-            .into(),
+            Vec::new(), // Empty binaries vector
             [transfer_cellpack].into(),
         );
         
@@ -229,10 +220,7 @@ mod tests {
         
         // Create a block for the supply info operation
         let supply_info_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-            [
-                [].into(),
-            ]
-            .into(),
+            Vec::new(), // Empty binaries vector
             [supply_info_cellpack].into(),
         );
         
@@ -308,10 +296,7 @@ mod tests {
         
         // Create a block for the mint operation
         let extreme_mint_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-            [
-                [].into(),
-            ]
-            .into(),
+            Vec::new(), // Empty binaries vector
             [extreme_mint_cellpack].into(),
         );
         
@@ -351,10 +336,7 @@ mod tests {
         
         // Create a block for the metadata operation
         let extreme_metadata_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-            [
-                [].into(),
-            ]
-            .into(),
+            Vec::new(), // Empty binaries vector
             [extreme_metadata_cellpack].into(),
         );
         
@@ -435,10 +417,7 @@ mod tests {
         
         // Create a block for the unauthorized transfer operation
         let unauthorized_transfer_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-            [
-                [].into(),
-            ]
-            .into(),
+            Vec::new(), // Empty binaries vector
             [unauthorized_transfer_cellpack].into(),
         );
         
@@ -581,10 +560,7 @@ mod tests {
         
         // Create a block for the mint operation
         let second_mint_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-            [
-                [].into(),
-            ]
-            .into(),
+            Vec::new(), // Empty binaries vector
             [second_mint_cellpack].into(),
         );
         
@@ -652,10 +628,7 @@ mod tests {
         
         // Create a block for the metadata operation
         let nonexistent_metadata_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-            [
-                [].into(),
-            ]
-            .into(),
+            Vec::new(), // Empty binaries vector
             [nonexistent_metadata_cellpack].into(),
         );
         
