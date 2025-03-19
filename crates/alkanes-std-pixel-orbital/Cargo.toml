@@ -1,0 +1,16 @@
+[package]
+name = "alkanes-std-pixel-orbital"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alkanes-runtime = { path = "../alkanes-runtime" }
+alkanes-support = { path = "../alkanes-support" }
+anyhow = "1.0.75"
+hex_lit = "0.1.1"
+metashrew-support = { path = "../metashrew-support" }
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.107"
+
+[lib]
+crate-type = ["cdylib", "rlib"]

@@ -29,7 +29,7 @@ enum PixelOrbitalMessage {
         rarity: u128,
     },
 
-    #[opcode(1)]
+    #[opcode(10)]
     Transfer {
         recipient: u128,
     },
