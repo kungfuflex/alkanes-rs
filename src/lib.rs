@@ -15,6 +15,7 @@ use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_e
 use protobuf::{Message, MessageField};
 use std::io::Cursor;
 use view::parcels_from_protobuf;
+pub mod etl;
 pub mod block;
 pub mod indexer;
 pub mod message;
@@ -369,6 +370,7 @@ pub fn _start() {
         consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
 
     index_block(&block, height).unwrap();
+    etl::index_extensions(height, &block);
     flush();
 }
 
