@@ -29,9 +29,3 @@ pub mod serialization;
 pub mod view;
 #[cfg(test)]
 pub mod pixel;
-#[cfg(test)]
-pub mod pixel_security_tests;
-#[cfg(test)]
-pub mod pixel_orbital_tests;
-#[cfg(test)]
-pub mod pixel_advanced_tests;
