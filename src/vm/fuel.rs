@@ -230,7 +230,7 @@ impl FuelTank {
     }
 }
 
-pub const MINIMUM_FUEL: u64 = 90_000;
+pub const MINIMUM_FUEL: u64 = 350_000;
 pub const FUEL_PER_VBYTE: u64 = 150;
 pub const FUEL_PER_REQUEST_BYTE: u64 = 1;
 pub const FUEL_PER_LOAD_BYTE: u64 = 2;
