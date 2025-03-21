@@ -285,6 +285,49 @@ impl AlkanePixel {
         Ok(response)
     }
     
+    /// # Ownership Model
+    ///
+    /// The Pixel contract follows the ALKANES ownership model, where ownership is determined
+    /// by possession of the corresponding alkane token. The contract cannot directly query
+    /// "who owns this pixel" from the blockchain, but must rely on the incoming transfers
+    /// in the current transaction.
+    ///
+    /// ## Ownership Verification
+    ///
+    /// When a transfer operation is requested, the contract verifies ownership by checking
+    /// if the caller has sent the appropriate alkane token in the current transaction:
+    ///
+    /// ```rust
+    /// // Verify ownership by checking incoming alkane transfers
+    /// if context.incoming_alkanes.0.len() != 1 {
+    ///     return Err(anyhow!("Expected exactly one alkane transfer for ownership verification"));
+    /// }
+    ///
+    /// let transfer = &context.incoming_alkanes.0[0];
+    /// if transfer.id != context.myself.clone() || transfer.value != 1 {
+    ///     return Err(anyhow!("Invalid alkane transfer for ownership verification"));
+    /// }
+    /// ```
+    ///
+    /// ## Internal Tracking
+    ///
+    /// The contract maintains an internal shadow state of ownership for convenience, but this
+    /// is not the source of truth. The actual ownership is determined by who possesses the
+    /// corresponding alkane token on the blockchain.
+    ///
+    /// ## Token Return
+    ///
+    /// After verifying ownership, the contract must return the alkane token to the caller
+    /// to maintain ownership:
+    ///
+    /// ```rust
+    /// response.alkanes.0.push(AlkaneTransfer {
+    ///     id: context.myself.clone(),
+    ///     value: 1u128,
+    /// });
+    /// ```
+    ///
+    /// Without this, the token would be consumed and ownership would be lost.
     // Method for opcode 2: Transfer
     fn transfer(&self) -> Result<CallResponse> {
         let context = self.context()?;
@@ -321,14 +364,19 @@ impl AlkanePixel {
         // Check if the pixel exists
         let _pixel = self.get_pixel(pixel_id).ok_or_else(|| anyhow!("Pixel not found"))?;
         
-        // Check if the sender owns the pixel
-        let caller_bytes: Vec<u8> = (&context.caller).into();
-        let sender_pixels = self.get_pixels_by_owner_internal(&caller_bytes);
-        if !sender_pixels.contains(&pixel_id) {
-            return Err(anyhow!("Sender does not own this pixel"));
+        // Verify ownership by checking incoming alkane transfers
+        if context.incoming_alkanes.0.len() != 1 {
+            return Err(anyhow!("Expected exactly one alkane transfer for ownership verification"));
         }
         
-        // Remove from sender's pixels
+        let transfer = &context.incoming_alkanes.0[0];
+        if transfer.id != context.myself.clone() || transfer.value != 1 {
+            return Err(anyhow!("Invalid alkane transfer for ownership verification"));
+        }
+        
+        // Update internal tracking (shadow state)
+        // Note: This is not the source of truth for ownership
+        let caller_bytes: Vec<u8> = (&context.caller).into();
         self.remove_pixel_from_owner(&caller_bytes, pixel_id);
         
         // Convert to_address to bytes
@@ -336,6 +384,13 @@ impl AlkanePixel {
         
         // Add to recipient's pixels
         self.add_pixel_to_owner(&to_address_bytes, pixel_id);
+        
+        // Return the alkane token to maintain ownership
+        // This is critical - without this, the token would be consumed
+        response.alkanes.0.push(AlkaneTransfer {
+            id: context.myself.clone(),
+            value: 1u128,
+        });
         
         Ok(response)
     }
