@@ -13,6 +13,7 @@ luckycoin = []
 mainnet = []
 fractal = []
 bellscoin = []
+wasm-logs = []
 
 [dependencies]
 alkanes-runtime = { path = "../alkanes-runtime" }

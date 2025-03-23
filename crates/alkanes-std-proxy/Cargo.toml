@@ -3,6 +3,9 @@ name = "alkanes-std-proxy"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+wasm-logs = []
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
