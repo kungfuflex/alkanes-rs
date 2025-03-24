@@ -9,7 +9,7 @@ use protorune_support::utils::consensus_encode;
 use std::u128;
 
 pub trait MessageContext {
-    fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)>;
+    fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, LazyBalanceSheet)>;
     fn protocol_tag() -> u128;
     fn asset_protoburned_in_protocol(id: ProtoruneRuneId) -> bool {
         let table = RuneTable::for_protocol(Self::protocol_tag());
@@ -30,7 +30,7 @@ pub struct MessageContextParcel {
     pub pointer: u32,
     pub refund_pointer: u32,
     pub calldata: Vec<u8>,
-    pub sheets: Box<BalanceSheet>,
+    pub sheets: Box<LazyBalanceSheet>,
     pub txindex: u32,
     pub vout: u32,
     pub runtime_balances: Box<LazyBalanceSheet>,
@@ -61,7 +61,7 @@ impl Default for MessageContextParcel {
             calldata: Vec::<u8>::default(),
             txindex: 0,
             runtime_balances: Box::new(LazyBalanceSheet::default()),
-            sheets: Box::new(BalanceSheet::default()),
+            sheets: Box::new(LazyBalanceSheet::default()),
         }
     }
 }

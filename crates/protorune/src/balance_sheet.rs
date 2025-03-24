@@ -95,6 +95,7 @@ impl MintableDebit for BalanceSheet {
         Ok(())
     }
 }
+// This implementation is kept for backward compatibility
 impl OutgoingRunes for (Vec<RuneTransfer>, BalanceSheet) {
     fn reconcile(
         &self,
@@ -104,46 +105,16 @@ impl OutgoingRunes for (Vec<RuneTransfer>, BalanceSheet) {
         pointer: u32,
         refund_pointer: u32,
     ) -> Result<()> {
-        let runtime_initial = balances_by_output
-            .get(&u32::MAX)
-            .map(|v| v.clone())
-            .unwrap_or_else(|| BalanceSheet::default());
-        let incoming_initial = balances_by_output
-            .get(&vout)
-            .ok_or("")
-            .map_err(|_| anyhow!("balance sheet not found"))?
-            .clone();
-        let mut initial = BalanceSheet::merge(&incoming_initial, &runtime_initial);
-
-        // self.0 is the amount to forward to the pointer
-        // self.1 is the amount to put into the runtime balance
-        let outgoing: BalanceSheet = self.0.clone().into();
-        let outgoing_runtime = self.1.clone();
-
-        // we want to subtract outgoing and the outgoing runtime balance
-        // amount from the initial amount
-        initial.debit_mintable(&outgoing, atomic)?;
-        initial.debit_mintable(&outgoing_runtime, atomic)?;
-
-        // now lets update balances_by_output to correct values
-
-        // first remove the protomessage vout balances
-        balances_by_output.remove(&vout);
-
-        // increase the pointer by the outgoing runes balancesheet
-        increase_balances_using_sheet(balances_by_output, &outgoing, pointer);
-
-        // set the runtime to the ending runtime balance sheet
-        // note that u32::MAX is the runtime vout
-        balances_by_output.insert(u32::MAX, outgoing_runtime);
-
-        // refund the remaining amount to the refund pointer
-        increase_balances_using_sheet(balances_by_output, &initial, refund_pointer);
-        Ok(())
+        // Convert BalanceSheet to LazyBalanceSheet for compatibility
+        let lazy_balance_sheet = LazyBalanceSheet::from_balance_sheet(&self.1, "/runtime_balances".to_string());
+        
+        // Use the LazyBalanceSheet implementation
+        let as_lazy = (self.0.clone(), lazy_balance_sheet);
+        as_lazy.reconcile(atomic, balances_by_output, vout, pointer, refund_pointer)
     }
 }
 
-// Implementation for LazyBalanceSheet
+// Primary implementation using LazyBalanceSheet
 impl OutgoingRunes for (Vec<RuneTransfer>, LazyBalanceSheet) {
     fn reconcile(
         &self,
@@ -153,12 +124,47 @@ impl OutgoingRunes for (Vec<RuneTransfer>, LazyBalanceSheet) {
         pointer: u32,
         refund_pointer: u32,
     ) -> Result<()> {
-        // Convert LazyBalanceSheet to BalanceSheet for compatibility
-        let outgoing_runtime_sheet = BalanceSheet::from(self.1.clone());
+        // Get the runtime initial balance
+        let runtime_initial = balances_by_output
+            .get(&u32::MAX)
+            .map(|v| v.clone())
+            .unwrap_or_else(|| BalanceSheet::default());
         
-        // Use the existing implementation
-        let as_balance_sheet = (self.0.clone(), outgoing_runtime_sheet);
-        as_balance_sheet.reconcile(atomic, balances_by_output, vout, pointer, refund_pointer)
+        // Get the incoming initial balance
+        let incoming_initial = balances_by_output
+            .get(&vout)
+            .ok_or("")
+            .map_err(|_| anyhow!("balance sheet not found"))?
+            .clone();
+        
+        // Merge the balances
+        let mut initial = BalanceSheet::merge(&incoming_initial, &runtime_initial);
+
+        // self.0 is the amount to forward to the pointer
+        // self.1 is the amount to put into the runtime balance
+        let outgoing: BalanceSheet = self.0.clone().into();
+        
+        // Convert LazyBalanceSheet to BalanceSheet for compatibility with existing methods
+        let outgoing_runtime_sheet = BalanceSheet::from(self.1.clone());
+
+        // Subtract outgoing and outgoing runtime balance from the initial amount
+        initial.debit_mintable(&outgoing, atomic)?;
+        initial.debit_mintable(&outgoing_runtime_sheet, atomic)?;
+
+        // Remove the protomessage vout balances
+        balances_by_output.remove(&vout);
+
+        // Increase the pointer by the outgoing runes balancesheet
+        increase_balances_using_sheet(balances_by_output, &outgoing, pointer);
+
+        // Set the runtime to the ending runtime balance sheet
+        // note that u32::MAX is the runtime vout
+        balances_by_output.insert(u32::MAX, outgoing_runtime_sheet);
+
+        // Refund the remaining amount to the refund pointer
+        increase_balances_using_sheet(balances_by_output, &initial, refund_pointer);
+        
+        Ok(())
     }
 }
 
@@ -174,6 +180,20 @@ pub fn load_sheet<T: KeyValuePointer>(ptr: &T) -> BalanceSheet {
         result.set(&rune, balance);
     }
     result
+}
+
+// New function that returns a LazyBalanceSheet
+pub fn load_lazy_sheet<T: KeyValuePointer>(_ptr: &T, storage_path: String) -> LazyBalanceSheet {
+    // Create a new LazyBalanceSheet with the specified storage path
+    let mut lazy_sheet = LazyBalanceSheet::new(storage_path);
+    
+    // We don't need to load all balances upfront - that's the whole point of LazyBalanceSheet
+    // The balances will be loaded on demand when get() is called
+    
+    // Mark as not modified since we're just loading
+    lazy_sheet.reset_modified();
+    
+    lazy_sheet
 }
 
 pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {

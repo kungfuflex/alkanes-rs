@@ -377,13 +377,19 @@ impl IntoString for Vec<u8> {
 
 /// LazyBalanceSheet is a specialized version of BalanceSheet that loads balances on demand
 /// It's specifically designed for the runtime balance sheet where loading all balances
-/// into memory at once would be inefficient for protocols with a large number of assets
+/// into memory at once would be inefficient for protocols with a large number of assets.
+///
+/// The LazyBalanceSheet is backed by an AtomicPointer for proper checkpointing and rollback
+/// semantics. This allows us to avoid keeping the entire BalanceSheet object in memory.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LazyBalanceSheet {
     // Cache of already loaded balances
     cache: HashMap<ProtoruneRuneId, u128>,
     // Storage path for loading balances on demand
     storage_path: String,
+    // Track if the cache has been modified and needs to be saved
+    #[serde(skip)]
+    modified: bool,
 }
 
 impl Default for LazyBalanceSheet {
@@ -391,6 +397,7 @@ impl Default for LazyBalanceSheet {
         LazyBalanceSheet {
             cache: HashMap::new(),
             storage_path: String::from("/runtime_balances"),
+            modified: false,
         }
     }
 }
@@ -400,6 +407,7 @@ impl LazyBalanceSheet {
         LazyBalanceSheet {
             cache: HashMap::new(),
             storage_path,
+            modified: false,
         }
     }
 
@@ -443,6 +451,7 @@ impl LazyBalanceSheet {
 
     pub fn set(&mut self, rune: &ProtoruneRuneId, value: u128) {
         self.cache.insert(rune.clone(), value);
+        self.modified = true;
     }
 
     pub fn increase<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, value: u128, ptr: &P) {
@@ -460,6 +469,16 @@ impl LazyBalanceSheet {
         }
     }
 
+    /// Check if the cache has been modified since the last save
+    pub fn is_modified(&self) -> bool {
+        self.modified
+    }
+
+    /// Reset the modified flag after saving
+    pub fn reset_modified(&mut self) {
+        self.modified = false;
+    }
+
     // Convert to a regular BalanceSheet (loads all cached balances)
     pub fn to_balance_sheet(&self) -> BalanceSheet {
         BalanceSheet {
@@ -472,19 +491,26 @@ impl LazyBalanceSheet {
         LazyBalanceSheet {
             cache: sheet.balances.clone(),
             storage_path,
+            modified: !sheet.balances.is_empty(), // If there are balances, mark as modified
         }
     }
 
     // Save the current state to storage
-    pub fn save<T: KeyValuePointer>(&self, ptr: &T, is_cenotaph: bool) {
-        let runes_ptr = ptr.keyword("/runes");
-        let balances_ptr = ptr.keyword("/balances");
+    pub fn save<T: KeyValuePointer>(&mut self, ptr: &T, is_cenotaph: bool) {
+        // Only save if modified
+        if self.modified {
+            let runes_ptr = ptr.keyword("/runes");
+            let balances_ptr = ptr.keyword("/balances");
 
-        for (rune, balance) in &self.cache {
-            if *balance != 0u128 && !is_cenotaph {
-                runes_ptr.append((*rune).into());
-                balances_ptr.append_value::<u128>(*balance);
+            for (rune, balance) in &self.cache {
+                if *balance != 0u128 && !is_cenotaph {
+                    runes_ptr.append((*rune).into());
+                    balances_ptr.append_value::<u128>(*balance);
+                }
             }
+            
+            // Reset the modified flag after saving
+            self.reset_modified();
         }
     }
 
@@ -553,9 +579,11 @@ impl From<LazyBalanceSheet> for BalanceSheet {
 // Implement conversion from BalanceSheet to LazyBalanceSheet
 impl From<BalanceSheet> for LazyBalanceSheet {
     fn from(sheet: BalanceSheet) -> Self {
+        let is_empty = sheet.balances.is_empty();
         LazyBalanceSheet {
             cache: sheet.balances,
             storage_path: String::from("/runtime_balances"),
+            modified: !is_empty, // If there are balances, mark as modified
         }
     }
 }

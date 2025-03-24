@@ -1,4 +1,4 @@
-use crate::balance_sheet::{load_sheet, PersistentRecord};
+use crate::balance_sheet::{load_sheet, load_lazy_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
@@ -760,6 +760,7 @@ impl Protorune {
         atomic.commit();
         Ok(())
     }
+    // Original method kept for backward compatibility
     pub fn save_balances<T: MessageContext>(
         height: u64,
         atomic: &mut AtomicPointer,
@@ -783,10 +784,6 @@ impl Protorune {
                 txid: tx.compute_txid(),
                 vout: i as u32,
             };
-            // println!(
-            //     "saving balancesheet: {:#?} to outpoint: {:#?}",
-            //     sheet, outpoint
-            // );
             sheet.save(
                 &mut atomic.derive(
                     &table
@@ -803,9 +800,9 @@ impl Protorune {
                 .unwrap_or_else(|| BalanceSheet::default());
             
             // Create a LazyBalanceSheet for saving
-            let lazy_runtime_balance = LazyBalanceSheet::from_balance_sheet(&runtime_balance, "/runtime_balance".to_string());
+            let mut lazy_runtime_balance = LazyBalanceSheet::from_balance_sheet(&runtime_balance, "/runtime_balance".to_string());
             
-            // Save using the LazyBalanceSheet's save method
+            // Save using the LazyBalanceSheet's save method (only saves if modified)
             lazy_runtime_balance.save(&mut atomic.derive(&table.RUNTIME_BALANCE), false);
         }
         index_unique_protorunes::<T>(
@@ -825,6 +822,71 @@ impl Protorune {
         );
         Ok(())
     }
+    
+    // New method that accepts a LazyBalanceSheet for the runtime balance
+    pub fn save_balances_with_lazy_runtime<T: MessageContext>(
+        height: u64,
+        atomic: &mut AtomicPointer,
+        table: &RuneTable,
+        tx: &Transaction,
+        map: &HashMap<u32, BalanceSheet>,
+        runtime_balance: &mut LazyBalanceSheet,
+    ) -> Result<()> {
+        // Process all outputs, including the last one
+        // The OP_RETURN doesn't have to be at the end
+        for i in 0..tx.output.len() {
+            // Skip OP_RETURN outputs
+            if tx.output[i].script_pubkey.is_op_return() {
+                continue;
+            }
+
+            let sheet = map
+                .get(&(i as u32))
+                .map(|v| v.clone())
+                .unwrap_or_else(|| BalanceSheet::default());
+            let outpoint = OutPoint {
+                txid: tx.compute_txid(),
+                vout: i as u32,
+            };
+            sheet.save(
+                &mut atomic.derive(
+                    &table
+                        .OUTPOINT_TO_RUNES
+                        .select(&consensus_encode(&outpoint)?),
+                ),
+                false,
+            );
+        }
+        
+        // Save the LazyBalanceSheet directly
+        if runtime_balance.is_modified() {
+            runtime_balance.save(&mut atomic.derive(&table.RUNTIME_BALANCE), false);
+        }
+        
+        // Collect all rune IDs from both regular balances and the runtime balance
+        let mut all_runes = map.iter()
+            .fold(BalanceSheet::default(), |mut r, (_k, v)| {
+                v.pipe(&mut r);
+                r
+            })
+            .balances
+            .keys()
+            .clone()
+            .map(|v| v.clone())
+            .collect::<Vec<ProtoruneRuneId>>();
+            
+        // We can't directly access the cache since it's private
+        // Instead, convert to a regular BalanceSheet to get the runes
+        let runtime_sheet = BalanceSheet::from(runtime_balance.clone());
+        for rune in runtime_sheet.balances.keys() {
+            if !all_runes.contains(rune) {
+                all_runes.push(rune.clone());
+            }
+        }
+        
+        index_unique_protorunes::<T>(atomic, height, all_runes);
+        Ok(())
+    }
 
     pub fn index_protostones<T: MessageContext>(
         atomic: &mut AtomicPointer,
@@ -842,17 +904,16 @@ impl Protorune {
             let mut proto_balances_by_output = HashMap::<u32, BalanceSheet>::new();
             let table = tables::RuneTable::for_protocol(T::protocol_tag());
 
-            // set the starting runtime balance
-            // Load the runtime balance sheet
-            let runtime_balance = load_sheet(&mut atomic.derive(&table.RUNTIME_BALANCE));
+            // Load the runtime balance sheet directly as a LazyBalanceSheet
+            let mut lazy_runtime_balance = load_lazy_sheet(
+                &mut atomic.derive(&table.RUNTIME_BALANCE),
+                "/runtime_balance".to_string()
+            );
             
-            // Convert to LazyBalanceSheet and then back to regular BalanceSheet for compatibility
-            let mut lazy_runtime_balance = LazyBalanceSheet::from_balance_sheet(&runtime_balance, "/runtime_balance".to_string());
-            
-            // Insert into the balances map
+            // Insert into the balances map - convert to BalanceSheet for compatibility with existing code
             proto_balances_by_output.insert(
                 u32::MAX,
-                lazy_runtime_balance.to_balance_sheet(),
+                BalanceSheet::from(lazy_runtime_balance.clone()),
             );
 
             // load the balance sheets
@@ -967,12 +1028,13 @@ impl Protorune {
             //     T::protocol_tag(),
             //     proto_balances_by_output
             // );
-            Self::save_balances::<T>(
+            Self::save_balances_with_lazy_runtime::<T>(
                 height,
                 &mut atomic.derive(&IndexPointer::default()),
                 &table,
                 tx,
                 &mut proto_balances_by_output,
+                &mut lazy_runtime_balance,
             )?;
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs

@@ -171,7 +171,7 @@ pub fn genesis(block: &Block) -> Result<()> {
             inputs: vec![0],
         })
         .encipher(),
-        sheets: Box::<BalanceSheet>::new(BalanceSheet::default()),
+        sheets: Box::<LazyBalanceSheet>::new(LazyBalanceSheet::default()),
         txindex: 0,
         vout: 0,
         runtime_balances: Box::<LazyBalanceSheet>::new(LazyBalanceSheet::default()),

@@ -164,10 +164,10 @@ impl MessageContext for AlkaneMessageContext {
     fn protocol_tag() -> u128 {
         1
     }
-    fn handle(_parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+    fn handle(_parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, LazyBalanceSheet)> {
         if is_active(_parcel.height) {
             match handle_message(_parcel) {
-                Ok((outgoing, runtime)) => Ok((outgoing, runtime.into())),
+                Ok((outgoing, runtime)) => Ok((outgoing, runtime)),
                 Err(e) => {
                     println!("{:?}", e);
                     Err(e) // Print the error

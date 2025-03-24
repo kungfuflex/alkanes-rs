@@ -141,7 +141,7 @@ impl MessageProcessor for Protostone {
                     })
                     .unwrap_or_else(|| LazyBalanceSheet::default()),
             ),
-            sheets: Box::new(BalanceSheet::default()),
+            sheets: Box::new(LazyBalanceSheet::default()),
         };
 
         match T::handle(&parcel) {
