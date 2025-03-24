@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use metashrew::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
+use protorune_support::balance_sheet::{BalanceSheet, LazyBalanceSheet, ProtoruneRuneId};
 use protorune_support::rune_transfer::{increase_balances_using_sheet, RuneTransfer};
 use std::collections::HashMap;
 
@@ -140,6 +140,25 @@ impl OutgoingRunes for (Vec<RuneTransfer>, BalanceSheet) {
         // refund the remaining amount to the refund pointer
         increase_balances_using_sheet(balances_by_output, &initial, refund_pointer);
         Ok(())
+    }
+}
+
+// Implementation for LazyBalanceSheet
+impl OutgoingRunes for (Vec<RuneTransfer>, LazyBalanceSheet) {
+    fn reconcile(
+        &self,
+        atomic: &mut AtomicPointer,
+        balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        vout: u32,
+        pointer: u32,
+        refund_pointer: u32,
+    ) -> Result<()> {
+        // Convert LazyBalanceSheet to BalanceSheet for compatibility
+        let outgoing_runtime_sheet = BalanceSheet::from(self.1.clone());
+        
+        // Use the existing implementation
+        let as_balance_sheet = (self.0.clone(), outgoing_runtime_sheet);
+        as_balance_sheet.reconcile(atomic, balances_by_output, vout, pointer, refund_pointer)
     }
 }
 

@@ -27,7 +27,7 @@ use protorune::balance_sheet::MintableDebit;
 use protorune::message::{MessageContext, MessageContextParcel};
 use protorune::tables::RUNES;
 use protorune::view;
-use protorune_support::balance_sheet::BalanceSheet;
+use protorune_support::balance_sheet::{BalanceSheet, LazyBalanceSheet};
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::{consensus_decode, decode_varint_list};
@@ -440,9 +440,19 @@ pub fn simulate_parcel(
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
     );
+    // Clone the runtime balances
     let mut combined = parcel.runtime_balances.as_ref().clone();
-    <BalanceSheet as From<Vec<RuneTransfer>>>::from(parcel.runes.clone()).pipe(&mut combined);
+    
+    // Convert runes to a BalanceSheet
+    let runes_sheet = <BalanceSheet as From<Vec<RuneTransfer>>>::from(parcel.runes.clone());
+    
+    // Pipe the runes to the combined LazyBalanceSheet
+    runes_sheet.pipe_to_lazy(&mut combined, &mut atomic);
+    
+    // Convert response alkanes to a BalanceSheet
     let sheet = <BalanceSheet as From<Vec<RuneTransfer>>>::from(response.alkanes.clone().into());
+    
+    // Debit mintable tokens from the combined LazyBalanceSheet
     combined.debit_mintable(&sheet, &mut atomic)?;
     debit_balances(&mut atomic, &myself, &response.alkanes)?;
     Ok((response, gas_used))

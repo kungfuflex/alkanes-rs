@@ -20,7 +20,7 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::balance_sheet::PersistentRecord;
 use protorune::message::{MessageContext, MessageContextParcel};
 use protorune::tables::RuneTable;
-use protorune_support::balance_sheet::BalanceSheet;
+use protorune_support::balance_sheet::{BalanceSheet, LazyBalanceSheet};
 use protorune_support::utils::outpoint_encode;
 use std::sync::Arc;
 
@@ -174,7 +174,7 @@ pub fn genesis(block: &Block) -> Result<()> {
         sheets: Box::<BalanceSheet>::new(BalanceSheet::default()),
         txindex: 0,
         vout: 0,
-        runtime_balances: Box::<BalanceSheet>::new(BalanceSheet::default()),
+        runtime_balances: Box::<LazyBalanceSheet>::new(LazyBalanceSheet::default()),
     };
     let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),

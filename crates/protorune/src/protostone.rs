@@ -8,7 +8,7 @@ use bitcoin::{Block, Transaction, Txid};
 use metashrew::index_pointer::{AtomicPointer, IndexPointer};
 use ordinals::Runestone;
 use protorune_support::{
-    balance_sheet::BalanceSheet,
+    balance_sheet::{BalanceSheet, LazyBalanceSheet},
     protostone::{split_bytes, Protostone},
     rune_transfer::{refund_to_refund_pointer, RuneTransfer},
     utils::encode_varint_list,
@@ -135,8 +135,11 @@ impl MessageProcessor for Protostone {
             runtime_balances: Box::new(
                 balances_by_output
                     .get(&u32::MAX)
-                    .map(|v| v.clone())
-                    .unwrap_or_else(|| BalanceSheet::default()),
+                    .map(|v| {
+                        // Convert the regular BalanceSheet to a LazyBalanceSheet
+                        LazyBalanceSheet::from_balance_sheet(v, "/runtime_balances".to_string())
+                    })
+                    .unwrap_or_else(|| LazyBalanceSheet::default()),
             ),
             sheets: Box::new(BalanceSheet::default()),
         };

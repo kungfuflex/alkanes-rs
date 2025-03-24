@@ -2,166 +2,137 @@
 
 ## What Works
 
-Based on the existing codebase and documentation, the following components appear to be functional:
+Based on the project structure and documentation, the following components appear to be implemented and functional:
 
-1. **Core Protocol Implementation**:
-   - Block processing and indexing through the METASHREW stack
-   - Message extraction and validation for ALKANES protocol messages
-   - WebAssembly-based smart contract execution with fuel metering
-   - Storage and state management for contract data
+### Core Infrastructure
 
-2. **Standard Library Contracts**:
-   - Authentication token (alkanes-std-auth-token): Provides access control mechanisms
-   - Genesis contracts (alkanes-std-genesis-alkane): Network-specific initialization
-   - Owned token (alkanes-std-owned-token): Token implementation with ownership verification
-   - Proxy contract (alkanes-std-proxy): Contract delegation and upgradeability
-   - Upgradeable contract (alkanes-std-upgradeable): Support for contract upgrades
-   - Merkle distributor (alkanes-std-merkle-distributor): Token distribution mechanism
-   - Orbital functionality (alkanes-std-orbital): Additional protocol features
+1. **Indexer Implementation**: The main indexer for processing Bitcoin blocks and extracting ALKANES protocol messages.
+2. **WebAssembly Runtime**: The execution environment for smart contracts with fuel metering.
+3. **Storage System**: Key-value storage for contract state persistence.
+4. **Message System**: Inter-contract communication and token transfer mechanisms.
 
-3. **View Functions**:
-   - protorunes_by_address: Returns all protorunes held by a specific address
-   - runes_by_address: Returns all runes held by a specific address
-   - protorunes_by_outpoint: Returns protorune balances for a specific outpoint
+### Standard Library Contracts
 
-4. **Multi-Network Support**:
-   - Bitcoin mainnet, testnet, and regtest
+1. **Auth Token Contract**: Implementation of authentication and access control mechanisms.
+2. **Genesis Contract**: Network-specific initialization and protocol bootstrapping.
+3. **Owned Token Contract**: Token implementation with ownership verification.
+4. **Proxy Contract**: Contract delegation and upgradeability support.
+5. **Merkle Distributor**: Token distribution mechanism.
+
+### Development Tools
+
+1. **Build System**: Cargo-based build system with custom scripts for WASM compilation.
+2. **Testing Framework**: Comprehensive testing infrastructure for both native and WASM code.
+3. **Message Dispatch Framework**: System for contract ABI definition and message handling.
+
+### Network Support
+
+1. **Multiple Networks**: Support for various Bitcoin-based networks including:
+   - Bitcoin mainnet
+   - Bitcoin testnet
+   - Bitcoin regtest
    - Dogecoin
    - Luckycoin
    - Bellscoin
    - Fractal
 
-5. **Development Tools**:
-   - Build system for compiling contracts to WebAssembly
-   - Testing framework for unit and integration tests
-   - Protocol buffer code generation for message serialization
-
 ## What's Left to Build
 
-Based on the project structure and documentation, the following components may still need development or enhancement:
+Based on the project documentation and future vision, the following areas may still need development:
 
-1. **Advanced DeFi Primitives**:
-   - Lending and borrowing protocols
-   - Staking and yield farming mechanisms
-   - Derivatives and synthetic assets
-   - Governance mechanisms
-   - Cross-chain bridges or interoperability
+### Standard Library Expansion
 
-2. **Developer Experience**:
-   - Comprehensive documentation and examples
-   - CLI tools for contract deployment and interaction
-   - Client libraries for different languages
-   - Development environments and templates
-   - Visual tools for contract design and testing
+1. **Advanced DeFi Primitives**: More sophisticated financial instruments and mechanisms.
+2. **Governance Contracts**: Implementations for decentralized governance.
+3. **Cross-Chain Bridges**: Contracts for interoperability with other blockchains.
 
-3. **ABI enhancements**:
-I now want to add another attribute to define the return type of each function. The return type is specifically what gets put in the .data of the CallResponse. 
-For example, in crates/alkanes-std-owned-token/src/lib.rs, get_name would have the return type of string
+### Tooling Improvements
+
+1. **Developer SDK**: Comprehensive SDK for building applications on ALKANES.
+2. **Contract Templates**: More templates and examples for common use cases.
+3. **Deployment Tools**: Better tools for contract deployment and management.
+4. **Monitoring Tools**: Systems for monitoring contract execution and state.
+
+### Performance Optimizations
+
+1. **Indexer Efficiency**: Optimizations for faster block processing.
+2. **State Management**: More efficient state storage and retrieval.
+3. **Contract Execution**: Optimizations for WASM execution.
+
+### User Interfaces
+
+1. **Web Interface**: User-friendly web interface for interacting with ALKANES contracts.
+2. **Wallet Integration**: Integration with popular Bitcoin wallets.
+3. **Block Explorer**: Specialized block explorer for ALKANES transactions and contracts.
 
 ## Current Status
 
-The project appears to have a solid foundation with the core protocol implementation and several standard library contracts in place. The system supports multiple networks and provides the basic infrastructure for DeFi applications on Bitcoin.
+The project appears to be in an active development state with a functional core system and several standard contracts implemented. The codebase is organized as a Rust workspace with multiple crates, each serving a specific purpose in the overall architecture.
 
-### Key Milestones Achieved:
+### Development Status
 
-1. **Core Protocol Implementation**: The foundational components of the ALKANES metaprotocol have been implemented.
-2. **Standard Library Contracts**: Several standard contracts have been implemented for common use cases.
-3. **Multi-Network Support**: The system supports multiple Bitcoin-based networks.
-4. **View Functions**: Basic query functionality is in place for accessing protocol state.
-5. **Development Tools**: Build system and testing framework are operational.
+1. **Core Protocol**: Implemented and functional.
+2. **Runtime Environment**: Implemented with fuel metering and state management.
+3. **Standard Library**: Several key contracts implemented, with room for expansion.
+4. **Testing**: Comprehensive testing infrastructure in place.
+5. **Documentation**: Basic documentation available, could be expanded.
 
-### In Progress:
+### Deployment Status
 
-1. **Advanced DeFi Primitives**: Development of more sophisticated financial instruments.
-2. **Developer Experience**: Improving tools and documentation for developers.
-3. **Performance Optimizations**: Enhancing system efficiency and scalability.
-4. **Security Enhancements**: Strengthening the security posture of the system.
-5. **Ecosystem Development**: Building a community and integrations with other projects.
+The system can be deployed using the METASHREW indexer stack with:
+
+```sh
+metashrew-keydb --redis <redis-url> --rpc-url <bitcoin-rpc> --auth <auth> --indexer <path-to-alkanes.wasm>
+```
+
+Different network targets can be built using feature flags:
+
+```sh
+cargo build --release --features all,<network>
+```
 
 ## Known Issues
 
-Based on the documentation, the following issues or challenges may exist:
+Based on the documentation, the following areas may present challenges or known issues:
 
-1. **Table Consistency**: Double indexing (calling `index_block` multiple times for the same block) can lead to inconsistent state between tables, causing:
-   - Additional tokens to be created with unexpected IDs
-   - Balances to be swapped or duplicated
-   - Inconsistent state between different tables
+### Technical Issues
 
-2. **View Function Dependencies**: View functions like `protorunes_by_address` depend on multiple tables being properly populated, which requires careful testing and validation.
+1. **BalanceSheet Scaling**: In the protorune codebase, the BalanceSheet object currently loads the entire set of protorune assets for the subprotocol into memory. This approach doesn't scale for protocols like ALKANES that may have a very large set of assets. This needs to be refactored to implement lazy loading of balances (the mapping of AlkaneId => u128) only on demand.
 
-3. **Cross-Network Compatibility**: Supporting multiple networks with different address formats, block structures, and activation heights requires careful handling of network-specific parameters.
+2. **Double Indexing**: Double indexing (calling `index_block` multiple times for the same block) leads to inconsistent state and should be avoided, especially in tests.
 
-4. **WebAssembly Limitations**: Smart contracts must operate within WebAssembly constraints, including limited memory model, no direct system access, and limited floating-point precision.
+3. **Table Dependencies**: View functions depend on specific tables being populated correctly. If these tables are not populated as expected, queries may return incomplete or incorrect results.
 
-5. **Indexer Performance**: As the blockchain grows, the indexer must efficiently process increasing amounts of data while maintaining state consistency and providing responsive queries.
+4. **Cross-Network Compatibility**: Supporting multiple networks with different parameters requires careful handling of network-specific logic.
 
-## Recently Fixed Issues
+### Development Challenges
 
-1. **Fuel Management**: Fixed multiple issues in the fuel management system:
-   - **Fuel Refunding**: Fixed an issue where the fuel refunded to the block was the entire initially allocated amount rather than the actual remaining fuel leftover from running the transaction.
-   - **Fuel Consumption**: Fixed an issue where WebAssembly execution was consuming all available fuel, leading to "ALKANES: revert: all fuel consumed by WebAssembly" errors.
-   - **Diagnostic Logging**: Added comprehensive logging throughout the fuel management system to provide detailed information for debugging fuel-related issues.
-   - **Fuel Benchmarking**: Implemented a benchmarking framework in the test suite to measure and analyze fuel consumption patterns.
-   - **Fixed Fuel Costs**: Optimized fuel costs for large data operations by replacing variable costs with fixed costs.
-   
-   The fixes ensure:
-   - Only the actual remaining fuel is refunded to the block
-   - Proper fuel tracking during transaction execution
-   - Explicit checks for fuel exhaustion with clearer error messages
-   - Consistent error handling in fuel consumption
-   - No incorrect fuel deductions in error cases
-   - Detailed diagnostic information when fuel issues occur, including:
-     - Transaction size and index
-     - Initial and remaining fuel amounts
-     - Block size and fuel allocation
-     - Storage size and associated fuel costs
-     - Step-by-step tracking of fuel allocation, consumption, and refunding
-   - Comprehensive fuel benchmarking capabilities:
-     - Tabular display of fuel consumption metrics
-     - Per-operation fuel tracking
-     - Percentage-based analysis of fuel usage
-     - Aggregated statistics for total fuel consumption
-   - Efficient handling of large data structures:
-     - Block loading operations now use a fixed cost of 1000 fuel units regardless of block size
-     - Transaction loading operations now use a fixed cost of 500 fuel units regardless of transaction size
-     - Request operations use proportionally smaller fixed costs
-     - Prevents excessive fuel consumption when working with large blocks (up to 4MB)
-     - Real-world impact demonstrated in transaction logs:
-       - Loading a 1.5MB block costs only 1,000 fuel units with fixed costs
-       - Would have cost ~3,000,000 fuel units with previous per-byte charging
-       - Represents a 99.97% reduction in fuel cost for this operation
-   - Complete fuel usage visibility:
-     - Added logging to all host functions that consume fuel
-     - Each function logs its operation type, data sizes, and fuel cost
-     - Contract calls log target information, input counts, and storage sizes
-     - Special handling for deployment operations with additional fuel costs
-     - Provides a comprehensive trace of all fuel consumption during execution
-     - Analysis of real transaction logs reveals:
-       - Context operations (request/load) are frequent but relatively inexpensive
-       - Block operations benefit significantly from fixed costs
-       - Most fuel consumption (~78M units in sample transaction) occurs in WebAssembly execution
-       - Storage operations are minimal in comparison to execution costs
-       - Detailed logs help identify specific operations consuming fuel
-     - Transaction-level contract identification:
-       - Added logging at the beginning of each transaction to identify the contract being called
-       - Shows target contract address (block, tx), input count, and first opcode
-       - Logs resolved contract addresses after address resolution
-       - Provides enhanced error reporting with contract-specific context for fuel-related errors
-       - Helps identify which specific contracts and operations are consuming excessive fuel
+1. **WebAssembly Limitations**: Smart contracts must operate within WebAssembly constraints, which may limit certain types of operations.
 
-## Next Development Priorities
+2. **Bitcoin Compatibility**: The system must work within Bitcoin's transaction model, which imposes limitations on data storage and execution.
 
-Based on the current status, the following priorities may be considered for the next development phase:
+3. **State Growth**: As the system is used, the state will grow, potentially leading to performance challenges.
 
-1. **Expand DeFi Capabilities**: Implement additional financial primitives to enable more sophisticated DeFi applications.
+### Documentation Gaps
 
-2. **Improve Developer Tooling**: Enhance the developer experience with better documentation, examples, and tools.
+1. **Developer Onboarding**: More comprehensive documentation for new developers may be needed.
 
-3. **Optimize Performance**: Address performance bottlenecks in state access, WASM execution, and indexing.
-   - **WebAssembly Optimization**: Transaction logs show that WebAssembly execution consumes the majority of fuel (~78M units in sample transaction)
-   - **Fuel Profiling**: Implement more granular profiling within WebAssembly execution to identify specific operations consuming the most fuel
-   - **Execution Efficiency**: Optimize frequently used operations in standard contracts to reduce overall fuel consumption
+2. **Contract Patterns**: Better documentation of common patterns and best practices for contract development.
 
-4. **Strengthen Security**: Conduct security audits and implement formal verification for critical contracts.
+3. **Error Handling**: More detailed documentation on error handling and debugging.
 
-5. **Build Community**: Develop educational resources, tutorials, and incentives to grow the developer community.
+## Next Milestones
+
+Based on the project's current state and future vision, the following milestones may be considered:
+
+1. **BalanceSheet Refactoring**: Refactoring the BalanceSheet handling in the protorune codebase to implement lazy loading of balances instead of loading the entire set of assets into memory. This is critical for scaling the ALKANES protocol to support a large number of assets and is likely the last major scaling bottleneck.
+
+2. **Expanded Standard Library**: Implementing more DeFi primitives and contract templates.
+
+3. **Improved Developer Tools**: Creating better tools for contract development and deployment.
+
+4. **Performance Optimization**: Enhancing the efficiency of the indexer and contract execution.
+
+5. **Community Building**: Encouraging adoption and contributions from the wider blockchain community.
+
+6. **Integration with Other Systems**: Improving interoperability with other Bitcoin layer 2 solutions.

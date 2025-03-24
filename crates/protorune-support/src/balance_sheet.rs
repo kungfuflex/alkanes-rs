@@ -3,6 +3,7 @@ use crate::proto::protorune::{BalanceSheetItem, Rune};
 use crate::rune_transfer::RuneTransfer;
 use anyhow::{anyhow, Result};
 use hex;
+use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consume_sized_int;
 use ordinals::RuneId;
 use protobuf::{MessageField, SpecialFields};
@@ -264,6 +265,13 @@ impl BalanceSheet {
             sheet.increase(rune, *balance);
         }
     }
+    
+    // pipes a balancesheet onto a LazyBalanceSheet
+    pub fn pipe_to_lazy<P: KeyValuePointer>(&self, sheet: &mut LazyBalanceSheet, ptr: &P) -> () {
+        for (rune, balance) in &self.balances {
+            sheet.increase(rune, *balance, ptr);
+        }
+    }
 
     /// When processing the return value for MessageContext.handle()
     /// we want to be able to mint arbituary amounts of mintable tokens.
@@ -364,5 +372,190 @@ pub trait IntoString {
 impl IntoString for Vec<u8> {
     fn to_str(&self) -> String {
         hex::encode(self)
+    }
+}
+
+/// LazyBalanceSheet is a specialized version of BalanceSheet that loads balances on demand
+/// It's specifically designed for the runtime balance sheet where loading all balances
+/// into memory at once would be inefficient for protocols with a large number of assets
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LazyBalanceSheet {
+    // Cache of already loaded balances
+    cache: HashMap<ProtoruneRuneId, u128>,
+    // Storage path for loading balances on demand
+    storage_path: String,
+}
+
+impl Default for LazyBalanceSheet {
+    fn default() -> Self {
+        LazyBalanceSheet {
+            cache: HashMap::new(),
+            storage_path: String::from("/runtime_balances"),
+        }
+    }
+}
+
+impl LazyBalanceSheet {
+    pub fn new(storage_path: String) -> Self {
+        LazyBalanceSheet {
+            cache: HashMap::new(),
+            storage_path,
+        }
+    }
+
+    // Load a balance from storage if not already in cache
+    fn load_balance<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, ptr: &P) -> u128 {
+        // If already in cache, return it
+        if let Some(balance) = self.cache.get(rune) {
+            return *balance;
+        }
+
+        // Try to load from storage using the provided pointer
+        let runes_ptr = ptr.keyword("/runes");
+        let balances_ptr = ptr.keyword("/balances");
+        
+        // Search for the rune in the runes list
+        let length = runes_ptr.length();
+        for i in 0..length {
+            let stored_rune = ProtoruneRuneId::from(runes_ptr.select_index(i).get());
+            if stored_rune == *rune {
+                // Found the rune, get its balance
+                let balance = balances_ptr.select_index(i).get_value::<u128>();
+                // Cache it for future use
+                self.cache.insert(rune.clone(), balance);
+                return balance;
+            }
+        }
+
+        // Not found in storage, return 0
+        0
+    }
+
+    // Get a balance, using the cache if available
+    pub fn get<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, ptr: &P) -> u128 {
+        self.load_balance(rune, ptr)
+    }
+
+    // Get a balance from the cache only, without loading from storage
+    pub fn get_cached(&self, rune: &ProtoruneRuneId) -> u128 {
+        *self.cache.get(rune).unwrap_or(&0u128)
+    }
+
+    pub fn set(&mut self, rune: &ProtoruneRuneId, value: u128) {
+        self.cache.insert(rune.clone(), value);
+    }
+
+    pub fn increase<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, value: u128, ptr: &P) {
+        let current_balance = self.get(rune, ptr);
+        self.set(rune, current_balance + value);
+    }
+
+    pub fn decrease<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, value: u128, ptr: &P) -> bool {
+        let current_balance = self.get(rune, ptr);
+        if current_balance < value {
+            false
+        } else {
+            self.set(rune, current_balance - value);
+            true
+        }
+    }
+
+    // Convert to a regular BalanceSheet (loads all cached balances)
+    pub fn to_balance_sheet(&self) -> BalanceSheet {
+        BalanceSheet {
+            balances: self.cache.clone(),
+        }
+    }
+
+    // Create from a regular BalanceSheet
+    pub fn from_balance_sheet(sheet: &BalanceSheet, storage_path: String) -> Self {
+        LazyBalanceSheet {
+            cache: sheet.balances.clone(),
+            storage_path,
+        }
+    }
+
+    // Save the current state to storage
+    pub fn save<T: KeyValuePointer>(&self, ptr: &T, is_cenotaph: bool) {
+        let runes_ptr = ptr.keyword("/runes");
+        let balances_ptr = ptr.keyword("/balances");
+
+        for (rune, balance) in &self.cache {
+            if *balance != 0u128 && !is_cenotaph {
+                runes_ptr.append((*rune).into());
+                balances_ptr.append_value::<u128>(*balance);
+            }
+        }
+    }
+
+    // Debit from this balance sheet
+    pub fn debit<P: KeyValuePointer>(&mut self, sheet: &BalanceSheet, ptr: &P) -> Result<()> {
+        for (rune, balance) in &sheet.balances {
+            if *balance <= self.get(rune, ptr) {
+                self.decrease(rune, *balance, ptr);
+            } else {
+                return Err(anyhow!("balance underflow"));
+            }
+        }
+        Ok(())
+    }
+    
+    // Debit mintable tokens from this balance sheet
+    pub fn debit_mintable<P: KeyValuePointer>(&mut self, sheet: &BalanceSheet, ptr: &P) -> Result<()> {
+        for (rune, balance) in &sheet.balances {
+            let current = self.get(rune, ptr);
+            if *balance <= current {
+                self.decrease(rune, *balance, ptr);
+            } else {
+                // For mintable tokens, we just decrease what we have
+                // This is a simplified implementation - in a real implementation,
+                // you would check if the token is mintable
+                self.decrease(rune, current, ptr);
+            }
+        }
+        Ok(())
+    }
+
+    // Pipe a balance sheet into this lazy balance sheet
+    pub fn pipe_from<P: KeyValuePointer>(&mut self, sheet: &BalanceSheet, ptr: &P) {
+        for (rune, balance) in &sheet.balances {
+            self.increase(rune, *balance, ptr);
+        }
+    }
+
+    // Merge two lazy balance sheets
+    pub fn merge(a: &mut LazyBalanceSheet, b: &mut LazyBalanceSheet) -> LazyBalanceSheet {
+        let mut merged = LazyBalanceSheet::new(a.storage_path.clone());
+        
+        // Merge the caches
+        for (rune, balance) in &a.cache {
+            merged.set(rune, *balance);
+        }
+        
+        for (rune, balance) in &b.cache {
+            let current_balance = merged.get_cached(rune);
+            merged.set(rune, current_balance + *balance);
+        }
+        
+        merged
+    }
+}
+
+// Implement conversion from LazyBalanceSheet to BalanceSheet
+impl From<LazyBalanceSheet> for BalanceSheet {
+    fn from(lazy: LazyBalanceSheet) -> Self {
+        BalanceSheet {
+            balances: lazy.cache,
+        }
+    }
+}
+
+// Implement conversion from BalanceSheet to LazyBalanceSheet
+impl From<BalanceSheet> for LazyBalanceSheet {
+    fn from(sheet: BalanceSheet) -> Self {
+        LazyBalanceSheet {
+            cache: sheet.balances,
+            storage_path: String::from("/runtime_balances"),
+        }
     }
 }

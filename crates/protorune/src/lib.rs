@@ -26,7 +26,7 @@ use protorune_support::constants;
 use protorune_support::network::to_address_str;
 use protorune_support::proto;
 use protorune_support::{
-    balance_sheet::{BalanceSheet, ProtoruneRuneId},
+    balance_sheet::{BalanceSheet, LazyBalanceSheet, ProtoruneRuneId},
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
     utils::{consensus_encode, field_to_name, outpoint_encode},
 };
@@ -797,10 +797,16 @@ impl Protorune {
             );
         }
         if map.contains_key(&u32::MAX) {
-            map.get(&u32::MAX)
+            // Get the runtime balance sheet
+            let runtime_balance = map.get(&u32::MAX)
                 .map(|v| v.clone())
-                .unwrap_or_else(|| BalanceSheet::default())
-                .save(&mut atomic.derive(&table.RUNTIME_BALANCE), false);
+                .unwrap_or_else(|| BalanceSheet::default());
+            
+            // Create a LazyBalanceSheet for saving
+            let lazy_runtime_balance = LazyBalanceSheet::from_balance_sheet(&runtime_balance, "/runtime_balance".to_string());
+            
+            // Save using the LazyBalanceSheet's save method
+            lazy_runtime_balance.save(&mut atomic.derive(&table.RUNTIME_BALANCE), false);
         }
         index_unique_protorunes::<T>(
             atomic,
@@ -837,9 +843,16 @@ impl Protorune {
             let table = tables::RuneTable::for_protocol(T::protocol_tag());
 
             // set the starting runtime balance
+            // Load the runtime balance sheet
+            let runtime_balance = load_sheet(&mut atomic.derive(&table.RUNTIME_BALANCE));
+            
+            // Convert to LazyBalanceSheet and then back to regular BalanceSheet for compatibility
+            let mut lazy_runtime_balance = LazyBalanceSheet::from_balance_sheet(&runtime_balance, "/runtime_balance".to_string());
+            
+            // Insert into the balances map
             proto_balances_by_output.insert(
                 u32::MAX,
-                load_sheet(&mut atomic.derive(&table.RUNTIME_BALANCE)),
+                lazy_runtime_balance.to_balance_sheet(),
             );
 
             // load the balance sheets

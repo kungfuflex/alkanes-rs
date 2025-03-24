@@ -36,10 +36,10 @@ mod tests {
             let mut runes = parcel.runes.clone();
             runes[0].value = runes[0].value / 2;
             let transfer = runes[0].clone();
-            <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(runes)?
-                .pipe(&mut new_runtime_balances);
+            let runes_sheet = <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(runes)?;
+            runes_sheet.pipe_to_lazy(&mut new_runtime_balances, &mut atomic);
             // transfer protorunes to the pointer
-            Ok((vec![transfer], *new_runtime_balances))
+            Ok((vec![transfer], (*new_runtime_balances).into()))
         }
     }
 

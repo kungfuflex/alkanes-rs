@@ -25,7 +25,7 @@ use protorune::message::{MessageContext, MessageContextParcel};
 #[allow(unused_imports)]
 use protorune::protorune_init::index_unique_protorunes;
 use protorune_support::{
-    balance_sheet::BalanceSheet, rune_transfer::RuneTransfer, utils::decode_varint_list,
+    balance_sheet::{BalanceSheet, LazyBalanceSheet}, rune_transfer::RuneTransfer, utils::decode_varint_list,
 };
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
@@ -35,7 +35,7 @@ pub struct AlkaneMessageContext(());
 
 // TODO: import MessageContextParcel
 
-pub fn handle_message(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+pub fn handle_message(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, LazyBalanceSheet)> {
     let cellpack: Cellpack =
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
     
@@ -89,11 +89,19 @@ pub fn handle_message(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer
                     &IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into()),
                 ),
             );
+            // Clone the runtime balances
             let mut combined = parcel.runtime_balances.as_ref().clone();
-            <BalanceSheet as From<Vec<RuneTransfer>>>::from(parcel.runes.clone())
-                .pipe(&mut combined);
-            let sheet =
-                <BalanceSheet as From<Vec<RuneTransfer>>>::from(response.alkanes.clone().into());
+            
+            // Convert runes to a BalanceSheet
+            let runes_sheet = <BalanceSheet as From<Vec<RuneTransfer>>>::from(parcel.runes.clone());
+            
+            // Pipe the runes to the combined LazyBalanceSheet
+            runes_sheet.pipe_to_lazy(&mut combined, &mut atomic);
+            
+            // Convert response alkanes to a BalanceSheet
+            let sheet = <BalanceSheet as From<Vec<RuneTransfer>>>::from(response.alkanes.clone().into());
+            
+            // Debit mintable tokens from the combined LazyBalanceSheet
             combined.debit_mintable(&sheet, &mut atomic)?;
             debit_balances(&mut atomic, &myself, &response.alkanes)?;
             let cloned = context.clone().lock().unwrap().trace.clone();
@@ -159,7 +167,7 @@ impl MessageContext for AlkaneMessageContext {
     fn handle(_parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
         if is_active(_parcel.height) {
             match handle_message(_parcel) {
-                Ok((outgoing, runtime)) => Ok((outgoing, runtime)),
+                Ok((outgoing, runtime)) => Ok((outgoing, runtime.into())),
                 Err(e) => {
                     println!("{:?}", e);
                     Err(e) // Print the error

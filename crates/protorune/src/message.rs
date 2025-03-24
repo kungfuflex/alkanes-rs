@@ -3,7 +3,7 @@ use anyhow::Result;
 use bitcoin::{Block, OutPoint, Transaction};
 use metashrew::index_pointer::AtomicPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
+use protorune_support::balance_sheet::{BalanceSheet, LazyBalanceSheet, ProtoruneRuneId};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_encode;
 use std::u128;
@@ -33,7 +33,7 @@ pub struct MessageContextParcel {
     pub sheets: Box<BalanceSheet>,
     pub txindex: u32,
     pub vout: u32,
-    pub runtime_balances: Box<BalanceSheet>,
+    pub runtime_balances: Box<LazyBalanceSheet>,
 }
 
 pub trait ToBytes {
@@ -60,7 +60,7 @@ impl Default for MessageContextParcel {
             refund_pointer: 0,
             calldata: Vec::<u8>::default(),
             txindex: 0,
-            runtime_balances: Box::new(BalanceSheet::default()),
+            runtime_balances: Box::new(LazyBalanceSheet::default()),
             sheets: Box::new(BalanceSheet::default()),
         }
     }

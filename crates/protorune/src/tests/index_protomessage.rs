@@ -70,9 +70,9 @@ mod tests {
                 value: parcel.runes[0].value / 8,
             };
             println!("{:?}", transfer_to_runtime);
-            <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(vec![transfer_to_runtime])?
-                .pipe(&mut new_runtime_balances);
-            Ok((vec![transfer], *new_runtime_balances))
+            let runes_sheet = <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(vec![transfer_to_runtime])?;
+            runes_sheet.pipe_to_lazy(&mut new_runtime_balances, &mut atomic);
+            Ok((vec![transfer], (*new_runtime_balances).into()))
         }
     }
     impl MessageContext for OverForward {
@@ -122,9 +122,9 @@ mod tests {
                 id: parcel.runes[0].id,
                 value: 1,
             };
-            <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(vec![transfer_to_runtime])?
-                .pipe(&mut new_runtime_balances);
-            Ok((vec![transfer], *new_runtime_balances))
+            let runes_sheet = <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(vec![transfer_to_runtime])?;
+            runes_sheet.pipe_to_lazy(&mut new_runtime_balances, &mut atomic);
+            Ok((vec![transfer], (*new_runtime_balances).into()))
         }
     }
     impl MessageContext for FullRefund {
