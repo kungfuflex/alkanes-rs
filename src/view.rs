@@ -1,4 +1,5 @@
 use crate::message::AlkaneMessageContext;
+use bitcoin::consensus::encode::serialize;
 use crate::network::set_view_mode;
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
 use crate::utils::{
@@ -493,4 +494,26 @@ pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
     } else {
         Err(anyhow!("No bytecode found for the given AlkaneId"))
     }
+}
+
+pub fn getblock(input: &Vec<u8>) -> Result<Vec<u8>> {
+    use crate::etl;
+    use alkanes_support::proto::alkanes::{BlockRequest, BlockResponse};
+    use protobuf::Message;
+    
+    let request = BlockRequest::parse_from_bytes(input)?;
+    let height = request.height;
+    
+    // Get the block from the etl module
+    let block = etl::get_block(height)?;
+    
+    // Create a response with the block data
+    let response = BlockResponse {
+        block: serialize(&block),
+        height: height,
+        special_fields: protobuf::SpecialFields::new(),
+    };
+    
+    // Serialize the response
+    response.write_to_bytes().map_err(|e| anyhow!("{:?}", e))
 }

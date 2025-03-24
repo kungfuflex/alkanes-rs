@@ -143,3 +143,12 @@ message TraceBlockResponse {
 message BytecodeRequest {
   AlkaneId id = 1;
 }
+
+message BlockRequest {
+  uint32 height = 1;
+}
+
+message BlockResponse {
+  bytes block = 1;
+  uint32 height = 2;
+}
