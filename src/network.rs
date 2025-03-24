@@ -1,4 +1,5 @@
 use crate::message::AlkaneMessageContext;
+use protorune::tables;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -183,20 +184,86 @@ pub fn genesis(block: &Block) -> Result<()> {
             Err(e)
         }
     })?;
+    // Create the genesis outpoint
+    let genesis_outpoint = OutPoint {
+        txid: Txid::from_byte_array(
+            <Vec<u8> as AsRef<[u8]>>::as_ref(&hex::decode(genesis::GENESIS_OUTPOINT)?)
+                .try_into()?,
+        ),
+        vout: 0,
+    };
+    
+    // Encode the outpoint for storage
+    let outpoint_bytes = outpoint_encode(&genesis_outpoint)?;
+    
+    // Save the balance sheet to OUTPOINT_TO_RUNES
     <AlkaneTransferParcel as Into<BalanceSheet>>::into(response.alkanes.into()).save(
         &mut atomic.derive(
             &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
                 .OUTPOINT_TO_RUNES
-                .select(&outpoint_encode(&OutPoint {
-                    txid: Txid::from_byte_array(
-                        <Vec<u8> as AsRef<[u8]>>::as_ref(&hex::decode(genesis::GENESIS_OUTPOINT)?)
-                            .try_into()?,
-                    ),
-                    vout: 0,
-                })?),
+                .select(&outpoint_bytes),
         ),
         false,
     );
+    
+    // Populate OUTPOINT_TO_HEIGHT table
+    atomic.derive(
+        &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+            .OUTPOINT_TO_HEIGHT
+            .select(&outpoint_bytes)
+    ).set_value::<u64>(genesis::GENESIS_BLOCK);
+    
+    // Create a dummy transaction ID list for HEIGHT_TO_TRANSACTION_IDS
+    let txid_bytes = genesis_outpoint.txid.as_byte_array().to_vec();
+    atomic.derive(
+        &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+            .HEIGHT_TO_TRANSACTION_IDS
+            .select_value::<u64>(genesis::GENESIS_BLOCK)
+    ).append(Arc::new(txid_bytes));
+    
+    // Create a dummy output for OUTPOINT_TO_OUTPUT
+    use protorune_support::proto::protorune::Output;
+    use protobuf::Message;
+    
+    // Create a dummy script that looks like a P2PKH address
+    let dummy_script = vec![
+        0x76, // OP_DUP
+        0xa9, // OP_HASH160
+        0x14, // Push 20 bytes
+        // 20 bytes of a dummy address (all zeros)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x88, // OP_EQUALVERIFY
+        0xac  // OP_CHECKSIG
+    ];
+    
+    let output = Output {
+        script: dummy_script.clone(),
+        value: 100000000, // 1 BTC
+        special_fields: protobuf::SpecialFields::new(),
+    };
+    atomic.derive(
+        &tables::OUTPOINT_TO_OUTPUT
+            .select(&outpoint_bytes)
+    ).set(Arc::new(output.write_to_bytes().unwrap()));
+    
+    // Create a dummy address for OUTPOINT_SPENDABLE_BY
+    // This would normally be derived from the script, but we'll use a dummy address
+    let dummy_address = vec![
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    ];
+    
+    atomic.derive(
+        &tables::OUTPOINT_SPENDABLE_BY
+            .select(&outpoint_bytes)
+    ).set(Arc::new(dummy_address.clone()));
+    
+    // Also populate OUTPOINTS_FOR_ADDRESS
+    atomic.derive(
+        &tables::OUTPOINTS_FOR_ADDRESS
+            .select(&dummy_address)
+    ).append(Arc::new(outpoint_bytes.clone()));
     pipe_storagemap_to(
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
