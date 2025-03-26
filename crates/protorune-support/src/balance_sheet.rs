@@ -180,6 +180,29 @@ impl From<Arc<Vec<u8>>> for ProtoruneRuneId {
     }
 }
 
+/// Common trait for balance sheet operations
+pub trait BalanceSheetOperations {
+    /// Get the balance for a rune
+    fn get_balance(&self, rune: &ProtoruneRuneId) -> u128;
+
+    /// Set the balance for a rune
+    fn set_balance(&mut self, rune: &ProtoruneRuneId, value: u128);
+
+    /// Increase the balance for a rune
+    fn increase_balance(&mut self, rune: &ProtoruneRuneId, value: u128);
+
+    /// Decrease the balance for a rune
+    /// Returns true if successful, false if insufficient balance
+    fn decrease_balance(&mut self, rune: &ProtoruneRuneId, value: u128) -> bool;
+
+    /// Debit balances from this sheet according to another sheet
+    /// Returns error if any balance would go negative
+    fn debit_from(&mut self, sheet: &BalanceSheet) -> Result<()>;
+
+    /// Convert to a standard BalanceSheet
+    fn to_balance_sheet(&self) -> BalanceSheet;
+}
+
 #[derive(Default, Clone, Debug, Eq, Serialize, Deserialize)]
 pub struct BalanceSheet {
     pub balances: HashMap<ProtoruneRuneId, u128>, // Using HashMap to map runes to their balances
@@ -244,6 +267,47 @@ impl From<crate::proto::protorune::OutpointResponse> for BalanceSheet {
     }
 }
 
+// Implementation of the common trait for BalanceSheet
+impl BalanceSheetOperations for BalanceSheet {
+    fn get_balance(&self, rune: &ProtoruneRuneId) -> u128 {
+        *self.balances.get(rune).unwrap_or(&0u128)
+    }
+
+    fn set_balance(&mut self, rune: &ProtoruneRuneId, value: u128) {
+        self.balances.insert(rune.clone(), value);
+    }
+
+    fn increase_balance(&mut self, rune: &ProtoruneRuneId, value: u128) {
+        let current_balance = self.get_balance(rune);
+        self.set_balance(rune, current_balance + value);
+    }
+
+    fn decrease_balance(&mut self, rune: &ProtoruneRuneId, value: u128) -> bool {
+        let current_balance = self.get_balance(rune);
+        if current_balance < value {
+            false
+        } else {
+            self.set_balance(rune, current_balance - value);
+            true
+        }
+    }
+
+    fn debit_from(&mut self, sheet: &BalanceSheet) -> Result<()> {
+        for (rune, balance) in &sheet.balances {
+            if *balance <= self.get_balance(rune) {
+                self.decrease_balance(rune, *balance);
+            } else {
+                return Err(anyhow!("balance underflow"));
+            }
+        }
+        Ok(())
+    }
+
+    fn to_balance_sheet(&self) -> BalanceSheet {
+        self.clone()
+    }
+}
+
 impl BalanceSheet {
     pub fn new() -> Self {
         BalanceSheet {
@@ -254,7 +318,7 @@ impl BalanceSheet {
     pub fn from_pairs(runes: Vec<ProtoruneRuneId>, balances: Vec<u128>) -> BalanceSheet {
         let mut sheet = BalanceSheet::new();
         for i in 0..runes.len() {
-            sheet.set(&runes[i], balances[i]);
+            sheet.set_balance(&runes[i], balances[i]);
         }
         return sheet;
     }
@@ -262,36 +326,25 @@ impl BalanceSheet {
     // pipes a balancesheet onto itself
     pub fn pipe(&self, sheet: &mut BalanceSheet) -> () {
         for (rune, balance) in &self.balances {
-            sheet.increase(rune, *balance);
+            sheet.increase_balance(rune, *balance);
         }
     }
-    
+
     // pipes a balancesheet onto a LazyBalanceSheet
     pub fn pipe_to_lazy<P: KeyValuePointer>(&self, sheet: &mut LazyBalanceSheet, ptr: &P) -> () {
         for (rune, balance) in &self.balances {
-            sheet.increase(rune, *balance, ptr);
+            sheet.increase_with_ptr(rune, *balance, ptr);
         }
     }
 
-    /// When processing the return value for MessageContext.handle()
-    /// we want to be able to mint arbituary amounts of mintable tokens.
-    ///
-    /// This function allows us to debit more than the existing amount
-    /// of a mintable token without returning an Err so that MessageContext
-    /// can mint more than what the initial balance sheet has.
+    // Alias for debit_from to maintain backward compatibility
     pub fn debit(&mut self, sheet: &BalanceSheet) -> Result<()> {
-        for (rune, balance) in &sheet.balances {
-            if *balance <= self.get(&rune) {
-                self.decrease(rune, *balance);
-            } else {
-                return Err(anyhow!("balance underflow"));
-            }
-        }
-        Ok(())
+        self.debit_from(sheet)
     }
 
+    // Alias for debit_from to maintain backward compatibility
     pub fn rune_debit(&mut self, sheet: &BalanceSheet) -> Result<()> {
-        self.debit(sheet)
+        self.debit_from(sheet)
     }
 
     /*
@@ -305,37 +358,34 @@ impl BalanceSheet {
     }
     */
 
+    // Alias for get_balance to maintain backward compatibility
     pub fn get(&self, rune: &ProtoruneRuneId) -> u128 {
-        *self.balances.get(rune).unwrap_or(&0u128) // Return 0 if rune not found
+        self.get_balance(rune)
     }
 
+    // Alias for set_balance to maintain backward compatibility
     pub fn set(&mut self, rune: &ProtoruneRuneId, value: u128) {
-        self.balances.insert(rune.clone(), value);
+        self.set_balance(rune, value)
     }
 
+    // Alias for increase_balance to maintain backward compatibility
     pub fn increase(&mut self, rune: &ProtoruneRuneId, value: u128) {
-        let current_balance = self.get(rune);
-        self.set(rune, current_balance + value);
+        self.increase_balance(rune, value)
     }
 
+    // Alias for decrease_balance to maintain backward compatibility
     pub fn decrease(&mut self, rune: &ProtoruneRuneId, value: u128) -> bool {
-        let current_balance = self.get(rune);
-        if current_balance < value {
-            false
-        } else {
-            self.set(rune, current_balance - value);
-            true
-        }
+        self.decrease_balance(rune, value)
     }
 
     pub fn merge(a: &BalanceSheet, b: &BalanceSheet) -> BalanceSheet {
         let mut merged = BalanceSheet::new();
         for (rune, balance) in &a.balances {
-            merged.set(rune, *balance);
+            merged.set_balance(rune, *balance);
         }
         for (rune, balance) in &b.balances {
-            let current_balance = merged.get(rune);
-            merged.set(rune, current_balance + *balance);
+            let current_balance = merged.get_balance(rune);
+            merged.set_balance(rune, current_balance + *balance);
         }
         merged
     }
@@ -402,6 +452,51 @@ impl Default for LazyBalanceSheet {
     }
 }
 
+// Implementation of the common trait for LazyBalanceSheet
+impl BalanceSheetOperations for LazyBalanceSheet {
+    fn get_balance(&self, rune: &ProtoruneRuneId) -> u128 {
+        // For the trait implementation, we only use the cache
+        *self.cache.get(rune).unwrap_or(&0u128)
+    }
+
+    fn set_balance(&mut self, rune: &ProtoruneRuneId, value: u128) {
+        self.cache.insert(rune.clone(), value);
+        self.modified = true;
+    }
+
+    fn increase_balance(&mut self, rune: &ProtoruneRuneId, value: u128) {
+        let current_balance = self.get_balance(rune);
+        self.set_balance(rune, current_balance + value);
+    }
+
+    fn decrease_balance(&mut self, rune: &ProtoruneRuneId, value: u128) -> bool {
+        let current_balance = self.get_balance(rune);
+        if current_balance < value {
+            false
+        } else {
+            self.set_balance(rune, current_balance - value);
+            true
+        }
+    }
+
+    fn debit_from(&mut self, sheet: &BalanceSheet) -> Result<()> {
+        for (rune, balance) in &sheet.balances {
+            if *balance <= self.get_balance(rune) {
+                self.decrease_balance(rune, *balance);
+            } else {
+                return Err(anyhow!("balance underflow"));
+            }
+        }
+        Ok(())
+    }
+
+    fn to_balance_sheet(&self) -> BalanceSheet {
+        BalanceSheet {
+            balances: self.cache.clone(),
+        }
+    }
+}
+
 impl LazyBalanceSheet {
     pub fn new(storage_path: String) -> Self {
         LazyBalanceSheet {
@@ -421,7 +516,7 @@ impl LazyBalanceSheet {
         // Try to load from storage using the provided pointer
         let runes_ptr = ptr.keyword("/runes");
         let balances_ptr = ptr.keyword("/balances");
-        
+
         // Search for the rune in the runes list
         let length = runes_ptr.length();
         for i in 0..length {
@@ -439,34 +534,64 @@ impl LazyBalanceSheet {
         0
     }
 
-    // Get a balance, using the cache if available
-    pub fn get<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, ptr: &P) -> u128 {
+    // Get a balance with pointer, using the cache if available or loading from storage
+    pub fn get_with_ptr<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, ptr: &P) -> u128 {
         self.load_balance(rune, ptr)
     }
 
-    // Get a balance from the cache only, without loading from storage
+    // Alias for get_balance to maintain backward compatibility
     pub fn get_cached(&self, rune: &ProtoruneRuneId) -> u128 {
-        *self.cache.get(rune).unwrap_or(&0u128)
+        self.get_balance(rune)
     }
 
+    // Alias for set_balance to maintain backward compatibility
     pub fn set(&mut self, rune: &ProtoruneRuneId, value: u128) {
-        self.cache.insert(rune.clone(), value);
-        self.modified = true;
+        self.set_balance(rune, value)
     }
 
-    pub fn increase<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, value: u128, ptr: &P) {
-        let current_balance = self.get(rune, ptr);
-        self.set(rune, current_balance + value);
+    // Increase balance with pointer support
+    pub fn increase_with_ptr<P: KeyValuePointer>(
+        &mut self,
+        rune: &ProtoruneRuneId,
+        value: u128,
+        ptr: &P,
+    ) {
+        let current_balance = self.get_with_ptr(rune, ptr);
+        self.set_balance(rune, current_balance + value);
     }
 
-    pub fn decrease<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, value: u128, ptr: &P) -> bool {
-        let current_balance = self.get(rune, ptr);
+    // Decrease balance with pointer support
+    pub fn decrease_with_ptr<P: KeyValuePointer>(
+        &mut self,
+        rune: &ProtoruneRuneId,
+        value: u128,
+        ptr: &P,
+    ) -> bool {
+        let current_balance = self.get_with_ptr(rune, ptr);
         if current_balance < value {
             false
         } else {
-            self.set(rune, current_balance - value);
+            self.set_balance(rune, current_balance - value);
             true
         }
+    }
+
+    // Backward compatibility methods
+    pub fn get<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, ptr: &P) -> u128 {
+        self.get_with_ptr(rune, ptr)
+    }
+
+    pub fn increase<P: KeyValuePointer>(&mut self, rune: &ProtoruneRuneId, value: u128, ptr: &P) {
+        self.increase_with_ptr(rune, value, ptr)
+    }
+
+    pub fn decrease<P: KeyValuePointer>(
+        &mut self,
+        rune: &ProtoruneRuneId,
+        value: u128,
+        ptr: &P,
+    ) -> bool {
+        self.decrease_with_ptr(rune, value, ptr)
     }
 
     /// Check if the cache has been modified since the last save
@@ -477,13 +602,6 @@ impl LazyBalanceSheet {
     /// Reset the modified flag after saving
     pub fn reset_modified(&mut self) {
         self.modified = false;
-    }
-
-    // Convert to a regular BalanceSheet (loads all cached balances)
-    pub fn to_balance_sheet(&self) -> BalanceSheet {
-        BalanceSheet {
-            balances: self.cache.clone(),
-        }
     }
 
     // Create from a regular BalanceSheet
@@ -508,35 +626,39 @@ impl LazyBalanceSheet {
                     balances_ptr.append_value::<u128>(*balance);
                 }
             }
-            
+
             // Reset the modified flag after saving
             self.reset_modified();
         }
     }
 
-    // Debit from this balance sheet
+    // Debit from this balance sheet with pointer support
     pub fn debit<P: KeyValuePointer>(&mut self, sheet: &BalanceSheet, ptr: &P) -> Result<()> {
         for (rune, balance) in &sheet.balances {
-            if *balance <= self.get(rune, ptr) {
-                self.decrease(rune, *balance, ptr);
+            if *balance <= self.get_with_ptr(rune, ptr) {
+                self.decrease_with_ptr(rune, *balance, ptr);
             } else {
                 return Err(anyhow!("balance underflow"));
             }
         }
         Ok(())
     }
-    
+
     // Debit mintable tokens from this balance sheet
-    pub fn debit_mintable<P: KeyValuePointer>(&mut self, sheet: &BalanceSheet, ptr: &P) -> Result<()> {
+    pub fn debit_mintable<P: KeyValuePointer>(
+        &mut self,
+        sheet: &BalanceSheet,
+        ptr: &P,
+    ) -> Result<()> {
         for (rune, balance) in &sheet.balances {
-            let current = self.get(rune, ptr);
+            let current = self.get_with_ptr(rune, ptr);
             if *balance <= current {
-                self.decrease(rune, *balance, ptr);
+                self.decrease_with_ptr(rune, *balance, ptr);
             } else {
                 // For mintable tokens, we just decrease what we have
                 // This is a simplified implementation - in a real implementation,
                 // you would check if the token is mintable
-                self.decrease(rune, current, ptr);
+                self.decrease_with_ptr(rune, current, ptr);
             }
         }
         Ok(())
@@ -545,24 +667,24 @@ impl LazyBalanceSheet {
     // Pipe a balance sheet into this lazy balance sheet
     pub fn pipe_from<P: KeyValuePointer>(&mut self, sheet: &BalanceSheet, ptr: &P) {
         for (rune, balance) in &sheet.balances {
-            self.increase(rune, *balance, ptr);
+            self.increase_with_ptr(rune, *balance, ptr);
         }
     }
 
     // Merge two lazy balance sheets
     pub fn merge(a: &mut LazyBalanceSheet, b: &mut LazyBalanceSheet) -> LazyBalanceSheet {
         let mut merged = LazyBalanceSheet::new(a.storage_path.clone());
-        
+
         // Merge the caches
         for (rune, balance) in &a.cache {
-            merged.set(rune, *balance);
+            merged.set_balance(rune, *balance);
         }
-        
+
         for (rune, balance) in &b.cache {
-            let current_balance = merged.get_cached(rune);
-            merged.set(rune, current_balance + *balance);
+            let current_balance = merged.get_balance(rune);
+            merged.set_balance(rune, current_balance + *balance);
         }
-        
+
         merged
     }
 }
