@@ -49,6 +49,20 @@ pub fn overflow_error<T>(v: Option<T>) -> Result<T> {
     v.ok_or("").map_err(|_| anyhow!("overflow error"))
 }
 
+/// A macro that captures the expression and passes it to overflow_error
+#[macro_export]
+macro_rules! checked_expr {
+    ($expr:expr) => {
+        match $expr {
+            Some(val) => Ok(val),
+            None => Err(anyhow::anyhow!(concat!(
+                "Overflow error in expression: ",
+                stringify!($expr)
+            ))),
+        }
+    };
+}
+
 pub fn shift_bytes32(v: &mut Vec<u128>) -> Option<Vec<u8>> {
     Some(
         (&[
