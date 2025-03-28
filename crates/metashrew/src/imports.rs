@@ -13,6 +13,7 @@ pub fn __set_input(v: Vec<u8>) {
     }
 }
 
+// For non-test builds, we'll use the actual host functions
 #[cfg(not(feature = "test-utils"))]
 #[link(wasm_import_module = "env")]
 extern "C" {
@@ -24,6 +25,7 @@ extern "C" {
     pub fn __log(ptr: i32);
 }
 
+// For test builds, we'll provide mock implementations
 #[allow(static_mut_refs)]
 #[cfg(feature = "test-utils")]
 pub fn __host_len() -> i32 {

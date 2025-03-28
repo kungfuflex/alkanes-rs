@@ -7,6 +7,9 @@ use std::fmt::Write;
 use std::panic;
 use std::sync::Arc;
 
+// Re-export metashrew-lib
+pub use metashrew_lib as lib;
+
 #[cfg(feature = "panic-hook")]
 pub mod compat;
 pub mod imports;
@@ -23,6 +26,7 @@ use crate::proto::metashrew::KeyValueFlush;
 pub use crate::stdio::stdout;
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr, to_ptr};
 
+// For backward compatibility, we'll keep the existing API but implement it using metashrew-lib
 static mut CACHE: Option<HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>>> = None;
 static mut TO_FLUSH: Option<Vec<Arc<Vec<u8>>>> = None;
 
@@ -38,15 +42,10 @@ pub fn get(v: Arc<Vec<u8>>) -> Arc<Vec<u8>> {
         if CACHE.as_ref().unwrap().contains_key(&v.clone()) {
             return CACHE.as_ref().unwrap().get(&v.clone()).unwrap().clone();
         }
-        let length: i32 = __get_len(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())));
-        let mut buffer = Vec::<u8>::new();
-        buffer.extend_from_slice(&length.to_le_bytes());
-        buffer.resize((length as usize) + 4, 0);
-        __get(
-            to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())),
-            to_passback_ptr(&mut buffer),
-        );
-        let value = Arc::new(buffer[4..].to_vec());
+        
+        // Use metashrew-lib's host functions
+        let result = metashrew_lib::host::get(v.as_ref()).unwrap_or_default();
+        let value = Arc::new(result);
         CACHE.as_mut().unwrap().insert(v.clone(), value.clone());
         value
     }
@@ -65,30 +64,32 @@ pub fn set(k: Arc<Vec<u8>>, v: Arc<Vec<u8>>) {
 pub fn flush() {
     unsafe {
         initialize();
-        let mut to_encode: Vec<Vec<u8>> = Vec::<Vec<u8>>::new();
+        let mut pairs = Vec::new();
         for item in TO_FLUSH.as_ref().unwrap() {
-            to_encode.push((*item.clone()).clone());
-            to_encode.push((*(CACHE.as_ref().unwrap().get(item).unwrap().clone())).clone());
+            pairs.push((
+                (*item.clone()).clone(),
+                (*(CACHE.as_ref().unwrap().get(item).unwrap().clone())).clone(),
+            ));
         }
         TO_FLUSH = Some(Vec::<Arc<Vec<u8>>>::new());
-        let mut buffer = KeyValueFlush::new();
-        buffer.list = to_encode;
-        let serialized = buffer.write_to_bytes().unwrap();
-        __flush(to_ptr(&mut to_arraybuffer_layout(&serialized.to_vec())) + 4);
+        
+        // Use metashrew-lib's host functions
+        let _ = metashrew_lib::host::flush(&pairs);
     }
 }
 
 #[allow(unused_unsafe)]
 pub fn input() -> Vec<u8> {
     initialize();
-    unsafe {
-        let length: i32 = __host_len().into();
-        let mut buffer = Vec::<u8>::new();
-        buffer.extend_from_slice(&length.to_le_bytes());
-        buffer.resize((length as usize) + 4, 0);
-        __load_input(to_ptr(&mut buffer) + 4);
-        buffer[4..].to_vec()
-    }
+    
+    // Use metashrew-lib's host functions
+    let (height, block) = metashrew_lib::host::load_input().unwrap_or_default();
+    
+    // Format the result the same way as the original function
+    let mut result = Vec::new();
+    result.extend_from_slice(&height.to_le_bytes());
+    result.extend_from_slice(&block);
+    result[4..].to_vec()
 }
 
 #[allow(static_mut_refs)]
@@ -114,4 +115,15 @@ pub fn clear() -> () {
         reset();
         CACHE = Some(HashMap::<Arc<Vec<u8>>, Arc<Vec<u8>>>::new());
     }
+}
+
+// Add a println macro that uses metashrew-lib's log function
+#[macro_export]
+macro_rules! println {
+    ($($arg:tt)*) => {{
+        use std::fmt::Write;
+        let mut s = String::new();
+        write!(&mut s, $($arg)*).unwrap();
+        metashrew_lib::host::log(&s);
+    }};
 }

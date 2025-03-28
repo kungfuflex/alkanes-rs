@@ -44,6 +44,8 @@ refunder = []
 merkle_distributor = []
 free_mint = []
 upgradeable = []
+# Native binary support
+native = ["metashrew-lib/native", "dep:tokio", "dep:actix-web", "dep:actix-cors", "dep:clap", "dep:env_logger"]
 
 
 [dependencies]
@@ -70,6 +72,13 @@ web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
 hex_lit = "0.1.1"
 once_cell = "1.20.1"
+# Dependencies for native binary
+metashrew-lib = { path = "../metashrew-lib" }
+tokio = { version = "1.43", features = ["full"], optional = true }
+actix-web = { version = "4.5", optional = true }
+actix-cors = { version = "0.7", optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
+env_logger = { version = "0.11", optional = true }
 
 [dev-dependencies]
 
@@ -92,3 +101,8 @@ flate2 = "1.0.34"
 protoc-rust = { version = "2.28.0" }
 protoc-bin-vendored = "3.0.0"
 hex = "0.4.3"
+
+[[bin]]
+name = "alkanes-native"
+path = "src/bin/alkanes-native.rs"
+required-features = ["native"]
