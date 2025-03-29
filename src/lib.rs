@@ -3,7 +3,7 @@ use crate::view::{ multi_simulate_safe, parcel_from_protobuf, simulate_safe, met
 use alkanes_support::proto;
 use bitcoin::{ Block, OutPoint };
 #[allow(unused_imports)]
-use metashrew::{ flush, input, println, stdio::{ stdout, Write } };
+use metashrew_lib::{ flush, host::log as println, stdio::{ stdout, Write } };
 #[allow(unused_imports)]
 use metashrew_support::block::AuxpowBlock;
 use metashrew_support::compat::export_bytes;
@@ -28,10 +28,11 @@ pub mod vm;
 use crate::indexer::index_block;
 
 // Import the metashrew-lib macros
-use metashrew::lib::declare_indexer;
+use metashrew_lib::declare_indexer;
 
 // Define the AlkanesIndexer struct
-struct AlkanesIndexer;
+#[derive(Clone)]
+pub struct AlkanesIndexer;
 
 impl Default for AlkanesIndexer {
     fn default() -> Self {
@@ -40,7 +41,7 @@ impl Default for AlkanesIndexer {
 }
 
 // Implement the Indexer trait for AlkanesIndexer
-impl metashrew::lib::indexer::Indexer for AlkanesIndexer {
+impl metashrew_lib::indexer::Indexer for AlkanesIndexer {
     fn index_block(&mut self, height: u32, block: &[u8]) -> anyhow::Result<()> {
         configure_network();
         
@@ -65,6 +66,214 @@ impl metashrew::lib::indexer::Indexer for AlkanesIndexer {
     }
 }
 
+// Implement NativeIndexer for AlkanesIndexer
+#[cfg(feature = "native")]
+impl metashrew_lib::indexer::NativeIndexer for AlkanesIndexer {
+    fn view_functions(&self) -> std::collections::HashMap<String, Box<dyn metashrew_lib::indexer::ViewFunctionWrapper>> {
+        use metashrew_lib::indexer::ProtoViewFunctionWrapper;
+        use metashrew_lib::view::ProtoViewFunction;
+        use std::collections::HashMap;
+        
+        let mut map = HashMap::new();
+        
+        // Add view functions
+        map.insert(
+            "multisimluate".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, proto::alkanes::MultiSimulateRequest, proto::alkanes::MultiSimulateResponse>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "simulate".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, proto::alkanes::MessageContextParcel, proto::alkanes::SimulateResponse>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "meta".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, proto::alkanes::MessageContextParcel, Vec<u8>>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "runesbyaddress".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, Vec<u8>, protorune_support::proto::protorune::WalletResponse>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "runesbyoutpoint".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, Vec<u8>, protorune_support::proto::protorune::OutpointResponse>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "protorunesbyheight".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, Vec<u8>, protorune_support::proto::protorune::RunesResponse>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "traceblock".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, u32, Vec<u8>>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "trace".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, protorune_support::proto::protorune::Outpoint, Vec<u8>>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "getbytecode".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, Vec<u8>, Vec<u8>>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "protorunesbyoutpoint".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, Vec<u8>, protorune_support::proto::protorune::OutpointResponse>::new(
+                self.clone(),
+            )),
+        );
+        
+        map.insert(
+            "runesbyheight".to_string(),
+            Box::new(ProtoViewFunctionWrapper::<Self, Vec<u8>, protorune_support::proto::protorune::RunesResponse>::new(
+                self.clone(),
+            )),
+        );
+        
+        map
+    }
+}
+
+// Implement ProtoViewFunction for each view function
+impl metashrew_lib::view::ProtoViewFunction<proto::alkanes::MultiSimulateRequest, proto::alkanes::MultiSimulateResponse> 
+    for AlkanesIndexer 
+{
+    fn execute_proto(&self, request: proto::alkanes::MultiSimulateRequest) -> anyhow::Result<proto::alkanes::MultiSimulateResponse> {
+        configure_network();
+        let mut result = proto::alkanes::MultiSimulateResponse::new();
+        let responses = multi_simulate_safe(
+            &parcels_from_protobuf(request),
+            u64::MAX
+        );
+    
+        for response in responses {
+            let mut res = proto::alkanes::SimulateResponse::new();
+            match response {
+                Ok((response, gas_used)) => {
+                    res.execution = MessageField::some(response.into());
+                    res.gas_used = gas_used;
+                }
+                Err(e) => {
+                    result.error = e.to_string();
+                }
+            }
+            result.responses.push(res);
+        }
+        
+        Ok(result)
+    }
+}
+
+impl metashrew_lib::view::ProtoViewFunction<proto::alkanes::MessageContextParcel, proto::alkanes::SimulateResponse> 
+    for AlkanesIndexer 
+{
+    fn execute_proto(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<proto::alkanes::SimulateResponse> {
+        configure_network();
+        let mut result = proto::alkanes::SimulateResponse::new();
+        match simulate_safe(&parcel_from_protobuf(request), u64::MAX) {
+            Ok((response, gas_used)) => {
+                result.execution = MessageField::some(response.into());
+                result.gas_used = gas_used;
+            }
+            Err(e) => {
+                result.error = e.to_string();
+            }
+        }
+        Ok(result)
+    }
+}
+
+impl metashrew_lib::view::ProtoViewFunction<proto::alkanes::MessageContextParcel, Vec<u8>> 
+    for AlkanesIndexer 
+{
+    fn execute_proto(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<Vec<u8>> {
+        configure_network();
+        meta_safe(&parcel_from_protobuf(request))
+    }
+}
+
+impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::protorune::WalletResponse> 
+    for AlkanesIndexer 
+{
+    fn execute_proto(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::WalletResponse> {
+        configure_network();
+        protorune::view::runes_by_address(&request)
+            .map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+    }
+}
+
+impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::protorune::OutpointResponse> 
+    for AlkanesIndexer 
+{
+    fn execute_proto(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::OutpointResponse> {
+        configure_network();
+        protorune::view::runes_by_outpoint(&request)
+            .map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+    }
+}
+
+impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::protorune::RunesResponse> 
+    for AlkanesIndexer 
+{
+    fn execute_proto(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::RunesResponse> {
+        configure_network();
+        view::protorunes_by_height(&request)
+            .map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+    }
+}
+
+impl metashrew_lib::view::ProtoViewFunction<u32, Vec<u8>> 
+    for AlkanesIndexer 
+{
+    fn execute_proto(&self, request: u32) -> anyhow::Result<Vec<u8>> {
+        configure_network();
+        view::traceblock(request)
+    }
+}
+
+impl metashrew_lib::view::ProtoViewFunction<protorune_support::proto::protorune::Outpoint, Vec<u8>> 
+    for AlkanesIndexer 
+{
+    fn execute_proto(&self, request: protorune_support::proto::protorune::Outpoint) -> anyhow::Result<Vec<u8>> {
+        configure_network();
+        let outpoint: OutPoint = request.try_into().unwrap();
+        view::trace(&outpoint)
+    }
+}
+
+impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, Vec<u8>> 
+    for AlkanesIndexer 
+{
+    fn execute_proto(&self, request: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+        configure_network();
+        view::getbytecode(&request).map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+    }
+}
+
 // Define the Metashrew indexer program with Protocol Buffer messages
 declare_indexer! {
     struct AlkanesProgram {
@@ -72,104 +281,57 @@ declare_indexer! {
         views: {
             "multisimluate" => {
                 fn multisimluate(&self, request: proto::alkanes::MultiSimulateRequest) -> anyhow::Result<proto::alkanes::MultiSimulateResponse> {
-                    configure_network();
-                    let mut result = proto::alkanes::MultiSimulateResponse::new();
-                    let responses = multi_simulate_safe(
-                        &parcels_from_protobuf(request),
-                        u64::MAX
-                    );
-                
-                    for response in responses {
-                        let mut res = proto::alkanes::SimulateResponse::new();
-                        match response {
-                            Ok((response, gas_used)) => {
-                                res.execution = MessageField::some(response.into());
-                                res.gas_used = gas_used;
-                            }
-                            Err(e) => {
-                                result.error = e.to_string();
-                            }
-                        }
-                        result.responses.push(res);
-                    }
-                    
-                    Ok(result)
+                    self.execute_proto(request)
                 }
             },
             "simulate" => {
                 fn simulate(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<proto::alkanes::SimulateResponse> {
-                    configure_network();
-                    let mut result = proto::alkanes::SimulateResponse::new();
-                    match simulate_safe(&parcel_from_protobuf(request), u64::MAX) {
-                        Ok((response, gas_used)) => {
-                            result.execution = MessageField::some(response.into());
-                            result.gas_used = gas_used;
-                        }
-                        Err(e) => {
-                            result.error = e.to_string();
-                        }
-                    }
-                    Ok(result)
+                    self.execute_proto(request)
                 }
             },
             "meta" => {
                 fn meta(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<Vec<u8>> {
-                    configure_network();
-                    meta_safe(&parcel_from_protobuf(request))
+                    self.execute_proto(request)
                 }
             },
             "runesbyaddress" => {
                 fn runesbyaddress(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::WalletResponse> {
-                    configure_network();
-                    protorune::view::runes_by_address(&request)
-                        .map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+                    self.execute_proto(request)
                 }
             },
             "runesbyoutpoint" => {
                 fn runesbyoutpoint(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::OutpointResponse> {
-                    configure_network();
-                    protorune::view::runes_by_outpoint(&request)
-                        .map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+                    self.execute_proto(request)
                 }
             },
             "protorunesbyheight" => {
                 fn protorunesbyheight(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::RunesResponse> {
-                    configure_network();
-                    view::protorunes_by_height(&request)
-                        .map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+                    self.execute_proto(request)
                 }
             },
             "traceblock" => {
                 fn traceblock(&self, request: u32) -> anyhow::Result<Vec<u8>> {
-                    configure_network();
-                    view::traceblock(request)
+                    self.execute_proto(request)
                 }
             },
             "trace" => {
                 fn trace(&self, request: protorune_support::proto::protorune::Outpoint) -> anyhow::Result<Vec<u8>> {
-                    configure_network();
-                    let outpoint: OutPoint = request.try_into().unwrap();
-                    view::trace(&outpoint)
+                    self.execute_proto(request)
                 }
             },
             "getbytecode" => {
                 fn getbytecode(&self, request: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-                    configure_network();
-                    view::getbytecode(&request).map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+                    self.execute_proto(request)
                 }
             },
             "protorunesbyoutpoint" => {
                 fn protorunesbyoutpoint(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::OutpointResponse> {
-                    configure_network();
-                    view::protorunes_by_outpoint(&request)
-                        .map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+                    self.execute_proto(request)
                 }
             },
             "runesbyheight" => {
                 fn runesbyheight(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::RunesResponse> {
-                    configure_network();
-                    protorune::view::runes_by_height(&request)
-                        .map_err(|e| anyhow::anyhow!("Error: {:?}", e))
+                    self.execute_proto(request)
                 }
             }
         }

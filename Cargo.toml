@@ -12,9 +12,10 @@ crate-type = ["cdylib", "rlib"]
 
 [workspace]
 members = [".", "crates/*"]
+exclude = ["crates/metashrew", "crates/metashrew-support"]
 
 [features]
-test-utils = []
+test-utils = ["metashrew-lib/test-utils"]
 testnet = []
 dogecoin = []
 luckycoin = []
@@ -52,8 +53,9 @@ native = ["metashrew-lib/native", "dep:tokio", "dep:actix-web", "dep:actix-cors"
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew = { path = "crates/metashrew" }
-metashrew-support = { path = "crates/metashrew-support" }
+# Use the top-level metashrew-lib and metashrew-support crates
+metashrew-lib = { path = "../metashrew-lib" }
+metashrew-support = { path = "../metashrew-support" }
 ordinals = { path = "crates/ordinals" }
 protorune = { path = "crates/protorune" }
 protorune-support = { path = "crates/protorune-support" }
@@ -73,7 +75,6 @@ js-sys = "0.3.72"
 hex_lit = "0.1.1"
 once_cell = "1.20.1"
 # Dependencies for native binary
-metashrew-lib = { path = "../metashrew-lib" }
 tokio = { version = "1.43", features = ["full"], optional = true }
 actix-web = { version = "4.5", optional = true }
 actix-cors = { version = "0.7", optional = true }
@@ -81,7 +82,6 @@ clap = { version = "4.5", features = ["derive"], optional = true }
 env_logger = { version = "0.11", optional = true }
 
 [dev-dependencies]
-
 alkanes = { path = ".", features = [
     "genesis_alkane",
     "genesis_protorune",
@@ -90,7 +90,8 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew = { path = "crates/metashrew", features = ["test-utils"] }
+# Use metashrew-lib for tests
+metashrew-lib = { path = "../metashrew-lib", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 
