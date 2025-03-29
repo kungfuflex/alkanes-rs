@@ -30,8 +30,8 @@ impl Protoburn {
     pub fn process(
         &mut self,
         atomic: &mut AtomicPointer,
-        balance_sheet: BalanceSheet,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balance_sheet: BalanceSheet<AtomicPointer>,
+        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         outpoint: OutPoint,
     ) -> Result<()> {
         let table = RuneTable::for_protocol(self.tag.ok_or(anyhow!("no tag found"))?);
@@ -73,8 +73,8 @@ pub trait Protoburns<T>: Deref<Target = [T]> {
         atomic: &mut AtomicPointer,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
@@ -86,8 +86,8 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
         atomic: &mut AtomicPointer,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {
@@ -103,7 +103,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
         let mut burn_sheets = self
             .into_iter()
             .map(|_a| BalanceSheet::new())
-            .collect::<Vec<BalanceSheet>>();
+            .collect::<Vec<BalanceSheet<AtomicPointer>>>();
 
         // from field in Protoburn is provided, which means the burn doesn't cycle through the inputs, just pulls the inputs from the "from" field and burns those
         for (i, burn) in self.into_iter().enumerate() {

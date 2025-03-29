@@ -6,6 +6,7 @@ mod tests {
     use crate::{tables, Protorune};
     use anyhow::Result;
     use bitcoin::{OutPoint, Transaction};
+    use metashrew::index_pointer::AtomicPointer;
     use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
     use protorune_support::proto::{self, protorune};
     use protorune_support::protostone::{Protostone, ProtostoneEdict};
@@ -31,12 +32,14 @@ mod tests {
             PROTOCOL_ID
         }
         // takes half of the first runes balance
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let mut new_runtime_balances = parcel.runtime_balances.clone();
             let mut runes = parcel.runes.clone();
             runes[0].value = runes[0].value / 2;
             let transfer = runes[0].clone();
-            <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(runes)?
+            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(runes)?
                 .pipe(&mut new_runtime_balances);
             // transfer protorunes to the pointer
             Ok((vec![transfer], *new_runtime_balances))

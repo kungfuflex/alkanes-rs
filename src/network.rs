@@ -171,10 +171,10 @@ pub fn genesis(block: &Block) -> Result<()> {
             inputs: vec![0],
         })
         .encipher(),
-        sheets: Box::<BalanceSheet>::new(BalanceSheet::default()),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
         txindex: 0,
         vout: 0,
-        runtime_balances: Box::<BalanceSheet>::new(BalanceSheet::default()),
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
     };
     let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
@@ -183,20 +183,23 @@ pub fn genesis(block: &Block) -> Result<()> {
             Err(e)
         }
     })?;
-    <AlkaneTransferParcel as Into<BalanceSheet>>::into(response.alkanes.into()).save(
-        &mut atomic.derive(
-            &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
-                .OUTPOINT_TO_RUNES
-                .select(&outpoint_encode(&OutPoint {
-                    txid: Txid::from_byte_array(
-                        <Vec<u8> as AsRef<[u8]>>::as_ref(&hex::decode(genesis::GENESIS_OUTPOINT)?)
+    <AlkaneTransferParcel as Into<BalanceSheet<AtomicPointer>>>::into(response.alkanes.into())
+        .save(
+            &mut atomic.derive(
+                &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+                    .OUTPOINT_TO_RUNES
+                    .select(&outpoint_encode(&OutPoint {
+                        txid: Txid::from_byte_array(
+                            <Vec<u8> as AsRef<[u8]>>::as_ref(&hex::decode(
+                                genesis::GENESIS_OUTPOINT,
+                            )?)
                             .try_into()?,
-                    ),
-                    vout: 0,
-                })?),
-        ),
-        false,
-    );
+                        ),
+                        vout: 0,
+                    })?),
+            ),
+            false,
+        );
     pipe_storagemap_to(
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),

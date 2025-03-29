@@ -29,6 +29,7 @@ mod tests {
     use metashrew_support::index_pointer::KeyValuePointer;
     use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
 
+    use metashrew::index_pointer::AtomicPointer;
     use protobuf::{Message, SpecialFields};
 
     use std::str::FromStr;
@@ -38,7 +39,9 @@ mod tests {
     struct MyMessageContext(());
 
     impl MessageContext for MyMessageContext {
-        fn handle(_parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            _parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let ar: Vec<RuneTransfer> = vec![];
             Ok((ar, BalanceSheet::default()))
         }

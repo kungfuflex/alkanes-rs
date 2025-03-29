@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use metashrew_support::index_pointer::KeyValuePointer;
+
 use crate::balance_sheet::{BalanceSheet, ProtoruneRuneId};
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -9,7 +11,7 @@ pub struct RuneTransfer {
 }
 
 impl RuneTransfer {
-    pub fn from_balance_sheet(s: BalanceSheet) -> Vec<Self> {
+    pub fn from_balance_sheet<P: KeyValuePointer + Clone>(s: BalanceSheet<P>) -> Vec<Self> {
         s.balances
             .iter()
             .filter_map(|(id, v)| {
@@ -28,9 +30,9 @@ impl RuneTransfer {
 ///                       the current transaction being handled.
 ///   sheet: The balance sheet to increase the balances by
 ///   vout: The target transaction vout to receive the runes
-pub fn increase_balances_using_sheet(
-    balances_by_output: &mut HashMap<u32, BalanceSheet>,
-    sheet: &BalanceSheet,
+pub fn increase_balances_using_sheet<P: KeyValuePointer + Clone>(
+    balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+    sheet: &BalanceSheet<P>,
     vout: u32,
 ) {
     if !balances_by_output.contains_key(&vout) {
@@ -40,8 +42,8 @@ pub fn increase_balances_using_sheet(
 }
 
 /// Refunds all input runes to the refund pointer
-pub fn refund_to_refund_pointer(
-    balances_by_output: &mut HashMap<u32, BalanceSheet>,
+pub fn refund_to_refund_pointer<P: KeyValuePointer + Clone>(
+    balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
     protomessage_vout: u32,
     refund_pointer: u32,
 ) {

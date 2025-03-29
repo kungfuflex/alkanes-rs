@@ -2,6 +2,7 @@
 mod tests {
     use crate::balance_sheet::load_sheet;
     use crate::message::MessageContext;
+    use metashrew::index_pointer::{AtomicPointer, IndexPointer};
     use metashrew::proto;
     use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
     use protorune_support::protostone::Protostone;
@@ -32,7 +33,9 @@ mod tests {
     struct MyMessageContext(());
 
     impl MessageContext for MyMessageContext {
-        fn handle(_parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            _parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let ar: Vec<RuneTransfer> = vec![];
             Ok((ar, BalanceSheet::default()))
         }

@@ -1,53 +1,43 @@
 use crate::message::AlkaneMessageContext;
-use bitcoin::consensus::encode::serialize;
 use crate::network::set_view_mode;
-use crate::tables::{ TRACES, TRACES_BY_HEIGHT };
+use crate::tables::{TRACES, TRACES_BY_HEIGHT};
 use crate::utils::{
-    alkane_inventory_pointer,
-    balance_pointer,
-    credit_balances,
-    debit_balances,
-    pipe_storagemap_to,
+    alkane_inventory_pointer, balance_pointer, credit_balances, debit_balances, pipe_storagemap_to,
 };
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
-use crate::vm::utils::{ prepare_context, run_after_special, run_special_cellpacks };
+use crate::vm::utils::{prepare_context, run_after_special, run_special_cellpacks};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransfer;
 use alkanes_support::proto;
-use alkanes_support::proto::alkanes::{ AlkaneInventoryRequest, AlkaneInventoryResponse };
+use alkanes_support::proto::alkanes::{AlkaneInventoryRequest, AlkaneInventoryResponse};
 use alkanes_support::response::ExtendedCallResponse;
-use anyhow::{ anyhow, Result };
+use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Version;
+use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::Hash;
 use bitcoin::{
-    blockdata::block::Header,
-    Block,
-    BlockHash,
-    CompactTarget,
-    OutPoint,
-    Transaction,
-    TxMerkleNode,
+    blockdata::block::Header, Block, BlockHash, CompactTarget, OutPoint, Transaction, TxMerkleNode,
 };
-use metashrew::index_pointer::{ AtomicPointer, IndexPointer };
+use metashrew::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew::{ println, stdio::stdout };
-use metashrew_support::{ index_pointer::KeyValuePointer, utils::consensus_encode };
-use protobuf::{ Message, MessageField };
+use metashrew::{println, stdio::stdout};
+use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
+use protobuf::{Message, MessageField};
 use protorune::balance_sheet::MintableDebit;
-use protorune::message::{ MessageContext, MessageContextParcel };
+use protorune::message::{MessageContext, MessageContextParcel};
 use protorune::tables::RUNES;
 use protorune::view;
 use protorune_support::balance_sheet::BalanceSheet;
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::rune_transfer::RuneTransfer;
-use protorune_support::utils::{ consensus_decode, decode_varint_list };
+use protorune_support::utils::{consensus_decode, decode_varint_list};
 use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::fmt::Write;
 use std::io::Cursor;
-use std::sync::{ Arc, LazyLock, Mutex };
+use std::sync::{Arc, LazyLock, Mutex};
 
 pub fn parcels_from_protobuf(v: proto::alkanes::MultiSimulateRequest) -> Vec<MessageContextParcel> {
     v.parcels.into_iter().map(parcel_from_protobuf).collect()
@@ -68,7 +58,8 @@ pub fn parcel_from_protobuf(v: proto::alkanes::MessageContextParcel) -> MessageC
     };
     result.vout = v.vout;
     result.calldata = v.calldata;
-    result.runes = v.alkanes
+    result.runes = v
+        .alkanes
         .into_iter()
         .map(|v| RuneTransfer {
             id: v.id.into_option().unwrap().clone().into(),
@@ -117,7 +108,7 @@ pub fn call_view(id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>
             target: id.clone(),
             inputs: inputs.clone(),
         }),
-        fuel
+        fuel,
     )?;
     Ok(response.data)
 }
@@ -151,9 +142,8 @@ pub const NAME_OPCODE: u128 = 99;
 pub const SYMBOL_OPCODE: u128 = 100;
 
 // Cache for storing name and symbol values for AlkaneIds
-static STATICS_CACHE: LazyLock<Mutex<HashMap<AlkaneId, (String, String)>>> = LazyLock::new(||
-    Mutex::new(HashMap::new())
-);
+static STATICS_CACHE: LazyLock<Mutex<HashMap<AlkaneId, (String, String)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn get_statics(id: &AlkaneId) -> (String, String) {
     // Try to get from cache first
@@ -182,15 +172,24 @@ pub fn get_statics(id: &AlkaneId) -> (String, String) {
 }
 
 pub fn to_alkanes_balances(
-    balances: protorune_support::proto::protorune::BalanceSheet
+    balances: protorune_support::proto::protorune::BalanceSheet,
 ) -> protorune_support::proto::protorune::BalanceSheet {
     let mut clone = balances.clone();
     for entry in &mut clone.entries {
-        let block: u128 = entry.rune.clone().unwrap().runeId.height.clone().unwrap().into();
+        let block: u128 = entry
+            .rune
+            .clone()
+            .unwrap()
+            .runeId
+            .height
+            .clone()
+            .unwrap()
+            .into();
         if block == 2 || block == 4 {
-            (entry.rune.as_mut().unwrap().name, entry.rune.as_mut().unwrap().symbol) = get_statics(
-                &from_protobuf(entry.rune.runeId.clone().unwrap())
-            );
+            (
+                entry.rune.as_mut().unwrap().name,
+                entry.rune.as_mut().unwrap().symbol,
+            ) = get_statics(&from_protobuf(entry.rune.runeId.clone().unwrap()));
             entry.rune.as_mut().unwrap().spacers = 0;
         }
     }
@@ -198,7 +197,7 @@ pub fn to_alkanes_balances(
 }
 
 pub fn to_alkanes_from_runes(
-    runes: Vec<protorune_support::proto::protorune::Rune>
+    runes: Vec<protorune_support::proto::protorune::Rune>,
 ) -> Vec<protorune_support::proto::protorune::Rune> {
     runes
         .into_iter()
@@ -223,32 +222,29 @@ fn into_u128(v: protorune_support::proto::protorune::Uint128) -> u128 {
 }
 
 pub fn protorunes_by_outpoint(
-    input: &Vec<u8>
+    input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::OutpointResponse> {
     let request =
         protorune_support::proto::protorune::OutpointWithProtocol::parse_from_bytes(input)?;
     view::protorunes_by_outpoint(input).and_then(|mut response| {
-        if
-            into_u128(
-                request.protocol.unwrap_or_else(|| {
-                    <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
-                })
-            ) == AlkaneMessageContext::protocol_tag()
+        if into_u128(request.protocol.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
         {
-            response.balances = MessageField::some(
-                to_alkanes_balances(
-                    response.balances.unwrap_or_else(|| {
+            response.balances =
+                MessageField::some(
+                    to_alkanes_balances(response.balances.unwrap_or_else(|| {
                         protorune_support::proto::protorune::BalanceSheet::new()
-                    })
-                ).clone()
-            );
+                    }))
+                    .clone(),
+                );
         }
         Ok(response)
     })
 }
 
 pub fn to_alkanes_outpoints(
-    v: Vec<protorune_support::proto::protorune::OutpointResponse>
+    v: Vec<protorune_support::proto::protorune::OutpointResponse>,
 ) -> Vec<protorune_support::proto::protorune::OutpointResponse> {
     let mut cloned = v.clone();
     for item in &mut cloned {
@@ -256,15 +252,16 @@ pub fn to_alkanes_outpoints(
             to_alkanes_balances(
                 item.balances
                     .clone()
-                    .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new())
-            ).clone()
+                    .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new()),
+            )
+            .clone(),
         );
     }
     cloned
 }
 
 pub fn protorunes_by_address(
-    input: &Vec<u8>
+    input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
     let request =
         protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input)?;
@@ -278,11 +275,9 @@ pub fn protorunes_by_address(
 
         if !cached_response.is_empty() {
             // Use the cached response if available
-            match
-                protorune_support::proto::protorune::WalletResponse::parse_from_bytes(
-                    &cached_response
-                )
-            {
+            match protorune_support::proto::protorune::WalletResponse::parse_from_bytes(
+                &cached_response,
+            ) {
                 Ok(response) => {
                     return Ok(response);
                 }
@@ -296,12 +291,9 @@ pub fn protorunes_by_address(
 
     // If no cached response or parsing failed, compute it
     view::protorunes_by_address(input).and_then(|mut response| {
-        if
-            into_u128(
-                request.protocol_tag.unwrap_or_else(|| {
-                    <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
-                })
-            ) == AlkaneMessageContext::protocol_tag()
+        if into_u128(request.protocol_tag.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
         {
             response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
         }
@@ -310,7 +302,7 @@ pub fn protorunes_by_address(
 }
 
 pub fn protorunes_by_address2(
-    input: &Vec<u8>
+    input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
     let request =
         protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input)?;
@@ -324,11 +316,9 @@ pub fn protorunes_by_address2(
 
         if !cached_response.is_empty() {
             // Use the cached response if available
-            match
-                protorune_support::proto::protorune::WalletResponse::parse_from_bytes(
-                    &cached_response
-                )
-            {
+            match protorune_support::proto::protorune::WalletResponse::parse_from_bytes(
+                &cached_response,
+            ) {
                 Ok(response) => {
                     return Ok(response);
                 }
@@ -342,12 +332,9 @@ pub fn protorunes_by_address2(
 
     // If no cached response or parsing failed, compute it
     view::protorunes_by_address2(input).and_then(|mut response| {
-        if
-            into_u128(
-                request.protocol_tag.unwrap_or_else(|| {
-                    <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
-                })
-            ) == AlkaneMessageContext::protocol_tag()
+        if into_u128(request.protocol_tag.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
         {
             response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
         }
@@ -356,17 +343,14 @@ pub fn protorunes_by_address2(
 }
 
 pub fn protorunes_by_height(
-    input: &Vec<u8>
+    input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::RunesResponse> {
     let request =
         protorune_support::proto::protorune::ProtorunesByHeightRequest::parse_from_bytes(input)?;
     view::protorunes_by_height(input).and_then(|mut response| {
-        if
-            into_u128(
-                request.protocol_tag.unwrap_or_else(|| {
-                    <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
-                })
-            ) == AlkaneMessageContext::protocol_tag()
+        if into_u128(request.protocol_tag.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
         {
             response.runes = to_alkanes_from_runes(response.runes.clone());
         }
@@ -380,23 +364,23 @@ pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryR
     result.alkanes = alkane_inventory
         .get_list()
         .into_iter()
-        .map(
-            |alkane_held| -> proto::alkanes::AlkaneTransfer {
-                let id = alkanes_support::id::AlkaneId
-                    ::parse(&mut Cursor::new(alkane_held.as_ref().clone()))
-                    .unwrap();
-                let balance_pointer = balance_pointer(
-                    &mut AtomicPointer::default(),
-                    &req.id.clone().unwrap().into(),
-                    &id
-                );
-                let balance = balance_pointer.get_value::<u128>();
-                (AlkaneTransfer {
-                    id: id,
-                    value: balance,
-                }).into()
-            }
-        )
+        .map(|alkane_held| -> proto::alkanes::AlkaneTransfer {
+            let id = alkanes_support::id::AlkaneId::parse(&mut Cursor::new(
+                alkane_held.as_ref().clone(),
+            ))
+            .unwrap();
+            let balance_pointer = balance_pointer(
+                &mut AtomicPointer::default(),
+                &req.id.clone().unwrap().into(),
+                &id,
+            );
+            let balance = balance_pointer.get_value::<u128>();
+            (AlkaneTransfer {
+                id: id,
+                value: balance,
+            })
+            .into()
+        })
         .collect::<Vec<proto::alkanes::AlkaneTransfer>>();
     Ok(result)
 }
@@ -432,12 +416,16 @@ pub fn traceblock(height: u32) -> Result<Vec<u8>> {
 }
 
 pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
-    Ok(TRACES.select(&consensus_encode::<OutPoint>(&outpoint)?).get().as_ref().clone())
+    Ok(TRACES
+        .select(&consensus_encode::<OutPoint>(&outpoint)?)
+        .get()
+        .as_ref()
+        .clone())
 }
 
 pub fn simulate_safe(
     parcel: &MessageContextParcel,
-    fuel: u64
+    fuel: u64,
 ) -> Result<(ExtendedCallResponse, u64)> {
     set_view_mode();
     simulate_parcel(parcel, fuel)
@@ -447,9 +435,9 @@ pub fn meta_safe(parcel: &MessageContextParcel) -> Result<Vec<u8>> {
     set_view_mode();
     let list = decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?;
     let cellpack: Cellpack = list.clone().try_into()?;
-    let context = Arc::new(
-        Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(parcel, &cellpack))
-    );
+    let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
+        parcel, &cellpack,
+    )));
     let (_caller, _myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
     let mut instance = AlkanesInstance::from_alkane(context, binary, 100000000)?;
     let abi_bytes: Vec<u8> = instance.call_meta()?;
@@ -458,14 +446,14 @@ pub fn meta_safe(parcel: &MessageContextParcel) -> Result<Vec<u8>> {
 
 pub fn simulate_parcel(
     parcel: &MessageContextParcel,
-    fuel: u64
+    fuel: u64,
 ) -> Result<(ExtendedCallResponse, u64)> {
     let list = decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?;
     let cellpack: Cellpack = list.clone().try_into()?;
     println!("{:?}, {:?}", list, cellpack);
-    let context = Arc::new(
-        Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(parcel, &cellpack))
-    );
+    let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
+        parcel, &cellpack,
+    )));
     let mut atomic = parcel.atomic.derive(&IndexPointer::default());
     let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
     credit_balances(&mut atomic, &myself, &parcel.runes);
@@ -473,11 +461,14 @@ pub fn simulate_parcel(
     let (response, gas_used) = run_after_special(context.clone(), binary, fuel)?;
     pipe_storagemap_to(
         &response.storage,
-        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into()))
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
     );
     let mut combined = parcel.runtime_balances.as_ref().clone();
-    <BalanceSheet as From<Vec<RuneTransfer>>>::from(parcel.runes.clone()).pipe(&mut combined);
-    let sheet = <BalanceSheet as From<Vec<RuneTransfer>>>::from(response.alkanes.clone().into());
+    <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(parcel.runes.clone())
+        .pipe(&mut combined);
+    let sheet = <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(
+        response.alkanes.clone().into(),
+    );
     combined.debit_mintable(&sheet, &mut atomic)?;
     debit_balances(&mut atomic, &myself, &response.alkanes)?;
     Ok((response, gas_used))
@@ -485,7 +476,7 @@ pub fn simulate_parcel(
 
 pub fn multi_simulate(
     parcels: &[MessageContextParcel],
-    fuel: u64
+    fuel: u64,
 ) -> Vec<Result<(ExtendedCallResponse, u64)>> {
     let mut responses: Vec<Result<(ExtendedCallResponse, u64)>> = vec![];
     for parcel in parcels {
@@ -496,7 +487,7 @@ pub fn multi_simulate(
 
 pub fn multi_simulate_safe(
     parcels: &[MessageContextParcel],
-    fuel: u64
+    fuel: u64,
 ) -> Vec<Result<(ExtendedCallResponse, u64)>> {
     set_view_mode();
     multi_simulate(parcels, fuel)
@@ -508,8 +499,7 @@ pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
     let alkane_id = crate::utils::from_protobuf(alkane_id);
 
     // Get the bytecode from the storage
-    let bytecode = metashrew::index_pointer::IndexPointer
-        ::from_keyword("/alkanes/")
+    let bytecode = metashrew::index_pointer::IndexPointer::from_keyword("/alkanes/")
         .select(&alkane_id.into())
         .get();
 
@@ -525,20 +515,20 @@ pub fn getblock(input: &Vec<u8>) -> Result<Vec<u8>> {
     use crate::etl;
     use alkanes_support::proto::alkanes::{BlockRequest, BlockResponse};
     use protobuf::Message;
-    
+
     let request = BlockRequest::parse_from_bytes(input)?;
     let height = request.height;
-    
+
     // Get the block from the etl module
     let block = etl::get_block(height)?;
-    
+
     // Create a response with the block data
     let response = BlockResponse {
         block: serialize(&block),
         height: height,
         special_fields: protobuf::SpecialFields::new(),
     };
-    
+
     // Serialize the response
     response.write_to_bytes().map_err(|e| anyhow!("{:?}", e))
 }

@@ -16,7 +16,6 @@ serde = "1.0.210"
 ordinals = { version = "0.0.10", path = "../ordinals" }
 anyhow = "1.0.90"
 metashrew-support = { path = "../metashrew-support" }
-metashrew = { path = "../metashrew" }
 hex = "0.4.3"
 protobuf = "3.6.0"
 bech32 = "0.11.0"

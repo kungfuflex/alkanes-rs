@@ -8,6 +8,7 @@ mod tests {
     use crate::Protorune;
     use anyhow::Result;
     use bitcoin::{OutPoint, Transaction};
+    use metashrew::index_pointer::AtomicPointer;
     use protorune_support::rune_transfer::RuneTransfer;
 
     use helpers::clear;
@@ -24,7 +25,9 @@ mod tests {
     struct MyMessageContext(());
 
     impl MessageContext for MyMessageContext {
-        fn handle(_parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            _parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let ar: Vec<RuneTransfer> = vec![];
             Ok((ar, BalanceSheet::default()))
         }

@@ -62,7 +62,7 @@ pub trait MessageProcessor {
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         num_protostones: usize,
     ) -> Result<()>;
@@ -77,7 +77,7 @@ impl MessageProcessor for Protostone {
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         num_protostones: usize,
     ) -> Result<()> {
@@ -92,18 +92,28 @@ impl MessageProcessor for Protostone {
         {
             return Err(anyhow::anyhow!("Invalid output pointer"));
         }
-        
+
         // Log the Bitcoin address that can spend the output pointed to by the "pointer" field
         if pointer < num_outputs as u32 {
-            if let Some(address) = protorune_support::network::to_address_str(&transaction.output[pointer as usize].script_pubkey) {
-                println!("Protostone pointer ({}) points to Bitcoin address: {}", pointer, address);
+            if let Some(address) = protorune_support::network::to_address_str(
+                &transaction.output[pointer as usize].script_pubkey,
+            ) {
+                println!(
+                    "Protostone pointer ({}) points to Bitcoin address: {}",
+                    pointer, address
+                );
             }
         }
-        
+
         // Log the Bitcoin address that can spend the output pointed to by the "refund_pointer" field
         if refund_pointer < num_outputs as u32 {
-            if let Some(address) = protorune_support::network::to_address_str(&transaction.output[refund_pointer as usize].script_pubkey) {
-                println!("Protostone refund_pointer ({}) points to Bitcoin address: {}", refund_pointer, address);
+            if let Some(address) = protorune_support::network::to_address_str(
+                &transaction.output[refund_pointer as usize].script_pubkey,
+            ) {
+                println!(
+                    "Protostone refund_pointer ({}) points to Bitcoin address: {}",
+                    refund_pointer, address
+                );
             }
         }
 
@@ -154,14 +164,16 @@ impl MessageProcessor for Protostone {
                     Err(e) => {
                         println!("Got error inside reconcile! {:?} \n\n", e);
                         println!("Refunding to refund_pointer: {}", refund_pointer);
-                        
+
                         // Log the Bitcoin address again to make it clear this is the refund address being used
                         if refund_pointer < num_outputs as u32 {
-                            if let Some(address) = protorune_support::network::to_address_str(&transaction.output[refund_pointer as usize].script_pubkey) {
+                            if let Some(address) = protorune_support::network::to_address_str(
+                                &transaction.output[refund_pointer as usize].script_pubkey,
+                            ) {
                                 println!("RECONCILE ERROR REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}", refund_pointer, address);
                             }
                         }
-                        
+
                         refund_to_refund_pointer(
                             balances_by_output,
                             protomessage_vout,
@@ -174,14 +186,19 @@ impl MessageProcessor for Protostone {
             Err(e) => {
                 println!("Alkanes message reverted with error: {:?}", e);
                 println!("Refunding to refund_pointer: {}", refund_pointer);
-                
+
                 // Log the Bitcoin address again to make it clear this is the refund address being used
                 if refund_pointer < num_outputs as u32 {
-                    if let Some(address) = protorune_support::network::to_address_str(&transaction.output[refund_pointer as usize].script_pubkey) {
-                        println!("REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}", refund_pointer, address);
+                    if let Some(address) = protorune_support::network::to_address_str(
+                        &transaction.output[refund_pointer as usize].script_pubkey,
+                    ) {
+                        println!(
+                            "REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}",
+                            refund_pointer, address
+                        );
                     }
                 }
-                
+
                 refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer);
                 atomic.rollback();
             }
@@ -197,8 +214,8 @@ pub trait Protostones {
         atomic: &mut AtomicPointer,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
@@ -232,8 +249,8 @@ impl Protostones for Vec<Protostone> {
         atomic: &mut AtomicPointer,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {

@@ -188,7 +188,7 @@ impl Protorune {
         block: &Block,
         runestone_output_index: u32,
     ) -> Result<()> {
-        let sheets: Vec<BalanceSheet> = tx
+        let sheets: Vec<BalanceSheet<AtomicPointer>> = tx
             .input
             .iter()
             .map(|input| {
@@ -197,9 +197,9 @@ impl Protorune {
                     &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
                 )))
             })
-            .collect::<Result<Vec<BalanceSheet>>>()?;
+            .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
         let mut balance_sheet = BalanceSheet::concat(sheets);
-        let mut balances_by_output = HashMap::<u32, BalanceSheet>::new();
+        let mut balances_by_output = HashMap::<u32, BalanceSheet<AtomicPointer>>::new();
         let unallocated_to = match runestone.pointer {
             Some(v) => v,
             None => default_output(tx),
@@ -257,8 +257,8 @@ impl Protorune {
         Ok(())
     }
     pub fn update_balances_for_edict(
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
-        balance_sheet: &mut BalanceSheet,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balance_sheet: &mut BalanceSheet<AtomicPointer>,
         edict_amount: u128,
         edict_output: u32,
         rune_id: &ProtoruneRuneId,
@@ -266,7 +266,7 @@ impl Protorune {
         if !balances_by_output.contains_key(&edict_output) {
             balances_by_output.insert(edict_output, BalanceSheet::default());
         }
-        let sheet: &mut BalanceSheet = balances_by_output
+        let sheet: &mut BalanceSheet<AtomicPointer> = balances_by_output
             .get_mut(&edict_output)
             .ok_or("")
             .map_err(|_| anyhow!("balance sheet not present"))?;
@@ -284,8 +284,8 @@ impl Protorune {
     pub fn process_edict(
         tx: &Transaction,
         edict: &ProtostoneEdict,
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
-        balances: &mut BalanceSheet,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances: &mut BalanceSheet<AtomicPointer>,
         _outs: &Vec<TxOut>,
     ) -> Result<()> {
         if edict.id.block == 0 && edict.id.tx != 0 {
@@ -312,8 +312,8 @@ impl Protorune {
     pub fn process_edicts(
         tx: &Transaction,
         edicts: &Vec<ProtostoneEdict>,
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
-        balances: &mut BalanceSheet,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances: &mut BalanceSheet<AtomicPointer>,
         outs: &Vec<TxOut>,
     ) -> Result<()> {
         for edict in edicts {
@@ -322,8 +322,8 @@ impl Protorune {
         Ok(())
     }
     pub fn handle_leftover_runes(
-        remaining_balances: &mut BalanceSheet,
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        remaining_balances: &mut BalanceSheet<AtomicPointer>,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
     ) -> Result<()> {
         // grab the balances of the vout to send unallocated to
@@ -359,7 +359,7 @@ impl Protorune {
     pub fn index_mint(
         mint: &ProtoruneRuneId,
         height: u64,
-        balance_sheet: &mut BalanceSheet,
+        balance_sheet: &mut BalanceSheet<AtomicPointer>,
     ) -> Result<()> {
         let name = tables::RUNES
             .RUNE_ID_TO_ETCHING
@@ -413,7 +413,7 @@ impl Protorune {
         etching: &Etching,
         index: u32,
         height: u64,
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
         tx: &Transaction,
     ) -> Result<()> {
@@ -765,7 +765,7 @@ impl Protorune {
         atomic: &mut AtomicPointer,
         table: &RuneTable,
         tx: &Transaction,
-        map: &HashMap<u32, BalanceSheet>,
+        map: &HashMap<u32, BalanceSheet<AtomicPointer>>,
     ) -> Result<()> {
         // Process all outputs, including the last one
         // The OP_RETURN doesn't have to be at the end
@@ -828,12 +828,12 @@ impl Protorune {
         height: u64,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
     ) -> Result<()> {
         let protostones = Protostone::from_runestone(runestone)?;
         if protostones.len() != 0 {
-            let mut proto_balances_by_output = HashMap::<u32, BalanceSheet>::new();
+            let mut proto_balances_by_output = HashMap::<u32, BalanceSheet<AtomicPointer>>::new();
             let table = tables::RuneTable::for_protocol(T::protocol_tag());
 
             // set the starting runtime balance
@@ -843,7 +843,7 @@ impl Protorune {
             );
 
             // load the balance sheets
-            let sheets: Vec<BalanceSheet> = tx
+            let sheets: Vec<BalanceSheet<AtomicPointer>> = tx
                 .input
                 .iter()
                 .map(|input| {
@@ -855,7 +855,7 @@ impl Protorune {
                         ),
                     ))
                 })
-                .collect::<Result<Vec<BalanceSheet>>>()?;
+                .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
             let mut balance_sheet = BalanceSheet::concat(sheets);
             protostones.process_burns(
                 &mut atomic.derive(&IndexPointer::default()),

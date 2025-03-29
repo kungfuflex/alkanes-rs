@@ -4,6 +4,7 @@ use crate::test_helpers::{self as helpers};
 use crate::{tables, Protorune};
 use anyhow::Result;
 use bitcoin::{OutPoint, Transaction};
+use metashrew::index_pointer::{AtomicPointer, IndexPointer};
 use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_encode;
@@ -26,7 +27,9 @@ impl MessageContext for ForwardAll {
         122
     }
     // takes half of the first runes balance
-    fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+    fn handle(
+        parcel: &MessageContextParcel,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
         let runes: Vec<RuneTransfer> = parcel.runes.clone();
         // transfer protorunes to the pointer
         Ok((runes, BalanceSheet::default()))
@@ -64,7 +67,11 @@ fn multi_protomessage_protocol_test_template<T: MessageContext>(
     expected_pointer_amount: u128,
     expected_refunded_amount: u128,
     expected_runtime_amount: u128,
-) -> (BalanceSheet, BalanceSheet, BalanceSheet) {
+) -> (
+    BalanceSheet<IndexPointer>,
+    BalanceSheet<IndexPointer>,
+    BalanceSheet<IndexPointer>,
+) {
     clear();
     let block_height = 840000;
     let protocol_ids = vec![122, 123];

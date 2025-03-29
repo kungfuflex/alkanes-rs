@@ -74,23 +74,28 @@ impl Mintable for ProtoruneRuneId {
     }
 }
 
-pub trait OutgoingRunes {
+pub trait OutgoingRunes<P: KeyValuePointer + Clone> {
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
         refund_pointer: u32,
     ) -> Result<()>;
 }
 
-pub trait MintableDebit {
-    fn debit_mintable(&mut self, sheet: &BalanceSheet, atomic: &mut AtomicPointer) -> Result<()>;
+pub trait MintableDebit<P: KeyValuePointer + Clone> {
+    fn debit_mintable(&mut self, sheet: &BalanceSheet<P>, atomic: &mut AtomicPointer)
+        -> Result<()>;
 }
 
-impl MintableDebit for BalanceSheet {
-    fn debit_mintable(&mut self, sheet: &BalanceSheet, atomic: &mut AtomicPointer) -> Result<()> {
+impl<P: KeyValuePointer + Clone> MintableDebit<P> for BalanceSheet<P> {
+    fn debit_mintable(
+        &mut self,
+        sheet: &BalanceSheet<P>,
+        atomic: &mut AtomicPointer,
+    ) -> Result<()> {
         for (rune, balance) in &sheet.balances {
             let mut amount = *balance;
             let current = self.get(&rune);
@@ -106,11 +111,11 @@ impl MintableDebit for BalanceSheet {
         Ok(())
     }
 }
-impl OutgoingRunes for (Vec<RuneTransfer>, BalanceSheet) {
+impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, BalanceSheet<P>) {
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
-        balances_by_output: &mut HashMap<u32, BalanceSheet>,
+        balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
         refund_pointer: u32,
@@ -128,7 +133,7 @@ impl OutgoingRunes for (Vec<RuneTransfer>, BalanceSheet) {
 
         // self.0 is the amount to forward to the pointer
         // self.1 is the amount to put into the runtime balance
-        let outgoing: BalanceSheet = self.0.clone().into();
+        let outgoing: BalanceSheet<P> = self.0.clone().into();
         let outgoing_runtime = self.1.clone();
 
         // we want to subtract outgoing and the outgoing runtime balance
@@ -154,7 +159,7 @@ impl OutgoingRunes for (Vec<RuneTransfer>, BalanceSheet) {
     }
 }
 
-pub fn load_sheet<T: KeyValuePointer>(ptr: &T) -> BalanceSheet {
+pub fn load_sheet<T: KeyValuePointer + Clone>(ptr: &T) -> BalanceSheet<T> {
     let runes_ptr = ptr.keyword("/runes");
     let balances_ptr = ptr.keyword("/balances");
     let length = runes_ptr.length();
@@ -181,7 +186,7 @@ pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {
     }
 }
 
-impl PersistentRecord for BalanceSheet {
+impl<P: KeyValuePointer + Clone> PersistentRecord for BalanceSheet<P> {
     fn balances(&self) -> &HashMap<ProtoruneRuneId, u128> {
         &self.balances
     }

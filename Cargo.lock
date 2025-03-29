@@ -2148,7 +2148,6 @@ dependencies = [
  "bech32 0.11.0",
  "bitcoin 0.32.5",
  "hex",
- "metashrew",
  "metashrew-support",
  "ordinals 0.0.10",
  "protobuf 3.7.1",

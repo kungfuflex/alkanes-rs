@@ -11,6 +11,7 @@ mod tests {
         address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut,
         Witness,
     };
+    use metashrew::index_pointer::{AtomicPointer, IndexPointer};
     use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
     use protorune_support::protostone::Protostone;
     use protorune_support::rune_transfer::RuneTransfer;
@@ -46,7 +47,9 @@ mod tests {
             122
         }
         // takes half of the first runes balance
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let runes: Vec<RuneTransfer> = parcel.runes.clone();
             // transfer protorunes to the pointer
             Ok((runes, BalanceSheet::default()))
@@ -58,7 +61,9 @@ mod tests {
         }
         /// quarter forward, eighth store in runtime, rest refund
         /// only does it for the first input
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let mut new_runtime_balances = parcel.runtime_balances.clone();
             let transfer = RuneTransfer {
                 id: parcel.runes[0].id,
@@ -70,8 +75,10 @@ mod tests {
                 value: parcel.runes[0].value / 8,
             };
             println!("{:?}", transfer_to_runtime);
-            <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(vec![transfer_to_runtime])?
-                .pipe(&mut new_runtime_balances);
+            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+                transfer_to_runtime,
+            ])?
+            .pipe(&mut new_runtime_balances);
             Ok((vec![transfer], *new_runtime_balances))
         }
     }
@@ -79,7 +86,9 @@ mod tests {
         fn protocol_tag() -> u128 {
             122
         }
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let transfer = RuneTransfer {
                 id: parcel.runes[0].id,
                 value: parcel.runes[0].value + 1,
@@ -91,7 +100,9 @@ mod tests {
         fn protocol_tag() -> u128 {
             122
         }
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let _ = parcel;
             let transfer = RuneTransfer {
                 id: parcel.runes[0].id,
@@ -111,7 +122,9 @@ mod tests {
         fn protocol_tag() -> u128 {
             122
         }
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let mut new_runtime_balances = parcel.runtime_balances.clone();
             let transfer = RuneTransfer {
                 id: parcel.runes[0].id,
@@ -122,8 +135,10 @@ mod tests {
                 id: parcel.runes[0].id,
                 value: 1,
             };
-            <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(vec![transfer_to_runtime])?
-                .pipe(&mut new_runtime_balances);
+            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+                transfer_to_runtime,
+            ])?
+            .pipe(&mut new_runtime_balances);
             Ok((vec![transfer], *new_runtime_balances))
         }
     }
@@ -131,7 +146,9 @@ mod tests {
         fn protocol_tag() -> u128 {
             122
         }
-        fn handle(_parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            _parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             Ok((vec![], BalanceSheet::default()))
         }
     }
@@ -139,7 +156,9 @@ mod tests {
         fn protocol_tag() -> u128 {
             122
         }
-        fn handle(_parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            _parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             Err(anyhow!("full refund"))
         }
     }
@@ -148,12 +167,16 @@ mod tests {
         fn protocol_tag() -> u128 {
             122
         }
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let transfer = RuneTransfer {
                 id: parcel.runes[0].id,
                 value: 50,
             };
-            let bs = <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(vec![transfer])?;
+            let bs = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+                transfer,
+            ])?;
             bs.save(
                 &mut parcel
                     .atomic
@@ -168,12 +191,16 @@ mod tests {
         fn protocol_tag() -> u128 {
             122
         }
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let transfer = RuneTransfer {
                 id: parcel.runes[0].id,
                 value: 50,
             };
-            let bs = <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(vec![transfer])?;
+            let bs = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+                transfer,
+            ])?;
             bs.save(
                 &mut parcel
                     .atomic
@@ -190,7 +217,9 @@ mod tests {
         }
         /// quarter forward, eighth store in runtime, rest refund
         /// only does it for the first input
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             let mut new_runtime_balances = BalanceSheet::default();
             let transfer = RuneTransfer {
                 id: parcel.runes[0].id,
@@ -201,8 +230,10 @@ mod tests {
                 id: parcel.runes[0].id,
                 value: parcel.runes[0].value / 8,
             };
-            <BalanceSheet as TryFrom<Vec<RuneTransfer>>>::try_from(vec![transfer_to_runtime])?
-                .pipe(&mut new_runtime_balances);
+            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+                transfer_to_runtime,
+            ])?
+            .pipe(&mut new_runtime_balances);
             Ok((vec![transfer], new_runtime_balances))
         }
     }
@@ -363,7 +394,11 @@ mod tests {
         expected_pointer_amount: u128,
         expected_refunded_amount: u128,
         expected_runtime_amount: u128,
-    ) -> (BalanceSheet, BalanceSheet, BalanceSheet) {
+    ) -> (
+        BalanceSheet<IndexPointer>,
+        BalanceSheet<IndexPointer>,
+        BalanceSheet<IndexPointer>,
+    ) {
         clear();
         let block_height = 840000;
         let protocol_id = 122;

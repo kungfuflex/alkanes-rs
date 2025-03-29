@@ -5,6 +5,7 @@ mod tests {
     use crate::{view, Protorune};
     use anyhow::Result;
     use bitcoin::OutPoint;
+    use metashrew::index_pointer::AtomicPointer;
     use metashrew::{
         println,
         stdio::{stdout, Write},
@@ -26,7 +27,9 @@ mod tests {
             122 // Using the same protocol tag as in the tests
         }
 
-        fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)> {
+        fn handle(
+            parcel: &MessageContextParcel,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
             // Just return the runes as-is without any special handling
             let runes: Vec<RuneTransfer> = parcel.runes.clone();
             Ok((runes, BalanceSheet::default()))
