@@ -291,7 +291,7 @@ impl Protorune {
         if edict.id.block == 0 && edict.id.tx != 0 {
             Err(anyhow!("invalid edict"))
         } else {
-            let max = balances.get_and_update(&edict.id.into());
+            let max = balances.get(&edict.id.into());
 
             let transfer_targets =
                 handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx);
@@ -606,10 +606,10 @@ impl Protorune {
         // Track unique addresses that have their spendable outpoints updated
         #[cfg(feature = "cache")]
         let mut updated_addresses: HashSet<Vec<u8>> = HashSet::new();
-
+        
         #[cfg(not(feature = "cache"))]
         let mut updated_addresses: HashSet<Vec<u8>> = HashSet::new();
-
+        
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
             tables::RUNES
@@ -626,11 +626,11 @@ impl Protorune {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
                     let address_str = to_address_str(output_script_pubkey).unwrap();
                     let address = address_str.into_bytes();
-
+                    
                     // Add address to the set of updated addresses
                     #[cfg(feature = "cache")]
                     updated_addresses.insert(address.to_vec());
-
+                    
                     tables::OUTPOINTS_FOR_ADDRESS
                         .select(&address.clone())
                         .append(Arc::new(outpoint_bytes.clone()));
@@ -640,7 +640,7 @@ impl Protorune {
                 }
             }
         }
-
+        
         // Return the set of updated addresses
         Ok(updated_addresses)
     }
@@ -648,10 +648,10 @@ impl Protorune {
         // Track unique addresses that have their spendable outpoints updated
         #[cfg(feature = "cache")]
         let mut updated_addresses: HashSet<Vec<u8>> = HashSet::new();
-
+        
         #[cfg(not(feature = "cache"))]
         let mut updated_addresses: HashSet<Vec<u8>> = HashSet::new();
-
+        
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
             tables::RUNES
@@ -668,13 +668,13 @@ impl Protorune {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
                     let address_str = to_address_str(output_script_pubkey).unwrap();
                     let address = address_str.into_bytes();
-
+                    
                     // Add address to the set of updated addresses
                     #[cfg(feature = "cache")]
                     if address.len() > 0 {
                         updated_addresses.insert(address.to_vec());
                     }
-
+                    
                     tables::OUTPOINTS_FOR_ADDRESS
                         .select(&address.clone())
                         .append(Arc::new(outpoint_bytes.clone()));
@@ -705,7 +705,7 @@ impl Protorune {
                     // Add address to the set of updated addresses (for spent inputs)
                     #[cfg(feature = "cache")]
                     updated_addresses.insert(address.as_ref().to_vec());
-
+                    
                     tables::OUTPOINT_SPENDABLE_BY_ADDRESS
                         .select(&address)
                         .delete_value(pos);
@@ -717,7 +717,7 @@ impl Protorune {
                 }
             }
         }
-
+        
         // Return the set of updated addresses
         Ok(updated_addresses)
     }
@@ -839,7 +839,7 @@ impl Protorune {
             // set the starting runtime balance
             proto_balances_by_output.insert(
                 u32::MAX,
-                BalanceSheet::new_ptr_backed(atomic.derive(&table.RUNTIME_BALANCE)),
+                load_sheet(&mut atomic.derive(&table.RUNTIME_BALANCE)),
             );
 
             // load the balance sheets
@@ -986,12 +986,12 @@ impl Protorune {
             .set_value::<u64>(height);
         Self::index_transaction_ids(&block, height)?;
         Self::index_outpoints(&block, height)?;
-
+        
         // Get the set of updated addresses
         let updated_addresses = Self::index_spendables(&block.txdata)?;
-
+        
         Self::index_unspendables::<T>(&block, height)?;
-
+        
         // Return the set of updated addresses
         Ok(updated_addresses)
     }

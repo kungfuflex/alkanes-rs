@@ -115,14 +115,14 @@ fn multi_protomessage_protocol_test_template<T: MessageContext>(
     let protorunes_sheet_runtime =
         load_sheet(&tables::RuneTable::for_protocol(122).RUNTIME_BALANCE);
 
-    let stored_runes_balance = sheet.get_cached(&protorune_id);
+    let stored_runes_balance = sheet.get(&protorune_id);
     assert_eq!(stored_runes_balance, 0);
 
-    let stored_protorune_balance0 = protorunes_sheet0.get_cached(&protorune_id);
+    let stored_protorune_balance0 = protorunes_sheet0.get(&protorune_id);
     assert_eq!(stored_protorune_balance0, expected_pointer_amount);
-    let stored_protorune_balance1 = protorunes_sheet1.get_cached(&protorune_id);
+    let stored_protorune_balance1 = protorunes_sheet1.get(&protorune_id);
     assert_eq!(stored_protorune_balance1, expected_refunded_amount);
-    let stored_protorune_balance_runtime = protorunes_sheet_runtime.get_cached(&protorune_id);
+    let stored_protorune_balance_runtime = protorunes_sheet_runtime.get(&protorune_id);
     assert_eq!(stored_protorune_balance_runtime, expected_runtime_amount);
 
     return (

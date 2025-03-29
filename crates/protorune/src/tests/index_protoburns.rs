@@ -90,9 +90,9 @@ mod tests {
             tx: 1,
         };
         // let v: Vec<u8> = protorune_id.into();
-        let stored_balance_address = sheet.get_cached(&protorune_id);
+        let stored_balance_address = sheet.get(&protorune_id);
         assert_eq!(stored_balance_address, 0);
-        let stored_protorune_balance = protorunes_sheet.get_cached(&protorune_id);
+        let stored_protorune_balance = protorunes_sheet.get(&protorune_id);
         assert_eq!(stored_protorune_balance, 1000);
     }
 

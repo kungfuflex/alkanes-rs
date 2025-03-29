@@ -276,7 +276,7 @@ pub fn get_rune_balance_by_outpoint(
     );
     let stored_amount = protorune_ids
         .into_iter()
-        .map(|id| mint_sheet.get_cached(&id))
+        .map(|id| mint_sheet.get(&id))
         .collect();
     return stored_amount;
 }
@@ -293,7 +293,7 @@ pub fn get_protorune_balance_by_outpoint(
     );
     let stored_amount = protorune_ids
         .into_iter()
-        .map(|id| mint_sheet.get_cached(&id))
+        .map(|id| mint_sheet.get(&id))
         .collect();
     return stored_amount;
 }

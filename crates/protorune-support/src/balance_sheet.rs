@@ -3,8 +3,6 @@ use crate::proto::protorune::{BalanceSheetItem, Rune};
 use crate::rune_transfer::RuneTransfer;
 use anyhow::{anyhow, Result};
 use hex;
-use metashrew::index_pointer::AtomicPointer;
-use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consume_sized_int;
 use ordinals::RuneId;
 use protobuf::{MessageField, SpecialFields};
@@ -71,7 +69,6 @@ impl From<crate::proto::protorune::BalanceSheet> for BalanceSheet {
                     (id, v.balance.into_option().unwrap().into())
                 }),
             ),
-            load_ptrs: Vec::new(),
         }
     }
 }
@@ -182,44 +179,9 @@ impl From<Arc<Vec<u8>>> for ProtoruneRuneId {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Eq, Serialize, Deserialize)]
 pub struct BalanceSheet {
     pub balances: HashMap<ProtoruneRuneId, u128>, // Using HashMap to map runes to their balances
-    #[serde(skip)]
-    pub load_ptrs: Vec<AtomicPointer>,
-}
-
-// We still need this implementation to customize the equality comparison
-impl PartialEq for BalanceSheet {
-    fn eq(&self, other: &Self) -> bool {
-        // Get all unique rune IDs from both balance sheets
-        let mut all_runes = self
-            .balances
-            .keys()
-            .collect::<std::collections::HashSet<_>>();
-        all_runes.extend(other.balances.keys());
-
-        // Compare balances for each rune using get() which checks both cached and stored values
-        for rune in all_runes {
-            if self.get(rune) != other.get(rune) {
-                return false;
-            }
-        }
-
-        true
-    }
-}
-
-// Implementing Eq for BalanceSheet
-impl Eq for BalanceSheet {}
-
-impl Default for BalanceSheet {
-    fn default() -> Self {
-        BalanceSheet {
-            balances: HashMap::new(),
-            load_ptrs: Vec::new(),
-        }
-    }
 }
 
 pub fn u128_from_bytes(v: Vec<u8>) -> u128 {
@@ -285,14 +247,6 @@ impl BalanceSheet {
     pub fn new() -> Self {
         BalanceSheet {
             balances: HashMap::new(),
-            load_ptrs: Vec::new(),
-        }
-    }
-
-    pub fn new_ptr_backed(ptr: AtomicPointer) -> Self {
-        BalanceSheet {
-            balances: HashMap::new(),
-            load_ptrs: vec![ptr],
         }
     }
 
@@ -343,42 +297,8 @@ impl BalanceSheet {
     }
     */
 
-    pub fn load_balance(&self, rune: &ProtoruneRuneId) -> u128 {
-        // If already in cache, return it
-        if let Some(balance) = self.balances.get(rune) {
-            return *balance;
-        }
-
-        // Try to load from storage using the stored pointer
-        let mut total_stored_balance = 0;
-        let rune_clone = rune.clone(); // Clone the rune to avoid borrowing issues
-
-        // First, collect all stored balances
-        for ptr in &self.load_ptrs {
-            let runes_to_balances_ptr = ptr
-                .clone()
-                .keyword("/id_to_balance")
-                .select(&rune_clone.into());
-            if runes_to_balances_ptr.get().len() != 0 {
-                let stored_balance = runes_to_balances_ptr.get_value::<u128>();
-                total_stored_balance += stored_balance;
-            }
-        }
-        return total_stored_balance;
-    }
-
     pub fn get(&self, rune: &ProtoruneRuneId) -> u128 {
-        self.load_balance(rune)
-    }
-
-    pub fn get_and_update(&mut self, rune: &ProtoruneRuneId) -> u128 {
-        let balance = self.load_balance(rune);
-        self.set(rune, balance);
-        balance
-    }
-
-    pub fn get_cached(&self, rune: &ProtoruneRuneId) -> u128 {
-        *self.balances.get(rune).unwrap_or(&0u128)
+        *self.balances.get(rune).unwrap_or(&0u128) // Return 0 if rune not found
     }
 
     pub fn set(&mut self, rune: &ProtoruneRuneId, value: u128) {
@@ -402,19 +322,13 @@ impl BalanceSheet {
 
     pub fn merge(a: &BalanceSheet, b: &BalanceSheet) -> BalanceSheet {
         let mut merged = BalanceSheet::new();
-
-        // Merge load_ptrs
-        merged.load_ptrs.extend(a.load_ptrs.iter().cloned());
-        merged.load_ptrs.extend(b.load_ptrs.iter().cloned());
-
-        // Merge balances
         for (rune, balance) in &a.balances {
-            merged.increase(rune, *balance);
+            merged.set(rune, *balance);
         }
         for (rune, balance) in &b.balances {
-            merged.increase(rune, *balance);
+            let current_balance = merged.get(rune);
+            merged.set(rune, current_balance + *balance);
         }
-
         merged
     }
 
@@ -427,13 +341,18 @@ impl BalanceSheet {
     }
 }
 
+impl PartialEq for BalanceSheet {
+    fn eq(&self, other: &Self) -> bool {
+        self.balances == other.balances
+    }
+}
+
 impl From<Vec<RuneTransfer>> for BalanceSheet {
     fn from(v: Vec<RuneTransfer>) -> BalanceSheet {
         BalanceSheet {
             balances: HashMap::<ProtoruneRuneId, u128>::from_iter(
                 v.into_iter().map(|v| (v.id, v.value)),
             ),
-            load_ptrs: Vec::new(),
         }
     }
 }

@@ -115,9 +115,9 @@ mod tests {
         // Print debug information
         println!("Protocol ID: {}", protocol_id);
         println!("Protorune ID: {:?}", protorune_id);
-        println!("Sheet balance: {}", sheet_end.get_cached(&protorune_id));
+        println!("Sheet balance: {}", sheet_end.get(&protorune_id));
 
-        let has_protorunes_end = sheet_end.get_cached(&protorune_id) > 0;
+        let has_protorunes_end = sheet_end.get(&protorune_id) > 0;
         assert!(
             has_protorunes_end,
             "Expected protorunes when OP_RETURN is at the end"

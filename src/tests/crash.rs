@@ -87,8 +87,8 @@ fn test_owned_token_mint_crash() -> Result<()> {
     println!("STEP 4: Balance sheet loaded successfully");
 
     // Verify initial balances
-    let owned_balance = sheet.get_cached(&owned_token_id.into());
-    let auth_balance = sheet.get_cached(&auth_token_id.into());
+    let owned_balance = sheet.get(&owned_token_id.into());
+    let auth_balance = sheet.get(&auth_token_id.into());
     println!(
         "STEP 5: Initial balances - owned: {}, auth: {}",
         owned_balance, auth_balance

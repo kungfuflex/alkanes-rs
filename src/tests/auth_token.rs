@@ -114,7 +114,7 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
     );
-    // assert_eq!(sheet.get_cached(&original_rune_id.into()), 1000);
+    // assert_eq!(sheet.get(&original_rune_id.into()), 1000);
 
     let tx_first = test_block.txdata.first().ok_or(anyhow!("no first el"))?;
     let outpoint_first = OutPoint {
@@ -189,8 +189,8 @@ fn test_auth_and_owned_token() -> Result<()> {
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
     );
-    assert_eq!(sheet.get_cached(&owned_token_id.into()), 1000);
-    assert_eq!(sheet.get_cached(&auth_token_id_deployment.into()), 1);
+    assert_eq!(sheet.get(&owned_token_id.into()), 1000);
+    assert_eq!(sheet.get(&auth_token_id_deployment.into()), 1);
 
     let tx_first = test_block.txdata.first().ok_or(anyhow!("no first el"))?;
     let outpoint_first = OutPoint {
@@ -431,8 +431,8 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
     );
-    assert_eq!(sheet.get_cached(&owned_token_id.into()), 1000);
-    assert_eq!(sheet.get_cached(&auth_token_id_deployment.into()), 1);
+    assert_eq!(sheet.get(&owned_token_id.into()), 1000);
+    assert_eq!(sheet.get(&auth_token_id_deployment.into()), 1);
 
     let tx_first = test_block.txdata.first().ok_or(anyhow!("no first el"))?;
     let outpoint_first = OutPoint {

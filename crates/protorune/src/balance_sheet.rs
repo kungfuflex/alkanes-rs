@@ -16,18 +16,12 @@ pub trait PersistentRecord {
     fn save<T: KeyValuePointer>(&self, ptr: &T, is_cenotaph: bool) {
         let runes_ptr = ptr.keyword("/runes");
         let balances_ptr = ptr.keyword("/balances");
-        let runes_to_balances_ptr = ptr.keyword("/id_to_balance");
 
         for (rune, balance) in self.balances() {
             if *balance != 0u128 && !is_cenotaph {
-                let rune_bytes: Vec<u8> = (*rune).into();
-                runes_ptr.append(rune_bytes.clone().into());
+                runes_ptr.append((*rune).into());
 
                 balances_ptr.append_value::<u128>(*balance);
-
-                runes_to_balances_ptr
-                    .select(&rune_bytes)
-                    .set_value::<u128>(*balance);
             }
         }
     }
@@ -40,18 +34,13 @@ pub trait PersistentRecord {
     ) -> Result<()> {
         let runes_ptr = ptr.keyword("/runes");
         let balances_ptr = ptr.keyword("/balances");
-        let runes_to_balances_ptr = ptr.keyword("/id_to_balance");
         let balance = self
             .balances()
             .get(rune)
             .ok_or(anyhow!("no balance found"))?;
         if *balance != 0u128 && !is_cenotaph {
-            let rune_bytes: Vec<u8> = (*rune).into();
-            runes_ptr.append(rune_bytes.clone().into());
+            runes_ptr.append((*rune).into());
             balances_ptr.append_value::<u128>(*balance);
-            runes_to_balances_ptr
-                .select(&rune_bytes)
-                .set_value::<u128>(*balance);
         }
 
         Ok(())
@@ -94,7 +83,7 @@ impl MintableDebit for BalanceSheet {
         for (rune, balance) in &sheet.balances {
             let mut amount = *balance;
             let current = self.get(&rune);
-            if amount > current {
+            if sheet.get(&rune) > current {
                 if rune.mintable_in_protocol(atomic) {
                     amount = current;
                 } else {
@@ -172,12 +161,9 @@ pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {
     let runes_ptr = ptr.keyword("/runes");
     let balances_ptr = ptr.keyword("/balances");
     let length = runes_ptr.length();
-    let runes_to_balances_ptr = ptr.keyword("/id_to_balance");
 
     for i in 0..length {
         balances_ptr.select_index(i).set_value::<u128>(0);
-        let rune = balances_ptr.select_index(i).get();
-        runes_to_balances_ptr.select(&rune).set_value::<u128>(0);
     }
 }
 

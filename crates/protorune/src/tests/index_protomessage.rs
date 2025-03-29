@@ -352,10 +352,10 @@ mod tests {
             block: block_height as u128,
             tx: 0,
         };
-        let stored_runes_balance = sheet.get_cached(&protorune_id);
+        let stored_runes_balance = sheet.get(&protorune_id);
         assert_eq!(stored_runes_balance, 0);
 
-        let stored_protorune_balance = protorunes_sheet.get_cached(&protorune_id);
+        let stored_protorune_balance = protorunes_sheet.get(&protorune_id);
         assert_eq!(stored_protorune_balance, 1000);
     }
 
@@ -405,14 +405,14 @@ mod tests {
         let protorunes_sheet_runtime =
             load_sheet(&tables::RuneTable::for_protocol(protocol_id.into()).RUNTIME_BALANCE);
 
-        let stored_runes_balance = sheet.get_cached(&protorune_id);
+        let stored_runes_balance = sheet.get(&protorune_id);
         assert_eq!(stored_runes_balance, 0);
 
-        let stored_protorune_balance0 = protorunes_sheet0.get_cached(&protorune_id);
+        let stored_protorune_balance0 = protorunes_sheet0.get(&protorune_id);
         assert_eq!(stored_protorune_balance0, expected_pointer_amount);
-        let stored_protorune_balance1 = protorunes_sheet1.get_cached(&protorune_id);
+        let stored_protorune_balance1 = protorunes_sheet1.get(&protorune_id);
         assert_eq!(stored_protorune_balance1, expected_refunded_amount);
-        let stored_protorune_balance_runtime = protorunes_sheet_runtime.get_cached(&protorune_id);
+        let stored_protorune_balance_runtime = protorunes_sheet_runtime.get(&protorune_id);
         assert_eq!(stored_protorune_balance_runtime, expected_runtime_amount);
 
         return (
@@ -475,11 +475,11 @@ mod tests {
         let protorunes_sheet_runtime =
             load_sheet(&tables::RuneTable::for_protocol(protocol_id.into()).RUNTIME_BALANCE);
 
-        let stored_protorune_balance0 = protorunes_sheet0.get_cached(&protorune_id);
+        let stored_protorune_balance0 = protorunes_sheet0.get(&protorune_id);
         assert_eq!(stored_protorune_balance0, expected_pointer_amount);
-        let stored_protorune_balance_runtime = protorunes_sheet_runtime.get_cached(&protorune_id);
+        let stored_protorune_balance_runtime = protorunes_sheet_runtime.get(&protorune_id);
         assert_eq!(stored_protorune_balance_runtime, expected_runtime_amount);
-        let stored_protorune_balance1 = protorunes_sheet1.get_cached(&protorune_id);
+        let stored_protorune_balance1 = protorunes_sheet1.get(&protorune_id);
         assert_eq!(stored_protorune_balance1, expected_refunded_amount);
     }
 
@@ -524,11 +524,11 @@ mod tests {
             protomessage_from_edict_test_template::<MintNewProtorune>(499, 501, 0);
         let minted_protorune = ProtoruneRuneId::new(840000, 999);
 
-        let minted_protorune_to_pointer = protorunes_sheet0.get_cached(&minted_protorune);
+        let minted_protorune_to_pointer = protorunes_sheet0.get(&minted_protorune);
         assert_eq!(minted_protorune_to_pointer, 10001);
-        let minted_protorune_to_runtime = protorunes_sheet_runtime.get_cached(&minted_protorune);
+        let minted_protorune_to_runtime = protorunes_sheet_runtime.get(&minted_protorune);
         assert_eq!(minted_protorune_to_runtime, 12345);
-        let minted_protorune_to_refund = protorunes_sheet1.get_cached(&minted_protorune);
+        let minted_protorune_to_refund = protorunes_sheet1.get(&minted_protorune);
         assert_eq!(minted_protorune_to_refund, 0);
     }
 
@@ -546,7 +546,7 @@ mod tests {
         };
         let bs = load_sheet(&tables::RuneTable::for_protocol(protocol_id as u128).CAP);
 
-        let amount = bs.get_cached(&protorune_id);
+        let amount = bs.get(&protorune_id);
         assert_eq!(amount, 50);
     }
 
@@ -564,7 +564,7 @@ mod tests {
         };
         let bs = load_sheet(&tables::RuneTable::for_protocol(protocol_id as u128).CAP);
 
-        let amount = bs.get_cached(&protorune_id);
+        let amount = bs.get(&protorune_id);
         assert_eq!(amount, 0);
     }
 
