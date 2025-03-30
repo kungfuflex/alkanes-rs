@@ -11,7 +11,7 @@ use alkane_helpers::clear;
 use alkanes::view;
 use bitcoin::Witness;
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };

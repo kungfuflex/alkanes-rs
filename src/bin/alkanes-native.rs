@@ -4,7 +4,7 @@
 //! without requiring a WASM VM, resulting in better performance.
 
 use alkanes::AlkanesIndexer;
-use metashrew_lib::native_binary;
+use metashrew_core::native_binary;
 
 // Define the native binary using the AlkanesIndexer from the main library
 native_binary! {

@@ -1,9 +1,9 @@
 use crate::tables::{RuneTable, RUNES};
 use anyhow::{anyhow, Result};
 use bitcoin::{OutPoint, Txid};
-use metashrew::index_pointer::AtomicPointer;
+use metashrew_core::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };

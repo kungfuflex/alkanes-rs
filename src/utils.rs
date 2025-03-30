@@ -3,9 +3,9 @@ use alkanes_support::parcel::AlkaneTransferParcel;
 use alkanes_support::storage::StorageMap;
 use alkanes_support::utils::overflow_error;
 use anyhow::{anyhow, Result};
-use metashrew::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };

@@ -20,7 +20,7 @@ use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id
 use crate::tests::std::alkanes_std_owned_token_build;
 use alkane_helpers::clear;
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };

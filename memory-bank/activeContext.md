@@ -2,131 +2,58 @@
 
 ## Current Work Focus
 
-The ALKANES-RS project is currently focused on implementing and refining the core components of the ALKANES metaprotocol for Bitcoin-based decentralized finance. The system is structured as a Rust workspace with multiple crates, each serving a specific purpose in the overall architecture.
+The ALKANES-RS project is a Rust implementation of the ALKANES metaprotocol for Bitcoin-based decentralized finance (DeFi). The project provides a framework for creating and executing smart contracts on the Bitcoin blockchain, leveraging the METASHREW indexer stack.
 
-## Recent Changes
+### Current Development Status
 
-Based on the existing codebase, the project appears to have established:
+The project is structured as a Rust workspace with multiple crates, each serving a specific purpose in the overall system:
 
-1. **Core Protocol Implementation**: The foundational components of the ALKANES metaprotocol have been implemented, including:
-   - Block processing and indexing
-   - Message extraction and validation
-   - WebAssembly-based smart contract execution
-   - Storage and state management
+1. **Top-level crate (alkanes)**: Main indexer implementation for the METASHREW environment
+2. **Support Crates**: Shared utilities for METASHREW integration, protorunes compatibility, and ALKANES protocol
+3. **Runtime Crates**: Smart contract runtime environment
+4. **Standard Library Crates**: Multiple `alkanes-std-*` crates implementing standard smart contracts
 
-2. **Standard Library Contracts**: Several standard contracts have been implemented:
-   - Authentication token (alkanes-std-auth-token)
-   - Genesis contracts for different networks (alkanes-std-genesis-alkane)
-   - Owned token implementation (alkanes-std-owned-token)
-   - Proxy contract functionality (alkanes-std-proxy)
-   - Upgradeable contract support (alkanes-std-upgradeable)
-   - Merkle distributor for token distribution (alkanes-std-merkle-distributor)
-   - Orbital functionality (alkanes-std-orbital)
+### Recent Changes
 
-3. **Multi-Network Support**: The system supports multiple Bitcoin-based networks through feature flags:
-   - Bitcoin mainnet, testnet, and regtest
-   - Dogecoin
-   - Luckycoin
-   - Bellscoin
-   - Fractal
+Based on the repository structure and documentation, the project appears to have implemented:
 
-4. **Fuel Management Improvements**: The fuel system has been updated to correctly handle fuel refunding and consumption:
-   - Fixed the `consume_fuel` method to properly track remaining fuel and provide clearer error messages
-   - Updated the `drain_fuel` method to avoid incorrect fuel deductions in error cases
-   - Ensured that only the actual remaining fuel (not the initially allocated amount) is refunded to the block
-   - Added explicit fuel consumption checks to prevent "all fuel consumed by WebAssembly" errors
-   - Enhanced logging throughout the fuel management system to provide detailed diagnostic information:
-     - Added comprehensive logging to `consume_fuel` with detailed error information
-     - Added execution tracking logs to `run_after_special` to monitor fuel usage during WebAssembly execution
-     - Added allocation tracking logs to `fuel_transaction` to monitor initial fuel allocation
-     - Added refunding tracking logs to `refuel_block` to monitor fuel refunding process
-     - Added detailed logging to all host functions that consume fuel:
-       - Storage operations: `request_storage`, `load_storage`
-       - Context operations: `request_context`, `load_context`
-       - Block and transaction operations: `request_block`, `load_block`, `request_transaction`, `load_transaction`
-       - Utility operations: `sequence`, `fuel`, `height`, `balance`, `returndatacopy`
-       - Contract operations: `extcall` (including deployment fuel)
-     - Added transaction-level cellpack logging:
-       - Logs detailed information about the contract being called at the start of each transaction
-       - Shows target contract address, input count, and first opcode (operation being performed)
-       - Logs resolved contract addresses after address resolution
-       - Provides enhanced error reporting with contract-specific context for fuel-related errors
-   - Implemented fuel benchmarking in the test suite:
-     - Added a benchmarking framework to `src/tests/genesis.rs`
-     - Created utilities for tracking and displaying fuel consumption metrics
-     - Added detailed fuel usage reporting for different operations (genesis block processing, mint operations)
-     - Implemented percentage-based fuel consumption analysis
-   - Optimized fuel costs for large data operations:
-     - Replaced variable fuel costs with fixed costs for block and transaction loading operations
-     - Added `FUEL_LOAD_BLOCK` and `FUEL_LOAD_TRANSACTION` constants for fixed fuel costs
-     - Modified host functions to use fixed costs instead of scaling with data size
-     - Added detailed logging for block and transaction loading operations
-     - Confirmed effectiveness with real transaction logs:
-       - Loading a 1.5MB block now costs only 1,000 fuel units (fixed)
-       - Previously would have cost ~3,000,000 fuel units (2 units per byte)
-       - Significant savings that prevent "all fuel consumed" errors
-
-## Next Steps
-
-Based on the project structure and documentation, potential next steps could include:
-
-1. **Enhanced DeFi Primitives**: Expanding the standard library with additional DeFi components:
-   - Lending and borrowing protocols
-   - Staking and yield farming
-   - Derivatives and synthetic assets
-   - Governance mechanisms
-
-2. **Developer Tooling**: Improving the developer experience:
-   - CLI tools for contract deployment and interaction
-   - Testing frameworks and simulation environments
-   - Documentation and examples
-   - Client libraries for different languages
-
-3. **Performance Optimization**: Enhancing system performance:
-   - Optimizing state access patterns
-   - Improving WASM execution efficiency
-   - Reducing memory usage
-   - Enhancing indexing speed
-
-4. **Integration Testing**: Comprehensive testing across networks:
-   - End-to-end testing with real blockchain data
-   - Stress testing with high transaction volumes
-   - Security audits and vulnerability testing
-   - Cross-network compatibility testing
+- Core indexer functionality for processing Bitcoin blocks and transactions
+- WebAssembly-based smart contract execution environment
+- Standard library contracts including auth-token, genesis-alkane, merkle-distributor, proxy, and upgradeable contracts
+- Support for multiple Bitcoin-based networks including mainnet, testnet, regtest, dogecoin, luckycoin, and bellscoin
 
 ## Active Decisions and Considerations
 
-1. **Message Dispatch Framework**: The project has implemented a message dispatch framework using Rust enums and traits to simplify contract development and ABI generation. This approach provides a clean interface for defining contract methods and handling parameters.
+### Architecture Decisions
 
-2. **Storage Abstraction**: The system uses a key-value storage abstraction for contract state, providing a consistent interface across different storage backends. This allows for efficient state caching and batching.
+1. **WASM-based Smart Contracts**: Smart contracts are compiled to WebAssembly for portability and security, with a runtime environment for execution and fuel metering to prevent DoS attacks.
 
-3. **Fuel Metering**: Computation is metered using a fuel system to prevent DoS attacks, with block-level fuel allocation and transaction-level fuel tracking. This ensures that contracts cannot consume excessive resources.
+2. **Modular Architecture**: The system is designed with a separation of concerns between indexing, execution, and state management, with support crates for shared functionality and a standard library for common contract patterns.
 
-4. **Cross-Network Compatibility**: The system supports multiple Bitcoin-based networks through feature flags and configuration, allowing for network-specific parameters and conditional compilation for different targets.
+3. **Protocol Extensions**: ALKANES is built on top of the protorunes protocol, compatible with Bitcoin's transaction model, and leverages ordinals for additional functionality.
 
-5. **Error Handling Strategy**: The project uses Rust's `anyhow` for error handling, providing rich error context, propagation of errors across boundaries, and consistent error reporting.
+### Technical Considerations
 
-6. **Testing Approach**: The system employs multiple testing strategies, including unit tests, integration tests, end-to-end tests, and WASM tests. This comprehensive approach ensures correctness at all levels of the system.
+1. **Cross-Network Support**: The system must support multiple Bitcoin-based networks with different address formats, block structures, activation heights, and network-specific parameters.
 
-## Current Development Environment
+2. **Performance Optimization**: The indexer must efficiently process blockchain data, handle large blocks and transactions, maintain state consistency, provide responsive queries, and scale with blockchain growth.
 
-The project is built using:
-- Rust toolchain with wasm32-unknown-unknown target
-- Cargo as the build system
-- wasm-bindgen-test-runner for testing WebAssembly code
-- Protocol Buffers for data serialization
+3. **Security**: The system employs fuel metering to prevent DoS attacks, sandboxed execution to isolate contract execution from the host system, input validation to ensure only valid transactions are processed, and error handling to gracefully handle invalid inputs and execution failures.
 
-The development workflow involves:
-1. Writing smart contracts in Rust
-2. Compiling to WebAssembly
-3. Testing with the wasm-bindgen-test-runner
-4. Deploying with the METASHREW indexer stack
+## Next Steps
 
-## Integration Points
+Based on the current state of the project, potential next steps could include:
 
-The ALKANES-RS project integrates with several external systems:
+1. **Expanded Standard Library**: Growing the set of standard contracts for common DeFi patterns.
 
-1. **Bitcoin Blockchain**: The primary data source and transaction medium
-2. **METASHREW Indexer Stack**: The underlying infrastructure for processing blockchain data
-3. **Protorunes Protocol**: The token standard that ALKANES extends
-4. **WebAssembly Runtime**: The execution environment for smart contracts
+2. **Improved Tooling**: Enhancing development, testing, and deployment tools.
+
+3. **Cross-Protocol Interoperability**: Better integration with other Bitcoin layer 2 solutions.
+
+4. **Performance Optimization**: Continued improvements to execution efficiency and state management.
+
+5. **Community Governance**: Potential for community-driven protocol evolution.
+
+6. **Documentation and Examples**: Expanding documentation and providing more examples to improve developer experience.
+
+7. **Testing and Validation**: Comprehensive testing across different networks and use cases.

@@ -14,7 +14,7 @@ use crate::tests::std::alkanes_std_genesis_alkane_build;
 use crate::vm::fuel::{FuelTank, TOTAL_FUEL};
 use alkane_helpers::clear;
 #[allow(unused_imports)]
-use metashrew::{get_cache, index_pointer::IndexPointer, println, stdio::stdout};
+use metashrew_core::{get_cache, index_pointer::IndexPointer, println, stdio::stdout};
 use std::fmt::Write;
 use wasm_bindgen_test::wasm_bindgen_test;
 

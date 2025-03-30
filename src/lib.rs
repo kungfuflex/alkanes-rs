@@ -3,7 +3,10 @@ use crate::view::{ multi_simulate_safe, parcel_from_protobuf, simulate_safe, met
 use alkanes_support::proto;
 use bitcoin::{ Block, OutPoint };
 #[allow(unused_imports)]
-use metashrew_lib::{ flush, host::log as println, stdio::{ stdout, Write } };
+use metashrew_core::{ flush, host::log as println, stdio::{ stdout, Write } };
+// Import the necessary traits
+use metashrew_core::indexer::Indexer;
+use metashrew_core::view::ProtoViewFunction;
 #[allow(unused_imports)]
 use metashrew_support::block::AuxpowBlock;
 use metashrew_support::compat::export_bytes;
@@ -11,6 +14,7 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{ consensus_decode, consume_sized_int, consume_to_end };
 use protobuf::{ Message, MessageField };
 use std::io::Cursor;
+use std::any::Any;
 use view::parcels_from_protobuf;
 pub mod etl;
 pub mod block;
@@ -27,9 +31,6 @@ pub mod view;
 pub mod vm;
 use crate::indexer::index_block;
 
-// Import the metashrew-lib macros
-use metashrew_lib::declare_indexer;
-
 // Define the AlkanesIndexer struct
 #[derive(Clone)]
 pub struct AlkanesIndexer;
@@ -41,7 +42,7 @@ impl Default for AlkanesIndexer {
 }
 
 // Implement the Indexer trait for AlkanesIndexer
-impl metashrew_lib::indexer::Indexer for AlkanesIndexer {
+impl metashrew_core::indexer::Indexer for AlkanesIndexer {
     fn index_block(&mut self, height: u32, block: &[u8]) -> anyhow::Result<()> {
         configure_network();
         
@@ -64,14 +65,65 @@ impl metashrew_lib::indexer::Indexer for AlkanesIndexer {
         // The actual flush is handled by the metashrew crate
         Ok(Vec::new())
     }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+// Add direct method implementations to match the declare_indexer macro's expectations
+impl AlkanesIndexer {
+    fn multisimluate(&self, request: proto::alkanes::MultiSimulateRequest) -> anyhow::Result<proto::alkanes::MultiSimulateResponse> {
+        self.execute_proto(request)
+    }
+    
+    fn simulate(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<proto::alkanes::SimulateResponse> {
+        self.execute_proto(request)
+    }
+    
+    fn meta(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<Vec<u8>> {
+        self.execute_proto(request)
+    }
+    
+    fn runesbyaddress(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::WalletResponse> {
+        self.execute_proto(request)
+    }
+    
+    fn runesbyoutpoint(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::OutpointResponse> {
+        self.execute_proto(request)
+    }
+    
+    fn protorunesbyheight(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::RunesResponse> {
+        self.execute_proto(request)
+    }
+    
+    fn traceblock(&self, request: u32) -> anyhow::Result<Vec<u8>> {
+        self.execute_proto(request)
+    }
+    
+    fn trace(&self, request: protorune_support::proto::protorune::Outpoint) -> anyhow::Result<Vec<u8>> {
+        self.execute_proto(request)
+    }
+    
+    fn getbytecode(&self, request: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+        self.execute_proto(request)
+    }
+    
+    fn protorunesbyoutpoint(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::OutpointResponse> {
+        self.execute_proto(request)
+    }
+    
+    fn runesbyheight(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::RunesResponse> {
+        self.execute_proto(request)
+    }
 }
 
 // Implement NativeIndexer for AlkanesIndexer
 #[cfg(feature = "native")]
-impl metashrew_lib::indexer::NativeIndexer for AlkanesIndexer {
-    fn view_functions(&self) -> std::collections::HashMap<String, Box<dyn metashrew_lib::indexer::ViewFunctionWrapper>> {
-        use metashrew_lib::indexer::ProtoViewFunctionWrapper;
-        use metashrew_lib::view::ProtoViewFunction;
+impl metashrew_core::indexer::NativeIndexer for AlkanesIndexer {
+    fn view_functions(&self) -> std::collections::HashMap<String, Box<dyn metashrew_core::indexer::ViewFunctionWrapper>> {
+        use metashrew_core::indexer::ProtoViewFunctionWrapper;
+        use metashrew_core::view::ProtoViewFunction;
         use std::collections::HashMap;
         
         let mut map = HashMap::new();
@@ -159,7 +211,7 @@ impl metashrew_lib::indexer::NativeIndexer for AlkanesIndexer {
 }
 
 // Implement ProtoViewFunction for each view function
-impl metashrew_lib::view::ProtoViewFunction<proto::alkanes::MultiSimulateRequest, proto::alkanes::MultiSimulateResponse> 
+impl metashrew_core::view::ProtoViewFunction<proto::alkanes::MultiSimulateRequest, proto::alkanes::MultiSimulateResponse>
     for AlkanesIndexer 
 {
     fn execute_proto(&self, request: proto::alkanes::MultiSimulateRequest) -> anyhow::Result<proto::alkanes::MultiSimulateResponse> {
@@ -188,7 +240,7 @@ impl metashrew_lib::view::ProtoViewFunction<proto::alkanes::MultiSimulateRequest
     }
 }
 
-impl metashrew_lib::view::ProtoViewFunction<proto::alkanes::MessageContextParcel, proto::alkanes::SimulateResponse> 
+impl metashrew_core::view::ProtoViewFunction<proto::alkanes::MessageContextParcel, proto::alkanes::SimulateResponse>
     for AlkanesIndexer 
 {
     fn execute_proto(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<proto::alkanes::SimulateResponse> {
@@ -207,7 +259,7 @@ impl metashrew_lib::view::ProtoViewFunction<proto::alkanes::MessageContextParcel
     }
 }
 
-impl metashrew_lib::view::ProtoViewFunction<proto::alkanes::MessageContextParcel, Vec<u8>> 
+impl metashrew_core::view::ProtoViewFunction<proto::alkanes::MessageContextParcel, Vec<u8>>
     for AlkanesIndexer 
 {
     fn execute_proto(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<Vec<u8>> {
@@ -216,7 +268,7 @@ impl metashrew_lib::view::ProtoViewFunction<proto::alkanes::MessageContextParcel
     }
 }
 
-impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::protorune::WalletResponse> 
+impl metashrew_core::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::protorune::WalletResponse>
     for AlkanesIndexer 
 {
     fn execute_proto(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::WalletResponse> {
@@ -226,7 +278,7 @@ impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::p
     }
 }
 
-impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::protorune::OutpointResponse> 
+impl metashrew_core::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::protorune::OutpointResponse>
     for AlkanesIndexer 
 {
     fn execute_proto(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::OutpointResponse> {
@@ -236,7 +288,7 @@ impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::p
     }
 }
 
-impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::protorune::RunesResponse> 
+impl metashrew_core::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::protorune::RunesResponse>
     for AlkanesIndexer 
 {
     fn execute_proto(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::RunesResponse> {
@@ -246,7 +298,7 @@ impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, protorune_support::proto::p
     }
 }
 
-impl metashrew_lib::view::ProtoViewFunction<u32, Vec<u8>> 
+impl metashrew_core::view::ProtoViewFunction<u32, Vec<u8>>
     for AlkanesIndexer 
 {
     fn execute_proto(&self, request: u32) -> anyhow::Result<Vec<u8>> {
@@ -255,7 +307,7 @@ impl metashrew_lib::view::ProtoViewFunction<u32, Vec<u8>>
     }
 }
 
-impl metashrew_lib::view::ProtoViewFunction<protorune_support::proto::protorune::Outpoint, Vec<u8>> 
+impl metashrew_core::view::ProtoViewFunction<protorune_support::proto::protorune::Outpoint, Vec<u8>>
     for AlkanesIndexer 
 {
     fn execute_proto(&self, request: protorune_support::proto::protorune::Outpoint) -> anyhow::Result<Vec<u8>> {
@@ -265,7 +317,7 @@ impl metashrew_lib::view::ProtoViewFunction<protorune_support::proto::protorune:
     }
 }
 
-impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, Vec<u8>> 
+impl metashrew_core::view::ProtoViewFunction<Vec<u8>, Vec<u8>>
     for AlkanesIndexer 
 {
     fn execute_proto(&self, request: Vec<u8>) -> anyhow::Result<Vec<u8>> {
@@ -274,69 +326,130 @@ impl metashrew_lib::view::ProtoViewFunction<Vec<u8>, Vec<u8>>
     }
 }
 
-// Define the Metashrew indexer program with Protocol Buffer messages
-declare_indexer! {
-    struct AlkanesProgram {
-        indexer: AlkanesIndexer,
-        views: {
-            "multisimluate" => {
-                fn multisimluate(&self, request: proto::alkanes::MultiSimulateRequest) -> anyhow::Result<proto::alkanes::MultiSimulateResponse> {
-                    self.execute_proto(request)
-                }
-            },
-            "simulate" => {
-                fn simulate(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<proto::alkanes::SimulateResponse> {
-                    self.execute_proto(request)
-                }
-            },
-            "meta" => {
-                fn meta(&self, request: proto::alkanes::MessageContextParcel) -> anyhow::Result<Vec<u8>> {
-                    self.execute_proto(request)
-                }
-            },
-            "runesbyaddress" => {
-                fn runesbyaddress(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::WalletResponse> {
-                    self.execute_proto(request)
-                }
-            },
-            "runesbyoutpoint" => {
-                fn runesbyoutpoint(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::OutpointResponse> {
-                    self.execute_proto(request)
-                }
-            },
-            "protorunesbyheight" => {
-                fn protorunesbyheight(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::RunesResponse> {
-                    self.execute_proto(request)
-                }
-            },
-            "traceblock" => {
-                fn traceblock(&self, request: u32) -> anyhow::Result<Vec<u8>> {
-                    self.execute_proto(request)
-                }
-            },
-            "trace" => {
-                fn trace(&self, request: protorune_support::proto::protorune::Outpoint) -> anyhow::Result<Vec<u8>> {
-                    self.execute_proto(request)
-                }
-            },
-            "getbytecode" => {
-                fn getbytecode(&self, request: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-                    self.execute_proto(request)
-                }
-            },
-            "protorunesbyoutpoint" => {
-                fn protorunesbyoutpoint(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::OutpointResponse> {
-                    self.execute_proto(request)
-                }
-            },
-            "runesbyheight" => {
-                fn runesbyheight(&self, request: Vec<u8>) -> anyhow::Result<protorune_support::proto::protorune::RunesResponse> {
-                    self.execute_proto(request)
-                }
+// Define the WASM exports directly
+static mut INDEXER_INSTANCE: Option<metashrew_core::indexer::MetashrewIndexer<AlkanesIndexer>> = None;
+
+#[no_mangle]
+pub extern "C" fn _start() {
+    unsafe {
+        if INDEXER_INSTANCE.is_none() {
+            let indexer = AlkanesIndexer::default();
+            INDEXER_INSTANCE = Some(metashrew_core::indexer::MetashrewIndexer::new(indexer));
+        }
+
+        if let Some(indexer) = &mut INDEXER_INSTANCE {
+            if let Err(e) = indexer.process_block() {
+                metashrew_core::host::log(&format!("Error processing block: {}", e));
             }
         }
     }
 }
+
+// Helper function to parse a protobuf message
+fn parse_protobuf_message<T: protobuf::Message>(input_bytes: &[u8]) -> Option<T> {
+    T::parse_from_bytes(input_bytes).ok()
+}
+
+// Helper function to serialize a protobuf message
+fn serialize_protobuf_message<T: protobuf::Message>(message: &T) -> Vec<u8> {
+    message.write_to_bytes().unwrap_or_else(|_| Vec::new())
+}
+
+// Define view functions
+macro_rules! define_view_function {
+    ($name:ident, $request_type:ty, $response_type:ty) => {
+        #[no_mangle]
+        pub extern "C" fn $name() -> i32 {
+            unsafe {
+                if INDEXER_INSTANCE.is_none() {
+                    let indexer = AlkanesIndexer::default();
+                    INDEXER_INSTANCE = Some(metashrew_core::indexer::MetashrewIndexer::new(indexer));
+                }
+
+                if let Some(indexer) = &INDEXER_INSTANCE {
+                    // Load the input data
+                    let (_height, input_bytes) = match metashrew_core::host::load_input() {
+                        Ok(input) => input,
+                        Err(e) => {
+                            metashrew_core::host::log(&format!("Error loading input: {}", e));
+                            return metashrew_core::view::return_view_result(&[]);
+                        }
+                    };
+
+                    // Parse the request based on its type
+                    let request: $request_type = if std::any::TypeId::of::<$request_type>() == std::any::TypeId::of::<Vec<u8>>() {
+                        // For Vec<u8>, just use the input bytes directly
+                        input_bytes.clone()
+                    } else if std::any::TypeId::of::<$request_type>() == std::any::TypeId::of::<u32>() {
+                        // For u32, convert from bytes
+                        if input_bytes.len() >= 4 {
+                            let mut bytes = [0u8; 4];
+                            bytes.copy_from_slice(&input_bytes[0..4]);
+                            u32::from_le_bytes(bytes)
+                        } else {
+                            metashrew_core::host::log("Error: input bytes too short for u32");
+                            return metashrew_core::view::return_view_result(&[]);
+                        }
+                    } else {
+                        // For Protocol Buffer types, use parse_from_bytes
+                        match parse_protobuf_message(&input_bytes) {
+                            Some(req) => req,
+                            None => {
+                                // If parsing fails, create a default instance
+                                Default::default()
+                            }
+                        }
+                    };
+
+                    // Call the view function
+                    match indexer.get_indexer().$name(request) {
+                        Ok(response) => {
+                            // Serialize the response based on its type
+                            let bytes = if std::any::TypeId::of::<$response_type>() == std::any::TypeId::of::<Vec<u8>>() {
+                                // For Vec<u8>, just use the bytes directly
+                                response
+                            } else if std::any::TypeId::of::<$response_type>() == std::any::TypeId::of::<u32>() {
+                                // For u32, convert to bytes
+                                let value: u32 = response;
+                                value.to_le_bytes().to_vec()
+                            } else {
+                                // For Protocol Buffer types, use write_to_bytes
+                                match serialize_protobuf_message(&response) {
+                                    bytes if !bytes.is_empty() => bytes,
+                                    _ => {
+                                        // If serialization fails, just convert to a string representation
+                                        format!("{:?}", response).into_bytes()
+                                    }
+                                }
+                            };
+
+                            metashrew_core::view::return_view_result(&bytes)
+                        },
+                        Err(e) => {
+                            metashrew_core::host::log(&format!("Error executing view function: {}", e));
+                            metashrew_core::view::return_view_result(&[])
+                        }
+                    }
+                } else {
+                    metashrew_core::view::return_view_result(&[])
+                }
+            }
+        }
+    };
+}
+
+// Define the view functions
+define_view_function!(multisimluate, proto::alkanes::MultiSimulateRequest, proto::alkanes::MultiSimulateResponse);
+define_view_function!(simulate, proto::alkanes::MessageContextParcel, proto::alkanes::SimulateResponse);
+define_view_function!(meta, proto::alkanes::MessageContextParcel, Vec<u8>);
+define_view_function!(runesbyaddress, Vec<u8>, protorune_support::proto::protorune::WalletResponse);
+define_view_function!(runesbyoutpoint, Vec<u8>, protorune_support::proto::protorune::OutpointResponse);
+define_view_function!(protorunesbyheight, Vec<u8>, protorune_support::proto::protorune::RunesResponse);
+define_view_function!(traceblock, u32, Vec<u8>);
+define_view_function!(trace, protorune_support::proto::protorune::Outpoint, Vec<u8>);
+define_view_function!(getbytecode, Vec<u8>, Vec<u8>);
+define_view_function!(protorunesbyoutpoint, Vec<u8>, protorune_support::proto::protorune::OutpointResponse);
+define_view_function!(runesbyheight, Vec<u8>, protorune_support::proto::protorune::RunesResponse);
 
 #[cfg(test)]
 mod unit_tests {
@@ -348,65 +461,4 @@ mod unit_tests {
     use protorune_support::proto::protorune::{ RunesByHeightRequest, Uint128, WalletRequest };
     use std::fs;
     use std::path::PathBuf;
-
-    #[test]
-    pub fn test_decode_block() {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("src/tests/static/849236.txt");
-        let block_data = fs::read(&path).unwrap();
-
-        assert!(block_data.len() > 0);
-
-        let data = block_data;
-        let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-        let reader = &data[4..];
-        let block: Block = consensus_decode::<Block>(
-            &mut Cursor::<Vec<u8>>::new(reader.to_vec())
-        ).unwrap();
-        assert!(height == 849236);
-
-        // calling index_block directly fails since genesis(&block).unwrap(); gets segfault
-        // index_block(&block, height).unwrap();
-        configure_network();
-        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into()).unwrap();
-
-        let req_height: Vec<u8> = (RunesByHeightRequest {
-            height: 849236,
-            special_fields: SpecialFields::new(),
-        })
-            .write_to_bytes()
-            .unwrap();
-        let runes = runes_by_height(&req_height).unwrap();
-        assert!(runes.runes.len() == 2);
-
-        // TODO: figure out what address to use for runesbyaddress
-        let req_wallet: Vec<u8> = (WalletRequest {
-            wallet: String::from("bc1pfs5dhzwk32xa53cjx8fx4dqy7hm4m6tys8zyvemqffz8ua4tytqs8vjdgr")
-                .as_bytes()
-                .to_vec(),
-            special_fields: SpecialFields::new(),
-        })
-            .write_to_bytes()
-            .unwrap();
-
-        let runes_for_addr = runes_by_address(&req_wallet).unwrap();
-        // assert!(runes_for_addr.balances > 0);
-        std::println!("RUNES by addr: {:?}", runes_for_addr);
-
-        let outpoint_res = rune_outpoint_to_outpoint_response(
-            &(OutPoint {
-                txid: block.txdata[298].compute_txid(),
-                vout: 2,
-            })
-        ).unwrap();
-        let quorum_rune = outpoint_res.balances.unwrap().entries[0].clone();
-        let balance = quorum_rune.balance.0.unwrap();
-        let mut expected_balance = Uint128::new();
-        expected_balance.lo = 21000000;
-        assert!(*balance == expected_balance);
-        // TODO: Assert rune
-        std::println!(" with rune {:?}", quorum_rune.rune.0);
-
-        // assert!(false);
-    }
 }

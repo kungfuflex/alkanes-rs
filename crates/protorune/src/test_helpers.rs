@@ -11,7 +11,7 @@ use bitcoin::{Address, Amount, BlockHash, Network, OutPoint, Script, Sequence, W
 use byteorder::{ByteOrder, LittleEndian};
 use core::str::FromStr;
 use hex::decode;
-use metashrew::{get_cache, println, stdio::stdout};
+use metashrew_core::{get_cache, println, stdio::stdout};
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::format_key;
 use ordinals::{Edict, Etching, Rune, RuneId, Runestone};

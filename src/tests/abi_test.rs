@@ -15,7 +15,7 @@ use alkanes::vm::fuel::VirtualFuelBytes;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use anyhow::Result;
 #[allow(unused_imports)]
-use metashrew::{ println, stdio::{ stdout, Write } };
+use metashrew_core::{ println, stdio::{ stdout, Write } };
 use protorune::message::MessageContextParcel;
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::balance_sheet::BalanceSheet;

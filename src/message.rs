@@ -13,9 +13,9 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew::index_pointer::IndexPointer;
+use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };

@@ -12,10 +12,9 @@ crate-type = ["cdylib", "rlib"]
 
 [workspace]
 members = [".", "crates/*"]
-exclude = ["crates/metashrew", "crates/metashrew-support"]
 
 [features]
-test-utils = ["metashrew-lib/test-utils"]
+test-utils = ["metashrew-core/test-utils"]
 testnet = []
 dogecoin = []
 luckycoin = []
@@ -46,16 +45,16 @@ merkle_distributor = []
 free_mint = []
 upgradeable = []
 # Native binary support
-native = ["metashrew-lib/native", "dep:tokio", "dep:actix-web", "dep:actix-cors", "dep:clap", "dep:env_logger"]
+native = ["metashrew-core/native", "dep:tokio", "dep:actix-web", "dep:actix-cors", "dep:clap", "dep:env_logger"]
 
 
 [dependencies]
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-# Use the top-level metashrew-lib and metashrew-support crates
-metashrew-lib = { path = "../metashrew-lib" }
-metashrew-support = { path = "../metashrew-support" }
+# Use metashrew-core from reference directory
+metashrew-core = { path = "reference/metashrew/metashrew-core" }
+metashrew-support = { path = "reference/metashrew/metashrew-support" }
 ordinals = { path = "crates/ordinals" }
 protorune = { path = "crates/protorune" }
 protorune-support = { path = "crates/protorune-support" }
@@ -90,8 +89,8 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-# Use metashrew-lib for tests
-metashrew-lib = { path = "../metashrew-lib", features = ["test-utils"] }
+# Use metashrew-core for tests
+metashrew-core = { path = "reference/metashrew/metashrew-core", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 

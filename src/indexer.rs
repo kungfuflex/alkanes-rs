@@ -4,7 +4,7 @@ use crate::vm::fuel::FuelTank;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };

@@ -8,9 +8,9 @@ use bitcoin::{
     address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness,
 };
 use bitcoin::{Block, Transaction};
-use metashrew::index_pointer::IndexPointer;
+use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     clear as clear_base, println,
     stdio::{stdout, Write},
 };

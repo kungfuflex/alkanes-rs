@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use hex_lit::hex;
-use metashrew::{println, stdio::stdout};
+use metashrew_core::{println, stdio::stdout};
 use protobuf::{Message, MessageField};
 use protorune_support::proto::protorune::ProtorunesWalletRequest;
 use std::fmt::Write;

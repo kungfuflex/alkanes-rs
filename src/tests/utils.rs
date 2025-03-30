@@ -3,7 +3,7 @@ mod tests {
     use crate::tests::helpers::clear;
     use anyhow::Result;
     #[allow(unused_imports)]
-    use metashrew::{
+    use metashrew_core::{
         index_pointer::IndexPointer,
         println,
         stdio::{stdout, Write},

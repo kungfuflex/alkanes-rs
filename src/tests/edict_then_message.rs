@@ -9,7 +9,7 @@ use anyhow::Result;
 use bitcoin::address::NetworkChecked;
 use bitcoin::{transaction::Version, ScriptBuf, Sequence};
 use bitcoin::{Address, Amount, Block, OutPoint, Transaction, TxIn, TxOut};
-use metashrew::{
+use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };

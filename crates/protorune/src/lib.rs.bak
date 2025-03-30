@@ -1,4 +1,3 @@
-use metashrew_support::index_pointer::KeyValuePointer;
 use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
@@ -12,13 +11,14 @@ use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
 use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew::{
     flush, input, println,
     stdio::{stdout, Write},
 };
 use metashrew_support::address::Payload;
+use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
 use ordinals::{Etching, Rune};
 use protobuf::{Message, SpecialFields};

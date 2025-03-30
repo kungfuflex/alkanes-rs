@@ -12,7 +12,7 @@ mod tests {
     use alkane_helpers::clear;
     use alkanes_support::gz::{compress, decompress};
     #[allow(unused_imports)]
-    use metashrew::{
+    use metashrew_core::{
         index_pointer::IndexPointer,
         println,
         stdio::{stdout, Write},
@@ -110,14 +110,14 @@ mod tests {
             */
         ];
 
-        let start = metashrew::imports::__now();
+        let start = metashrew_core::imports::__now();
         let test_block = alkane_helpers::init_with_multiple_cellpacks(
             alkanes_std_test_build::get_bytes(),
             test_cellpacks.to_vec(),
         );
 
         index_block(&test_block, block_height as u32)?;
-        println!("time: {}ms", metashrew::imports::__now() - start);
+        println!("time: {}ms", metashrew_core::imports::__now() - start);
         Ok(())
     }
 

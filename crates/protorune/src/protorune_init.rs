@@ -1,8 +1,8 @@
 use crate::message::MessageContext;
 use crate::tables::RuneTable;
-use metashrew::index_pointer::AtomicPointer;
+use metashrew_core::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     flush, input, println,
     stdio::{stdout, Write},
 };

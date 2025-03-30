@@ -13,5 +13,5 @@ anyhow = "1.0.91"
 bitcoin = { version = "0.32.4", features = ["rand"] }
 hex = "0.4.3"
 hex_lit = "0.1.1"
-metashrew-support = { path = "../metashrew-support" }
+metashrew-support = { path = "../../reference/metashrew/metashrew-support" }
 protorune-support = { path = "../protorune-support" }

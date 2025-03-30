@@ -3,7 +3,7 @@ use crate::proto::protorune::{BalanceSheetItem, Rune};
 use crate::rune_transfer::RuneTransfer;
 use anyhow::{anyhow, Result};
 use hex;
-use metashrew::index_pointer::AtomicPointer;
+use metashrew_core::index_pointer::AtomicPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consume_sized_int;
 use ordinals::RuneId;
