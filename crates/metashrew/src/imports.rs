@@ -1,8 +1,14 @@
 #[cfg(feature = "test-utils")]
 use wasm_bindgen::prelude::*;
 
-#[allow(unused_imports)]
-use metashrew_support::utils::ptr_to_vec;
+// Define our own ptr_to_vec function
+pub fn ptr_to_vec(ptr: i32) -> Vec<u8> {
+    let len_bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, 4) };
+    let len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize;
+    let data = unsafe { std::slice::from_raw_parts((ptr as usize + 4) as *const u8, len) };
+    data.to_vec()
+}
+
 static mut _INPUT: Option<Vec<u8>> = None;
 
 #[allow(static_mut_refs)]
@@ -13,6 +19,7 @@ pub fn __set_input(v: Vec<u8>) {
     }
 }
 
+// For non-test builds, we'll use the actual host functions
 #[cfg(not(feature = "test-utils"))]
 #[link(wasm_import_module = "env")]
 extern "C" {
@@ -24,6 +31,7 @@ extern "C" {
     pub fn __log(ptr: i32);
 }
 
+// For test builds, we'll provide mock implementations
 #[allow(static_mut_refs)]
 #[cfg(feature = "test-utils")]
 pub fn __host_len() -> i32 {
