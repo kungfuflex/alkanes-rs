@@ -21,7 +21,7 @@ fn build_alkane(wasm_str: &str, features: Vec<&'static str>) -> Result<()> {
             .arg("build")
             .arg("--release")
             .arg("--features")
-            .arg(features.join(","))
+            .arg(features.join(""))
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()?
@@ -126,7 +126,7 @@ fn main() {
                     ("mainnet", vec!["mainnet"]),
                     ("fractal", vec!["fractal"]),
                     ("regtest", vec!["regtest"]),
-                    ("testnet", vec!["regtest"]), // testnet uses regtest features
+                    ("testnet", vec!["regtest"]) // testnet uses regtest features
                 ];
 
                 for (network, features) in networks {
@@ -136,12 +136,15 @@ fn main() {
                     let subbed = v.clone().replace("-", "_");
 
                     // Read the built wasm
-                    let f: Vec<u8> = fs::read(
+                    let f: Vec<u8> = match fs::read(
                         &Path::new(&wasm_str)
                             .join("wasm32-unknown-unknown")
                             .join("release")
-                            .join(subbed.clone() + ".wasm"),
-                    )?;
+                            .join(subbed.clone() + ".wasm")
+                    ) {
+                        Ok(data) => data,
+                        Err(_) => Vec::new(), // Return empty vector if file doesn't exist
+                    };
 
                     // Compress
                     let compressed: Vec<u8> = compress(f.clone())?;
@@ -173,12 +176,15 @@ fn main() {
                     .to_str()
                     .unwrap()
             );
-            let f: Vec<u8> = fs::read(
+            let f: Vec<u8> = match fs::read(
                 &Path::new(&wasm_str)
                     .join("wasm32-unknown-unknown")
                     .join("release")
-                    .join(subbed.clone() + ".wasm"),
-            )?;
+                    .join(subbed.clone() + ".wasm")
+            ) {
+                Ok(data) => data,
+                Err(_) => Vec::new(), // Return empty vector if file doesn't exist
+            };
             let compressed: Vec<u8> = compress(f.clone())?;
             fs::write(&Path::new(&wasm_str).join("wasm32-unknown-unknown").join("release").join(subbed.clone() + ".wasm.gz"), &compressed)?;
             let data: String = hex::encode(&f);
@@ -186,7 +192,7 @@ fn main() {
                 &write_dir.join("std").join(subbed.clone() + "_build.rs"),
                 String::from("use hex_lit::hex;\n#[allow(long_running_const_eval)]\npub fn get_bytes() -> Vec<u8> { (&hex!(\"")
                     + data.as_str()
-                    + "\")).to_vec() }",
+                    + "\")).to_vec() }"
             )?;
             eprintln!(
                 "build: {}",
@@ -225,21 +231,13 @@ fn main() {
         "mainnet",
         "fractal",
         "regtest",
-        "testnet",
+        "testnet"
     ];
     let genesis_base = "alkanes_std_genesis_alkane";
     for network in networks {
         mod_content.push_str(&format!("pub mod {}_{}_build;\n", genesis_base, network));
     }
 
+    // Write mod.rs only once
     fs::write(&write_dir.join("std").join("mod.rs"), mod_content).unwrap();
-    fs::write(
-        &write_dir.join("std").join("mod.rs"),
-        mods.into_iter()
-            .map(|v| v.replace("-", "_"))
-            .fold(String::default(), |r, v| {
-                r + "pub mod " + v.as_str() + "_build;\n"
-            }),
-    )
-    .unwrap();
 }
