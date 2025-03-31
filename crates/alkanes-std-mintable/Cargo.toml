@@ -1,0 +1,12 @@
+[package]
+name = "alkanes-std-mintable"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+metashrew = { path = "../metashrew" }
+metashrew-support = { path = "../metashrew-support" }
+ordinals = { path = "../ordinals" }
+protorune = { path = "../protorune" }
+protorune-support = { path = "../protorune-support" }
+alkanes-support = { path = "../alkanes-support" }

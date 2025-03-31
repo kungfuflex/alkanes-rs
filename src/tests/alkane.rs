@@ -110,14 +110,16 @@ mod tests {
             */
         ];
 
-        let start = metashrew::imports::__now();
+        // Commented out because metashrew::imports::__now() is not available in the new metashrew version
+        // let start = metashrew::imports::__now();
         let test_block = alkane_helpers::init_with_multiple_cellpacks(
             alkanes_std_test_build::get_bytes(),
             test_cellpacks.to_vec(),
         );
 
         index_block(&test_block, block_height as u32)?;
-        println!("time: {}ms", metashrew::imports::__now() - start);
+        // Commented out because metashrew::imports::__now() is not available in the new metashrew version
+        // println!("time: {}ms", metashrew::imports::__now() - start);
         Ok(())
     }
 
