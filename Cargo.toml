@@ -38,7 +38,7 @@ minimal = [
     "merkle_distributor",
     "free_mint",
     "upgradeable",
-    "proxy",
+    "proxy"
 ]
 refunder = []
 merkle_distributor = []
@@ -50,8 +50,8 @@ upgradeable = []
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew = { path = "crates/metashrew" }
-metashrew-support = { path = "crates/metashrew-support" }
+metashrew = { path = "crates/metashrew", version = "8.4.0" }
+metashrew-support = { path = "crates/metashrew-support", version = "8.4.0" }
 ordinals = { path = "crates/ordinals" }
 protorune = { path = "crates/protorune" }
 protorune-support = { path = "crates/protorune-support" }
@@ -72,14 +72,13 @@ hex_lit = "0.1.1"
 once_cell = "1.20.1"
 
 [dev-dependencies]
-
 alkanes = { path = ".", features = [
     "genesis_alkane",
     "genesis_protorune",
     "amm",
     "orbital",
     "auth_token",
-    "minimal",
+    "minimal"
 ] }
 metashrew = { path = "crates/metashrew", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }

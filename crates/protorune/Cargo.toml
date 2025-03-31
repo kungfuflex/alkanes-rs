@@ -18,8 +18,8 @@ cache = []
 [dependencies]
 anyhow = "1.0.89"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew = { path = "../metashrew", version = "0.1.0" }
-metashrew-support = { path = "../metashrew-support", version = "0.1.0" }
+metashrew = { path = "../metashrew", version = "8.4.0" }
+metashrew-support = { path = "../metashrew-support", version = "8.4.0" }
 protorune-support = { path = "../protorune-support", version = "0.1.0" }
 ordinals = { version = "0.0.10", path = "../ordinals" }
 ruint = "1.12.3"
