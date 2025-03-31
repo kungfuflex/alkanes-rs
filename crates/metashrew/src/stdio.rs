@@ -1,8 +1,19 @@
 use std::sync::Arc;
-//use std::io::{Write, Result};
-use crate::imports::__log;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use crate::host::__log;
 pub use std::fmt::{Error, Write};
+
+// Define our own to_arraybuffer_layout and to_passback_ptr functions
+pub fn to_arraybuffer_layout(v: &[u8]) -> Vec<u8> {
+    let len = v.len() as u32;
+    let mut result = Vec::with_capacity(4 + v.len());
+    result.extend_from_slice(&len.to_le_bytes());
+    result.extend_from_slice(v);
+    result
+}
+
+pub fn to_passback_ptr(v: &mut [u8]) -> i32 {
+    v.as_ptr() as i32
+}
 
 pub struct Stdout(());
 
@@ -35,14 +46,6 @@ macro_rules! print {
     }
   }
 }
-
-/*
-#[cfg(not(test))]
-#[link(wasm_import_module = "env")]
-extern "C" {
-    fn __log(ptr: i32);
-}
-*/
 
 #[allow(unused_unsafe)]
 pub fn log(v: Arc<Vec<u8>>) -> () {

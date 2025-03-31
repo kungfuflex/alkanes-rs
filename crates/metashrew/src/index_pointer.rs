@@ -1,7 +1,8 @@
-use crate::{get, set};
-use metashrew_support::index_pointer::KeyValuePointer;
+use crate::wasm::{get, set};
+use metashrew_support::byte_view::ByteView;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use metashrew_support::index_pointer::KeyValuePointer;
 
 #[derive(Debug, Clone, Default)]
 pub struct IndexPointer(Arc<Vec<u8>>);
@@ -16,14 +17,14 @@ impl KeyValuePointer for IndexPointer {
     }
     fn inherits(&mut self, _v: &Self) {}
     fn set(&mut self, v: Arc<Vec<u8>>) {
-        set(self.unwrap(), v)
+        set(self.unwrap(), v);
     }
     fn get(&self) -> Arc<Vec<u8>> {
         get(self.unwrap())
     }
 }
 
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug)]
 pub struct IndexCheckpoint(pub HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>>);
 
 impl IndexCheckpoint {
