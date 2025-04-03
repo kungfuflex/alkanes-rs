@@ -15,7 +15,7 @@ bitcoin = { version = "0.32.4", features = ["rand"] }
 serde = "1.0.210"
 ordinals = { version = "0.0.10", path = "../ordinals" }
 anyhow = "1.0.90"
-metashrew-support = { path = "../metashrew-support" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 hex = "0.4.3"
 protobuf = "3.6.0"
 bech32 = "0.11.0"

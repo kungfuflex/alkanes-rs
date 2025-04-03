@@ -1,14 +1,14 @@
 use anyhow::{anyhow, Result};
-use metashrew::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::rune_transfer::{increase_balances_using_sheet, RuneTransfer};
 use std::collections::HashMap;
 
-use metashrew::{println, stdio::stdout};
+use metashrew_core::{println, stdio::stdout};
 use std::fmt::Write;
 
-// use metashrew::{println, stdio::stdout};
+// use metashrew_core::{println, stdio::stdout};
 // use std::fmt::Write;
 //
 

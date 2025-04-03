@@ -12,5 +12,5 @@ alkanes-support = { path = "../alkanes-support" }
 anyhow = "1.0.91"
 bitcoin = { version = "0.32.4", features = ["rand"] }
 hex = "0.4.3"
-metashrew-support = { path = "../metashrew-support" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 protorune-support = { path = "../protorune-support" }

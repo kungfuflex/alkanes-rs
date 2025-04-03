@@ -11,9 +11,9 @@ use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
 use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
-use metashrew::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     flush, input, println,
     stdio::{stdout, Write},
 };

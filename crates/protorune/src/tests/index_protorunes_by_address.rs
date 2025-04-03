@@ -5,8 +5,8 @@ mod tests {
     use crate::{view, Protorune};
     use anyhow::Result;
     use bitcoin::OutPoint;
-    use metashrew::index_pointer::AtomicPointer;
-    use metashrew::{
+    use metashrew_core::index_pointer::AtomicPointer;
+    use metashrew_core::{
         println,
         stdio::{stdout, Write},
     };

@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use bitcoin::{Block, Transaction, Txid};
-use metashrew::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use ordinals::Runestone;
 use protorune_support::{
     balance_sheet::BalanceSheet,
@@ -15,7 +15,7 @@ use protorune_support::{
 };
 use std::collections::{HashMap, HashSet};
 
-use metashrew::{println, stdio::stdout};
+use metashrew_core::{println, stdio::stdout};
 use std::fmt::Write;
 
 static mut PROTOCOLS: Option<HashSet<u128>> = None;

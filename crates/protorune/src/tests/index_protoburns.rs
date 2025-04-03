@@ -6,7 +6,7 @@ mod tests {
     use crate::{tables, Protorune};
     use anyhow::Result;
     use bitcoin::{OutPoint, Transaction};
-    use metashrew::index_pointer::AtomicPointer;
+    use metashrew_core::index_pointer::AtomicPointer;
     use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
     use protorune_support::proto::{self, protorune};
     use protorune_support::protostone::{Protostone, ProtostoneEdict};
@@ -14,7 +14,7 @@ mod tests {
     use protorune_support::utils::consensus_encode;
 
     use helpers::clear;
-    use metashrew::{
+    use metashrew_core::{
         println,
         stdio::{stdout, Write},
     };

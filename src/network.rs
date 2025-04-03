@@ -14,7 +14,7 @@ use alkanes_support::parcel::AlkaneTransferParcel;
 use anyhow::Result;
 use bitcoin::hashes::Hash;
 use bitcoin::{Block, OutPoint, Transaction, Txid};
-use metashrew::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::balance_sheet::PersistentRecord;
 use protorune::message::{MessageContext, MessageContextParcel};
@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 #[allow(unused_imports)]
 use {
-    metashrew::{println, stdio::stdout},
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
 

@@ -7,14 +7,14 @@ mod tests {
     use crate::test_helpers::{self as helpers, RunesTestingConfig, ADDRESS1, ADDRESS2};
     use crate::Protorune;
     use anyhow::Result;
-    use metashrew::index_pointer::AtomicPointer;
+    use metashrew_core::index_pointer::AtomicPointer;
     use protorune_support::rune_transfer::RuneTransfer;
 
     use bitcoin::OutPoint;
 
     use helpers::clear;
     #[allow(unused_imports)]
-    use metashrew::{
+    use metashrew_core::{
         println,
         stdio::{stdout, Write},
     };

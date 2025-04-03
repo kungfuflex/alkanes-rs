@@ -14,9 +14,9 @@ use alkanes_support::{
     utils::overflow_error,
 };
 use anyhow::{anyhow, Result};
-use metashrew::index_pointer::IndexPointer;
+use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     print, println,
     stdio::{stdout, Write},
 };

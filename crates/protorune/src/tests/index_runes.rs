@@ -22,14 +22,14 @@ mod tests {
 
     use helpers::clear;
     #[allow(unused_imports)]
-    use metashrew::{
+    use metashrew_core::{
         println,
         stdio::{stdout, Write},
     };
     use metashrew_support::index_pointer::KeyValuePointer;
     use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
 
-    use metashrew::index_pointer::AtomicPointer;
+    use metashrew_core::index_pointer::AtomicPointer;
     use protobuf::{Message, SpecialFields};
 
     use std::str::FromStr;

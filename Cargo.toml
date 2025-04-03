@@ -51,8 +51,8 @@ debug-log = []
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew = { path = "crates/metashrew" }
-metashrew-support = { path = "crates/metashrew-support" }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 ordinals = { path = "crates/ordinals" }
 protorune = { path = "crates/protorune" }
 protorune-support = { path = "crates/protorune-support" }
@@ -82,7 +82,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew = { path = "crates/metashrew", features = ["test-utils"] }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 

@@ -18,8 +18,8 @@ cache = []
 [dependencies]
 anyhow = "1.0.89"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew = { path = "../metashrew", version = "0.1.0" }
-metashrew-support = { path = "../metashrew-support", version = "0.1.0" }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 protorune-support = { path = "../protorune-support", version = "0.1.0" }
 ordinals = { version = "0.0.10", path = "../ordinals" }
 ruint = "1.12.3"
@@ -33,7 +33,7 @@ serde_json = "1.0.128"
 protobuf = "3.6.0"
 
 [dev-dependencies]
-metashrew = { path = "../metashrew", features = ["test-utils"] }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
 wasm-bindgen-cli = "0.2.99"
 getrandom = { version = "0.2.15", features = ["js"] }
 protorune = { path = ".", features = ["test-utils"] }

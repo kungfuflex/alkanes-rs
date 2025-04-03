@@ -12,7 +12,7 @@ test = []
 [dependencies]
 alkanes-support = { path = "../../crates/alkanes-support" }
 alkanes-runtime = { path = "../../crates/alkanes-runtime" }
-metashrew-support = { path = "../../crates/metashrew-support" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 protorune-support = { path = "../../crates/protorune-support" }
 alkanes-std-factory-support = { path = "../../crates/alkanes-std-factory-support" }
 ordinals = { path = "../../crates/ordinals" }

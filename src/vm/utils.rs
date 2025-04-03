@@ -8,9 +8,9 @@ use alkanes_support::{
     witness::find_witness_payload,
 };
 use anyhow::{anyhow, Result};
-use metashrew::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew::{
+use metashrew_core::{
     clear as clear_base, println,
     stdio::{stdout, Write},
 };

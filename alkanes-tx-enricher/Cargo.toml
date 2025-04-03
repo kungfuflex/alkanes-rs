@@ -1,0 +1,26 @@
+[package]
+name = "alkanes-tx-enricher"
+version = "0.1.0"
+edition = "2024"
+description = "CLI tool to enrich Bitcoin transactions with protorune data"
+
+[dependencies]
+# Bitcoin and blockchain related
+bitcoin = { version = "0.32.4", features = ["rand"] }
+hex = "0.4.3"
+ordinals = { path = "../crates/ordinals" }
+metashrew-support = { path = "../crates/metashrew-support" }
+protorune-support = { path = "../crates/protorune-support" }
+alkanes-support = { path = "../crates/alkanes-support" }
+
+# CLI and JSON-RPC
+clap = { version = "4.5.3", features = ["derive"] }
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
+
+# Utilities
+anyhow = "1.0.90"
+getrandom = { version = "0.2.15", features = ["js"] }
+thiserror = "1.0.58"
+log = "0.4.21"
+env_logger = "0.11.3"

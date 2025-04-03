@@ -11,14 +11,14 @@ mod tests {
         address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut,
         Witness,
     };
-    use metashrew::index_pointer::{AtomicPointer, IndexPointer};
+    use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
     use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
     use protorune_support::protostone::Protostone;
     use protorune_support::rune_transfer::RuneTransfer;
     use protorune_support::utils::consensus_encode;
 
     #[allow(unused_imports)]
-    use metashrew::{
+    use metashrew_core::{
         println,
         stdio::{stdout, Write},
     };

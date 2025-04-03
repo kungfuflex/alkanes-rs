@@ -20,9 +20,9 @@ use bitcoin::hashes::Hash;
 use bitcoin::{
     blockdata::block::Header, Block, BlockHash, CompactTarget, OutPoint, Transaction, TxMerkleNode,
 };
-use metashrew::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew::{println, stdio::stdout};
+use metashrew_core::{println, stdio::stdout};
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
 use protobuf::{Message, MessageField};
 use protorune::balance_sheet::MintableDebit;
@@ -499,7 +499,7 @@ pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
     let alkane_id = crate::utils::from_protobuf(alkane_id);
 
     // Get the bytecode from the storage
-    let bytecode = metashrew::index_pointer::IndexPointer::from_keyword("/alkanes/")
+    let bytecode = metashrew_core::index_pointer::IndexPointer::from_keyword("/alkanes/")
         .select(&alkane_id.into())
         .get();
 

@@ -12,7 +12,7 @@ test = []
 [dependencies]
 alkanes-support = { path = "../../crates/alkanes-support" }
 alkanes-runtime = { path = "../../crates/alkanes-runtime" }
-metashrew-support = { path = "../../crates/metashrew-support" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 ordinals = { path = "../../crates/ordinals" }
 anyhow = "1.0.94"
 bitcoin = { version = "0.32.4", features = ["rand"] }
