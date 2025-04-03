@@ -1,7 +1,6 @@
 use anyhow::Result;
 use bitcoin::Block;
-use metashrew_core::{declare_indexer, flush, input, println, stdio::{stdout, Write}};
-use metashrew_support::block::AuxpowBlock;
+use metashrew_core::{metashrew_indexer, host, view as core_view, indexer::Indexer};
 use metashrew_support::utils::consensus_decode;
 use protobuf::Message;
 use std::io::Cursor;
@@ -24,24 +23,20 @@ pub mod vm;
 
 // Import the indexer function
 use crate::indexer::{configure_network, index_block};
-use crate::view::{
-    multi_simulate_safe, parcel_from_protobuf, parcels_from_protobuf, simulate_safe, meta_safe,
-    protorunes_by_address, protorunes_by_height, protorunes_by_outpoint, traceblock, trace, getbytecode
-};
 
 // Define the AlkanesIndexer struct
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct AlkanesIndexer;
 
 // Implement the Indexer trait for AlkanesIndexer
-impl metashrew_core::indexer::Indexer for AlkanesIndexer {
+impl Indexer for AlkanesIndexer {
     fn index_block(&mut self, height: u32, block_data: &[u8]) -> Result<()> {
         // Configure the network
         configure_network();
         
         // Parse the block data
         #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
-        let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(block_data.to_vec()))
+        let block: Block = metashrew_support::block::AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(block_data.to_vec()))
             .unwrap()
             .to_consensus();
         #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin")))]
@@ -69,127 +64,130 @@ impl metashrew_core::indexer::Indexer for AlkanesIndexer {
     }
 }
 
-// Use the declare_indexer! macro to define the indexer and its view functions
-declare_indexer! {
+// Implement the view functions for AlkanesIndexer
+impl AlkanesIndexer {
+    fn multisimulate(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        let mut result = alkanes_support::proto::alkanes::MultiSimulateResponse::new();
+        let responses = view::multi_simulate_safe(
+            &view::parcels_from_protobuf(
+                alkanes_support::proto::alkanes::MultiSimulateRequest::parse_from_bytes(&request)?
+            ),
+            u64::MAX
+        );
+
+        for response in responses {
+            let mut res = alkanes_support::proto::alkanes::SimulateResponse::new();
+            match response {
+                Ok((response, gas_used)) => {
+                    res.execution = protobuf::MessageField::some(response.into());
+                    res.gas_used = gas_used;
+                }
+                Err(e) => {
+                    result.error = e.to_string();
+                }
+            }
+            result.responses.push(res);
+        }
+
+        result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
+    }
+    
+    fn simulate(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        let mut result = alkanes_support::proto::alkanes::SimulateResponse::new();
+        match view::simulate_safe(
+            &view::parcel_from_protobuf(
+                alkanes_support::proto::alkanes::MessageContextParcel::parse_from_bytes(&request)?
+            ),
+            u64::MAX
+        ) {
+            Ok((response, gas_used)) => {
+                result.execution = protobuf::MessageField::some(response.into());
+                result.gas_used = gas_used;
+            }
+            Err(e) => {
+                result.error = e.to_string();
+            }
+        }
+        result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
+    }
+    
+    fn meta(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        view::meta_safe(
+            &view::parcel_from_protobuf(
+                alkanes_support::proto::alkanes::MessageContextParcel::parse_from_bytes(&request)?
+            )
+        )
+    }
+    
+    fn runesbyaddress(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        let result = protorune::view::runes_by_address(&request)?;
+        result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
+    }
+    
+    fn runesbyoutpoint(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        let result = protorune::view::runes_by_outpoint(&request)?;
+        result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
+    }
+    
+    fn protorunesbyheight(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        let result = view::protorunes_by_height(&request)?;
+        result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
+    }
+    
+    fn traceblock(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        let height = u32::from_le_bytes((&request[0..4]).try_into()?);
+        view::traceblock(height)
+    }
+    
+    fn trace(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        let outpoint: bitcoin::OutPoint = protorune_support::proto::protorune::Outpoint
+            ::parse_from_bytes(&request)?
+            .try_into()?;
+        view::trace(&outpoint)
+    }
+    
+    fn getbytecode(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        view::getbytecode(&request)
+    }
+    
+    fn protorunesbyoutpoint(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        let result = view::protorunes_by_outpoint(&request)?;
+        result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
+    }
+    
+    fn runesbyheight(&self, request: Vec<u8>) -> Result<Vec<u8>> {
+        configure_network();
+        let result = protorune::view::runes_by_height(&request)?;
+        result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
+    }
+}
+
+// Use the metashrew_indexer! macro to define the indexer and its view functions
+metashrew_indexer! {
     struct AlkanesIndexerProgram {
         indexer: AlkanesIndexer,
         views: {
-            "multisimulate" => {
-                fn multisimulate(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    let mut result = alkanes_support::proto::alkanes::MultiSimulateResponse::new();
-                    let responses = multi_simulate_safe(
-                        &parcels_from_protobuf(
-                            alkanes_support::proto::alkanes::MultiSimulateRequest::parse_from_bytes(&request)?
-                        ),
-                        u64::MAX
-                    );
-
-                    for response in responses {
-                        let mut res = alkanes_support::proto::alkanes::SimulateResponse::new();
-                        match response {
-                            Ok((response, gas_used)) => {
-                                res.execution = protobuf::MessageField::some(response.into());
-                                res.gas_used = gas_used;
-                            }
-                            Err(e) => {
-                                result.error = e.to_string();
-                            }
-                        }
-                        result.responses.push(res);
-                    }
-
-                    result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
-                }
-            },
-            "simulate" => {
-                fn simulate(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    let mut result = alkanes_support::proto::alkanes::SimulateResponse::new();
-                    match simulate_safe(
-                        &parcel_from_protobuf(
-                            alkanes_support::proto::alkanes::MessageContextParcel::parse_from_bytes(&request)?
-                        ),
-                        u64::MAX
-                    ) {
-                        Ok((response, gas_used)) => {
-                            result.execution = protobuf::MessageField::some(response.into());
-                            result.gas_used = gas_used;
-                        }
-                        Err(e) => {
-                            result.error = e.to_string();
-                        }
-                    }
-                    result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
-                }
-            },
-            "meta" => {
-                fn meta(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    meta_safe(
-                        &parcel_from_protobuf(
-                            alkanes_support::proto::alkanes::MessageContextParcel::parse_from_bytes(&request)?
-                        )
-                    )
-                }
-            },
-            "runesbyaddress" => {
-                fn runesbyaddress(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    let result = protorune::view::runes_by_address(&request)?;
-                    result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
-                }
-            },
-            "runesbyoutpoint" => {
-                fn runesbyoutpoint(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    let result = protorune::view::runes_by_outpoint(&request)?;
-                    result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
-                }
-            },
-            "protorunesbyheight" => {
-                fn protorunesbyheight(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    let result = protorunes_by_height(&request)?;
-                    result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
-                }
-            },
-            "traceblock" => {
-                fn traceblock(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    let height = u32::from_le_bytes((&request[0..4]).try_into()?);
-                    view::traceblock(height)
-                }
-            },
-            "trace" => {
-                fn trace(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    let outpoint: bitcoin::OutPoint = protorune_support::proto::protorune::Outpoint
-                        ::parse_from_bytes(&request)?
-                        .try_into()?;
-                    view::trace(&outpoint)
-                }
-            },
-            "getbytecode" => {
-                fn getbytecode(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    view::getbytecode(&request)
-                }
-            },
-            "protorunesbyoutpoint" => {
-                fn protorunesbyoutpoint(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    let result = protorunes_by_outpoint(&request)?;
-                    result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
-                }
-            },
-            "runesbyheight" => {
-                fn runesbyheight(&self, request: Vec<u8>) -> Result<Vec<u8>> {
-                    configure_network();
-                    let result = protorune::view::runes_by_height(&request)?;
-                    result.write_to_bytes().map_err(|e| anyhow::anyhow!("{:?}", e))
-                }
-            },
+            "multisimulate" => multisimulate(Vec<u8>) -> Vec<u8>,
+            "simulate" => simulate(Vec<u8>) -> Vec<u8>,
+            "meta" => meta(Vec<u8>) -> Vec<u8>,
+            "runesbyaddress" => runesbyaddress(Vec<u8>) -> Vec<u8>,
+            "runesbyoutpoint" => runesbyoutpoint(Vec<u8>) -> Vec<u8>,
+            "protorunesbyheight" => protorunesbyheight(Vec<u8>) -> Vec<u8>,
+            "traceblock" => traceblock(Vec<u8>) -> Vec<u8>,
+            "trace" => trace(Vec<u8>) -> Vec<u8>,
+            "getbytecode" => getbytecode(Vec<u8>) -> Vec<u8>,
+            "protorunesbyoutpoint" => protorunesbyoutpoint(Vec<u8>) -> Vec<u8>,
+            "runesbyheight" => runesbyheight(Vec<u8>) -> Vec<u8>
         }
     }
 }
