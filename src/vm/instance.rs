@@ -72,6 +72,7 @@ impl AlkanesInstance {
         context: Arc<Mutex<AlkanesRuntimeContext>>,
         binary: Arc<Vec<u8>>,
         start_fuel: u64,
+        is_start: bool,
     ) -> Result<Self> {
         /*
         let binary = context
@@ -343,7 +344,7 @@ impl AlkanesInstance {
             store,
         };
 
-        if start_fuel == 0 {
+        if is_start {
             let memory = alkanes_instance.get_memory()?;
 
             let current_pages = memory.size(&alkanes_instance.store);

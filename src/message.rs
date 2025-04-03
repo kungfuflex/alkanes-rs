@@ -95,7 +95,7 @@ pub fn handle_message(
         target,
         fuel,
     }));
-    run_after_special(context.clone(), binary, fuel)
+    run_after_special(context.clone(), binary, fuel, true)
         .and_then(|(response, gas_used)| {
             FuelTank::consume_fuel(gas_used)?;
             pipe_storagemap_to(
