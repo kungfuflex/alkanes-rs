@@ -558,6 +558,7 @@ impl AlkanesHostFunctionsImpl {
             Arc::new(Mutex::new(subcontext.clone())),
             binary_rc,
             start_fuel,
+            false,
         ) {
             Ok((response, gas_used)) => {
                 caller.set_fuel(overflow_error(start_fuel.checked_sub(gas_used))?)?;

@@ -439,7 +439,7 @@ pub fn meta_safe(parcel: &MessageContextParcel) -> Result<Vec<u8>> {
         parcel, &cellpack,
     )));
     let (_caller, _myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
-    let mut instance = AlkanesInstance::from_alkane(context, binary, 100000000)?;
+    let mut instance = AlkanesInstance::from_alkane(context, binary, 100000000, true)?;
     let abi_bytes: Vec<u8> = instance.call_meta()?;
     Ok(abi_bytes)
 }
@@ -458,7 +458,7 @@ pub fn simulate_parcel(
     let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
     credit_balances(&mut atomic, &myself, &parcel.runes);
     prepare_context(context.clone(), &caller, &myself, false);
-    let (response, gas_used) = run_after_special(context.clone(), binary, fuel)?;
+    let (response, gas_used) = run_after_special(context.clone(), binary, fuel, true)?;
     pipe_storagemap_to(
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),

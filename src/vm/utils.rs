@@ -215,6 +215,7 @@ pub fn run_after_special(
     context: Arc<Mutex<AlkanesRuntimeContext>>,
     binary: Arc<Vec<u8>>,
     start_fuel: u64,
+    is_start: bool,
 ) -> Result<(ExtendedCallResponse, u64)> {
     #[cfg(feature = "debug-log")]
     {
@@ -225,7 +226,7 @@ pub fn run_after_special(
         );
     }
 
-    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
+    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel, is_start)?;
     let response = instance.execute()?;
 
     let remaining_fuel = instance.store.get_fuel().unwrap();
@@ -285,7 +286,7 @@ pub fn run(
 ) -> Result<(ExtendedCallResponse, u64)> {
     let (caller, myself, binary) = run_special_cellpacks(context.clone(), cellpack)?;
     prepare_context(context.clone(), &caller, &myself, delegate);
-    run_after_special(context, binary, start_fuel)
+    run_after_special(context, binary, start_fuel, false)
 }
 
 pub fn send_to_arraybuffer<'a>(

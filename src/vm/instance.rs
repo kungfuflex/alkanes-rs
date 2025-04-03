@@ -72,6 +72,7 @@ impl AlkanesInstance {
         context: Arc<Mutex<AlkanesRuntimeContext>>,
         binary: Arc<Vec<u8>>,
         start_fuel: u64,
+        is_start: bool,
     ) -> Result<Self> {
         /*
         let binary = context
@@ -343,14 +344,16 @@ impl AlkanesInstance {
             store,
         };
 
-        let memory = alkanes_instance.get_memory()?;
+        if is_start {
+            let memory = alkanes_instance.get_memory()?;
 
-        let current_pages = memory.size(&alkanes_instance.store);
+            let current_pages = memory.size(&alkanes_instance.store);
 
-        if current_pages < 512 {
-            memory
-                .grow(&mut alkanes_instance.store, 512 - current_pages)
-                .map_err(|e| anyhow::Error::new(e).context("Failed to grow memory"))?;
+            if current_pages < 512 {
+                memory
+                    .grow(&mut alkanes_instance.store, 512 - current_pages)
+                    .map_err(|e| anyhow::Error::new(e).context("Failed to grow memory"))?;
+            }
         }
 
         Ok(alkanes_instance)
