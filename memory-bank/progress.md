@@ -165,3 +165,13 @@ Based on the current status, the following priorities may be considered for the 
 4. **Strengthen Security**: Conduct security audits and implement formal verification for critical contracts.
 
 5. **Build Community**: Develop educational resources, tutorials, and incentives to grow the developer community.
+
+## Recently Implemented Features
+
+1. **Dogecoin Inscription Support for WASM Files**:
+   - Added support for loading WASM files from Dogecoin inscriptions using the BIN protocol
+   - Enhanced the doge_inscription.rs file to support BIN headers for WASM files
+   - Created a new dogecoin.rs module with Dogecoin-specific functionality
+   - Modified the VM utils to extract WASM from Dogecoin inscriptions when the "dogecoin" feature is enabled
+   - All changes are properly feature-gated with #[cfg(feature = "dogecoin")]
+   - This allows users to deploy smart contracts from Bitcoin transactions using the same technique as ord-dogecoin

@@ -15,6 +15,10 @@ use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_e
 use protobuf::{Message, MessageField};
 use std::io::Cursor;
 use view::parcels_from_protobuf;
+#[cfg(feature = "dogecoin")]
+pub mod inscription;
+#[cfg(feature = "dogecoin")]
+pub mod dogecoin;
 pub mod block;
 pub mod etl;
 pub mod indexer;

@@ -1,6 +1,8 @@
 use super::{AlkanesInstance, AlkanesRuntimeContext, AlkanesState};
 use crate::utils::{pipe_storagemap_to, transfer_from};
 use crate::vm::fuel::compute_extcall_fuel;
+#[cfg(feature = "dogecoin")]
+use crate::dogecoin::load_wasm_from_dogecoin_inscription;
 use alkanes_support::trace::TraceEvent;
 use alkanes_support::{
     cellpack::Cellpack, gz::decompress, id::AlkaneId, parcel::AlkaneTransferParcel,
@@ -68,11 +70,27 @@ pub fn run_special_cellpacks(
             .get();
         binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
     } else if cellpack.target.is_create() {
+        #[cfg(not(feature = "dogecoin"))]
         let wasm_payload = Arc::new(
             find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
                 .ok_or("finding witness payload failed for creation of alkane")
                 .map_err(|_| anyhow!("used CREATE cellpack but no binary found in witness"))?,
         );
+        
+        #[cfg(feature = "dogecoin")]
+        let wasm_payload = {
+            // Try to find WASM in standard witness first
+            match find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0) {
+                Some(payload) => Arc::new(payload),
+                None => {
+                    // If not found, try to find in Dogecoin inscription
+                    load_wasm_from_dogecoin_inscription(
+                        &context.lock().unwrap().message.transaction.clone(),
+                        &cellpack.target
+                    )?
+                }
+            }
+        };
         payload.target = AlkaneId {
             block: 2,
             tx: next_sequence,
@@ -88,6 +106,7 @@ pub fn run_special_cellpacks(
         binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
         next_sequence_pointer.set_value(next_sequence + 1);
     } else if let Some(number) = cellpack.target.reserved() {
+        #[cfg(not(feature = "dogecoin"))]
         let wasm_payload = Arc::new(
             find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
                 .ok_or("finding witness payload failed for creation of alkane")
@@ -95,6 +114,21 @@ pub fn run_special_cellpacks(
                     anyhow!("used CREATERESERVED cellpack but no binary found in witness")
                 })?,
         );
+        
+        #[cfg(feature = "dogecoin")]
+        let wasm_payload = {
+            // Try to find WASM in standard witness first
+            match find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0) {
+                Some(payload) => Arc::new(payload),
+                None => {
+                    // If not found, try to find in Dogecoin inscription
+                    load_wasm_from_dogecoin_inscription(
+                        &context.lock().unwrap().message.transaction.clone(),
+                        &AlkaneId { block: 4, tx: number }
+                    )?
+                }
+            }
+        };
         payload.target = AlkaneId {
             block: 4,
             tx: number,

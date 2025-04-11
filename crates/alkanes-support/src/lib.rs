@@ -11,6 +11,7 @@ pub mod storage;
 pub mod trace;
 pub mod utils;
 pub mod witness;
+pub mod doge_inscription;
 
 use crate::id::AlkaneId;
 use crate::parcel::{AlkaneTransfer, AlkaneTransferParcel};
