@@ -1,6 +1,7 @@
 use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
 use alkanes_support::{
     cellpack::Cellpack,
+    id::AlkaneId,
     parcel::{AlkaneTransfer, AlkaneTransferParcel},
     response::CallResponse,
 };
@@ -42,6 +43,12 @@ enum LoggerAlkaneMessage {
 
     #[opcode(20)]
     TestInfiniteLoop,
+
+    #[opcode(30)]
+    TestArbitraryMint { alkane: AlkaneId },
+
+    #[opcode(31)]
+    TestExtCall { target: AlkaneId, inputs: Vec<u128> },
 
     #[opcode(50)]
     GetTransaction,
@@ -138,6 +145,28 @@ impl LoggerAlkane {
 
         loop {}
 
+        Ok(response)
+    }
+
+    fn test_arbitrary_mint(&self, alkane: AlkaneId) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        response.alkanes.0.push(AlkaneTransfer {
+            id: alkane,
+            value: 1_000_000,
+        });
+
+        Ok(response)
+    }
+
+    fn test_ext_call(&self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
+        let context = self.context()?;
+        let cellpack = Cellpack {
+            target: target,
+            inputs: inputs,
+        };
+        let response = self.call(&cellpack, &context.incoming_alkanes, self.fuel())?;
         Ok(response)
     }
 

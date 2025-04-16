@@ -1,3 +1,4 @@
+use crate::message::AlkaneMessageContext;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::gz::compress;
@@ -15,12 +16,16 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::index_pointer::KeyValuePointer;
+use metashrew_support::utils::consensus_encode;
+use ordinals::{Etching, Rune, Runestone};
+use protorune::balance_sheet::load_sheet;
+use protorune::message::MessageContext;
 use protorune::protostone::Protostones;
+use protorune::tables::RuneTable;
 use protorune::test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1};
+use protorune_support::balance_sheet::BalanceSheet;
 use protorune_support::network::{set_network, NetworkParams};
 use protorune_support::protostone::Protostone;
-
-use ordinals::{Etching, Rune, Runestone};
 use std::str::FromStr;
 
 #[cfg(test)]
@@ -326,4 +331,42 @@ pub fn assert_token_id_has_no_deployment(token_id: AlkaneId) -> Result<()> {
         .clone();
     assert_eq!(binary.len(), 0);
     return Ok(());
+}
+
+fn get_sheet_for_outpoint(
+    test_block: &Block,
+    tx_num: usize,
+    vout: u32,
+) -> Result<BalanceSheet<IndexPointer>> {
+    let outpoint = OutPoint {
+        txid: test_block.txdata[tx_num].compute_txid(),
+        vout,
+    };
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        .OUTPOINT_TO_RUNES
+        .select(&consensus_encode(&outpoint)?);
+    let sheet = load_sheet(&ptr);
+    println!(
+        "balances at outpoint tx {} vout {}: {:?}",
+        tx_num, vout, sheet
+    );
+    Ok(sheet)
+}
+
+pub fn get_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
+    let sheet = load_sheet(&ptr);
+    println!("runtime balances: {:?}", sheet);
+    sheet
+}
+
+pub fn get_lazy_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
+    let sheet = BalanceSheet::new_ptr_backed(ptr);
+    sheet
+}
+
+pub fn get_last_outpoint_sheet(test_block: &Block) -> Result<BalanceSheet<IndexPointer>> {
+    let len = test_block.txdata.len();
+    get_sheet_for_outpoint(test_block, len - 1, 0)
 }

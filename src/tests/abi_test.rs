@@ -347,6 +347,18 @@ fn test_logger_alkane_abi() -> Result<()> {
             "void",
         ),
         ("test_infinite_loop", 20, vec![], "void"),
+        (
+            "test_arbitrary_mint",
+            30,
+            vec![("alkane", "AlkaneId")],
+            "void",
+        ),
+        (
+            "test_ext_call",
+            31,
+            vec![("target", "AlkaneId"), ("inputs", "Vec<u128>")],
+            "void",
+        ),
     ];
 
     test_contract_abi(

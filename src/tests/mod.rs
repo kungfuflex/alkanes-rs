@@ -12,6 +12,8 @@ pub mod abi_test;
 #[cfg(test)]
 pub mod alkane;
 #[cfg(test)]
+pub mod arbitrary_alkane_mint;
+#[cfg(test)]
 pub mod auth_token;
 #[cfg(test)]
 pub mod crash;
