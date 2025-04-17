@@ -13,6 +13,32 @@ pub struct Context {
     pub inputs: Vec<u128>,
 }
 
+fn serialize_context(context: &Context) -> Vec<u8> {
+    let mut result = vec![
+        context.myself.block,
+        context.myself.tx,
+        context.caller.block,
+        context.caller.tx,
+        context.vout as u128,
+        context.incoming_alkanes.0.len() as u128,
+    ];
+    let mut incoming_alkanes = context
+        .incoming_alkanes
+        .0
+        .clone()
+        .into_iter()
+        .map(|v| vec![v.id.block, v.id.tx, v.value])
+        .flatten()
+        .collect::<Vec<u128>>();
+    result.extend(&incoming_alkanes);
+    result.extend(&context.inputs);
+    result
+        .into_iter()
+        .map(|v| v.to_le_bytes().to_vec())
+        .flatten()
+        .collect::<Vec<u8>>()
+}
+
 impl Context {
     pub fn parse(v: &mut Cursor<Vec<u8>>) -> Result<Context> {
         let mut result = Context::default();
@@ -26,6 +52,6 @@ impl Context {
         Ok(result)
     }
     pub fn serialize(&self) -> Vec<u8> {
-        vec![]
+        serialize_context(self)
     }
 }
