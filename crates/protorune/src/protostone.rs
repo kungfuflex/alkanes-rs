@@ -20,6 +20,7 @@ use std::fmt::Write;
 
 static mut PROTOCOLS: Option<HashSet<u128>> = None;
 
+// this will reset every time its called
 #[allow(static_mut_refs)]
 pub fn initialized_protocol_index() -> Result<()> {
     unsafe { PROTOCOLS = Some(HashSet::new()) }
