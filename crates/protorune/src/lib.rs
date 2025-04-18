@@ -166,7 +166,7 @@ pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) ->
                 .get_value();
 
             // add 1 to follow the ordinals spec: https://github.com/ordinals/ord/blob/master/src/index/updater/rune_updater.rs#L454
-            let confirmations = height - h + 1;
+            let confirmations = height.checked_sub(h).unwrap() + 1;
             if confirmations >= 6 {
                 return Ok(true);
             }
@@ -618,8 +618,9 @@ impl Protorune {
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
             for (_index, input) in transaction.input.iter().enumerate() {
-              tables::OUTPOINT_SPENDABLE_BY.select(&consensus_encode(&input.previous_output)?).nullify();
-              
+                tables::OUTPOINT_SPENDABLE_BY
+                    .select(&consensus_encode(&input.previous_output)?)
+                    .nullify();
             }
             for (index, output) in transaction.output.iter().enumerate() {
                 let outpoint = OutPoint {
