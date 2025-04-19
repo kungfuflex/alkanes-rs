@@ -10,7 +10,7 @@ use balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
-use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
+use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut, Txid};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -618,8 +618,9 @@ impl Protorune {
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
             for (_index, input) in transaction.input.iter().enumerate() {
-              tables::OUTPOINT_SPENDABLE_BY.select(&consensus_encode(&input.previous_output)?).nullify();
-              
+                tables::OUTPOINT_SPENDABLE_BY
+                    .select(&consensus_encode(&input.previous_output)?)
+                    .nullify();
             }
             for (index, output) in transaction.output.iter().enumerate() {
                 let outpoint = OutPoint {
@@ -837,6 +838,7 @@ impl Protorune {
         unallocated_to: u32,
     ) -> Result<()> {
         let protostones = Protostone::from_runestone(runestone)?;
+
         if protostones.len() != 0 {
             let mut proto_balances_by_output = HashMap::<u32, BalanceSheet<AtomicPointer>>::new();
             let table = tables::RuneTable::for_protocol(T::protocol_tag());
@@ -903,7 +905,9 @@ impl Protorune {
                     let mut prior_balance_sheet = BalanceSheet::default();
                     let is_message = stone.is_message();
                     if is_message {
-                        let refund = stone.refund.unwrap();
+                        let refund = stone
+                            .refund
+                            .ok_or_else(|| anyhow!("Missing refund pointer"))?;
                         // Start with a fresh balance sheet for edicts
                         prior_balance_sheet = match proto_balances_by_output.get(&refund) {
                             Some(sheet) => sheet.clone(),
