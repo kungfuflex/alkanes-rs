@@ -53,6 +53,7 @@ dependencies = [
  "protoc-rust",
  "protorune",
  "protorune-support",
+ "rs_merkle",
  "ruint",
  "serde",
  "serde_json",

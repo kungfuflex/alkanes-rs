@@ -394,12 +394,7 @@ fn test_merkle_distributor_abi() -> Result<()> {
 
     // Expected methods with their opcodes, parameter names and types, and return types
     let expected_methods = vec![
-        (
-            "initialize",
-            0,
-            vec![("length", "u128"), ("root_bytes", "u128")],
-            "void",
-        ),
+        ("initialize", 0, vec![("length", "u128")], "void"),
         ("claim", 1, vec![], "void"),
     ];
 

@@ -26,6 +26,8 @@ pub mod fuel;
 #[cfg(test)]
 pub mod genesis;
 #[cfg(test)]
+pub mod merkle_distributor;
+#[cfg(test)]
 pub mod networks;
 #[cfg(test)]
 pub mod serialization;
