@@ -31,7 +31,7 @@ pub struct MerkleDistributor(());
 #[derive(MessageDispatch)]
 enum MerkleDistributorMessage {
     #[opcode(0)]
-    Initialize { length: u128, root_bytes: u128 },
+    Initialize { length: u128 },
 
     #[opcode(1)]
     Claim,
@@ -137,12 +137,12 @@ impl MerkleDistributor {
         self.alkane_pointer().set(Arc::<Vec<u8>>::new(v.into()));
     }
 
-    fn initialize(&self, length: u128, root_bytes: u128) -> Result<CallResponse> {
+    fn initialize(&self, length: u128) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
         let mut inputs = context.inputs.clone();
         if context.incoming_alkanes.0.len() != 1 {
-            panic!("must send 1 alkane to lock for distribution");
+            return Err(anyhow!("must send 1 alkane to lock for distribution"));
         }
         self.set_alkane(context.incoming_alkanes.0[0].id.clone());
 

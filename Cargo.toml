@@ -100,6 +100,7 @@ web-sys = { workspace = true }
 js-sys = { workspace = true }
 hex_lit = { workspace = true }
 once_cell = { workspace = true }
+rs_merkle = "1.4.2"
 
 [dev-dependencies]
 
