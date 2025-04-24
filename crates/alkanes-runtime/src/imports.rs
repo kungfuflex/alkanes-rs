@@ -21,19 +21,9 @@ extern "C" {
     pub fn __load_transaction(output: i32);
     pub fn __request_block() -> i32;
     pub fn __load_block(output: i32);
-    pub fn __call(cellpack: i32, incoming_alkanes: i32, checkpoint: i32, start_fuel: u64) -> i32;
-    pub fn __staticcall(
-        cellpack: i32,
-        incoming_alkanes: i32,
-        checkpoint: i32,
-        start_fuel: u64,
-    ) -> i32;
-    pub fn __delegatecall(
-        cellpack: i32,
-        incoming_alkanes: i32,
-        checkpoint: i32,
-        start_fuel: u64,
-    ) -> i32;
+    pub fn __call(cellpack: i32, incoming_alkanes: i32, checkpoint: i32) -> i32;
+    pub fn __staticcall(cellpack: i32, incoming_alkanes: i32, checkpoint: i32) -> i32;
+    pub fn __delegatecall(cellpack: i32, incoming_alkanes: i32, checkpoint: i32) -> i32;
 }
 
 #[cfg(feature = "test-utils")]

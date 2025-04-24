@@ -24,7 +24,7 @@ pub trait AuthenticatedResponder: AlkaneResponder {
             inputs: vec![0x0, units],
         };
         let sequence = self.sequence();
-        let response = self.call(&cellpack, &AlkaneTransferParcel::default(), self.fuel())?;
+        let response = self.call(&cellpack, &AlkaneTransferParcel::default())?;
         let mut ptr = StoragePointer::from_keyword("/auth");
         ptr.set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(AlkaneId {
             block: 2,
@@ -62,7 +62,6 @@ pub trait AuthenticatedResponder: AlkaneResponder {
                 id: cellpack.target.clone(),
                 value: 1,
             }]),
-            self.fuel(),
         )?;
         println!("Only owner response: {:?}", response);
         if response.data == vec![0x01] {

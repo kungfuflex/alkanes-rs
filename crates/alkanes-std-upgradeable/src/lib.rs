@@ -81,7 +81,7 @@ impl Upgradeable {
             target: self.alkane()?,
             inputs: context.inputs.clone(),
         };
-        Ok(self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())?)
+        Ok(self.delegatecall(&cellpack, &context.incoming_alkanes)?)
     }
 }
 
