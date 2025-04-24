@@ -35,6 +35,9 @@ use wasmi::*;
 
 pub struct AlkanesHostFunctionsImpl(());
 
+// New wrapper struct that ensures proper context management
+pub struct SafeAlkanesHostFunctionsImpl(());
+
 impl AlkanesHostFunctionsImpl {
     fn preserve_context(caller: &mut Caller<'_, AlkanesState>) {
         caller
@@ -56,6 +59,18 @@ impl AlkanesHostFunctionsImpl {
             .message
             .atomic
             .commit();
+    }
+
+    // Get the current depth of the checkpoint stack
+    fn get_checkpoint_depth(caller: &mut Caller<'_, AlkanesState>) -> usize {
+        caller
+            .data_mut()
+            .context
+            .lock()
+            .unwrap()
+            .message
+            .atomic
+            .checkpoint_depth()
     }
     pub(super) fn _abort<'a>(caller: Caller<'_, AlkanesState>) {
         AlkanesHostFunctionsImpl::abort(caller, 0, 0, 0, 0);
@@ -111,8 +126,6 @@ impl AlkanesHostFunctionsImpl {
         k: i32,
         v: i32,
     ) -> Result<i32> {
-        Self::preserve_context(caller);
-
         let (bytes_processed, value) = {
             let mem = get_memory(caller)?;
             let key = {
@@ -142,13 +155,9 @@ impl AlkanesHostFunctionsImpl {
         }
 
         consume_fuel(caller, fuel_cost)?;
-
-        Self::restore_context(caller);
         send_to_arraybuffer(caller, v.try_into()?, value.as_ref())
     }
     pub(super) fn request_context(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
-        Self::preserve_context(caller);
-
         let result: i32 = caller
             .data_mut()
             .context
@@ -168,13 +177,9 @@ impl AlkanesHostFunctionsImpl {
         }
 
         consume_fuel(caller, fuel_cost)?;
-
-        Self::restore_context(caller);
         Ok(result)
     }
     pub(super) fn load_context(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<i32> {
-        Self::preserve_context(caller);
-
         let result: Vec<u8> = caller.data_mut().context.lock().unwrap().serialize();
 
         let fuel_cost = overflow_error((result.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
@@ -189,7 +194,6 @@ impl AlkanesHostFunctionsImpl {
 
         consume_fuel(caller, fuel_cost)?;
 
-        Self::restore_context(caller);
         send_to_arraybuffer(caller, v.try_into()?, &result)
     }
     pub(super) fn request_transaction(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
@@ -254,8 +258,6 @@ impl AlkanesHostFunctionsImpl {
     }
     */
     pub(super) fn returndatacopy(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
-        Self::preserve_context(caller);
-
         let returndata: Vec<u8> = caller.data_mut().context.lock().unwrap().returndata.clone();
 
         let fuel_cost = overflow_error((returndata.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
@@ -270,7 +272,6 @@ impl AlkanesHostFunctionsImpl {
 
         consume_fuel(caller, fuel_cost)?;
 
-        Self::restore_context(caller);
         send_to_arraybuffer(caller, output.try_into()?, &returndata)?;
         Ok(())
     }
@@ -301,8 +302,6 @@ impl AlkanesHostFunctionsImpl {
         Ok(())
     }
     pub(super) fn request_block(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
-        Self::preserve_context(caller);
-
         let block_data =
             consensus_encode(&caller.data_mut().context.lock().unwrap().message.block)?;
         let len: i32 = block_data.len().try_into()?;
@@ -320,12 +319,9 @@ impl AlkanesHostFunctionsImpl {
             );
         }
 
-        Self::restore_context(caller);
         Ok(len)
     }
     pub(super) fn load_block(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
-        Self::preserve_context(caller);
-
         let block: Vec<u8> =
             consensus_encode(&caller.data_mut().context.lock().unwrap().message.block)?;
 
@@ -340,8 +336,6 @@ impl AlkanesHostFunctionsImpl {
                 FUEL_LOAD_BLOCK
             );
         }
-
-        Self::restore_context(caller);
         send_to_arraybuffer(caller, v.try_into()?, &block)?;
         Ok(())
     }
@@ -514,8 +508,7 @@ impl AlkanesHostFunctionsImpl {
         checkpoint_ptr: i32,
         start_fuel: u64,
     ) -> i32 {
-        Self::preserve_context(caller);
-        let returnval = match Self::_extcall_read_from_memory::<T>(
+        match Self::_extcall_read_from_memory::<T>(
             caller,
             cellpack_ptr,
             incoming_alkanes_ptr,
@@ -535,10 +528,7 @@ impl AlkanesHostFunctionsImpl {
                 }
             }
             Err(e) => Self::_handle_extcall_abort::<T>(caller, e, false),
-        };
-
-        Self::restore_context(caller);
-        returnval
+        }
     }
     pub(super) fn extcall<'a, T: Extcall>(
         caller: &mut Caller<'_, AlkanesState>,
@@ -648,5 +638,132 @@ impl AlkanesHostFunctionsImpl {
         };
         print!("{}", String::from_utf8(message)?);
         Ok(())
+    }
+}
+
+// Implementation of the safe wrapper
+impl SafeAlkanesHostFunctionsImpl {
+    // Helper method to execute a function with proper context management and depth checking
+    fn with_context_safety<F, R>(caller: &mut Caller<'_, AlkanesState>, f: F) -> R
+    where
+        F: FnOnce(&mut Caller<'_, AlkanesState>) -> R,
+    {
+        // Get initial checkpoint depth
+        let initial_depth = AlkanesHostFunctionsImpl::get_checkpoint_depth(caller);
+
+        // Preserve context
+        AlkanesHostFunctionsImpl::preserve_context(caller);
+
+        // Execute the function
+        let result = f(caller);
+
+        // Restore context
+        AlkanesHostFunctionsImpl::restore_context(caller);
+
+        // Check that the checkpoint depth is the same as before
+        let final_depth = AlkanesHostFunctionsImpl::get_checkpoint_depth(caller);
+        assert_eq!(
+            initial_depth, final_depth,
+            "IndexCheckpointStack depth changed: {} -> {}",
+            initial_depth, final_depth
+        );
+
+        result
+    }
+    pub(super) fn _abort<'a>(caller: Caller<'_, AlkanesState>) {
+        SafeAlkanesHostFunctionsImpl::abort(caller, 0, 0, 0, 0);
+    }
+    pub(super) fn abort<'a>(mut caller: Caller<'_, AlkanesState>, _: i32, _: i32, _: i32, _: i32) {
+        caller.data_mut().had_failure = true;
+    }
+
+    pub(super) fn request_storage<'a>(
+        caller: &mut Caller<'_, AlkanesState>,
+        k: i32,
+    ) -> Result<i32> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::request_storage(c, k))
+    }
+
+    pub(super) fn load_storage<'a>(
+        caller: &mut Caller<'_, AlkanesState>,
+        k: i32,
+        v: i32,
+    ) -> Result<i32> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::load_storage(c, k, v))
+    }
+
+    pub(super) fn log<'a>(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::log(c, v))
+    }
+
+    pub(super) fn balance<'a>(
+        caller: &mut Caller<'a, AlkanesState>,
+        who: i32,
+        what: i32,
+        output: i32,
+    ) -> Result<()> {
+        Self::with_context_safety(caller, |c| {
+            AlkanesHostFunctionsImpl::balance(c, who, what, output)
+        })
+    }
+
+    pub(super) fn request_context(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::request_context(c))
+    }
+
+    pub(super) fn load_context(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<i32> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::load_context(c, v))
+    }
+
+    pub(super) fn request_transaction(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::request_transaction(c))
+    }
+
+    pub(super) fn returndatacopy(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+        Self::with_context_safety(caller, |c| {
+            AlkanesHostFunctionsImpl::returndatacopy(c, output)
+        })
+    }
+
+    pub(super) fn load_transaction(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::load_transaction(c, v))
+    }
+
+    pub(super) fn request_block(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::request_block(c))
+    }
+
+    pub(super) fn load_block(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::load_block(c, v))
+    }
+
+    pub(super) fn sequence(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::sequence(c, output))
+    }
+
+    pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::fuel(c, output))
+    }
+
+    pub(super) fn height(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::height(c, output))
+    }
+
+    pub(super) fn handle_extcall<'a, T: Extcall>(
+        caller: &mut Caller<'a, AlkanesState>,
+        cellpack_ptr: i32,
+        incoming_alkanes_ptr: i32,
+        checkpoint_ptr: i32,
+        start_fuel: u64,
+    ) -> i32 {
+        Self::with_context_safety(caller, |c| {
+            AlkanesHostFunctionsImpl::handle_extcall::<T>(
+                c,
+                cellpack_ptr,
+                incoming_alkanes_ptr,
+                checkpoint_ptr,
+                start_fuel,
+            )
+        })
     }
 }
