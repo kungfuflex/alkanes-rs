@@ -78,7 +78,7 @@ pub fn handle_message(
         );
     }
 
-    credit_balances(&mut atomic, &myself, &parcel.runes);
+    credit_balances(&mut atomic, &myself, &parcel.runes)?;
     prepare_context(context.clone(), &caller, &myself, false);
     let txsize = parcel.transaction.vfsize() as u64;
     if FuelTank::is_top() {

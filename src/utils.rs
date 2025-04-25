@@ -52,11 +52,21 @@ pub fn u128_from_bytes(v: Vec<u8>) -> u128 {
     let bytes: [u8; 16] = untyped.try_into().unwrap();
     u128::from_le_bytes(bytes)
 }
-pub fn credit_balances(atomic: &mut AtomicPointer, to: &AlkaneId, runes: &Vec<RuneTransfer>) {
+pub fn credit_balances(
+    atomic: &mut AtomicPointer,
+    to: &AlkaneId,
+    runes: &Vec<RuneTransfer>,
+) -> Result<()> {
     for rune in runes.clone() {
         let mut ptr = balance_pointer(atomic, to, &rune.id.clone().into());
-        ptr.set_value::<u128>(rune.value + ptr.get_value::<u128>());
+        ptr.set_value::<u128>(
+            rune.value
+                .checked_add(ptr.get_value::<u128>())
+                .ok_or("")
+                .map_err(|_| anyhow!("balance overflow during credit_balances"))?,
+        );
     }
+    Ok(())
 }
 
 pub fn debit_balances(
