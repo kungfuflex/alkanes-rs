@@ -196,7 +196,7 @@ fn generate_u128_extraction(field_name: &Ident) -> proc_macro2::TokenStream {
     quote! {
         let #field_name = {
             if input_index >= __macro_inputs.len() {
-                return Err(anyhow::anyhow!("Missing parameter"));
+                return Err(anyhow::anyhow!("Missing u128 parameter"));
             }
             let value = __macro_inputs[input_index];
             input_index += 1;

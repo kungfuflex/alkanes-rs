@@ -210,7 +210,7 @@ fn test_extcall_mint() -> Result<()> {
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
         target: AlkaneId { block: 2, tx: 1 },
-        inputs: vec![31, 2, 1, 3, 30, 2, 0, 1_000_000],
+        inputs: vec![31, 2, 1, 4, 30, 2, 0, 1_000_000],
     };
 
     test_block
@@ -263,7 +263,7 @@ fn test_delegatecall_mint() -> Result<()> {
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
         target: AlkaneId { block: 2, tx: 1 },
-        inputs: vec![32, 2, 1, 3, 30, 2, 0, 1_000_000],
+        inputs: vec![32, 2, 1, 4, 30, 2, 0, 1_000_000],
     };
 
     test_block
@@ -316,7 +316,7 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
         target: AlkaneId { block: 2, tx: 1 },
-        inputs: vec![31, 2, 1, 3, 30, 2, 0, 1_000_000],
+        inputs: vec![31, 2, 1, 4, 30, 2, 0, 1_000_000],
     };
     let mint_self_cellpack = Cellpack {
         target: AlkaneId { block: 2, tx: 1 },
@@ -381,7 +381,7 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
     let arb_mint_cellpack = Cellpack {
         target: AlkaneId { block: 2, tx: 1 },
         inputs: vec![
-            34, 2, 1, 3, 30, 2, 0, 1_000_000, 2, 1, 3, 30, 2, 1, 1_000_000,
+            34, 2, 1, 4, 30, 2, 0, 1_000_000, 2, 1, 4, 30, 2, 1, 1_000_000,
         ],
     };
 
