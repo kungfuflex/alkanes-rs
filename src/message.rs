@@ -76,6 +76,7 @@ pub fn handle_message(
             "Target resolved to: [block={}, tx={}]",
             myself.block, myself.tx
         );
+        println!("Parcel runes: {:?}", parcel.runes);
     }
 
     credit_balances(&mut atomic, &myself, &parcel.runes)?;
@@ -105,11 +106,14 @@ pub fn handle_message(
                 ),
             );
             let mut combined = parcel.runtime_balances.as_ref().clone();
-            <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(parcel.runes.clone())
-                .pipe(&mut combined);
-            let sheet = <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(
+            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
+                parcel.runes.clone(),
+            )?
+            .pipe(&mut combined)?;
+            println!("contract transfered {:?}", response.alkanes.clone());
+            let sheet = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 response.alkanes.clone().into(),
-            );
+            )?;
             combined.debit_mintable(&sheet, &mut atomic)?;
             debit_balances(&mut atomic, &myself, &response.alkanes)?;
             let cloned = context.clone().lock().unwrap().trace.clone();

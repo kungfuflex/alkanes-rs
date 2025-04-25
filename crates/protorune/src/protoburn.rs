@@ -58,7 +58,12 @@ impl Protoburn {
         if !proto_balances_by_output.contains_key(&outpoint.vout) {
             proto_balances_by_output.insert(outpoint.vout, BalanceSheet::default());
         }
-        balance_sheet.pipe(proto_balances_by_output.get_mut(&outpoint.vout).unwrap());
+        balance_sheet.pipe(
+            proto_balances_by_output
+                .get_mut(&outpoint.vout)
+                .ok_or("")
+                .map_err(|_| anyhow!("outpoint vout not in proto_balances_by_output"))?,
+        )?;
         Ok(())
     }
 }
@@ -96,7 +101,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
             let sheet = balances_by_output
                 .get(&runestone_output_index)
                 .ok_or(anyhow!("cannot find balance sheet"))?;
-            sheet.pipe(&mut runestone_balance_sheet);
+            sheet.pipe(&mut runestone_balance_sheet)?;
         }
         let mut burn_cycles = self.construct_burncycle()?;
         let mut pull_set = HashMap::<u32, bool>::new();
@@ -124,7 +129,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
                             continue;
                         }
                         runestone_balance_sheet.decrease(&rune.clone().into(), to_apply);
-                        burn_sheets[i].increase(&rune.into(), to_apply);
+                        burn_sheets[i].increase(&rune.into(), to_apply)?;
                     }
                 }
             }
@@ -145,7 +150,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
                 };
                 burn_cycles.next(&(rune.into()))?;
                 runestone_balance_sheet.decrease(&rune.clone().into(), to_apply);
-                burn_sheets[cycle as usize].increase(&rune.into(), to_apply);
+                burn_sheets[cycle as usize].increase(&rune.into(), to_apply)?;
             }
         }
 
@@ -160,7 +165,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
                 };
                 burn_cycles.next(rune)?;
                 runestone_balance_sheet.decrease(rune, to_apply);
-                burn_sheets[cycle as usize].increase(rune, to_apply);
+                burn_sheets[cycle as usize].increase(rune, to_apply)?;
             }
         }
 

@@ -204,15 +204,17 @@ pub fn genesis(block: &Block) -> Result<()> {
         ),
         vout: 0,
     })?;
-    <AlkaneTransferParcel as Into<BalanceSheet<AtomicPointer>>>::into(response.alkanes.into())
-        .save(
-            &mut atomic.derive(
-                &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
-                    .OUTPOINT_TO_RUNES
-                    .select(&outpoint_bytes),
-            ),
-            false,
-        );
+    <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
+        response.alkanes.into(),
+    )?
+    .save(
+        &mut atomic.derive(
+            &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+                .OUTPOINT_TO_RUNES
+                .select(&outpoint_bytes),
+        ),
+        false,
+    );
     pipe_storagemap_to(
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),

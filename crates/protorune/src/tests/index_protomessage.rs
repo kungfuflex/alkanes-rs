@@ -78,7 +78,7 @@ mod tests {
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
                 transfer_to_runtime,
             ])?
-            .pipe(&mut new_runtime_balances);
+            .pipe(&mut new_runtime_balances)?;
             Ok((vec![transfer], *new_runtime_balances))
         }
     }
@@ -114,7 +114,7 @@ mod tests {
                 value: 10001,
             };
             let mut runtime = BalanceSheet::default();
-            runtime.increase(&mint_rune, 12345);
+            runtime.increase(&mint_rune, 12345)?;
             Ok((vec![transfer, mint], runtime))
         }
     }
@@ -138,7 +138,7 @@ mod tests {
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
                 transfer_to_runtime,
             ])?
-            .pipe(&mut new_runtime_balances);
+            .pipe(&mut new_runtime_balances)?;
             Ok((vec![transfer], *new_runtime_balances))
         }
     }
@@ -233,7 +233,7 @@ mod tests {
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
                 transfer_to_runtime,
             ])?
-            .pipe(&mut new_runtime_balances);
+            .pipe(&mut new_runtime_balances)?;
             Ok((vec![transfer], new_runtime_balances))
         }
     }

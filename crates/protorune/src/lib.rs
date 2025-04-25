@@ -199,7 +199,7 @@ impl Protorune {
                 )))
             })
             .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
-        let mut balance_sheet = BalanceSheet::concat(sheets);
+        let mut balance_sheet = BalanceSheet::concat(sheets)?;
         let mut balances_by_output = HashMap::<u32, BalanceSheet<AtomicPointer>>::new();
         let unallocated_to = match runestone.pointer {
             Some(v) => v,
@@ -279,7 +279,7 @@ impl Protorune {
         // Ensure we decrease the source balance first
         balance_sheet.decrease(rune_id, amount);
         // Then increase the destination balance
-        sheet.increase(rune_id, amount);
+        sheet.increase(rune_id, amount)?;
         Ok(())
     }
     pub fn process_edict(
@@ -330,7 +330,7 @@ impl Protorune {
         // grab the balances of the vout to send unallocated to
         match balances_by_output.get_mut(&unallocated_to) {
             // if it already has balances, then send the remaining balances over
-            Some(v) => remaining_balances.pipe(v),
+            Some(v) => remaining_balances.pipe(v)?,
             None => {
                 balances_by_output.insert(unallocated_to, remaining_balances.clone());
             }
@@ -401,7 +401,7 @@ impl Protorune {
                         tx: u128::from(mint.tx),
                     }),
                     amount,
-                );
+                )?;
             } else {
                 return Ok(());
             }
@@ -812,10 +812,10 @@ impl Protorune {
             atomic,
             height,
             map.iter()
-                .fold(BalanceSheet::default(), |mut r, (_k, v)| {
-                    v.pipe(&mut r);
-                    r
-                })
+                .try_fold(BalanceSheet::default(), |mut r, (_k, v)| {
+                    v.pipe(&mut r)?;
+                    Ok(r)
+                })?
                 .balances()
                 .keys()
                 .clone()
@@ -863,7 +863,7 @@ impl Protorune {
                     ))
                 })
                 .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
-            let mut balance_sheet = BalanceSheet::concat(sheets);
+            let mut balance_sheet = BalanceSheet::concat(sheets)?;
             protostones.process_burns(
                 &mut atomic.derive(&IndexPointer::default()),
                 runestone,

@@ -27,7 +27,7 @@ use protorune::tables::RuneTable;
 use protorune::test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1};
 use protorune_support::balance_sheet::BalanceSheet;
 use protorune_support::network::{set_network, NetworkParams};
-use protorune_support::protostone::Protostone;
+use protorune_support::protostone::{Protostone, ProtostoneEdict};
 use std::str::FromStr;
 
 #[cfg(test)]
@@ -214,7 +214,6 @@ pub fn create_multiple_cellpack_with_witness_and_in(
     previous_output: OutPoint,
     etch: bool,
 ) -> Transaction {
-    let protocol_id = 1;
     let input_script = ScriptBuf::new();
     let txin = TxIn {
         previous_output,
@@ -222,6 +221,16 @@ pub fn create_multiple_cellpack_with_witness_and_in(
         sequence: Sequence::MAX,
         witness,
     };
+    create_multiple_cellpack_with_witness_and_txins_edicts(cellpacks, vec![txin], etch, vec![])
+}
+
+pub fn create_multiple_cellpack_with_witness_and_txins_edicts(
+    cellpacks: Vec<Cellpack>,
+    txins: Vec<TxIn>,
+    etch: bool,
+    edicts: Vec<ProtostoneEdict>,
+) -> Transaction {
+    let protocol_id = 1;
     let protostones = [
         match etch {
             true => vec![Protostone {
@@ -241,7 +250,7 @@ pub fn create_multiple_cellpack_with_witness_and_in(
                 message: cellpack.encipher(),
                 pointer: Some(0),
                 refund: Some(0),
-                edicts: vec![],
+                edicts: edicts.clone(),
                 from: None,
                 burn: None,
                 protocol_tag: protocol_id as u128,
@@ -289,7 +298,7 @@ pub fn create_multiple_cellpack_with_witness_and_in(
     Transaction {
         version: Version::ONE,
         lock_time: bitcoin::absolute::LockTime::ZERO,
-        input: vec![txin],
+        input: txins,
         output: vec![txout, op_return],
     }
 }

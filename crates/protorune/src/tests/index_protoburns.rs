@@ -40,7 +40,7 @@ mod tests {
             runes[0].value = runes[0].value / 2;
             let transfer = runes[0].clone();
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(runes)?
-                .pipe(&mut new_runtime_balances);
+                .pipe(&mut new_runtime_balances)?;
             // transfer protorunes to the pointer
             Ok((vec![transfer], *new_runtime_balances))
         }

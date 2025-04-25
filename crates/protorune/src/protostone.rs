@@ -178,7 +178,7 @@ impl MessageProcessor for Protostone {
                             balances_by_output,
                             protomessage_vout,
                             refund_pointer,
-                        );
+                        )?;
                         atomic.rollback()
                     }
                 }
@@ -199,7 +199,7 @@ impl MessageProcessor for Protostone {
                     }
                 }
 
-                refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer);
+                refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
                 atomic.rollback();
             }
         }

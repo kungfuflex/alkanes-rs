@@ -48,7 +48,7 @@ enum LoggerAlkaneMessage {
     TestInfiniteExtcall,
 
     #[opcode(30)]
-    TestArbitraryMint { alkane: AlkaneId },
+    TestArbitraryMint { alkane: AlkaneId, amount: u128 },
 
     #[opcode(31)]
     TestExtCall { target: AlkaneId, inputs: Vec<u128> },
@@ -180,13 +180,13 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn test_arbitrary_mint(&self, alkane: AlkaneId) -> Result<CallResponse> {
+    fn test_arbitrary_mint(&self, alkane: AlkaneId, amount: u128) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
-        response.alkanes.0.push(AlkaneTransfer {
+        response.alkanes.pay(AlkaneTransfer {
             id: alkane,
-            value: 1_000_000,
+            value: amount,
         });
 
         Ok(response)

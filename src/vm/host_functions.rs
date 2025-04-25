@@ -474,11 +474,6 @@ impl AlkanesHostFunctionsImpl {
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
     ) -> Result<(Cellpack, AlkaneTransferParcel, StorageMap, u64)> {
-        #[cfg(feature = "debug-log")]
-        {
-            // Log refunding details after refunding
-            println!("Depth of checkpoints: {}", initial_depth);
-        }
         let current_depth = AlkanesHostFunctionsImpl::get_checkpoint_depth(caller);
         if current_depth >= 75 {
             return Err(anyhow!(format!(

@@ -114,7 +114,6 @@ alkanes = { path = ".", features = [
 metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
-
 [build-dependencies]
 anyhow = "1.0.90"
 protobuf-codegen = "3.4.0"

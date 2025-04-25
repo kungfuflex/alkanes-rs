@@ -439,11 +439,11 @@ pub fn simulate_parcel(
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
     );
     let mut combined = parcel.runtime_balances.as_ref().clone();
-    <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(parcel.runes.clone())
-        .pipe(&mut combined);
-    let sheet = <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(
+    <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(parcel.runes.clone())?
+        .pipe(&mut combined)?;
+    let sheet = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
         response.alkanes.clone().into(),
-    );
+    )?;
     combined.debit_mintable(&sheet, &mut atomic)?;
     debit_balances(&mut atomic, &myself, &response.alkanes)?;
     Ok((response, gas_used))
