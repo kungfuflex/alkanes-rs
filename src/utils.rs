@@ -78,6 +78,9 @@ pub fn debit_balances(
         let mut pointer = balance_pointer(atomic, to, &rune.id.clone().into());
         let pointer_value = pointer.get_value::<u128>();
         let v = {
+            // NOTE: we intentionally allow alkanes to mint an infinite amount of themselves
+            // It is up to the contract creator to ensure that this functionality is not abused.
+            // Alkanes should not be able to arbitrarily mint alkanes that is not itself
             if *to == rune.id {
                 match pointer_value.checked_sub(rune.value) {
                     Some(value) => value,

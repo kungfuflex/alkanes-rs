@@ -110,7 +110,6 @@ pub fn handle_message(
                 parcel.runes.clone(),
             )?
             .pipe(&mut combined)?;
-            println!("contract transfered {:?}", response.alkanes.clone());
             let sheet = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 response.alkanes.clone().into(),
             )?;

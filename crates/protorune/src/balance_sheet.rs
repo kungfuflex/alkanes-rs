@@ -66,6 +66,7 @@ pub trait Mintable {
 
 impl Mintable for ProtoruneRuneId {
     fn mintable_in_protocol(&self, atomic: &mut AtomicPointer) -> bool {
+        // if it was not etched via runes-like etch in the Runestone and protoburned, then it is considered mintable
         atomic
             .derive(
                 &IndexPointer::from_keyword("/etching/byruneid/").select(&(self.clone().into())),
@@ -93,6 +94,11 @@ pub trait MintableDebit<P: KeyValuePointer + Clone> {
 }
 
 impl<P: KeyValuePointer + Clone> MintableDebit<P> for BalanceSheet<P> {
+    // logically, this will debit the input sheet from the self sheet, and if it would produce a negative value
+    // it will check if the rune id is mintable (if it was etched and protoburned or if it is an alkane).
+    // if it is mintable, we assume the extra amount was minted and do not decrease the amount.
+    // NOTE: if it was a malicious case where an alkane was minted by another alkane, this will not check for that.
+    // such a case should be checked in debit_balances in src/utils.rs
     fn debit_mintable(
         &mut self,
         sheet: &BalanceSheet<P>,
@@ -105,7 +111,7 @@ impl<P: KeyValuePointer + Clone> MintableDebit<P> for BalanceSheet<P> {
                 if rune.mintable_in_protocol(atomic) {
                     amount = current;
                 } else {
-                    return Err(anyhow!("balance underflow during debit"));
+                    return Err(anyhow!("balance underflow during debit_mintable"));
                 }
             }
             self.decrease(rune, amount);
