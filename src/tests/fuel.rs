@@ -86,7 +86,8 @@ fn test_infinite_extcall_loop() -> Result<()> {
         TraceEvent::RevertContext(trace_response) => {
             // Now we have the TraceResponse, access the data field
             let data = String::from_utf8_lossy(&trace_response.inner.data);
-            assert!(data.contains("ALKANES: revert: all fuel consumed by WebAssembly"));
+            assert!(data
+                .contains("Possible infinite recursion encountered: checkpoint depth too large"));
         }
         _ => panic!("Expected RevertContext variant, but got a different variant"),
     }

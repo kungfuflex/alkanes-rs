@@ -1,3 +1,4 @@
+use super::fuel::compute_extcall_fuel;
 use super::{
     get_memory, read_arraybuffer, send_to_arraybuffer, sequence_pointer, AlkanesState, Extcall,
     Saveable, SaveableExtendedCallResponse,
@@ -467,12 +468,24 @@ impl AlkanesHostFunctionsImpl {
         Self::_abort(caller.into());
         result
     }
-    fn _extcall_read_from_memory<'a, T: Extcall>(
+    fn _prepare_extcall_before_checkpoint<'a, T: Extcall>(
         caller: &mut Caller<'_, AlkanesState>,
         cellpack_ptr: i32,
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
     ) -> Result<(Cellpack, AlkaneTransferParcel, StorageMap, u64)> {
+        #[cfg(feature = "debug-log")]
+        {
+            // Log refunding details after refunding
+            println!("Depth of checkpoints: {}", initial_depth);
+        }
+        let current_depth = AlkanesHostFunctionsImpl::get_checkpoint_depth(caller);
+        if current_depth >= 75 {
+            return Err(anyhow!(format!(
+                "Possible infinite recursion encountered: checkpoint depth too large({})",
+                current_depth
+            )));
+        }
         // Read all input data first
         let mem = get_memory(caller)?;
         let data = mem.data(&caller);
@@ -507,7 +520,7 @@ impl AlkanesHostFunctionsImpl {
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
     ) -> i32 {
-        match Self::_extcall_read_from_memory::<T>(
+        match Self::_prepare_extcall_before_checkpoint::<T>(
             caller,
             cellpack_ptr,
             incoming_alkanes_ptr,
@@ -582,16 +595,14 @@ impl AlkanesHostFunctionsImpl {
             (subbed, binary)
         };
 
-        let base_fuel = FUEL_EXTCALL;
-        let storage_fuel = overflow_error(FUEL_PER_STORE_BYTE.checked_mul(storage_map_len))?;
-        let total_fuel = overflow_error(base_fuel.checked_add(storage_fuel))?;
+        let total_fuel = compute_extcall_fuel(storage_map_len)?;
 
         #[cfg(feature = "debug-log")]
         {
-            println!("extcall: target=[{},{}], inputs={}, storage_size={} bytes, base_fuel={}, storage_fuel={}, total_fuel={}, deployment={}",
+            println!("extcall: target=[{},{}], inputs={}, storage_size={} bytes, total_fuel={}, deployment={}",
                 cellpack.target.block, cellpack.target.tx,
                 cellpack.inputs.len(), storage_map_len,
-                base_fuel, storage_fuel, total_fuel,
+                total_fuel,
                 cellpack.target.is_deployment());
         }
 
