@@ -77,7 +77,7 @@ pub fn genesis_alkane_bytes() -> Vec<u8> {
     not(feature = "luckycoin")
 ))]
 pub mod genesis {
-    pub const GENESIS_BLOCK: u64 = 840_000;
+    pub const GENESIS_BLOCK: u64 = 0;
     pub const GENESIS_OUTPOINT: &str =
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
