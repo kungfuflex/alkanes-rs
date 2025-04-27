@@ -358,7 +358,7 @@ impl AlkanesHostFunctionsImpl {
         Ok(())
     }
     pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
-        let remaining_fuel = caller.get_fuel().unwrap();
+        let remaining_fuel = caller.get_fuel()?;
         let buffer: Vec<u8> = (&remaining_fuel.to_le_bytes()).to_vec();
 
         #[cfg(feature = "debug-log")]
@@ -604,7 +604,7 @@ impl AlkanesHostFunctionsImpl {
         consume_fuel(caller, total_fuel)?;
 
         let mut trace_context: TraceContext = subcontext.flat().into();
-        let start_fuel: u64 = caller.get_fuel().unwrap();
+        let start_fuel: u64 = caller.get_fuel()?;
         trace_context.fuel = start_fuel;
         let event: TraceEvent = T::event(trace_context);
         subcontext.trace.clock(event);

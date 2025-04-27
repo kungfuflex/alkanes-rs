@@ -24,14 +24,14 @@ pub struct AlkanesInstance {
 
 impl AlkanesInstance {
     pub fn consume_fuel(&mut self, fuel: u64) -> Result<()> {
-        let fuel_remaining = self.store.get_fuel().unwrap();
+        let fuel_remaining = self.store.get_fuel()?;
         if fuel_remaining < fuel {
             Err(anyhow!(format!(
                 "{} gas remaining but {} consumed by call",
                 fuel_remaining, fuel
             )))
         } else {
-            self.store.set_fuel(fuel_remaining - fuel).unwrap();
+            self.store.set_fuel(fuel_remaining - fuel)?;
             Ok(())
         }
     }
