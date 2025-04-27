@@ -10,6 +10,7 @@ use protorune::message::MessageContext;
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::decode_varint_list;
 use std::io::Cursor;
+use std::sync::RwLock;
 use wasmi::*;
 
 #[allow(unused_imports)]
@@ -108,133 +109,139 @@ pub struct FuelTank {
     pub block_metered_fuel: u64,
 }
 
-static mut _FUEL_TANK: Option<FuelTank> = None;
+static _FUEL_TANK: RwLock<Option<FuelTank>> = RwLock::new(None);
 
-#[allow(static_mut_refs)]
 impl FuelTank {
     pub fn get_fuel_tank_copy() -> Option<FuelTank> {
-        unsafe { _FUEL_TANK.clone() }
+        _FUEL_TANK.read().unwrap().clone()
     }
+
     pub fn should_advance(txindex: u32) -> bool {
-        unsafe { _FUEL_TANK.as_ref().unwrap().current_txindex != txindex }
+        _FUEL_TANK.read().unwrap().as_ref().unwrap().current_txindex != txindex
     }
+
     pub fn is_top() -> bool {
-        unsafe { _FUEL_TANK.as_ref().unwrap().current_txindex == u32::MAX }
+        _FUEL_TANK.read().unwrap().as_ref().unwrap().current_txindex == u32::MAX
     }
+
     pub fn initialize(block: &Block) {
-        unsafe {
-            _FUEL_TANK = Some(FuelTank {
-                current_txindex: u32::MAX,
-                txsize: 0,
-                size: block.vfsize(),
-                block_fuel: TOTAL_FUEL,
-                transaction_fuel: 0,
-                block_metered_fuel: 0,
-            });
-        }
+        let mut tank = _FUEL_TANK.write().unwrap();
+        *tank = Some(FuelTank {
+            current_txindex: u32::MAX,
+            txsize: 0,
+            size: block.vfsize(),
+            block_fuel: TOTAL_FUEL,
+            transaction_fuel: 0,
+            block_metered_fuel: 0,
+        });
     }
+
     pub fn fuel_transaction(txsize: u64, txindex: u32) {
-        unsafe {
-            let tank: &'static mut FuelTank = _FUEL_TANK.as_mut().unwrap();
-            tank.current_txindex = txindex;
+        let mut tank = _FUEL_TANK.write().unwrap();
+        let tank = tank.as_mut().unwrap();
+        tank.current_txindex = txindex;
 
-            // Calculate fuel allocation based on transaction size
-            let _block_fuel_before = tank.block_fuel;
-            tank.block_metered_fuel = tank.block_fuel * txsize / tank.size;
+        // Calculate fuel allocation based on transaction size
+        let _block_fuel_before = tank.block_fuel;
+        tank.block_metered_fuel = tank.block_fuel * txsize / tank.size;
 
-            // Ensure minimum fuel allocation
-            tank.transaction_fuel = std::cmp::max(MINIMUM_FUEL, tank.block_metered_fuel);
+        // Ensure minimum fuel allocation
+        tank.transaction_fuel = std::cmp::max(MINIMUM_FUEL, tank.block_metered_fuel);
 
-            // Deduct allocated fuel from block fuel
-            tank.block_fuel =
-                tank.block_fuel - std::cmp::min(tank.block_fuel, tank.block_metered_fuel);
-            tank.txsize = txsize;
+        // Deduct allocated fuel from block fuel
+        tank.block_fuel = tank.block_fuel - std::cmp::min(tank.block_fuel, tank.block_metered_fuel);
+        tank.txsize = txsize;
 
-            #[cfg(feature = "debug-log")]
-            {
-                println!("Fuel allocation for transaction {}:", txindex);
-                println!("  - Transaction size: {} bytes", txsize);
-                println!("  - Block size: {} bytes", tank.size);
-                println!("  - Block fuel before: {}", _block_fuel_before);
-                println!("  - Block fuel after: {}", tank.block_fuel);
-                println!("  - Allocated fuel: {}", tank.transaction_fuel);
-                println!("  - Minimum fuel: {}", MINIMUM_FUEL);
-            }
+        #[cfg(feature = "debug-log")]
+        {
+            println!("Fuel allocation for transaction {}:", txindex);
+            println!("  - Transaction size: {} bytes", txsize);
+            println!("  - Block size: {} bytes", tank.size);
+            println!("  - Block fuel before: {}", _block_fuel_before);
+            println!("  - Block fuel after: {}", tank.block_fuel);
+            println!("  - Allocated fuel: {}", tank.transaction_fuel);
+            println!("  - Minimum fuel: {}", MINIMUM_FUEL);
         }
     }
+
     pub fn refuel_block() {
-        unsafe {
-            let tank: &'static mut FuelTank = _FUEL_TANK.as_mut().unwrap();
+        let mut tank = _FUEL_TANK.write().unwrap();
+        let tank = tank.as_mut().unwrap();
 
-            #[cfg(feature = "debug-log")]
-            {
-                // Log refunding details before refunding
-                println!(
-                    "Refunding fuel to block after transaction {}:",
-                    tank.current_txindex
-                );
-                println!("  - Block fuel before refund: {}", tank.block_fuel);
-                println!("  - Remaining metered fuel: {}", tank.block_metered_fuel);
-                println!("  - Transaction size: {} bytes", tank.txsize);
-                println!("  - Block size before update: {} bytes", tank.size);
-            }
+        #[cfg(feature = "debug-log")]
+        {
+            // Log refunding details before refunding
+            println!(
+                "Refunding fuel to block after transaction {}:",
+                tank.current_txindex
+            );
+            println!("  - Block fuel before refund: {}", tank.block_fuel);
+            println!("  - Remaining metered fuel: {}", tank.block_metered_fuel);
+            println!("  - Transaction size: {} bytes", tank.txsize);
+            println!("  - Block size before update: {} bytes", tank.size);
+        }
 
-            // Only refund the remaining fuel (block_metered_fuel) that wasn't consumed
-            // This value is updated by consume_fuel() to reflect the remaining amount
-            // after transaction execution
-            tank.block_fuel = tank.block_fuel + tank.block_metered_fuel;
-            tank.size = tank.size - tank.txsize;
+        // Only refund the remaining fuel (block_metered_fuel) that wasn't consumed
+        // This value is updated by consume_fuel() to reflect the remaining amount
+        // after transaction execution
+        tank.block_fuel = tank.block_fuel + tank.block_metered_fuel;
+        tank.size = tank.size - tank.txsize;
 
-            #[cfg(feature = "debug-log")]
-            {
-                // Log refunding details after refunding
-                println!("  - Block fuel after refund: {}", tank.block_fuel);
-                println!("  - Block size after update: {} bytes", tank.size);
-            }
+        #[cfg(feature = "debug-log")]
+        {
+            // Log refunding details after refunding
+            println!("  - Block fuel after refund: {}", tank.block_fuel);
+            println!("  - Block size after update: {} bytes", tank.size);
         }
     }
+
     pub fn consume_fuel(n: u64) -> Result<()> {
-        unsafe {
-            let tank: &'static mut FuelTank = _FUEL_TANK.as_mut().unwrap();
+        let mut tank = _FUEL_TANK.write().unwrap();
+        let tank = tank.as_mut().unwrap();
 
-            // Check if we have enough transaction_fuel
-            if tank.transaction_fuel < n {
-                // Add detailed logging for fuel exhaustion
-                return Err(anyhow!(
-                    "all fuel consumed by WebAssembly: requested {} units, but only {} remaining. \
-                    Transaction index: {}, Initial allocation: {}, Block fuel remaining: {}, \
-                    Transaction size: {} bytes, Block size: {} bytes",
-                    n,
-                    tank.transaction_fuel,
-                    tank.current_txindex,
-                    tank.block_metered_fuel + (TOTAL_FUEL - tank.block_fuel),
-                    tank.block_fuel,
-                    tank.txsize,
-                    tank.size
-                ));
-            }
-
-            // Update transaction_fuel - this is used to check if we have enough fuel
-            tank.transaction_fuel = tank.transaction_fuel - n;
-
-            // Update block_metered_fuel - this is the amount that will be refunded to the block
-            // If we don't have enough block_metered_fuel, set it to 0 (no refund)
-            // This ensures we don't refund more fuel than was allocated
-            tank.block_metered_fuel = tank.block_metered_fuel.checked_sub(n).unwrap_or(0);
-
-            Ok(())
+        // Check if we have enough transaction_fuel
+        if tank.transaction_fuel < n {
+            // Add detailed logging for fuel exhaustion
+            return Err(anyhow!(
+                "all fuel consumed by WebAssembly: requested {} units, but only {} remaining. \
+                Transaction index: {}, Initial allocation: {}, Block fuel remaining: {}, \
+                Transaction size: {} bytes, Block size: {} bytes",
+                n,
+                tank.transaction_fuel,
+                tank.current_txindex,
+                tank.block_metered_fuel + (TOTAL_FUEL - tank.block_fuel),
+                tank.block_fuel,
+                tank.txsize,
+                tank.size
+            ));
         }
+
+        // Update transaction_fuel - this is used to check if we have enough fuel
+        tank.transaction_fuel = tank.transaction_fuel - n;
+
+        // Update block_metered_fuel - this is the amount that will be refunded to the block
+        // If we don't have enough block_metered_fuel, set it to 0 (no refund)
+        // This ensures we don't refund more fuel than was allocated
+        tank.block_metered_fuel = tank.block_metered_fuel.checked_sub(n).unwrap_or(0);
+
+        Ok(())
     }
+
     pub fn drain_fuel() {
-        unsafe {
-            let tank: &'static mut FuelTank = _FUEL_TANK.as_mut().unwrap();
-            // Don't subtract from block_fuel since we're not refunding in error case
-            tank.transaction_fuel = 0;
-            tank.block_metered_fuel = 0;
-        }
+        let mut tank = _FUEL_TANK.write().unwrap();
+        let tank = tank.as_mut().unwrap();
+        // Don't subtract from block_fuel since we're not refunding in error case
+        tank.transaction_fuel = 0;
+        tank.block_metered_fuel = 0;
     }
+
     pub fn start_fuel() -> u64 {
-        unsafe { _FUEL_TANK.as_ref().unwrap().transaction_fuel }
+        _FUEL_TANK
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .transaction_fuel
     }
 }
 
