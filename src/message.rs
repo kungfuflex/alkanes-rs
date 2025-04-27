@@ -89,6 +89,11 @@ pub fn handle_message(
         FuelTank::fuel_transaction(txsize, parcel.txindex);
     }
     let fuel = FuelTank::start_fuel();
+    // NOTE: we  want to keep unwrap for cases where we lock a mutex guard,
+    // it's better if it panics, so then metashrew will retry that block again
+    // whereas if we do .map_err(|e| anyhow!("Mutex lock poisoned: {}", e))?
+    // it could produce inconsistent indexes if the unlocking fails due to concurrency problem
+    // but may pass on retry
     let inner = context.lock().unwrap().flat();
     let trace = context.lock().unwrap().trace.clone();
     trace.clock(TraceEvent::EnterCall(TraceContext {

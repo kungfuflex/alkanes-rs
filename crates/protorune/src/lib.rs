@@ -83,7 +83,7 @@ pub fn handle_transfer_runes_to_vout(
     amount: u128,
     max_amount: u128,
     tx: &Transaction,
-) -> HashMap<u32, u128> {
+) -> Result<HashMap<u32, u128>> {
     // pointer should not call this function if amount is 0
     let mut output: HashMap<u32, u128> = HashMap::<u32, u128>::new();
     if (vout as usize) == tx.output.len() {
@@ -127,13 +127,13 @@ pub fn handle_transfer_runes_to_vout(
         // every vout should try to get the amount until we run out
         if amount == 0 {
             // we should transfer everything to this vout
-            output.insert(vout.try_into().unwrap(), max_amount);
+            output.insert(vout.try_into()?, max_amount);
         } else {
-            output.insert(vout.try_into().unwrap(), amount);
+            output.insert(vout.try_into()?, amount);
         }
     }
 
-    return output;
+    Ok(output)
 }
 
 #[cfg(not(test))]
@@ -295,7 +295,7 @@ impl Protorune {
             let max = balances.get_and_update(&edict.id.into());
 
             let transfer_targets =
-                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx);
+                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx)?;
 
             transfer_targets.iter().try_for_each(|(vout, amount)| {
                 Self::update_balances_for_edict(
@@ -630,7 +630,7 @@ impl Protorune {
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey).unwrap();
+                    let address_str = to_address_str(output_script_pubkey)?;
                     let address = address_str.into_bytes();
 
                     // Add address to the set of updated addresses
@@ -672,7 +672,7 @@ impl Protorune {
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey).unwrap();
+                    let address_str = to_address_str(output_script_pubkey)?;
                     let address = address_str.into_bytes();
 
                     // Add address to the set of updated addresses
@@ -758,8 +758,7 @@ impl Protorune {
                             value: tx.output[i].clone().value.to_sat(),
                             special_fields: SpecialFields::new(),
                         })
-                        .write_to_bytes()
-                        .unwrap(),
+                        .write_to_bytes()?,
                     ));
             }
         }

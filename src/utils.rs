@@ -47,11 +47,6 @@ pub fn alkane_inventory_pointer(who: &AlkaneId) -> IndexPointer {
     ptr
 }
 
-pub fn u128_from_bytes(v: Vec<u8>) -> u128 {
-    let untyped: &[u8] = &v;
-    let bytes: [u8; 16] = untyped.try_into().unwrap();
-    u128::from_le_bytes(bytes)
-}
 pub fn credit_balances(
     atomic: &mut AtomicPointer,
     to: &AlkaneId,

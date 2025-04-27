@@ -63,8 +63,7 @@ pub const ADDRESS2_BYTES: &'static str = "a9140000000000000000000000000000000000
 pub fn get_address_from_bytes(hex: &str) -> String {
     let bytes = decode(hex.to_string()).unwrap();
     let pk = Script::from_bytes(bytes.as_slice());
-    let address = to_address_str(pk);
-    address.unwrap()
+    to_address_str(pk).unwrap()
 }
 
 #[allow(non_snake_case)]

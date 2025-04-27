@@ -54,7 +54,7 @@ impl AlkanesExportsImpl {
         let mut result = [Val::I32(0)];
         let func = Self::_get_export(vm, "__execute")?;
         func.call(&mut vm.store, &[], &mut result)?;
-        println!("fuel left: {}", vm.store.get_fuel().unwrap());
+        println!("fuel left: {}", vm.store.get_fuel()?);
         let response = ExtendedCallResponse::parse(&mut std::io::Cursor::new(Self::_get_result(
             vm, &result,
         )?))?;

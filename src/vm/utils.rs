@@ -228,7 +228,7 @@ pub fn run_after_special(
     let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
     let response = instance.execute()?;
 
-    let remaining_fuel = instance.store.get_fuel().unwrap();
+    let remaining_fuel = instance.store.get_fuel()?;
     let storage_len = response.storage.serialize().len() as u64;
 
     #[cfg(feature = "debug-log")]
