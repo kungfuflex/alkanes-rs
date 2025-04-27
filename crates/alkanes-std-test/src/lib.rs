@@ -96,6 +96,7 @@ impl LoggerAlkane {
                     inputs: vec![50],
                 },
                 &AlkaneTransferParcel::default(),
+                self.fuel(),
             )?
             .data;
 
@@ -176,7 +177,7 @@ impl LoggerAlkane {
             target: context.myself,
             inputs: vec![21],
         };
-        let response = self.call(&cellpack, &context.incoming_alkanes)?;
+        let response = self.call(&cellpack, &context.incoming_alkanes, u64::MAX)?;
         Ok(response)
     }
 
@@ -198,7 +199,7 @@ impl LoggerAlkane {
             target: target,
             inputs: inputs,
         };
-        let response = self.call(&cellpack, &context.incoming_alkanes)?;
+        let response = self.call(&cellpack, &context.incoming_alkanes, self.fuel())?;
         Ok(response)
     }
 
@@ -208,7 +209,7 @@ impl LoggerAlkane {
             target: target,
             inputs: inputs,
         };
-        let response = self.delegatecall(&cellpack, &context.incoming_alkanes)?;
+        let response = self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())?;
         Ok(response)
     }
 
@@ -218,7 +219,7 @@ impl LoggerAlkane {
             target: target,
             inputs: inputs,
         };
-        let response = self.staticcall(&cellpack, &context.incoming_alkanes)?;
+        let response = self.staticcall(&cellpack, &context.incoming_alkanes, self.fuel())?;
         Ok(response)
     }
 
@@ -234,13 +235,13 @@ impl LoggerAlkane {
             target: target,
             inputs: inputs,
         };
-        let _ = self.call(&cellpack, &context.incoming_alkanes); // allow to fail
+        let _ = self.call(&cellpack, &context.incoming_alkanes, self.fuel()); // allow to fail
 
         let cellpack2 = Cellpack {
             target: target2,
             inputs: inputs2,
         };
-        let _ = self.call(&cellpack2, &context.incoming_alkanes); // allow to fail
+        let _ = self.call(&cellpack2, &context.incoming_alkanes, self.fuel()); // allow to fail
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 
@@ -268,6 +269,7 @@ impl LoggerAlkane {
                 id: context.myself,
                 value: u128::MAX, // Extremely large value
             }]),
+            self.fuel(),
         )?;
         Ok(response)
     }

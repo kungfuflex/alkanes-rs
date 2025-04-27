@@ -86,7 +86,8 @@ impl Proxy {
                 .map_err(|_| anyhow!("witness envelope not found"))?,
         ))?;
 
-        let mut response: CallResponse = self.call(&cellpack, &context.incoming_alkanes)?;
+        let mut response: CallResponse =
+            self.call(&cellpack, &context.incoming_alkanes, self.fuel())?;
         response.alkanes.0.push(unwrap_auth(auth)?);
         Ok(response)
     }
@@ -103,7 +104,8 @@ impl Proxy {
                 .map_err(|_| anyhow!("witness envelope not found"))?,
         ))?;
 
-        let mut response: CallResponse = self.delegatecall(&cellpack, &context.incoming_alkanes)?;
+        let mut response: CallResponse =
+            self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())?;
         response.alkanes.0.push(unwrap_auth(auth)?);
         Ok(response)
     }
@@ -114,7 +116,8 @@ impl Proxy {
         self.only_owner(auth.clone())?;
 
         let cellpack: Cellpack = context.inputs.clone().try_into()?;
-        let mut response: CallResponse = self.call(&cellpack, &context.incoming_alkanes)?;
+        let mut response: CallResponse =
+            self.call(&cellpack, &context.incoming_alkanes, self.fuel())?;
         response.alkanes.0.push(unwrap_auth(auth)?);
         Ok(response)
     }
@@ -125,7 +128,8 @@ impl Proxy {
         self.only_owner(auth.clone())?;
 
         let cellpack: Cellpack = context.inputs.clone().try_into()?;
-        let mut response: CallResponse = self.delegatecall(&cellpack, &context.incoming_alkanes)?;
+        let mut response: CallResponse =
+            self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())?;
         response.alkanes.0.push(unwrap_auth(auth)?);
         Ok(response)
     }

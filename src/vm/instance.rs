@@ -281,13 +281,15 @@ impl AlkanesInstance {
             |mut caller: Caller<'_, AlkanesState>,
              cellpack_ptr: i32,
              incoming_alkanes_ptr: i32,
-             checkpoint_ptr: i32|
+             checkpoint_ptr: i32,
+             start_fuel: u64|
              -> i32 {
                 SafeAlkanesHostFunctionsImpl::handle_extcall::<Call>(
                     &mut caller,
                     cellpack_ptr,
                     incoming_alkanes_ptr,
                     checkpoint_ptr,
+                    start_fuel,
                 )
             },
         )?;
@@ -297,13 +299,15 @@ impl AlkanesInstance {
             |mut caller: Caller<'_, AlkanesState>,
              cellpack_ptr: i32,
              incoming_alkanes_ptr: i32,
-             checkpoint_ptr: i32|
+             checkpoint_ptr: i32,
+             start_fuel: u64|
              -> i32 {
                 SafeAlkanesHostFunctionsImpl::handle_extcall::<Delegatecall>(
                     &mut caller,
                     cellpack_ptr,
                     incoming_alkanes_ptr,
                     checkpoint_ptr,
+                    start_fuel,
                 )
             },
         )?;
@@ -313,13 +317,15 @@ impl AlkanesInstance {
             |mut caller: Caller<'_, AlkanesState>,
              cellpack_ptr: i32,
              incoming_alkanes_ptr: i32,
-             checkpoint_ptr: i32|
+             checkpoint_ptr: i32,
+             start_fuel: u64|
              -> i32 {
                 SafeAlkanesHostFunctionsImpl::handle_extcall::<Staticcall>(
                     &mut caller,
                     cellpack_ptr,
                     incoming_alkanes_ptr,
                     checkpoint_ptr,
+                    start_fuel,
                 )
             },
         )?;

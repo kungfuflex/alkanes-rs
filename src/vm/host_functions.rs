@@ -514,6 +514,7 @@ impl AlkanesHostFunctionsImpl {
         cellpack_ptr: i32,
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
+        _start_fuel: u64, // this arg is not used, but cannot be removed due to backwards compat
     ) -> i32 {
         match Self::_prepare_extcall_before_checkpoint::<T>(
             caller,
@@ -758,6 +759,7 @@ impl SafeAlkanesHostFunctionsImpl {
         cellpack_ptr: i32,
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
+        start_fuel: u64,
     ) -> i32 {
         Self::with_context_safety(caller, |c| {
             AlkanesHostFunctionsImpl::handle_extcall::<T>(
@@ -765,6 +767,7 @@ impl SafeAlkanesHostFunctionsImpl {
                 cellpack_ptr,
                 incoming_alkanes_ptr,
                 checkpoint_ptr,
+                start_fuel,
             )
         })
     }
