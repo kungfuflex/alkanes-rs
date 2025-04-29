@@ -55,14 +55,16 @@ fn set_alkane_id_to_tx_id(
     context: Arc<Mutex<AlkanesRuntimeContext>>,
     alkane_id: &AlkaneId,
 ) -> Result<()> {
+    // Acquire the mutex once and keep the guard for the duration of the function
+    let context_guard = context.lock().unwrap();
+
     let outpoint = OutPoint {
-        txid: context.lock().unwrap().message.transaction.compute_txid(),
-        vout: context.lock().unwrap().message.vout,
+        txid: context_guard.message.transaction.compute_txid(),
+        vout: context_guard.message.vout,
     };
     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-    context
-        .lock()
-        .unwrap()
+
+    context_guard
         .message
         .atomic
         .keyword("/alkanes_id_to_outpoint/")
