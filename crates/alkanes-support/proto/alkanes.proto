@@ -118,8 +118,17 @@ message AlkaneInventoryRequest {
   AlkaneId id = 1;
 }
 
+message AlkaneIdToOutpointRequest {
+  AlkaneId id = 1;
+}
+
 message AlkaneInventoryResponse {
   repeated AlkaneTransfer alkanes = 1;
+}
+
+message AlkaneIdToOutpointResponse {
+  bytes txid = 1;
+  uint32 vout = 2;
 }
 
 message Outpoint {

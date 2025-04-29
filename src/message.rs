@@ -46,7 +46,13 @@ pub fn handle_message(
     {
         // Log cellpack information at the beginning of transaction processing
         println!("=== TRANSACTION CELLPACK INFO ===");
-        println!("Transaction index: {}", parcel.txindex);
+        println!(
+            "Transaction index: {}, Transaction height: {}, vout: {}, txid: {}",
+            parcel.txindex,
+            parcel.height,
+            parcel.vout,
+            parcel.transaction.compute_txid()
+        );
         println!(
             "Target contract: [block={}, tx={}]",
             cellpack.target.block, cellpack.target.tx

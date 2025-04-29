@@ -8,6 +8,8 @@ use alkanes_support::{
     witness::find_witness_payload,
 };
 use anyhow::{anyhow, Result};
+use bitcoin::hashes::Hash;
+use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -15,7 +17,8 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::index_pointer::KeyValuePointer;
-
+use protobuf::SpecialFields;
+use protorune_support::utils::consensus_encode;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
 
@@ -48,6 +51,27 @@ pub fn sequence_pointer(ptr: &AtomicPointer) -> AtomicPointer {
     ptr.derive(&IndexPointer::from_keyword("/alkanes/sequence"))
 }
 
+fn set_alkane_id_to_tx_id(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
+    alkane_id: &AlkaneId,
+) -> Result<()> {
+    let outpoint = OutPoint {
+        txid: context.lock().unwrap().message.transaction.compute_txid(),
+        vout: context.lock().unwrap().message.vout,
+    };
+    let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
+    context
+        .lock()
+        .unwrap()
+        .message
+        .atomic
+        .keyword("/alkanes_id_to_outpoint/")
+        .select(&alkane_id.clone().into())
+        .set(Arc::new(outpoint_bytes));
+
+    Ok(())
+}
+
 pub fn run_special_cellpacks(
     context: Arc<Mutex<AlkanesRuntimeContext>>,
     cellpack: &Cellpack,
@@ -58,6 +82,7 @@ pub fn run_special_cellpacks(
     let next_sequence = next_sequence_pointer.get_value::<u128>();
     let original_target = cellpack.target.clone();
     if cellpack.target.is_created(next_sequence) {
+        // contract already created, load the wasm from the index
         let wasm_payload = context
             .lock()
             .unwrap()
@@ -68,6 +93,8 @@ pub fn run_special_cellpacks(
             .get();
         binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
     } else if cellpack.target.is_create() {
+        // contract not created, create it by first loading the wasm from the witness
+        // then storing it in the index.
         let wasm_payload = Arc::new(
             find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
                 .ok_or("finding witness payload failed for creation of alkane")
@@ -87,7 +114,11 @@ pub fn run_special_cellpacks(
         pointer.set(wasm_payload.clone());
         binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
         next_sequence_pointer.set_value(next_sequence + 1);
+
+        set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
     } else if let Some(number) = cellpack.target.reserved() {
+        // we have already reserved an alkane id, find the binary and
+        // set it in the index
         let wasm_payload = Arc::new(
             find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
                 .ok_or("finding witness payload failed for creation of alkane")
@@ -108,6 +139,7 @@ pub fn run_special_cellpacks(
             .select(&payload.target.clone().into());
         if ptr.get().as_ref().len() == 0 {
             ptr.set(wasm_payload.clone());
+            set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
         } else {
             return Err(anyhow!(format!(
                 "used CREATERESERVED cellpack but {} already holds a binary",
@@ -116,6 +148,7 @@ pub fn run_special_cellpacks(
         }
         binary = Arc::new(decompress(wasm_payload.clone().as_ref().clone())?);
     } else if let Some(factory) = cellpack.target.factory() {
+        // we find the factory alkane wasm and set the current alkane to the factory wasm
         payload.target = AlkaneId::new(2, next_sequence);
         next_sequence_pointer.set_value(next_sequence + 1);
         let context_binary: Vec<u8> = context
@@ -136,7 +169,8 @@ pub fn run_special_cellpacks(
             .atomic
             .keyword("/alkanes/")
             .select(&payload.target.clone().into())
-            .set(rc.clone());
+            .set(rc.clone()); // TODO: we don't need to store this twice
+        set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
         binary = Arc::new(decompress(rc.as_ref().clone())?);
     }
     if &original_target != &payload.target {

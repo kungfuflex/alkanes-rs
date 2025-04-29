@@ -3,6 +3,7 @@ use alkanes_support::parcel::AlkaneTransferParcel;
 use alkanes_support::storage::StorageMap;
 use alkanes_support::utils::overflow_error;
 use anyhow::{anyhow, Result};
+use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -11,6 +12,8 @@ use metashrew_core::{
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::rune_transfer::RuneTransfer;
+use protorune_support::utils::consensus_decode;
+use std::io::Cursor;
 use std::sync::Arc;
 
 pub fn from_protobuf(v: alkanes_support::proto::alkanes::AlkaneId) -> AlkaneId {
@@ -45,6 +48,21 @@ pub fn alkane_inventory_pointer(who: &AlkaneId) -> IndexPointer {
         .select(&who_bytes)
         .keyword("/inventory/");
     ptr
+}
+
+pub fn alkane_id_to_outpoint(alkane_id: &AlkaneId) -> Result<OutPoint> {
+    let alkane_id_bytes: Vec<u8> = alkane_id.clone().into();
+    let outpoint_bytes = IndexPointer::from_keyword("/alkanes")
+        .select(&alkane_id_bytes)
+        .keyword("/alkanes_id_to_outpoint/")
+        .get()
+        .as_ref()
+        .clone();
+    if outpoint_bytes.len() == 0 {
+        return Err(anyhow!("No creation outpoint for alkane id"));
+    }
+    let outpoint = consensus_decode::<OutPoint>(&mut Cursor::new(outpoint_bytes))?;
+    Ok(outpoint)
 }
 
 pub fn u128_from_bytes(v: Vec<u8>) -> u128 {

@@ -3059,6 +3059,129 @@ impl ::protobuf::reflect::ProtobufValue for AlkaneInventoryRequest {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+// @@protoc_insertion_point(message:alkanes.AlkaneIdToOutpointRequest)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct AlkaneIdToOutpointRequest {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.AlkaneIdToOutpointRequest.id)
+    pub id: ::protobuf::MessageField<AlkaneId>,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.AlkaneIdToOutpointRequest.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a AlkaneIdToOutpointRequest {
+    fn default() -> &'a AlkaneIdToOutpointRequest {
+        <AlkaneIdToOutpointRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl AlkaneIdToOutpointRequest {
+    pub fn new() -> AlkaneIdToOutpointRequest {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(1);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_message_field_accessor::<_, AlkaneId>(
+            "id",
+            |m: &AlkaneIdToOutpointRequest| { &m.id },
+            |m: &mut AlkaneIdToOutpointRequest| { &mut m.id },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<AlkaneIdToOutpointRequest>(
+            "AlkaneIdToOutpointRequest",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for AlkaneIdToOutpointRequest {
+    const NAME: &'static str = "AlkaneIdToOutpointRequest";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    ::protobuf::rt::read_singular_message_into_field(is, &mut self.id)?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if let Some(v) = self.id.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if let Some(v) = self.id.as_ref() {
+            ::protobuf::rt::write_message_field_with_cached_size(1, v, os)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> AlkaneIdToOutpointRequest {
+        AlkaneIdToOutpointRequest::new()
+    }
+
+    fn clear(&mut self) {
+        self.id.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static AlkaneIdToOutpointRequest {
+        static instance: AlkaneIdToOutpointRequest = AlkaneIdToOutpointRequest {
+            id: ::protobuf::MessageField::none(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for AlkaneIdToOutpointRequest {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("AlkaneIdToOutpointRequest").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for AlkaneIdToOutpointRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for AlkaneIdToOutpointRequest {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
 // @@protoc_insertion_point(message:alkanes.AlkaneInventoryResponse)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct AlkaneInventoryResponse {
@@ -3179,6 +3302,146 @@ impl ::std::fmt::Display for AlkaneInventoryResponse {
 }
 
 impl ::protobuf::reflect::ProtobufValue for AlkaneInventoryResponse {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+// @@protoc_insertion_point(message:alkanes.AlkaneIdToOutpointResponse)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct AlkaneIdToOutpointResponse {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.AlkaneIdToOutpointResponse.txid)
+    pub txid: ::std::vec::Vec<u8>,
+    // @@protoc_insertion_point(field:alkanes.AlkaneIdToOutpointResponse.vout)
+    pub vout: u32,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.AlkaneIdToOutpointResponse.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a AlkaneIdToOutpointResponse {
+    fn default() -> &'a AlkaneIdToOutpointResponse {
+        <AlkaneIdToOutpointResponse as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl AlkaneIdToOutpointResponse {
+    pub fn new() -> AlkaneIdToOutpointResponse {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(2);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "txid",
+            |m: &AlkaneIdToOutpointResponse| { &m.txid },
+            |m: &mut AlkaneIdToOutpointResponse| { &mut m.txid },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "vout",
+            |m: &AlkaneIdToOutpointResponse| { &m.vout },
+            |m: &mut AlkaneIdToOutpointResponse| { &mut m.vout },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<AlkaneIdToOutpointResponse>(
+            "AlkaneIdToOutpointResponse",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for AlkaneIdToOutpointResponse {
+    const NAME: &'static str = "AlkaneIdToOutpointResponse";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.txid = is.read_bytes()?;
+                },
+                16 => {
+                    self.vout = is.read_uint32()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if !self.txid.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(1, &self.txid);
+        }
+        if self.vout != 0 {
+            my_size += ::protobuf::rt::uint32_size(2, self.vout);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if !self.txid.is_empty() {
+            os.write_bytes(1, &self.txid)?;
+        }
+        if self.vout != 0 {
+            os.write_uint32(2, self.vout)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> AlkaneIdToOutpointResponse {
+        AlkaneIdToOutpointResponse::new()
+    }
+
+    fn clear(&mut self) {
+        self.txid.clear();
+        self.vout = 0;
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static AlkaneIdToOutpointResponse {
+        static instance: AlkaneIdToOutpointResponse = AlkaneIdToOutpointResponse {
+            txid: ::std::vec::Vec::new(),
+            vout: 0,
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for AlkaneIdToOutpointResponse {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("AlkaneIdToOutpointResponse").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for AlkaneIdToOutpointResponse {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for AlkaneIdToOutpointResponse {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
@@ -4281,22 +4544,25 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     sponse\x127\n\tresponses\x18\x01\x20\x03(\x0b2\x19.alkanes.SimulateRespo\
     nseR\tresponses\x12\x14\n\x05error\x18\x02\x20\x01(\tR\x05error\";\n\x16\
     AlkaneInventoryRequest\x12!\n\x02id\x18\x01\x20\x01(\x0b2\x11.alkanes.Al\
-    kaneIdR\x02id\"L\n\x17AlkaneInventoryResponse\x121\n\x07alkanes\x18\x01\
-    \x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x07alkanes\"2\n\x08Outpoint\
-    \x12\x12\n\x04txid\x18\x01\x20\x01(\x0cR\x04txid\x12\x12\n\x04vout\x18\
-    \x02\x20\x01(\rR\x04vout\"c\n\x05Trace\x12-\n\x08outpoint\x18\x01\x20\
-    \x01(\x0b2\x11.alkanes.OutpointR\x08outpoint\x12+\n\x05trace\x18\x02\x20\
-    \x01(\x0b2\x15.alkanes.AlkanesTraceR\x05trace\")\n\x11TraceBlockRequest\
-    \x12\x14\n\x05block\x18\x01\x20\x01(\x04R\x05block\"<\n\x12TraceBlockRes\
-    ponse\x12&\n\x06traces\x18\x01\x20\x03(\x0b2\x0e.alkanes.TraceR\x06trace\
-    s\"4\n\x0fBytecodeRequest\x12!\n\x02id\x18\x01\x20\x01(\x0b2\x11.alkanes\
-    .AlkaneIdR\x02id\"&\n\x0cBlockRequest\x12\x16\n\x06height\x18\x01\x20\
-    \x01(\rR\x06height\"=\n\rBlockResponse\x12\x14\n\x05block\x18\x01\x20\
-    \x01(\x0cR\x05block\x12\x16\n\x06height\x18\x02\x20\x01(\rR\x06height*L\
-    \n\x14AlkanesTraceCallType\x12\x08\n\x04NONE\x10\0\x12\x08\n\x04CALL\x10\
-    \x01\x12\x10\n\x0cDELEGATECALL\x10\x02\x12\x0e\n\nSTATICCALL\x10\x03*2\n\
-    \x16AlkanesTraceStatusFlag\x12\x0b\n\x07SUCCESS\x10\0\x12\x0b\n\x07FAILU\
-    RE\x10\x01b\x06proto3\
+    kaneIdR\x02id\">\n\x19AlkaneIdToOutpointRequest\x12!\n\x02id\x18\x01\x20\
+    \x01(\x0b2\x11.alkanes.AlkaneIdR\x02id\"L\n\x17AlkaneInventoryResponse\
+    \x121\n\x07alkanes\x18\x01\x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x07\
+    alkanes\"D\n\x1aAlkaneIdToOutpointResponse\x12\x12\n\x04txid\x18\x01\x20\
+    \x01(\x0cR\x04txid\x12\x12\n\x04vout\x18\x02\x20\x01(\rR\x04vout\"2\n\
+    \x08Outpoint\x12\x12\n\x04txid\x18\x01\x20\x01(\x0cR\x04txid\x12\x12\n\
+    \x04vout\x18\x02\x20\x01(\rR\x04vout\"c\n\x05Trace\x12-\n\x08outpoint\
+    \x18\x01\x20\x01(\x0b2\x11.alkanes.OutpointR\x08outpoint\x12+\n\x05trace\
+    \x18\x02\x20\x01(\x0b2\x15.alkanes.AlkanesTraceR\x05trace\")\n\x11TraceB\
+    lockRequest\x12\x14\n\x05block\x18\x01\x20\x01(\x04R\x05block\"<\n\x12Tr\
+    aceBlockResponse\x12&\n\x06traces\x18\x01\x20\x03(\x0b2\x0e.alkanes.Trac\
+    eR\x06traces\"4\n\x0fBytecodeRequest\x12!\n\x02id\x18\x01\x20\x01(\x0b2\
+    \x11.alkanes.AlkaneIdR\x02id\"&\n\x0cBlockRequest\x12\x16\n\x06height\
+    \x18\x01\x20\x01(\rR\x06height\"=\n\rBlockResponse\x12\x14\n\x05block\
+    \x18\x01\x20\x01(\x0cR\x05block\x12\x16\n\x06height\x18\x02\x20\x01(\rR\
+    \x06height*L\n\x14AlkanesTraceCallType\x12\x08\n\x04NONE\x10\0\x12\x08\n\
+    \x04CALL\x10\x01\x12\x10\n\x0cDELEGATECALL\x10\x02\x12\x0e\n\nSTATICCALL\
+    \x10\x03*2\n\x16AlkanesTraceStatusFlag\x12\x0b\n\x07SUCCESS\x10\0\x12\
+    \x0b\n\x07FAILURE\x10\x01b\x06proto3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file
@@ -4314,7 +4580,7 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
     file_descriptor.get(|| {
         let generated_file_descriptor = generated_file_descriptor_lazy.get(|| {
             let mut deps = ::std::vec::Vec::with_capacity(0);
-            let mut messages = ::std::vec::Vec::with_capacity(27);
+            let mut messages = ::std::vec::Vec::with_capacity(29);
             messages.push(Uint128::generated_message_descriptor_data());
             messages.push(AlkaneId::generated_message_descriptor_data());
             messages.push(AlkaneTransfer::generated_message_descriptor_data());
@@ -4334,7 +4600,9 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
             messages.push(SimulateResponse::generated_message_descriptor_data());
             messages.push(MultiSimulateResponse::generated_message_descriptor_data());
             messages.push(AlkaneInventoryRequest::generated_message_descriptor_data());
+            messages.push(AlkaneIdToOutpointRequest::generated_message_descriptor_data());
             messages.push(AlkaneInventoryResponse::generated_message_descriptor_data());
+            messages.push(AlkaneIdToOutpointResponse::generated_message_descriptor_data());
             messages.push(Outpoint::generated_message_descriptor_data());
             messages.push(Trace::generated_message_descriptor_data());
             messages.push(TraceBlockRequest::generated_message_descriptor_data());

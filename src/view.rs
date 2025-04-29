@@ -2,7 +2,8 @@ use crate::message::AlkaneMessageContext;
 use crate::network::set_view_mode;
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
 use crate::utils::{
-    alkane_inventory_pointer, balance_pointer, credit_balances, debit_balances, pipe_storagemap_to,
+    alkane_id_to_outpoint, alkane_inventory_pointer, balance_pointer, credit_balances,
+    debit_balances, pipe_storagemap_to,
 };
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
@@ -11,7 +12,10 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransfer;
 use alkanes_support::proto;
-use alkanes_support::proto::alkanes::{AlkaneInventoryRequest, AlkaneInventoryResponse};
+use alkanes_support::proto::alkanes::{
+    AlkaneIdToOutpointRequest, AlkaneIdToOutpointResponse, AlkaneInventoryRequest,
+    AlkaneInventoryResponse,
+};
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Version;
@@ -331,6 +335,15 @@ pub fn protorunes_by_height(
         }
         Ok(response)
     })
+}
+
+pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {
+    let request = AlkaneIdToOutpointRequest::parse_from_bytes(input)?;
+    let mut response = AlkaneIdToOutpointResponse::new();
+    let outpoint = alkane_id_to_outpoint(&request.id.unwrap().into())?;
+    response.txid = outpoint.txid.as_byte_array().to_vec();
+    response.vout = outpoint.vout;
+    return Ok(response);
 }
 
 pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
