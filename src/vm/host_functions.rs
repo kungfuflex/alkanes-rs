@@ -595,9 +595,9 @@ impl AlkanesHostFunctionsImpl {
 
         #[cfg(feature = "debug-log")]
         {
-            println!("extcall: target=[{},{}], inputs={}, storage_size={} bytes, total_fuel={}, deployment={}",
+            println!("extcall: target=[{},{}], inputs={:?}, storage_size={} bytes, total_fuel={}, deployment={}",
                 cellpack.target.block, cellpack.target.tx,
-                cellpack.inputs.len(), storage_map_len,
+                cellpack.inputs, storage_map_len,
                 total_fuel,
                 cellpack.target.is_deployment());
         }
