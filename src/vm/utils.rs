@@ -250,8 +250,7 @@ pub fn run_after_special(
 
     let fuel_used = overflow_error(start_fuel.checked_sub(remaining_fuel).and_then(
         |v: u64| -> Option<u64> {
-            let computed_fuel =
-                overflow_error(FUEL_PER_STORE_BYTE.checked_mul(storage_len)).ok()?;
+            let computed_fuel = overflow_error(FUEL_PER_STORE_BYTE.checked_mul(storage_len))?;
             let opt = v.checked_add(computed_fuel);
             #[cfg(feature = "debug-log")]
             {
