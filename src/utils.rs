@@ -52,9 +52,8 @@ pub fn alkane_inventory_pointer(who: &AlkaneId) -> IndexPointer {
 
 pub fn alkane_id_to_outpoint(alkane_id: &AlkaneId) -> Result<OutPoint> {
     let alkane_id_bytes: Vec<u8> = alkane_id.clone().into();
-    let outpoint_bytes = IndexPointer::from_keyword("/alkanes")
+    let outpoint_bytes = IndexPointer::from_keyword("/alkanes_id_to_outpoint/")
         .select(&alkane_id_bytes)
-        .keyword("/alkanes_id_to_outpoint/")
         .get()
         .as_ref()
         .clone();

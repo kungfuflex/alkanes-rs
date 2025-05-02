@@ -341,7 +341,10 @@ pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointRespo
     let request = AlkaneIdToOutpointRequest::parse_from_bytes(input)?;
     let mut response = AlkaneIdToOutpointResponse::new();
     let outpoint = alkane_id_to_outpoint(&request.id.unwrap().into())?;
-    response.txid = outpoint.txid.as_byte_array().to_vec();
+    // get the human readable txid (LE byte order), but comes out as a string
+    let hex_string = outpoint.txid.to_string();
+    // convert the hex string to a byte array
+    response.txid = hex::decode(hex_string).unwrap();
     response.vout = outpoint.vout;
     return Ok(response);
 }

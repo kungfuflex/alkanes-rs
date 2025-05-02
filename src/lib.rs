@@ -280,9 +280,14 @@ pub fn protorunesbyheight() -> i32 {
 pub fn alkanes_id_to_outpoint() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    // first 4 bytes come in as height, not used
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let data_vec = consume_to_end(&mut data).unwrap();
     let result: alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse =
-        view::alkanes_id_to_outpoint(&consume_to_end(&mut data).unwrap())
-            .unwrap_or_else(|_| alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::new());
+        view::alkanes_id_to_outpoint(&data_vec).unwrap_or_else(|err| {
+            eprintln!("Error in alkanes_id_to_outpoint: {:?}", err);
+            alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::new()
+        });
     export_bytes(result.write_to_bytes().unwrap())
 }
 

@@ -8,7 +8,6 @@ use alkanes_support::{
     witness::find_witness_payload,
 };
 use anyhow::{anyhow, Result};
-use bitcoin::hashes::Hash;
 use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
@@ -17,7 +16,6 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::index_pointer::KeyValuePointer;
-use protobuf::SpecialFields;
 use protorune_support::utils::consensus_encode;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
