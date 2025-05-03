@@ -514,7 +514,7 @@ impl AlkanesHostFunctionsImpl {
         cellpack_ptr: i32,
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
-        _start_fuel: u64, // this arg is not used, but cannot be removed due to backwards compat
+        _start_fuel: u64,
     ) -> i32 {
         match Self::_prepare_extcall_before_checkpoint::<T>(
             caller,
@@ -529,6 +529,7 @@ impl AlkanesHostFunctionsImpl {
                     incoming_alkanes,
                     storage_map,
                     storage_map_len,
+                    _start_fuel,
                 ) {
                     Ok(v) => v,
                     Err(e) => Self::_handle_extcall_abort::<T>(caller, e, true),
@@ -543,6 +544,7 @@ impl AlkanesHostFunctionsImpl {
         incoming_alkanes: AlkaneTransferParcel,
         storage_map: StorageMap,
         storage_map_len: u64,
+        _start_fuel: u64,
     ) -> Result<i32> {
         // Prepare subcontext data
         let (subcontext, binary_rc) = {
@@ -605,7 +607,11 @@ impl AlkanesHostFunctionsImpl {
         consume_fuel(caller, total_fuel)?;
 
         let mut trace_context: TraceContext = subcontext.flat().into();
-        let start_fuel: u64 = caller.get_fuel()?;
+        let start_fuel: u64 = if caller.data_mut().context.lock().unwrap().message.height > 894950 {
+            caller.get_fuel()?
+        } else {
+            _start_fuel
+        };
         trace_context.fuel = start_fuel;
         let event: TraceEvent = T::event(trace_context);
         subcontext.trace.clock(event);
