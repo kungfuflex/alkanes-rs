@@ -20,7 +20,7 @@ Protocol fees are accepted in terms of Bitcoin and compute is metered with the w
 
 ## Software Topology
 
-This repository is a pure Rust implementation, built entirely for a WASM target and even tested withim the WASM test runner `wasm-bindgen-test-runner`.
+This repository is a pure Rust implementation, built entirely for a WASM target and even tested within the WASM test runner `wasm-bindgen-test-runner`.
 
 The top level crate in the monorepo contains sources for the ALKANES indexer, built for the METASHREW environment.
 
