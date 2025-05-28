@@ -879,15 +879,19 @@ impl Protorune {
                 })
                 .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
             let mut balance_sheet = BalanceSheet::concat(sheets)?;
-            protostones.process_burns(
-                &mut atomic.derive(&IndexPointer::default()),
-                runestone,
-                runestone_output_index,
-                balances_by_output,
-                &mut proto_balances_by_output,
-                unallocated_to,
-                tx.compute_txid(),
-            )?;
+            // TODO: Enable this at a future block when protoburns have been fully tested. For now only enabled in tests
+            #[cfg(test)]
+            {
+                protostones.process_burns(
+                    &mut atomic.derive(&IndexPointer::default()),
+                    runestone,
+                    runestone_output_index,
+                    balances_by_output,
+                    &mut proto_balances_by_output,
+                    unallocated_to,
+                    tx.compute_txid(),
+                )?;
+            }
 
             let num_protostones = protostones.len();
             let protostones_iter = protostones.into_iter();
