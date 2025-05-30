@@ -493,16 +493,17 @@ impl AlkanesHostFunctionsImpl {
         let storage_map = StorageMap::parse(&mut Cursor::new(storage_map_buffer))?;
         // Handle deployment fuel first
         if cellpack.target.is_deployment() {
+            // Extract height into a local variable to avoid multiple mutable borrows
+            let height = caller.data_mut().context.lock().unwrap().message.height as u32;
+
             #[cfg(feature = "debug-log")]
             {
                 println!(
                     "extcall: deployment detected, additional fuel_cost={}",
-                    fuel_extcall_deploy(caller.data_mut().context.lock().unwrap().message.height)
+                    fuel_extcall_deploy(height)
                 );
             }
-            caller.consume_fuel(fuel_extcall_deploy(
-                caller.data_mut().context.lock().unwrap().message.height as u32,
-            ))?;
+            caller.consume_fuel(fuel_extcall_deploy(height))?;
         }
         Ok((
             cellpack,

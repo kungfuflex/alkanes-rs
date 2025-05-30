@@ -88,9 +88,9 @@ impl VirtualFuelBytes for Block {
     feature = "fractal",
     feature = "luckycoin"
 )))]
-pub const FUEL_CHANGE1_HEIGHT: u32 = 899_080;
+pub const FUEL_CHANGE1_HEIGHT: u32 = 899_085;
 #[cfg(feature = "mainnet")]
-pub const FUEL_CHANGE1_HEIGHT: u32 = 899_080;
+pub const FUEL_CHANGE1_HEIGHT: u32 = 899_085;
 #[cfg(feature = "dogecoin")]
 pub const FUEL_CHANGE1_HEIGHT: u32 = 5_730_675;
 #[cfg(feature = "fractal")]
