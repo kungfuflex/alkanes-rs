@@ -501,7 +501,7 @@ impl AlkanesHostFunctionsImpl {
                 );
             }
             caller.consume_fuel(fuel_extcall_deploy(
-                caller.data_mut().context.lock().unwrap().message.height,
+                caller.data_mut().context.lock().unwrap().message.height as u32,
             ))?;
         }
         Ok((
