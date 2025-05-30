@@ -25,7 +25,7 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 
 use crate::vm::fuel::{
-    consume_fuel, Fuelable, FUEL_BALANCE, FUEL_EXTCALL, FUEL_EXTCALL_DEPLOY, FUEL_FUEL,
+    consume_fuel, fuel_extcall_deploy, Fuelable, FUEL_BALANCE, FUEL_EXTCALL, FUEL_FUEL,
     FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE, FUEL_PER_REQUEST_BYTE,
     FUEL_PER_STORE_BYTE, FUEL_SEQUENCE,
 };
@@ -497,10 +497,12 @@ impl AlkanesHostFunctionsImpl {
             {
                 println!(
                     "extcall: deployment detected, additional fuel_cost={}",
-                    FUEL_EXTCALL_DEPLOY
+                    fuel_extcall_deploy(caller.data_mut().context.lock().unwrap().message.height)
                 );
             }
-            caller.consume_fuel(FUEL_EXTCALL_DEPLOY)?;
+            caller.consume_fuel(fuel_extcall_deploy(
+                caller.data_mut().context.lock().unwrap().message.height,
+            ))?;
         }
         Ok((
             cellpack,

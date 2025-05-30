@@ -9,6 +9,7 @@ use ordinals::{Artifact, Runestone};
 use protorune::message::MessageContext;
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::decode_varint_list;
+use ruint::aliases::U32;
 use std::io::Cursor;
 use std::sync::RwLock;
 use wasmi::*;
@@ -87,17 +88,65 @@ impl VirtualFuelBytes for Block {
     feature = "fractal",
     feature = "luckycoin"
 )))]
-pub const TOTAL_FUEL: u64 = 100_000_000;
+pub const FUEL_CHANGE1_HEIGHT: u64 = 899_080;
 #[cfg(feature = "mainnet")]
-pub const TOTAL_FUEL: u64 = 100_000_000;
+pub const FUEL_CHANGE1_HEIGHT: u64 = 899_080;
 #[cfg(feature = "dogecoin")]
-pub const TOTAL_FUEL: u64 = 60_000_000;
+pub const FUEL_CHANGE1_HEIGHT: u64 = 5_730_675;
 #[cfg(feature = "fractal")]
-pub const TOTAL_FUEL: u64 = 50_000_000;
+pub const FUEL_CHANGE1_HEIGHT: u64 = 759_865;
 #[cfg(feature = "luckycoin")]
-pub const TOTAL_FUEL: u64 = 50_000_000;
+pub const FUEL_CHANGE1_HEIGHT: u64 = 1_664_317;
 #[cfg(feature = "bellscoin")]
-pub const TOTAL_FUEL: u64 = 50_000_000;
+pub const FUEL_CHANGE1_HEIGHT: u64 = 533_970;
+
+//use if regtest
+#[cfg(not(any(
+    feature = "mainnet",
+    feature = "dogecoin",
+    feature = "bellscoin",
+    feature = "fractal",
+    feature = "luckycoin"
+)))]
+pub const TOTAL_FUEL_START: u64 = 100_000_000;
+#[cfg(feature = "mainnet")]
+pub const TOTAL_FUEL_START: u64 = 100_000_000;
+#[cfg(feature = "dogecoin")]
+pub const TOTAL_FUEL_START: u64 = 60_000_000;
+#[cfg(feature = "fractal")]
+pub const TOTAL_FUEL_START: u64 = 50_000_000;
+#[cfg(feature = "luckycoin")]
+pub const TOTAL_FUEL_START: u64 = 50_000_000;
+#[cfg(feature = "bellscoin")]
+pub const TOTAL_FUEL_START: u64 = 50_000_000;
+
+//use if regtest
+#[cfg(not(any(
+    feature = "mainnet",
+    feature = "dogecoin",
+    feature = "bellscoin",
+    feature = "fractal",
+    feature = "luckycoin"
+)))]
+pub const TOTAL_FUEL_CHANGE1: u64 = 1_000_000_000;
+#[cfg(feature = "mainnet")]
+pub const TOTAL_FUEL_CHANGE1: u64 = 1_000_000_000;
+#[cfg(feature = "dogecoin")]
+pub const TOTAL_FUEL_CHANGE1: u64 = 600_000_000;
+#[cfg(feature = "fractal")]
+pub const TOTAL_FUEL_CHANGE1: u64 = 500_000_000;
+#[cfg(feature = "luckycoin")]
+pub const TOTAL_FUEL_CHANGE1: u64 = 500_000_000;
+#[cfg(feature = "bellscoin")]
+pub const TOTAL_FUEL_CHANGE1: u64 = 500_000_000;
+
+pub const fn total_fuel(height: U32) -> u64 {
+    if height >= FUEL_CHANGE1_HEIGHT {
+        TOTAL_FUEL_CHANGE1
+    } else {
+        TOTAL_FUEL_START
+    }
+}
 
 #[derive(Default, Clone, Debug)]
 pub struct FuelTank {
@@ -124,19 +173,19 @@ impl FuelTank {
         _FUEL_TANK.read().unwrap().as_ref().unwrap().current_txindex == u32::MAX
     }
 
-    pub fn initialize(block: &Block) {
+    pub fn initialize(block: &Block, height: u32) {
         let mut tank = _FUEL_TANK.write().unwrap();
         *tank = Some(FuelTank {
             current_txindex: u32::MAX,
             txsize: 0,
             size: block.vfsize(),
-            block_fuel: TOTAL_FUEL,
+            block_fuel: total_fuel(height),
             transaction_fuel: 0,
             block_metered_fuel: 0,
         });
     }
 
-    pub fn fuel_transaction(txsize: u64, txindex: u32) {
+    pub fn fuel_transaction(txsize: u64, txindex: u32, height: u32) {
         let mut tank = _FUEL_TANK.write().unwrap();
         let tank = tank.as_mut().unwrap();
         tank.current_txindex = txindex;
@@ -146,7 +195,7 @@ impl FuelTank {
         tank.block_metered_fuel = tank.block_fuel * txsize / tank.size;
 
         // Ensure minimum fuel allocation
-        tank.transaction_fuel = std::cmp::max(MINIMUM_FUEL, tank.block_metered_fuel);
+        tank.transaction_fuel = std::cmp::max(minimum_fuel(height), tank.block_metered_fuel);
 
         // Deduct allocated fuel from block fuel
         tank.block_fuel = tank.block_fuel - std::cmp::min(tank.block_fuel, tank.block_metered_fuel);
@@ -160,7 +209,7 @@ impl FuelTank {
             println!("  - Block fuel before: {}", _block_fuel_before);
             println!("  - Block fuel after: {}", tank.block_fuel);
             println!("  - Allocated fuel: {}", tank.transaction_fuel);
-            println!("  - Minimum fuel: {}", MINIMUM_FUEL);
+            println!("  - Minimum fuel: {}", minimum_fuel(height));
         }
     }
 
@@ -204,12 +253,12 @@ impl FuelTank {
             // Add detailed logging for fuel exhaustion
             return Err(anyhow!(
                 "all fuel consumed by WebAssembly: requested {} units, but only {} remaining. \
-                Transaction index: {}, Initial allocation: {}, Block fuel remaining: {}, \
+                Transaction index: {}, Block metered fuel: {}, Block fuel remaining: {}, \
                 Transaction size: {} bytes, Block size: {} bytes",
                 n,
                 tank.transaction_fuel,
                 tank.current_txindex,
-                tank.block_metered_fuel + (TOTAL_FUEL - tank.block_fuel),
+                tank.block_metered_fuel,
                 tank.block_fuel,
                 tank.txsize,
                 tank.size
@@ -245,8 +294,15 @@ impl FuelTank {
     }
 }
 
-pub const MINIMUM_FUEL: u64 = 350_000;
-pub const FUEL_PER_VBYTE: u64 = 150;
+pub const MINIMUM_FUEL_START: u64 = 350_000;
+pub const MINIMUM_FUEL_CHANGE1: u64 = 3_500_000;
+pub const fn minimum_fuel(height: u32) -> u64 {
+    if height >= FUEL_CHANGE1_HEIGHT {
+        MINIMUM_FUEL_CHANGE1
+    } else {
+        MINIMUM_FUEL_START
+    }
+}
 pub const FUEL_PER_REQUEST_BYTE: u64 = 1;
 pub const FUEL_PER_LOAD_BYTE: u64 = 2;
 pub const FUEL_PER_STORE_BYTE: u64 = 8;
@@ -255,7 +311,15 @@ pub const FUEL_FUEL: u64 = 5;
 pub const FUEL_EXTCALL: u64 = 500;
 pub const FUEL_HEIGHT: u64 = 10;
 pub const FUEL_BALANCE: u64 = 10;
-pub const FUEL_EXTCALL_DEPLOY: u64 = 10_000;
+pub const FUEL_EXTCALL_DEPLOY_START: u64 = 10_000;
+pub const FUEL_EXTCALL_DEPLOY_CHANGE1: u64 = 100_000;
+pub const fn fuel_extcall_deploy(height: u32) -> u64 {
+    if height >= FUEL_CHANGE1_HEIGHT {
+        FUEL_EXTCALL_DEPLOY_CHANGE1
+    } else {
+        FUEL_EXTCALL_DEPLOY_START
+    }
+}
 pub const FUEL_LOAD_BLOCK: u64 = 1000; // Fixed cost for loading a block
 pub const FUEL_LOAD_TRANSACTION: u64 = 500; // Fixed cost for loading a transaction
 

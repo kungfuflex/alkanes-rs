@@ -2,7 +2,7 @@ use crate::index_block;
 use crate::network::genesis;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_genesis_alkane_build;
-use crate::vm::fuel::{FuelTank, TOTAL_FUEL};
+use crate::vm::fuel::{FuelTank, TOTAL_FUEL_START};
 use alkane_helpers::clear;
 use alkanes::message::AlkaneMessageContext;
 use alkanes_support::cellpack::Cellpack;
@@ -33,7 +33,7 @@ struct FuelBenchmark {
 impl FuelBenchmark {
     fn new(operation: &str, initial_fuel: u64, final_fuel: u64) -> Self {
         let fuel_consumed = initial_fuel - final_fuel;
-        let fuel_percentage = (fuel_consumed as f64 / TOTAL_FUEL as f64) * 100.0;
+        let fuel_percentage = (fuel_consumed as f64 / TOTAL_FUEL_START as f64) * 100.0;
 
         Self {
             operation: operation.to_string(),
@@ -74,7 +74,7 @@ fn test_genesis() -> Result<()> {
     let mut benchmarks = Vec::new();
 
     // Track initial fuel state
-    let initial_total_fuel = TOTAL_FUEL;
+    let initial_total_fuel = TOTAL_FUEL_START;
 
     println!(
         "Starting Genesis Test with total fuel: {}",
@@ -109,7 +109,7 @@ fn test_genesis() -> Result<()> {
 
     // Initialize FuelTank for the first block
     FuelTank::initialize(&test_block);
-    let pre_genesis_fuel = TOTAL_FUEL;
+    let pre_genesis_fuel = TOTAL_FUEL_START;
 
     // Process the genesis block
     index_block(&test_block, block_height)?;
