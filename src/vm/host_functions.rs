@@ -25,9 +25,9 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 
 use crate::vm::fuel::{
-    consume_fuel, Fuelable, FUEL_BALANCE, FUEL_EXTCALL, FUEL_EXTCALL_DEPLOY, FUEL_FUEL,
-    FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE, FUEL_PER_REQUEST_BYTE,
-    FUEL_PER_STORE_BYTE, FUEL_SEQUENCE,
+    consume_fuel, fuel_extcall_deploy, fuel_per_store_byte, Fuelable, FUEL_BALANCE, FUEL_EXTCALL,
+    FUEL_FUEL, FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE,
+    FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
 use protorune_support::utils::consensus_encode;
 use std::io::Cursor;
@@ -493,14 +493,17 @@ impl AlkanesHostFunctionsImpl {
         let storage_map = StorageMap::parse(&mut Cursor::new(storage_map_buffer))?;
         // Handle deployment fuel first
         if cellpack.target.is_deployment() {
+            // Extract height into a local variable to avoid multiple mutable borrows
+            let height = caller.data_mut().context.lock().unwrap().message.height as u32;
+
             #[cfg(feature = "debug-log")]
             {
                 println!(
                     "extcall: deployment detected, additional fuel_cost={}",
-                    FUEL_EXTCALL_DEPLOY
+                    fuel_extcall_deploy(height)
                 );
             }
-            caller.consume_fuel(FUEL_EXTCALL_DEPLOY)?;
+            caller.consume_fuel(fuel_extcall_deploy(height))?;
         }
         Ok((
             cellpack,
@@ -591,7 +594,9 @@ impl AlkanesHostFunctionsImpl {
             (subbed, binary)
         };
 
-        let total_fuel = compute_extcall_fuel(storage_map_len)?;
+        let height = caller.data_mut().context.lock().unwrap().message.height as u32;
+
+        let total_fuel = compute_extcall_fuel(storage_map_len, height)?;
 
         #[cfg(feature = "debug-log")]
         {

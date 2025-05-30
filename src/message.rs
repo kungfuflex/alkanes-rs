@@ -89,10 +89,10 @@ pub fn handle_message(
     prepare_context(context.clone(), &caller, &myself, false);
     let txsize = parcel.transaction.vfsize() as u64;
     if FuelTank::is_top() {
-        FuelTank::fuel_transaction(txsize, parcel.txindex);
+        FuelTank::fuel_transaction(txsize, parcel.txindex, parcel.height as u32);
     } else if FuelTank::should_advance(parcel.txindex) {
         FuelTank::refuel_block();
-        FuelTank::fuel_transaction(txsize, parcel.txindex);
+        FuelTank::fuel_transaction(txsize, parcel.txindex, parcel.height as u32);
     }
     let fuel = FuelTank::start_fuel();
     // NOTE: we  want to keep unwrap for cases where we lock a mutex guard,

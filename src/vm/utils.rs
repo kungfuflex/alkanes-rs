@@ -1,6 +1,6 @@
 use super::{AlkanesInstance, AlkanesRuntimeContext, AlkanesState};
 use crate::utils::{pipe_storagemap_to, transfer_from};
-use crate::vm::fuel::FUEL_PER_STORE_BYTE;
+use crate::vm::fuel::fuel_per_store_byte;
 use alkanes_support::trace::TraceEvent;
 use alkanes_support::{
     cellpack::Cellpack, gz::decompress, id::AlkaneId, parcel::AlkaneTransferParcel,
@@ -264,6 +264,7 @@ pub fn run_after_special(
 
     let remaining_fuel = instance.store.get_fuel()?;
     let storage_len = response.storage.serialize().len() as u64;
+    let height = context.lock().unwrap().message.height as u32;
 
     #[cfg(feature = "debug-log")]
     {
@@ -278,14 +279,16 @@ pub fn run_after_special(
     #[cfg(feature = "debug-log")]
     {
         // Log storage fuel cost
-        let computed_storage_fuel = FUEL_PER_STORE_BYTE.checked_mul(storage_len).unwrap_or(0);
+        let computed_storage_fuel = fuel_per_store_byte(height)
+            .checked_mul(storage_len)
+            .unwrap_or(0);
         println!("  - Storage fuel cost: {}", computed_storage_fuel);
     }
 
     let fuel_used = overflow_error(start_fuel.checked_sub(remaining_fuel).and_then(
         |v: u64| -> Option<u64> {
             let computed_fuel =
-                overflow_error(FUEL_PER_STORE_BYTE.checked_mul(storage_len)).ok()?;
+                overflow_error(fuel_per_store_byte(height).checked_mul(storage_len)).ok()?;
             let opt = v.checked_add(computed_fuel);
             #[cfg(feature = "debug-log")]
             {
