@@ -140,7 +140,7 @@ pub const TOTAL_FUEL_CHANGE1: u64 = 500_000_000;
 #[cfg(feature = "bellscoin")]
 pub const TOTAL_FUEL_CHANGE1: u64 = 500_000_000;
 
-pub const fn total_fuel(height: U32) -> u64 {
+pub const fn total_fuel(height: u32) -> u64 {
     if height >= FUEL_CHANGE1_HEIGHT {
         TOTAL_FUEL_CHANGE1
     } else {
