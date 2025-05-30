@@ -25,9 +25,9 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 
 use crate::vm::fuel::{
-    consume_fuel, fuel_extcall_deploy, Fuelable, FUEL_BALANCE, FUEL_EXTCALL, FUEL_FUEL,
-    FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE, FUEL_PER_REQUEST_BYTE,
-    FUEL_PER_STORE_BYTE, FUEL_SEQUENCE,
+    consume_fuel, fuel_extcall_deploy, fuel_per_store_byte, Fuelable, FUEL_BALANCE, FUEL_EXTCALL,
+    FUEL_FUEL, FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE,
+    FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
 use protorune_support::utils::consensus_encode;
 use std::io::Cursor;
@@ -594,7 +594,9 @@ impl AlkanesHostFunctionsImpl {
             (subbed, binary)
         };
 
-        let total_fuel = compute_extcall_fuel(storage_map_len)?;
+        let height = caller.data_mut().context.lock().unwrap().message.height as u32;
+
+        let total_fuel = compute_extcall_fuel(storage_map_len, height)?;
 
         #[cfg(feature = "debug-log")]
         {

@@ -305,7 +305,16 @@ pub const fn minimum_fuel(height: u32) -> u64 {
 }
 pub const FUEL_PER_REQUEST_BYTE: u64 = 1;
 pub const FUEL_PER_LOAD_BYTE: u64 = 2;
-pub const FUEL_PER_STORE_BYTE: u64 = 8;
+pub const FUEL_PER_STORE_BYTE_START: u64 = 8;
+pub const FUEL_PER_STORE_BYTE_CHANGE1: u64 = 40;
+pub const fn fuel_per_store_byte(height: u32) -> u64 {
+    if height >= FUEL_CHANGE1_HEIGHT {
+        FUEL_PER_STORE_BYTE_CHANGE1
+    } else {
+        FUEL_PER_STORE_BYTE_START
+    }
+}
+
 pub const FUEL_SEQUENCE: u64 = 5;
 pub const FUEL_FUEL: u64 = 5;
 pub const FUEL_EXTCALL: u64 = 500;
@@ -345,7 +354,7 @@ pub fn consume_fuel<'a>(caller: &mut Caller<'_, AlkanesState>, n: u64) -> Result
     caller.consume_fuel(n)
 }
 
-pub fn compute_extcall_fuel(savecount: u64) -> Result<u64> {
-    let save_fuel = overflow_error(FUEL_PER_STORE_BYTE.checked_mul(savecount))?;
+pub fn compute_extcall_fuel(savecount: u64, height: u32) -> Result<u64> {
+    let save_fuel = overflow_error(fuel_per_store_byte(height).checked_mul(savecount))?;
     overflow_error::<u64>(FUEL_EXTCALL.checked_add(save_fuel))
 }
