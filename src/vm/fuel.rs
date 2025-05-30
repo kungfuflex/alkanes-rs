@@ -88,17 +88,17 @@ impl VirtualFuelBytes for Block {
     feature = "fractal",
     feature = "luckycoin"
 )))]
-pub const FUEL_CHANGE1_HEIGHT: u64 = 899_080;
+pub const FUEL_CHANGE1_HEIGHT: u32 = 899_080;
 #[cfg(feature = "mainnet")]
-pub const FUEL_CHANGE1_HEIGHT: u64 = 899_080;
+pub const FUEL_CHANGE1_HEIGHT: u32 = 899_080;
 #[cfg(feature = "dogecoin")]
-pub const FUEL_CHANGE1_HEIGHT: u64 = 5_730_675;
+pub const FUEL_CHANGE1_HEIGHT: u32 = 5_730_675;
 #[cfg(feature = "fractal")]
-pub const FUEL_CHANGE1_HEIGHT: u64 = 759_865;
+pub const FUEL_CHANGE1_HEIGHT: u32 = 759_865;
 #[cfg(feature = "luckycoin")]
-pub const FUEL_CHANGE1_HEIGHT: u64 = 1_664_317;
+pub const FUEL_CHANGE1_HEIGHT: u32 = 1_664_317;
 #[cfg(feature = "bellscoin")]
-pub const FUEL_CHANGE1_HEIGHT: u64 = 533_970;
+pub const FUEL_CHANGE1_HEIGHT: u32 = 533_970;
 
 //use if regtest
 #[cfg(not(any(

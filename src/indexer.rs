@@ -8,9 +8,9 @@ use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
-use protorune::Protorune;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
+use protorune::Protorune;
 use protorune_support::network::{set_network, NetworkParams};
 
 #[cfg(all(
@@ -86,11 +86,11 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     if really_is_genesis {
         genesis(&block).unwrap();
     }
-    FuelTank::initialize(&block);
+    FuelTank::initialize(&block, height);
 
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
-      Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
+        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 
     #[cfg(feature = "cache")]
     {

@@ -108,7 +108,7 @@ fn test_genesis() -> Result<()> {
     );
 
     // Initialize FuelTank for the first block
-    FuelTank::initialize(&test_block);
+    FuelTank::initialize(&test_block, block_height);
     let pre_genesis_fuel = TOTAL_FUEL_START;
 
     // Process the genesis block
@@ -138,7 +138,7 @@ fn test_genesis() -> Result<()> {
     let test_block2 = alkane_helpers::init_with_multiple_cellpacks_with_tx([].into(), cellpacks2);
 
     // Initialize FuelTank for the second block
-    FuelTank::initialize(&test_block2);
+    FuelTank::initialize(&test_block2, block_height);
     let pre_mint_fuel = unsafe {
         match &FuelTank::get_fuel_tank_copy() {
             Some(tank) => tank.block_fuel,
