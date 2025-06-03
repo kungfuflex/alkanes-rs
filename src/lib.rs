@@ -21,6 +21,8 @@ pub mod etl;
 pub mod indexer;
 pub mod message;
 pub mod network;
+#[cfg(feature = "oyl")]
+pub mod oyl;
 pub mod precompiled;
 pub mod tables;
 #[cfg(any(test, feature = "test-utils"))]
@@ -347,6 +349,143 @@ pub fn runesbyheight() -> i32 {
         protorune::view::runes_by_height(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::new());
     export_bytes(result.write_to_bytes().unwrap())
+}
+
+// ============================================================================
+// OYL PROTOCOL RPC FUNCTIONS
+// ============================================================================
+
+#[cfg(all(not(test), feature = "oyl"))]
+#[no_mangle]
+pub fn oyl_token_info() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let input_data = consume_to_end(&mut data).unwrap();
+    
+    match alkanes_support::proto::oyl::TokenInfoRequest::parse_from_bytes(&input_data) {
+        Ok(request) => {
+            match oyl::view::TokenView::get_token_info(&request) {
+                Ok(response) => export_bytes(response.write_to_bytes().unwrap()),
+                Err(_) => export_bytes(alkanes_support::proto::oyl::TokenInfoResponse::new().write_to_bytes().unwrap())
+            }
+        }
+        Err(_) => export_bytes(alkanes_support::proto::oyl::TokenInfoResponse::new().write_to_bytes().unwrap())
+    }
+}
+
+#[cfg(all(not(test), feature = "oyl"))]
+#[no_mangle]
+pub fn oyl_tokens_by_holder() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let input_data = consume_to_end(&mut data).unwrap();
+    
+    match alkanes_support::proto::oyl::TokensByHolderRequest::parse_from_bytes(&input_data) {
+        Ok(request) => {
+            match oyl::view::TokenView::get_tokens_by_holder(&request) {
+                Ok(response) => export_bytes(response.write_to_bytes().unwrap()),
+                Err(_) => export_bytes(alkanes_support::proto::oyl::TokensByHolderResponse::new().write_to_bytes().unwrap())
+            }
+        }
+        Err(_) => export_bytes(alkanes_support::proto::oyl::TokensByHolderResponse::new().write_to_bytes().unwrap())
+    }
+}
+
+#[cfg(all(not(test), feature = "oyl"))]
+#[no_mangle]
+pub fn oyl_token_holders() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let input_data = consume_to_end(&mut data).unwrap();
+    
+    match alkanes_support::proto::oyl::TokenHoldersRequest::parse_from_bytes(&input_data) {
+        Ok(request) => {
+            match oyl::view::TokenView::get_token_holders(&request) {
+                Ok(response) => export_bytes(response.write_to_bytes().unwrap()),
+                Err(_) => export_bytes(alkanes_support::proto::oyl::TokenHoldersResponse::new().write_to_bytes().unwrap())
+            }
+        }
+        Err(_) => export_bytes(alkanes_support::proto::oyl::TokenHoldersResponse::new().write_to_bytes().unwrap())
+    }
+}
+
+#[cfg(all(not(test), feature = "oyl"))]
+#[no_mangle]
+pub fn oyl_token_price_history() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let input_data = consume_to_end(&mut data).unwrap();
+    
+    match alkanes_support::proto::oyl::TokenPriceHistoryRequest::parse_from_bytes(&input_data) {
+        Ok(request) => {
+            match oyl::view::TokenView::get_token_price_history(&request) {
+                Ok(response) => export_bytes(response.write_to_bytes().unwrap()),
+                Err(_) => export_bytes(alkanes_support::proto::oyl::TokenPriceHistoryResponse::new().write_to_bytes().unwrap())
+            }
+        }
+        Err(_) => export_bytes(alkanes_support::proto::oyl::TokenPriceHistoryResponse::new().write_to_bytes().unwrap())
+    }
+}
+
+#[cfg(all(not(test), feature = "oyl"))]
+#[no_mangle]
+pub fn oyl_pool_info() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let input_data = consume_to_end(&mut data).unwrap();
+    
+    match alkanes_support::proto::oyl::PoolInfoRequest::parse_from_bytes(&input_data) {
+        Ok(request) => {
+            match oyl::view::PoolView::get_pool_info(&request) {
+                Ok(response) => export_bytes(response.write_to_bytes().unwrap()),
+                Err(_) => export_bytes(alkanes_support::proto::oyl::PoolInfoResponse::new().write_to_bytes().unwrap())
+            }
+        }
+        Err(_) => export_bytes(alkanes_support::proto::oyl::PoolInfoResponse::new().write_to_bytes().unwrap())
+    }
+}
+
+#[cfg(all(not(test), feature = "oyl"))]
+#[no_mangle]
+pub fn oyl_pools_by_token() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let input_data = consume_to_end(&mut data).unwrap();
+    
+    match alkanes_support::proto::oyl::PoolsByTokenRequest::parse_from_bytes(&input_data) {
+        Ok(request) => {
+            match oyl::view::PoolView::get_pools_by_token(&request) {
+                Ok(response) => export_bytes(response.write_to_bytes().unwrap()),
+                Err(_) => export_bytes(alkanes_support::proto::oyl::PoolsByTokenResponse::new().write_to_bytes().unwrap())
+            }
+        }
+        Err(_) => export_bytes(alkanes_support::proto::oyl::PoolsByTokenResponse::new().write_to_bytes().unwrap())
+    }
+}
+
+#[cfg(all(not(test), feature = "oyl"))]
+#[no_mangle]
+pub fn oyl_all_pools() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let input_data = consume_to_end(&mut data).unwrap();
+    
+    match alkanes_support::proto::oyl::AllPoolsRequest::parse_from_bytes(&input_data) {
+        Ok(request) => {
+            match oyl::view::PoolView::get_all_pools(&request) {
+                Ok(response) => export_bytes(response.write_to_bytes().unwrap()),
+                Err(_) => export_bytes(alkanes_support::proto::oyl::AllPoolsResponse::new().write_to_bytes().unwrap())
+            }
+        }
+        Err(_) => export_bytes(alkanes_support::proto::oyl::AllPoolsResponse::new().write_to_bytes().unwrap())
+    }
 }
 
 // #[no_mangle]

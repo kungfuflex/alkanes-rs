@@ -61,6 +61,7 @@ amm_factory = ["auth_token"]
 amm = ["amm_pool", "amm_factory"]
 orbital = []
 cache = ["protorune/cache"]
+oyl = []
 all = []
 minimal = [
     "refunder",

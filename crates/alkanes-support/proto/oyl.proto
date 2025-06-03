@@ -1,0 +1,490 @@
+syntax = "proto3";
+package oyl;
+
+// Import common types
+import "alkanes.proto";
+
+// ============================================================================
+// CORE DATA TYPES
+// ============================================================================
+
+message TokenId {
+  alkanes.uint128 block = 1;
+  alkanes.uint128 tx = 2;
+}
+
+message PoolId {
+  alkanes.uint128 block = 1;
+  alkanes.uint128 tx = 2;
+}
+
+message Timestamp {
+  uint64 seconds = 1;
+}
+
+message Price {
+  double value = 1;
+  string currency = 2; // "BTC", "SATS", "USD"
+}
+
+message Volume {
+  alkanes.uint128 amount = 1;
+  Price value_usd = 2;
+}
+
+message Percentage {
+  double value = 1; // 0.0 to 100.0
+}
+
+// ============================================================================
+// TOKEN DATA STRUCTURES
+// ============================================================================
+
+message TokenInfo {
+  TokenId id = 1;
+  string symbol = 2;
+  string name = 3;
+  string logo_url = 4;
+  bytes logo_data = 5;
+  alkanes.uint128 total_supply = 6;
+  alkanes.uint128 circulating_supply = 7;
+  alkanes.uint128 max_supply = 8;
+  Timestamp created_at = 9;
+  uint32 block_created = 10;
+  Percentage mint_progress = 11;
+  repeated string explorer_links = 12;
+}
+
+message TokenPrice {
+  TokenId token_id = 1;
+  Price current_price = 2;
+  Percentage price_change_1h = 3;
+  Percentage price_change_24h = 4;
+  Percentage price_change_7d = 5;
+  Percentage price_change_30d = 6;
+  Percentage price_change_all = 7;
+  Timestamp last_updated = 8;
+}
+
+message TokenHolder {
+  bytes address = 1;
+  alkanes.uint128 balance = 2;
+  Percentage percent_of_supply = 3;
+  Timestamp first_acquired = 4;
+  Timestamp last_activity = 5;
+}
+
+message TokenMetrics {
+  TokenId token_id = 1;
+  uint64 total_holders = 2;
+  Volume volume_1h = 3;
+  Volume volume_24h = 4;
+  Volume volume_7d = 5;
+  Volume volume_30d = 6;
+  Volume volume_all = 7;
+  Price market_cap = 8;
+  Price fdv = 9; // Fully diluted valuation
+  Price tvl = 10; // Total value locked
+  uint32 pool_count = 11;
+}
+
+// ============================================================================
+// POOL DATA STRUCTURES
+// ============================================================================
+
+message PoolInfo {
+  PoolId id = 1;
+  TokenId token_a = 2;
+  TokenId token_b = 3;
+  string name = 4; // e.g., "BTC / USDT LP"
+  alkanes.uint128 reserve_a = 5;
+  alkanes.uint128 reserve_b = 6;
+  alkanes.uint128 total_supply = 7; // LP token supply
+  Timestamp created_at = 8;
+  uint32 block_created = 9;
+  string explorer_link = 10;
+  TokenId factory_id = 11;
+}
+
+message PoolMetrics {
+  PoolId pool_id = 1;
+  Price tvl = 2;
+  Percentage tvl_change_1h = 3;
+  Percentage tvl_change_24h = 4;
+  Percentage tvl_change_7d = 5;
+  Percentage tvl_change_30d = 6;
+  Volume volume_1h = 7;
+  Volume volume_24h = 8;
+  Volume volume_7d = 9;
+  Volume volume_30d = 10;
+  Volume volume_all = 11;
+  Percentage apr = 12; // Annual percentage return
+  Price fees_earned_1h = 13;
+  Price fees_earned_24h = 14;
+  Price fees_earned_7d = 15;
+  Price fees_earned_30d = 16;
+  Price fees_earned_all = 17;
+}
+
+message PoolTransaction {
+  bytes tx_hash = 1;
+  PoolId pool_id = 2;
+  Timestamp timestamp = 3;
+  uint32 block_height = 4;
+  TransactionType type = 5;
+  bytes from_address = 6;
+  bytes to_address = 7;
+  repeated TokenAmount token_amounts = 8;
+  Price total_value_usd = 9;
+  string explorer_url = 10;
+}
+
+enum TransactionType {
+  TX_UNKNOWN = 0;
+  TX_SWAP = 1;
+  TX_ADD_LIQUIDITY = 2;
+  TX_REMOVE_LIQUIDITY = 3;
+  TX_COLLECT_FEES = 4;
+}
+
+message TokenAmount {
+  TokenId token_id = 1;
+  alkanes.uint128 amount = 2;
+  Price value_usd = 3;
+}
+
+// ============================================================================
+// POSITION DATA STRUCTURES
+// ============================================================================
+
+message Position {
+  PoolId pool_id = 1;
+  bytes wallet_address = 2;
+  alkanes.uint128 lp_token_balance = 3;
+  Percentage share_percent = 4;
+  repeated TokenAmount tokens_supplied = 5;
+  Price fees_earned_realized = 6;
+  Price fees_earned_unrealized = 7;
+  Timestamp created_at = 8;
+  uint32 block_created = 9;
+  Timestamp last_updated = 10;
+}
+
+// ============================================================================
+// ACTIVITY DATA STRUCTURES
+// ============================================================================
+
+message ActivityEvent {
+  bytes tx_hash = 1;
+  Timestamp timestamp = 2;
+  uint32 block_height = 3;
+  ActivityType type = 4;
+  bytes from_address = 5;
+  bytes to_address = 6;
+  TokenId token_id = 7;
+  alkanes.uint128 amount = 8;
+  Price value_usd = 9;
+  string explorer_url = 10;
+  PoolId pool_id = 11; // Optional, for pool-related activities
+  bytes additional_data = 12; // Flexible field for extra context
+}
+
+enum ActivityType {
+  ACTIVITY_UNKNOWN = 0;
+  ACTIVITY_SEND = 1;
+  ACTIVITY_RECEIVE = 2;
+  ACTIVITY_MINT = 3;
+  ACTIVITY_BURN = 4;
+  ACTIVITY_SWAP_IN = 5;
+  ACTIVITY_SWAP_OUT = 6;
+  ACTIVITY_ADD_LIQUIDITY = 7;
+  ACTIVITY_REMOVE_LIQUIDITY = 8;
+  ACTIVITY_COLLECT_FEES = 9;
+}
+
+message ActivityFeed {
+  repeated ActivityEvent events = 1;
+  uint64 total_count = 2;
+  bool has_more = 3;
+  bytes next_cursor = 4; // For pagination
+}
+
+// ============================================================================
+// TIME SERIES DATA STRUCTURES
+// ============================================================================
+
+message PricePoint {
+  Timestamp timestamp = 1;
+  Price price = 2;
+  Volume volume = 3;
+}
+
+message PriceHistory {
+  TokenId token_id = 1;
+  repeated PricePoint points = 2;
+  Timestamp start_time = 3;
+  Timestamp end_time = 4;
+  string interval = 5; // "1h", "1d", "1w", etc.
+}
+
+message VolumePoint {
+  Timestamp timestamp = 1;
+  Volume volume = 2;
+  uint32 transaction_count = 3;
+}
+
+message VolumeHistory {
+  oneof target {
+    TokenId token_id = 1;
+    PoolId pool_id = 2;
+  }
+  repeated VolumePoint points = 3;
+  Timestamp start_time = 4;
+  Timestamp end_time = 5;
+  string interval = 6;
+}
+
+// ============================================================================
+// REQUEST/RESPONSE MESSAGES
+// ============================================================================
+
+// Token Requests/Responses
+message TokenInfoRequest {
+  TokenId token_id = 1;
+  bool include_metrics = 2;
+  bool include_price = 3;
+}
+
+message TokenInfoResponse {
+  TokenInfo token = 1;
+  TokenMetrics metrics = 2;
+  TokenPrice price = 3;
+}
+
+message TokensByHolderRequest {
+  bytes wallet_address = 1;
+  uint32 limit = 2;
+  bytes cursor = 3; // For pagination
+  bool include_zero_balances = 4;
+}
+
+message TokensByHolderResponse {
+  repeated TokenHolder holdings = 1;
+  bool has_more = 2;
+  bytes next_cursor = 3;
+}
+
+message TokenHoldersRequest {
+  TokenId token_id = 1;
+  uint32 limit = 2;
+  bytes cursor = 3;
+  alkanes.uint128 min_balance = 4;
+}
+
+message TokenHoldersResponse {
+  repeated TokenHolder holders = 1;
+  uint64 total_holders = 2;
+  bool has_more = 3;
+  bytes next_cursor = 4;
+}
+
+message TokenPriceHistoryRequest {
+  TokenId token_id = 1;
+  Timestamp start_time = 2;
+  Timestamp end_time = 3;
+  string interval = 4; // "1h", "1d", "1w"
+  string currency = 5; // "BTC", "SATS", "USD"
+}
+
+message TokenPriceHistoryResponse {
+  PriceHistory history = 1;
+}
+
+// Pool Requests/Responses
+message PoolInfoRequest {
+  PoolId pool_id = 1;
+  bool include_metrics = 2;
+}
+
+message PoolInfoResponse {
+  PoolInfo pool = 1;
+  PoolMetrics metrics = 2;
+}
+
+message PoolsByTokenRequest {
+  TokenId token_id = 1;
+  uint32 limit = 2;
+  bytes cursor = 3;
+  bool include_metrics = 4;
+}
+
+message PoolsByTokenResponse {
+  repeated PoolInfo pools = 1;
+  repeated PoolMetrics metrics = 2;
+  bool has_more = 3;
+  bytes next_cursor = 4;
+}
+
+message PoolTransactionsRequest {
+  PoolId pool_id = 1;
+  Timestamp start_time = 2;
+  Timestamp end_time = 3;
+  repeated TransactionType types = 4; // Filter by transaction types
+  uint32 limit = 5;
+  bytes cursor = 6;
+}
+
+message PoolTransactionsResponse {
+  repeated PoolTransaction transactions = 1;
+  bool has_more = 2;
+  bytes next_cursor = 3;
+}
+
+message AllPoolsRequest {
+  uint32 limit = 1;
+  bytes cursor = 2;
+  bool include_metrics = 3;
+  string sort_by = 4; // "tvl", "volume", "created_at"
+  bool descending = 5;
+}
+
+message AllPoolsResponse {
+  repeated PoolInfo pools = 1;
+  repeated PoolMetrics metrics = 2;
+  uint64 total_pools = 3;
+  bool has_more = 4;
+  bytes next_cursor = 5;
+}
+
+// Position Requests/Responses
+message PositionsByAddressRequest {
+  bytes wallet_address = 1;
+  uint32 limit = 2;
+  bytes cursor = 3;
+  bool include_zero_positions = 4;
+}
+
+message PositionsByAddressResponse {
+  repeated Position positions = 1;
+  bool has_more = 2;
+  bytes next_cursor = 3;
+}
+
+message PositionsByPoolRequest {
+  PoolId pool_id = 1;
+  uint32 limit = 2;
+  bytes cursor = 3;
+  alkanes.uint128 min_lp_balance = 4;
+}
+
+message PositionsByPoolResponse {
+  repeated Position positions = 1;
+  uint64 total_positions = 2;
+  bool has_more = 3;
+  bytes next_cursor = 4;
+}
+
+// Activity Requests/Responses
+message ActivityByTokenRequest {
+  TokenId token_id = 1;
+  Timestamp start_time = 2;
+  Timestamp end_time = 3;
+  repeated ActivityType types = 4;
+  uint32 limit = 5;
+  bytes cursor = 6;
+}
+
+message ActivityByTokenResponse {
+  ActivityFeed feed = 1;
+}
+
+message ActivityByAddressRequest {
+  bytes wallet_address = 1;
+  Timestamp start_time = 2;
+  Timestamp end_time = 3;
+  repeated ActivityType types = 4;
+  repeated TokenId token_filter = 5; // Optional token filter
+  uint32 limit = 6;
+  bytes cursor = 7;
+}
+
+message ActivityByAddressResponse {
+  ActivityFeed feed = 1;
+}
+
+message ActivityByPoolRequest {
+  PoolId pool_id = 1;
+  Timestamp start_time = 2;
+  Timestamp end_time = 3;
+  repeated ActivityType types = 4;
+  uint32 limit = 5;
+  bytes cursor = 6;
+}
+
+message ActivityByPoolResponse {
+  ActivityFeed feed = 1;
+}
+
+// Analytics Requests/Responses
+message TokenAnalyticsRequest {
+  TokenId token_id = 1;
+  Timestamp start_time = 2;
+  Timestamp end_time = 3;
+  string interval = 4;
+}
+
+message TokenAnalyticsResponse {
+  PriceHistory price_history = 1;
+  VolumeHistory volume_history = 2;
+  repeated TokenHolder top_holders = 3;
+  repeated PoolInfo pools = 4;
+  TokenMetrics current_metrics = 5;
+}
+
+message PoolAnalyticsRequest {
+  PoolId pool_id = 1;
+  Timestamp start_time = 2;
+  Timestamp end_time = 3;
+  string interval = 4;
+}
+
+message PoolAnalyticsResponse {
+  VolumeHistory volume_history = 1;
+  repeated PricePoint tvl_history = 2;
+  repeated PoolTransaction recent_transactions = 3;
+  repeated Position top_positions = 4;
+  PoolMetrics current_metrics = 5;
+}
+
+// Global Analytics
+message GlobalAnalyticsRequest {
+  Timestamp start_time = 1;
+  Timestamp end_time = 2;
+  string interval = 3;
+}
+
+message GlobalAnalyticsResponse {
+  Price total_tvl = 1;
+  Volume total_volume_24h = 2;
+  uint64 total_pools = 3;
+  uint64 total_tokens = 4;
+  uint64 total_users = 5;
+  repeated TokenInfo top_tokens_by_volume = 6;
+  repeated PoolInfo top_pools_by_tvl = 7;
+  repeated VolumePoint volume_history = 8;
+}
+
+// Display Options
+message DisplayOptions {
+  string unit = 1; // "BTC", "SATS", "USD"
+  string locale = 2; // "en-US", etc.
+  uint32 decimal_places = 3;
+  bool use_scientific_notation = 4;
+}
+
+// Error Response
+message ErrorResponse {
+  string error_code = 1;
+  string error_message = 2;
+  bytes error_details = 3;
+}

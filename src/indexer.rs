@@ -92,6 +92,14 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     let _updated_addresses =
         Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 
+    // Index OYL protocol data if the feature is enabled
+    #[cfg(feature = "oyl")]
+    {
+        if let Err(e) = crate::oyl::indexer::OylIndexer::index_oyl_block_data(block, height) {
+            println!("OYL indexing error: {:?}", e);
+        }
+    }
+
     #[cfg(feature = "cache")]
     {
         // Cache the WalletResponse for each updated address
