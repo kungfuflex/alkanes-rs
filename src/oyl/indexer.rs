@@ -212,8 +212,9 @@ impl OylIndexer {
             .map_err(|e| OylError::SerializationError(e.to_string()))?;
         
         let timestamp_key = StorageUtils::timestamp_to_key(timestamp);
+        let activity_type_bytes = vec![(ActivityType::ACTIVITY_ADD_LIQUIDITY as u8)];
         ACTIVITIES_BY_TYPE
-            .select(&(ActivityType::ACTIVITY_ADD_LIQUIDITY as u8).to_le_bytes())
+            .select(&activity_type_bytes)
             .select(&timestamp_key)
             .set(Arc::new(activity_bytes));
         
@@ -259,9 +260,12 @@ impl OylIndexer {
                 .map_err(|e| OylError::SerializationError(e.to_string()))?;
             POOL_INFO.select(&pool_key).set(Arc::new(pool_bytes));
             
-            // Update pool count
+            // Update pool count using the storage utilities pattern
             let current_count = POOL_COUNT.get_value::<u64>();
-            POOL_COUNT.set_value::<u64>(current_count + 1);
+            let new_count = current_count + 1;
+            // Use the same pattern as in storage utilities - create a temporary key for the count
+            let empty_key = Vec::new();
+            POOL_COUNT.select(&empty_key).set_value::<u64>(new_count);
             
             // Add to all pools list
             let pool_id_bytes = StorageUtils::alkane_id_to_key(pool_id);
@@ -385,8 +389,9 @@ impl OylIndexer {
             .set(Arc::new(activity_bytes.clone()));
         
         // Index by type
+        let activity_type_bytes = vec![(activity.type_.value() as u8)];
         ACTIVITIES_BY_TYPE
-            .select(&(activity.type_.value() as u8).to_le_bytes())
+            .select(&activity_type_bytes)
             .select(&timestamp_key)
             .set(Arc::new(activity_bytes.clone()));
         
@@ -425,8 +430,9 @@ impl OylIndexer {
             .map_err(|e| OylError::SerializationError(e.to_string()))?;
         
         let timestamp_key = StorageUtils::timestamp_to_key(timestamp);
+        let activity_type_bytes = vec![(ActivityType::ACTIVITY_UNKNOWN.value() as u8)];
         ACTIVITIES_BY_TYPE
-            .select(&(ActivityType::ACTIVITY_UNKNOWN.value() as u8).to_le_bytes())
+            .select(&activity_type_bytes)
             .select(&timestamp_key)
             .set(Arc::new(activity_bytes));
         

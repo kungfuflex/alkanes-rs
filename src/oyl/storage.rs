@@ -5,7 +5,8 @@
 //! activities, and time-series data.
 
 use alkanes_support::id::AlkaneId;
-use metashrew_support::index_pointer::{KeyValuePointer, IndexPointer};
+use metashrew_core::index_pointer::{IndexPointer};
+use metashrew_support::index_pointer::{KeyValuePointer};
 use std::sync::LazyLock;
 use crate::oyl::{OylError, OylResult};
 use std::sync::Arc;
