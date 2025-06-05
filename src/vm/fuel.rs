@@ -195,6 +195,22 @@ impl FuelTank {
         tank.block_metered_fuel = tank.block_fuel * txsize / tank.size;
 
         // Ensure minimum fuel allocation
+
+        #[cfg(not(any(
+            feature = "mainnet",
+            feature = "dogecoin",
+            feature = "bellscoin",
+            feature = "fractal",
+            feature = "luckycoin"
+        )))]
+        tank.transaction_fuel = minimum_fuel(height); // for testing it is useful to assume we always get minimum fuel
+        #[cfg(any(
+            feature = "mainnet",
+            feature = "dogecoin",
+            feature = "bellscoin",
+            feature = "fractal",
+            feature = "luckycoin"
+        ))]
         tank.transaction_fuel = std::cmp::max(minimum_fuel(height), tank.block_metered_fuel);
 
         // Deduct allocated fuel from block fuel
