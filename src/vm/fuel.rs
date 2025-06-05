@@ -185,6 +185,37 @@ impl FuelTank {
         });
     }
 
+    #[cfg(not(any(
+        feature = "mainnet",
+        feature = "dogecoin",
+        feature = "bellscoin",
+        feature = "fractal",
+        feature = "luckycoin"
+    )))]
+    pub fn _calculate_transaction_fuel(height: u32) -> u64 {
+        // for testing it is useful to assume we always get minimum fuel
+        minimum_fuel(height)
+    }
+
+    #[cfg(any(
+        feature = "mainnet",
+        feature = "dogecoin",
+        feature = "bellscoin",
+        feature = "fractal",
+        feature = "luckycoin"
+    ))]
+    pub fn _calculate_transaction_fuel(height: u32) -> u64 {
+        std::cmp::max(
+            minimum_fuel(height),
+            _FUEL_TANK
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_metered_fuel,
+        )
+    }
+
     pub fn fuel_transaction(txsize: u64, txindex: u32, height: u32) {
         let mut tank = _FUEL_TANK.write().unwrap();
         let tank = tank.as_mut().unwrap();
@@ -194,24 +225,7 @@ impl FuelTank {
         let _block_fuel_before = tank.block_fuel;
         tank.block_metered_fuel = tank.block_fuel * txsize / tank.size;
 
-        // Ensure minimum fuel allocation
-
-        #[cfg(not(any(
-            feature = "mainnet",
-            feature = "dogecoin",
-            feature = "bellscoin",
-            feature = "fractal",
-            feature = "luckycoin"
-        )))]
-        tank.transaction_fuel = minimum_fuel(height); // for testing it is useful to assume we always get minimum fuel
-        #[cfg(any(
-            feature = "mainnet",
-            feature = "dogecoin",
-            feature = "bellscoin",
-            feature = "fractal",
-            feature = "luckycoin"
-        ))]
-        tank.transaction_fuel = std::cmp::max(minimum_fuel(height), tank.block_metered_fuel);
+        tank.transaction_fuel = FuelTank::_calculate_transaction_fuel(height);
 
         // Deduct allocated fuel from block fuel
         tank.block_fuel = tank.block_fuel - std::cmp::min(tank.block_fuel, tank.block_metered_fuel);
