@@ -194,7 +194,7 @@ impl FuelTank {
     )))]
     pub fn _calculate_transaction_fuel(tank: &FuelTank, height: u32) -> u64 {
         // for testing it is useful to assume we always get minimum fuel
-        std::cmp::max(minimum_fuel(height), tank.block_metered_fuel)
+        minimum_fuel(height)
     }
 
     #[cfg(any(
