@@ -314,17 +314,6 @@ pub fn prepare_context(
     }
 }
 
-pub fn run(
-    context: Arc<Mutex<AlkanesRuntimeContext>>,
-    cellpack: &Cellpack,
-    start_fuel: u64,
-    delegate: bool,
-) -> Result<(ExtendedCallResponse, u64)> {
-    let (caller, myself, binary) = run_special_cellpacks(context.clone(), cellpack)?;
-    prepare_context(context.clone(), &caller, &myself, delegate);
-    run_after_special(context, binary, start_fuel)
-}
-
 pub fn send_to_arraybuffer<'a>(
     caller: &mut Caller<'_, AlkanesState>,
     ptr: usize,
