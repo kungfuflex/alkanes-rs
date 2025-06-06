@@ -16,6 +16,7 @@ extern "C" {
     pub fn __sequence(output: i32);
     pub fn __fuel(output: i32);
     pub fn __height(output: i32);
+    pub fn __blocktime(output: i32);
     pub fn __returndatacopy(output: i32);
     pub fn __request_transaction() -> i32;
     pub fn __load_transaction(output: i32);
@@ -101,6 +102,7 @@ mod exports {
     pub fn __sequence(output: i32) {}
     pub fn __fuel(output: i32) {}
     pub fn __height(output: i32) {}
+    pub fn __blocktime(output: i32) {}
     pub fn __returndatacopy(output: i32) {}
     pub fn __request_transaction() -> i32 {
         0

@@ -25,9 +25,9 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 
 use crate::vm::fuel::{
-    consume_fuel, fuel_extcall_deploy, fuel_per_store_byte, Fuelable, FUEL_BALANCE, FUEL_EXTCALL,
-    FUEL_FUEL, FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE,
-    FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
+    consume_fuel, fuel_extcall_deploy, fuel_per_store_byte, Fuelable, FUEL_BALANCE,
+    FUEL_BLOCK_TIME, FUEL_EXTCALL, FUEL_FUEL, FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION,
+    FUEL_PER_LOAD_BYTE, FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
 use protorune_support::utils::consensus_encode;
 use std::io::Cursor;
@@ -389,6 +389,31 @@ impl AlkanesHostFunctionsImpl {
         consume_fuel(caller, FUEL_HEIGHT)?;
 
         send_to_arraybuffer(caller, output.try_into()?, &height)?;
+        Ok(())
+    }
+    pub(super) fn block_time(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+        let time_value = caller
+            .data_mut()
+            .context
+            .lock()
+            .unwrap()
+            .message
+            .block
+            .header
+            .time as u64;
+        let time = (&time_value.to_le_bytes()).to_vec();
+
+        #[cfg(feature = "debug-log")]
+        {
+            println!(
+                "block_time: time={}, fuel_cost={}",
+                time_value, FUEL_BLOCK_TIME
+            );
+        }
+
+        consume_fuel(caller, FUEL_BLOCK_TIME)?;
+
+        send_to_arraybuffer(caller, output.try_into()?, &time)?;
         Ok(())
     }
     pub(super) fn balance<'a>(
@@ -757,6 +782,10 @@ impl SafeAlkanesHostFunctionsImpl {
 
     pub(super) fn height(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::height(c, output))
+    }
+
+    pub(super) fn block_time(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+        Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::block_time(c, output))
     }
 
     pub(super) fn handle_extcall<'a, T: Extcall>(

@@ -195,6 +195,15 @@ impl AlkanesInstance {
                 }
             },
         )?;
+        linker.func_wrap(
+            "env",
+            "__blocktime",
+            |mut caller: Caller<'_, AlkanesState>, output: i32| {
+                if let Err(_e) = SafeAlkanesHostFunctionsImpl::block_time(&mut caller, output) {
+                    SafeAlkanesHostFunctionsImpl::_abort(caller);
+                }
+            },
+        )?;
 
         linker.func_wrap(
             "env",

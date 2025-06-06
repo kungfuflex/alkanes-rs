@@ -349,6 +349,7 @@ pub const FUEL_SEQUENCE: u64 = 5;
 pub const FUEL_FUEL: u64 = 5;
 pub const FUEL_EXTCALL: u64 = 500;
 pub const FUEL_HEIGHT: u64 = 10;
+pub const FUEL_BLOCK_TIME: u64 = 10;
 pub const FUEL_BALANCE: u64 = 10;
 pub const FUEL_EXTCALL_DEPLOY_START: u64 = 10_000;
 pub const FUEL_EXTCALL_DEPLOY_CHANGE1: u64 = 100_000;

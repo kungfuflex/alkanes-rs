@@ -5,7 +5,7 @@ use crate::imports::{
     __request_storage, __request_transaction, __returndatacopy, __sequence, __staticcall,
     abort, /*, __load_output, __request_output */
 };
-use crate::storage::StoragePointer;
+use crate::{imports::__blocktime, storage::StoragePointer};
 #[allow(unused_imports)]
 use crate::{
     println,
@@ -280,6 +280,13 @@ pub trait AlkaneResponder: 'static {
         unsafe {
             let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; 8]);
             __height(to_ptr(&mut buffer) + 4);
+            u64::from_le_bytes((&buffer[4..]).try_into().unwrap())
+        }
+    }
+    fn blocktime(&self) -> u64 {
+        unsafe {
+            let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; 8]);
+            __blocktime(to_ptr(&mut buffer) + 4);
             u64::from_le_bytes((&buffer[4..]).try_into().unwrap())
         }
     }
