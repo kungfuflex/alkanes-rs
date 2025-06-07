@@ -192,7 +192,7 @@ impl FuelTank {
         feature = "fractal",
         feature = "luckycoin"
     )))]
-    pub fn _calculate_transaction_fuel(height: u32) -> u64 {
+    pub fn _calculate_transaction_fuel(tank: &FuelTank, height: u32) -> u64 {
         // for testing it is useful to assume we always get minimum fuel
         minimum_fuel(height)
     }
@@ -204,16 +204,8 @@ impl FuelTank {
         feature = "fractal",
         feature = "luckycoin"
     ))]
-    pub fn _calculate_transaction_fuel(height: u32) -> u64 {
-        std::cmp::max(
-            minimum_fuel(height),
-            _FUEL_TANK
-                .read()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_metered_fuel,
-        )
+    pub fn _calculate_transaction_fuel(tank: &FuelTank, height: u32) -> u64 {
+        std::cmp::max(minimum_fuel(height), tank.block_metered_fuel)
     }
 
     pub fn fuel_transaction(txsize: u64, txindex: u32, height: u32) {
@@ -225,7 +217,7 @@ impl FuelTank {
         let _block_fuel_before = tank.block_fuel;
         tank.block_metered_fuel = tank.block_fuel * txsize / tank.size;
 
-        tank.transaction_fuel = FuelTank::_calculate_transaction_fuel(height);
+        tank.transaction_fuel = FuelTank::_calculate_transaction_fuel(&tank, height);
 
         // Deduct allocated fuel from block fuel
         tank.block_fuel = tank.block_fuel - std::cmp::min(tank.block_fuel, tank.block_metered_fuel);
