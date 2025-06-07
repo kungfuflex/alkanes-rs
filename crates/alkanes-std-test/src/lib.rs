@@ -85,6 +85,9 @@ enum LoggerAlkaneMessage {
 
     #[opcode(100)]
     Revert,
+
+    #[opcode(101)]
+    SpecialExtcall,
 }
 
 impl LoggerAlkane {
@@ -321,6 +324,20 @@ impl LoggerAlkane {
 
     fn revert(&self) -> Result<CallResponse> {
         Err(anyhow!("Revert"))
+    }
+
+    fn special_extcall(&self) -> Result<CallResponse> {
+        self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 0,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )
     }
 }
 
