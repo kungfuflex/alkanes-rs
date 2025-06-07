@@ -1,24 +1,22 @@
+use crate::index_block;
+use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_test_build;
+use alkane_helpers::clear;
+use alkanes::view;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::block::Header;
-use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
-use protorune::test_helpers::create_coinbase_transaction;
-use protorune_support::protostone::ProtostoneEdict;
-use protorune_support::utils::consensus_decode;
-
-use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};
-use alkane_helpers::clear;
-use alkanes::view;
+use bitcoin::OutPoint;
+use bitcoin::Transaction;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
-use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune::test_helpers::create_coinbase_transaction;
+use protorune_support::utils::consensus_decode;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -31,7 +29,7 @@ fn test_special_extcall() -> Result<()> {
         inputs: vec![101],
     };
     let get_coinbase_tx = Cellpack {
-        target: AlkaneId { block: 1, tx: 0 },
+        target: AlkaneId { block: 2, tx: 1 },
         inputs: vec![102],
     };
 
