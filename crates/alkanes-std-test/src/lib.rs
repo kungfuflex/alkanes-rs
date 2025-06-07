@@ -6,7 +6,10 @@ use alkanes_support::{
     response::CallResponse,
 };
 use anyhow::{anyhow, Result};
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use metashrew_support::{
+    compat::{to_arraybuffer_layout, to_passback_ptr},
+    utils::consensus_encode,
+};
 use sha2::{Digest, Sha256};
 #[allow(unused_imports)]
 use {
@@ -87,7 +90,10 @@ enum LoggerAlkaneMessage {
     Revert,
 
     #[opcode(101)]
-    SpecialExtcall,
+    MyGetBlockHeader,
+
+    #[opcode(102)]
+    MyGetCoinbaseTx,
 }
 
 impl LoggerAlkane {
@@ -326,18 +332,22 @@ impl LoggerAlkane {
         Err(anyhow!("Revert"))
     }
 
-    fn special_extcall(&self) -> Result<CallResponse> {
-        self.staticcall(
-            &Cellpack {
-                target: AlkaneId {
-                    block: 800000000,
-                    tx: 0,
-                },
-                inputs: vec![],
-            },
-            &AlkaneTransferParcel::default(),
-            self.fuel(),
-        )
+    fn my_get_block_header(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let header = self.block_header()?;
+        response.data = consensus_encode(&header)?;
+
+        Ok(response)
+    }
+
+    fn my_get_coinbase_tx(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let tx = self.coinbase_tx()?;
+        response.data = consensus_encode(&tx)?;
+
+        Ok(response)
     }
 }
 

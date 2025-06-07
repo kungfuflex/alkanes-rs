@@ -12,9 +12,10 @@ use crate::{
     stdio::{stdout, Write},
 };
 use anyhow::{anyhow, Result};
+use bitcoin::{block::Header, Transaction};
 #[allow(unused_imports)]
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr, to_ptr};
-use metashrew_support::index_pointer::KeyValuePointer;
+use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_decode};
 use std::io::Cursor;
 
 #[cfg(feature = "panic-hook")]
@@ -314,5 +315,35 @@ pub trait AlkaneResponder: 'static {
         fuel: u64,
     ) -> Result<CallResponse> {
         self.extcall::<Staticcall>(cellpack, outgoing_alkanes, fuel)
+    }
+
+    fn block_header(&self) -> Result<Header> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 0,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        consensus_decode::<Header>(&mut std::io::Cursor::new(result.data))
+    }
+
+    fn coinbase_tx(&self) -> Result<Transaction> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 1,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        consensus_decode::<Transaction>(&mut std::io::Cursor::new(result.data))
     }
 }
