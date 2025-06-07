@@ -380,6 +380,53 @@ macro_rules! declare_alkane {
 }
 ```
 
+### 3.1 Precompiled Contracts
+
+ALKANES implements a concept similar to Ethereum's precompiled contracts by hooking the staticcall host function to add new functions to the execution environment:
+
+```rust
+// Example implementation in the staticcall host function
+fn staticcall(target: AlkaneId, inputs: Vec<u128>, fuel: u64) -> Result<CallResponse> {
+    // Check for precompiled contract addresses
+    if target.block == 800000000 { // 8e8
+        match target.tx {
+            0 => {
+                // Return the current block header
+                let block_header = get_current_block_header();
+                let mut response = CallResponse::default();
+                response.data = block_header.to_vec();
+                Ok(response)
+            },
+            1 => {
+                // Return the coinbase transaction bytes
+                let coinbase_tx = get_coinbase_transaction();
+                let mut response = CallResponse::default();
+                response.data = coinbase_tx.to_vec();
+                Ok(response)
+            },
+            _ => Err(anyhow!("Unknown precompiled contract")),
+        }
+    } else {
+        // Regular contract call logic
+        // ...
+    }
+}
+```
+
+Key characteristics of precompiled contracts:
+
+- **Special Addresses**: Precompiled contracts use specific AlkaneId values:
+  - `{ block: 8e8, tx: 0 }`: Returns the current block header
+  - `{ block: 8e8, tx: 1 }`: Returns the coinbase transaction bytes
+
+- **Efficient Access**: Provides direct access to blockchain data without requiring separate storage or indexing
+
+- **Standard Interface**: Uses the same CallResponse structure as regular contracts, with data field containing the requested information
+
+- **Performance**: Implemented natively in the host environment, avoiding WASM execution overhead
+
+- **Extensibility**: The pattern can be extended to support additional precompiled functions by adding more tx values
+
 ### 4. Storage Abstraction
 
 The system provides a key-value storage abstraction for contract state:

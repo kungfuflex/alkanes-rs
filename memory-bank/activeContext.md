@@ -30,7 +30,16 @@ Based on the existing codebase, the project appears to have established:
    - Bellscoin
    - Fractal
 
-4. **Fuel Management Improvements**: The fuel system has been updated to correctly handle fuel refunding and consumption:
+4. **Precompiled Contract Implementation**: Added Ethereum-inspired precompiled contracts by hooking the staticcall host function:
+   - Implemented special handling for specific AlkaneId values in the extcall function
+   - AlkaneId with { block: 8e8, tx: 0 } now returns the block header from the current block
+   - AlkaneId with { block: 8e8, tx: 1 } now returns the bytes of the coinbase transaction
+   - Added proper error handling for invalid precompiled contract addresses
+   - Ensured trace events are properly recorded for precompiled contract calls
+   - No fuel is consumed for these efficient native operations
+   - This provides efficient access to blockchain data directly from the execution environment
+
+5. **Fuel Management Improvements**: The fuel system has been updated to correctly handle fuel refunding and consumption:
    - Fixed the `consume_fuel` method to properly track remaining fuel and provide clearer error messages
    - Updated the `drain_fuel` method to avoid incorrect fuel deductions in error cases
    - Ensured that only the actual remaining fuel (not the initially allocated amount) is refunded to the block
@@ -70,25 +79,35 @@ Based on the existing codebase, the project appears to have established:
 
 Based on the project structure and documentation, potential next steps could include:
 
-1. **Enhanced DeFi Primitives**: Expanding the standard library with additional DeFi components:
+1. **OYL Feature Implementation**: There appears to be ongoing planning for a new feature or module called "OYL":
+   - Planning documents (OYL_ACTION_PLAN.md, OYL_REFERENCE_MATERIAL.md, OYL_IMPLEMENTATION_STRATEGY.md) are being developed
+   - Module structure (utils.rs, view.rs, mod.rs, indexer.rs) is being designed
+   - Protocol buffer definition (oyl.proto) is being prepared
+   - This feature is in the early planning stages with no committed code yet
+
+2. **ABI Enhancements**: Adding return type attributes to function definitions in the ABI:
+   - Specifying what gets put in the .data field of the CallResponse
+   - For example, defining the get_name function in the owned token contract with a return type of string
+
+3. **Enhanced DeFi Primitives**: Expanding the standard library with additional DeFi components:
    - Lending and borrowing protocols
    - Staking and yield farming
    - Derivatives and synthetic assets
    - Governance mechanisms
 
-2. **Developer Tooling**: Improving the developer experience:
+4. **Developer Tooling**: Improving the developer experience:
    - CLI tools for contract deployment and interaction
    - Testing frameworks and simulation environments
    - Documentation and examples
    - Client libraries for different languages
 
-3. **Performance Optimization**: Enhancing system performance:
+5. **Performance Optimization**: Enhancing system performance:
    - Optimizing state access patterns
    - Improving WASM execution efficiency
    - Reducing memory usage
    - Enhancing indexing speed
 
-4. **Integration Testing**: Comprehensive testing across networks:
+6. **Integration Testing**: Comprehensive testing across networks:
    - End-to-end testing with real blockchain data
    - Stress testing with high transaction volumes
    - Security audits and vulnerability testing
@@ -98,15 +117,17 @@ Based on the project structure and documentation, potential next steps could inc
 
 1. **Message Dispatch Framework**: The project has implemented a message dispatch framework using Rust enums and traits to simplify contract development and ABI generation. This approach provides a clean interface for defining contract methods and handling parameters.
 
-2. **Storage Abstraction**: The system uses a key-value storage abstraction for contract state, providing a consistent interface across different storage backends. This allows for efficient state caching and batching.
+2. **ABI Enhancements**: There is ongoing work to enhance the ABI by adding return type attributes to function definitions. This will specify what gets put in the .data field of the CallResponse. For example, the get_name function in the owned token contract would have a return type of string.
 
-3. **Fuel Metering**: Computation is metered using a fuel system to prevent DoS attacks, with block-level fuel allocation and transaction-level fuel tracking. This ensures that contracts cannot consume excessive resources.
+3. **Storage Abstraction**: The system uses a key-value storage abstraction for contract state, providing a consistent interface across different storage backends. This allows for efficient state caching and batching.
 
-4. **Cross-Network Compatibility**: The system supports multiple Bitcoin-based networks through feature flags and configuration, allowing for network-specific parameters and conditional compilation for different targets.
+4. **Fuel Metering**: Computation is metered using a fuel system to prevent DoS attacks, with block-level fuel allocation and transaction-level fuel tracking. This ensures that contracts cannot consume excessive resources.
 
-5. **Error Handling Strategy**: The project uses Rust's `anyhow` for error handling, providing rich error context, propagation of errors across boundaries, and consistent error reporting.
+5. **Cross-Network Compatibility**: The system supports multiple Bitcoin-based networks through feature flags and configuration, allowing for network-specific parameters and conditional compilation for different targets.
 
-6. **Testing Approach**: The system employs multiple testing strategies, including unit tests, integration tests, end-to-end tests, and WASM tests. This comprehensive approach ensures correctness at all levels of the system.
+6. **Error Handling Strategy**: The project uses Rust's `anyhow` for error handling, providing rich error context, propagation of errors across boundaries, and consistent error reporting.
+
+7. **Testing Approach**: The system employs multiple testing strategies, including unit tests, integration tests, end-to-end tests, and WASM tests. This comprehensive approach ensures correctness at all levels of the system.
 
 ## Current Development Environment
 

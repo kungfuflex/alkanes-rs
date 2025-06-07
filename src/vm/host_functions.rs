@@ -540,6 +540,84 @@ impl AlkanesHostFunctionsImpl {
             Err(e) => Self::_handle_extcall_abort::<T>(caller, e, false),
         }
     }
+    fn _handle_special_extcall(
+        caller: &mut Caller<'_, AlkanesState>,
+        cellpack: Cellpack,
+    ) -> Result<i32> {
+        #[cfg(feature = "debug-log")]
+        {
+            println!(
+                "extcall: precompiled contract detected at [{},{}]",
+                cellpack.target.block, cellpack.target.tx
+            );
+        }
+
+        let mut response = CallResponse::default();
+
+        match cellpack.target.tx {
+            0 => {
+                // Return the current block header
+                #[cfg(feature = "debug-log")]
+                {
+                    println!("Precompiled contract: returning current block header");
+                }
+
+                // Get the block header from the current context
+                let block = {
+                    let context_guard = caller.data_mut().context.lock().unwrap();
+                    context_guard.message.block.clone()
+                };
+
+                // Serialize just the header (not the full block with transactions)
+                let header_bytes = consensus_encode(&block.header)?;
+                response.data = header_bytes;
+            }
+            1 => {
+                // Return the coinbase transaction bytes
+                #[cfg(feature = "debug-log")]
+                {
+                    println!("Precompiled contract: returning coinbase transaction");
+                }
+
+                // Get the coinbase transaction from the current block
+                let coinbase_tx = {
+                    let context_guard = caller.data_mut().context.lock().unwrap();
+                    if context_guard.message.block.txdata.is_empty() {
+                        return Err(anyhow!("Block has no transactions"));
+                    }
+                    context_guard.message.block.txdata[0].clone()
+                };
+
+                // Serialize the coinbase transaction
+                let tx_bytes = consensus_encode(&coinbase_tx)?;
+                response.data = tx_bytes;
+            }
+            _ => {
+                return Err(anyhow!(
+                    "Unknown precompiled contract: [{}, {}]",
+                    cellpack.target.block,
+                    cellpack.target.tx
+                ));
+            }
+        }
+
+        // Serialize the response and return
+        let serialized = response.serialize();
+        {
+            let mut context_guard = caller.data_mut().context.lock().unwrap();
+            context_guard.returndata = serialized.clone();
+
+            // Create a trace response
+            let mut return_context = TraceResponse::default();
+            return_context.inner = response.clone().into();
+            return_context.fuel_used = 0; // Precompiled contracts don't use fuel
+            context_guard
+                .trace
+                .clock(TraceEvent::ReturnContext(return_context));
+        }
+
+        Ok(serialized.len() as i32)
+    }
     pub(super) fn extcall<'a, T: Extcall>(
         caller: &mut Caller<'_, AlkanesState>,
         cellpack: Cellpack,
@@ -547,6 +625,13 @@ impl AlkanesHostFunctionsImpl {
         storage_map: StorageMap,
         storage_map_len: u64,
     ) -> Result<i32> {
+        // Check for precompiled contract addresses
+        if cellpack.target.block == 800000000 {
+            // 8e8
+            return Self::_handle_special_extcall(caller, cellpack);
+        }
+
+        // Regular contract execution
         // Prepare subcontext data
         let (subcontext, binary_rc) = {
             let mut context_guard = caller.data_mut().context.lock().unwrap();
