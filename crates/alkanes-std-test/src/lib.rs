@@ -335,7 +335,7 @@ impl LoggerAlkane {
     fn my_get_block_header(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        let header = self.get_block_header()?;
+        let header = self.block_header()?;
         response.data = consensus_encode(&header)?;
 
         Ok(response)
@@ -344,7 +344,7 @@ impl LoggerAlkane {
     fn my_get_coinbase_tx(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        let tx = self.get_coinbase_tx()?;
+        let tx = self.coinbase_tx()?;
         response.data = consensus_encode(&tx)?;
 
         Ok(response)

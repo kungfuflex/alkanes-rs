@@ -28,7 +28,7 @@ fn test_special_extcall() -> Result<()> {
         target: AlkaneId { block: 1, tx: 0 },
         inputs: vec![101],
     };
-    let get_coinbase_tx = Cellpack {
+    let coinbase_tx = Cellpack {
         target: AlkaneId { block: 2, tx: 1 },
         inputs: vec![102],
     };
@@ -36,7 +36,7 @@ fn test_special_extcall() -> Result<()> {
     // Initialize the contract and execute the cellpacks
     let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes(), [].into()].into(),
-        [get_header, get_coinbase_tx].into(),
+        [get_header, coinbase_tx].into(),
     );
 
     for i in 0..5000 {

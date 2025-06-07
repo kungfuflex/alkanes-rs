@@ -317,7 +317,7 @@ pub trait AlkaneResponder: 'static {
         self.extcall::<Staticcall>(cellpack, outgoing_alkanes, fuel)
     }
 
-    fn get_block_header(&self) -> Result<Header> {
+    fn block_header(&self) -> Result<Header> {
         let result = self.staticcall(
             &Cellpack {
                 target: AlkaneId {
@@ -332,7 +332,7 @@ pub trait AlkaneResponder: 'static {
         consensus_decode::<Header>(&mut std::io::Cursor::new(result.data))
     }
 
-    fn get_coinbase_tx(&self) -> Result<Transaction> {
+    fn coinbase_tx(&self) -> Result<Transaction> {
         let result = self.staticcall(
             &Cellpack {
                 target: AlkaneId {
