@@ -1,11 +1,12 @@
 use crate::network::{genesis::GENESIS_BLOCK, is_active};
 use crate::trace::save_trace;
-use crate::utils::{credit_balances, debit_balances, pipe_storagemap_to};
+use crate::utils::{balance_pointer, credit_balances, debit_balances, pipe_storagemap_to};
 use crate::vm::{
     fuel::{FuelTank, VirtualFuelBytes},
     runtime::AlkanesRuntimeContext,
     utils::{prepare_context, run_after_special, run_special_cellpacks},
 };
+use alkanes_support::id::AlkaneId;
 use alkanes_support::{
     cellpack::Cellpack,
     response::ExtendedCallResponse,
@@ -125,9 +126,7 @@ pub fn handle_message(
                 response.alkanes.clone().into(),
             )?;
             combined.debit_mintable(&sheet, &mut atomic)?;
-            println!("1");
             debit_balances(&mut atomic, &myself, &response.alkanes)?;
-            println!("2");
             let cloned = context.clone().lock().unwrap().trace.clone();
             let response_alkanes = response.alkanes.clone();
             cloned.clock(TraceEvent::ReturnContext(TraceResponse {

@@ -111,10 +111,6 @@ pub fn debit_balances(
     for transfer in &runes.0 {
         let mut pointer = balance_pointer(atomic, to, &transfer.id.clone().into());
         let pointer_value = pointer.get_value::<u128>();
-        println!(
-            "attempting to debit {:?} with left {}",
-            transfer, pointer_value
-        );
         pointer.set_value::<u128>(checked_debit_with_minting(transfer, to, pointer_value)?);
     }
     Ok(())
@@ -126,6 +122,11 @@ pub fn transfer_from(
     from: &AlkaneId,
     to: &AlkaneId,
 ) -> Result<()> {
+    let non_contract_id = AlkaneId { block: 0, tx: 0 };
+    if *to == non_contract_id {
+        println!("skipping transfer_from since caller is not a contract");
+        return Ok(());
+    }
     for transfer in &parcel.0 {
         let mut from_pointer =
             balance_pointer(atomic, &from.clone().into(), &transfer.id.clone().into());
