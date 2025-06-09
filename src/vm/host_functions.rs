@@ -674,7 +674,6 @@ impl AlkanesHostFunctionsImpl {
             subbed.returndata = vec![];
             subbed.incoming_alkanes = incoming_alkanes.clone();
             subbed.inputs = cellpack.inputs.clone();
-
             (subbed, binary)
         };
 

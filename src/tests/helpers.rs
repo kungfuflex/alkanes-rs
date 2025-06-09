@@ -297,19 +297,6 @@ pub fn create_multiple_cellpack_with_witness_and_txins_edicts(
         script_pubkey: runestone,
     };
 
-    // op return must be less than 80 bytes or else miners will not accept it
-    if (op_return.size() > 80) {
-        println!(
-            "op return size: {} greater than 80 bytes! This is dangerous",
-            op_return.size()
-        );
-    }
-    assert!(
-        op_return.size() <= 80,
-        "op return ({}) > 80 bytes",
-        op_return.size()
-    );
-
     let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
 
     let script_pubkey = address.script_pubkey();
