@@ -207,6 +207,17 @@ pub fn protorunesbyaddress() -> i32 {
     export_bytes(result.write_to_bytes().unwrap())
 }
 
+#[cfg(not(test))]
+#[no_mangle]
+pub fn getblock() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let input_data = consume_to_end(&mut data).unwrap();
+    export_bytes(view::getblock(&input_data).unwrap())
+}
+
+
 // #[cfg(not(test))]
 // #[no_mangle]
 // pub fn protorunesbyaddress2() -> i32 {
