@@ -97,7 +97,7 @@ fn test_special_extcall() -> Result<()> {
                 ))?;
 
                 println!("{:?}", data);
-                // assert_eq!(data.time, 1231006505);
+                assert_eq!(data.version, bitcoin::transaction::Version(2));
             }
             _ => panic!("Expected ReturnContext variant, but got a different variant"),
         }

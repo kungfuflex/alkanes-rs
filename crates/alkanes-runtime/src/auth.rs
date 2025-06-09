@@ -55,7 +55,6 @@ pub trait AuthenticatedResponder: AlkaneResponder {
             target: auth_token,
             inputs: vec![0x1],
         };
-        println!("Only owner cellpack: {:?}", cellpack);
         let response = self.call(
             &cellpack,
             &AlkaneTransferParcel(vec![AlkaneTransfer {
@@ -64,7 +63,6 @@ pub trait AuthenticatedResponder: AlkaneResponder {
             }]),
             self.fuel(),
         )?;
-        println!("Only owner response: {:?}", response);
         if response.data == vec![0x01] {
             Ok(())
         } else {

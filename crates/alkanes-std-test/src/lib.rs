@@ -1,4 +1,6 @@
-use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
+use alkanes_runtime::{
+    declare_alkane, message::MessageDispatch, runtime::AlkaneResponder, storage::StoragePointer,
+};
 use alkanes_support::{
     cellpack::Cellpack,
     id::AlkaneId,
@@ -8,6 +10,7 @@ use alkanes_support::{
 use anyhow::{anyhow, Result};
 use metashrew_support::{
     compat::{to_arraybuffer_layout, to_passback_ptr},
+    index_pointer::KeyValuePointer,
     utils::consensus_encode,
 };
 use sha2::{Digest, Sha256};
@@ -49,6 +52,9 @@ enum LoggerAlkaneMessage {
 
     #[opcode(21)]
     TestInfiniteExtcall,
+
+    #[opcode(22)]
+    TestSelfMint { amount: u128 },
 
     #[opcode(30)]
     TestArbitraryMint { alkane: AlkaneId, amount: u128 },
@@ -94,9 +100,30 @@ enum LoggerAlkaneMessage {
 
     #[opcode(102)]
     MyGetCoinbaseTx,
+
+    #[opcode(103)]
+    ClaimableFees,
+
+    #[opcode(104)]
+    SetClaimableFees { v: u128 },
 }
 
 impl LoggerAlkane {
+    fn claimable_fees_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/claimablefees")
+    }
+    fn claimable_fees(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let fees = self.claimable_fees_pointer().get_value::<u128>();
+        response.data = fees.to_le_bytes().to_vec();
+        Ok(response)
+    }
+    fn set_claimable_fees(&self, v: u128) -> Result<CallResponse> {
+        let context = self.context()?;
+        self.claimable_fees_pointer().set_value::<u128>(v);
+        Ok(CallResponse::forward(&context.incoming_alkanes))
+    }
     fn self_call(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -199,6 +226,18 @@ impl LoggerAlkane {
 
         response.alkanes.pay(AlkaneTransfer {
             id: alkane,
+            value: amount,
+        });
+
+        Ok(response)
+    }
+
+    fn test_self_mint(&self, amount: u128) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        response.alkanes.pay(AlkaneTransfer {
+            id: context.myself,
             value: amount,
         });
 

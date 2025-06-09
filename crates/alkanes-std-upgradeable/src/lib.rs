@@ -20,16 +20,15 @@ pub struct Upgradeable(());
 enum UpgradeableMessage {
     #[opcode(0x7fff)]
     Initialize {
-        block: u128,
-        tx: u128,
+        implementation: AlkaneId,
         auth_token_units: u128,
     },
 
     #[opcode(0x7ffe)]
-    Upgrade { block: u128, tx: u128 },
+    Upgrade { implementation: AlkaneId },
 
     #[opcode(0x7ffd)]
-    Delegate,
+    Delegate { inputs: Vec<u128> },
 }
 
 impl Upgradeable {
@@ -46,12 +45,9 @@ impl Upgradeable {
             .set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
     }
 
-    fn initialize(&self, block: u128, tx: u128, auth_token_units: u128) -> Result<CallResponse> {
+    fn initialize(&self, implementation: AlkaneId, auth_token_units: u128) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
-
-        // Construct AlkaneId from block and tx
-        let implementation = AlkaneId::new(block, tx);
 
         self.set_alkane(implementation);
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
@@ -63,25 +59,22 @@ impl Upgradeable {
         Ok(response)
     }
 
-    fn upgrade(&self, block: u128, tx: u128) -> Result<CallResponse> {
+    fn upgrade(&self, implementation: AlkaneId) -> Result<CallResponse> {
         let context = self.context()?;
 
         self.only_owner()?;
-
-        // Construct AlkaneId from block and tx
-        let implementation = AlkaneId::new(block, tx);
 
         self.set_alkane(implementation);
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 
-    fn delegate(&self) -> Result<CallResponse> {
+    fn delegate(&self, inputs: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
         let cellpack = Cellpack {
             target: self.alkane()?,
-            inputs: context.inputs.clone(),
+            inputs: inputs,
         };
-        Ok(self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())?)
+        self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())
     }
 }
 
