@@ -186,7 +186,7 @@ fn test_mint_underflow() -> Result<()> {
         vout: 3,
     };
 
-    alkane_helpers::assert_revert_context(&outpoint, "overflow error")?;
+    alkane_helpers::assert_revert_context(&outpoint, "balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 0 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 1 }), balance(0)")?;
     Ok(())
 }
 
@@ -253,7 +253,7 @@ fn test_transfer_runtime() -> Result<()> {
         vout: 3,
     };
 
-    alkane_helpers::assert_revert_context(&outpoint, "overflow error")?;
+    alkane_helpers::assert_revert_context(&outpoint, "balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 1 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 2 }), balance(0)")?;
     Ok(())
 }
 
@@ -304,7 +304,7 @@ fn test_extcall_mint() -> Result<()> {
 
     alkane_helpers::assert_revert_context(
         &outpoint,
-        "ALKANES: revert: Error: Extcall failed: balance underflow during transfer_from",
+        "ALKANES: revert: Error: Extcall failed: balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 0 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 1 }), balance(0)",
     )?;
 
     Ok(())
@@ -357,7 +357,7 @@ fn test_delegatecall_mint() -> Result<()> {
 
     alkane_helpers::assert_revert_context(
         &outpoint,
-        "ALKANES: revert: Error: Extcall failed: balance underflow during transfer_from",
+        "ALKANES: revert: Error: Extcall failed: balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 0 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 1 }), balance(0)",
     )?;
 
     Ok(())
@@ -414,7 +414,7 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
 
     alkane_helpers::assert_revert_context(
         &outpoint,
-        "ALKANES: revert: Error: Extcall failed: balance underflow during transfer_from",
+        "ALKANES: revert: Error: Extcall failed: balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 0 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 1 }), balance(0)",
     )?;
 
     alkane_helpers::assert_revert_context(

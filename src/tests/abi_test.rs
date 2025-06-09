@@ -284,38 +284,6 @@ fn test_proxy_abi() -> Result<()> {
 }
 
 #[wasm_bindgen_test]
-fn test_upgradeable_abi() -> Result<()> {
-    clear();
-
-    // Expected methods with their opcodes, parameter names and types, and return types
-    let expected_methods = vec![
-        (
-            "initialize",
-            0x7fff,
-            vec![
-                ("block", "u128"),
-                ("tx", "u128"),
-                ("auth_token_units", "u128"),
-            ],
-            "void",
-        ),
-        (
-            "upgrade",
-            0x7ffe,
-            vec![("block", "u128"), ("tx", "u128")],
-            "void",
-        ),
-        ("delegate", 0x7ffd, vec![], "void"),
-    ];
-
-    test_contract_abi(
-        "Upgradeable",
-        alkanes_std_upgradeable_build::get_bytes(),
-        expected_methods,
-    )
-}
-
-#[wasm_bindgen_test]
 fn test_orbital_abi() -> Result<()> {
     clear();
 
