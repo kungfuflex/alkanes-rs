@@ -125,7 +125,9 @@ pub fn handle_message(
                 response.alkanes.clone().into(),
             )?;
             combined.debit_mintable(&sheet, &mut atomic)?;
+            println!("1");
             debit_balances(&mut atomic, &myself, &response.alkanes)?;
+            println!("2");
             let cloned = context.clone().lock().unwrap().trace.clone();
             let response_alkanes = response.alkanes.clone();
             cloned.clock(TraceEvent::ReturnContext(TraceResponse {

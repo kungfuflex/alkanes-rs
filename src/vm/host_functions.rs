@@ -638,21 +638,21 @@ impl AlkanesHostFunctionsImpl {
             context_guard.message.atomic.checkpoint();
             let myself = context_guard.myself.clone();
             let caller_id = context_guard.caller.clone();
+            pipe_storagemap_to(
+                &storage_map,
+                &mut context_guard.message.atomic.derive(
+                    &IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into()),
+                ),
+            );
             std::mem::drop(context_guard); // Release lock before calling run_special_cellpacks
 
             let (_subcaller, submyself, binary) =
                 run_special_cellpacks(caller.data_mut().context.clone(), &cellpack)?;
 
-            // Re-acquire lock for state updates
-            {
-                let mut context_guard = caller.data_mut().context.lock().unwrap();
-                pipe_storagemap_to(
-                    &storage_map,
-                    &mut context_guard.message.atomic.derive(
-                        &IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into()),
-                    ),
-                );
+            let context_guard = caller.data_mut().context.lock().unwrap();
 
+            if !T::isdelegate() {
+                // delegate call retains caller and myself, so no alkanes are transferred to the subcontext
                 transfer_from(
                     &incoming_alkanes,
                     &mut context_guard
@@ -662,9 +662,7 @@ impl AlkanesHostFunctionsImpl {
                     &myself,
                     &submyself,
                 )?;
-            };
-            let context_guard = caller.data_mut().context.lock().unwrap();
-
+            }
             // Create subcontext
             let mut subbed = context_guard.clone();
             subbed.message.atomic = context_guard
@@ -676,6 +674,7 @@ impl AlkanesHostFunctionsImpl {
             subbed.returndata = vec![];
             subbed.incoming_alkanes = incoming_alkanes.clone();
             subbed.inputs = cellpack.inputs.clone();
+
             (subbed, binary)
         };
 

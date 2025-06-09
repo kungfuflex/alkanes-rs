@@ -70,7 +70,6 @@ impl Upgradeable {
 
     fn delegate(&self, inputs: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
-        println!("self.alkane()?: {:?}", self.alkane()?);
         let cellpack = Cellpack {
             target: self.alkane()?,
             inputs: inputs,
