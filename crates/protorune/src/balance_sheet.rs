@@ -21,7 +21,12 @@ pub trait PersistentRecord: BalanceSheetOperations {
         let balances_ptr = ptr.keyword("/balances");
         let runes_to_balances_ptr = ptr.keyword("/id_to_balance");
 
-        for (rune, balance) in self.balances() {
+        // Create a sorted list of keys to ensure deterministic order
+        let mut sorted_keys: Vec<&ProtoruneRuneId> = self.balances().keys().collect();
+        sorted_keys.sort();
+
+        for rune in sorted_keys {
+            let balance = self.balances().get(rune).unwrap();
             if *balance != 0u128 && !is_cenotaph {
                 let rune_bytes: Vec<u8> = (*rune).into();
                 runes_ptr.append(rune_bytes.clone().into());
