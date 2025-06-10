@@ -123,28 +123,32 @@ impl Into<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
 
 impl From<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
     fn from(v: proto::alkanes::ExtendedCallResponse) -> ExtendedCallResponse {
+        let mut transfers = v
+            .alkanes
+            .into_iter()
+            .map(|transfer| AlkaneTransfer {
+                id: transfer
+                    .id
+                    .into_option()
+                    .ok_or("")
+                    .and_then(|v| Ok(v.into()))
+                    .unwrap_or_else(|_| AlkaneId::default()),
+                value: transfer
+                    .value
+                    .into_option()
+                    .ok_or("")
+                    .and_then(|v| Ok(v.into()))
+                    .unwrap_or_else(|_| 0u128),
+            })
+            .collect::<Vec<AlkaneTransfer>>();
+
+        // Sort by AlkaneId (which sorts by block first, then by tx)
+        transfers.sort_by(|a, b| a.id.cmp(&b.id));
+
         ExtendedCallResponse {
             storage: StorageMap::from_iter(v.storage.into_iter().map(|kv| (kv.key, kv.value))),
             data: v.data,
-            alkanes: AlkaneTransferParcel(
-                v.alkanes
-                    .into_iter()
-                    .map(|transfer| AlkaneTransfer {
-                        id: transfer
-                            .id
-                            .into_option()
-                            .ok_or("")
-                            .and_then(|v| Ok(v.into()))
-                            .unwrap_or_else(|_| AlkaneId::default()),
-                        value: transfer
-                            .value
-                            .into_option()
-                            .ok_or("")
-                            .and_then(|v| Ok(v.into()))
-                            .unwrap_or_else(|_| 0u128),
-                    })
-                    .collect::<Vec<AlkaneTransfer>>(),
-            ),
+            alkanes: AlkaneTransferParcel(transfers),
         }
     }
 }

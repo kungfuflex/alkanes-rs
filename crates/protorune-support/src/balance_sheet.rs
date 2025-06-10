@@ -76,26 +76,31 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::BalanceSheet> for
 
 impl<P: KeyValuePointer + Clone> From<BalanceSheet<P>> for crate::proto::protorune::BalanceSheet {
     fn from(balance_sheet: BalanceSheet<P>) -> crate::proto::protorune::BalanceSheet {
+        // Create a sorted list of keys to ensure deterministic order
+        let mut sorted_keys: Vec<&ProtoruneRuneId> = balance_sheet.balances().keys().collect();
+        sorted_keys.sort();
+
         crate::proto::protorune::BalanceSheet {
-            entries: balance_sheet
-                .balances()
-                .clone()
-                .iter()
-                .map(|(k, v)| BalanceSheetItem {
-                    special_fields: SpecialFields::new(),
-                    rune: MessageField::some(Rune {
+            entries: sorted_keys
+                .into_iter()
+                .map(|k| {
+                    let v = balance_sheet.balances().get(k).unwrap();
+                    BalanceSheetItem {
                         special_fields: SpecialFields::new(),
-                        runeId: MessageField::some(proto::protorune::ProtoruneRuneId {
+                        rune: MessageField::some(Rune {
                             special_fields: SpecialFields::new(),
-                            height: MessageField::some(k.block.into()),
-                            txindex: MessageField::some(k.tx.into()),
+                            runeId: MessageField::some(proto::protorune::ProtoruneRuneId {
+                                special_fields: SpecialFields::new(),
+                                height: MessageField::some(k.block.into()),
+                                txindex: MessageField::some(k.tx.into()),
+                            }),
+                            name: "UNKNOWN".to_owned(),
+                            divisibility: 1,
+                            spacers: 1,
+                            symbol: "0".to_owned(),
                         }),
-                        name: "UNKNOWN".to_owned(),
-                        divisibility: 1,
-                        spacers: 1,
-                        symbol: "0".to_owned(),
-                    }),
-                    balance: MessageField::some((*v).into()),
+                        balance: MessageField::some((*v).into()),
+                    }
                 })
                 .collect::<Vec<BalanceSheetItem>>(),
             special_fields: SpecialFields::new(),
