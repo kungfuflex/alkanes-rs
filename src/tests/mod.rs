@@ -18,6 +18,8 @@ pub mod auth_token;
 #[cfg(test)]
 pub mod crash;
 #[cfg(test)]
+pub mod determinism;
+#[cfg(test)]
 pub mod edict_then_message;
 #[cfg(test)]
 pub mod forge;

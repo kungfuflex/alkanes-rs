@@ -38,6 +38,10 @@ enum LoggerAlkaneMessage {
     #[returns(Vec<u8>)]
     ReturnData1,
 
+    #[opcode(6)]
+    #[returns(Vec<u8>)]
+    TestOrderedIncoming,
+
     #[opcode(11)]
     ProcessNumbers { numbers: Vec<u128> },
 
@@ -170,6 +174,20 @@ impl LoggerAlkane {
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
         response.data = vec![0x05, 0x06, 0x07, 0x08];
+
+        Ok(response)
+    }
+
+    fn test_ordered_incoming(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let transfers = context.incoming_alkanes.0;
+        println!("{:?}", transfers);
+        for i in 1..transfers.len() {
+            if transfers[i] < transfers[i - 1] {
+                return Err(anyhow!("Not sorted in ascending order"));
+            }
+        }
 
         Ok(response)
     }
