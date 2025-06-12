@@ -3,7 +3,7 @@ use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::rune_transfer::{increase_balances_using_sheet, RuneTransfer};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[allow(unused_imports)]
 use {
@@ -81,7 +81,7 @@ pub trait OutgoingRunes<P: KeyValuePointer + Clone> {
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
         refund_pointer: u32,
@@ -123,7 +123,7 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
         refund_pointer: u32,

@@ -37,7 +37,7 @@ use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::{consensus_decode, decode_varint_list};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 #[allow(unused_imports)]
 use std::fmt::Write;
 use std::io::Cursor;
@@ -146,8 +146,8 @@ pub const NAME_OPCODE: u128 = 99;
 pub const SYMBOL_OPCODE: u128 = 100;
 
 // Cache for storing name and symbol values for AlkaneIds
-static STATICS_CACHE: LazyLock<Mutex<HashMap<AlkaneId, (String, String)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static STATICS_CACHE: LazyLock<Mutex<BTreeMap<AlkaneId, (String, String)>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 pub fn get_statics(id: &AlkaneId) -> (String, String) {
     // Try to get from cache first

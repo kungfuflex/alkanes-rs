@@ -13,16 +13,16 @@ use protorune_support::{
     rune_transfer::{refund_to_refund_pointer, RuneTransfer},
     utils::encode_varint_list,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use metashrew_core::{println, stdio::stdout};
 use std::fmt::Write;
 
-static mut PROTOCOLS: Option<HashSet<u128>> = None;
+static mut PROTOCOLS: Option<BTreeSet<u128>> = None;
 
 #[allow(static_mut_refs)]
 pub fn initialized_protocol_index() -> Result<()> {
-    unsafe { PROTOCOLS = Some(HashSet::new()) }
+    unsafe { PROTOCOLS = Some(BTreeSet::new()) }
     Ok(())
 }
 
@@ -63,7 +63,7 @@ pub trait MessageProcessor {
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         num_protostones: usize,
     ) -> Result<bool>;
 }
@@ -77,7 +77,7 @@ impl MessageProcessor for Protostone {
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         num_protostones: usize,
     ) -> Result<bool> {
         // Validate output indexes and protomessage_vout
@@ -220,8 +220,8 @@ pub trait Protostones {
         atomic: &mut AtomicPointer,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
@@ -255,8 +255,8 @@ impl Protostones for Vec<Protostone> {
         atomic: &mut AtomicPointer,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {
