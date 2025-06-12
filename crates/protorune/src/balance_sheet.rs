@@ -3,7 +3,7 @@ use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::rune_transfer::{increase_balances_using_sheet, RuneTransfer};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[allow(unused_imports)]
 use {
@@ -21,12 +21,7 @@ pub trait PersistentRecord: BalanceSheetOperations {
         let balances_ptr = ptr.keyword("/balances");
         let runes_to_balances_ptr = ptr.keyword("/id_to_balance");
 
-        // Create a sorted list of keys to ensure deterministic order
-        let mut sorted_keys: Vec<&ProtoruneRuneId> = self.balances().keys().collect();
-        sorted_keys.sort();
-
-        for rune in sorted_keys {
-            let balance = self.balances().get(rune).unwrap();
+        for (rune, balance) in self.balances() {
             if *balance != 0u128 && !is_cenotaph {
                 let rune_bytes: Vec<u8> = (*rune).into();
                 runes_ptr.append(rune_bytes.clone().into());
@@ -86,7 +81,7 @@ pub trait OutgoingRunes<P: KeyValuePointer + Clone> {
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
         refund_pointer: u32,
@@ -128,7 +123,7 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
         refund_pointer: u32,

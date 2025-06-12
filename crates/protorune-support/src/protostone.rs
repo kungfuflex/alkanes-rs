@@ -1,7 +1,7 @@
 use crate::{balance_sheet::ProtoruneRuneId, byte_utils::ByteUtils};
 use anyhow::{anyhow, Result};
 use ordinals::{runestone::tag::Tag, Edict, RuneId, Runestone};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 pub fn next_protostone_edict_id(
     id: &ProtoruneRuneId,
@@ -124,8 +124,8 @@ fn take_n<T, I: Iterator<Item = T>>(iter: &mut I, n: usize) -> Option<Vec<T>> {
     }
 }
 
-pub fn to_fields(values: &Vec<u128>) -> HashMap<u128, Vec<u128>> {
-    let mut map: HashMap<u128, Vec<u128>> = HashMap::new();
+pub fn to_fields(values: &Vec<u128>) -> BTreeMap<u128, Vec<u128>> {
+    let mut map: BTreeMap<u128, Vec<u128>> = BTreeMap::new();
     let mut iter = values
         .into_iter()
         .map(|v| *v)
@@ -260,7 +260,7 @@ impl Protostone {
         }
         Ok(payload)
     }
-    pub fn from_fields_and_tag(map: &HashMap<u128, Vec<u128>>, protocol_tag: u128) -> Result<Self> {
+    pub fn from_fields_and_tag(map: &BTreeMap<u128, Vec<u128>>, protocol_tag: u128) -> Result<Self> {
         Ok(Protostone {
             burn: map.get(&Tag::Burn.into()).map(|v| v[0] as u128),
             message: join_to_bytes(

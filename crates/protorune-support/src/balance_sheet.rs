@@ -8,7 +8,7 @@ use metashrew_support::utils::consume_sized_int;
 use ordinals::RuneId;
 use protobuf::{MessageField, SpecialFields};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 use std::sync::Arc;
 use std::u128;
@@ -59,7 +59,7 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::BalanceSheet> for
     fn from(balance_sheet: crate::proto::protorune::BalanceSheet) -> BalanceSheet<P> {
         BalanceSheet {
             cached: CachedBalanceSheet {
-                balances: HashMap::<ProtoruneRuneId, u128>::from_iter(
+                balances: BTreeMap::<ProtoruneRuneId, u128>::from_iter(
                     balance_sheet.entries.into_iter().map(|v| {
                         let id = ProtoruneRuneId::new(
                             v.rune.runeId.height.clone().into_option().unwrap().into(),
@@ -76,31 +76,26 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::BalanceSheet> for
 
 impl<P: KeyValuePointer + Clone> From<BalanceSheet<P>> for crate::proto::protorune::BalanceSheet {
     fn from(balance_sheet: BalanceSheet<P>) -> crate::proto::protorune::BalanceSheet {
-        // Create a sorted list of keys to ensure deterministic order
-        let mut sorted_keys: Vec<&ProtoruneRuneId> = balance_sheet.balances().keys().collect();
-        sorted_keys.sort();
-
         crate::proto::protorune::BalanceSheet {
-            entries: sorted_keys
-                .into_iter()
-                .map(|k| {
-                    let v = balance_sheet.balances().get(k).unwrap();
-                    BalanceSheetItem {
+            entries: balance_sheet
+                .balances()
+                .clone()
+                .iter()
+                .map(|(k, v)| BalanceSheetItem {
+                    special_fields: SpecialFields::new(),
+                    rune: MessageField::some(Rune {
                         special_fields: SpecialFields::new(),
-                        rune: MessageField::some(Rune {
+                        runeId: MessageField::some(proto::protorune::ProtoruneRuneId {
                             special_fields: SpecialFields::new(),
-                            runeId: MessageField::some(proto::protorune::ProtoruneRuneId {
-                                special_fields: SpecialFields::new(),
-                                height: MessageField::some(k.block.into()),
-                                txindex: MessageField::some(k.tx.into()),
-                            }),
-                            name: "UNKNOWN".to_owned(),
-                            divisibility: 1,
-                            spacers: 1,
-                            symbol: "0".to_owned(),
+                            height: MessageField::some(k.block.into()),
+                            txindex: MessageField::some(k.tx.into()),
                         }),
-                        balance: MessageField::some((*v).into()),
-                    }
+                        name: "UNKNOWN".to_owned(),
+                        divisibility: 1,
+                        spacers: 1,
+                        symbol: "0".to_owned(),
+                    }),
+                    balance: MessageField::some((*v).into()),
                 })
                 .collect::<Vec<BalanceSheetItem>>(),
             special_fields: SpecialFields::new(),
@@ -269,13 +264,13 @@ pub trait BalanceSheetOperations: Sized {
     }
 
     /// Get all balances
-    fn balances(&self) -> &HashMap<ProtoruneRuneId, u128>;
+    fn balances(&self) -> &BTreeMap<ProtoruneRuneId, u128>;
 }
 
 /// A basic balance sheet that only stores balances in memory
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct CachedBalanceSheet {
-    pub balances: HashMap<ProtoruneRuneId, u128>, // Using HashMap to map runes to their balances
+    pub balances: BTreeMap<ProtoruneRuneId, u128>, // Using BTreeMap to map runes to their balances
 }
 
 impl BalanceSheetOperations for CachedBalanceSheet {
@@ -289,7 +284,7 @@ impl BalanceSheetOperations for CachedBalanceSheet {
 
     fn new() -> Self {
         CachedBalanceSheet {
-            balances: HashMap::new(),
+            balances: BTreeMap::new(),
         }
     }
 
@@ -299,7 +294,7 @@ impl BalanceSheetOperations for CachedBalanceSheet {
         Ok(merged)
     }
 
-    fn balances(&self) -> &HashMap<ProtoruneRuneId, u128> {
+    fn balances(&self) -> &BTreeMap<ProtoruneRuneId, u128> {
         &self.balances
     }
 }
@@ -326,7 +321,7 @@ pub struct BalanceSheet<P: KeyValuePointer + Clone> {
 impl<P: KeyValuePointer + Clone> PartialEq for BalanceSheet<P> {
     fn eq(&self, other: &Self) -> bool {
         // Get all unique rune IDs from both balance sheets
-        let mut all_runes = self.balances().keys().collect::<HashSet<_>>();
+        let mut all_runes = self.balances().keys().collect::<BTreeSet<_>>();
         all_runes.extend(other.balances().keys());
 
         // Compare balances for each rune using get() which checks both cached and stored values
@@ -452,7 +447,7 @@ impl<P: KeyValuePointer + Clone> BalanceSheet<P> {
 }
 
 impl<P: KeyValuePointer + Clone> BalanceSheetOperations for BalanceSheet<P> {
-    fn balances(&self) -> &HashMap<ProtoruneRuneId, u128> {
+    fn balances(&self) -> &BTreeMap<ProtoruneRuneId, u128> {
         self.cached.balances()
     }
 

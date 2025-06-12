@@ -1,14 +1,14 @@
 use anyhow::Result;
 use metashrew_support::utils::{consume_exact, consume_sized_int};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::Cursor;
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct StorageMap(pub HashMap<Vec<u8>, Vec<u8>>);
+pub struct StorageMap(pub BTreeMap<Vec<u8>, Vec<u8>>);
 
 impl FromIterator<(Vec<u8>, Vec<u8>)> for StorageMap {
     fn from_iter<I: IntoIterator<Item = (Vec<u8>, Vec<u8>)>>(iter: I) -> Self {
-        Self(HashMap::<Vec<u8>, Vec<u8>>::from_iter(iter))
+        Self(BTreeMap::<Vec<u8>, Vec<u8>>::from_iter(iter))
     }
 }
 
@@ -41,17 +41,11 @@ impl StorageMap {
         let size = self.0.len() as u32;
         buffer.extend(&(size).to_le_bytes());
         if size > 0 {
-            // Sort keys to ensure deterministic serialization order
-            let mut sorted_keys: Vec<&Vec<u8>> = self.0.keys().collect();
-            sorted_keys.sort();
-
-            for k in sorted_keys {
-                if let Some(v) = self.0.get(k) {
-                    buffer.extend(&(k.len() as u32).to_le_bytes());
-                    buffer.extend(k);
-                    buffer.extend(&(v.len() as u32).to_le_bytes());
-                    buffer.extend(v);
-                }
+            for (k, v) in self.0.iter() {
+                buffer.extend(&(k.len() as u32).to_le_bytes());
+                buffer.extend(k);
+                buffer.extend(&(v.len() as u32).to_le_bytes());
+                buffer.extend(v);
             }
         }
         buffer

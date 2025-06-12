@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use metashrew_support::index_pointer::KeyValuePointer;
 
@@ -13,8 +13,7 @@ pub struct RuneTransfer {
 
 impl RuneTransfer {
     pub fn from_balance_sheet<P: KeyValuePointer + Clone>(s: BalanceSheet<P>) -> Vec<Self> {
-        let mut transfers = s
-            .balances()
+        s.balances()
             .iter()
             .filter_map(|(id, v)| {
                 if *v > 0 {
@@ -23,12 +22,7 @@ impl RuneTransfer {
                     None
                 }
             })
-            .collect::<Vec<RuneTransfer>>();
-
-        // Sort by id to ensure deterministic order
-        transfers.sort_by(|a, b| a.id.cmp(&b.id));
-
-        transfers
+            .collect::<Vec<RuneTransfer>>()
     }
 }
 
@@ -38,7 +32,7 @@ impl RuneTransfer {
 ///   sheet: The balance sheet to increase the balances by
 ///   vout: The target transaction vout to receive the runes
 pub fn increase_balances_using_sheet<P: KeyValuePointer + Clone>(
-    balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+    balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
     sheet: &BalanceSheet<P>,
     vout: u32,
 ) -> Result<()> {
@@ -51,7 +45,7 @@ pub fn increase_balances_using_sheet<P: KeyValuePointer + Clone>(
 
 /// Refunds all input runes to the refund pointer
 pub fn refund_to_refund_pointer<P: KeyValuePointer + Clone>(
-    balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+    balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
     protomessage_vout: u32,
     refund_pointer: u32,
 ) -> Result<()> {

@@ -13,18 +13,14 @@ pub struct AlkaneTransfer {
 
 impl From<Vec<RuneTransfer>> for AlkaneTransferParcel {
     fn from(v: Vec<RuneTransfer>) -> AlkaneTransferParcel {
-        let mut transfers: Vec<AlkaneTransfer> = v
-            .into_iter()
-            .map(|incoming| AlkaneTransfer {
-                id: incoming.id.into(),
-                value: incoming.value,
-            })
-            .collect();
-
-        // Sort by AlkaneId (which sorts by block first, then by tx)
-        transfers.sort_by(|a, b| a.id.cmp(&b.id));
-
-        AlkaneTransferParcel(transfers)
+        AlkaneTransferParcel(
+            v.into_iter()
+                .map(|incoming| AlkaneTransfer {
+                    id: incoming.id.into(),
+                    value: incoming.value,
+                })
+                .collect(),
+        )
     }
 }
 
@@ -67,16 +63,10 @@ impl AlkaneTransferParcel {
         for _i in 0..len {
             result.0.push(AlkaneTransfer::parse(cursor)?);
         }
-
-        // Sort by AlkaneId (which sorts by block first, then by tx)
-        result.0.sort_by(|a, b| a.id.cmp(&b.id));
-
         Ok(result)
     }
     pub fn pay(&mut self, transfer: AlkaneTransfer) {
         self.0.push(transfer);
-        // Sort by AlkaneId after adding a new transfer
-        self.0.sort_by(|a, b| a.id.cmp(&b.id));
     }
     pub fn to_vec(&self) -> Vec<u128> {
         let len = self.0.len();
