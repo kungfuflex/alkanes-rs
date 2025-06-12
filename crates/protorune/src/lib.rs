@@ -31,7 +31,7 @@ use protorune_support::{
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
     utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Sub;
 use std::sync::Arc;
 
@@ -85,9 +85,9 @@ pub fn handle_transfer_runes_to_vout(
     amount: u128,
     max_amount: u128,
     tx: &Transaction,
-) -> Result<HashMap<u32, u128>> {
+) -> Result<BTreeMap<u32, u128>> {
     // pointer should not call this function if amount is 0
-    let mut output: HashMap<u32, u128> = HashMap::<u32, u128>::new();
+    let mut output: BTreeMap<u32, u128> = BTreeMap::<u32, u128>::new();
     if (vout as usize) == tx.output.len() {
         // "special vout" -- give amount to all non-op_return vouts
         if amount == 0 {
@@ -202,7 +202,7 @@ impl Protorune {
             })
             .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
         let mut balance_sheet = BalanceSheet::concat(sheets)?;
-        let mut balances_by_output = HashMap::<u32, BalanceSheet<AtomicPointer>>::new();
+        let mut balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
         let unallocated_to = match runestone.pointer {
             Some(v) => v,
             None => default_output(tx),
@@ -260,7 +260,7 @@ impl Protorune {
         Ok(())
     }
     pub fn update_balances_for_edict(
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balance_sheet: &mut BalanceSheet<AtomicPointer>,
         edict_amount: u128,
         edict_output: u32,
@@ -287,7 +287,7 @@ impl Protorune {
     pub fn process_edict(
         tx: &Transaction,
         edict: &ProtostoneEdict,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         _outs: &Vec<TxOut>,
     ) -> Result<()> {
@@ -315,7 +315,7 @@ impl Protorune {
     pub fn process_edicts(
         tx: &Transaction,
         edicts: &Vec<ProtostoneEdict>,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         outs: &Vec<TxOut>,
     ) -> Result<()> {
@@ -326,7 +326,7 @@ impl Protorune {
     }
     pub fn handle_leftover_runes(
         remaining_balances: &mut BalanceSheet<AtomicPointer>,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
     ) -> Result<()> {
         // grab the balances of the vout to send unallocated to
@@ -416,7 +416,7 @@ impl Protorune {
         etching: &Etching,
         index: u32,
         height: u64,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
         tx: &Transaction,
     ) -> Result<()> {
@@ -605,13 +605,13 @@ impl Protorune {
         }
         Ok(())
     }
-    pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<HashSet<Vec<u8>>> {
+    pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
         // Track unique addresses that have their spendable outpoints updated
         #[cfg(feature = "cache")]
-        let mut updated_addresses: HashSet<Vec<u8>> = HashSet::new();
+        let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         #[cfg(not(feature = "cache"))]
-        let updated_addresses: HashSet<Vec<u8>> = HashSet::new();
+        let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
@@ -652,13 +652,13 @@ impl Protorune {
         // Return the set of updated addresses
         Ok(updated_addresses)
     }
-    pub fn index_spendables_ll(txdata: &Vec<Transaction>) -> Result<HashSet<Vec<u8>>> {
+    pub fn index_spendables_ll(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
         // Track unique addresses that have their spendable outpoints updated
         #[cfg(feature = "cache")]
-        let mut updated_addresses: HashSet<Vec<u8>> = HashSet::new();
+        let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         #[cfg(not(feature = "cache"))]
-        let updated_addresses: HashSet<Vec<u8>> = HashSet::new();
+        let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
@@ -772,7 +772,7 @@ impl Protorune {
         atomic: &mut AtomicPointer,
         table: &RuneTable,
         tx: &Transaction,
-        map: &HashMap<u32, BalanceSheet<AtomicPointer>>,
+        map: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
     ) -> Result<()> {
         // Process all outputs, including the last one
         // The OP_RETURN doesn't have to be at the end
@@ -835,7 +835,7 @@ impl Protorune {
         height: u64,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
     ) -> Result<()> {
         // Check if this transaction is in the blacklist
@@ -855,7 +855,7 @@ impl Protorune {
         let protostones = Protostone::from_runestone(runestone)?;
 
         if protostones.len() != 0 {
-            let mut proto_balances_by_output = HashMap::<u32, BalanceSheet<AtomicPointer>>::new();
+            let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
             let table = tables::RuneTable::for_protocol(T::protocol_tag());
 
             // set the starting runtime balance
@@ -988,7 +988,7 @@ impl Protorune {
         Ok(())
     }
 
-    pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<HashSet<Vec<u8>>> {
+    pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));

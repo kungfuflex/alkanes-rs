@@ -3,13 +3,13 @@ use super::*;
 pub struct Message {
     pub flaw: Option<Flaw>,
     pub edicts: Vec<Edict>,
-    pub fields: HashMap<u128, VecDeque<u128>>,
+    pub fields: BTreeMap<u128, VecDeque<u128>>,
 }
 
 impl Message {
     pub fn from_integers(num_outputs: u32, payload: &[u128], check_outputs: bool) -> Self {
         let mut edicts = Vec::new();
-        let mut fields = HashMap::<u128, VecDeque<u128>>::new();
+        let mut fields = BTreeMap::<u128, VecDeque<u128>>::new();
         let mut flaw = None;
 
         for i in (0..payload.len()).step_by(2) {

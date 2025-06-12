@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use metashrew_support::index_pointer::KeyValuePointer;
 
@@ -38,7 +38,7 @@ impl RuneTransfer {
 ///   sheet: The balance sheet to increase the balances by
 ///   vout: The target transaction vout to receive the runes
 pub fn increase_balances_using_sheet<P: KeyValuePointer + Clone>(
-    balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+    balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
     sheet: &BalanceSheet<P>,
     vout: u32,
 ) -> Result<()> {
@@ -51,7 +51,7 @@ pub fn increase_balances_using_sheet<P: KeyValuePointer + Clone>(
 
 /// Refunds all input runes to the refund pointer
 pub fn refund_to_refund_pointer<P: KeyValuePointer + Clone>(
-    balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+    balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
     protomessage_vout: u32,
     refund_pointer: u32,
 ) -> Result<()> {
