@@ -13,8 +13,7 @@ pub struct RuneTransfer {
 
 impl RuneTransfer {
     pub fn from_balance_sheet<P: KeyValuePointer + Clone>(s: BalanceSheet<P>) -> Vec<Self> {
-        let mut transfers = s
-            .balances()
+        s.balances()
             .iter()
             .filter_map(|(id, v)| {
                 if *v > 0 {
@@ -23,12 +22,7 @@ impl RuneTransfer {
                     None
                 }
             })
-            .collect::<Vec<RuneTransfer>>();
-
-        // Sort by id to ensure deterministic order
-        transfers.sort_by(|a, b| a.id.cmp(&b.id));
-
-        transfers
+            .collect::<Vec<RuneTransfer>>()
     }
 }
 
