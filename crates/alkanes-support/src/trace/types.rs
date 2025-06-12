@@ -155,15 +155,6 @@ impl From<TraceContext> for Context {
 
 impl From<proto::alkanes::Context> for Context {
     fn from(v: proto::alkanes::Context) -> Context {
-        let mut transfers = v
-            .incoming_alkanes
-            .into_iter()
-            .map(|v| v.into())
-            .collect::<Vec<AlkaneTransfer>>();
-
-        // Sort by AlkaneId (which sorts by block first, then by tx)
-        transfers.sort_by(|a, b| a.id.cmp(&b.id));
-
         Context {
             myself: v
                 .myself
@@ -178,7 +169,12 @@ impl From<proto::alkanes::Context> for Context {
                 .and_then(|v| Ok(v.into()))
                 .unwrap_or_else(|_| AlkaneId::default()),
             vout: v.vout,
-            incoming_alkanes: AlkaneTransferParcel(transfers),
+            incoming_alkanes: AlkaneTransferParcel(
+                v.incoming_alkanes
+                    .into_iter()
+                    .map(|v| v.into())
+                    .collect::<Vec<AlkaneTransfer>>(),
+            ),
             inputs: v
                 .inputs
                 .into_iter()
