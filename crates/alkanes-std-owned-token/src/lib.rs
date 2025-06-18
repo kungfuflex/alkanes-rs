@@ -36,6 +36,9 @@ enum OwnedTokenMessage {
     #[opcode(77)]
     Mint { token_units: u128 },
 
+    #[opcode(88)]
+    Burn {},
+
     #[opcode(99)]
     #[returns(String)]
     GetName,
@@ -100,6 +103,20 @@ impl OwnedToken {
         response.alkanes.0.push(transfer);
 
         Ok(response)
+    }
+
+    fn burn(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        if context.incoming_alkanes.0.len() != 1 {
+            return Err(anyhow!("Input must be 1 alkane"));
+        }
+        if context.myself != context.incoming_alkanes.0[0].id {
+            return Err(anyhow!("Input must be owned token"));
+        }
+
+        self.decrease_total_supply(context.incoming_alkanes.0[0].value)?;
+
+        Ok(CallResponse::default())
     }
 
     fn get_name(&self) -> Result<CallResponse> {
