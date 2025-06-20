@@ -360,6 +360,12 @@ pub fn runesbyheight() -> i32 {
     export_bytes(result.write_to_bytes().unwrap())
 }
 
+#[cfg(not(test))]
+#[no_mangle]
+pub fn sequence() -> i32 {
+    export_bytes(vm::utils::sequence_pointer(&mut AtomicPointer::default()).get().as_ref().to_vec())
+}
+
 // #[no_mangle]
 // pub fn alkane_balance_sheet() -> i32 {
 //     let data = input();

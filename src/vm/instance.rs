@@ -3,8 +3,7 @@ use super::{
     SafeAlkanesHostFunctionsImpl, MEMORY_LIMIT,
 };
 use alkanes_support::{
-    response::{CallResponse, ExtendedCallResponse},
-    trace::{TraceEvent, TraceResponse},
+    response::{ExtendedCallResponse}
 };
 use anyhow::{anyhow, Result};
 use hex;
