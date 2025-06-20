@@ -226,6 +226,7 @@ fn test_owned_token_abi() -> Result<()> {
             "void",
         ),
         ("mint", 77, vec![("token_units", "u128")], "void"),
+        ("burn", 88, vec![], "void"),
         ("get_name", 99, vec![], "String"),
         ("get_symbol", 100, vec![], "String"),
         ("get_total_supply", 101, vec![], "u128"),
