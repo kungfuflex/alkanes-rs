@@ -7,10 +7,11 @@ use metashrew_core::{
     flush, input, println,
     stdio::{stdout, Write},
 };
+use std::sync::{Arc};
 #[allow(unused_imports)]
 use metashrew_support::block::AuxpowBlock;
 use metashrew_support::compat::export_bytes;
-use metashrew_core::index_pointer::AtomicPointer;
+use metashrew_core::index_pointer::{IndexPointer, AtomicPointer};
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
@@ -367,6 +368,12 @@ pub fn sequence() -> i32 {
     export_bytes(vm::utils::sequence_pointer(&mut AtomicPointer::default()).get().as_ref().to_vec())
 }
 
+#[cfg(not(test))]
+#[no_mangle]
+pub fn blocktracker() -> i32 {
+    export_bytes(IndexPointer::from_keyword("/blocktracker").get().as_ref().clone())
+}
+
 // #[no_mangle]
 // pub fn alkane_balance_sheet() -> i32 {
 //     let data = input();
@@ -397,6 +404,10 @@ pub fn _start() {
     let block: Block =
         consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
 
+    let mut tracker = IndexPointer::from_keyword("/blocktracker");
+    let mut new_tracker = tracker.get().as_ref().clone();
+    new_tracker.extend((&[ block.header.block_hash()[1] ]).to_vec());
+    tracker.set(Arc::new(new_tracker));
     index_block(&block, height).unwrap();
     etl::index_extensions(height, &block);
     flush();
