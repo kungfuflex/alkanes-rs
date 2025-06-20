@@ -10,6 +10,7 @@ use metashrew_core::{
 #[allow(unused_imports)]
 use metashrew_support::block::AuxpowBlock;
 use metashrew_support::compat::export_bytes;
+use metashrew_core::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
