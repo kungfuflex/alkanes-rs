@@ -346,4 +346,12 @@ pub trait AlkaneResponder: 'static {
         )?;
         consensus_decode::<Transaction>(&mut std::io::Cursor::new(result.data))
     }
+
+    /// Fallback function that gets called when an opcode is not recognized
+    ///
+    /// This default implementation reverts with an error.
+    /// Contracts can override this method to provide custom fallback behavior.
+    fn fallback(&self) -> Result<CallResponse> {
+        Err(anyhow!("Unrecognized opcode"))
+    }
 }
