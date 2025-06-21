@@ -42,11 +42,11 @@ fn upgradeability_harness() -> Result<Block> {
     };
     let set_claimable = Cellpack {
         target: AlkaneId { block: 2, tx: 2 },
-        inputs: vec![0x7ffd, 2, 104, 10],
+        inputs: vec![104, 10],
     };
     let mint = Cellpack {
         target: AlkaneId { block: 2, tx: 2 },
-        inputs: vec![0x7ffd, 2, 22, 1_000_000],
+        inputs: vec![22, 1_000_000],
     };
 
     // Initialize the contract and execute the cellpacks
@@ -100,11 +100,11 @@ fn test_upgradeability() -> Result<()> {
     };
     let get_claimable = Cellpack {
         target: AlkaneId { block: 2, tx: 2 },
-        inputs: vec![0x7ffd, 2, 103],
+        inputs: vec![103],
     };
     let mint = Cellpack {
         target: AlkaneId { block: 2, tx: 2 },
-        inputs: vec![0x7ffd, 2, 22, 1_000_000],
+        inputs: vec![22, 1_000_000],
     };
 
     let mut test_block = create_block_with_coinbase_tx(block_height + 1);

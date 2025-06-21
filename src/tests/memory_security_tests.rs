@@ -44,10 +44,7 @@ fn test_integer_overflow_in_memory_operations() -> Result<()> {
         vout: 3,
     };
 
-    alkane_helpers::assert_revert_context(
-        &outpoint,
-        "Error: Failed to parse message: Unknown opcode: 340282366920938463463374607431768211455",
-    )?;
+    alkane_helpers::assert_revert_context(&outpoint, "Unrecognized opcode")?;
 
     Ok(())
 }

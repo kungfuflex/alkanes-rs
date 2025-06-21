@@ -26,30 +26,26 @@ enum UpgradeableMessage {
 
     #[opcode(0x7ffe)]
     Upgrade { implementation: AlkaneId },
-
-    #[opcode(0x7ffd)]
-    Delegate { inputs: Vec<u128> },
 }
 
 impl Upgradeable {
-    pub fn alkane_pointer(&self) -> StoragePointer {
+    pub fn alkane_pointer() -> StoragePointer {
         StoragePointer::from_keyword("/implementation")
     }
 
-    pub fn alkane(&self) -> Result<AlkaneId> {
-        Ok(self.alkane_pointer().get().as_ref().clone().try_into()?)
+    pub fn alkane() -> Result<AlkaneId> {
+        Ok(Self::alkane_pointer().get().as_ref().clone().try_into()?)
     }
 
-    pub fn set_alkane(&self, v: AlkaneId) {
-        self.alkane_pointer()
-            .set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
+    pub fn set_alkane(v: AlkaneId) {
+        Self::alkane_pointer().set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
     }
 
     fn initialize(&self, implementation: AlkaneId, auth_token_units: u128) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
 
-        self.set_alkane(implementation);
+        Self::set_alkane(implementation);
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
 
         response
@@ -64,23 +60,24 @@ impl Upgradeable {
 
         self.only_owner()?;
 
-        self.set_alkane(implementation);
+        Self::set_alkane(implementation);
         Ok(CallResponse::forward(&context.incoming_alkanes))
-    }
-
-    fn delegate(&self, inputs: Vec<u128>) -> Result<CallResponse> {
-        let context = self.context()?;
-        let cellpack = Cellpack {
-            target: self.alkane()?,
-            inputs: inputs,
-        };
-        self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())
     }
 }
 
 impl AuthenticatedResponder for Upgradeable {}
 
-impl AlkaneResponder for Upgradeable {}
+impl AlkaneResponder for Upgradeable {
+    fn fallback(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let inputs: Vec<u128> = context.inputs.clone();
+        let cellpack = Cellpack {
+            target: Self::alkane()?,
+            inputs: inputs,
+        };
+        self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())
+    }
+}
 
 // Use the new macro format
 declare_alkane! {
