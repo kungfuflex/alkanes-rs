@@ -11,7 +11,11 @@ use {
     },
     bitcoin::script,
     bitcoin::script::Script,
+    bitcoin::secp256k1::{Secp256k1, XOnlyPublicKey},
+    bitcoin::taproot::TaprootBuilder,
     bitcoin::transaction::Transaction,
+    bitcoin::Address,
+    bitcoin::Network,
     serde::{Deserialize, Serialize},
     std::iter::Peekable,
 };
@@ -91,7 +95,7 @@ impl RawEnvelope {
             Ok(false)
         }
     }
-    fn append_reveal_script(&self, mut builder: script::Builder) -> script::ScriptBuf {
+    pub fn append_reveal_script(&self, mut builder: script::Builder) -> script::ScriptBuf {
         builder = builder
             .push_opcode(opcodes::OP_FALSE)
             .push_opcode(opcodes::all::OP_IF)
@@ -232,5 +236,29 @@ impl RawEnvelope {
                 Some(_) => return Ok((false, None)),
             }
         }
+    }
+
+    pub fn to_commit_address(
+        &self,
+        network: Network,
+        internal_key: XOnlyPublicKey,
+    ) -> Result<Address> {
+        let secp = Secp256k1::new();
+
+        // Create the reveal script
+        let builder = script::Builder::new();
+        let reveal_script = self.append_reveal_script(builder);
+
+        // Build taproot tree with reveal script
+        let taproot = TaprootBuilder::new()
+            .add_leaf(0, reveal_script.clone())
+            .map_err(|_| script::Error::EarlyEndOfScript)?
+            .finalize(&secp, internal_key)
+            .map_err(|_| script::Error::EarlyEndOfScript)?;
+
+        // Create P2TR address
+        let address = Address::p2tr(&secp, taproot.output_key().into(), None, network);
+
+        Ok(address)
     }
 }
