@@ -29,9 +29,16 @@ enum UpgradeableBeaconMessage {
 
     #[opcode(0x7ffe)]
     UpgradeTo { implementation: AlkaneId },
+    #[opcode(0x8fff)]
+    Forward {},
 }
 
 impl UpgradeableBeacon {
+    fn forward(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let response = CallResponse::forward(&context.incoming_alkanes);
+        Ok(response)
+    }
     pub fn implementation_pointer() -> StoragePointer {
         StoragePointer::from_keyword("/implementation")
     }

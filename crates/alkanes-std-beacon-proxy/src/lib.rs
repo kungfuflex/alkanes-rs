@@ -22,9 +22,16 @@ pub struct BeaconProxy(());
 enum BeaconProxyMessage {
     #[opcode(0x7fff)]
     Initialize { beacon: AlkaneId },
+    #[opcode(0x8fff)]
+    Forward {},
 }
 
 impl BeaconProxy {
+    fn forward(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let response = CallResponse::forward(&context.incoming_alkanes);
+        Ok(response)
+    }
     pub fn beacon_pointer() -> StoragePointer {
         StoragePointer::from_keyword("/beacon")
     }
