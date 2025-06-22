@@ -108,6 +108,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-std-beacon-proxy"
+version = "0.2.3"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "anyhow",
+ "bitcoin 0.32.5",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
 name = "alkanes-std-factory-support"
 version = "0.2.3"
 dependencies = [
@@ -214,7 +226,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-std-test-2"
+version = "0.2.3"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "anyhow",
+ "hex",
+ "metashrew-support",
+ "sha2",
+]
+
+[[package]]
 name = "alkanes-std-upgradeable"
+version = "0.2.3"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "anyhow",
+ "bitcoin 0.32.5",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
+name = "alkanes-std-upgradeable-beacon"
 version = "0.2.3"
 dependencies = [
  "alkanes-runtime",

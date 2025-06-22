@@ -134,7 +134,7 @@ impl LoggerAlkane {
     fn inc_claimable_fees(&self) -> Result<CallResponse> {
         let context = self.context()?;
         self.claimable_fees_pointer()
-            .set_value::<u128>(self.claimable_fees_pointer().get_value::<u128>() + 1);
+            .set_value::<u128>(self.claimable_fees_pointer().get_value::<u128>() + 2);
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
     fn self_call(&self) -> Result<CallResponse> {
