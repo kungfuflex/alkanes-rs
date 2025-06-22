@@ -26,9 +26,16 @@ enum UpgradeableMessage {
 
     #[opcode(0x7ffe)]
     Upgrade { implementation: AlkaneId },
+    #[opcode(0x8fff)]
+    Forward {},
 }
 
 impl Upgradeable {
+    fn forward(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let response = CallResponse::forward(&context.incoming_alkanes);
+        Ok(response)
+    }
     pub fn alkane_pointer() -> StoragePointer {
         StoragePointer::from_keyword("/implementation")
     }
