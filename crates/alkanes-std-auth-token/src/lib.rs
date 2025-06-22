@@ -1,13 +1,11 @@
 use alkanes_runtime::runtime::AlkaneResponder;
-use alkanes_runtime::{
-    declare_alkane, message::MessageDispatch, mintable_token::MintableToken,
-    storage::StoragePointer,
-};
+use alkanes_runtime::{declare_alkane, message::MessageDispatch, storage::StoragePointer};
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
+use alkanes_std_factory_support::MintableToken;
 use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
