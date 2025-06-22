@@ -1,0 +1,15 @@
+[package]
+name = "alkanes-std-test-2"
+version = "0.2.3"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+alkanes-runtime = { workspace = true }
+alkanes-support = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }
+metashrew-support = { workspace = true }
+sha2 = "0.10.8"
