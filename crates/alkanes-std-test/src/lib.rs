@@ -25,6 +25,9 @@ pub struct LoggerAlkane(());
 
 #[derive(MessageDispatch)]
 enum LoggerAlkaneMessage {
+    #[opcode(0)]
+    Initialize,
+
     #[opcode(2)]
     SelfCall,
 
@@ -116,6 +119,12 @@ enum LoggerAlkaneMessage {
 }
 
 impl LoggerAlkane {
+    fn initialize(&self) -> Result<CallResponse> {
+        self.observe_initialization()?;
+        let context = self.context()?;
+        let response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
+        Ok(response)
+    }
     fn claimable_fees_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/claimablefees")
     }

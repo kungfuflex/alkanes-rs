@@ -172,6 +172,15 @@ pub trait AlkaneResponder: 'static {
             Err(anyhow!("already initialized"))
         }
     }
+    fn observe_proxy_initialization(&self) -> Result<()> {
+        let mut pointer = StoragePointer::from_keyword("/proxy_initialized");
+        if pointer.get().len() == 0 {
+            pointer.set_value::<u8>(0x01);
+            Ok(())
+        } else {
+            Err(anyhow!("proxy already initialized"))
+        }
+    }
     fn context(&self) -> Result<Context> {
         unsafe {
             let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; __request_context() as usize]);

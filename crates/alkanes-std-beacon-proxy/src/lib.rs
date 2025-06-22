@@ -51,7 +51,7 @@ impl BeaconProxy {
     }
 
     fn initialize(&self, implementation: AlkaneId) -> Result<CallResponse> {
-        self.observe_initialization()?;
+        self.observe_proxy_initialization()?;
         let context = self.context()?;
 
         Self::set_beacon(implementation);
