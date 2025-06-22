@@ -42,7 +42,7 @@ impl Upgradeable {
     }
 
     fn initialize(&self, implementation: AlkaneId, auth_token_units: u128) -> Result<CallResponse> {
-        self.observe_initialization()?;
+        self.observe_proxy_initialization()?;
         let context = self.context()?;
 
         Self::set_alkane(implementation);

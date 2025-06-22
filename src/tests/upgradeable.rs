@@ -1,5 +1,5 @@
 use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers};
+use crate::tests::helpers::{self as alkane_helpers, assert_revert_context};
 use crate::tests::std::{
     alkanes_std_auth_token_build, alkanes_std_beacon_proxy_build, alkanes_std_test_2_build,
     alkanes_std_test_build, alkanes_std_upgradeable_beacon_build, alkanes_std_upgradeable_build,
@@ -40,7 +40,7 @@ fn setup_env() -> Result<Block> {
     };
     let test = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
-        inputs: vec![50],
+        inputs: vec![0], // even though calling initialize here, this should not affect the proxies
     };
 
     // Initialize the contract and execute the cellpacks
@@ -87,29 +87,45 @@ fn upgradeability_harness(
 ) -> Result<(Block, u128)> {
     let mut next_sequence_pointer = sequence_pointer(&mut AtomicPointer::default());
     let proxy_sequence = next_sequence_pointer.get_value::<u128>();
-    let proxy: Cellpack = Cellpack {
-        target: AlkaneId { block: 1, tx: 0 },
-        inputs: vec![0x7fff, delegate_target.block, delegate_target.tx, 1],
+    let proxy = alkane_helpers::BinaryAndCellpack {
+        binary: proxy_build,
+        cellpack: Cellpack {
+            target: AlkaneId { block: 1, tx: 0 },
+            inputs: vec![0x7fff, delegate_target.block, delegate_target.tx, 1],
+        },
     };
-    let set_claimable = Cellpack {
+    let initialize = alkane_helpers::BinaryAndCellpack::cellpack_only(Cellpack {
+        target: AlkaneId {
+            block: 2,
+            tx: proxy_sequence,
+        },
+        inputs: vec![0],
+    });
+    let set_claimable = alkane_helpers::BinaryAndCellpack::cellpack_only(Cellpack {
         target: AlkaneId {
             block: 2,
             tx: proxy_sequence,
         },
         inputs: vec![104, 10],
-    };
-    let mint = Cellpack {
+    });
+    let mint = alkane_helpers::BinaryAndCellpack::cellpack_only(Cellpack {
         target: AlkaneId {
             block: 2,
             tx: proxy_sequence,
         },
         inputs: vec![22, 1_000_000],
-    };
+    });
+    let double_init = alkane_helpers::BinaryAndCellpack::cellpack_only(Cellpack {
+        target: AlkaneId {
+            block: 2,
+            tx: proxy_sequence,
+        },
+        inputs: vec![0x7fff, delegate_target.block, delegate_target.tx, 1],
+    });
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-        [proxy_build, [].into(), [].into()].into(),
-        [proxy, set_claimable, mint].into(),
+    let mut test_block = alkane_helpers::init_with_cellpack_pairs(
+        [proxy, initialize, set_claimable, mint, double_init].into(),
     );
 
     index_block(&test_block, block_height)?;
@@ -123,7 +139,13 @@ fn upgradeability_harness(
         1_000_000
     );
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
-
+    assert_revert_context(
+        &OutPoint {
+            txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
+            vout: 3,
+        },
+        "proxy already initialized",
+    )?;
     Ok((test_block, proxy_sequence))
 }
 
@@ -160,6 +182,13 @@ fn check_after_upgrade(block_height: u32, proxy_sequence: u128) -> Result<()> {
         },
         inputs: vec![105],
     };
+    let initialize = Cellpack {
+        target: AlkaneId {
+            block: 2,
+            tx: proxy_sequence,
+        },
+        inputs: vec![0],
+    };
     let get_claimable = Cellpack {
         target: AlkaneId {
             block: 2,
@@ -181,7 +210,7 @@ fn check_after_upgrade(block_height: u32, proxy_sequence: u128) -> Result<()> {
         .txdata
         .push(alkane_helpers::create_multiple_cellpack_with_witness(
             Witness::new(),
-            vec![incr, get_claimable, mint],
+            vec![incr, get_claimable, mint, initialize],
             false,
         ));
 
@@ -222,6 +251,14 @@ fn check_after_upgrade(block_height: u32, proxy_sequence: u128) -> Result<()> {
     } else {
         panic!("Failed to get trace_event_1 from trace data");
     }
+
+    assert_revert_context(
+        &OutPoint {
+            txid: test_block.txdata[1].compute_txid(),
+            vout: 6,
+        },
+        "already initialized",
+    )?;
 
     Ok(())
 }
