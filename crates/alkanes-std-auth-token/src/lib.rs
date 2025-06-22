@@ -42,7 +42,7 @@ impl AuthToken {
     fn initialize(&self, name: String, symbol: String, amount: u128) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
-        self.set_name_and_symbol(name, symbol);
+        self.set_name_and_symbol_str(name, symbol);
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
         response.alkanes = context.incoming_alkanes.clone();
         response.alkanes.0.push(AlkaneTransfer {
