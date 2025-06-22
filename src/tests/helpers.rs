@@ -112,6 +112,37 @@ pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
     test_block
 }
 
+/// A struct that combines a binary and its corresponding cellpack for cleaner initialization
+#[derive(Debug, Clone)]
+pub struct BinaryAndCellpack {
+    pub binary: Vec<u8>,
+    pub cellpack: Cellpack,
+}
+
+impl BinaryAndCellpack {
+    pub fn new(binary: Vec<u8>, cellpack: Cellpack) -> Self {
+        Self { binary, cellpack }
+    }
+
+    /// Creates a BinaryAndCellpack with an empty binary (useful when only cellpack data is needed)
+    pub fn cellpack_only(cellpack: Cellpack) -> Self {
+        Self {
+            binary: Vec::new(),
+            cellpack,
+        }
+    }
+}
+
+/// Helper function that accepts a vector of BinaryAndCellpack structs and calls init_with_multiple_cellpacks_with_tx
+pub fn init_with_cellpack_pairs(cellpack_pairs: Vec<BinaryAndCellpack>) -> Block {
+    let (binaries, cellpacks): (Vec<Vec<u8>>, Vec<Cellpack>) = cellpack_pairs
+        .into_iter()
+        .map(|pair| (pair.binary, pair.cellpack))
+        .unzip();
+
+    init_with_multiple_cellpacks_with_tx(binaries, cellpacks)
+}
+
 pub fn init_with_multiple_cellpacks_with_tx(
     binaries: Vec<Vec<u8>>,
     cellpacks: Vec<Cellpack>,
