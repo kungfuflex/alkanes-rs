@@ -20,13 +20,15 @@ use crate::snapshot::{RepoIndex, SnapshotConfig, SnapshotManager};
 pub struct RockshrewSnapshotProvider {
     manager: Arc<RwLock<SnapshotManager>>,
     storage: Arc<RwLock<RocksDBStorageAdapter>>,
+    snapshot_interval: u32,
 }
 
 impl RockshrewSnapshotProvider {
     #[allow(dead_code)]
     pub fn new(config: SnapshotConfig, storage: Arc<RwLock<RocksDBStorageAdapter>>) -> Self {
+        let snapshot_interval = config.interval;
         let manager = Arc::new(RwLock::new(SnapshotManager::new(config)));
-        Self { manager, storage }
+        Self { manager, storage, snapshot_interval }
     }
 
     #[allow(dead_code)]
@@ -227,9 +229,10 @@ impl SnapshotProvider for RockshrewSnapshotProvider {
 
     /// Check if a snapshot should be created at this height
     fn should_create_snapshot(&self, height: u32) -> bool {
-        // This is a synchronous method, so we can't access the async manager
-        // For now, use a simple heuristic
-        height > 0 && height % 1000 == 0
+        if height == 0 || self.snapshot_interval == 0 {
+            return false;
+        }
+        height % self.snapshot_interval == 0
     }
 }
 

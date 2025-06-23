@@ -50,6 +50,14 @@ pub mod state_root_production_test;
 pub mod stateroot_jsonrpc_test;
 #[cfg(test)]
 pub mod surface_api_test;
+#[cfg(test)]
+pub mod snapshot_interval_test;
+#[cfg(test)]
+pub mod snapshot_interval_fix_test;
+#[cfg(test)]
+pub mod snapshot_directory_creation_test;
+#[cfg(test)]
+pub mod snapshot_initialization_fix_test;
 
 /// Test configuration and utilities
 pub struct TestConfig {

@@ -828,6 +828,20 @@ async fn main() -> Result<()> {
             };
             
             let provider = RockshrewSnapshotProvider::new(snapshot_config, storage_adapter_ref.clone());
+            
+            // Initialize the snapshot provider with the database path
+            if let Err(e) = provider.initialize(&args.db_path).await {
+                error!("Failed to initialize snapshot provider: {}", e);
+                return Err(anyhow!("Failed to initialize snapshot provider: {}", e));
+            }
+            
+            // Set the current WASM file for snapshot metadata
+            if let Err(e) = provider.set_current_wasm(indexer_path.clone()).await {
+                error!("Failed to set WASM file for snapshot provider: {}", e);
+                return Err(anyhow!("Failed to set WASM file for snapshot provider: {}", e));
+            }
+            
+            info!("Successfully initialized snapshot provider");
             sync_engine.set_snapshot_provider(Box::new(provider)).await;
         }
         SyncMode::Repo(_config) => {
