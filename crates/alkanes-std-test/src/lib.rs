@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use alkanes_runtime::{
     declare_alkane, message::MessageDispatch, runtime::AlkaneResponder, storage::StoragePointer,
 };
@@ -116,6 +118,9 @@ enum LoggerAlkaneMessage {
 
     #[opcode(105)]
     IncClaimableFees,
+
+    #[opcode(110)]
+    TestExtCallReturnLeftovers { target: AlkaneId, inputs: Vec<u128> },
 }
 
 impl LoggerAlkane {
@@ -280,6 +285,29 @@ impl LoggerAlkane {
         Ok(response)
     }
 
+    fn _return_leftovers(
+        &self,
+        myself: AlkaneId,
+        result: CallResponse,
+        input_alkanes: AlkaneTransferParcel,
+    ) -> Result<CallResponse> {
+        let mut response = CallResponse::default();
+        let mut unique_ids: BTreeSet<AlkaneId> = BTreeSet::new();
+        for transfer in input_alkanes.0 {
+            unique_ids.insert(transfer.id);
+        }
+        for transfer in result.alkanes.0 {
+            unique_ids.insert(transfer.id);
+        }
+        for id in unique_ids {
+            response.alkanes.pay(AlkaneTransfer {
+                id: id,
+                value: self.balance(&myself, &id),
+            });
+        }
+        Ok(response)
+    }
+
     fn test_ext_call(&self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
         let cellpack = Cellpack {
@@ -288,6 +316,20 @@ impl LoggerAlkane {
         };
         let response = self.call(&cellpack, &context.incoming_alkanes, self.fuel())?;
         Ok(response)
+    }
+
+    fn test_ext_call_return_leftovers(
+        &self,
+        target: AlkaneId,
+        inputs: Vec<u128>,
+    ) -> Result<CallResponse> {
+        let context = self.context()?;
+        let cellpack = Cellpack {
+            target: target,
+            inputs: inputs,
+        };
+        let response = self.call(&cellpack, &context.incoming_alkanes, self.fuel())?;
+        self._return_leftovers(context.myself, response, context.incoming_alkanes)
     }
 
     fn test_ext_delegate_call(&self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
