@@ -58,6 +58,8 @@ pub mod snapshot_interval_fix_test;
 pub mod snapshot_directory_creation_test;
 #[cfg(test)]
 pub mod snapshot_initialization_fix_test;
+#[cfg(test)]
+pub mod snapshot_rocksdb_lock_fix_test;
 
 /// Test configuration and utilities
 pub struct TestConfig {

@@ -250,6 +250,38 @@ impl RocksDBStorageAdapter {
     pub fn new(db: Arc<DB>) -> Self {
         Self { db }
     }
+
+    #[allow(dead_code)]
+    pub fn new_with_path(db_path: &std::path::Path) -> Result<Self> {
+        let mut opts = rocksdb::Options::default();
+        opts.create_if_missing(true);
+        let db = rocksdb::DB::open(&opts, db_path)
+            .map_err(|e| anyhow!("Failed to open database: {}", e))?;
+        Ok(Self { db: Arc::new(db) })
+    }
+
+    #[allow(dead_code)]
+    pub async fn get_current_height(&self) -> Result<u32> {
+        // Try to get the tip height first (used by main runtime)
+        let tip_key = "/__INTERNAL/tip-height".as_bytes();
+        if let Ok(Some(height_bytes)) = self.db.get(tip_key) {
+            if height_bytes.len() >= 4 {
+                let height = u32::from_le_bytes([
+                    height_bytes[0],
+                    height_bytes[1],
+                    height_bytes[2],
+                    height_bytes[3],
+                ]);
+                return Ok(height);
+            }
+        }
+
+        // Fall back to indexed height
+        match self.get_indexed_height().await {
+            Ok(height) => Ok(height),
+            Err(_) => Ok(0),
+        }
+    }
 }
 
 #[async_trait]

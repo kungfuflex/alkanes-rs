@@ -829,8 +829,14 @@ async fn main() -> Result<()> {
             
             let provider = RockshrewSnapshotProvider::new(snapshot_config, storage_adapter_ref.clone());
             
-            // Initialize the snapshot provider with the database path
-            if let Err(e) = provider.initialize(&args.db_path).await {
+            // Get current height from the database to initialize snapshot provider
+            let current_height = {
+                let storage = storage_adapter_ref.read().await;
+                storage.get_current_height().await.unwrap_or(start_block)
+            };
+            
+            // Initialize the snapshot provider with the current height
+            if let Err(e) = provider.initialize_with_height(current_height).await {
                 error!("Failed to initialize snapshot provider: {}", e);
                 return Err(anyhow!("Failed to initialize snapshot provider: {}", e));
             }
