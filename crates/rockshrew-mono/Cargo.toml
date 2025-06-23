@@ -3,6 +3,14 @@ name = "rockshrew-mono"
 version = "9.0.0"
 edition = "2021"
 
+[[bin]]
+name = "rockshrew-mono"
+path = "src/main.rs"
+
+[[bin]]
+name = "rockshrew-mono-simplified"
+path = "src/main_simplified.rs"
+
 [dependencies]
 async-trait = "0.1"
 rand = "0.8"

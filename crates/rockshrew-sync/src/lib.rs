@@ -6,6 +6,7 @@
 
 pub mod adapters;
 pub mod error;
+pub mod jsonrpc;
 pub mod snapshot;
 pub mod snapshot_sync;
 pub mod sync;
@@ -20,6 +21,7 @@ pub mod mock_snapshot;
 
 pub use adapters::*;
 pub use error::*;
+pub use jsonrpc::*;
 pub use snapshot::*;
 pub use snapshot_sync::*;
 pub use sync::*;

@@ -1,0 +1,23 @@
+[package]
+name = "metashrew-sync"
+version = "9.0.0"
+edition = "2021"
+description = "Generic synchronization framework for Metashrew indexers"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = "0.1"
+tokio = { version = "1.43.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Optional dependencies for specific features
+clap = { version = "4.0", features = ["derive"], optional = true }
+
+[features]
+default = []
+cli = ["clap"]
+
+[lib]
+name = "metashrew_sync"
+path = "src/lib.rs"

@@ -21,6 +21,21 @@ dependencies = [
 
 [[package]]
 name = "actix-cors"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0346d8c1f762b41b458ed3145eea914966bb9ad20b9be0d6d463b20d45586370"
+dependencies = [
+ "actix-utils",
+ "actix-web",
+ "derive_more 0.99.20",
+ "futures-util",
+ "log",
+ "once_cell",
+ "smallvec",
+]
+
+[[package]]
+name = "actix-cors"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daa239b93927be1ff123eebada5a3ff23e89f0124ccb8609234e5103d5a5ae6d"
@@ -2752,7 +2767,7 @@ dependencies = [
 name = "memshrew-p2p"
 version = "9.0.0"
 dependencies = [
- "actix-cors",
+ "actix-cors 0.7.1",
  "actix-web",
  "anyhow",
  "bitcoin 0.32.6",
@@ -2814,6 +2829,7 @@ name = "metashrew-runtime"
 version = "9.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "env_logger 0.11.8",
  "hex",
  "itertools 0.12.1",
@@ -2844,6 +2860,18 @@ dependencies = [
  "protobuf-codegen 3.7.2",
  "protoc-bin-vendored",
  "protoc-rust",
+]
+
+[[package]]
+name = "metashrew-sync"
+version = "9.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3838,7 +3866,7 @@ dependencies = [
 name = "rockshrew-mono"
 version = "9.0.0"
 dependencies = [
- "actix-cors",
+ "actix-cors 0.7.1",
  "actix-web",
  "anyhow",
  "async-trait",
@@ -3874,16 +3902,20 @@ name = "rockshrew-runtime"
 version = "9.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "log",
  "metashrew-runtime",
  "rocksdb",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
 name = "rockshrew-sync"
 version = "9.0.0"
 dependencies = [
+ "actix-cors 0.6.5",
+ "actix-web",
  "anyhow",
  "async-trait",
  "bitcoin 0.32.6",

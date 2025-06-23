@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 // Core modules
+pub mod adapters;
 pub mod context;
 pub mod helpers;
 pub mod optimized_bst;
@@ -24,6 +25,13 @@ pub use traits::{BatchLike, KVTrackerFn, KeyValueStoreLike};
 pub use helpers::{BSTHelper, BSTStatistics};
 pub use optimized_bst::{OptimizedBST, OptimizedBSTStatistics};
 pub use smt::{BatchedSMTHelper, SMTHelper, SMTNode};
+
+// Re-export adapter functionality
+pub use adapters::{
+    HeightTracker, StateRootManager, BatchProcessor,
+    traits::{BlockHashManager, StorageAdapterCore},
+    GenericHeightTracker, GenericStateRootManager,
+};
 
 // Utility functions that are storage-backend agnostic
 static mut _LABEL: Option<String> = None;
