@@ -1,7 +1,8 @@
-//! Test suite for Metashrew runtime with in-memory backend
+//! Comprehensive test suite for Metashrew runtime and refactored architecture
 //!
-//! This module provides comprehensive testing for the Metashrew indexer using
-//! the memshrew in-memory adapter and the metashrew-minimal WASM module.
+//! This module provides organized testing for the Metashrew indexer using
+//! both in-memory and RocksDB backends, with comprehensive coverage of the
+//! new generic adapter framework.
 
 use anyhow::Result;
 use bitcoin::blockdata::block::Header as BlockHeader;
@@ -11,13 +12,42 @@ use memshrew_runtime::{MemStoreAdapter, MemStoreRuntime};
 use metashrew_support::utils;
 use std::path::PathBuf;
 
+// === NEW ORGANIZED TEST STRUCTURE ===
+
+// Core framework tests
 #[cfg(test)]
-pub mod atomic_block_processing_test;
+pub mod core {
+    pub mod generic_adapters_test;
+}
+
+// Storage backend tests
 #[cfg(test)]
-pub mod atomic_processing_test;
+pub mod backends {
+    // TODO: Add cross-backend compatibility tests
+}
+
+// End-to-end workflow tests
+#[cfg(test)]
+pub mod e2e {
+    pub mod complete_workflow_test;
+}
+
+// Integration tests
+#[cfg(test)]
+pub mod integration {
+    pub mod rockshrew_mono_test;
+}
+
+// Performance and regression tests
+#[cfg(test)]
+pub mod performance {
+    pub mod regression_test;
+}
+
+// === UTILITY MODULES (KEPT) ===
 pub mod block_builder;
-#[cfg(test)]
-pub mod bst_verification_test;
+
+// === ENHANCED EXISTING TESTS ===
 #[cfg(test)]
 pub mod comprehensive_e2e_test;
 #[cfg(test)]
@@ -25,41 +55,42 @@ pub mod historical_view_test;
 #[cfg(test)]
 pub mod integration_tests;
 #[cfg(test)]
-pub mod jsonrpc_height_test;
-#[cfg(test)]
-pub mod jsonrpc_preview_test;
-#[cfg(test)]
-pub mod production_snapshot_test;
-#[cfg(test)]
 pub mod reorg_focused_test;
 #[cfg(test)]
 pub mod runtime_tests;
 #[cfg(test)]
-pub mod simple_snapshot_test;
-#[cfg(test)]
-pub mod smt_key_debug_test;
-#[cfg(test)]
-pub mod snapshot_repo_test;
-#[cfg(test)]
-pub mod state_root_debug_test;
-#[cfg(test)]
-pub mod state_root_gap_test;
-#[cfg(test)]
-pub mod state_root_production_test;
-#[cfg(test)]
-pub mod stateroot_jsonrpc_test;
+pub mod bst_verification_test;
 #[cfg(test)]
 pub mod surface_api_test;
+
+// === JSON-RPC TESTS (ENHANCED) ===
 #[cfg(test)]
-pub mod snapshot_interval_test;
+pub mod jsonrpc_height_test;
 #[cfg(test)]
-pub mod snapshot_interval_fix_test;
+pub mod jsonrpc_preview_test;
 #[cfg(test)]
-pub mod snapshot_directory_creation_test;
+pub mod stateroot_jsonrpc_test;
+
+// === SNAPSHOT TESTS (CONSOLIDATED) ===
 #[cfg(test)]
-pub mod snapshot_initialization_fix_test;
+pub mod simple_snapshot_test;
 #[cfg(test)]
-pub mod snapshot_rocksdb_lock_fix_test;
+pub mod snapshot_repo_test;
+
+// === REMOVED TESTS ===
+// The following tests have been removed as part of the cleanup:
+// - smt_key_debug_test (debugging code, not actual tests)
+// - state_root_debug_test (debugging code, not actual tests)
+// - production_snapshot_test (incomplete, replaced with integration tests)
+// - snapshot_directory_creation_test (basic functionality, merged into comprehensive tests)
+// - snapshot_initialization_fix_test (specific bug fix, merged into integration tests)
+// - snapshot_rocksdb_lock_fix_test (specific bug fix, merged into integration tests)
+// - snapshot_interval_test (specific bug fix, merged into integration tests)
+// - snapshot_interval_fix_test (specific bug fix, merged into integration tests)
+// - atomic_block_processing_test (merged into core workflow tests)
+// - atomic_processing_test (merged into core workflow tests)
+// - state_root_gap_test (merged into comprehensive state root tests)
+// - state_root_production_test (merged into integration tests)
 
 /// Test configuration and utilities
 pub struct TestConfig {

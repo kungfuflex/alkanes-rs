@@ -32,11 +32,12 @@ where
     }
 
     async fn get_state_root(&self, height: u32) -> Result<Option<Vec<u8>>> {
-        let smt_helper = SMTHelper::new(self.storage.clone());
+        let root_key = format!("smt:root:{}", height).into_bytes();
         
-        match smt_helper.get_smt_root_at_height(height) {
-            Ok(root) => Ok(Some(root.to_vec())),
-            Err(_) => Ok(None), // No state root found for this height
+        match self.storage.get_immutable(&root_key)
+            .map_err(|e| anyhow::anyhow!("Failed to get state root: {}", e))? {
+            Some(root) => Ok(Some(root)),
+            None => Ok(None),
         }
     }
 
