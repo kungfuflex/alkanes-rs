@@ -229,18 +229,21 @@ pub trait Saveable {
     fn to(&self) -> AlkaneId;
     fn storage_map(&self) -> StorageMap;
     fn alkanes(&self) -> AlkaneTransferParcel;
-    fn save(&self, atomic: &mut AtomicPointer) -> Result<()> {
+    fn save(&self, atomic: &mut AtomicPointer, is_delegate: bool) -> Result<()> {
         pipe_storagemap_to(
             &self.storage_map(),
             &mut atomic
                 .derive(&IndexPointer::from_keyword("/alkanes/").select(&self.from().into())),
         );
-        transfer_from(
-            &self.alkanes(),
-            &mut atomic.derive(&IndexPointer::default()),
-            &self.from().into(),
-            &self.to().into(),
-        )?;
+        if !is_delegate {
+            // delegate call retains caller and myself, so no alkanes are transferred from the subcontext to myself
+            transfer_from(
+                &self.alkanes(),
+                &mut atomic.derive(&IndexPointer::default()),
+                &self.from().into(),
+                &self.to().into(),
+            )?;
+        }
         Ok(())
     }
 }

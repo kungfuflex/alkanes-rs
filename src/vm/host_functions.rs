@@ -717,7 +717,7 @@ impl AlkanesHostFunctionsImpl {
                 .clock(TraceEvent::ReturnContext(return_context));
             let mut saveable: SaveableExtendedCallResponse = response.clone().into();
             saveable.associate(&subcontext);
-            saveable.save(&mut context_guard.message.atomic)?;
+            saveable.save(&mut context_guard.message.atomic, T::isdelegate())?;
             context_guard.returndata = serialized.clone();
             T::handle_atomic(&mut context_guard.message.atomic);
         }
