@@ -1,5 +1,6 @@
 use crate::{message::AlkaneMessageContext, tests::std::alkanes_std_auth_token_build};
 use alkanes_support::id::AlkaneId;
+use alkanes_support::utils::string_to_u128_list;
 use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
@@ -234,29 +235,18 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
         inputs: vec![100],
     };
 
-    // Create a cellpack to set the name and symbol
-    // For the set_name_and_symbol method (opcode 88)
-    // The format for string parameters is now null-terminated strings
-
-    // For a long name that spans multiple u128s
-    // "SuperLongCustomTokenNameThatSpansMultipleU128Values" (49 characters)
-    let name_data1 = u128::from_le_bytes(*b"SuperLongCustomT");
-    let name_data2 = u128::from_le_bytes(*b"ok\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
-
-    // For "SLCT" symbol (4 characters)
-    let symbol_data = u128::from_le_bytes(*b"SLCT\0\0\0\0\0\0\0\0\0\0\0\0");
+    let mut inputs = vec![
+        1,    /* opcode (to init new token) */
+        1,    /* auth_token units */
+        1000, /* owned_token token_units */
+    ];
+    inputs.extend(string_to_u128_list("SuperLongCustomToken".to_string()));
+    inputs.extend(string_to_u128_list("SLCT".to_string()));
 
     // Initialize the OwnedToken with auth token and token units
     let init_cellpack = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
-        inputs: vec![
-            1,           /* opcode (to init new token) */
-            1,           /* auth_token units */
-            1000,        /* owned_token token_units */
-            name_data1,  // first part of the name
-            name_data2,  // second part of the name
-            symbol_data, // null-terminated symbol data
-        ],
+        inputs: inputs,
     };
 
     // Create a cellpack to get the name
@@ -317,7 +307,7 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
 
     println!("trace {:?}", trace_str);
 
-    let expected_name = "SuperLongCustomTok";
+    let expected_name = "SuperLongCustomToken";
     let expected_symbol = "SLCT";
 
     // Check if the trace data contains the expected name
