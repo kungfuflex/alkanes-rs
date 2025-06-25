@@ -142,7 +142,7 @@ pub fn get_view_mode() -> bool {
 pub fn is_genesis(height: u64) -> bool {
     let mut init_ptr = IndexPointer::from_keyword("/seen-genesis");
     let has_not_seen_genesis = init_ptr.get().len() == 0;
-    println!("Current block: {}, genesis processed: {}", height, has_not_seen_genesis);
+    println!("Current block: {}, Genesis processed: {}", height, has_not_seen_genesis);
     let is_genesis = if has_not_seen_genesis {
         get_view_mode() || height >= genesis::GENESIS_BLOCK
     } else {
