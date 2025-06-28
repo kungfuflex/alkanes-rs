@@ -9,7 +9,7 @@ license = "CC0-1.0"
 rust-version = "1.74.0"
 
 [features]
-dogecoin = []
+dogecoin = ["ordinals-scriptsig"]
 
 [dependencies]
 bitcoin = { version = "0.32.4", features = ["rand"] }
@@ -17,6 +17,10 @@ derive_more = { version = "1.0.0", features = ["display", "from_str"] }
 serde = { version = "1.0.137", features = ["derive"] }
 serde_with = "3.7.0"
 thiserror = "1.0.56"
+
+[dependencies.ordinals-scriptsig]
+path = "../ordinals-scriptsig"
+optional = true
 
 [dev-dependencies]
 serde_json = { version = "1.0.81", features = ["preserve_order"] }

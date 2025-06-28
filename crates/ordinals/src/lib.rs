@@ -31,6 +31,9 @@ pub use {
     sat_point::SatPoint, spaced_rune::SpacedRune, terms::Terms,
 };
 
+// Re-export inscription types and functions
+pub use inscription::{parse_inscriptions_from_transactions, Inscription, ParsedInscription};
+
 pub const CYCLE_EPOCHS: u32 = 6;
 
 fn default<T: Default>() -> T {
@@ -47,6 +50,7 @@ mod epoch;
 mod etching;
 mod flaw;
 mod height;
+pub mod inscription;
 mod pile;
 mod rarity;
 mod rune;
@@ -57,3 +61,6 @@ pub mod sat_point;
 pub mod spaced_rune;
 mod terms;
 pub mod varint;
+
+#[cfg(test)]
+mod inscription_tests;

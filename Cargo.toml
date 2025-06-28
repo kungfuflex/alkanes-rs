@@ -21,6 +21,7 @@ bitcoin = { version = "0.32.4", features = ["rand"] }
 metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 ordinals = { path = "./crates/ordinals" }
+ordinals-scriptsig = { path = "./crates/ordinals-scriptsig" }
 protorune = { path = "./crates/protorune" }
 protorune-support = { path = "./crates/protorune-support" }
 alkanes-support = { path = "./crates/alkanes-support" }

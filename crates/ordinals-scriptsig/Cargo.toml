@@ -1,0 +1,14 @@
+[package]
+name = "ordinals-scriptsig"
+version = "0.1.0"
+edition = "2021"
+description = "Dogecoin script_sig inscription parsing for ordinals"
+license = "MIT"
+
+[dependencies]
+bitcoin = { version = "0.32.4", features = ["rand"] }
+anyhow = "1.0.90"
+thiserror = "1.0.56"
+
+[dev-dependencies]
+bitcoin = { version = "0.32.4", features = ["rand"] }

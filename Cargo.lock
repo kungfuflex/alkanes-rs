@@ -1911,10 +1911,20 @@ version = "0.2.3"
 dependencies = [
  "bitcoin 0.32.5",
  "derive_more 1.0.0",
+ "ordinals-scriptsig",
  "pretty_assertions",
  "serde",
  "serde_json",
  "serde_with",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "ordinals-scriptsig"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitcoin 0.32.5",
  "thiserror 1.0.69",
 ]
 
