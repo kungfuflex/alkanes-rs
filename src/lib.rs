@@ -112,6 +112,12 @@ pub fn simulate() -> i32 {
 
 #[cfg(not(test))]
 #[no_mangle]
+pub fn simulate() -> i32 {
+    export_bytes(view::sequence().unwrap())
+}
+
+#[cfg(not(test))]
+#[no_mangle]
 pub fn meta() -> i32 {
     configure_network();
     let data = input();

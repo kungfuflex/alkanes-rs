@@ -3,6 +3,7 @@ use crate::network::set_view_mode;
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
 use crate::utils::{
     alkane_id_to_outpoint, alkane_inventory_pointer, balance_pointer, credit_balances,
+    sequence_pointer,
     debit_balances, pipe_storagemap_to,
 };
 use crate::vm::instance::AlkanesInstance;
@@ -262,6 +263,10 @@ pub fn to_alkanes_outpoints(
         );
     }
     cloned
+}
+
+pub fn sequence() -> Result<Vec<u8>> {
+  Ok(sequence_pointer(&AtomicPointer::default()).get_value::<u128>().to_le_bytes().to_vec())
 }
 
 pub fn protorunes_by_address(
