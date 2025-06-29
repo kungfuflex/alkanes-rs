@@ -112,7 +112,7 @@ pub fn simulate() -> i32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn simulate() -> i32 {
+pub fn sequence() -> i32 {
     export_bytes(view::sequence().unwrap())
 }
 

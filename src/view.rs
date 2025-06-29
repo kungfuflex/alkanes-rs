@@ -3,12 +3,11 @@ use crate::network::set_view_mode;
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
 use crate::utils::{
     alkane_id_to_outpoint, alkane_inventory_pointer, balance_pointer, credit_balances,
-    sequence_pointer,
     debit_balances, pipe_storagemap_to,
 };
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
-use crate::vm::utils::{prepare_context, run_after_special, run_special_cellpacks};
+use crate::vm::utils::{sequence_pointer, prepare_context, run_after_special, run_special_cellpacks};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransfer;
