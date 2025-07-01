@@ -412,7 +412,8 @@ pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
 }
 
 pub fn read_alkane_storage(id: &AlkaneId, key: &str) -> Arc<Vec<u8>> {
-    let storage_ptr = StoragePointer::from_keyword(key).unwrap().as_ref().clone();
+    let mut storage_ptr = StoragePointer::from_keyword(key).unwrap().as_ref().clone();
+    storage_ptr.extend([0, 0, 0, 0].iter());
     println!("storage ptr {:?}", storage_ptr);
     let ptr = IndexPointer::from_keyword("/alkanes/")
         .select(&id.clone().into())
