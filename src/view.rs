@@ -158,14 +158,10 @@ pub fn get_statics(id: &AlkaneId) -> (String, String) {
     }
 
     // If not in cache, fetch the values
-    let name = call_view(id, &vec![NAME_OPCODE], STATIC_FUEL)
-        .and_then(|v| Ok(String::from_utf8(v)))
-        .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
-        .unwrap();
-    let symbol = call_view(id, &vec![SYMBOL_OPCODE], STATIC_FUEL)
-        .and_then(|v| Ok(String::from_utf8(v)))
-        .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
-        .unwrap();
+    let name = String::from_utf8(read_alkane_storage(id, "/name").to_vec())
+        .unwrap_or_else(|_| String::from("{REVERT}"));
+    let symbol = String::from_utf8(read_alkane_storage(id, "/symbol").to_vec())
+        .unwrap_or_else(|_| String::from("{REVERT}"));
 
     // Store in cache
     if let Ok(mut cache) = STATICS_CACHE.lock() {
@@ -414,6 +410,14 @@ pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
         .clone())
 }
 
+pub fn read_alkane_storage(id: &AlkaneId, key: &str) -> Arc<Vec<u8>> {
+    IndexPointer::from_keyword("/alkanes/")
+        .select(&id.clone().into())
+        .keyword("/storage/")
+        .keyword(key)
+        .get()
+}
+
 pub fn simulate_safe(
     parcel: &MessageContextParcel,
     fuel: u64,
@@ -450,10 +454,6 @@ pub fn simulate_parcel(
     credit_balances(&mut atomic, &myself, &parcel.runes)?;
     prepare_context(context.clone(), &caller, &myself, false);
     let (response, gas_used) = run_after_special(context.clone(), binary, fuel)?;
-    pipe_storagemap_to(
-        &response.storage,
-        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
-    );
     let mut combined = parcel.runtime_balances.as_ref().clone();
     <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(parcel.runes.clone())?
         .pipe(&mut combined)?;
