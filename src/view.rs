@@ -157,12 +157,28 @@ pub fn get_statics(id: &AlkaneId) -> (String, String) {
             return cached_values.clone();
         }
     }
+    let name_ptr = read_alkane_storage(id, "/name");
+    let symbol_ptr = read_alkane_storage(id, "/symbol");
+    println!("name_ptr {:?}", name_ptr);
+    println!("symbol_ptr {:?}", symbol_ptr);
 
     // If not in cache, fetch the values
-    let name = String::from_utf8(read_alkane_storage(id, "/name").to_vec())
-        .unwrap_or_else(|_| String::from("{REVERT}"));
-    let symbol = String::from_utf8(read_alkane_storage(id, "/symbol").to_vec())
-        .unwrap_or_else(|_| String::from("{REVERT}"));
+    let name = if name_ptr.len() == 0 {
+        call_view(id, &vec![NAME_OPCODE], STATIC_FUEL)
+            .and_then(|v| Ok(String::from_utf8(v)))
+            .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
+            .unwrap()
+    } else {
+        String::from_utf8(name_ptr.to_vec()).unwrap_or_else(|_| String::from("{REVERT}"))
+    };
+    let symbol = if symbol_ptr.len() == 0 {
+        call_view(id, &vec![SYMBOL_OPCODE], STATIC_FUEL)
+            .and_then(|v| Ok(String::from_utf8(v)))
+            .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
+            .unwrap()
+    } else {
+        String::from_utf8(symbol_ptr.to_vec()).unwrap_or_else(|_| String::from("{REVERT}"))
+    };
 
     // Store in cache
     if let Ok(mut cache) = STATICS_CACHE.lock() {
@@ -413,7 +429,7 @@ pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
 
 pub fn read_alkane_storage(id: &AlkaneId, key: &str) -> Arc<Vec<u8>> {
     let mut storage_ptr = StoragePointer::from_keyword(key).unwrap().as_ref().clone();
-    storage_ptr.extend([0, 0, 0, 0].iter());
+    // storage_ptr.extend([0, 0, 0, 0].iter());
     println!("storage ptr {:?}", storage_ptr);
     let ptr = IndexPointer::from_keyword("/alkanes/")
         .select(&id.clone().into())

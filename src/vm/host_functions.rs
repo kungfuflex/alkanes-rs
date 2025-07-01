@@ -135,13 +135,14 @@ impl AlkanesHostFunctionsImpl {
             };
             let value = {
                 let myself = caller.data_mut().context.lock().unwrap().myself.clone();
-                (&caller.data_mut().context.lock().unwrap().message)
+                let ptr = (&caller.data_mut().context.lock().unwrap().message)
                     .atomic
                     .keyword("/alkanes/")
                     .select(&myself.into())
                     .keyword("/storage/")
-                    .select(&key)
-                    .get()
+                    .select(&key);
+                println!("Load mem ptr {:?}", ptr);
+                ptr.get()
             };
             (key.len() + value.len(), value)
         };
