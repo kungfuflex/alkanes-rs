@@ -411,11 +411,12 @@ pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
 }
 
 pub fn read_alkane_storage(id: &AlkaneId, key: &str) -> Arc<Vec<u8>> {
-    IndexPointer::from_keyword("/alkanes/")
+    let ptr = IndexPointer::from_keyword("/alkanes/")
         .select(&id.clone().into())
         .keyword("/storage/")
-        .keyword(key)
-        .get()
+        .keyword(key);
+    println!("storage ptr {:?}", ptr);
+    ptr.get()
 }
 
 pub fn simulate_safe(
