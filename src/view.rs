@@ -8,6 +8,7 @@ use crate::utils::{
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
 use crate::vm::utils::{prepare_context, run_after_special, run_special_cellpacks};
+use alkanes_runtime::storage::StoragePointer;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransfer;
@@ -411,11 +412,13 @@ pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
 }
 
 pub fn read_alkane_storage(id: &AlkaneId, key: &str) -> Arc<Vec<u8>> {
+    let storage_ptr = StoragePointer::from_keyword(key).unwrap().as_ref().clone();
+    println!("storage ptr {:?}", storage_ptr);
     let ptr = IndexPointer::from_keyword("/alkanes/")
         .select(&id.clone().into())
         .keyword("/storage/")
-        .keyword(key);
-    println!("storage ptr {:?}", ptr);
+        .select(&storage_ptr);
+    println!("ptr {:?}", ptr);
     ptr.get()
 }
 
