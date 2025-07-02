@@ -393,8 +393,8 @@ pub fn alkanes_indexer(height: u32, block_data: &[u8]) -> Result<(), Box<dyn std
     // Update cache statistics
     logging::update_cache_stats(logging::get_cache_stats());
     
-    // Log comprehensive block summary
-    logging::log_block_summary(&block, height);
+    // Log comprehensive block summary with actual block data size
+    logging::log_block_summary_with_size(&block, height, block_data.len());
     
     Ok(())
 }

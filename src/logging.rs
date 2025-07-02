@@ -294,6 +294,12 @@ pub fn get_cache_stats() -> CacheStats {
 /// Log block summary at the end of block processing
 #[cfg(not(target_arch = "wasm32"))]
 pub fn log_block_summary(block: &Block, height: u32) {
+    log_block_summary_with_size(block, height, block.vfsize());
+}
+
+/// Log block summary with actual block data size
+#[cfg(not(target_arch = "wasm32"))]
+pub fn log_block_summary_with_size(block: &Block, height: u32, block_size_bytes: usize) {
     // Update cache stats before logging
     let current_cache_stats = get_cache_stats();
     update_cache_stats(current_cache_stats);
@@ -309,7 +315,7 @@ pub fn log_block_summary(block: &Block, height: u32) {
         println!("📦 BLOCK {} PROCESSING SUMMARY", height);
         println!("🏗️  ═══════════════════════════════════════════════════════════════");
         println!("🔗 Block Hash: {}", block.block_hash());
-        println!("📏 Block Size: {} bytes", block.vfsize());
+        println!("📏 Block Size: {} bytes", format_number_with_commas(block_size_bytes));
         println!();
         
         // Transaction & Outpoint Processing
@@ -405,8 +411,30 @@ pub fn log_block_summary(block: &Block, height: u32) {
     }
 }
 
+/// Helper function to format numbers with commas
+fn format_number_with_commas(n: usize) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(*c);
+    }
+    
+    result
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn log_block_summary(block: &Block, height: u32) {
+    log_block_summary_with_size(block, height, block.vfsize() as usize);
+}
+
+/// Log block summary with actual block data size
+#[cfg(target_arch = "wasm32")]
+pub fn log_block_summary_with_size(block: &Block, height: u32, block_size_bytes: usize) {
     // Update cache stats before logging
     let current_cache_stats = get_cache_stats();
     update_cache_stats(current_cache_stats);
@@ -418,7 +446,7 @@ pub fn log_block_summary(block: &Block, height: u32) {
             println!("📦 BLOCK {} PROCESSING SUMMARY", height);
             println!("🏗️  ═══════════════════════════════════════════════════════════════");
             println!("🔗 Block Hash: {}", block.block_hash());
-            println!("📏 Block Size: {} bytes", block.vfsize());
+            println!("📏 Block Size: {} bytes", format_number_with_commas(block_size_bytes));
             println!();
             
             // Transaction & Outpoint Processing
