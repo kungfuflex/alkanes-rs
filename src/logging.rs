@@ -283,23 +283,29 @@ pub fn log_block_summary(block: &Block, height: u32) {
     };
 
     if let Some(stats) = stats {
-        println!("=== BLOCK {} SUMMARY ===", height);
-        println!("Block hash: {}", block.block_hash());
-        println!("Block size: {} bytes", block.vfsize());
+        println!();
+        println!("🏗️  ═══════════════════════════════════════════════════════════════");
+        println!("📦 BLOCK {} PROCESSING SUMMARY", height);
+        println!("🏗️  ═══════════════════════════════════════════════════════════════");
+        println!("🔗 Block Hash: {}", block.block_hash());
+        println!("📏 Block Size: {} bytes", block.vfsize());
+        println!();
         
-        // 1) Number of transactions + outpoints indexed
-        println!("Transactions processed: {}", stats.transactions_processed);
-        println!("Outpoints indexed: {}", stats.outpoints_indexed);
+        // Transaction & Outpoint Processing
+        println!("💳 TRANSACTION PROCESSING");
+        println!("├── 📊 Transactions: {}", stats.transactions_processed);
+        println!("└── 🎯 Outpoints: {}", stats.outpoints_indexed);
+        println!();
         
-        // 2) Number of protostones run
-        println!("Protostones executed: {}", stats.protostones_run);
+        // Protostone Execution
+        println!("⚡ PROTOSTONE EXECUTION");
+        println!("├── 🚀 Total Executed: {}", stats.protostones_run);
+        println!("└── 📦 With Cellpacks: {}", stats.protostones_with_cellpacks);
+        println!();
         
-        // 3) Number of protostones with message payloads (cellpacks) attached
-        println!("Protostones with cellpacks: {}", stats.protostones_with_cellpacks);
-        
-        // 4) New alkanes created
+        // New Alkanes Created
         if !stats.new_alkanes.is_empty() {
-            println!("New alkanes created: {}", stats.new_alkanes.len());
+            println!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len());
             
             let mut direct_init_count = 0;
             let mut predictable_count = 0;
@@ -307,58 +313,74 @@ pub fn log_block_summary(block: &Block, height: u32) {
             let mut factory_clone_predictable_count = 0;
             let mut total_wasm_size_kb = 0.0;
             
-            for alkane in &stats.new_alkanes {
+            for (i, alkane) in stats.new_alkanes.iter().enumerate() {
+                let is_last = i == stats.new_alkanes.len() - 1;
+                let prefix = if is_last { "└──" } else { "├──" };
+                
                 match alkane.creation_method {
                     CreationMethod::DirectInit => {
                         direct_init_count += 1;
-                        println!("  - [2, {}]: {:.2} KB WASM (direct init [1, 0])", 
-                                alkane.alkane_id.tx, alkane.wasm_size_kb);
+                        println!("{} 🆕 [2, {}]: {:.2} KB WASM (direct init [1, 0])",
+                                prefix, alkane.alkane_id.tx, alkane.wasm_size_kb);
                     },
                     CreationMethod::PredictableAddress(n) => {
                         predictable_count += 1;
-                        println!("  - [4, {}]: {:.2} KB WASM (predictable [3, {}])", 
-                                alkane.alkane_id.tx, alkane.wasm_size_kb, n);
+                        println!("{} 🎯 [4, {}]: {:.2} KB WASM (predictable [3, {}])",
+                                prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, n);
                     },
                     CreationMethod::FactoryClone(source) => {
                         factory_clone_count += 1;
-                        println!("  - [2, {}]: {:.2} KB WASM (factory clone [5, {}])", 
-                                alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx);
+                        println!("{} 🏭 [2, {}]: {:.2} KB WASM (factory clone [5, {}])",
+                                prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx);
                     },
                     CreationMethod::FactoryClonePredictable(source) => {
                         factory_clone_predictable_count += 1;
-                        println!("  - [2, {}]: {:.2} KB WASM (factory clone [6, {}])", 
-                                alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx);
+                        println!("{} 🎯🏭 [2, {}]: {:.2} KB WASM (factory clone [6, {}])",
+                                prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx);
                     },
                 }
                 total_wasm_size_kb += alkane.wasm_size_kb;
             }
             
-            println!("  Summary: {} direct init, {} predictable, {} factory clones, {} factory predictable clones",
-                    direct_init_count, predictable_count, factory_clone_count, factory_clone_predictable_count);
-            println!("  Total WASM deployed: {:.2} KB", total_wasm_size_kb);
+            println!();
+            println!("📈 DEPLOYMENT BREAKDOWN:");
+            println!("├── 🆕 Direct Init: {}", direct_init_count);
+            println!("├── 🎯 Predictable: {}", predictable_count);
+            println!("├── 🏭 Factory Clones: {}", factory_clone_count);
+            println!("├── 🎯🏭 Factory Predictable: {}", factory_clone_predictable_count);
+            println!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb);
         } else {
-            println!("New alkanes created: 0");
+            println!("🧪 NEW ALKANES DEPLOYED");
+            println!("└── ❌ None deployed this block");
         }
+        println!();
         
-        // 5) Total fuel used / excess fuel unused
-        println!("Total fuel consumed: {}", stats.total_fuel_consumed);
-        println!("Excess fuel unused: {}", stats.excess_fuel_unused);
+        // Fuel Usage
+        println!("⛽ FUEL CONSUMPTION");
+        println!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed);
+        println!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused);
+        println!();
         
-        // 6) LRU cache stats
+        // Cache Performance
+        println!("🗄️  CACHE PERFORMANCE");
         if stats.cache_stats.hits > 0 || stats.cache_stats.misses > 0 {
             let hit_rate = if stats.cache_stats.hits + stats.cache_stats.misses > 0 {
                 (stats.cache_stats.hits as f64 / (stats.cache_stats.hits + stats.cache_stats.misses) as f64) * 100.0
             } else {
                 0.0
             };
-            println!("Cache stats: {} hits, {} misses ({:.1}% hit rate), {} evictions",
-                    stats.cache_stats.hits, stats.cache_stats.misses, hit_rate, stats.cache_stats.evictions);
-            println!("Cache usage: {}/{} entries", stats.cache_stats.current_size, stats.cache_stats.max_capacity);
+            let hit_emoji = if hit_rate >= 80.0 { "🎯" } else if hit_rate >= 60.0 { "👍" } else { "⚠️" };
+            
+            println!("├── {} Hit Rate: {:.1}% ({} hits, {} misses)", hit_emoji, hit_rate, stats.cache_stats.hits, stats.cache_stats.misses);
+            println!("├── 📊 Usage: {}/{} entries", stats.cache_stats.current_size, stats.cache_stats.max_capacity);
+            println!("└── 🗑️  Evictions: {}", stats.cache_stats.evictions);
         } else {
-            println!("Cache stats: No cache activity");
+            println!("└── 😴 No cache activity");
         }
         
-        println!("========================");
+        println!();
+        println!("🏗️  ═══════════════════════════════════════════════════════════════");
+        println!();
     }
 }
 
@@ -366,23 +388,29 @@ pub fn log_block_summary(block: &Block, height: u32) {
 pub fn log_block_summary(block: &Block, height: u32) {
     BLOCK_STATS.with(|stats| {
         if let Some(ref stats) = &*stats.borrow() {
-            println!("=== BLOCK {} SUMMARY ===", height);
-            println!("Block hash: {}", block.block_hash());
-            println!("Block size: {} bytes", block.vfsize());
+            println!();
+            println!("🏗️  ═══════════════════════════════════════════════════════════════");
+            println!("📦 BLOCK {} PROCESSING SUMMARY", height);
+            println!("🏗️  ═══════════════════════════════════════════════════════════════");
+            println!("🔗 Block Hash: {}", block.block_hash());
+            println!("📏 Block Size: {} bytes", block.vfsize());
+            println!();
             
-            // 1) Number of transactions + outpoints indexed
-            println!("Transactions processed: {}", stats.transactions_processed);
-            println!("Outpoints indexed: {}", stats.outpoints_indexed);
+            // Transaction & Outpoint Processing
+            println!("💳 TRANSACTION PROCESSING");
+            println!("├── 📊 Transactions: {}", stats.transactions_processed);
+            println!("└── 🎯 Outpoints: {}", stats.outpoints_indexed);
+            println!();
             
-            // 2) Number of protostones run
-            println!("Protostones executed: {}", stats.protostones_run);
+            // Protostone Execution
+            println!("⚡ PROTOSTONE EXECUTION");
+            println!("├── 🚀 Total Executed: {}", stats.protostones_run);
+            println!("└── 📦 With Cellpacks: {}", stats.protostones_with_cellpacks);
+            println!();
             
-            // 3) Number of protostones with message payloads (cellpacks) attached
-            println!("Protostones with cellpacks: {}", stats.protostones_with_cellpacks);
-            
-            // 4) New alkanes created
+            // New Alkanes Created
             if !stats.new_alkanes.is_empty() {
-                println!("New alkanes created: {}", stats.new_alkanes.len());
+                println!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len());
                 
                 let mut direct_init_count = 0;
                 let mut predictable_count = 0;
@@ -390,58 +418,74 @@ pub fn log_block_summary(block: &Block, height: u32) {
                 let mut factory_clone_predictable_count = 0;
                 let mut total_wasm_size_kb = 0.0;
                 
-                for alkane in &stats.new_alkanes {
+                for (i, alkane) in stats.new_alkanes.iter().enumerate() {
+                    let is_last = i == stats.new_alkanes.len() - 1;
+                    let prefix = if is_last { "└──" } else { "├──" };
+                    
                     match alkane.creation_method {
                         CreationMethod::DirectInit => {
                             direct_init_count += 1;
-                            println!("  - [2, {}]: {:.2} KB WASM (direct init [1, 0])", 
-                                    alkane.alkane_id.tx, alkane.wasm_size_kb);
+                            println!("{} 🆕 [2, {}]: {:.2} KB WASM (direct init [1, 0])",
+                                    prefix, alkane.alkane_id.tx, alkane.wasm_size_kb);
                         },
                         CreationMethod::PredictableAddress(n) => {
                             predictable_count += 1;
-                            println!("  - [4, {}]: {:.2} KB WASM (predictable [3, {}])", 
-                                    alkane.alkane_id.tx, alkane.wasm_size_kb, n);
+                            println!("{} 🎯 [4, {}]: {:.2} KB WASM (predictable [3, {}])",
+                                    prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, n);
                         },
                         CreationMethod::FactoryClone(source) => {
                             factory_clone_count += 1;
-                            println!("  - [2, {}]: {:.2} KB WASM (factory clone [5, {}])", 
-                                    alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx);
+                            println!("{} 🏭 [2, {}]: {:.2} KB WASM (factory clone [5, {}])",
+                                    prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx);
                         },
                         CreationMethod::FactoryClonePredictable(source) => {
                             factory_clone_predictable_count += 1;
-                            println!("  - [2, {}]: {:.2} KB WASM (factory clone [6, {}])", 
-                                    alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx);
+                            println!("{} 🎯🏭 [2, {}]: {:.2} KB WASM (factory clone [6, {}])",
+                                    prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx);
                         },
                     }
                     total_wasm_size_kb += alkane.wasm_size_kb;
                 }
                 
-                println!("  Summary: {} direct init, {} predictable, {} factory clones, {} factory predictable clones",
-                        direct_init_count, predictable_count, factory_clone_count, factory_clone_predictable_count);
-                println!("  Total WASM deployed: {:.2} KB", total_wasm_size_kb);
+                println!();
+                println!("📈 DEPLOYMENT BREAKDOWN:");
+                println!("├── 🆕 Direct Init: {}", direct_init_count);
+                println!("├── 🎯 Predictable: {}", predictable_count);
+                println!("├── 🏭 Factory Clones: {}", factory_clone_count);
+                println!("├── 🎯🏭 Factory Predictable: {}", factory_clone_predictable_count);
+                println!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb);
             } else {
-                println!("New alkanes created: 0");
+                println!("🧪 NEW ALKANES DEPLOYED");
+                println!("└── ❌ None deployed this block");
             }
+            println!();
             
-            // 5) Total fuel used / excess fuel unused
-            println!("Total fuel consumed: {}", stats.total_fuel_consumed);
-            println!("Excess fuel unused: {}", stats.excess_fuel_unused);
+            // Fuel Usage
+            println!("⛽ FUEL CONSUMPTION");
+            println!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed);
+            println!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused);
+            println!();
             
-            // 6) LRU cache stats
+            // Cache Performance
+            println!("🗄️  CACHE PERFORMANCE");
             if stats.cache_stats.hits > 0 || stats.cache_stats.misses > 0 {
                 let hit_rate = if stats.cache_stats.hits + stats.cache_stats.misses > 0 {
                     (stats.cache_stats.hits as f64 / (stats.cache_stats.hits + stats.cache_stats.misses) as f64) * 100.0
                 } else {
                     0.0
                 };
-                println!("Cache stats: {} hits, {} misses ({:.1}% hit rate), {} evictions",
-                        stats.cache_stats.hits, stats.cache_stats.misses, hit_rate, stats.cache_stats.evictions);
-                println!("Cache usage: {}/{} entries", stats.cache_stats.current_size, stats.cache_stats.max_capacity);
+                let hit_emoji = if hit_rate >= 80.0 { "🎯" } else if hit_rate >= 60.0 { "👍" } else { "⚠️" };
+                
+                println!("├── {} Hit Rate: {:.1}% ({} hits, {} misses)", hit_emoji, hit_rate, stats.cache_stats.hits, stats.cache_stats.misses);
+                println!("├── 📊 Usage: {}/{} entries", stats.cache_stats.current_size, stats.cache_stats.max_capacity);
+                println!("└── 🗑️  Evictions: {}", stats.cache_stats.evictions);
             } else {
-                println!("Cache stats: No cache activity");
+                println!("└── 😴 No cache activity");
             }
             
-            println!("========================");
+            println!();
+            println!("🏗️  ═══════════════════════════════════════════════════════════════");
+            println!();
         }
     });
 }
@@ -453,7 +497,7 @@ macro_rules! alkane_log {
         #[cfg(feature = "logs")]
         {
             use metashrew_core::println;
-            println!("[ALKANE] {}", format!($($arg)*));
+            println!("🧪 [ALKANE] {}", format!($($arg)*));
         }
     };
 }
