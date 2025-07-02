@@ -4,6 +4,8 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use metashrew_support::utils::{consume_exact, consume_sized_int, consume_to_end};
+use metashrew_core::{stdout};
+use std::fmt::{Write};
 use wasmi::*;
 
 #[allow(unused_imports)]
