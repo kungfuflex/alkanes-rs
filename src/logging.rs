@@ -125,6 +125,25 @@ pub fn record_transaction() {
     });
 }
 
+/// Record multiple transactions being processed
+#[cfg(not(target_arch = "wasm32"))]
+pub fn record_transactions(count: u32) {
+    if let Ok(mut stats) = BLOCK_STATS.lock() {
+        if let Some(ref mut s) = *stats {
+            s.transactions_processed += count;
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn record_transactions(count: u32) {
+    BLOCK_STATS.with(|stats| {
+        if let Some(ref mut s) = &mut *stats.borrow_mut() {
+            s.transactions_processed += count;
+        }
+    });
+}
+
 /// Record outpoints being indexed
 #[cfg(not(target_arch = "wasm32"))]
 pub fn record_outpoints(count: u32) {

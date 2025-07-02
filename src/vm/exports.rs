@@ -6,6 +6,9 @@ use anyhow::{anyhow, Result};
 use metashrew_support::utils::{consume_exact, consume_sized_int, consume_to_end};
 use wasmi::*;
 
+#[allow(unused_imports)]
+use metashrew_core::{println, stdio::{stdout, Write}};
+
 pub struct AlkanesExportsImpl(());
 impl AlkanesExportsImpl {
     pub fn _get_export(vm: &mut AlkanesInstance, name: &str) -> Result<Func> {

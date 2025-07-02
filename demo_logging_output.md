@@ -10,8 +10,8 @@
 📏 Block Size: 1,234,567 bytes
 
 💳 TRANSACTION PROCESSING
-├── 📊 Transactions: 2,847
-└── 🎯 Outpoints: 8,521
+├── 📊 Transactions: 2,847 (from block.txdata.len())
+└── 🎯 Outpoints: 8,521 (sum of all tx outputs)
 
 ⚡ PROTOSTONE EXECUTION
 ├── 🚀 Total Executed: 156

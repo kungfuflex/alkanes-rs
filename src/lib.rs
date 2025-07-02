@@ -384,7 +384,7 @@ pub fn alkanes_indexer(height: u32, block_data: &[u8]) -> Result<(), Box<dyn std
         consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(block_data.to_vec())).unwrap();
 
     // Record basic block metrics
-    logging::record_transaction(); // Count the block itself as a transaction unit
+    logging::record_transactions(block.txdata.len() as u32); // Count actual transactions in block
     logging::record_outpoints(block.txdata.iter().map(|tx| tx.output.len() as u32).sum());
 
     index_block(&block, height)?;
