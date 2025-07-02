@@ -258,25 +258,27 @@ pub fn update_cache_stats(cache_stats: CacheStats) {
     });
 }
 
-/// Get current cache statistics from metashrew-core
+/// Get current cache statistics from metashrew-support
 pub fn get_cache_stats() -> CacheStats {
-    // Try to get cache stats from metashrew-core if available
-    // This is a placeholder - actual implementation would depend on metashrew-core API
-    #[cfg(feature = "cache")]
-    {
-        // TODO: Implement actual cache stats retrieval from metashrew-core
-        // For now, return default stats
-        CacheStats::default()
-    }
-    #[cfg(not(feature = "cache"))]
-    {
-        CacheStats::default()
+    // Get actual cache stats from metashrew-support LRU cache
+    let metashrew_stats = metashrew_support::lru_cache::get_cache_stats();
+    
+    CacheStats {
+        hits: metashrew_stats.hits,
+        misses: metashrew_stats.misses,
+        current_size: metashrew_stats.items as u64,
+        max_capacity: 1024 * 1024 * 1024 / 1024, // Approximate max items (1GB / 1KB avg)
+        evictions: metashrew_stats.evictions,
     }
 }
 
 /// Log block summary at the end of block processing
 #[cfg(not(target_arch = "wasm32"))]
 pub fn log_block_summary(block: &Block, height: u32) {
+    // Update cache stats before logging
+    let current_cache_stats = get_cache_stats();
+    update_cache_stats(current_cache_stats);
+    
     let stats = {
         let stats_guard = BLOCK_STATS.lock().unwrap();
         stats_guard.clone()
@@ -386,6 +388,10 @@ pub fn log_block_summary(block: &Block, height: u32) {
 
 #[cfg(target_arch = "wasm32")]
 pub fn log_block_summary(block: &Block, height: u32) {
+    // Update cache stats before logging
+    let current_cache_stats = get_cache_stats();
+    update_cache_stats(current_cache_stats);
+    
     BLOCK_STATS.with(|stats| {
         if let Some(ref stats) = &*stats.borrow() {
             println!();
