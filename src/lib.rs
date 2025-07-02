@@ -19,6 +19,7 @@ use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
 pub mod indexer;
+pub mod logging;
 pub mod message;
 pub mod network;
 pub mod precompiled;
@@ -217,7 +218,7 @@ pub fn alkanes_id_to_outpoint(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::erro
     let input_vec = input.to_vec();
     let result: alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse =
         view::alkanes_id_to_outpoint(&input_vec).unwrap_or_else(|err| {
-            eprintln!("Error in alkanes_id_to_outpoint: {:?}", err);
+            crate::alkane_log!("Error in alkanes_id_to_outpoint: {:?}", err);
             alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::new()
         });
     Ok(result.write_to_bytes()?)
@@ -371,6 +372,9 @@ pub fn runesbyheight() -> i32 {
 pub fn alkanes_indexer(height: u32, block_data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     configure_network();
     
+    // Initialize block statistics tracking
+    logging::init_block_stats();
+    
     #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
     let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(block_data.to_vec()))
         .unwrap()
@@ -379,8 +383,18 @@ pub fn alkanes_indexer(height: u32, block_data: &[u8]) -> Result<(), Box<dyn std
     let block: Block =
         consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(block_data.to_vec())).unwrap();
 
+    // Record basic block metrics
+    logging::record_transaction(); // Count the block itself as a transaction unit
+    logging::record_outpoints(block.txdata.iter().map(|tx| tx.output.len() as u32).sum());
+
     index_block(&block, height)?;
     etl::index_extensions(height, &block);
+    
+    // Update cache statistics
+    logging::update_cache_stats(logging::get_cache_stats());
+    
+    // Log comprehensive block summary
+    logging::log_block_summary(&block, height);
     
     Ok(())
 }

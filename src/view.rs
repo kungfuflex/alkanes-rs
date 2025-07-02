@@ -331,7 +331,7 @@ pub fn protorunes_by_address2(
                     return Ok(response);
                 }
                 Err(e) => {
-                    println!("Error parsing cached wallet response: {:?}", e);
+                    crate::alkane_log!("Error parsing cached wallet response: {:?}", e);
                     // Fall back to computing the response if parsing fails
                 }
             }
@@ -470,7 +470,7 @@ pub fn simulate_parcel(
 ) -> Result<(ExtendedCallResponse, u64)> {
     let list = decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?;
     let cellpack: Cellpack = list.clone().try_into()?;
-    println!("{:?}, {:?}", list, cellpack);
+    crate::alkane_log!("{:?}, {:?}", list, cellpack);
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
         parcel, &cellpack,
     )));

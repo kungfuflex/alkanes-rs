@@ -74,6 +74,7 @@ merkle_distributor = []
 free_mint = []
 upgradeable = []
 debug-log = []
+logs = []
 
 
 [dependencies]
