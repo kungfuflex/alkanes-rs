@@ -26,7 +26,7 @@ use bitcoin::{
 };
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew_core::{println, stdio::stdout};
+use metashrew_core::{println, stdio::stdout, cache_get, cache_set};
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
 use protobuf::{Message, MessageField};
 use protorune::balance_sheet::MintableDebit;
@@ -37,11 +37,11 @@ use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::{consensus_decode, decode_varint_list};
-use std::collections::BTreeMap;
+
 #[allow(unused_imports)]
 use std::fmt::Write;
 use std::io::Cursor;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 pub fn parcels_from_protobuf(v: proto::alkanes::MultiSimulateRequest) -> Vec<MessageContextParcel> {
     v.parcels.into_iter().map(parcel_from_protobuf).collect()
@@ -145,19 +145,33 @@ pub const STATIC_FUEL: u64 = 100_000;
 pub const NAME_OPCODE: u128 = 99;
 pub const SYMBOL_OPCODE: u128 = 100;
 
-// Cache for storing name and symbol values for AlkaneIds
-static STATICS_CACHE: LazyLock<Mutex<BTreeMap<AlkaneId, (String, String)>>> =
-    LazyLock::new(|| Mutex::new(BTreeMap::new()));
-
+/// Get cached name and symbol for an AlkaneId using the metashrew-core API cache
+/// 
+/// This function uses the height-partitioned LRU cache API from metashrew-core
+/// to persist static values (name/symbol) across metashrew_view calls. The cache
+/// is automatically managed by the LRU system and will persist beyond the lifespan
+/// of individual view function calls.
 pub fn get_statics(id: &AlkaneId) -> (String, String) {
-    // Try to get from cache first
-    if let Ok(cache) = STATICS_CACHE.lock() {
-        if let Some(cached_values) = cache.get(id) {
-            return cached_values.clone();
+    // Create a cache key from the AlkaneId
+    let cache_key = format!("alkane_statics_{}", hex::encode(Vec::<u8>::from(id)));
+    
+    // Try to get from the metashrew-core API cache first
+    if let Some(cached_data) = cache_get(&cache_key) {
+        // Deserialize the cached (name, symbol) tuple
+        if cached_data.len() >= 8 {
+            let name_len = u32::from_le_bytes([cached_data[0], cached_data[1], cached_data[2], cached_data[3]]) as usize;
+            if cached_data.len() >= 8 + name_len {
+                let symbol_len = u32::from_le_bytes([cached_data[4], cached_data[5], cached_data[6], cached_data[7]]) as usize;
+                if cached_data.len() >= 8 + name_len + symbol_len {
+                    let name = String::from_utf8(cached_data[8..8 + name_len].to_vec()).unwrap_or_else(|_| "{REVERT}".to_string());
+                    let symbol = String::from_utf8(cached_data[8 + name_len..8 + name_len + symbol_len].to_vec()).unwrap_or_else(|_| "{REVERT}".to_string());
+                    return (name, symbol);
+                }
+            }
         }
     }
 
-    // If not in cache, fetch the values
+    // If not in cache, fetch the values via view calls
     let name = call_view(id, &vec![NAME_OPCODE], STATIC_FUEL)
         .and_then(|v| Ok(String::from_utf8(v)))
         .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
@@ -167,10 +181,21 @@ pub fn get_statics(id: &AlkaneId) -> (String, String) {
         .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
         .unwrap();
 
-    // Store in cache
-    if let Ok(mut cache) = STATICS_CACHE.lock() {
-        cache.insert(id.clone(), (name.clone(), symbol.clone()));
-    }
+    // Serialize and store in the metashrew-core API cache
+    let name_bytes = name.as_bytes();
+    let symbol_bytes = symbol.as_bytes();
+    let mut cache_data = Vec::with_capacity(8 + name_bytes.len() + symbol_bytes.len());
+    
+    // Store lengths as little-endian u32
+    cache_data.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+    cache_data.extend_from_slice(&(symbol_bytes.len() as u32).to_le_bytes());
+    
+    // Store the actual string data
+    cache_data.extend_from_slice(name_bytes);
+    cache_data.extend_from_slice(symbol_bytes);
+    
+    // Cache the serialized data using metashrew-core API cache
+    cache_set(cache_key, Arc::new(cache_data));
 
     (name, symbol)
 }
