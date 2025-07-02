@@ -17,9 +17,9 @@ members = [".", "crates/*"]
 [workspace.dependencies]
 anyhow = "1.0.90"
 num = "0.4.3"
-bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
+bitcoin = { version = "0.32.6", features = ["rand"] }
+metashrew-core = { path = "../../crates/metashrew-core" }
+metashrew-support = { path = "../../crates/metashrew-support" }
 ordinals = { path = "./crates/ordinals" }
 protorune = { path = "./crates/protorune" }
 protorune-support = { path = "./crates/protorune-support" }
@@ -111,7 +111,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
+metashrew-core = { path = "../../crates/metashrew-core", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]

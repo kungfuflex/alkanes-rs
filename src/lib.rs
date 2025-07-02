@@ -52,18 +52,15 @@ Then links everything together, leading to duplicate symbols
 Thus, going to add not(test) to all these functions
 */
 
-#[cfg(not(test))]
-#[no_mangle]
-pub fn multisimluate() -> i32 {
+/// Multi-simulate view function using metashrew_core::view macro
+#[metashrew_core::view]
+pub fn multisimluate(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let data = input();
-    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-    let reader = &data[4..];
     let mut result: proto::alkanes::MultiSimulateResponse =
         proto::alkanes::MultiSimulateResponse::new();
     let responses = multi_simulate_safe(
         &parcels_from_protobuf(
-            proto::alkanes::MultiSimulateRequest::parse_from_bytes(reader).unwrap(),
+            proto::alkanes::MultiSimulateRequest::parse_from_bytes(input)?,
         ),
         u64::MAX,
     );
@@ -82,20 +79,17 @@ pub fn multisimluate() -> i32 {
         result.responses.push(res);
     }
 
-    export_bytes(result.write_to_bytes().unwrap())
+    Ok(result.write_to_bytes()?)
 }
 
-#[cfg(not(test))]
-#[no_mangle]
-pub fn simulate() -> i32 {
+/// Simulate view function using metashrew_core::view macro
+#[metashrew_core::view]
+pub fn simulate(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let data = input();
-    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-    let reader = &data[4..];
     let mut result: proto::alkanes::SimulateResponse = proto::alkanes::SimulateResponse::new();
     match simulate_safe(
         &parcel_from_protobuf(
-            proto::alkanes::MessageContextParcel::parse_from_bytes(reader).unwrap(),
+            proto::alkanes::MessageContextParcel::parse_from_bytes(input)?,
         ),
         u64::MAX,
     ) {
@@ -107,64 +101,62 @@ pub fn simulate() -> i32 {
             result.error = e.to_string();
         }
     }
-    export_bytes(result.write_to_bytes().unwrap())
+    Ok(result.write_to_bytes()?)
 }
 
-#[cfg(not(test))]
-#[no_mangle]
-pub fn sequence() -> i32 {
-    export_bytes(view::sequence().unwrap())
+/// Sequence view function using metashrew_core::view macro
+#[metashrew_core::view]
+pub fn sequence(_input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    Ok(view::sequence()?)
 }
 
-#[cfg(not(test))]
-#[no_mangle]
-pub fn meta() -> i32 {
+/// Meta view function using metashrew_core::view macro
+#[metashrew_core::view]
+pub fn meta(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let data = input();
-    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-    let reader = &data[4..];
     match meta_safe(&parcel_from_protobuf(
-        proto::alkanes::MessageContextParcel::parse_from_bytes(reader).unwrap(),
+        proto::alkanes::MessageContextParcel::parse_from_bytes(input)?,
     )) {
-        Ok(response) => export_bytes(response),
-        Err(_) => export_bytes(vec![]),
+        Ok(response) => Ok(response),
+        Err(_) => Ok(vec![]),
     }
 }
 
-#[cfg(not(test))]
-#[no_mangle]
-pub fn runesbyaddress() -> i32 {
+/// Runes by address view function using metashrew_core::view macro
+#[metashrew_core::view]
+pub fn runesbyaddress(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let input_vec = input.to_vec();
     let result: protorune_support::proto::protorune::WalletResponse =
-        protorune::view::runes_by_address(&consume_to_end(&mut data).unwrap())
+        protorune::view::runes_by_address(&input_vec)
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
-    export_bytes(result.write_to_bytes().unwrap())
+    Ok(result.write_to_bytes()?)
 }
 
 #[cfg(not(test))]
-#[no_mangle]
-pub fn runesbyoutpoint() -> i32 {
+#[metashrew_core::view]
+pub fn runesbyoutpoint(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input.to_vec());
+    let _height = consume_sized_int::<u32>(&mut data)?;
+    let input_data = consume_to_end(&mut data)?;
     let result: protorune_support::proto::protorune::OutpointResponse =
-        protorune::view::runes_by_outpoint(&consume_to_end(&mut data).unwrap())
+        protorune::view::runes_by_outpoint(&input_data)
             .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::new());
-    export_bytes(result.write_to_bytes().unwrap())
+    Ok(result.write_to_bytes()?)
 }
 
 #[cfg(not(test))]
-#[no_mangle]
-pub fn spendablesbyaddress() -> i32 {
+#[metashrew_core::view]
+pub fn spendablesbyaddress(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input.to_vec());
+    let _height = consume_sized_int::<u32>(&mut data)?;
+    let input_data = consume_to_end(&mut data)?;
     let result: protorune_support::proto::protorune::WalletResponse =
-        view::protorunes_by_address(&consume_to_end(&mut data).unwrap())
+        view::protorunes_by_address(&input_data)
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
-    export_bytes(result.write_to_bytes().unwrap())
+    Ok(result.write_to_bytes()?)
 }
 
 // #[cfg(not(test))]
@@ -179,17 +171,14 @@ pub fn spendablesbyaddress() -> i32 {
 //     export_bytes(result.write_to_bytes().unwrap())
 // }
 
-#[cfg(not(test))]
-#[no_mangle]
-pub fn protorunesbyaddress() -> i32 {
+/// Protorunes by address view function using metashrew_core::view macro
+#[metashrew_core::view]
+pub fn protorunesbyaddress(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let input_data = consume_to_end(&mut data).unwrap();
-    //  let _request = protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(&input_data).unwrap();
-
+    
+    let input_vec = input.to_vec();
     let mut result: protorune_support::proto::protorune::WalletResponse =
-        view::protorunes_by_address(&input_data)
+        view::protorunes_by_address(&input_vec)
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
 
     result.outpoints = result
@@ -210,19 +199,29 @@ pub fn protorunesbyaddress() -> i32 {
         })
         .collect::<Vec<protorune_support::proto::protorune::OutpointResponse>>();
 
-    export_bytes(result.write_to_bytes().unwrap())
+    Ok(result.write_to_bytes()?)
 }
 
-#[cfg(not(test))]
-#[no_mangle]
-pub fn getblock() -> i32 {
+/// Get block view function using metashrew_core::view macro
+#[metashrew_core::view]
+pub fn getblock(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let input_data = consume_to_end(&mut data).unwrap();
-    export_bytes(view::getblock(&input_data).unwrap())
+    let input_vec = input.to_vec();
+    Ok(view::getblock(&input_vec)?)
 }
 
+/// Alkanes ID to outpoint view function using metashrew_core::view macro
+#[metashrew_core::view]
+pub fn alkanes_id_to_outpoint(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    configure_network();
+    let input_vec = input.to_vec();
+    let result: alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse =
+        view::alkanes_id_to_outpoint(&input_vec).unwrap_or_else(|err| {
+            eprintln!("Error in alkanes_id_to_outpoint: {:?}", err);
+            alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::new()
+        });
+    Ok(result.write_to_bytes()?)
+}
 
 // #[cfg(not(test))]
 // #[no_mangle]
@@ -281,77 +280,61 @@ pub fn getblock() -> i32 {
 // }
 
 #[cfg(not(test))]
-#[no_mangle]
-pub fn protorunesbyheight() -> i32 {
+#[metashrew_core::view]
+pub fn protorunesbyheight(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input.to_vec());
+    let _height = consume_sized_int::<u32>(&mut data)?;
+    let input_data = consume_to_end(&mut data)?;
     let result: protorune_support::proto::protorune::RunesResponse =
-        view::protorunes_by_height(&consume_to_end(&mut data).unwrap())
+        view::protorunes_by_height(&input_data)
             .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::new());
-    export_bytes(result.write_to_bytes().unwrap())
+    Ok(result.write_to_bytes()?)
 }
 
 #[cfg(not(test))]
-#[no_mangle]
-pub fn alkanes_id_to_outpoint() -> i32 {
+#[metashrew_core::view]
+pub fn traceblock(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    // first 4 bytes come in as height, not used
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let data_vec = consume_to_end(&mut data).unwrap();
-    let result: alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse =
-        view::alkanes_id_to_outpoint(&data_vec).unwrap_or_else(|err| {
-            eprintln!("Error in alkanes_id_to_outpoint: {:?}", err);
-            alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::new()
-        });
-    export_bytes(result.write_to_bytes().unwrap())
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input.to_vec());
+    let height = consume_sized_int::<u32>(&mut data)?;
+    Ok(view::traceblock(height)?)
 }
 
 #[cfg(not(test))]
-#[no_mangle]
-pub fn traceblock() -> i32 {
+#[metashrew_core::view]
+pub fn trace(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let height = consume_sized_int::<u32>(&mut data).unwrap();
-    export_bytes(view::traceblock(height).unwrap())
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input.to_vec());
+    let _height = consume_sized_int::<u32>(&mut data)?;
+    let input_data = consume_to_end(&mut data)?;
+    let outpoint: OutPoint = protorune_support::proto::protorune::Outpoint::parse_from_bytes(&input_data)?
+        .try_into()?;
+    Ok(view::trace(&outpoint)?)
 }
 
 #[cfg(not(test))]
-#[no_mangle]
-pub fn trace() -> i32 {
+#[metashrew_core::view]
+pub fn getbytecode(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let outpoint: OutPoint = protorune_support::proto::protorune::Outpoint::parse_from_bytes(
-        &consume_to_end(&mut data).unwrap(),
-    )
-    .unwrap()
-    .try_into()
-    .unwrap();
-    export_bytes(view::trace(&outpoint).unwrap())
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input.to_vec());
+    let _height = consume_sized_int::<u32>(&mut data)?;
+    let input_data = consume_to_end(&mut data)?;
+    Ok(view::getbytecode(&input_data).unwrap_or_default())
 }
 
 #[cfg(not(test))]
-#[no_mangle]
-pub fn getbytecode() -> i32 {
+#[metashrew_core::view]
+pub fn protorunesbyoutpoint(input: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    export_bytes(view::getbytecode(&consume_to_end(&mut data).unwrap()).unwrap_or_default())
-}
-
-#[cfg(not(test))]
-#[no_mangle]
-pub fn protorunesbyoutpoint() -> i32 {
-    configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input.to_vec());
+    let _height = consume_sized_int::<u32>(&mut data)?;
+    let input_data = consume_to_end(&mut data)?;
     let result: protorune_support::proto::protorune::OutpointResponse =
-        view::protorunes_by_outpoint(&consume_to_end(&mut data).unwrap())
+        view::protorunes_by_outpoint(&input_data)
             .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::new());
 
-    export_bytes(result.write_to_bytes().unwrap())
+    Ok(result.write_to_bytes()?)
 }
 
 #[cfg(not(test))]
@@ -382,23 +365,24 @@ pub fn runesbyheight() -> i32 {
 //
 //
 
-#[cfg(all(target_arch = "wasm32", not(test)))]
-#[no_mangle]
-pub fn _start() {
-    let data = input();
-    let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-    let reader = &data[4..];
+/// Main indexer function using metashrew_core::main macro
+/// This replaces the manual _start function and handles input parsing automatically
+#[metashrew_core::main]
+pub fn alkanes_indexer(height: u32, block_data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    configure_network();
+    
     #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
-    let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(reader.to_vec()))
+    let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(block_data.to_vec()))
         .unwrap()
         .to_consensus();
     #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin")))]
     let block: Block =
-        consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
+        consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(block_data.to_vec())).unwrap();
 
-    index_block(&block, height).unwrap();
+    index_block(&block, height)?;
     etl::index_extensions(height, &block);
-    flush();
+    
+    Ok(())
 }
 
 #[cfg(test)]
