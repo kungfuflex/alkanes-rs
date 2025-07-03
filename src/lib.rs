@@ -451,7 +451,7 @@ mod unit_tests {
 
         let runes_for_addr = runes_by_address(&req_wallet).unwrap();
         // assert!(runes_for_addr.balances > 0);
-        std::println!("RUNES by addr: {:?}", runes_for_addr);
+        crate::alkane_log!("RUNES by addr: {:?}", runes_for_addr);
 
         let outpoint_res = rune_outpoint_to_outpoint_response(
             &(OutPoint {
@@ -466,7 +466,7 @@ mod unit_tests {
         expected_balance.lo = 21000000;
         assert!(*balance == expected_balance);
         // TODO: Assert rune
-        std::println!(" with rune {:?}", quorum_rune.rune.0);
+        crate::alkane_log!(" with rune {:?}", quorum_rune.rune.0);
 
         // assert!(false);
     }

@@ -1,3 +1,15 @@
+/// Log function for individual alkanes (only active with --features logs)
+#[macro_export]
+macro_rules! alkane_log {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "logs")]
+        {
+            use metashrew_core::println;
+            println!("🧪 [ALKANE] {}", format!($($arg)*));
+        }
+    };
+}
+
 use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
@@ -445,7 +457,7 @@ impl Protorune {
                 .get())
             .clone(),
         ) {
-            println!(
+            crate::alkane_log!(
                 "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
                 name, rune_id
             );
@@ -539,7 +551,7 @@ impl Protorune {
         // TODO: chain name
         let minimum_name = Rune::minimum_at_height(Network::Bitcoin, ordinals::Height(block));
         if rune.n() < minimum_name.n() {
-            println!("error not unlocked");
+            crate::alkane_log!("error not unlocked");
             return Err(anyhow!("Given name is not unlocked yet"));
         }
         if rune.n() >= constants::RESERVED_NAME {
@@ -589,7 +601,7 @@ impl Protorune {
                     runestone_output_index,
                 ) {
                     Err(e) => {
-                        println!("err: {:?}", e);
+                        crate::alkane_log!("err: {:?}", e);
                         atomic.rollback();
                     }
                     _ => {
@@ -844,7 +856,7 @@ impl Protorune {
             match tx_hex_to_txid(blacklisted_hash) {
                 std::result::Result::Ok(blacklisted_txid) => {
                     if tx_id == blacklisted_txid {
-                        println!("Ignoring blacklisted transaction: {}", blacklisted_hash);
+                        crate::alkane_log!("Ignoring blacklisted transaction: {}", blacklisted_hash);
                         return Ok(());
                     }
                 }

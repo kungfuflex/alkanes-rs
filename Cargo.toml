@@ -75,7 +75,7 @@ merkle_distributor = []
 free_mint = []
 upgradeable = []
 debug-log = []
-logs = []
+logs = ["protorune/logs"]
 
 
 [dependencies]
