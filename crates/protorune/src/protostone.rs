@@ -144,8 +144,8 @@ impl MessageProcessor for Protostone {
                         Ok(true)
                     }
                     Err(e) => {
-                        println!("Got error inside reconcile! {:?} \n\n", e);
-                        println!("Refunding to refund_pointer: {}", refund_pointer);
+                        // Error in reconcile - refunding to refund pointer
+                        // Removed excessive logging per user request
 
                         // Removed excessive logging of refund address
 
@@ -160,8 +160,8 @@ impl MessageProcessor for Protostone {
                 }
             }
             Err(e) => {
-                println!("Alkanes message reverted with error: {:?}", e);
-                println!("Refunding to refund_pointer: {}", refund_pointer);
+                // Alkanes message reverted - refunding to refund pointer
+                // Removed excessive logging per user request
 
                 // Removed excessive logging of refund address
 
