@@ -46,7 +46,7 @@ pub fn handle_message(
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
 
     // Record protostone with cellpack if it has payload
-    // Note: record_protostone_run() is now called in MessageContext::handle for ALL protostones
+    // Note: record_protostone_run() is now called via on_protostone_processed() for ALL protostones
     if !parcel.calldata.is_empty() {
         record_protostone_with_cellpack();
     }
@@ -177,11 +177,6 @@ impl MessageContext for AlkaneMessageContext {
     fn handle(
         _parcel: &MessageContextParcel,
     ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-        // Record protostone execution for ALL protostones with subprotocol ID 1
-        // This is called for every protostone that matches our protocol tag,
-        // regardless of whether it has a cellpack or not
-        record_protostone_run();
-        
         if is_active(_parcel.height) {
             match handle_message(_parcel) {
                 Ok((outgoing, runtime)) => Ok((outgoing, runtime)),
@@ -196,5 +191,11 @@ impl MessageContext for AlkaneMessageContext {
                 GENESIS_BLOCK
             ))
         }
+    }
+    
+    /// Called by protorune library when any protostone for subprotocol ID 1 is processed
+    /// This ensures we count ALL protostones, not just those with cellpacks
+    fn on_protostone_processed() {
+        record_protostone_run();
     }
 }

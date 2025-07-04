@@ -922,6 +922,13 @@ impl Protorune {
             protostones_iter
                 .enumerate()
                 .map(|(i, stone)| {
+                    // Count all protostones for subprotocol ID 1 (alkanes)
+                    if stone.protocol_tag == 1 {
+                        // Call external callback to record protostone execution
+                        // We need to define a trait or callback mechanism for this
+                        T::on_protostone_processed();
+                    }
+                    
                     let shadow_vout = (i as u32) + (tx.output.len() as u32) + 1;
                     if !proto_balances_by_output.contains_key(&shadow_vout) {
                         proto_balances_by_output.insert(shadow_vout, BalanceSheet::default());
