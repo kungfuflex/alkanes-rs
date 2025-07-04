@@ -375,6 +375,10 @@ pub fn alkanes_indexer(height: u32, block_data: &[u8]) -> Result<(), Box<dyn std
     // Initialize block statistics tracking
     logging::init_block_stats();
     
+    // Enable LRU debug mode if feature is active
+    #[cfg(feature = "lru-debug")]
+    logging::enable_lru_debug_mode();
+    
     #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
     let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(block_data.to_vec()))
         .unwrap()

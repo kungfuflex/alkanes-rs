@@ -81,6 +81,11 @@ pub struct CacheStats {
     pub max_capacity: u64,
     /// Number of evictions
     pub evictions: u64,
+    /// Memory usage in bytes
+    pub memory_usage: u64,
+    /// Top key prefixes (only available with lru-debug feature)
+    #[cfg(feature = "lru-debug")]
+    pub top_prefixes: Vec<(String, u64)>,
 }
 
 // Global state for tracking block statistics
@@ -277,10 +282,38 @@ pub fn update_cache_stats(cache_stats: CacheStats) {
     });
 }
 
+/// Enable LRU cache debugging mode (only available with lru-debug feature)
+#[cfg(feature = "lru-debug")]
+pub fn enable_lru_debug_mode() {
+    metashrew_support::lru_cache::enable_lru_debug_mode();
+}
+
+/// Disable LRU cache debugging mode (only available with lru-debug feature)
+#[cfg(feature = "lru-debug")]
+pub fn disable_lru_debug_mode() {
+    metashrew_support::lru_cache::disable_lru_debug_mode();
+}
+
+/// Generate detailed LRU cache debug report (only available with lru-debug feature)
+#[cfg(feature = "lru-debug")]
+pub fn generate_lru_debug_report() -> String {
+    metashrew_support::lru_cache::generate_lru_debug_report()
+}
+
 /// Get current cache statistics from metashrew-support
 pub fn get_cache_stats() -> CacheStats {
     // Get actual cache stats from metashrew-support LRU cache
     let metashrew_stats = metashrew_support::lru_cache::get_cache_stats();
+    
+    #[cfg(feature = "lru-debug")]
+    let top_prefixes = {
+        // Get debug stats and extract top prefixes
+        let debug_stats = metashrew_support::lru_cache::get_lru_debug_stats();
+        debug_stats.prefix_stats.into_iter()
+            .take(10) // Top 10 prefixes
+            .map(|stat| (stat.prefix_readable, stat.hits))
+            .collect()
+    };
     
     CacheStats {
         hits: metashrew_stats.hits,
@@ -288,6 +321,9 @@ pub fn get_cache_stats() -> CacheStats {
         current_size: metashrew_stats.items as u64,
         max_capacity: 1024 * 1024 * 1024 / 1024, // Approximate max items (1GB / 1KB avg)
         evictions: metashrew_stats.evictions,
+        memory_usage: metashrew_stats.memory_usage as u64,
+        #[cfg(feature = "lru-debug")]
+        top_prefixes,
     }
 }
 
@@ -401,6 +437,20 @@ pub fn log_block_summary_with_size(block: &Block, height: u32, block_size_bytes:
             
             println!("├── {} Hit Rate: {:.1}% ({} hits, {} misses)", hit_emoji, hit_rate, stats.cache_stats.hits, stats.cache_stats.misses);
             println!("├── 📊 Usage: {}/{} entries", stats.cache_stats.current_size, stats.cache_stats.max_capacity);
+            println!("├── 💾 Memory: {} bytes", format_number_with_commas(stats.cache_stats.memory_usage as usize));
+            
+            #[cfg(feature = "lru-debug")]
+            {
+                if !stats.cache_stats.top_prefixes.is_empty() {
+                    println!("├── 🔍 Top Key Prefixes:");
+                    for (i, (prefix, count)) in stats.cache_stats.top_prefixes.iter().enumerate() {
+                        let is_last_prefix = i == stats.cache_stats.top_prefixes.len() - 1;
+                        let prefix_symbol = if is_last_prefix { "│   └──" } else { "│   ├──" };
+                        println!("{} {}: {} accesses", prefix_symbol, prefix, count);
+                    }
+                }
+            }
+            
             println!("└── 🗑️  Evictions: {}", stats.cache_stats.evictions);
         } else {
             println!("└── 😴 No cache activity");
@@ -533,6 +583,20 @@ pub fn log_block_summary_with_size(block: &Block, height: u32, block_size_bytes:
                 
                 println!("├── {} Hit Rate: {:.1}% ({} hits, {} misses)", hit_emoji, hit_rate, stats.cache_stats.hits, stats.cache_stats.misses);
                 println!("├── 📊 Usage: {}/{} entries", stats.cache_stats.current_size, stats.cache_stats.max_capacity);
+                println!("├── 💾 Memory: {} bytes", format_number_with_commas(stats.cache_stats.memory_usage as usize));
+                
+                #[cfg(feature = "lru-debug")]
+                {
+                    if !stats.cache_stats.top_prefixes.is_empty() {
+                        println!("├── 🔍 Top Key Prefixes:");
+                        for (i, (prefix, count)) in stats.cache_stats.top_prefixes.iter().enumerate() {
+                            let is_last_prefix = i == stats.cache_stats.top_prefixes.len() - 1;
+                            let prefix_symbol = if is_last_prefix { "│   └──" } else { "│   ├──" };
+                            println!("{} {}: {} accesses", prefix_symbol, prefix, count);
+                        }
+                    }
+                }
+                
                 println!("└── 🗑️  Evictions: {}", stats.cache_stats.evictions);
             } else {
                 println!("└── 😴 No cache activity");

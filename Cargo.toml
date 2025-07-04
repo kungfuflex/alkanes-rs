@@ -76,6 +76,7 @@ free_mint = []
 upgradeable = []
 debug-log = []
 logs = ["protorune/logs"]
+lru-debug = []
 
 
 [dependencies]
