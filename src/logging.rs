@@ -45,6 +45,8 @@ pub struct BlockStats {
     pub excess_fuel_unused: u64,
     /// LRU cache statistics
     pub cache_stats: CacheStats,
+    /// GPU pipeline execution statistics
+    pub pipeline_stats: PipelineStats,
 }
 
 /// Information about a newly created alkane
@@ -89,6 +91,31 @@ pub struct CacheStats {
     /// Top key prefixes (only available with lru-debug feature)
     #[cfg(feature = "lru-debug")]
     pub top_prefixes: Vec<(String, u64)>,
+}
+
+/// GPU pipeline execution statistics
+#[derive(Debug, Default, Clone)]
+pub struct PipelineStats {
+    /// Total number of GPU shards executed
+    pub gpu_shards_executed: u32,
+    /// Total number of messages processed on GPU
+    pub gpu_messages_processed: u32,
+    /// Number of shards that fell back to WASM
+    pub wasm_fallback_shards: u32,
+    /// Total GPU execution time in microseconds
+    pub gpu_execution_time_us: u64,
+    /// GPU memory usage in bytes
+    pub gpu_memory_used_bytes: u64,
+    /// Number of GPU clustering passes performed
+    pub clustering_passes: u32,
+    /// Number of shard merges during clustering
+    pub shard_merges: u32,
+    /// Number of conflicts detected and resolved
+    pub conflicts_resolved: u32,
+    /// Average shard size (messages per shard)
+    pub avg_shard_size: f64,
+    /// Pipeline efficiency (GPU messages / total messages)
+    pub pipeline_efficiency: f64,
 }
 
 // Global state for tracking block statistics
@@ -281,6 +308,92 @@ pub fn update_cache_stats(cache_stats: CacheStats) {
     BLOCK_STATS.with(|stats| {
         if let Some(ref mut s) = &mut *stats.borrow_mut() {
             s.cache_stats = cache_stats;
+        }
+    });
+}
+
+/// Update pipeline statistics
+#[cfg(not(target_arch = "wasm32"))]
+pub fn update_pipeline_stats(pipeline_stats: PipelineStats) {
+    if let Ok(mut stats) = BLOCK_STATS.lock() {
+        if let Some(ref mut s) = *stats {
+            s.pipeline_stats = pipeline_stats;
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn update_pipeline_stats(pipeline_stats: PipelineStats) {
+    BLOCK_STATS.with(|stats| {
+        if let Some(ref mut s) = &mut *stats.borrow_mut() {
+            s.pipeline_stats = pipeline_stats;
+        }
+    });
+}
+
+/// Record GPU shard execution
+#[cfg(not(target_arch = "wasm32"))]
+pub fn record_gpu_shard_execution(messages_count: u32, execution_time_us: u64, memory_used: u64) {
+    if let Ok(mut stats) = BLOCK_STATS.lock() {
+        if let Some(ref mut s) = *stats {
+            s.pipeline_stats.gpu_shards_executed += 1;
+            s.pipeline_stats.gpu_messages_processed += messages_count;
+            s.pipeline_stats.gpu_execution_time_us += execution_time_us;
+            s.pipeline_stats.gpu_memory_used_bytes = s.pipeline_stats.gpu_memory_used_bytes.max(memory_used);
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn record_gpu_shard_execution(messages_count: u32, execution_time_us: u64, memory_used: u64) {
+    BLOCK_STATS.with(|stats| {
+        if let Some(ref mut s) = &mut *stats.borrow_mut() {
+            s.pipeline_stats.gpu_shards_executed += 1;
+            s.pipeline_stats.gpu_messages_processed += messages_count;
+            s.pipeline_stats.gpu_execution_time_us += execution_time_us;
+            s.pipeline_stats.gpu_memory_used_bytes = s.pipeline_stats.gpu_memory_used_bytes.max(memory_used);
+        }
+    });
+}
+
+/// Record WASM fallback shard
+#[cfg(not(target_arch = "wasm32"))]
+pub fn record_wasm_fallback_shard() {
+    if let Ok(mut stats) = BLOCK_STATS.lock() {
+        if let Some(ref mut s) = *stats {
+            s.pipeline_stats.wasm_fallback_shards += 1;
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn record_wasm_fallback_shard() {
+    BLOCK_STATS.with(|stats| {
+        if let Some(ref mut s) = &mut *stats.borrow_mut() {
+            s.pipeline_stats.wasm_fallback_shards += 1;
+        }
+    });
+}
+
+/// Record clustering statistics
+#[cfg(not(target_arch = "wasm32"))]
+pub fn record_clustering_stats(passes: u32, merges: u32, conflicts: u32) {
+    if let Ok(mut stats) = BLOCK_STATS.lock() {
+        if let Some(ref mut s) = *stats {
+            s.pipeline_stats.clustering_passes += passes;
+            s.pipeline_stats.shard_merges += merges;
+            s.pipeline_stats.conflicts_resolved += conflicts;
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn record_clustering_stats(passes: u32, merges: u32, conflicts: u32) {
+    BLOCK_STATS.with(|stats| {
+        if let Some(ref mut s) = &mut *stats.borrow_mut() {
+            s.pipeline_stats.clustering_passes += passes;
+            s.pipeline_stats.shard_merges += merges;
+            s.pipeline_stats.conflicts_resolved += conflicts;
         }
     });
 }
@@ -498,6 +611,71 @@ pub fn log_block_summary_with_size(block: &Block, height: u32, block_size_bytes:
         } else {
             println!("└── 😴 No cache activity");
         }
+        println!();
+
+        // GPU Pipeline Performance
+        if stats.pipeline_stats.gpu_shards_executed > 0 || stats.pipeline_stats.wasm_fallback_shards > 0 {
+            println!("🚀 GPU PIPELINE PERFORMANCE");
+            
+            // Calculate pipeline efficiency
+            let total_messages = stats.pipeline_stats.gpu_messages_processed +
+                               (stats.pipeline_stats.wasm_fallback_shards * 32); // Estimate WASM messages
+            let efficiency = if total_messages > 0 {
+                (stats.pipeline_stats.gpu_messages_processed as f64 / total_messages as f64) * 100.0
+            } else {
+                0.0
+            };
+            
+            let efficiency_emoji = if efficiency >= 80.0 {
+                "🎯"
+            } else if efficiency >= 60.0 {
+                "⚡"
+            } else if efficiency > 0.0 {
+                "⚠️"
+            } else {
+                "💻"
+            };
+            
+            println!("├── {} Pipeline Efficiency: {:.1}%", efficiency_emoji, efficiency);
+            println!("├── 🔥 GPU Shards: {} ({} messages)",
+                     stats.pipeline_stats.gpu_shards_executed,
+                     stats.pipeline_stats.gpu_messages_processed);
+            
+            if stats.pipeline_stats.wasm_fallback_shards > 0 {
+                println!("├── 💻 WASM Fallback: {} shards", stats.pipeline_stats.wasm_fallback_shards);
+            }
+            
+            if stats.pipeline_stats.gpu_execution_time_us > 0 {
+                let gpu_time_ms = stats.pipeline_stats.gpu_execution_time_us as f64 / 1000.0;
+                println!("├── ⏱️  GPU Time: {:.2} ms", gpu_time_ms);
+            }
+            
+            if stats.pipeline_stats.gpu_memory_used_bytes > 0 {
+                let gpu_memory_mb = stats.pipeline_stats.gpu_memory_used_bytes as f64 / (1024.0 * 1024.0);
+                println!("├── 💾 GPU Memory: {:.1} MB", gpu_memory_mb);
+            }
+            
+            if stats.pipeline_stats.clustering_passes > 0 {
+                println!("├── 🔄 Clustering: {} passes, {} merges",
+                         stats.pipeline_stats.clustering_passes,
+                         stats.pipeline_stats.shard_merges);
+            }
+            
+            if stats.pipeline_stats.conflicts_resolved > 0 {
+                println!("├── ⚔️  Conflicts Resolved: {}", stats.pipeline_stats.conflicts_resolved);
+            }
+            
+            if stats.pipeline_stats.gpu_shards_executed > 0 {
+                let avg_shard_size = stats.pipeline_stats.gpu_messages_processed as f64 /
+                                   stats.pipeline_stats.gpu_shards_executed as f64;
+                println!("└── 📊 Avg Shard Size: {:.1} messages", avg_shard_size);
+            } else {
+                println!("└── 📊 No GPU shards executed");
+            }
+        } else {
+            println!("🚀 GPU PIPELINE PERFORMANCE");
+            println!("└── 💻 CPU-only execution (no GPU pipeline used)");
+        }
 
         println!();
         println!("🏗️  ═══════════════════════════════════════════════════════════════");
@@ -684,6 +862,71 @@ pub fn log_block_summary_with_size(block: &Block, height: u32, block_size_bytes:
             } else {
                 println!("└── 😴 No cache activity");
             }
+            println!();
+
+            // GPU Pipeline Performance
+            if stats.pipeline_stats.gpu_shards_executed > 0 || stats.pipeline_stats.wasm_fallback_shards > 0 {
+                println!("🚀 GPU PIPELINE PERFORMANCE");
+                
+                // Calculate pipeline efficiency
+                let total_messages = stats.pipeline_stats.gpu_messages_processed +
+                                   (stats.pipeline_stats.wasm_fallback_shards * 32); // Estimate WASM messages
+                let efficiency = if total_messages > 0 {
+                    (stats.pipeline_stats.gpu_messages_processed as f64 / total_messages as f64) * 100.0
+                } else {
+                    0.0
+                };
+                
+                let efficiency_emoji = if efficiency >= 80.0 {
+                    "🎯"
+                } else if efficiency >= 60.0 {
+                    "⚡"
+                } else if efficiency > 0.0 {
+                    "⚠️"
+                } else {
+                    "💻"
+                };
+                
+                println!("├── {} Pipeline Efficiency: {:.1}%", efficiency_emoji, efficiency);
+                println!("├── 🔥 GPU Shards: {} ({} messages)",
+                         stats.pipeline_stats.gpu_shards_executed,
+                         stats.pipeline_stats.gpu_messages_processed);
+                
+                if stats.pipeline_stats.wasm_fallback_shards > 0 {
+                    println!("├── 💻 WASM Fallback: {} shards", stats.pipeline_stats.wasm_fallback_shards);
+                }
+                
+                if stats.pipeline_stats.gpu_execution_time_us > 0 {
+                    let gpu_time_ms = stats.pipeline_stats.gpu_execution_time_us as f64 / 1000.0;
+                    println!("├── ⏱️  GPU Time: {:.2} ms", gpu_time_ms);
+                }
+                
+                if stats.pipeline_stats.gpu_memory_used_bytes > 0 {
+                    let gpu_memory_mb = stats.pipeline_stats.gpu_memory_used_bytes as f64 / (1024.0 * 1024.0);
+                    println!("├── 💾 GPU Memory: {:.1} MB", gpu_memory_mb);
+                }
+                
+                if stats.pipeline_stats.clustering_passes > 0 {
+                    println!("├── 🔄 Clustering: {} passes, {} merges",
+                             stats.pipeline_stats.clustering_passes,
+                             stats.pipeline_stats.shard_merges);
+                }
+                
+                if stats.pipeline_stats.conflicts_resolved > 0 {
+                    println!("├── ⚔️  Conflicts Resolved: {}", stats.pipeline_stats.conflicts_resolved);
+                }
+                
+                if stats.pipeline_stats.gpu_shards_executed > 0 {
+                    let avg_shard_size = stats.pipeline_stats.gpu_messages_processed as f64 /
+                                       stats.pipeline_stats.gpu_shards_executed as f64;
+                    println!("└── 📊 Avg Shard Size: {:.1} messages", avg_shard_size);
+                } else {
+                    println!("└── 📊 No GPU shards executed");
+                }
+            } else {
+                println!("🚀 GPU PIPELINE PERFORMANCE");
+                println!("└── 💻 CPU-only execution (no GPU pipeline used)");
+            }
 
             println!();
             println!("🏗️  ═══════════════════════════════════════════════════════════════");
@@ -775,5 +1018,67 @@ mod tests {
     fn test_wasm_size_calculation() {
         let wasm_bytes = vec![0u8; 2048]; // 2KB
         assert_eq!(calculate_wasm_size_kb(&wasm_bytes), 2.0);
+    }
+
+    #[test]
+    fn test_pipeline_stats_recording() {
+        init_block_stats();
+        
+        // Test GPU shard execution recording
+        record_gpu_shard_execution(32, 1500, 1024 * 1024); // 32 messages, 1.5ms, 1MB
+        record_gpu_shard_execution(28, 1200, 800 * 1024);  // 28 messages, 1.2ms, 800KB
+        
+        // Test WASM fallback recording
+        record_wasm_fallback_shard();
+        record_wasm_fallback_shard();
+        
+        // Test clustering stats
+        record_clustering_stats(3, 5, 2); // 3 passes, 5 merges, 2 conflicts
+        
+        let stats = get_block_stats().unwrap();
+        
+        // Verify GPU execution stats
+        assert_eq!(stats.pipeline_stats.gpu_shards_executed, 2);
+        assert_eq!(stats.pipeline_stats.gpu_messages_processed, 60); // 32 + 28
+        assert_eq!(stats.pipeline_stats.gpu_execution_time_us, 2700); // 1500 + 1200
+        assert_eq!(stats.pipeline_stats.gpu_memory_used_bytes, 1024 * 1024); // Max of the two
+        
+        // Verify WASM fallback stats
+        assert_eq!(stats.pipeline_stats.wasm_fallback_shards, 2);
+        
+        // Verify clustering stats
+        assert_eq!(stats.pipeline_stats.clustering_passes, 3);
+        assert_eq!(stats.pipeline_stats.shard_merges, 5);
+        assert_eq!(stats.pipeline_stats.conflicts_resolved, 2);
+    }
+
+    #[test]
+    fn test_pipeline_stats_update() {
+        init_block_stats();
+        
+        let custom_stats = PipelineStats {
+            gpu_shards_executed: 10,
+            gpu_messages_processed: 320,
+            wasm_fallback_shards: 3,
+            gpu_execution_time_us: 5000,
+            gpu_memory_used_bytes: 2 * 1024 * 1024,
+            clustering_passes: 2,
+            shard_merges: 4,
+            conflicts_resolved: 1,
+            avg_shard_size: 32.0,
+            pipeline_efficiency: 91.4,
+        };
+        
+        update_pipeline_stats(custom_stats.clone());
+        
+        let stats = get_block_stats().unwrap();
+        assert_eq!(stats.pipeline_stats.gpu_shards_executed, 10);
+        assert_eq!(stats.pipeline_stats.gpu_messages_processed, 320);
+        assert_eq!(stats.pipeline_stats.wasm_fallback_shards, 3);
+        assert_eq!(stats.pipeline_stats.gpu_execution_time_us, 5000);
+        assert_eq!(stats.pipeline_stats.gpu_memory_used_bytes, 2 * 1024 * 1024);
+        assert_eq!(stats.pipeline_stats.clustering_passes, 2);
+        assert_eq!(stats.pipeline_stats.shard_merges, 4);
+        assert_eq!(stats.pipeline_stats.conflicts_resolved, 1);
     }
 }

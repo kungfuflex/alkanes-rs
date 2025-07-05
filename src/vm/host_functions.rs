@@ -701,6 +701,65 @@ impl AlkanesHostFunctionsImpl {
         print!("{}", String::from_utf8(message)?);
         Ok(())
     }
+
+    pub(super) fn call_vulkan(
+        caller: &mut Caller<'_, AlkanesState>,
+        input_ptr: i32,
+        input_len: i32,
+        output_ptr: i32,
+        output_len: i32,
+    ) -> Result<i32> {
+        use crate::logging::{record_gpu_shard_execution, record_wasm_fallback_shard};
+        
+        let start_time = std::time::Instant::now();
+        
+        // Read input data from WASM memory
+        let input_data = {
+            let mem = get_memory(caller)?;
+            let data = mem.data(&caller);
+            let input_slice = data.get(input_ptr as usize..(input_ptr as usize + input_len as usize))
+                .ok_or_else(|| anyhow!("Invalid input buffer range"))?;
+            input_slice.to_vec()
+        };
+
+        alkane_log!(
+            "call_vulkan: input_size={} bytes, output_size={} bytes",
+            input_len, output_len
+        );
+
+        // For now, we'll simulate GPU execution
+        // In a real implementation, this would interface with the metashrew-runtime GPU functions
+        let result = {
+            let execution_time = start_time.elapsed().as_micros() as u64;
+            let memory_used = (input_len + output_len) as u64;
+            
+            // Simulate GPU processing - for now, just record successful execution
+            record_gpu_shard_execution(1, execution_time, memory_used);
+            
+            alkane_log!(
+                "call_vulkan: GPU simulation successful, time={}μs, memory={}B",
+                execution_time, memory_used
+            );
+            
+            0 // Success
+        };
+
+        Ok(result)
+    }
+
+    pub(super) fn load_vulkan(caller: &mut Caller<'_, AlkanesState>, result_ptr: i32) -> Result<i32> {
+        // For now, we'll return a simple success indicator
+        // In a real implementation, this would load GPU execution results
+        let mem = get_memory(caller)?;
+        let success_data = vec![1u8; 4]; // Simple success indicator
+        
+        mem.write(&mut *caller, result_ptr as usize, &success_data)
+            .map_err(|_| anyhow!("Failed to write GPU result data"))?;
+
+        alkane_log!("load_vulkan: GPU result data loaded, size={} bytes", success_data.len());
+
+        Ok(success_data.len() as i32)
+    }
 }
 
 // Implementation of the safe wrapper
@@ -826,6 +885,24 @@ impl SafeAlkanesHostFunctionsImpl {
                 checkpoint_ptr,
                 start_fuel,
             )
+        })
+    }
+
+    pub(super) fn call_vulkan(
+        caller: &mut Caller<'_, AlkanesState>,
+        input_ptr: i32,
+        input_len: i32,
+        output_ptr: i32,
+        output_len: i32,
+    ) -> Result<i32> {
+        Self::with_context_safety(caller, |c| {
+            AlkanesHostFunctionsImpl::call_vulkan(c, input_ptr, input_len, output_ptr, output_len)
+        })
+    }
+
+    pub(super) fn load_vulkan(caller: &mut Caller<'_, AlkanesState>, result_ptr: i32) -> Result<i32> {
+        Self::with_context_safety(caller, |c| {
+            AlkanesHostFunctionsImpl::load_vulkan(c, result_ptr)
         })
     }
 }

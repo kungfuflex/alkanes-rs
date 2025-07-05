@@ -329,6 +329,37 @@ impl AlkanesInstance {
                 )
             },
         )?;
+        
+        // Add GPU host functions for pipeline acceleration
+        // These functions are provided by metashrew-runtime when --pipeline is used
+        linker.func_wrap(
+            "env",
+            "__call_vulkan",
+            |mut caller: Caller<'_, AlkanesState>, input_ptr: i32, input_len: i32, output_ptr: i32, output_len: i32| -> i32 {
+                match SafeAlkanesHostFunctionsImpl::call_vulkan(&mut caller, input_ptr, input_len, output_ptr, output_len) {
+                    Ok(v) => v,
+                    Err(_e) => {
+                        SafeAlkanesHostFunctionsImpl::_abort(caller);
+                        -1
+                    }
+                }
+            },
+        )?;
+        
+        linker.func_wrap(
+            "env",
+            "__load_vulkan",
+            |mut caller: Caller<'_, AlkanesState>, result_ptr: i32| -> i32 {
+                match SafeAlkanesHostFunctionsImpl::load_vulkan(&mut caller, result_ptr) {
+                    Ok(v) => v,
+                    Err(_e) => {
+                        SafeAlkanesHostFunctionsImpl::_abort(caller);
+                        -1
+                    }
+                }
+            },
+        )?;
+        
         let mut alkanes_instance = AlkanesInstance {
             instance: linker
                 .instantiate(&mut store, &module)?

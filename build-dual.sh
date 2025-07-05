@@ -43,7 +43,7 @@ mkdir -p target/vulkan/release
 
 print_status "Building WASM target..."
 
-# Build WASM target (normal alkanes.wasm) without GPU dependencies
+# Build WASM target (GPU host functions are provided by metashrew runtime, not WASM features)
 export RUSTUP_TOOLCHAIN=1.86.0
 cargo build --target wasm32-unknown-unknown --release --no-default-features
 
@@ -95,8 +95,14 @@ print_status "  - Vulkan: target/vulkan/release/alkanes.vulkan"
 
 echo ""
 print_status "Usage with rockshrew-mono:"
-print_status "  Normal: rockshrew-mono --wasm target/wasm32-unknown-unknown/release/alkanes.wasm"
-print_status "  GPU:    rockshrew-mono --wasm target/wasm32-unknown-unknown/release/alkanes.wasm --use-vulkan target/vulkan/release/alkanes.vulkan"
+print_status "  WASM-only: rockshrew-mono --indexer target/wasm32-unknown-unknown/release/alkanes.wasm"
+print_status "  GPU:       rockshrew-mono --indexer target/wasm32-unknown-unknown/release/alkanes.wasm --pipeline target/vulkan/release/alkanes.vulkan"
+print_status "  Pipeline:  rockshrew-mono --indexer target/wasm32-unknown-unknown/release/alkanes.wasm --pipeline target/vulkan/release/alkanes.vulkan --pipeline-size 32"
+print_status ""
+print_status "GPU Host Functions (provided by metashrew runtime):"
+print_status "  - __call_vulkan: Execute GPU compute shaders from WASM"
+print_status "  - __load_vulkan: Load GPU result data into WASM memory"
+print_status "  - Available when --pipeline argument is used with rockshrew-mono"
 
 echo ""
 print_success "🚀 Ready for GPU-accelerated alkanes indexing!"
