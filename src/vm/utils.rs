@@ -72,6 +72,26 @@ fn set_alkane_id_to_tx_id(
     Ok(())
 }
 
+pub fn get_alkane_binary(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
+    alkane_id: &AlkaneId,
+) -> Result<Arc<Vec<u8>>> {
+    let wasm_payload_arc = context
+        .lock()
+        .unwrap()
+        .message
+        .atomic
+        .keyword("/alkanes/")
+        .select(&alkane_id.clone().into())
+        .get();
+    let wasm_payload = wasm_payload_arc.as_ref();
+    if wasm_payload.len() == 32 {
+        let factory_id = wasm_payload.to_vec().try_into()?;
+        return get_alkane_binary(context, &factory_id);
+    }
+    Ok(Arc::new(decompress(wasm_payload.clone())?))
+}
+
 pub fn run_special_cellpacks(
     context: Arc<Mutex<AlkanesRuntimeContext>>,
     cellpack: &Cellpack,
@@ -82,16 +102,7 @@ pub fn run_special_cellpacks(
     let next_sequence = next_sequence_pointer.get_value::<u128>();
     let original_target = cellpack.target.clone();
     if cellpack.target.is_created(next_sequence) {
-        // contract already created, load the wasm from the index
-        let wasm_payload = context
-            .lock()
-            .unwrap()
-            .message
-            .atomic
-            .keyword("/alkanes/")
-            .select(&payload.target.clone().into())
-            .get();
-        binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
+        binary = get_alkane_binary(context.clone(), &payload.target)?;
     } else if cellpack.target.is_create() {
         // contract not created, create it by first loading the wasm from the witness
         // then storing it in the index.
@@ -151,17 +162,7 @@ pub fn run_special_cellpacks(
         // we find the factory alkane wasm and set the current alkane to the factory wasm
         payload.target = AlkaneId::new(2, next_sequence);
         next_sequence_pointer.set_value(next_sequence + 1);
-        let context_binary: Vec<u8> = context
-            .lock()
-            .unwrap()
-            .message
-            .atomic
-            .keyword("/alkanes/")
-            .select(&factory.clone().into())
-            .get()
-            .as_ref()
-            .clone();
-        let rc = Arc::new(context_binary);
+        let factory_payload: Vec<u8> = factory.into();
         context
             .lock()
             .unwrap()
@@ -169,9 +170,9 @@ pub fn run_special_cellpacks(
             .atomic
             .keyword("/alkanes/")
             .select(&payload.target.clone().into())
-            .set(rc.clone()); // TODO: we don't need to store this twice
+            .set(Arc::new(factory_payload));
         set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
-        binary = Arc::new(decompress(rc.as_ref().clone())?);
+        binary = get_alkane_binary(context.clone(), &factory)?;
     }
     if &original_target != &payload.target {
         context
