@@ -2023,7 +2023,7 @@ dependencies = [
 [[package]]
 name = "metashrew-core"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#00189a78977a47cd47a073defd5f4d0f01d65a56"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#8fecbdb4d2c1e206cb722d6f82362c2ba7d1b40a"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
@@ -2044,7 +2044,7 @@ dependencies = [
 [[package]]
 name = "metashrew-macros"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#00189a78977a47cd47a073defd5f4d0f01d65a56"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#8fecbdb4d2c1e206cb722d6f82362c2ba7d1b40a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2080,7 +2080,7 @@ dependencies = [
 [[package]]
 name = "metashrew-support"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#00189a78977a47cd47a073defd5f4d0f01d65a56"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#8fecbdb4d2c1e206cb722d6f82362c2ba7d1b40a"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
