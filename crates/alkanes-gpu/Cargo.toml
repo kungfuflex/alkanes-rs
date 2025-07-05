@@ -1,0 +1,34 @@
+[package]
+name = "alkanes-gpu"
+version = "0.5.2"
+edition = "2021"
+description = "GPU compute shaders for alkanes parallel execution"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Basic utilities
+anyhow = "1.0"
+serde = { version = "1.0.210", features = ["derive"] }
+
+# Core alkanes dependencies (optional for now)
+alkanes-support = { path = "../alkanes-support", optional = true }
+protorune-support = { path = "../protorune-support", optional = true }
+
+# SPIR-V compilation dependencies (optional)
+# Note: These are commented out to avoid compilation issues
+# spirv-std = { version = "0.9", default-features = false, optional = true }
+
+[build-dependencies]
+# spirv-builder = { version = "0.9", optional = true }
+which = "4.4"
+anyhow = "1.0"
+
+[features]
+default = []
+# Feature for building SPIR-V shaders (placeholder for now)
+spirv = []
+# Feature for alkanes integration
+alkanes = ["alkanes-support", "protorune-support"]

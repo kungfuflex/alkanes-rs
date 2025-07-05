@@ -15,6 +15,7 @@ test-utils = []
 mainnet = []
 cache = []
 logs = []
+gpu = ["metashrew-runtime", "alkanes-gpu"]
 
 [dependencies]
 anyhow = "1.0.89"
@@ -23,6 +24,10 @@ metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
 protorune-support = { path = "../protorune-support" }
 ordinals = { path = "../ordinals" }
+
+# GPU-only dependencies
+metashrew-runtime = { workspace = true, optional = true }
+alkanes-gpu = { path = "../alkanes-gpu", optional = true }
 ruint = { workspace = true }
 wasm-bindgen = { workspace = true }
 byteorder = { workspace = true }

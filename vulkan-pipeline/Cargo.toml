@@ -1,0 +1,24 @@
+[package]
+name = "alkanes-vulkan-pipeline"
+version = "0.5.2"
+edition = "2021"
+description = "ALKANES GPU pipeline - minimal Vulkan target"
+license = "MIT"
+
+[workspace]
+# Empty workspace to exclude from parent workspace
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Minimal dependencies for GPU pipeline only
+alkanes-gpu = { path = "../crates/alkanes-gpu", features = ["spirv"] }
+anyhow = "1.0.90"
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.128"
+
+[features]
+default = ["vulkan"]
+vulkan = []
+gpu = []

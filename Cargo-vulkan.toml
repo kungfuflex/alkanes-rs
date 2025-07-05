@@ -1,0 +1,24 @@
+[package]
+name = "alkanes-vulkan"
+version = "0.5.2"
+edition = "2021"
+description = "ALKANES GPU pipeline - minimal Vulkan target"
+license = "MIT"
+repository = "https://github.com/kungfuflex/alkanes-rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Minimal dependencies for GPU pipeline only
+alkanes-gpu = { path = "./crates/alkanes-gpu", features = ["spirv"] }
+anyhow = "1.0.90"
+serde = { version = "1.0.210", features = ["derive"] }
+
+[features]
+default = ["vulkan"]
+vulkan = []
+gpu = []
+
+[build-dependencies]
+anyhow = "1.0.90"
