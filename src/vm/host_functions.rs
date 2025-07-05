@@ -3,6 +3,8 @@ use super::{
     get_memory, read_arraybuffer, send_to_arraybuffer, sequence_pointer, AlkanesState, Extcall,
     Saveable, SaveableExtendedCallResponse,
 };
+use crate::alkane_log;
+use crate::logging::{record_alkane_creation, AlkaneCreation, determine_creation_method};
 use crate::utils::{balance_pointer, pipe_storagemap_to, transfer_from};
 use crate::vm::{run_after_special, run_special_cellpacks};
 use alkanes_support::{
@@ -109,15 +111,13 @@ impl AlkanesHostFunctionsImpl {
 
         let fuel_cost =
             overflow_error((bytes_processed as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?;
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "request_storage: key_size={} bytes, result_size={} bytes, fuel_cost={}",
-                bytes_processed - (result as u64),
-                result,
-                fuel_cost
-            );
-        }
+        
+        alkane_log!(
+            "request_storage: key_size={} bytes, result_size={} bytes, fuel_cost={}",
+            bytes_processed - (result as u64),
+            result,
+            fuel_cost
+        );
 
         consume_fuel(caller, fuel_cost)?;
         Ok(result)
@@ -147,13 +147,11 @@ impl AlkanesHostFunctionsImpl {
         };
 
         let fuel_cost = overflow_error((bytes_processed as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "load_storage: key_size={} bytes, value_size={} bytes, total_size={} bytes, fuel_cost={}",
-                bytes_processed - value.len(), value.len(), bytes_processed, fuel_cost
-            );
-        }
+        
+        alkane_log!(
+            "load_storage: key_size={} bytes, value_size={} bytes, total_size={} bytes, fuel_cost={}",
+            bytes_processed - value.len(), value.len(), bytes_processed, fuel_cost
+        );
 
         consume_fuel(caller, fuel_cost)?;
         send_to_arraybuffer(caller, v.try_into()?, value.as_ref())
@@ -169,13 +167,11 @@ impl AlkanesHostFunctionsImpl {
             .try_into()?;
 
         let fuel_cost = overflow_error((result as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?;
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "request_context: context_size={} bytes, fuel_cost={}",
-                result, fuel_cost
-            );
-        }
+        
+        alkane_log!(
+            "request_context: context_size={} bytes, fuel_cost={}",
+            result, fuel_cost
+        );
 
         consume_fuel(caller, fuel_cost)?;
         Ok(result)
@@ -184,14 +180,12 @@ impl AlkanesHostFunctionsImpl {
         let result: Vec<u8> = caller.data_mut().context.lock().unwrap().serialize();
 
         let fuel_cost = overflow_error((result.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "load_context: context_size={} bytes, fuel_cost={}",
-                result.len(),
-                fuel_cost
-            );
-        }
+        
+        alkane_log!(
+            "load_context: context_size={} bytes, fuel_cost={}",
+            result.len(),
+            fuel_cost
+        );
 
         consume_fuel(caller, fuel_cost)?;
 
@@ -214,13 +208,10 @@ impl AlkanesHostFunctionsImpl {
         let request_fuel = std::cmp::min(50, FUEL_LOAD_TRANSACTION / 10);
         consume_fuel(caller, request_fuel)?;
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "Requesting transaction size: {} bytes, fuel cost={} (fixed)",
-                result, request_fuel
-            );
-        }
+        alkane_log!(
+            "request_transaction: size={} bytes, fuel_cost={} (fixed)",
+            result, request_fuel
+        );
 
         Ok(result)
     }
@@ -262,14 +253,12 @@ impl AlkanesHostFunctionsImpl {
         let returndata: Vec<u8> = caller.data_mut().context.lock().unwrap().returndata.clone();
 
         let fuel_cost = overflow_error((returndata.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "returndatacopy: data_size={} bytes, fuel_cost={}",
-                returndata.len(),
-                fuel_cost
-            );
-        }
+        
+        alkane_log!(
+            "returndatacopy: data_size={} bytes, fuel_cost={}",
+            returndata.len(),
+            fuel_cost
+        );
 
         consume_fuel(caller, fuel_cost)?;
 
@@ -290,14 +279,11 @@ impl AlkanesHostFunctionsImpl {
         // Use fixed fuel cost instead of scaling with transaction size
         consume_fuel(caller, FUEL_LOAD_TRANSACTION)?;
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "Loading transaction: size={} bytes, fuel cost={} (fixed)",
-                transaction.len(),
-                FUEL_LOAD_TRANSACTION
-            );
-        }
+        alkane_log!(
+            "load_transaction: size={} bytes, fuel_cost={} (fixed)",
+            transaction.len(),
+            FUEL_LOAD_TRANSACTION
+        );
 
         send_to_arraybuffer(caller, v.try_into()?, &transaction)?;
         Ok(())
@@ -312,13 +298,10 @@ impl AlkanesHostFunctionsImpl {
         let request_fuel = std::cmp::min(100, FUEL_LOAD_BLOCK / 10);
         consume_fuel(caller, request_fuel)?;
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "Requesting block size: {} bytes, fuel cost={} (fixed)",
-                len, request_fuel
-            );
-        }
+        alkane_log!(
+            "request_block: size={} bytes, fuel_cost={} (fixed)",
+            len, request_fuel
+        );
 
         Ok(len)
     }
@@ -329,14 +312,11 @@ impl AlkanesHostFunctionsImpl {
         // Use fixed fuel cost instead of scaling with block size
         consume_fuel(caller, FUEL_LOAD_BLOCK)?;
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "Loading block: size={} bytes, fuel cost={} (fixed)",
-                block.len(),
-                FUEL_LOAD_BLOCK
-            );
-        }
+        alkane_log!(
+            "load_block: size={} bytes, fuel_cost={} (fixed)",
+            block.len(),
+            FUEL_LOAD_BLOCK
+        );
         send_to_arraybuffer(caller, v.try_into()?, &block)?;
         Ok(())
     }
@@ -347,10 +327,7 @@ impl AlkanesHostFunctionsImpl {
                 .to_le_bytes())
                 .to_vec();
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!("sequence: fuel_cost={}", FUEL_SEQUENCE);
-        }
+        alkane_log!("sequence: fuel_cost={}", FUEL_SEQUENCE);
 
         consume_fuel(caller, FUEL_SEQUENCE)?;
 
@@ -361,13 +338,10 @@ impl AlkanesHostFunctionsImpl {
         let remaining_fuel = caller.get_fuel()?;
         let buffer: Vec<u8> = (&remaining_fuel.to_le_bytes()).to_vec();
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "fuel: remaining_fuel={}, fuel_cost={}",
-                remaining_fuel, FUEL_FUEL
-            );
-        }
+        alkane_log!(
+            "fuel: remaining_fuel={}, fuel_cost={}",
+            remaining_fuel, FUEL_FUEL
+        );
 
         consume_fuel(caller, FUEL_FUEL)?;
 
@@ -378,13 +352,10 @@ impl AlkanesHostFunctionsImpl {
         let height_value = caller.data_mut().context.lock().unwrap().message.height;
         let height = (&height_value.to_le_bytes()).to_vec();
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "height: block_height={}, fuel_cost={}",
-                height_value, FUEL_HEIGHT
-            );
-        }
+        alkane_log!(
+            "height: block_height={}, fuel_cost={}",
+            height_value, FUEL_HEIGHT
+        );
 
         consume_fuel(caller, FUEL_HEIGHT)?;
 
@@ -414,18 +385,15 @@ impl AlkanesHostFunctionsImpl {
         .as_ref()
         .clone();
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "balance: who=[{},{}], what=[{},{}], balance_size={} bytes, fuel_cost={}",
-                who.block,
-                who.tx,
-                what.block,
-                what.tx,
-                balance.len(),
-                FUEL_BALANCE
-            );
-        }
+        alkane_log!(
+            "balance: who=[{},{}], what=[{},{}], balance_size={} bytes, fuel_cost={}",
+            who.block,
+            who.tx,
+            what.block,
+            what.tx,
+            balance.len(),
+            FUEL_BALANCE
+        );
 
         consume_fuel(caller, FUEL_BALANCE)?;
 
@@ -437,7 +405,7 @@ impl AlkanesHostFunctionsImpl {
         e: anyhow::Error,
         should_rollback: bool,
     ) -> i32 {
-        println!("[[handle_extcall]] Error during extcall: {:?}", e);
+        alkane_log!("extcall error: {:?}", e);
         let mut data: Vec<u8> = vec![0x08, 0xc3, 0x79, 0xa0];
         data.extend(e.to_string().as_bytes());
 
@@ -496,13 +464,10 @@ impl AlkanesHostFunctionsImpl {
             // Extract height into a local variable to avoid multiple mutable borrows
             let height = caller.data_mut().context.lock().unwrap().message.height as u32;
 
-            #[cfg(feature = "debug-log")]
-            {
-                println!(
-                    "extcall: deployment detected, additional fuel_cost={}",
-                    fuel_extcall_deploy(height)
-                );
-            }
+            alkane_log!(
+                "extcall: deployment detected, additional fuel_cost={}",
+                fuel_extcall_deploy(height)
+            );
             caller.consume_fuel(fuel_extcall_deploy(height))?;
         }
         Ok((
@@ -544,23 +509,17 @@ impl AlkanesHostFunctionsImpl {
         caller: &mut Caller<'_, AlkanesState>,
         cellpack: Cellpack,
     ) -> Result<i32> {
-        #[cfg(feature = "debug-log")]
-        {
-            println!(
-                "extcall: precompiled contract detected at [{},{}]",
-                cellpack.target.block, cellpack.target.tx
-            );
-        }
+        alkane_log!(
+            "extcall: precompiled contract [{},{}]",
+            cellpack.target.block, cellpack.target.tx
+        );
 
         let mut response = CallResponse::default();
 
         match cellpack.target.tx {
             0 => {
                 // Return the current block header
-                #[cfg(feature = "debug-log")]
-                {
-                    println!("Precompiled contract: returning current block header");
-                }
+                alkane_log!("Precompiled contract: returning current block header");
 
                 // Get the block header from the current context
                 let block = {
@@ -574,10 +533,7 @@ impl AlkanesHostFunctionsImpl {
             }
             1 => {
                 // Return the coinbase transaction bytes
-                #[cfg(feature = "debug-log")]
-                {
-                    println!("Precompiled contract: returning coinbase transaction");
-                }
+                alkane_log!("Precompiled contract: returning coinbase transaction");
 
                 // Get the coinbase transaction from the current block
                 let coinbase_tx = {
@@ -681,14 +637,27 @@ impl AlkanesHostFunctionsImpl {
 
         let total_fuel = compute_extcall_fuel(storage_map_len, height)?;
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!("extcall: target=[{},{}], inputs={:?}, storage_size={} bytes, total_fuel={}, deployment={}",
-                cellpack.target.block, cellpack.target.tx,
-                cellpack.inputs, storage_map_len,
-                total_fuel,
-                cellpack.target.is_deployment());
+        // Check if this is an alkane deployment and record it
+        if cellpack.target.is_deployment() {
+            // Get the WASM binary size for the deployment
+            let binary_size = storage_map_len as f64 / 1024.0; // Approximate WASM size from storage
+            
+            let creation_method = determine_creation_method(&cellpack.target, &subcontext.myself);
+            let creation = AlkaneCreation {
+                alkane_id: subcontext.myself.clone(),
+                wasm_size_kb: binary_size,
+                creation_method,
+            };
+            record_alkane_creation(creation);
         }
+
+        alkane_log!(
+            "extcall: target=[{},{}], inputs={:?}, storage_size={} bytes, total_fuel={}, deployment={}",
+            cellpack.target.block, cellpack.target.tx,
+            cellpack.inputs, storage_map_len,
+            total_fuel,
+            cellpack.target.is_deployment()
+        );
 
         consume_fuel(caller, total_fuel)?;
 

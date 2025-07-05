@@ -20,6 +20,13 @@ pub trait MessageContext {
         }
         false
     }
+    
+    /// Called when a protostone for this protocol is processed
+    /// Default implementation does nothing, but implementations can override
+    /// to track protostone execution statistics
+    fn on_protostone_processed() {
+        // Default: do nothing
+    }
 }
 
 #[derive(Clone, Debug)]

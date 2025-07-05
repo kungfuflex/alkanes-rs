@@ -144,7 +144,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                         .set(Arc::new(filtered_response.write_to_bytes()?));
                 }
                 Err(e) => {
-                    println!("Error caching wallet response for address: {:?}", e);
+                    crate::alkane_log!("Error caching wallet response for address: {:?}", e);
                 }
             }
         }

@@ -124,7 +124,7 @@ pub fn transfer_from(
 ) -> Result<()> {
     let non_contract_id = AlkaneId { block: 0, tx: 0 };
     if *to == non_contract_id {
-        println!("skipping transfer_from since caller is not a contract");
+        crate::alkane_log!("skipping transfer_from since caller is not a contract");
         return Ok(());
     }
     for transfer in &parcel.0 {

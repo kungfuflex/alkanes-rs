@@ -142,7 +142,7 @@ pub fn get_view_mode() -> bool {
 pub fn is_genesis(height: u64) -> bool {
     let mut init_ptr = IndexPointer::from_keyword("/seen-genesis");
     let has_not_seen_genesis = init_ptr.get().len() == 0;
-    println!("has_not_seen_genesis: {}", has_not_seen_genesis);
+    crate::alkane_log!("has_not_seen_genesis: {}", has_not_seen_genesis);
     let is_genesis = if has_not_seen_genesis {
         get_view_mode() || height >= genesis::GENESIS_BLOCK
     } else {
@@ -187,7 +187,7 @@ pub fn genesis(block: &Block) -> Result<()> {
     let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
-            println!("{:?}", e);
+            crate::alkane_log!("{:?}", e);
             Err(e)
         }
     })?;
