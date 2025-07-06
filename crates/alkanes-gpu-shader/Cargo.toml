@@ -13,6 +13,7 @@ spirv-std.workspace = true
 
 [target.'cfg(not(target_arch = "spirv"))'.dependencies]
 spirv-std = { workspace = true, default-features = true }
+alkanes-gpu = { path = "../alkanes-gpu" }
 
 [package.metadata.rust-gpu.build]
 capabilities = ["Int64", "Int16", "StorageBuffer16BitAccess"]
