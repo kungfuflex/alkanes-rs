@@ -89,6 +89,6 @@ fn test_factory_wasm_load() -> Result<()> {
         .as_ref()
         .clone();
     let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
-    assert_eq!(ptr, copy_alkane.clone());
+    assert_eq!(ptr, orig_alkane.clone());
     Ok(())
 }
