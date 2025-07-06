@@ -13,9 +13,16 @@ crate-type = ["cdylib", "rlib"]
 anyhow = "1.0"
 serde = { version = "1.0.210", features = ["derive"] }
 
-# Core alkanes dependencies (optional for now)
-alkanes-support = { path = "../alkanes-support", optional = true }
-protorune-support = { path = "../protorune-support", optional = true }
+# Core alkanes dependencies
+alkanes-support = { path = "../alkanes-support" }
+protorune-support = { path = "../protorune-support" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan" }
+
+# Bitcoin and crypto
+bitcoin = "0.32"
+
+# WASM runtime
+wasmi = "0.32"
 
 # SPIR-V compilation dependencies (optional)
 # Note: These are commented out to avoid compilation issues
@@ -30,5 +37,3 @@ anyhow = "1.0"
 default = []
 # Feature for building SPIR-V shaders (placeholder for now)
 spirv = []
-# Feature for alkanes integration
-alkanes = ["alkanes-support", "protorune-support"]

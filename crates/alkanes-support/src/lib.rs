@@ -10,6 +10,7 @@ pub mod response;
 pub mod storage;
 pub mod trace;
 pub mod utils;
+pub mod vm;
 pub mod witness;
 
 use crate::id::AlkaneId;

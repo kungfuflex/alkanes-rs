@@ -18,9 +18,9 @@ members = [".", "crates/*"]
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.6", features = ["rand"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache" }
-metashrew-runtime = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache" }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan" }
+metashrew-runtime = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan" }
 lru-mem = "0.3.0"
 ordinals = { path = "./crates/ordinals" }
 protorune = { path = "./crates/protorune" }
@@ -120,7 +120,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache", features = ["test-utils"] }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]
