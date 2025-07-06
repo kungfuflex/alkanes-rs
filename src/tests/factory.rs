@@ -1,5 +1,7 @@
 use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};
+use crate::tests::helpers::{
+    self as alkane_helpers, assert_binary_deployed_to_id, get_sheet_for_runtime,
+};
 use crate::tests::std::alkanes_std_test_build;
 use alkane_helpers::clear;
 use alkanes::view;

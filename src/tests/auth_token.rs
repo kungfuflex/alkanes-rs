@@ -15,7 +15,6 @@ use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
-use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
 use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
 use protorune_support::balance_sheet::BalanceSheetOperations;
