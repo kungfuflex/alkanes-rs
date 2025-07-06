@@ -717,9 +717,9 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "cc"
-version = "1.2.28"
+version = "1.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ad45f4f74e4e20eaa392913b7b33a7091c87e59628f4dd27888205ad888843c"
+checksum = "5c1599538de2394445747c8cf7935946e3cc27e9625f889d979bfb2aaf569362"
 dependencies = [
  "shlex",
 ]
@@ -1644,7 +1644,7 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 [[package]]
 name = "metashrew-core"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#8fecbdb4d2c1e206cb722d6f82362c2ba7d1b40a"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#6e14d4ae57f19a75cb2a5cb2bb42077ecf8d1874"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
@@ -1665,7 +1665,7 @@ dependencies = [
 [[package]]
 name = "metashrew-macros"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#8fecbdb4d2c1e206cb722d6f82362c2ba7d1b40a"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#6e14d4ae57f19a75cb2a5cb2bb42077ecf8d1874"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1675,7 +1675,7 @@ dependencies = [
 [[package]]
 name = "metashrew-support"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#8fecbdb4d2c1e206cb722d6f82362c2ba7d1b40a"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/lru-cache#6e14d4ae57f19a75cb2a5cb2bb42077ecf8d1874"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
@@ -2611,9 +2611,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "1.0.3"
+version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1375ba8ef45a6f15d83fa8748f1079428295d403d6ea991d09ab100155fbc06d"
+checksum = "82d20c4491bc164fa2f6c5d44565947a52ad80b9505d8e36f8d54c27c739fcd0"
 dependencies = [
  "dyn-clone",
  "ref-cast",
@@ -2730,7 +2730,7 @@ dependencies = [
  "indexmap 1.9.3",
  "indexmap 2.10.0",
  "schemars 0.9.0",
- "schemars 1.0.3",
+ "schemars 1.0.4",
  "serde",
  "serde_derive",
  "serde_json",
