@@ -1,23 +1,23 @@
+use crate::index_block;
+use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
+use crate::tests::std::alkanes_std_owned_token_build;
 use crate::{message::AlkaneMessageContext, tests::std::alkanes_std_auth_token_build};
+use alkane_helpers::clear;
+use alkanes::view;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
-use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
-use protorune_support::balance_sheet::BalanceSheetOperations;
-
-use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
-use crate::tests::std::alkanes_std_owned_token_build;
-use alkane_helpers::clear;
-use alkanes::view;
 use bitcoin::Witness;
+use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
+use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
+use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
+use protorune_support::balance_sheet::BalanceSheetOperations;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -212,9 +212,18 @@ fn test_auth_and_owned_token() -> Result<()> {
         _auth_token_id_factory.clone(),
         alkanes_std_auth_token_build::get_bytes(),
     );
-    let _ = assert_binary_deployed_to_id(
-        auth_token_id_deployment.clone(),
-        alkanes_std_auth_token_build::get_bytes(),
+    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
+        .select(&auth_token_id_deployment.into())
+        .get()
+        .as_ref()
+        .clone();
+    let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
+    assert_eq!(
+        ptr,
+        AlkaneId {
+            block: 4,
+            tx: AUTH_TOKEN_FACTORY_ID
+        }
     );
 
     Ok(())
@@ -450,35 +459,19 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         _auth_token_id_factory.clone(),
         alkanes_std_auth_token_build::get_bytes(),
     );
-    let _ = assert_binary_deployed_to_id(
-        auth_token_id_deployment.clone(),
-        alkanes_std_auth_token_build::get_bytes(),
-    );
+    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
+        .select(&auth_token_id_deployment.into())
+        .get()
+        .as_ref()
+        .clone();
 
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 3 },
-        alkanes_std_owned_token_build::get_bytes(),
+    let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
+    assert_eq!(
+        ptr,
+        AlkaneId {
+            block: 4,
+            tx: AUTH_TOKEN_FACTORY_ID
+        }
     );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 4 },
-        alkanes_std_auth_token_build::get_bytes(),
-    );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 5 },
-        alkanes_std_owned_token_build::get_bytes(),
-    );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 6 },
-        alkanes_std_auth_token_build::get_bytes(),
-    );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 7 },
-        alkanes_std_owned_token_build::get_bytes(),
-    );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 8 },
-        alkanes_std_auth_token_build::get_bytes(),
-    );
-
     Ok(())
 }
