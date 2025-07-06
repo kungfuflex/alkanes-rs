@@ -513,7 +513,7 @@ impl GpuWasmExecutor {
         let engine = Engine::new(&config);
         
         let mut store = Store::new(&engine, context.clone());
-        store.set_fuel(self.fuel_limit).map_err(|e| anyhow::anyhow!("Failed to set fuel: {:?}", e))?;
+        store.add_fuel(self.fuel_limit).map_err(|e| anyhow::anyhow!("Failed to add fuel: {:?}", e))?;
         
         let module = Module::new(&engine, &self.binary[..])?;
         let mut linker = Linker::new(&engine);
@@ -528,7 +528,7 @@ impl GpuWasmExecutor {
         let main_func = instance.get_typed_func::<(), ()>(&store, "main")?;
         main_func.call(&mut store, ())?;
         
-        let fuel_used = self.fuel_limit - store.get_fuel().map_err(|e| anyhow::anyhow!("Failed to get fuel: {:?}", e))?;
+        let fuel_used = store.fuel_consumed().unwrap_or(0);
         
         // Return placeholder response for now
         Ok((ExtendedCallResponse::default(), fuel_used))

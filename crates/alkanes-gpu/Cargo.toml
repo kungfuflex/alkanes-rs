@@ -21,7 +21,7 @@ metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew
 # Bitcoin and crypto
 bitcoin = { version = "0.32", optional = true }
 
-# WASM runtime
+# WASM runtime with fuel support
 wasmi = { version = "0.31", optional = true }
 
 # SPIR-V compilation dependencies (optional)

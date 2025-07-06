@@ -3,14 +3,22 @@
 //! This crate contains the actual GPU compute shader code that gets compiled to SPIR-V.
 //! It implements the core alkanes message processing pipeline for parallel execution on GPU.
 
-#![no_std]
+#![cfg_attr(target_arch = "spirv", no_std)]
 #![cfg_attr(target_arch = "spirv", no_main, feature(register_attr), register_attr(spirv))]
 
+// Only import spirv-std when compiling for SPIR-V target
+#[cfg(target_arch = "spirv")]
 use spirv_std::glam::{UVec3};
+#[cfg(target_arch = "spirv")]
 use spirv_std::{spirv};
 
-#[cfg(target_arch = "spirv")]
-use spirv_std::macros::panic_handler;
+// For non-SPIR-V targets, provide dummy types
+#[cfg(not(target_arch = "spirv"))]
+pub struct UVec3 {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
 
 /// Panic handler for SPIR-V target
 #[cfg(target_arch = "spirv")]
@@ -145,6 +153,7 @@ fn process_message(
 
 /// Main compute shader entry point
 /// Each workgroup processes one shard, each thread processes one message
+#[cfg(target_arch = "spirv")]
 #[spirv(compute(threads(64, 1, 1)))]
 pub fn alkanes_pipeline_compute(
     #[spirv(global_invocation_id)] global_id: UVec3,
@@ -191,6 +200,7 @@ pub fn alkanes_pipeline_compute(
 }
 
 /// Simple test compute shader for validation
+#[cfg(target_arch = "spirv")]
 #[spirv(compute(threads(1, 1, 1)))]
 pub fn test_compute(
     #[spirv(global_invocation_id)] _global_id: UVec3,

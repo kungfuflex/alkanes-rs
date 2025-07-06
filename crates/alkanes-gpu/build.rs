@@ -12,8 +12,8 @@ fn main() -> Result<()> {
     // Only build SPIR-V if we're targeting a native platform
     // Skip SPIR-V compilation when building for WASM or other non-native targets
     let target = env::var("TARGET").unwrap_or_default();
-    if target.contains("wasm") || target.contains("unknown") {
-        println!("cargo:warning=alkanes-gpu@{}: Skipping SPIR-V compilation for target: {}", 
+    if target.contains("wasm") {
+        println!("cargo:warning=alkanes-gpu@{}: Skipping SPIR-V compilation for target: {}",
                  env::var("CARGO_PKG_VERSION").unwrap_or_default(), target);
         return Ok(());
     }
@@ -42,6 +42,10 @@ fn main() -> Result<()> {
     }
     
     // Build the shader crate to SPIR-V
+    println!("cargo:warning=Attempting to build SPIR-V shader...");
+    println!("cargo:warning=Shader crate path: {}", shader_crate_path.display());
+    println!("cargo:warning=Current working directory: {:?}", std::env::current_dir());
+    
     let result = SpirvBuilder::new(shader_crate_path, "spirv-unknown-vulkan1.1")
         .print_metadata(MetadataPrintout::Full)
         .capability(spirv_builder::Capability::Int64)
@@ -50,8 +54,9 @@ fn main() -> Result<()> {
         .build();
     
     match result {
-        Ok(_) => {
+        Ok(compile_result) => {
             println!("cargo:warning=Successfully compiled alkanes-gpu-shader to SPIR-V");
+            println!("cargo:warning=Compile result: {:?}", compile_result);
             
             // The SPIR-V binary path will be available as an environment variable
             // named after the crate: alkanes_gpu_shader.spv
@@ -60,12 +65,45 @@ fn main() -> Result<()> {
                 
                 // Make the SPIR-V path available to the main crate
                 println!("cargo:rustc-env=ALKANES_GPU_SPIRV_PATH={}", spirv_path);
+            } else {
+                println!("cargo:warning=No SPIR-V path environment variable found");
             }
         }
         Err(e) => {
             // Don't fail the build if SPIR-V compilation fails
             // This allows the crate to still build for CPU-only testing
-            println!("cargo:warning=SPIR-V compilation failed: {}", e);
+            println!("cargo:warning=SPIR-V compilation failed with detailed error:");
+            println!("cargo:warning=Error: {:?}", e);
+            println!("cargo:warning=Error display: {}", e);
+            
+            // Try to get more detailed error information
+            let mut current_error: &dyn std::error::Error = &e;
+            let mut error_chain = Vec::new();
+            
+            while let Some(source) = current_error.source() {
+                error_chain.push(format!("{}", source));
+                current_error = source;
+            }
+            
+            if !error_chain.is_empty() {
+                println!("cargo:warning=Error chain:");
+                for (i, err) in error_chain.iter().enumerate() {
+                    println!("cargo:warning=  {}: {}", i + 1, err);
+                }
+            }
+            
+            // Check if this is a toolchain issue
+            let error_str = format!("{}", e);
+            if error_str.contains("toolchain") || error_str.contains("rustc") {
+                println!("cargo:warning=This appears to be a toolchain compatibility issue");
+                println!("cargo:warning=Current rustc version:");
+                if let Ok(output) = std::process::Command::new("rustc").arg("--version").output() {
+                    if let Ok(version) = String::from_utf8(output.stdout) {
+                        println!("cargo:warning=  {}", version.trim());
+                    }
+                }
+            }
+            
             println!("cargo:warning=Continuing with CPU-only build");
         }
     }
