@@ -46,8 +46,9 @@ fn main() -> Result<()> {
     println!("cargo:warning=Shader crate path: {}", shader_crate_path.display());
     println!("cargo:warning=Current working directory: {:?}", std::env::current_dir());
     
-    let result = SpirvBuilder::new(shader_crate_path, "spirv-unknown-vulkan1.1")
+    let result = SpirvBuilder::new(shader_crate_path, "spirv-unknown-spv1.3")
         .print_metadata(MetadataPrintout::Full)
+        .capability(spirv_builder::Capability::Int8)
         .capability(spirv_builder::Capability::Int64)
         .capability(spirv_builder::Capability::Int16)
         .capability(spirv_builder::Capability::StorageBuffer16BitAccess)

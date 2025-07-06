@@ -4,13 +4,11 @@
 //! It implements the core alkanes message processing pipeline for parallel execution on GPU.
 
 #![cfg_attr(target_arch = "spirv", no_std)]
-#![cfg_attr(target_arch = "spirv", no_main, feature(register_attr), register_attr(spirv))]
+#![cfg_attr(target_arch = "spirv", no_main)]
 
 // Only import spirv-std when compiling for SPIR-V target
 #[cfg(target_arch = "spirv")]
 use spirv_std::glam::{UVec3};
-#[cfg(target_arch = "spirv")]
-use spirv_std::{spirv};
 
 // For non-SPIR-V targets, provide dummy types
 #[cfg(not(target_arch = "spirv"))]
@@ -20,12 +18,6 @@ pub struct UVec3 {
     pub z: u32,
 }
 
-/// Panic handler for SPIR-V target
-#[cfg(target_arch = "spirv")]
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
 
 /// Maximum constraints for GPU compatibility (must match alkanes-gpu)
 pub const MAX_MESSAGE_SIZE: usize = 4096;
@@ -106,20 +98,19 @@ pub struct GpuExecutionResult {
     pub error_message: [u8; 256],
 }
 
-/// Simple hash function for GPU (FNV-1a variant)
-fn gpu_hash(data: &[u8]) -> u32 {
+/// Simple hash function for GPU (simplified for SPIR-V)
+fn gpu_hash(value: u32) -> u32 {
+    // Simple hash that works in SPIR-V
     let mut hash = 2166136261u32;
-    for &byte in data {
-        hash ^= byte as u32;
-        hash = hash.wrapping_mul(16777619);
-    }
+    hash ^= value;
+    hash = hash.wrapping_mul(16777619);
     hash
 }
 
-/// Process a single alkanes message on GPU
+/// Process a single alkanes message on GPU (simplified for SPIR-V)
 fn process_message(
     message: &GpuMessageInput,
-    context: &GpuExecutionContext,
+    _context: &GpuExecutionContext,
     message_index: u32,
 ) -> GpuReturnData {
     let mut result = GpuReturnData {
@@ -135,14 +126,15 @@ fn process_message(
         return result; // Invalid message
     }
     
-    // Simple processing: hash the calldata and store result
+    // Simple processing: hash the calldata length (simplified for SPIR-V)
     if message.calldata_len > 0 {
-        let calldata = &message.calldata[0..message.calldata_len as usize];
-        let hash = gpu_hash(calldata);
+        let hash = gpu_hash(message.calldata_len);
         
-        // Store hash in return data
-        let hash_bytes = hash.to_le_bytes();
-        result.data[0..4].copy_from_slice(&hash_bytes);
+        // Store hash in return data (simplified assignment)
+        result.data[0] = (hash & 0xFF) as u8;
+        result.data[1] = ((hash >> 8) & 0xFF) as u8;
+        result.data[2] = ((hash >> 16) & 0xFF) as u8;
+        result.data[3] = ((hash >> 24) & 0xFF) as u8;
         result.data_len = 4;
         result.success = 1;
         result.gas_used += (message.calldata_len as u64) * 10; // Gas per byte
@@ -154,11 +146,11 @@ fn process_message(
 /// Main compute shader entry point
 /// Each workgroup processes one shard, each thread processes one message
 #[cfg(target_arch = "spirv")]
-#[spirv(compute(threads(64, 1, 1)))]
+#[rust_gpu::spirv(compute(threads(64, 1, 1)))]
 pub fn alkanes_pipeline_compute(
-    #[spirv(global_invocation_id)] global_id: UVec3,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] input_shards: &[GpuExecutionShard],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] output_results: &mut [GpuExecutionResult],
+    #[rust_gpu::spirv(global_invocation_id)] global_id: UVec3,
+    #[rust_gpu::spirv(storage_buffer, descriptor_set = 0, binding = 0)] input_shards: &[GpuExecutionShard],
+    #[rust_gpu::spirv(storage_buffer, descriptor_set = 0, binding = 1)] output_results: &mut [GpuExecutionResult],
 ) {
     let shard_id = global_id.x as usize;
     let thread_id = global_id.y as usize;
@@ -201,10 +193,10 @@ pub fn alkanes_pipeline_compute(
 
 /// Simple test compute shader for validation
 #[cfg(target_arch = "spirv")]
-#[spirv(compute(threads(1, 1, 1)))]
+#[rust_gpu::spirv(compute(threads(1, 1, 1)))]
 pub fn test_compute(
-    #[spirv(global_invocation_id)] _global_id: UVec3,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 0)] data: &mut [u32],
+    #[rust_gpu::spirv(global_invocation_id)] _global_id: UVec3,
+    #[rust_gpu::spirv(storage_buffer, descriptor_set = 0, binding = 0)] data: &mut [u32],
 ) {
     if !data.is_empty() {
         data[0] = 42; // Simple test: write magic number
