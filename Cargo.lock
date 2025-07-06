@@ -1649,7 +1649,7 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 [[package]]
 name = "metashrew-cache"
 version = "9.0.1"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#05d7ac4be7aa3d34043c533f5d5bf343709e7e33"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#6b5240bba72d29fedd0c5f99d4c2f7f866ac1255"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-epoch",
@@ -1667,7 +1667,7 @@ dependencies = [
 [[package]]
 name = "metashrew-core"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#05d7ac4be7aa3d34043c533f5d5bf343709e7e33"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#6b5240bba72d29fedd0c5f99d4c2f7f866ac1255"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
@@ -1688,7 +1688,7 @@ dependencies = [
 [[package]]
 name = "metashrew-macros"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#05d7ac4be7aa3d34043c533f5d5bf343709e7e33"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#6b5240bba72d29fedd0c5f99d4c2f7f866ac1255"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1698,7 +1698,7 @@ dependencies = [
 [[package]]
 name = "metashrew-support"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#05d7ac4be7aa3d34043c533f5d5bf343709e7e33"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#6b5240bba72d29fedd0c5f99d4c2f7f866ac1255"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
