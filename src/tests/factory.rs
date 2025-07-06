@@ -1,21 +1,22 @@
+use crate::index_block;
+use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};
 use crate::tests::std::alkanes_std_test_build;
+use alkane_helpers::clear;
+use alkanes::view;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
-use protorune_support::protostone::ProtostoneEdict;
-
-use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};
-use alkane_helpers::clear;
-use alkanes::view;
+use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
+use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::protostone::ProtostoneEdict;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -68,15 +69,24 @@ fn test_factory_wasm_load() -> Result<()> {
 
     println!("Last sheet: {:?}", sheet);
     let runtime_sheet = get_sheet_for_runtime();
+    let orig_alkane = AlkaneId { block: 2, tx: 1 };
+    let copy_alkane = AlkaneId { block: 2, tx: 2 };
 
     assert_eq!(
-        runtime_sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
+        runtime_sheet.get_cached(&orig_alkane.clone().into()),
         1000000
     );
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
-    assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 2 }),
-        1000000
-    );
+    assert_eq!(sheet.get_cached(&orig_alkane.clone().into()), 0);
+    assert_eq!(sheet.get_cached(&copy_alkane.clone().into()), 1000000);
+
+    let _ = assert_binary_deployed_to_id(orig_alkane.clone(), alkanes_std_test_build::get_bytes());
+
+    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
+        .select(&copy_alkane.into())
+        .get()
+        .as_ref()
+        .clone();
+    let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
+    assert_eq!(ptr, copy_alkane.clone());
     Ok(())
 }
