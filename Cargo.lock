@@ -346,6 +346,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-vulkan-pipeline"
+version = "0.5.2"
+dependencies = [
+ "alkanes-gpu",
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -834,6 +844,20 @@ name = "bytemuck"
 version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c76a5792e44e4abe34d3abf15636779261d45a7450612059293d1d2cfc63422"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ecc273b49b3205b83d648f0690daa588925572cc5063745bfe547fe7ec8e1a1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
 
 [[package]]
 name = "byteorder"
@@ -3269,8 +3293,7 @@ checksum = "aa9c45b374136f52f2d6311062c7146bff20fec063c3f5d46a410bd937746955"
 [[package]]
 name = "rustc_codegen_spirv"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00f05d43c1d9ef3b0e5e2be3dcc9025e5ed103f99c36bb29a1b396386bd032ce"
+source = "git+https://github.com/EmbarkStudios/rust-gpu#7e54ed23a2a808b19c94c100517f15821cd68e0d"
 dependencies = [
  "ar",
  "either",
@@ -3297,8 +3320,7 @@ dependencies = [
 [[package]]
 name = "rustc_codegen_spirv-types"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13333711bd68d2a02617c2093fa6535ae40024fef610c37e6826d1ea77e97710"
+source = "git+https://github.com/EmbarkStudios/rust-gpu#7e54ed23a2a808b19c94c100517f15821cd68e0d"
 dependencies = [
  "rspirv",
  "serde",
@@ -3638,10 +3660,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "spirv-build"
+version = "0.0.0"
+dependencies = [
+ "spirv-builder",
+]
+
+[[package]]
 name = "spirv-builder"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ee97a4472a73b2f6adc911468b16405fa5b732f510e5ae11a33a914f36fe5ad"
+source = "git+https://github.com/EmbarkStudios/rust-gpu#7e54ed23a2a808b19c94c100517f15821cd68e0d"
 dependencies = [
  "memchr",
  "raw-string",
@@ -3652,10 +3680,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spirv-shared"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "spirv-std",
+]
+
+[[package]]
 name = "spirv-std"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68c3c0972a2df79abe2c8af2fe7f7937a9aa558b6a1f78fc5edf93f4d480d757"
+source = "git+https://github.com/EmbarkStudios/rust-gpu#7e54ed23a2a808b19c94c100517f15821cd68e0d"
 dependencies = [
  "bitflags 1.3.2",
  "glam",
@@ -3667,8 +3702,7 @@ dependencies = [
 [[package]]
 name = "spirv-std-macros"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73f776bf9f2897ea7acff15d7753711fdf1693592bd7459a01c394262b1df45c"
+source = "git+https://github.com/EmbarkStudios/rust-gpu#7e54ed23a2a808b19c94c100517f15821cd68e0d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3679,23 +3713,32 @@ dependencies = [
 [[package]]
 name = "spirv-std-types"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a73417b7d72d95b4995c840dceb4e3b4bcbad4ff7f35df9c1655b6826c18d3a9"
+source = "git+https://github.com/EmbarkStudios/rust-gpu#7e54ed23a2a808b19c94c100517f15821cd68e0d"
+
+[[package]]
+name = "spirv-test"
+version = "0.1.0"
+dependencies = [
+ "spirv-builder",
+ "spirv-std",
+]
 
 [[package]]
 name = "spirv-tools"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc7c8ca2077515286505bd3ccd396e55ac5706e80322e1d6d22a82e1cad4f7c3"
+checksum = "bcb3b0832881834994b7ec82b709ec5491043ceb4bf8101e27da6b5234b24261"
 dependencies = [
+ "memchr",
  "spirv-tools-sys",
+ "tempfile",
 ]
 
 [[package]]
 name = "spirv-tools-sys"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4b32d9d6469cd6b50dcd6bd841204b5946b4fb7b70a97872717cdc417659c9a"
+checksum = "48e68b55a97aa6856e010a6f2477425875a97873e147bb0232160e73c45bdae7"
 dependencies = [
  "cc",
 ]

@@ -29,7 +29,7 @@ wasmi = { version = "0.31", optional = true }
 # spirv-std = { version = "0.9", default-features = false, optional = true }
 
 [build-dependencies]
-spirv-builder = "0.9"
+spirv-builder.workspace = true
 which = "4.4"
 anyhow = "1.0"
 

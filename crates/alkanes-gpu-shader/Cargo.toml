@@ -8,8 +8,11 @@ license = "MIT"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[dependencies]
-spirv-std = { version = "0.9", default-features = false }
+[target.'cfg(target_arch = "spirv")'.dependencies]
+spirv-std.workspace = true
+
+[target.'cfg(not(target_arch = "spirv"))'.dependencies]
+spirv-std = { workspace = true, default-features = true }
 
 [package.metadata.rust-gpu.build]
 capabilities = ["Int64", "Int16", "StorageBuffer16BitAccess"]

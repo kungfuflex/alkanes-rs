@@ -1,3 +1,0 @@
-[toolchain]
-channel = "1.86.0"
-targets = ["spirv-unknown-vulkan1.2"]

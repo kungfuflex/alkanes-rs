@@ -10,9 +10,12 @@ resolver = "2"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "test-spirv-minimal"
+path = "test-spirv-minimal.rs"
+
 [workspace]
 members = [".", "crates/*"]
-
 
 [workspace.dependencies]
 anyhow = "1.0.90"
@@ -31,6 +34,10 @@ alkanes-runtime = { path = "./crates/alkanes-runtime" }
 alkanes-macros = { path = "./crates/alkanes-macros" }
 alkanes-std-factory-support = { path = "./crates/alkanes-std-factory-support" }
 alkanes-gpu = { path = "./crates/alkanes-gpu" }
+spirv-builder = { git = "https://github.com/EmbarkStudios/rust-gpu" }
+spirv-tools-sys = { git = "https://github.com/EmbarkStudios/rust-gpu" }
+spirv-std = { git = "https://github.com/EmbarkStudios/rust-gpu" }
+bytemuck = { version = "1.6.3", features = ["derive"] }
 ruint = "1.12.3"
 wasm-bindgen = "0.2.100"
 byteorder = "1.5"
