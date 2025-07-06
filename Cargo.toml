@@ -34,10 +34,14 @@ alkanes-runtime = { path = "./crates/alkanes-runtime" }
 alkanes-macros = { path = "./crates/alkanes-macros" }
 alkanes-std-factory-support = { path = "./crates/alkanes-std-factory-support" }
 alkanes-gpu = { path = "./crates/alkanes-gpu" }
-spirv-builder = { git = "https://github.com/EmbarkStudios/rust-gpu" }
-spirv-tools-sys = { git = "https://github.com/EmbarkStudios/rust-gpu" }
-spirv-std = { git = "https://github.com/EmbarkStudios/rust-gpu" }
+spirv-builder = { git = "https://github.com/EmbarkStudios/rust-gpu", rev = "7e54ed23" }
+spirv-tools-sys = { git = "https://github.com/EmbarkStudios/rust-gpu", rev = "7e54ed23" }
+spirv-std = { git = "https://github.com/EmbarkStudios/rust-gpu", rev = "7e54ed23" }
+spirv-shared = { path = "./crates/spirv-shared" }
 bytemuck = { version = "1.6.3", features = ["derive"] }
+glam = { version = ">=0.22, <=0.29", default-features = false }
+libm = { version = "=0.2.8" }
+num-traits = { version = "0.2.15", default-features = false }
 ruint = "1.12.3"
 wasm-bindgen = "0.2.100"
 byteorder = "1.5"
@@ -152,6 +156,9 @@ protobuf-support = { path = "./crates/alkanes-protobuf-support" }
 arrayvec = { path = "./crates/alkanes-arrayvec" }
 cfg-if = { path = "./crates/alkanes-cfg-if" }
 lazy_cell = { path = "./crates/alkanes-lazy-cell" }
+
+# Override wasmi_core to use libm 0.2.8 for SPIR-V compatibility
+wasmi_core = { path = "./crates/alkanes-wasmi-core" }
 
 [patch."https://github.com/sandshrewmetaprotocols/metashrew"]
 # Override git dependency's metashrew-support with our local version

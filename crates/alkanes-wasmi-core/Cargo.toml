@@ -1,0 +1,25 @@
+[package]
+name = "wasmi_core"
+version = "0.13.0"
+edition = "2021"
+documentation = "https://docs.rs/wasmi_core"
+description = "Core primitives for the wasmi WebAssembly interpreter"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+libm = "=0.2.8"
+num-traits = { version = "0.2.8", default-features = false }
+downcast-rs = { version = "1.2", default-features = false }
+paste = "1"
+
+[dev-dependencies]
+rand = "0.8.2"
+
+[features]
+default = ["std"]
+# Use `no-default-features` for a `no_std` build.
+std = ["num-traits/std", "downcast-rs/std"]
+
+[package.metadata.cargo-udeps.ignore]
+# cargo-udeps cannot detect that libm is used for no_std targets only.
+normal = ["libm"]

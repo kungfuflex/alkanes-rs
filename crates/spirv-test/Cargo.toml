@@ -7,5 +7,4 @@ edition = "2021"
 crate-type = ["dylib"]
 
 [dependencies]
-spirv-builder = { workspace = true }
 spirv-std = { workspace = true }

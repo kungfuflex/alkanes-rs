@@ -3,7 +3,7 @@
 #![cfg_attr(target_arch = "spirv", no_std, feature(lang_items))]
 
 use core::f32::consts::PI;
-use glam::{vec3, Vec3};
+use spirv_std::glam::{vec3, Vec3};
 
 pub use spirv_std::glam;
 
