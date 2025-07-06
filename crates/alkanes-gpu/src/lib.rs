@@ -4,6 +4,13 @@
 //! It provides a memory-based KeyValuePointer implementation and WASM execution environment
 //! that can run the same message processing logic as the main indexer.
 //!
+//! ## Key Features
+//!
+//! - **Generic Host Functions**: Factored host functions that work with any KeyValuePointer
+//! - **GPU-Specific Pointers**: AtomicPointer and IndexPointer implementations with ejection detection
+//! - **Shard Ejection**: Automatic detection of GPU constraint violations with CPU fallback
+//! - **Preloaded Storage**: Works with K/V subsets preloaded for GPU execution
+//!
 //! ## SPIR-V Compilation
 //!
 //! This crate can compile to SPIR-V for actual GPU execution. Set the environment variable
@@ -36,6 +43,14 @@ use protorune_support::{
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
+
+// New modules for GPU-specific functionality
+pub mod gpu_pointers;
+pub mod gpu_host_functions;
+
+// Re-export key types for convenience
+pub use gpu_pointers::{GpuAtomicPointer, GpuIndexPointer, PointerResult};
+pub use gpu_host_functions::{GpuHostFunctions, GpuWasmExecutor};
 
 /// GPU-compatible data structures for Vulkan execution
 pub mod gpu_types {
@@ -505,15 +520,15 @@ impl KeyValuePointer for GpuKeyValuePointer {
     }
 }
 
-/// GPU-based WASM execution environment
-pub struct GpuWasmExecutor {
+/// Legacy GPU-based WASM execution environment (kept for compatibility)
+pub struct LegacyGpuWasmExecutor {
     /// WASM binary to execute
     binary: Arc<Vec<u8>>,
     /// Fuel limit for execution
     fuel_limit: u64,
 }
 
-impl GpuWasmExecutor {
+impl LegacyGpuWasmExecutor {
     pub fn new(binary: Arc<Vec<u8>>, fuel_limit: u64) -> Self {
         Self { binary, fuel_limit }
     }
@@ -578,15 +593,20 @@ impl GpuWasmExecutor {
     }
 }
 
-/// Main GPU pipeline implementation
+/// Main GPU pipeline implementation with ejection capabilities
 pub struct GpuAlkanesPipeline {
-    message_handler: GenericAlkaneMessageHandler<GpuKeyValuePointer>,
+    atomic_message_handler: GenericAlkaneMessageHandler<GpuAtomicPointer>,
+    kv_message_handler: GenericAlkaneMessageHandler<GpuKeyValuePointer>,
+    gpu_executor: GpuWasmExecutor,
 }
 
 impl GpuAlkanesPipeline {
     pub fn new() -> Self {
+        let dummy_binary = Arc::new(vec![0u8; 100]); // Placeholder binary
         Self {
-            message_handler: GenericAlkaneMessageHandler::new(),
+            atomic_message_handler: GenericAlkaneMessageHandler::new(),
+            kv_message_handler: GenericAlkaneMessageHandler::new(),
+            gpu_executor: GpuWasmExecutor::new(dummy_binary, 1000000), // 1M fuel limit
         }
     }
     
@@ -600,8 +620,8 @@ impl GpuAlkanesPipeline {
         result.return_data_count = shard.message_count;
         result.status = gpu_types::GPU_STATUS_SUCCESS;
         
-        // Create GPU KeyValuePointer from context
-        let gpu_kv = GpuKeyValuePointer::from_gpu_context(&shard.context);
+        // Create GPU AtomicPointer from context with ejection capabilities
+        let gpu_atomic = GpuAtomicPointer::from_gpu_context(&shard.context);
         
         // Process each message in the shard
         for i in 0..shard.message_count as usize {
@@ -624,8 +644,18 @@ impl GpuAlkanesPipeline {
                 return Ok((self.process_shard_on_cpu(shard)?, true));
             }
             
-            match self.process_single_message(message, &gpu_kv) {
-                Ok((response, gas_used)) => {
+            // Process message with ejection-aware execution
+            match self.process_single_message_with_ejection(message, &gpu_atomic) {
+                Ok((response, gas_used, ejection_reason)) => {
+                    if let Some(reason) = ejection_reason {
+                        // Message processing triggered ejection - eject entire shard
+                        result.status = gpu_types::GPU_STATUS_EJECTED;
+                        result.ejection_reason = reason;
+                        result.ejected_message_index = i as u32;
+                        
+                        return Ok((self.process_shard_on_cpu(shard)?, true));
+                    }
+                    
                     return_data.success = 1;
                     return_data.gas_used = gas_used;
                     
@@ -633,16 +663,6 @@ impl GpuAlkanesPipeline {
                     let data_len = std::cmp::min(response.data.len(), gpu_types::MAX_RETURN_DATA_SIZE);
                     return_data.data_len = data_len as u32;
                     return_data.data[0..data_len].copy_from_slice(&response.data[0..data_len]);
-                    
-                    // Check if processing results would violate GPU constraints
-                    if let Some(ejection_reason) = self.check_processing_constraints(&response) {
-                        // Processing result violates GPU constraints - eject to CPU
-                        result.status = gpu_types::GPU_STATUS_EJECTED;
-                        result.ejection_reason = ejection_reason;
-                        result.ejected_message_index = i as u32;
-                        
-                        return Ok((self.process_shard_on_cpu(shard)?, true));
-                    }
                 }
                 Err(e) => {
                     // WASM execution error - this is normal, not ejection
@@ -662,7 +682,7 @@ impl GpuAlkanesPipeline {
         }
         
         // Export K/V updates
-        gpu_kv.export_updates(&mut result);
+        gpu_atomic.export_updates(&mut result);
         
         Ok((result, false)) // Successfully processed on GPU
     }
@@ -685,7 +705,7 @@ impl GpuAlkanesPipeline {
         result.return_data_count = shard.message_count;
         result.status = gpu_types::GPU_STATUS_SUCCESS;
         
-        // Create GPU KeyValuePointer from context
+        // Create standard GpuKeyValuePointer for CPU execution (no ejection constraints)
         let gpu_kv = GpuKeyValuePointer::from_gpu_context(&shard.context);
         
         // Process each message using full CPU pipeline (no GPU constraints)
@@ -729,6 +749,76 @@ impl GpuAlkanesPipeline {
         gpu_kv.export_updates(&mut result);
         
         Ok(result)
+    }
+    
+    /// Process a single message with ejection detection
+    fn process_single_message_with_ejection(
+        &self,
+        message: &gpu_types::GpuMessageInput,
+        gpu_atomic: &GpuAtomicPointer,
+    ) -> Result<(ExtendedCallResponse, u64, Option<u32>)> {
+        // Convert GPU message to generic message context parcel
+        let parcel = self.convert_gpu_message_to_parcel_atomic(message, gpu_atomic.clone())?;
+        
+        // Create context for GPU execution
+        let context = Arc::new(Mutex::new(GenericAlkanesRuntimeContext {
+            myself: alkanes_support::id::AlkaneId::default(),
+            caller: alkanes_support::id::AlkaneId::default(),
+            incoming_alkanes: Default::default(),
+            returndata: vec![],
+            inputs: vec![],
+            message: Box::new(parcel),
+            trace: Default::default(),
+        }));
+        
+        // Execute with GPU constraints and ejection detection
+        match self.gpu_executor.execute_with_ejection(context, &[]) {
+            Ok((response, gas_used, ejection_reason)) => {
+                Ok((response, gas_used, ejection_reason))
+            }
+            Err(e) => Err(e),
+        }
+    }
+    
+    /// Convert GPU message format to generic message context parcel with GpuAtomicPointer
+    fn convert_gpu_message_to_parcel_atomic(
+        &self,
+        message: &gpu_types::GpuMessageInput,
+        gpu_atomic: GpuAtomicPointer,
+    ) -> Result<GenericMessageContextParcel<GpuAtomicPointer>> {
+        // Create a minimal transaction from the message data
+        let transaction = Transaction {
+            version: bitcoin::transaction::Version::ONE,
+            lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        };
+        
+        // Extract calldata
+        let calldata = if message.calldata_len > 0 {
+            message.calldata[0..message.calldata_len as usize].to_vec()
+        } else {
+            vec![]
+        };
+        
+        // Create runtime balances (placeholder)
+        let runtime_balances = Arc::new(BalanceSheet::default());
+        
+        // Create runes (placeholder)
+        let runes = vec![];
+        
+        Ok(GenericMessageContextParcel {
+            transaction,
+            txindex: message.txindex,
+            height: message.height,
+            vout: message.vout,
+            pointer: message.pointer,
+            refund_pointer: message.refund_pointer,
+            calldata,
+            atomic: gpu_atomic,
+            runtime_balances,
+            runes,
+        })
     }
     
     /// Check if a message would violate GPU constraints before processing
@@ -777,8 +867,8 @@ impl GpuAlkanesPipeline {
         // Convert GPU message to generic message context parcel
         let parcel = self.convert_gpu_message_to_parcel(message, gpu_kv.clone())?;
         
-        // Use the generic message handler
-        let (_rune_transfers, _balance_sheet) = self.message_handler.handle_message(&parcel)?;
+        // Use the KV message handler
+        let (_rune_transfers, _balance_sheet) = self.kv_message_handler.handle_message(&parcel)?;
         
         // For now, return a placeholder response
         // In a full implementation, this would execute the actual WASM contract
@@ -794,8 +884,8 @@ impl GpuAlkanesPipeline {
         // Convert GPU message to generic message context parcel
         let parcel = self.convert_gpu_message_to_parcel(message, gpu_kv.clone())?;
         
-        // Use the generic message handler with full CPU capabilities
-        let (_rune_transfers, _balance_sheet) = self.message_handler.handle_message(&parcel)?;
+        // Use the KV message handler with full CPU capabilities
+        let (_rune_transfers, _balance_sheet) = self.kv_message_handler.handle_message(&parcel)?;
         
         // For now, return a placeholder response
         // In a full implementation, this would execute the actual WASM contract
@@ -907,6 +997,105 @@ pub fn spirv_info() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Test SPIR-V binary availability and validation
+    #[test]
+    fn test_spirv_binary_availability() {
+        println!("Testing SPIR-V binary availability...");
+        
+        // Test basic availability
+        let has_binary = has_spirv_binary();
+        println!("SPIR-V binary available: {}", has_binary);
+        
+        // Test info function
+        let info = spirv_info();
+        println!("SPIR-V info: {}", info);
+        
+        // Test binary access
+        match get_spirv_binary() {
+            Some(binary) => {
+                println!("SPIR-V binary loaded: {} bytes", binary.len());
+                assert!(!binary.is_empty(), "SPIR-V binary should not be empty");
+                
+                // Basic SPIR-V validation - check magic number
+                if binary.len() >= 4 {
+                    let magic = u32::from_le_bytes([binary[0], binary[1], binary[2], binary[3]]);
+                    println!("SPIR-V magic number: 0x{:08x}", magic);
+                    
+                    // SPIR-V magic number is 0x07230203
+                    if magic == 0x07230203 {
+                        println!("✓ Valid SPIR-V magic number detected");
+                    } else {
+                        println!("⚠ Warning: Expected SPIR-V magic 0x07230203, got 0x{:08x}", magic);
+                    }
+                }
+                
+                // Check minimum size (SPIR-V header is 20 bytes minimum)
+                assert!(binary.len() >= 20, "SPIR-V binary too small (minimum 20 bytes for header)");
+                
+                // Test that we can access the binary multiple times
+                let binary2 = get_spirv_binary().unwrap();
+                assert_eq!(binary.len(), binary2.len(), "SPIR-V binary should be consistent");
+                
+                println!("✓ SPIR-V binary validation passed");
+            }
+            None => {
+                println!("No SPIR-V binary available - this is expected when not built with ALKANES_BUILD_SPIRV=1");
+                assert!(!has_binary, "has_spirv_binary() should return false when no binary available");
+            }
+        }
+    }
+    
+    /// Test SPIR-V feature flag integration
+    #[test]
+    fn test_spirv_feature_integration() {
+        println!("Testing SPIR-V feature integration...");
+        
+        // Test that the feature flag and binary availability are consistent
+        #[cfg(feature = "spirv")]
+        {
+            println!("SPIR-V feature is enabled");
+            // When feature is enabled, we should either have a binary or a clear reason why not
+            match get_spirv_binary() {
+                Some(_) => println!("✓ SPIR-V binary available with feature enabled"),
+                None => println!("SPIR-V feature enabled but no binary (ALKANES_GPU_SPIRV_PATH not set)"),
+            }
+        }
+        
+        #[cfg(not(feature = "spirv"))]
+        {
+            println!("SPIR-V feature is disabled");
+            assert!(get_spirv_binary().is_none(), "No SPIR-V binary should be available when feature is disabled");
+        }
+    }
+    
+    /// Test GPU pipeline with SPIR-V integration
+    #[test]
+    fn test_gpu_pipeline_spirv_integration() {
+        println!("Testing GPU pipeline SPIR-V integration...");
+        
+        let pipeline = GpuAlkanesPipeline::new();
+        
+        // Test that pipeline can be created regardless of SPIR-V availability
+        println!("✓ GPU pipeline created successfully");
+        
+        // Test SPIR-V info access through pipeline
+        let info = spirv_info();
+        println!("Pipeline SPIR-V info: {}", info);
+        
+        // Test basic SPIR-V functionality without large stack allocations
+        match get_spirv_binary() {
+            Some(binary) => {
+                println!("✓ SPIR-V binary accessible from pipeline context: {} bytes", binary.len());
+                assert!(binary.len() > 1000, "SPIR-V binary should be substantial");
+            }
+            None => {
+                println!("No SPIR-V binary available in pipeline context");
+            }
+        }
+        
+        println!("✓ GPU pipeline SPIR-V integration test passed");
+    }
+    
     use gpu_types::test_types::*;
     
     /// Test GPU KeyValuePointer basic operations
@@ -1046,7 +1235,7 @@ mod tests {
     #[test]
     fn test_wasm_executor_creation() {
         let binary = Arc::new(vec![0u8; 100]); // Dummy WASM binary
-        let _executor = GpuWasmExecutor::new(binary, 1000000);
+        let _executor = LegacyGpuWasmExecutor::new(binary, 1000000);
         // If we get here without panic, the executor was created successfully
     }
     

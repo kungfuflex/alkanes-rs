@@ -344,6 +344,7 @@ dependencies = [
  "protoc-rust",
  "protorune-support",
  "serde",
+ "wasmi",
 ]
 
 [[package]]

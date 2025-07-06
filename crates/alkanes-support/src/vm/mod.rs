@@ -5,6 +5,7 @@
 //! in both the main indexer and GPU pipeline contexts.
 
 pub mod wasmi;
+pub mod host_functions;
 
 use crate::{
     cellpack::Cellpack,
@@ -135,6 +136,11 @@ impl<KV: KeyValuePointer + Clone> GenericAlkanesRuntimeContext<KV> {
             incoming_alkanes: self.incoming_alkanes.clone(),
             inputs: self.inputs.clone(),
         }
+    }
+    
+    /// Serialize the context for WASM host functions
+    pub fn serialize(&self) -> Vec<u8> {
+        self.flat().serialize()
     }
 }
 
@@ -433,8 +439,11 @@ impl<KV: KeyValuePointer + Clone> GenericAlkaneMessageHandler<KV> {
     }
 }
 
-// Re-export WASM VM implementation
+// Re-export WASM VM implementation and host functions
 pub use wasmi::{WasmiAlkaneVM, WasmiHostFunctions};
+pub use host_functions::{
+    GenericHostFunctions, HostFunctionResult, CpuHostFunctions, GenericWasmLinker,
+};
 
 #[cfg(test)]
 pub mod tests {

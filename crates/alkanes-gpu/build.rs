@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     println!("cargo:warning=alkanes-gpu@{}: Building SPIR-V shaders for GPU execution", 
              env::var("CARGO_PKG_VERSION").unwrap_or_default());
     
-    // Path to the shader crate
+    // Path to the shader crate (relative to crates directory)
     let shader_crate_path = Path::new("../alkanes-gpu-shader");
     
     // Verify shader crate exists
@@ -59,16 +59,32 @@ fn main() -> Result<()> {
             println!("cargo:warning=Successfully compiled alkanes-gpu-shader to SPIR-V");
             println!("cargo:warning=Compile result: {:?}", compile_result);
             
-            // The SPIR-V binary path will be available as an environment variable
-            // named after the crate: alkanes_gpu_shader.spv
-            if let Ok(spirv_path) = env::var("alkanes_gpu_shader.spv") {
-                println!("cargo:warning=SPIR-V binary available at: {}", spirv_path);
-                
-                // Make the SPIR-V path available to the main crate
-                println!("cargo:rustc-env=ALKANES_GPU_SPIRV_PATH={}", spirv_path);
-            } else {
-                println!("cargo:warning=No SPIR-V path environment variable found");
-            }
+            // Extract the SPIR-V binary path from the compile result
+            let spirv_path = match &compile_result.module {
+                spirv_builder::ModuleResult::SingleModule(path) => {
+                    println!("cargo:warning=SPIR-V binary available at: {}", path.display());
+                    path.to_string_lossy().to_string()
+                }
+                spirv_builder::ModuleResult::MultiModule(modules) => {
+                    // For multi-module, use the first entry point (alkanes_pipeline_compute)
+                    if let Some(path) = modules.get("alkanes_pipeline_compute") {
+                        println!("cargo:warning=SPIR-V binary (alkanes_pipeline_compute) available at: {}", path.display());
+                        path.to_string_lossy().to_string()
+                    } else if let Some((name, path)) = modules.iter().next() {
+                        println!("cargo:warning=SPIR-V binary ({}) available at: {}", name, path.display());
+                        path.to_string_lossy().to_string()
+                    } else {
+                        println!("cargo:warning=No SPIR-V modules found in multi-module result");
+                        return Ok(());
+                    }
+                }
+            };
+            
+            // Make the SPIR-V path available to the main crate
+            println!("cargo:rustc-env=ALKANES_GPU_SPIRV_PATH={}", spirv_path);
+            
+            // Also set a feature flag to indicate SPIR-V is available
+            println!("cargo:rustc-cfg=feature=\"spirv\"");
         }
         Err(e) => {
             // Don't fail the build if SPIR-V compilation fails

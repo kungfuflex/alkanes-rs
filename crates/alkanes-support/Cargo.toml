@@ -19,6 +19,7 @@ serde = "1.0.213"
 flate2 = "1.0.34"
 protobuf = { workspace = true }
 lru-mem = { workspace = true }
+wasmi = { workspace = true }
 
 [build-dependencies]
 anyhow = "1.0.90"
