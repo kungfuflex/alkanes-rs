@@ -15,9 +15,10 @@ use {
     std::{
         cmp,
         collections::{BTreeMap, VecDeque},
-        fmt::{self, Formatter},
+        fmt::{self, Display, Formatter},
         num::ParseIntError,
         ops::{Add, AddAssign, Sub},
+        str::FromStr,
     },
     thiserror::Error,
 };

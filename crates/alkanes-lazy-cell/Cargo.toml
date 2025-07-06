@@ -1,0 +1,20 @@
+[package]
+name = "lazy_cell"
+version = "1.3.0"
+authors = ["Alkanes Team"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Compatibility shim for std::sync::LazyLock using once_cell"
+keywords = ["lazy", "cell", "sync", "no-std"]
+categories = ["data-structures", "no-std"]
+
+[lib]
+name = "lazy_cell"
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["once_cell/std"]
+
+[dependencies]
+once_cell = { path = "../alkanes-once-cell", default-features = false, features = ["alloc", "std"] }

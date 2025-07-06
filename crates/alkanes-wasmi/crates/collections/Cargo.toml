@@ -1,0 +1,55 @@
+[package]
+name = "wasmi_collections"
+version.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/wasmi_collections/"
+description = "Specialized data structures for the Wasmi interpreter"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+
+[dependencies]
+hashbrown = { version = "0.15.1", default-features = false, optional = true, features = ["default-hasher", "inline-more"] }
+string-interner = { version = "0.19", default-features = false, optional = true, features = ["inline-more", "backends"] }
+
+[features]
+default = ["std"]
+std = ["string-interner?/std"]
+
+# Hash collections usage:
+#
+# - Enable `hash-collections` to make use of hash-based collections in `wasmi_collections`.
+# - Enable `prefer-btree-collections` to still use btree-based collections even when
+#   the `hash-collections` crate feature is enabled.
+#
+# Note:
+#
+# - Not enabling `hash-collections` allows `wasmi_collections` to drop lots of
+#   hash-based dependencies and thus decrease compilation times significantly.
+# - Btree-based collections can be useful for environments without a random source.
+#
+# Which collections will be used:
+#
+# `hash-collections` | `prefer-btree-collections` |      usage
+# ------------------ | -------------------------- | -------------------
+#            false   |                    false   |      btree
+#             true   |                    false   |      hash
+#            false   |                     true   |      btree
+#             true   |                     true   |      btree
+#
+hash-collections = [
+  'dep:hashbrown',
+  'dep:string-interner',
+]
+prefer-btree-collections = []
+
+[package.metadata.cargo-udeps.ignore]
+normal = [
+    # Needed to suppress weird `udep` warnings. Maybe a `cargo-udep` bug?
+    "string-interner"
+]

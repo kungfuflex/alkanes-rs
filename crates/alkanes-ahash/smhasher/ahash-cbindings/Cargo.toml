@@ -1,0 +1,20 @@
+[package]
+name = "ahash-cbindings"
+version = "0.1.2"
+authors = ["Tom Kaitchuck <Tom.Kaitchuck@gmail.com>"]
+edition = "2018"
+description = "C bindings for aHash so that it can be invoked by SMHasher to verify quality."
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "ahash_c"
+crate-type = ["staticlib"] # Creates static lib
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = 'fat'
+debug-assertions = false
+
+[dependencies]
+ahash = { path = "../../", default-features = false }

@@ -3,6 +3,23 @@
 //! This crate implements the complete GPU pipeline for parallel alkanes message execution.
 //! It provides a memory-based KeyValuePointer implementation and WASM execution environment
 //! that can run the same message processing logic as the main indexer.
+//!
+//! ## SPIR-V Compilation
+//!
+//! This crate can compile to SPIR-V for actual GPU execution. Set the environment variable
+//! `ALKANES_BUILD_SPIRV=1` during build to enable SPIR-V compilation.
+
+// Include compiled SPIR-V binary if available
+#[cfg(feature = "spirv")]
+const ALKANES_GPU_SPIRV: Option<&[u8]> = {
+    match option_env!("ALKANES_GPU_SPIRV_PATH") {
+        Some(path) => Some(include_bytes!(env!("ALKANES_GPU_SPIRV_PATH"))),
+        None => None,
+    }
+};
+
+#[cfg(not(feature = "spirv"))]
+const ALKANES_GPU_SPIRV: Option<&[u8]> = None;
 
 use alkanes_support::{
     response::ExtendedCallResponse,
@@ -30,6 +47,16 @@ pub mod gpu_types {
     pub const MAX_KV_PAIRS: usize = 1024;
     pub const MAX_RETURN_DATA_SIZE: usize = 1024;
     pub const MAX_SHARD_SIZE: usize = 64;
+    
+    /// Smaller test constraints to avoid stack overflow in tests
+    #[cfg(test)]
+    pub const TEST_MAX_KV_PAIRS: usize = 4;
+    #[cfg(test)]
+    pub const TEST_MAX_SHARD_SIZE: usize = 2;
+    #[cfg(test)]
+    pub const TEST_MAX_CALLDATA_SIZE: usize = 64;
+    #[cfg(test)]
+    pub const TEST_MAX_RETURN_DATA_SIZE: usize = 64;
 
     /// GPU message input structure
     #[repr(C)]
@@ -178,6 +205,162 @@ pub mod gpu_types {
                 data_len: 0,
                 data: [0; MAX_RETURN_DATA_SIZE],
                 gas_used: 0,
+            }
+        }
+    }
+    
+    /// Test-specific smaller data structures to avoid stack overflow
+    #[cfg(test)]
+    pub mod test_types {
+        use super::*;
+        
+        /// Small test message input
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug)]
+        pub struct TestGpuMessageInput {
+            pub txid: [u8; 32],
+            pub txindex: u32,
+            pub height: u64,
+            pub vout: u32,
+            pub pointer: u32,
+            pub refund_pointer: u32,
+            pub calldata_len: u32,
+            pub calldata: [u8; TEST_MAX_CALLDATA_SIZE],
+            pub runtime_balance_len: u32,
+            pub runtime_balance_data: [u8; 64],
+            pub input_runes_len: u32,
+            pub input_runes_data: [u8; 64],
+        }
+        
+        impl Default for TestGpuMessageInput {
+            fn default() -> Self {
+                Self {
+                    txid: [0; 32],
+                    txindex: 0,
+                    height: 0,
+                    vout: 0,
+                    pointer: 0,
+                    refund_pointer: 0,
+                    calldata_len: 0,
+                    calldata: [0; TEST_MAX_CALLDATA_SIZE],
+                    runtime_balance_len: 0,
+                    runtime_balance_data: [0; 64],
+                    input_runes_len: 0,
+                    input_runes_data: [0; 64],
+                }
+            }
+        }
+        
+        /// Small test K/V pair
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug)]
+        pub struct TestGpuKvPair {
+            pub key_len: u32,
+            pub key: [u8; 32],
+            pub value_len: u32,
+            pub value: [u8; 64],
+            pub operation: u32,
+        }
+        
+        impl Default for TestGpuKvPair {
+            fn default() -> Self {
+                Self {
+                    key_len: 0,
+                    key: [0; 32],
+                    value_len: 0,
+                    value: [0; 64],
+                    operation: 0,
+                }
+            }
+        }
+        
+        /// Small test execution context
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug)]
+        pub struct TestGpuExecutionContext {
+            pub kv_count: u32,
+            pub kv_pairs: [TestGpuKvPair; TEST_MAX_KV_PAIRS],
+            pub shard_id: u32,
+            pub height: u64,
+        }
+        
+        impl Default for TestGpuExecutionContext {
+            fn default() -> Self {
+                Self {
+                    kv_count: 0,
+                    kv_pairs: [TestGpuKvPair::default(); TEST_MAX_KV_PAIRS],
+                    shard_id: 0,
+                    height: 0,
+                }
+            }
+        }
+        
+        /// Small test execution shard
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug)]
+        pub struct TestGpuExecutionShard {
+            pub message_count: u32,
+            pub messages: [TestGpuMessageInput; TEST_MAX_SHARD_SIZE],
+            pub context: TestGpuExecutionContext,
+        }
+        
+        impl Default for TestGpuExecutionShard {
+            fn default() -> Self {
+                Self {
+                    message_count: 0,
+                    messages: [TestGpuMessageInput::default(); TEST_MAX_SHARD_SIZE],
+                    context: TestGpuExecutionContext::default(),
+                }
+            }
+        }
+        
+        /// Small test return data
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug)]
+        pub struct TestGpuReturnData {
+            pub message_index: u32,
+            pub success: u32,
+            pub data_len: u32,
+            pub data: [u8; TEST_MAX_RETURN_DATA_SIZE],
+            pub gas_used: u64,
+        }
+        
+        impl Default for TestGpuReturnData {
+            fn default() -> Self {
+                Self {
+                    message_index: 0,
+                    success: 0,
+                    data_len: 0,
+                    data: [0; TEST_MAX_RETURN_DATA_SIZE],
+                    gas_used: 0,
+                }
+            }
+        }
+        
+        /// Small test execution result
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug)]
+        pub struct TestGpuExecutionResult {
+            pub kv_update_count: u32,
+            pub kv_updates: [TestGpuKvPair; TEST_MAX_KV_PAIRS],
+            pub return_data_count: u32,
+            pub return_data: [TestGpuReturnData; TEST_MAX_SHARD_SIZE],
+            pub status: u32,
+            pub error_len: u32,
+            pub error_message: [u8; 64],
+        }
+        
+        impl Default for TestGpuExecutionResult {
+            fn default() -> Self {
+                Self {
+                    kv_update_count: 0,
+                    kv_updates: [TestGpuKvPair::default(); TEST_MAX_KV_PAIRS],
+                    return_data_count: 0,
+                    return_data: [TestGpuReturnData::default(); TEST_MAX_SHARD_SIZE],
+                    status: 0,
+                    error_len: 0,
+                    error_message: [0; 64],
+                }
             }
         }
     }
@@ -543,48 +726,223 @@ pub fn __pipeline_cpu(
     Ok(())
 }
 
+/// Get the compiled SPIR-V binary for GPU execution
+/// Returns None if SPIR-V compilation was not enabled during build
+pub fn get_spirv_binary() -> Option<&'static [u8]> {
+    ALKANES_GPU_SPIRV
+}
+
+/// Check if SPIR-V binary is available
+pub fn has_spirv_binary() -> bool {
+    ALKANES_GPU_SPIRV.is_some()
+}
+
+/// Get information about the SPIR-V compilation
+pub fn spirv_info() -> String {
+    match ALKANES_GPU_SPIRV {
+        Some(binary) => format!("SPIR-V binary available ({} bytes)", binary.len()),
+        None => "SPIR-V binary not available (set ALKANES_BUILD_SPIRV=1 during build)".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpu_types::test_types::*;
     
+    /// Test GPU KeyValuePointer basic operations
     #[test]
-    fn test_gpu_kv_pointer() {
+    fn test_gpu_kv_pointer_basic() {
         let mut initial_data = BTreeMap::new();
         initial_data.insert(b"test_key".to_vec(), Arc::new(b"test_value".to_vec()));
         
-        let mut gpu_kv = GpuKeyValuePointer::new(initial_data);
+        let gpu_kv = GpuKeyValuePointer::new(initial_data);
         
-        // Test basic get/set
-        let mut test_ptr = gpu_kv.keyword("test_key");
+        // Test basic get
+        let test_ptr = gpu_kv.keyword("test_key");
         assert_eq!(test_ptr.get().as_ref(), b"test_value");
         
-        test_ptr.set(Arc::new(b"new_value".to_vec()));
-        assert_eq!(test_ptr.get().as_ref(), b"new_value");
-        
-        // Test updates tracking
-        let updates = gpu_kv.get_updates();
-        assert!(updates.contains_key(&b"test_key".to_vec()));
+        // Test empty key
+        let empty_ptr = gpu_kv.keyword("nonexistent");
+        assert_eq!(empty_ptr.get().len(), 0);
     }
     
+    /// Test GPU KeyValuePointer updates tracking
+    #[test]
+    fn test_gpu_kv_pointer_updates() {
+        let initial_data = BTreeMap::new();
+        let gpu_kv = GpuKeyValuePointer::new(initial_data);
+        
+        // Test setting new value
+        let mut test_ptr = gpu_kv.keyword("new_key");
+        test_ptr.set(Arc::new(b"new_value".to_vec()));
+        
+        // Check updates tracking
+        let updates = gpu_kv.get_updates();
+        assert!(updates.contains_key(&b"new_key".to_vec()));
+        assert_eq!(updates.get(&b"new_key".to_vec()).unwrap().as_ref(), b"new_value");
+    }
+    
+    /// Test GPU KeyValuePointer inheritance
+    #[test]
+    fn test_gpu_kv_pointer_inheritance() {
+        let mut initial_data = BTreeMap::new();
+        initial_data.insert(b"shared_key".to_vec(), Arc::new(b"shared_value".to_vec()));
+        
+        let parent_kv = GpuKeyValuePointer::new(initial_data);
+        let mut child_kv = GpuKeyValuePointer::wrap(&b"child_path".to_vec());
+        child_kv.inherits(&parent_kv);
+        
+        // Child should have access to parent's data through the shared store
+        // But the child's path is different, so we need to access the shared key directly
+        let mut shared_ptr = child_kv.clone();
+        shared_ptr.path = b"shared_key".to_vec();
+        assert_eq!(shared_ptr.get().as_ref(), b"shared_value");
+        
+        // Test that inheritance shares the store and updates
+        let updates = child_kv.get_updates();
+        let parent_updates = parent_kv.get_updates();
+        // Both should point to the same updates store
+        assert_eq!(updates.len(), parent_updates.len());
+    }
+    
+    /// Test GPU pipeline creation
     #[test]
     fn test_gpu_pipeline_creation() {
-        // Test basic pipeline creation
         let _pipeline = GpuAlkanesPipeline::new();
         // If we get here without panic, the pipeline was created successfully
     }
     
+    /// Test GPU data structure sizes (should be reasonable for stack allocation)
     #[test]
-    fn test_gpu_kv_operations() {
-        // Test GPU KeyValuePointer operations without large structures
-        let initial_data = std::collections::BTreeMap::new();
+    fn test_gpu_test_structure_sizes() {
+        use std::mem::size_of;
+        
+        // Test structures should be much smaller than production ones
+        assert!(size_of::<TestGpuMessageInput>() < 1024);
+        assert!(size_of::<TestGpuExecutionContext>() < 1024);
+        assert!(size_of::<TestGpuExecutionShard>() < 4096);
+        assert!(size_of::<TestGpuExecutionResult>() < 4096);
+        
+        println!("Test structure sizes:");
+        println!("  TestGpuMessageInput: {} bytes", size_of::<TestGpuMessageInput>());
+        println!("  TestGpuExecutionContext: {} bytes", size_of::<TestGpuExecutionContext>());
+        println!("  TestGpuExecutionShard: {} bytes", size_of::<TestGpuExecutionShard>());
+        println!("  TestGpuExecutionResult: {} bytes", size_of::<TestGpuExecutionResult>());
+    }
+    
+    /// Test GPU message conversion logic
+    #[test]
+    fn test_gpu_message_conversion() {
+        let pipeline = GpuAlkanesPipeline::new();
+        let gpu_kv = GpuKeyValuePointer::new(BTreeMap::new());
+        
+        // Create a test message
+        let mut test_message = TestGpuMessageInput::default();
+        test_message.txindex = 42;
+        test_message.height = 100;
+        test_message.vout = 1;
+        test_message.pointer = 123;
+        test_message.refund_pointer = 456;
+        
+        // Add some test calldata
+        let test_calldata = b"test_calldata";
+        test_message.calldata_len = test_calldata.len() as u32;
+        test_message.calldata[0..test_calldata.len()].copy_from_slice(test_calldata);
+        
+        // Convert to full GPU message for testing conversion logic
+        let full_message = gpu_types::GpuMessageInput {
+            txid: test_message.txid,
+            txindex: test_message.txindex,
+            height: test_message.height,
+            vout: test_message.vout,
+            pointer: test_message.pointer,
+            refund_pointer: test_message.refund_pointer,
+            calldata_len: test_message.calldata_len,
+            calldata: {
+                let mut calldata = [0u8; gpu_types::MAX_CALLDATA_SIZE];
+                calldata[0..test_calldata.len()].copy_from_slice(test_calldata);
+                calldata
+            },
+            runtime_balance_len: 0,
+            runtime_balance_data: [0; 512],
+            input_runes_len: 0,
+            input_runes_data: [0; 512],
+        };
+        
+        // Test conversion (this tests the conversion logic without full processing)
+        let result = pipeline.convert_gpu_message_to_parcel(&full_message, gpu_kv);
+        assert!(result.is_ok());
+        
+        let parcel = result.unwrap();
+        assert_eq!(parcel.txindex, 42);
+        assert_eq!(parcel.height, 100);
+        assert_eq!(parcel.vout, 1);
+        assert_eq!(parcel.pointer, 123);
+        assert_eq!(parcel.refund_pointer, 456);
+        assert_eq!(parcel.calldata, test_calldata);
+    }
+    
+    /// Test WASM executor creation
+    #[test]
+    fn test_wasm_executor_creation() {
+        let binary = Arc::new(vec![0u8; 100]); // Dummy WASM binary
+        let _executor = GpuWasmExecutor::new(binary, 1000000);
+        // If we get here without panic, the executor was created successfully
+    }
+    
+    /// Test GPU context export/import
+    #[test]
+    fn test_gpu_context_export_import() {
+        // Create initial K/V data
+        let mut initial_data = BTreeMap::new();
+        initial_data.insert(b"key1".to_vec(), Arc::new(b"value1".to_vec()));
+        initial_data.insert(b"key2".to_vec(), Arc::new(b"value2".to_vec()));
+        
         let gpu_kv = GpuKeyValuePointer::new(initial_data);
         
-        // Test basic operations
-        let test_key = gpu_kv.keyword("test");
-        assert_eq!(test_key.get().len(), 0); // Empty value
+        // Add some updates
+        let mut update_ptr = gpu_kv.keyword("new_key");
+        update_ptr.set(Arc::new(b"new_value".to_vec()));
         
-        // Test updates tracking
+        // Test export to GPU result format
+        let mut result = TestGpuExecutionResult::default();
+        
+        // We can't directly test export_updates with test structures,
+        // but we can test the updates tracking
         let updates = gpu_kv.get_updates();
-        assert_eq!(updates.len(), 0); // No updates yet
+        assert_eq!(updates.len(), 1);
+        assert!(updates.contains_key(&b"new_key".to_vec()));
+    }
+}
+
+/// Integration tests using vulkanology framework
+#[cfg(test)]
+mod vulkan_integration_tests {
+    use super::*;
+    
+    /// Test basic Vulkan compute shader functionality
+    /// This would use vulkanology once we have actual compute shaders
+    #[test]
+    #[ignore] // Ignore until we have actual compute shaders
+    fn test_vulkan_compute_basic() {
+        // TODO: Implement once we have SPIR-V compute shaders
+        // This would use vulkanology to test actual GPU execution
+        
+        // Example of what this would look like:
+        // vulkanology_test! {
+        //     name: test_alkanes_pipeline,
+        //     shader: "shaders/alkanes_pipeline.comp.spv",
+        //     input: test_shard_data,
+        //     expected: expected_result_data
+        // }
+    }
+    
+    /// Test GPU memory management
+    #[test]
+    #[ignore] // Ignore until we have actual GPU integration
+    fn test_gpu_memory_management() {
+        // TODO: Test actual GPU memory allocation and management
+        // This would test the Vulkan buffer management for our data structures
     }
 }

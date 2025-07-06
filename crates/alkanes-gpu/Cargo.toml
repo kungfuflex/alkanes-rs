@@ -10,30 +10,36 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Basic utilities
-anyhow = "1.0"
-serde = { version = "1.0.210", features = ["derive"] }
+anyhow = { version = "1.0", optional = true }
+serde = { version = "1.0.210", features = ["derive"], optional = true }
 
 # Core alkanes dependencies
-alkanes-support = { path = "../alkanes-support" }
-protorune-support = { path = "../protorune-support" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan" }
+alkanes-support = { path = "../alkanes-support", optional = true }
+protorune-support = { path = "../protorune-support", optional = true }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan", optional = true }
 
 # Bitcoin and crypto
-bitcoin = "0.32"
+bitcoin = { version = "0.32", optional = true }
 
 # WASM runtime
-wasmi = "0.32"
+wasmi = { version = "0.31", optional = true }
 
 # SPIR-V compilation dependencies (optional)
 # Note: These are commented out to avoid compilation issues
 # spirv-std = { version = "0.9", default-features = false, optional = true }
 
 [build-dependencies]
-# spirv-builder = { version = "0.9", optional = true }
+spirv-builder = "0.9"
 which = "4.4"
 anyhow = "1.0"
 
+[dev-dependencies]
+# Basic testing utilities
+tempfile = "3.0"
+
 [features]
-default = []
-# Feature for building SPIR-V shaders (placeholder for now)
+default = ["std"]
+# Feature for including compiled SPIR-V shaders
 spirv = []
+# Standard library features
+std = ["anyhow", "serde", "alkanes-support", "protorune-support", "metashrew-support", "bitcoin", "wasmi"]

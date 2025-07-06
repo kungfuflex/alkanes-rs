@@ -1,0 +1,31 @@
+name: Rust - Miri Testing (CRON)
+on:
+  schedule:
+    # Conduct Miri testing on 3:30 UTC every night.
+    - cron: "30 3 * * *"
+jobs:
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+        - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        - uses: dtolnay/rust-toolchain@nightly
+          with:
+            components: miri
+            targets: x86_64-unknown-linux-gnu
+        - name: Set up Rust cache
+          uses: Swatinem/rust-cache@v2
+        - name: Checkout Submodules
+          run: git submodule update --init --recursive
+        - name: Install cargo-nextest
+          run:
+            # Note: We use `|| true` because cargo install returns an error
+            #       if cargo-nextest was already installed on the CI runner.
+            cargo install cargo-nextest || true
+        - name: Miri Testing - Wasm Spec Testsuite
+          env:
+            # Debug assertions are checked in the normal test jobs.
+            # They have huge overhead for Wasmi and unnecessarily slow down Miri.
+            # The Miri job should focus on finding undefined behavior instead or logic errors.
+            CARGO_PROFILE_DEV_DEBUG_ASSERTIONS: "false"
+          run: cargo +nightly miri nextest run --target x86_64-unknown-linux-gnu -p wasmi_wast --release

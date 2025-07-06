@@ -1,0 +1,15 @@
+[package]
+name = "alkanes-gpu-shader"
+version = "0.5.2"
+edition = "2021"
+description = "GPU compute shader for alkanes parallel execution"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+spirv-std = { version = "0.9", default-features = false }
+
+[package.metadata.rust-gpu.build]
+capabilities = ["Int64", "Int16", "StorageBuffer16BitAccess"]

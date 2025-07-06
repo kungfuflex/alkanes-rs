@@ -18,8 +18,9 @@ members = [".", "crates/*"]
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.6", features = ["rand"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan" }
+metashrew-core = { path = "./crates/metashrew-core" }
+metashrew-macros = { path = "./crates/metashrew-macros" }
+metashrew-support = { path = "./crates/metashrew-support" }
 metashrew-runtime = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan" }
 lru-mem = "0.3.0"
 ordinals = { path = "./crates/ordinals" }
@@ -34,11 +35,11 @@ ruint = "1.12.3"
 wasm-bindgen = "0.2.100"
 byteorder = "1.5"
 wasm-bindgen-test = "0.3.49"
-wasmi = "0.37.2"
+wasmi = { path = "./crates/alkanes-wasmi/crates/wasmi" }
 serde = "1.0.210"
 serde_json = "1.0.128"
 hex = "0.4.3"
-protobuf = "3.7.1"
+protobuf = "3.4.0"
 wasm-bindgen-futures = "0.4.45"
 web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
@@ -120,7 +121,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/vulkan", features = ["test-utils"] }
+metashrew-core = { path = "./crates/metashrew-core", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]
@@ -130,3 +131,27 @@ flate2 = "1.0.34"
 protoc-rust = { version = "2.28.0" }
 protoc-bin-vendored = "3.0.0"
 hex = "0.4.3"
+
+[patch.crates-io]
+# Override external ordinals crate with our local version
+ordinals = { path = "./crates/ordinals" }
+
+# Core infrastructure crates for no_std compatibility
+ahash = { path = "./crates/alkanes-ahash" }
+hashbrown = { path = "./crates/alkanes-hashbrown" }
+once_cell = { path = "./crates/alkanes-once-cell" }
+protobuf = { path = "./crates/alkanes-protobuf" }
+protobuf-support = { path = "./crates/alkanes-protobuf-support" }
+arrayvec = { path = "./crates/alkanes-arrayvec" }
+cfg-if = { path = "./crates/alkanes-cfg-if" }
+lazy_cell = { path = "./crates/alkanes-lazy-cell" }
+
+# Use local wasmi with fuel support
+wasmi = { path = "./crates/alkanes-wasmi/crates/wasmi" }
+
+[patch."https://github.com/sandshrewmetaprotocols/metashrew"]
+# Override git dependency's metashrew-support with our local version
+metashrew-support = { path = "./crates/metashrew-support" }
+metashrew-core = { path = "./crates/metashrew-core" }
+metashrew-macros = { path = "./crates/metashrew-macros" }
+

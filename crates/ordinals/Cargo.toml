@@ -6,16 +6,16 @@ description = "Library for interoperating with ordinals and inscriptions"
 homepage = "https://github.com/ordinals/ord"
 repository = "https://github.com/ordinals/ord"
 license = "CC0-1.0"
-rust-version = "1.74.0"
+rust-version = "1.71.0"
 
 [features]
 dogecoin = []
 
 [dependencies]
 bitcoin = { version = "0.32.6", features = ["rand"] }
-derive_more = { version = "1.0.0", features = ["display", "from_str"] }
+derive_more = { version = "0.99.17", features = ["display", "from_str"] }
 serde = { version = "1.0.137", features = ["derive"] }
-serde_with = "3.7.0"
+serde_with = "2.3.3"
 thiserror = "1.0.56"
 
 [dev-dependencies]

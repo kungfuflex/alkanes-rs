@@ -1,0 +1,380 @@
+name: Rust - Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# disable running jobs on earlier commits
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin nightly so that it does not invalidate GitHub Actions cache too frequently.
+  RUST_NIGHTLY_VERSION: nightly-2025-05-10
+
+jobs:
+  check:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, x86_64-unknown-none
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Build (default features)
+        run: cargo build --workspace --locked --verbose
+      - name: Build (all features)
+        run: cargo build --workspace --locked --all-features --verbose
+      - name: Build (no_std)
+        run: >-
+            cargo build
+            --package wasmi
+            --package wasmi_c_api_impl
+            --locked
+            --lib
+            --no-default-features
+            --target x86_64-unknown-none
+            --verbose
+      - name: Build (no_std + hash-collections)
+        run: >-
+            cargo build
+            --package wasmi
+            --locked
+            --lib
+            --no-default-features
+            --features hash-collections
+            --target x86_64-unknown-none
+            --verbose
+      - name: Build (no_std + simd)
+        run: >-
+            cargo build
+            --package wasmi
+            --locked
+            --lib
+            --no-default-features
+            --features simd
+            --target x86_64-unknown-none
+            --verbose
+      - name: Build (no_std + wasm32)
+        run: >-
+            cargo build
+            --package wasmi
+            --package wasmi_c_api_impl
+            --locked
+            --lib
+            --no-default-features
+            --target wasm32-unknown-unknown
+            --verbose
+      - name: Build (CMake)
+        run: |
+            cmake --version
+            cmake -S crates/c_api -B target/c_api --install-prefix "$(pwd)/artifacts"
+            cmake --build target/c_api --target install
+
+  test-asan:
+    name: Test (Address Sanitizer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_VERSION }}
+          components: rust-src
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Show Rust Toolchain
+        run: rustup show
+      - name: "Add Rust Component: `rust-src`"
+        run: rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+      - name: Build Tests
+        env:
+          RUSTFLAGS: "-C debug-assertions -Zsanitizer=address"
+        run: cargo build --tests --workspace --locked -Zbuild-std --target x86_64-unknown-linux-gnu --verbose
+      - name: Test
+        env:
+          RUSTFLAGS: "-C debug-assertions -Zsanitizer=address"
+        run: cargo test --workspace --locked --tests -Zbuild-std --target x86_64-unknown-linux-gnu
+
+  min-version:
+    name: Check mininum supported Rust version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - uses: Swatinem/rust-cache@v2
+      - run: >-
+          cargo check
+          --workspace
+          --exclude wasmi_fuzz
+          --exclude fuzz
+
+  test:
+    name: Test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Build (default features)
+        env:
+          RUSTFLAGS: "-C debug-assertions"
+        run: cargo build --tests --workspace --locked --verbose
+      - name: Test (default features)
+        env:
+          RUSTFLAGS: "-C debug-assertions"
+        run: cargo test --workspace --locked
+      - name: Build (all features)
+        env:
+          RUSTFLAGS: "-C debug-assertions"
+        run: cargo build --tests --workspace --locked --all-features --verbose
+      - name: Test (all features)
+        env:
+          RUSTFLAGS: "-C debug-assertions"
+        run: cargo test --workspace --locked --all-features
+
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_VERSION }}
+          components: rustfmt
+      - name: Foramtting
+        run: cargo fmt --all -- --check
+      - name: Formatting (fuzz)
+        run: pushd fuzz && cargo fmt --all -- --check && popd
+      - name: Format (CMake)
+        run: |
+            cmake --version
+            cmake -S crates/c_api -B target/c_api --install-prefix "$(pwd)/artifacts"
+            cmake --build target/c_api --target check-format
+
+  doc:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-docs, rust-src
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Check Docs
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --locked --all-features --no-deps --document-private-items
+      - name: Install Doxygen
+        run: |
+            tar --version
+            curl -L https://sourceforge.net/projects/doxygen/files/rel-1.11.0/doxygen-1.11.0.linux.bin.tar.gz/download | tar xzf - -C $GITHUB_WORKSPACE
+            echo "$GITHUB_WORKSPACE/doxygen-1.11.0/bin" >> $GITHUB_PATH
+      - name: Configure CMake for Wasmi C-API
+        run: cmake -S crates/c_api -B target/c_api
+      - name: Generate Docs via Cmake and Doxygen
+        run: cmake --build target/c_api --target doc
+
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: |
+          # Note: We use `|| true` because cargo install returns an error
+          #       if cargo-audit was already installed on the CI runner.
+          cargo install cargo-audit || true
+      - name: Check Audit
+        run: cargo audit
+
+  udeps:
+    name: uDeps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_VERSION }}
+      - name: Install cargo-udeps
+        run: |
+          # Note: We use `|| true` because cargo install returns an error
+          #       if cargo-udeps was already installed on the CI runner.
+          cargo install --locked cargo-udeps || true
+      - name: Check uDeps
+        run: cargo udeps --all-targets
+
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        fuzz_target: ['translate', 'execute', 'differential']
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_VERSION }}
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: |
+            ${{ github.workspace }}/fuzz/corpus/${{ matrix.fuzz_target }}
+            ${{ github.workspace }}/target
+          prefix-key: fuzz-${{ matrix.fuzz_target }}
+      - name: Install `cargo-fuzz`
+        run: |
+          # Note: We use `|| true` because cargo install returns an error
+          #       if cargo-fuzz was already installed on the CI runner.
+          cargo install cargo-fuzz || true
+      - name: Set Fuzzing Features
+        run: |
+          FEATURES=""
+          if [ "${{ matrix.fuzz_target }}" == "differential" ]; then
+            FEATURES="--features differential"
+          fi
+          echo "FEATURES=$FEATURES" >> $GITHUB_ENV
+      - name: Check Fuzzing Target
+        run: cargo fuzz check ${{ matrix.fuzz_target }} $FEATURES
+      - name: Build Fuzzing Target
+        run: cargo fuzz build ${{ matrix.fuzz_target }} $FEATURES
+      - name: Run Fuzzing Target
+        # - Use 4 jobs since GitHub hosted runners provide 4 CPUs.
+        # - Always enable debug-assertions for all modes to catch more bugs.
+        # - Run fuzzing for 120s (2 minutes) in total.
+        run: >-
+          cargo fuzz run ${{ matrix.fuzz_target }}
+          --jobs 4
+          --verbose
+          --debug-assertions
+          $FEATURES
+          --
+          -max_total_time=120
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_VERSION }}
+          components: miri
+          targets: x86_64-unknown-linux-gnu
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-nextest
+        run: |
+          # Note: We use `|| true` because cargo install returns an error
+          #       if cargo-nextest was already installed on the CI runner.
+          cargo install cargo-nextest || true
+      - name: Miri (setup)
+        run: cargo miri setup --target x86_64-unknown-linux-gnu --lib --workspace --locked
+      - name: Miri (--lib)
+        run: cargo miri nextest run --target x86_64-unknown-linux-gnu --lib --workspace --locked
+      - name: Miri (--doc)
+        run: cargo miri test --target x86_64-unknown-linux-gnu --doc --workspace --locked
+
+  miri-spec:
+    name: Miri (spec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_VERSION }}
+          components: miri
+          targets: x86_64-unknown-linux-gnu
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-nextest
+        run: |
+          # Note: We use `|| true` because cargo install returns an error
+          #       if cargo-nextest was already installed on the CI runner.
+          cargo install cargo-nextest || true
+      - name: Miri (setup)
+        run: cargo miri setup --target x86_64-unknown-linux-gnu --locked
+      - name: Miri - Wasm Spec Testsuite (store)
+        # We just run the `store.wast` test since running the entire Wasm spec testsuite
+        # simply takes too long to do on every pull request commit. There exists an entire
+        # CRON job that runs the entire Wasm spec testsuite using miri every night.
+        run: cargo miri nextest run --target x86_64-unknown-linux-gnu ::wasm_store --locked
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_VERSION }}
+          components: clippy
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Clippy (default features)
+        run: cargo clippy --workspace --locked -- -D warnings
+      - name: Clippy (all features)
+        run: cargo clippy --workspace --locked --all-features -- -D warnings
+      - name: Clippy (no_std)
+        run: cargo clippy --workspace --locked --no-default-features -- -D warnings
+      - name: Clippy (tests)
+        run: cargo clippy --workspace --locked --tests -- -D warnings
+      - name: Clippy (benches)
+        run: cargo clippy --workspace --locked --benches -- -D warnings
+      - name: Clippy (fuzz)
+        run: pushd fuzz && cargo clippy -- -D warnings && popd
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    container:
+      image: xd009642/tarpaulin:develop-nightly
+      options: --security-opt seccomp=unconfined
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          submodules: true
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_VERSION }}
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Generate code coverage
+        run: |
+          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v5.4.3
+        with:
+          token: ${{secrets.CODECOV_TOKEN}}
+          fail_ci_if_error: true
+      - name: Archive code coverage results
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage-report
+          path: cobertura.xml
