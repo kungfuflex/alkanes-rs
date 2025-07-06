@@ -39,7 +39,6 @@ use wasmi::*;
 
 /// GPU-compatible data structures for Vulkan execution
 pub mod gpu_types {
-    use super::*;
     
     /// Maximum constraints for GPU compatibility
     pub const MAX_MESSAGE_SIZE: usize = 4096;
@@ -542,15 +541,15 @@ impl GpuWasmExecutor {
         })?;
         
         // Add storage functions
-        linker.func_wrap("env", "__load_storage", 
-            |mut caller: Caller<_>, key_ptr: i32, value_ptr: i32| -> i32 {
+        linker.func_wrap("env", "__load_storage",
+            |_caller: Caller<_>, _key_ptr: i32, _value_ptr: i32| -> i32 {
                 // Implementation would read from GPU KeyValuePointer
                 0
             }
         )?;
         
         linker.func_wrap("env", "__request_storage",
-            |mut caller: Caller<_>, key_ptr: i32| -> i32 {
+            |_caller: Caller<_>, _key_ptr: i32| -> i32 {
                 // Implementation would allocate storage space
                 1024
             }

@@ -166,3 +166,21 @@ metashrew-support = { path = "./crates/metashrew-support" }
 metashrew-core = { path = "./crates/metashrew-core" }
 metashrew-macros = { path = "./crates/metashrew-macros" }
 
+[profile.test]
+opt-level = 2
+lto = 'fat'
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = 'fat'
+debug-assertions = false
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+debug = false
+lto = 'fat'
+debug-assertions = false
+codegen-units = 1
+

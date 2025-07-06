@@ -49,10 +49,6 @@ harness = false
 default = ["std"]
 std = []
 
-[profile.bench]
-debug = true
-[profile.release]
-debug = true
 
 [package.metadata.docs.rs]
 features = ["borsh", "serde", "zeroize"]

@@ -141,7 +141,9 @@ impl<KV: KeyValuePointer + Clone> GenericAlkanesRuntimeContext<KV> {
 /// Generic fuel tank for gas management
 pub struct GenericFuelTank {
     fuel: u64,
+    #[allow(dead_code)]
     height: u32,
+    #[allow(dead_code)]
     txindex: u32,
 }
 
@@ -221,7 +223,7 @@ impl<KV: KeyValuePointer + Clone> GenericAlkaneMessageHandler<KV> {
             &mut atomic.keyword("/alkanes").select_value(myself),
         );
         
-        let mut combined = parcel.runtime_balances.as_ref().clone();
+        let combined = parcel.runtime_balances.as_ref().clone();
         let alkanes_vec: Vec<RuneTransfer> = response.alkanes.clone().into();
         let mut sheet = BalanceSheet::<KV>::try_from(alkanes_vec)?;
         combined.pipe(&mut sheet)?;

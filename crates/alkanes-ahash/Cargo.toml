@@ -49,31 +49,13 @@ nightly-arm-aes = []
 
 [[bench]]
 name = "ahash"
-path = "tests/bench.rs"
+path = "benches/bench.rs"
 harness = false
 
 [[bench]]
 name = "map"
-path = "tests/map_tests.rs"
+path = "benches/map_tests.rs"
 harness = false
-
-[profile.test]
-opt-level = 2
-lto = 'fat'
-
-[profile.release]
-opt-level = 3
-debug = false
-lto = 'fat'
-debug-assertions = false
-codegen-units = 1
-
-[profile.bench]
-opt-level = 3
-debug = false
-lto = 'fat'
-debug-assertions = false
-codegen-units = 1
 
 [build-dependencies]
 version_check = "0.9.4"

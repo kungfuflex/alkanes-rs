@@ -99,6 +99,7 @@ pub struct GpuExecutionResult {
 }
 
 /// Simple hash function for GPU (simplified for SPIR-V)
+#[cfg(target_arch = "spirv")]
 fn gpu_hash(value: u32) -> u32 {
     // Simple hash that works in SPIR-V
     let mut hash = 2166136261u32;
@@ -108,6 +109,7 @@ fn gpu_hash(value: u32) -> u32 {
 }
 
 /// Process a single alkanes message on GPU (simplified for SPIR-V)
+#[cfg(target_arch = "spirv")]
 fn process_message(
     message: &GpuMessageInput,
     _context: &GpuExecutionContext,

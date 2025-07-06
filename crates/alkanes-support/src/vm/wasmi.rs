@@ -29,8 +29,8 @@ impl<KV: KeyValuePointer + Clone> WasmiAlkaneVM<KV> {
     /// Execute a WASM contract with the given binary and context
     pub fn execute_contract(
         &self,
-        context: Arc<Mutex<GenericAlkanesRuntimeContext<KV>>>,
-        binary: Arc<Vec<u8>>,
+        _context: Arc<Mutex<GenericAlkanesRuntimeContext<KV>>>,
+        _binary: Arc<Vec<u8>>,
         start_fuel: u64,
     ) -> Result<ExtendedCallResponse> {
         // This is where we would integrate with wasmi to execute the WASM binary
@@ -63,6 +63,7 @@ impl<KV: KeyValuePointer + Clone> WasmiAlkaneVM<KV> {
 
 /// WASM host functions that work with any KeyValuePointer backend
 pub struct WasmiHostFunctions<KV: KeyValuePointer + Clone> {
+    #[allow(dead_code)]
     context: Arc<Mutex<GenericAlkanesRuntimeContext<KV>>>,
 }
 
@@ -72,7 +73,7 @@ impl<KV: KeyValuePointer + Clone> WasmiHostFunctions<KV> {
     }
     
     /// Load storage value (equivalent to __load_storage)
-    pub fn load_storage(&self, key_ptr: i32, value_ptr: i32) -> Result<i32> {
+    pub fn load_storage(&self, _key_ptr: i32, _value_ptr: i32) -> Result<i32> {
         // This would read the key from WASM memory, look it up in the KV store,
         // and write the result back to WASM memory
         // For now, return success
@@ -80,21 +81,21 @@ impl<KV: KeyValuePointer + Clone> WasmiHostFunctions<KV> {
     }
     
     /// Request storage allocation (equivalent to __request_storage)
-    pub fn request_storage(&self, key_ptr: i32) -> Result<i32> {
+    pub fn request_storage(&self, _key_ptr: i32) -> Result<i32> {
         // This would allocate space for a storage value
         // For now, return a placeholder pointer
         Ok(1024)
     }
     
     /// Log function (equivalent to __log)
-    pub fn log(&self, data_ptr: i32) -> Result<()> {
+    pub fn log(&self, _data_ptr: i32) -> Result<()> {
         // This would read data from WASM memory and log it
         // For now, just succeed
         Ok(())
     }
     
     /// Get balance (equivalent to __balance)
-    pub fn balance(&self, who_ptr: i32, what_ptr: i32, output_ptr: i32) -> Result<()> {
+    pub fn balance(&self, _who_ptr: i32, _what_ptr: i32, _output_ptr: i32) -> Result<()> {
         // This would look up balance information and write it to output
         // For now, just succeed
         Ok(())
@@ -108,7 +109,7 @@ impl<KV: KeyValuePointer + Clone> WasmiHostFunctions<KV> {
     }
     
     /// Load context (equivalent to __load_context)
-    pub fn load_context(&self, output_ptr: i32) -> Result<i32> {
+    pub fn load_context(&self, _output_ptr: i32) -> Result<i32> {
         // This would write context data to WASM memory
         // For now, return success
         Ok(0)
