@@ -1,5 +1,7 @@
 use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
+use crate::tests::helpers::{
+    self as alkane_helpers, assert_binary_deployed_to_id, assert_id_points_to_alkane_id,
+};
 use crate::tests::std::alkanes_std_owned_token_build;
 use crate::{message::AlkaneMessageContext, tests::std::alkanes_std_auth_token_build};
 use alkane_helpers::clear;
@@ -212,19 +214,13 @@ fn test_auth_and_owned_token() -> Result<()> {
         _auth_token_id_factory.clone(),
         alkanes_std_auth_token_build::get_bytes(),
     );
-    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
-        .select(&auth_token_id_deployment.into())
-        .get()
-        .as_ref()
-        .clone();
-    let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
-    assert_eq!(
-        ptr,
+    assert_id_points_to_alkane_id(
+        auth_token_id_deployment.clone(),
         AlkaneId {
             block: 4,
-            tx: AUTH_TOKEN_FACTORY_ID
-        }
-    );
+            tx: AUTH_TOKEN_FACTORY_ID,
+        },
+    )?;
 
     Ok(())
 }
@@ -459,19 +455,12 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         _auth_token_id_factory.clone(),
         alkanes_std_auth_token_build::get_bytes(),
     );
-    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
-        .select(&auth_token_id_deployment.into())
-        .get()
-        .as_ref()
-        .clone();
-
-    let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
-    assert_eq!(
-        ptr,
+    assert_id_points_to_alkane_id(
+        auth_token_id_deployment.clone(),
         AlkaneId {
             block: 4,
-            tx: AUTH_TOKEN_FACTORY_ID
-        }
-    );
+            tx: AUTH_TOKEN_FACTORY_ID,
+        },
+    )?;
     Ok(())
 }
