@@ -1,4 +1,7 @@
+#[cfg(not(target_arch = "spirv"))]
 use alloc::boxed::Box;
+#[cfg(target_arch = "spirv")]
+use crate::alloc::boxed::Box;
 use core::{
     any::{type_name, Any},
     fmt::{Debug, Display},
@@ -88,13 +91,14 @@ impl dyn HostError {
     /// # Errors
     ///
     /// If `self` cannot be downcast to `T`.
+    #[cfg(not(target_arch = "spirv"))]
     #[inline]
     pub fn downcast<T: HostError>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
         if self.is::<T>() {
             let Ok(value) = (self as Box<dyn Any>).downcast::<T>() else {
                 unreachable!(
                     "failed to downcast `HostError` to T (= {})",
-                    type_name::<T>()
+                    core::any::type_name::<T>()
                 );
             };
             Ok(value)

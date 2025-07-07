@@ -3,13 +3,12 @@ name = "test-alkanes-wasmi-shader"
 version = "0.1.0"
 edition = "2021"
 
-[workspace]
-
 [dependencies]
 spirv-std = { git = "https://github.com/EmbarkStudios/rust-gpu", rev = "7e54ed23" }
 libm = { version = "=0.2.8" }
 alkanes-alloc = { path = "../crates/alkanes-alloc", default-features = false }
 alkanes-sync = { path = "../crates/alkanes-sync", default-features = false }
+wasmi = { path = "../crates/alkanes-wasmi", default-features = false, features = ["hash-collections"] }
 
 [lib]
 crate-type = ["cdylib"]

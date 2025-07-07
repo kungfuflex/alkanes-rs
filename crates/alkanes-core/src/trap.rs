@@ -1,9 +1,15 @@
 use crate::HostError;
-use alloc::{boxed::Box, string::String};
 use core::fmt::{self, Display};
 
-#[cfg(feature = "std")]
+#[cfg(not(target_arch = "spirv"))]
+use alloc::{boxed::Box, string::String};
+#[cfg(target_arch = "spirv")]
+use crate::alloc::{boxed::Box, string::String};
+
+#[cfg(all(feature = "std", not(target_arch = "spirv")))]
 use std::error::Error as StdError;
+#[cfg(target_arch = "spirv")]
+use crate::std::error::Error as StdError;
 
 /// Error type which can be returned by Wasm code or by the host environment.
 ///
@@ -204,12 +210,11 @@ impl Display for Trap {
     }
 }
 
-#[cfg(feature = "std")]
-impl StdError for Trap {
-    fn description(&self) -> &str {
-        self.trap_code().map_or("", |code| code.trap_message())
-    }
-}
+#[cfg(all(feature = "std", not(target_arch = "spirv")))]
+impl StdError for Trap {}
+
+#[cfg(target_arch = "spirv")]
+impl StdError for Trap {}
 
 /// Error type which can be thrown by wasm code or by host environment.
 ///

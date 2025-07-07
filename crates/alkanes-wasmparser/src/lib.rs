@@ -30,6 +30,7 @@
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
+#[cfg(not(target_arch = "spirv"))]
 extern crate alloc;
 #[cfg(feature = "std")]
 #[macro_use]
@@ -41,6 +42,7 @@ extern crate std;
 /// by default. This crate also uses `alloc`, however, and common types there
 /// like `String`. This custom prelude helps bring those types into scope to
 /// avoid having to import each of them manually.
+#[cfg(not(target_arch = "spirv"))]
 mod prelude {
     pub use alloc::borrow::ToOwned;
     pub use alloc::boxed::Box;
@@ -53,6 +55,258 @@ mod prelude {
     pub use crate::collections::IndexSet;
     #[cfg(feature = "validate")]
     pub use crate::collections::{IndexMap, Map, Set};
+}
+
+#[cfg(target_arch = "spirv")]
+mod prelude {
+    use core::marker::PhantomData;
+    
+    // Stub prelude for SPIR-V - most functionality disabled
+    
+    // Stub implementations for missing types
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct Box<T: ?Sized>(PhantomData<T>);
+    
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[derive(Default)]
+    pub struct Vec<T>(PhantomData<T>);
+    
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct String;
+    
+    impl<T> Box<T> {
+        pub fn new(_value: T) -> Self {
+            panic!("Box not supported on SPIR-V")
+        }
+    }
+    
+    impl<T: ?Sized> Clone for Box<T> {
+        fn clone(&self) -> Self {
+            panic!("Box clone not supported on SPIR-V")
+        }
+    }
+    
+    impl<T> Box<T> {
+        pub fn iter(&self) -> core::iter::Empty<T> {
+            panic!("Box::iter not supported on SPIR-V")
+        }
+    }
+    
+    impl<T> Box<[T]> {
+        pub fn iter(&self) -> core::iter::Empty<T> {
+            panic!("Box::iter not supported on SPIR-V")
+        }
+        
+        pub fn len(&self) -> usize {
+            panic!("Box::len not supported on SPIR-V")
+        }
+    }
+    
+    impl<T> core::ops::Index<core::ops::Range<usize>> for Box<[T]> {
+        type Output = [T];
+        
+        fn index(&self, _: core::ops::Range<usize>) -> &Self::Output {
+            panic!("Box indexing not supported on SPIR-V")
+        }
+    }
+    
+    impl<T> core::ops::Index<core::ops::RangeFrom<usize>> for Box<[T]> {
+        type Output = [T];
+        
+        fn index(&self, _: core::ops::RangeFrom<usize>) -> &Self::Output {
+            panic!("Box indexing not supported on SPIR-V")
+        }
+    }
+    
+    impl<T> core::ops::Index<core::ops::RangeTo<usize>> for Box<[T]> {
+        type Output = [T];
+        
+        fn index(&self, _: core::ops::RangeTo<usize>) -> &Self::Output {
+            panic!("Box indexing not supported on SPIR-V")
+        }
+    }
+    
+    impl<T: ?Sized> core::ops::Deref for Box<T> {
+        type Target = T;
+        
+        fn deref(&self) -> &Self::Target {
+            panic!("Box deref not supported on SPIR-V")
+        }
+    }
+    
+    impl<T: ?Sized> core::ops::DerefMut for Box<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            panic!("Box deref_mut not supported on SPIR-V")
+        }
+    }
+    
+    impl<T> From<Vec<T>> for Box<[T]> {
+        fn from(_: Vec<T>) -> Self {
+            panic!("Box::from not supported on SPIR-V")
+        }
+    }
+    
+    
+    impl<T> core::iter::FromIterator<T> for Box<[T]> {
+        fn from_iter<I: IntoIterator<Item = T>>(_: I) -> Self {
+            panic!("Box::from_iter not supported on SPIR-V")
+        }
+    }
+    
+    impl<T> Vec<T> {
+        pub fn new() -> Self {
+            panic!("Vec not supported on SPIR-V")
+        }
+        
+        pub fn with_capacity(_capacity: usize) -> Self {
+            panic!("Vec not supported on SPIR-V")
+        }
+        
+        pub fn push(&mut self, _: T) {
+            panic!("Vec::push not supported on SPIR-V")
+        }
+        
+        pub fn pop(&mut self) -> Option<T> {
+            panic!("Vec::pop not supported on SPIR-V")
+        }
+        
+        pub fn len(&self) -> usize {
+            panic!("Vec::len not supported on SPIR-V")
+        }
+        
+        pub fn reserve(&mut self, _: usize) {
+            panic!("Vec::reserve not supported on SPIR-V")
+        }
+        
+        pub fn reserve_exact(&mut self, _: usize) {
+            panic!("Vec::reserve_exact not supported on SPIR-V")
+        }
+        
+        pub fn clear(&mut self) {
+            panic!("Vec::clear not supported on SPIR-V")
+        }
+        
+        pub fn first(&self) -> Option<&T> {
+            panic!("Vec::first not supported on SPIR-V")
+        }
+        
+        pub fn into(self) -> Self {
+            panic!("Vec::into not supported on SPIR-V")
+        }
+        
+        pub fn into_iter(self) -> VecIntoIter<T> {
+            panic!("Vec::into_iter not supported on SPIR-V")
+        }
+        
+        pub fn extend<I: IntoIterator<Item = T>>(&mut self, _: I) {
+            panic!("Vec::extend not supported on SPIR-V")
+        }
+    }
+    
+    impl<T> core::iter::FromIterator<T> for Vec<T> {
+        fn from_iter<I: IntoIterator<Item = T>>(_: I) -> Self {
+            panic!("Vec::from_iter not supported on SPIR-V")
+        }
+    }
+    
+    impl<T> AsRef<[T]> for Vec<T> {
+        fn as_ref(&self) -> &[T] {
+            panic!("Vec::as_ref not supported on SPIR-V")
+        }
+    }
+    
+    // Stub VecIntoIter for SPIR-V
+    pub struct VecIntoIter<T>(PhantomData<T>);
+    
+    impl<T> Iterator for VecIntoIter<T> {
+        type Item = T;
+        
+        fn next(&mut self) -> Option<Self::Item> {
+            panic!("VecIntoIter not supported on SPIR-V")
+        }
+    }
+    
+    impl String {
+        pub fn new() -> Self {
+            panic!("String not supported on SPIR-V")
+        }
+    }
+    
+    impl From<&str> for String {
+        fn from(_: &str) -> Self {
+            panic!("String::from not supported on SPIR-V")
+        }
+    }
+    
+    impl core::fmt::Display for String {
+        fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            panic!("String Display not supported on SPIR-V")
+        }
+    }
+    
+    impl ToString for String {
+        fn to_string(&self) -> String {
+            panic!("String ToString not supported on SPIR-V")
+        }
+    }
+    
+    impl ToString for &str {
+        fn to_string(&self) -> String {
+            panic!("&str ToString not supported on SPIR-V")
+        }
+    }
+    
+    impl ToString for core::fmt::Arguments<'_> {
+        fn to_string(&self) -> String {
+            panic!("Arguments ToString not supported on SPIR-V")
+        }
+    }
+    
+    impl core::ops::Deref for String {
+        type Target = str;
+        
+        fn deref(&self) -> &Self::Target {
+            panic!("String deref not supported on SPIR-V")
+        }
+    }
+    
+    impl From<&String> for String {
+        fn from(_: &String) -> Self {
+            panic!("String from &String not supported on SPIR-V")
+        }
+    }
+    
+    // Stub format! macro
+    #[macro_export]
+    macro_rules! format {
+        ($($arg:tt)*) => {
+            String::new()
+        };
+    }
+    pub use format;
+    
+    // Stub vec! macro
+    #[macro_export]
+    macro_rules! vec {
+        ($($arg:tt)*) => {
+            panic!("vec! not supported on SPIR-V")
+        };
+    }
+    pub use vec;
+    
+    // Stub trait implementations
+    pub trait ToOwned {
+        type Owned;
+        fn to_owned(&self) -> Self::Owned {
+            panic!("ToOwned not supported on SPIR-V")
+        }
+    }
+    
+    pub trait ToString {
+        fn to_string(&self) -> String {
+            panic!("ToString not supported on SPIR-V")
+        }
+    }
 }
 
 /// A helper macro which is used to itself define further macros below.

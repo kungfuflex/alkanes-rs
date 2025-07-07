@@ -32,7 +32,7 @@
 
 #[cfg(not(target_arch = "spirv"))]
 extern crate alloc;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(target_arch = "spirv")))]
 extern crate std;
 
 pub mod arena;
@@ -40,7 +40,10 @@ pub mod arena;
 pub mod hash;
 mod head_vec;
 pub mod map;
+pub mod multi_stash;
 pub mod set;
+pub mod small_vec;
+#[cfg(not(target_arch = "spirv"))]
 pub mod string_interner;
 pub mod vec;
 
@@ -52,6 +55,12 @@ pub use self::{
     arena::{Arena, ComponentVec, DedupArena},
     head_vec::HeadVec,
     map::Map,
+    multi_stash::{AlkanesMultiStash, MultiStash, Key},
     set::Set,
-    string_interner::StringInterner,
+    small_vec::{AlkanesSmallVec, SmallVec},
+    vec::AlkanesVec,
 };
+
+#[cfg(not(target_arch = "spirv"))]
+#[doc(inline)]
+pub use self::string_interner::StringInterner;

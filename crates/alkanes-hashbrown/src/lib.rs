@@ -47,13 +47,30 @@
     feature(stdarch_loongarch)
 )]
 
-/// Default hasher for [`HashMap`] and [`HashSet`].
-#[cfg(feature = "default-hasher")]
-pub type DefaultHashBuilder = foldhash::fast::RandomState;
-
 /// Dummy default hasher for [`HashMap`] and [`HashSet`].
-#[cfg(not(feature = "default-hasher"))]
 pub enum DefaultHashBuilder {}
+
+impl Default for DefaultHashBuilder {
+    fn default() -> Self {
+        panic!("DefaultHashBuilder not supported on SPIR-V")
+    }
+}
+
+impl core::hash::BuildHasher for DefaultHashBuilder {
+    type Hasher = DummyHasher;
+    
+    fn build_hasher(&self) -> Self::Hasher {
+        panic!("DefaultHashBuilder not supported on SPIR-V")
+    }
+}
+
+/// Dummy hasher implementation for SPIR-V
+pub struct DummyHasher;
+
+impl core::hash::Hasher for DummyHasher {
+    fn finish(&self) -> u64 { 0 }
+    fn write(&mut self, _bytes: &[u8]) {}
+}
 
 #[cfg(test)]
 #[macro_use]
@@ -61,6 +78,7 @@ extern crate std;
 
 #[cfg_attr(test, macro_use)]
 #[cfg_attr(feature = "rustc-dep-of-std", allow(unused_extern_crates))]
+#[cfg(not(target_arch = "spirv"))]
 extern crate alloc;
 
 #[cfg(feature = "nightly")]
@@ -181,6 +199,7 @@ pub enum TryReserveError {
     CapacityOverflow,
 
     /// The memory allocator returned an error
+    #[cfg(not(target_arch = "spirv"))]
     AllocError {
         /// The layout of the allocation request that failed.
         layout: alloc::alloc::Layout,

@@ -1,4 +1,7 @@
+#[cfg(not(target_arch = "spirv"))]
 use crate::alloc::alloc::{handle_alloc_error, Layout};
+#[cfg(target_arch = "spirv")]
+use core::alloc::Layout;
 use crate::control::{BitMaskIter, Group, Tag, TagSliceExt};
 use crate::scopeguard::{guard, ScopeGuard};
 use crate::util::{invalid_mut, likely, unlikely};
@@ -42,8 +45,14 @@ impl Fallibility {
     #[cfg_attr(feature = "inline-more", inline)]
     fn alloc_err(self, layout: Layout) -> TryReserveError {
         match self {
+            #[cfg(not(target_arch = "spirv"))]
             Fallibility::Fallible => TryReserveError::AllocError { layout },
+            #[cfg(target_arch = "spirv")]
+            Fallibility::Fallible => TryReserveError::CapacityOverflow,
+            #[cfg(not(target_arch = "spirv"))]
             Fallibility::Infallible => handle_alloc_error(layout),
+            #[cfg(target_arch = "spirv")]
+            Fallibility::Infallible => panic!("Hash table allocation error"),
         }
     }
 }

@@ -1,8 +1,12 @@
 use crate::{FuelError, LimiterError};
 use core::{
-    error::Error,
     fmt::{self, Display},
 };
+
+#[cfg(not(target_arch = "spirv"))]
+use core::error::Error;
+#[cfg(target_arch = "spirv")]
+use crate::std::error::Error;
 
 /// Errors that may occur upon operating with table entities.
 #[derive(Debug, Copy, Clone)]
@@ -32,7 +36,11 @@ pub enum TableError {
     OutOfFuel { required_fuel: u64 },
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl Error for TableError {}
+
+#[cfg(target_arch = "spirv")]
+impl crate::std::error::Error for TableError {}
 
 impl Display for TableError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

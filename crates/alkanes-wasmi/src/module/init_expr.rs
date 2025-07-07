@@ -15,7 +15,7 @@ use crate::{
 };
 use alloc::boxed::Box;
 use core::fmt;
-use smallvec::SmallVec;
+use wasmi_collections::SmallVec;
 use wasmparser::AbstractHeapType;
 
 #[cfg(feature = "simd")]
@@ -256,7 +256,7 @@ impl ConstExpr {
         }
 
         let mut reader = expr.get_operators_reader();
-        let mut stack = TranslationBuffer::new();
+        let mut stack = TranslationBuffer::default();
         loop {
             let op = reader.read().unwrap_or_else(|error| {
                 panic!("unexpectedly encountered invalid const expression operator: {error}")

@@ -15,7 +15,7 @@ name = "test-spirv-minimal"
 path = "test-spirv-minimal.rs"
 
 [workspace]
-members = [".", "crates/*", "test-alkanes-alloc-shader", "test-alkanes-sync-shader"]
+members = [".", "crates/*", "test-alkanes-alloc-shader", "test-alkanes-sync-shader", "test-alkanes-wasmi-shader"]
 
 [workspace.package]
 version = "0.5.2"
@@ -68,7 +68,7 @@ wasmi_wasi = { path = "./crates/alkanes-wasi" }
 wasmi_core = { path = "./crates/alkanes-core" }
 wasmi_collections = { path = "./crates/alkanes-collections" }
 wasmi_ir = { path = "./crates/alkanes-ir" }
-wasmparser = { path = "./crates/alkanes-wasmparser" }
+wasmparser = { path = "./crates/alkanes-wasmparser", default-features = false }
 wasm-encoder = { path = "./crates/alkanes-wasm-encoder" }
 wat = { path = "./crates/alkanes-wat" }
 wast = { path = "./crates/alkanes-wast" }
@@ -78,11 +78,11 @@ wit-component = { path = "./crates/alkanes-wit-component" }
 wasm-metadata = { path = "./crates/alkanes-wasm-metadata" }
 wit-parser = { path = "./crates/alkanes-wit-parser" }
 wasm-mutate = { path = "./crates/alkanes-wasm-mutate" }
-hashbrown = { path = "./crates/alkanes-hashbrown" }
-ahash = { path = "./crates/alkanes-ahash" }
-arrayvec = { path = "./crates/alkanes-arrayvec" }
-cfg-if = { path = "./crates/alkanes-cfg-if" }
-indexmap = { path = "./crates/alkanes-indexmap" }
+hashbrown = { path = "./crates/alkanes-hashbrown", default-features = false, features = ["inline-more", "allocator-api2", "equivalent", "raw-entry"] }
+ahash = { path = "./crates/alkanes-ahash", default-features = false }
+arrayvec = { path = "./crates/alkanes-arrayvec", default-features = false }
+cfg-if = { path = "./crates/alkanes-cfg-if", default-features = false }
+indexmap = { path = "./crates/alkanes-indexmap", default-features = false }
 semver = "1.0"
 unicode-width = "0.1"
 leb128 = "0.2"
@@ -121,6 +121,10 @@ hex_lit = "0.1.1"
 once_cell = "1.20.1"
 alkanes-alloc = { path = "./crates/alkanes-alloc" }
 alkanes-sync = { path = "./crates/alkanes-sync" }
+alkanes-wasmi = { path = "./crates/alkanes-wasmi" }
+proc-macro2 = { version = "1.0.74", default-features = false }
+quote = { version = "1.0.35", default-features = false }
+syn = { version = "2.0.81", default-features = false }
 
 [features]
 test-utils = []

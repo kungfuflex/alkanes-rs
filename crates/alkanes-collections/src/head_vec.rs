@@ -1,27 +1,27 @@
-#[cfg(not(target_arch = "spirv"))]
-use alloc::vec::Vec;
+use crate::vec::AlkanesVec;
+use alkanes_alloc::AlkanesAllocator;
 use core::mem;
 
-/// A [`Vec`]-like data structure with fast access to the last item.
+/// A generic vector-like data structure with fast access to the last item.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct HeadVec<T> {
+pub struct HeadVec<T, A: AlkanesAllocator = alkanes_alloc::SpirvLayoutAllocator> {
     /// The top (or last) item in the [`HeadVec`].
     head: Option<T>,
     /// The rest of the items in the [`HeadVec`] excluding the last item.
-    rest: Vec<T>,
+    rest: AlkanesVec<T, A>,
 }
 
-impl<T> Default for HeadVec<T> {
+impl<T, A: AlkanesAllocator + Default> Default for HeadVec<T, A> {
     #[inline]
     fn default() -> Self {
         Self {
             head: None,
-            rest: Vec::new(),
+            rest: AlkanesVec::new(A::default()),
         }
     }
 }
 
-impl<T> HeadVec<T> {
+impl<T, A: AlkanesAllocator> HeadVec<T, A> {
     /// Removes all items from the [`HeadVec`].
     #[inline]
     pub fn clear(&mut self) {
@@ -65,7 +65,7 @@ impl<T> HeadVec<T> {
     pub fn push(&mut self, value: T) {
         let prev_head = self.head.replace(value);
         if let Some(prev_head) = prev_head {
-            self.rest.push(prev_head);
+            let _ = self.rest.push(prev_head);
         }
     }
 

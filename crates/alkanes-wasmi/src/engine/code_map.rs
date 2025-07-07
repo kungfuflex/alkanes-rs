@@ -23,7 +23,7 @@ use core::{
     pin::Pin,
     slice,
 };
-use spin::Mutex;
+use alkanes_sync::{DefaultMutex, AlkanesMutex};
 use wasmparser::{FuncToValidate, ValidatorResources, WasmFeatures};
 
 /// A reference to a compiled function stored in the [`CodeMap`] of an [`Engine`](crate::Engine).
@@ -70,7 +70,7 @@ impl ArenaIndex for EngineFunc {
 /// Datastructure to efficiently store information about compiled functions.
 #[derive(Debug)]
 pub struct CodeMap {
-    funcs: Mutex<Arena<EngineFunc, FuncEntity>>,
+    funcs: DefaultMutex<Arena<EngineFunc, FuncEntity>>,
     features: WasmFeatures,
 }
 
@@ -212,7 +212,7 @@ impl CodeMap {
     /// Creates a new [`CodeMap`].
     pub fn new(config: &Config) -> Self {
         Self {
-            funcs: Mutex::new(Arena::default()),
+            funcs: DefaultMutex::new(Arena::default()),
             features: config.wasm_features(),
         }
     }

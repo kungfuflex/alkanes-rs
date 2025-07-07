@@ -32,18 +32,35 @@ mod detail {
     #[cfg(not(target_arch = "spirv"))]
     use alloc::collections::btree_map;
 
+    #[cfg(not(target_arch = "spirv"))]
     pub type MapImpl<K, V> = btree_map::BTreeMap<K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type EntryImpl<'a, K, V> = btree_map::Entry<'a, K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type OccupiedEntryImpl<'a, K, V> = btree_map::OccupiedEntry<'a, K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type VacantEntryImpl<'a, K, V> = btree_map::VacantEntry<'a, K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type IterImpl<'a, K, V> = btree_map::Iter<'a, K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type IterMutImpl<'a, K, V> = btree_map::IterMut<'a, K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type IntoIterImpl<K, V> = btree_map::IntoIter<K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type KeysImpl<'a, K, V> = btree_map::Keys<'a, K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type ValuesImpl<'a, K, V> = btree_map::Values<'a, K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type ValuesMutImpl<'a, K, V> = btree_map::ValuesMut<'a, K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type IntoKeysImpl<K, V> = btree_map::IntoKeys<K, V>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type IntoValuesImpl<K, V> = btree_map::IntoValues<K, V>;
+
+    // For SPIR-V target, we need to provide stub implementations
+    // Since we can't use BTreeMap, we'll need to disable this functionality
+    #[cfg(target_arch = "spirv")]
+    compile_error!("BTreeMap collections are not supported on SPIR-V target. Use hash-collections feature instead.");
 }
 
 /// A default key-value mapping.

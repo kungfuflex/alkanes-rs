@@ -9,7 +9,7 @@ use core::{
     cmp::{max, min},
     num::NonZeroUsize,
 };
-use multi_stash::{Key, Key as StashKey, MultiStash};
+use wasmi_collections::{Key, Key as StashKey, MultiStash};
 
 #[cfg(doc)]
 use crate::engine::translator::func::InstrEncoder;

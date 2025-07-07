@@ -1,36 +1,19 @@
-//! WASM32-specific synchronization implementation
+//! WASM32 target synchronization implementation
 //! 
-//! WASM32 can be single-threaded or multi-threaded depending on the environment.
-//! This implementation provides both options.
+//! Uses no-op implementations for WASM32 since it's typically single-threaded.
 
-use crate::{AlkanesArc, AlkanesMutex, AlkanesOnceCell, SyncError};
-use core::cell::{Cell, UnsafeCell};
+use crate::{AlkanesArc, AlkanesMutex, AlkanesOnceCell, AlkanesRwLock};
+use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 
-#[cfg(feature = "std")]
-use std::sync::{Arc, Mutex, Once};
-
-/// WASM32 mutex implementation
-#[cfg(feature = "std")]
-pub struct WasmMutex<T> {
-    inner: Mutex<T>,
-}
-
-#[cfg(not(feature = "std"))]
+/// WASM32 mutex (no-op since single-threaded)
 pub struct WasmMutex<T> {
     data: UnsafeCell<T>,
 }
 
-#[cfg(feature = "std")]
-impl<T> WasmMutex<T> {
-    pub fn new(data: T) -> Self {
-        Self {
-            inner: Mutex::new(data),
-        }
-    }
-}
+unsafe impl<T: Send> Send for WasmMutex<T> {}
+unsafe impl<T: Send> Sync for WasmMutex<T> {}
 
-#[cfg(not(feature = "std"))]
 impl<T> WasmMutex<T> {
     pub const fn new(data: T) -> Self {
         Self {
@@ -40,33 +23,10 @@ impl<T> WasmMutex<T> {
 }
 
 /// WASM32 mutex guard
-#[cfg(feature = "std")]
-pub struct WasmMutexGuard<'a, T> {
-    guard: std::sync::MutexGuard<'a, T>,
-}
-
-#[cfg(not(feature = "std"))]
 pub struct WasmMutexGuard<'a, T> {
     data: &'a mut T,
 }
 
-#[cfg(feature = "std")]
-impl<'a, T> Deref for WasmMutexGuard<'a, T> {
-    type Target = T;
-    
-    fn deref(&self) -> &Self::Target {
-        &self.guard
-    }
-}
-
-#[cfg(feature = "std")]
-impl<'a, T> DerefMut for WasmMutexGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.guard
-    }
-}
-
-#[cfg(not(feature = "std"))]
 impl<'a, T> Deref for WasmMutexGuard<'a, T> {
     type Target = T;
     
@@ -75,7 +35,6 @@ impl<'a, T> Deref for WasmMutexGuard<'a, T> {
     }
 }
 
-#[cfg(not(feature = "std"))]
 impl<'a, T> DerefMut for WasmMutexGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.data
@@ -92,135 +51,67 @@ impl<T> AlkanesMutex<T> for WasmMutex<T> {
         Self::new(data)
     }
     
-    #[cfg(feature = "std")]
     fn lock(&self) -> Self::Guard<'_> {
-        WasmMutexGuard {
-            guard: self.inner.lock().unwrap(),
-        }
-    }
-    
-    #[cfg(not(feature = "std"))]
-    fn lock(&self) -> Self::Guard<'_> {
-        // SAFETY: Single-threaded WASM32 without std
+        // SAFETY: WASM32 is single-threaded, so this is safe
         let data = unsafe { &mut *self.data.get() };
         WasmMutexGuard { data }
     }
     
-    #[cfg(feature = "std")]
     fn try_lock(&self) -> Option<Self::Guard<'_>> {
-        self.inner.try_lock().ok().map(|guard| WasmMutexGuard { guard })
-    }
-    
-    #[cfg(not(feature = "std"))]
-    fn try_lock(&self) -> Option<Self::Guard<'_>> {
+        // Always succeeds in single-threaded environment
         Some(self.lock())
     }
 }
 
-/// WASM32 atomic reference counter
-#[cfg(feature = "std")]
-pub struct WasmArc<T> {
-    inner: Arc<T>,
-}
-
-#[cfg(not(feature = "std"))]
+/// WASM32 atomic reference counter (simplified for single-threaded use)
 pub struct WasmArc<T> {
     data: T,
 }
 
-#[cfg(feature = "std")]
-impl<T> WasmArc<T> {
-    pub fn new(data: T) -> Self {
-        Self {
-            inner: Arc::new(data),
-        }
-    }
-}
-
-#[cfg(not(feature = "std"))]
 impl<T> WasmArc<T> {
     pub fn new(data: T) -> Self {
         Self { data }
     }
 }
 
-#[cfg(feature = "std")]
-impl<T> Clone for WasmArc<T> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
-#[cfg(not(feature = "std"))]
 impl<T: Clone> Clone for WasmArc<T> {
     fn clone(&self) -> Self {
+        // In WASM32, we clone the data since we can't do heap allocation easily
         Self {
             data: self.data.clone(),
         }
     }
 }
 
-impl<T> AlkanesArc<T> for WasmArc<T> {
+impl<T: Clone> AlkanesArc<T> for WasmArc<T> {
     fn new(data: T) -> Self {
         Self::new(data)
     }
     
     fn clone(&self) -> Self {
-        self.clone()
+        Clone::clone(&self)
     }
     
-    #[cfg(feature = "std")]
-    fn as_ref(&self) -> &T {
-        &self.inner
-    }
-    
-    #[cfg(not(feature = "std"))]
     fn as_ref(&self) -> &T {
         &self.data
     }
 }
 
-/// WASM32 once cell
-#[cfg(feature = "std")]
+/// WASM32 once cell - simplified for WASM32 compatibility
 pub struct WasmOnceCell<T> {
-    once: Once,
     data: UnsafeCell<Option<T>>,
 }
 
-#[cfg(not(feature = "std"))]
-pub struct WasmOnceCell<T> {
-    data: UnsafeCell<Option<T>>,
-    initialized: Cell<bool>,
-}
-
-#[cfg(feature = "std")]
-unsafe impl<T: Send> Send for WasmOnceCell<T> {}
-#[cfg(feature = "std")]
-unsafe impl<T: Send + Sync> Sync for WasmOnceCell<T> {}
-
-#[cfg(not(feature = "std"))]
-unsafe impl<T: Send> Send for WasmOnceCell<T> {}
-#[cfg(not(feature = "std"))]
-unsafe impl<T: Send + Sync> Sync for WasmOnceCell<T> {}
-
-#[cfg(feature = "std")]
 impl<T> WasmOnceCell<T> {
     pub const fn new() -> Self {
-        Self {
-            once: Once::new(),
+        Self { 
             data: UnsafeCell::new(None),
         }
     }
-}
-
-#[cfg(not(feature = "std"))]
-impl<T> WasmOnceCell<T> {
-    pub const fn new() -> Self {
-        Self {
-            data: UnsafeCell::new(None),
-            initialized: Cell::new(false),
+    
+    pub const fn with_value(value: T) -> Self {
+        Self { 
+            data: UnsafeCell::new(Some(value)),
         }
     }
 }
@@ -230,55 +121,97 @@ impl<T> AlkanesOnceCell<T> for WasmOnceCell<T> {
         Self::new()
     }
     
-    #[cfg(feature = "std")]
     fn get_or_init<F>(&self, f: F) -> &T
     where
         F: FnOnce() -> T,
     {
-        self.once.call_once(|| {
-            // SAFETY: This is only called once due to Once
-            let data = unsafe { &mut *self.data.get() };
+        // SAFETY: WASM32 is single-threaded
+        let data = unsafe { &mut *self.data.get() };
+        if data.is_none() {
             *data = Some(f());
-        });
-        
-        // SAFETY: We just initialized it above
-        unsafe { (*self.data.get()).as_ref().unwrap() }
+        }
+        data.as_ref().unwrap()
     }
     
-    #[cfg(not(feature = "std"))]
-    fn get_or_init<F>(&self, f: F) -> &T
+    fn get(&self) -> Option<&T> {
+        // SAFETY: WASM32 is single-threaded
+        unsafe { (*self.data.get()).as_ref() }
+    }
+}
+
+/// WASM32 read-write lock (no-op since single-threaded)
+pub struct WasmRwLock<T> {
+    data: UnsafeCell<T>,
+}
+
+unsafe impl<T: Send> Send for WasmRwLock<T> {}
+unsafe impl<T: Send + Sync> Sync for WasmRwLock<T> {}
+
+impl<T> WasmRwLock<T> {
+    pub const fn new(data: T) -> Self {
+        Self {
+            data: UnsafeCell::new(data),
+        }
+    }
+}
+
+/// WASM32 read guard
+pub struct WasmReadGuard<'a, T> {
+    data: &'a T,
+}
+
+impl<'a, T> Deref for WasmReadGuard<'a, T> {
+    type Target = T;
+    
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+/// WASM32 write guard
+pub struct WasmWriteGuard<'a, T> {
+    data: &'a mut T,
+}
+
+impl<'a, T> Deref for WasmWriteGuard<'a, T> {
+    type Target = T;
+    
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+impl<'a, T> DerefMut for WasmWriteGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data
+    }
+}
+
+impl<T> AlkanesRwLock<T> for WasmRwLock<T> {
+    type ReadGuard<'a> = WasmReadGuard<'a, T>
     where
-        F: FnOnce() -> T,
-    {
-        if !self.initialized.get() {
-            // SAFETY: Single-threaded without std
-            let data = unsafe { &mut *self.data.get() };
-            *data = Some(f());
-            self.initialized.set(true);
-        }
-        
-        // SAFETY: We just initialized it above
-        unsafe { (*self.data.get()).as_ref().unwrap() }
+        Self: 'a,
+        T: 'a;
+    
+    type WriteGuard<'a> = WasmWriteGuard<'a, T>
+    where
+        Self: 'a,
+        T: 'a;
+    
+    fn new(data: T) -> Self {
+        Self::new(data)
     }
     
-    #[cfg(feature = "std")]
-    fn get(&self) -> Option<&T> {
-        if self.once.is_completed() {
-            // SAFETY: Once guarantees initialization is complete
-            unsafe { (*self.data.get()).as_ref() }
-        } else {
-            None
-        }
+    fn read(&self) -> Self::ReadGuard<'_> {
+        // SAFETY: WASM32 is single-threaded, so this is safe
+        let data = unsafe { &*self.data.get() };
+        WasmReadGuard { data }
     }
     
-    #[cfg(not(feature = "std"))]
-    fn get(&self) -> Option<&T> {
-        if self.initialized.get() {
-            // SAFETY: We checked that it's initialized
-            unsafe { (*self.data.get()).as_ref() }
-        } else {
-            None
-        }
+    fn write(&self) -> Self::WriteGuard<'_> {
+        // SAFETY: WASM32 is single-threaded, so this is safe
+        let data = unsafe { &mut *self.data.get() };
+        WasmWriteGuard { data }
     }
 }
 
@@ -286,6 +219,7 @@ impl<T> AlkanesOnceCell<T> for WasmOnceCell<T> {
 pub type DefaultMutex<T> = WasmMutex<T>;
 pub type DefaultArc<T> = WasmArc<T>;
 pub type DefaultOnceCell<T> = WasmOnceCell<T>;
+pub type DefaultRwLock<T> = WasmRwLock<T>;
 
 #[cfg(test)]
 mod tests {
@@ -299,11 +233,15 @@ mod tests {
     }
     
     #[test]
-    fn test_wasm_arc() {
-        let arc = WasmArc::new(42u32);
-        let arc2 = arc.clone();
-        assert_eq!(*arc.as_ref(), 42);
-        assert_eq!(*arc2.as_ref(), 42);
+    fn test_wasm_rwlock() {
+        let rwlock = WasmRwLock::new(42u32);
+        let read_guard = rwlock.read();
+        assert_eq!(*read_guard, 42);
+        drop(read_guard);
+        
+        let mut write_guard = rwlock.write();
+        *write_guard = 84;
+        assert_eq!(*write_guard, 84);
     }
     
     #[test]

@@ -260,6 +260,40 @@ where
 
 impl<T, A: AlkanesAllocator> Eq for AlkanesVec<T, A> where T: Eq {}
 
+impl<T, A: AlkanesAllocator> Clone for AlkanesVec<T, A>
+where
+    T: Clone,
+    A: Clone,
+{
+    fn clone(&self) -> Self {
+        let mut new_vec = Self::new(self.allocator.clone());
+        if let Ok(()) = new_vec.reserve(self.len()) {
+            for item in self.iter() {
+                let _ = new_vec.push(item.clone());
+            }
+        }
+        new_vec
+    }
+}
+
+impl<T, A: AlkanesAllocator> PartialOrd for AlkanesVec<T, A>
+where
+    T: PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.as_slice().partial_cmp(other.as_slice())
+    }
+}
+
+impl<T, A: AlkanesAllocator> Ord for AlkanesVec<T, A>
+where
+    T: Ord,
+{
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.as_slice().cmp(other.as_slice())
+    }
+}
+
 impl<T, A: AlkanesAllocator> FromIterator<T> for AlkanesVec<T, A>
 where
     A: Default,
@@ -274,7 +308,7 @@ where
 }
 
 // For compatibility with existing code that expects Vec<T>
-#[cfg(feature = "std")]
+#[cfg(not(target_arch = "spirv"))]
 impl<T, A: AlkanesAllocator> From<AlkanesVec<T, A>> for alloc::vec::Vec<T> {
     fn from(mut alkanes_vec: AlkanesVec<T, A>) -> Self {
         let mut vec = alloc::vec::Vec::with_capacity(alkanes_vec.len());
@@ -287,7 +321,7 @@ impl<T, A: AlkanesAllocator> From<AlkanesVec<T, A>> for alloc::vec::Vec<T> {
     }
 }
 
-#[cfg(feature = "std")]
+#[cfg(not(target_arch = "spirv"))]
 impl<T, A: AlkanesAllocator + Default> From<alloc::vec::Vec<T>> for AlkanesVec<T, A> {
     fn from(vec: alloc::vec::Vec<T>) -> Self {
         let mut alkanes_vec = Self::with_capacity(vec.len(), A::default())

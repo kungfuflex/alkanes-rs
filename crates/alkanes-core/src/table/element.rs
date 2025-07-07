@@ -1,5 +1,9 @@
 use crate::{UntypedVal, ValType};
+
+#[cfg(not(target_arch = "spirv"))]
 use alloc::boxed::Box;
+#[cfg(target_arch = "spirv")]
+use crate::alloc::boxed::Box;
 
 /// A Wasm [`ElementSegment`].
 #[derive(Debug)]

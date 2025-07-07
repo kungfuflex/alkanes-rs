@@ -43,7 +43,7 @@ pub trait AlkanesMutex<T> {
 }
 
 /// Generic atomic reference counter trait
-pub trait AlkanesArc<T> {
+pub trait AlkanesArc<T: Clone> {
     /// Create a new atomic reference counter
     fn new(data: T) -> Self;
     
@@ -66,6 +66,28 @@ pub trait AlkanesOnceCell<T> {
     
     /// Get the value if it has been initialized
     fn get(&self) -> Option<&T>;
+}
+
+/// Generic read-write lock trait
+pub trait AlkanesRwLock<T> {
+    type ReadGuard<'a>: core::ops::Deref<Target = T>
+    where
+        Self: 'a,
+        T: 'a;
+    
+    type WriteGuard<'a>: core::ops::Deref<Target = T> + core::ops::DerefMut<Target = T>
+    where
+        Self: 'a,
+        T: 'a;
+    
+    /// Create a new read-write lock protecting the given data
+    fn new(data: T) -> Self;
+    
+    /// Acquire a read lock
+    fn read(&self) -> Self::ReadGuard<'_>;
+    
+    /// Acquire a write lock
+    fn write(&self) -> Self::WriteGuard<'_>;
 }
 
 /// Error types for synchronization failures

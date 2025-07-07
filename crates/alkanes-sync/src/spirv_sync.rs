@@ -3,7 +3,7 @@
 //! SPIR-V compute shaders are single-threaded within a workgroup,
 //! so synchronization primitives are mostly no-ops.
 
-use crate::{AlkanesArc, AlkanesMutex, AlkanesOnceCell};
+use crate::{AlkanesArc, AlkanesMutex, AlkanesOnceCell, AlkanesRwLock};
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 
@@ -152,10 +152,87 @@ impl<T> AlkanesOnceCell<T> for SpirvOnceCell<T> {
     }
 }
 
+/// SPIR-V read-write lock (no-op since single-threaded)
+pub struct SpirvRwLock<T> {
+    data: UnsafeCell<T>,
+}
+
+unsafe impl<T: Send> Send for SpirvRwLock<T> {}
+unsafe impl<T: Send + Sync> Sync for SpirvRwLock<T> {}
+
+impl<T> SpirvRwLock<T> {
+    pub const fn new(data: T) -> Self {
+        Self {
+            data: UnsafeCell::new(data),
+        }
+    }
+}
+
+/// SPIR-V read guard
+pub struct SpirvReadGuard<'a, T> {
+    data: &'a T,
+}
+
+impl<'a, T> core::ops::Deref for SpirvReadGuard<'a, T> {
+    type Target = T;
+    
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+/// SPIR-V write guard
+pub struct SpirvWriteGuard<'a, T> {
+    data: &'a mut T,
+}
+
+impl<'a, T> core::ops::Deref for SpirvWriteGuard<'a, T> {
+    type Target = T;
+    
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+impl<'a, T> core::ops::DerefMut for SpirvWriteGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data
+    }
+}
+
+impl<T> AlkanesRwLock<T> for SpirvRwLock<T> {
+    type ReadGuard<'a> = SpirvReadGuard<'a, T>
+    where
+        Self: 'a,
+        T: 'a;
+    
+    type WriteGuard<'a> = SpirvWriteGuard<'a, T>
+    where
+        Self: 'a,
+        T: 'a;
+    
+    fn new(data: T) -> Self {
+        Self::new(data)
+    }
+    
+    fn read(&self) -> Self::ReadGuard<'_> {
+        // SAFETY: SPIR-V is single-threaded, so this is safe
+        let data = unsafe { &*self.data.get() };
+        SpirvReadGuard { data }
+    }
+    
+    fn write(&self) -> Self::WriteGuard<'_> {
+        // SAFETY: SPIR-V is single-threaded, so this is safe
+        let data = unsafe { &mut *self.data.get() };
+        SpirvWriteGuard { data }
+    }
+}
+
 /// Default types for SPIR-V
 pub type DefaultMutex<T> = SpirvMutex<T>;
 pub type DefaultArc<T> = SpirvArc<T>;
 pub type DefaultOnceCell<T> = SpirvOnceCell<T>;
+pub type DefaultRwLock<T> = SpirvRwLock<T>;
 
 #[cfg(test)]
 mod tests {

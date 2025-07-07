@@ -8,7 +8,11 @@ pub use self::{
     ty::TableType,
 };
 use crate::{Fuel, FuelError, ResourceLimiterRef, TypedVal, UntypedVal};
+
+#[cfg(not(target_arch = "spirv"))]
 use alloc::vec::Vec;
+#[cfg(target_arch = "spirv")]
+use crate::alloc::vec::Vec;
 use core::{cmp, iter};
 
 #[cfg(test)]
@@ -52,7 +56,10 @@ impl Table {
             }
             return Err(error);
         };
+        #[cfg(not(target_arch = "spirv"))]
         elements.extend(iter::repeat_n::<UntypedVal>(init.into(), min_size));
+        #[cfg(target_arch = "spirv")]
+        elements.extend((0..min_size).map(|_| init.into()));
         Ok(Self { ty, elements })
     }
 

@@ -13,11 +13,17 @@
  * limitations under the License.
  */
 
+#[cfg(not(target_arch = "spirv"))]
+extern crate alloc;
+
 use crate::binary_reader::BinaryReaderErrorKind;
 use crate::limits::{
     MAX_WASM_FUNCTION_PARAMS, MAX_WASM_FUNCTION_RETURNS, MAX_WASM_STRUCT_FIELDS,
     MAX_WASM_SUPERTYPES, MAX_WASM_TYPES,
 };
+#[cfg(not(target_arch = "spirv"))]
+extern crate alloc;
+
 use crate::prelude::*;
 #[cfg(feature = "validate")]
 use crate::types::CoreTypeId;
@@ -384,7 +390,10 @@ impl RecGroup {
 
         enum Iter {
             Implicit(Option<(usize, SubType)>),
+            #[cfg(not(target_arch = "spirv"))]
             Explicit(alloc::vec::IntoIter<(usize, SubType)>),
+            #[cfg(target_arch = "spirv")]
+            Explicit(crate::prelude::VecIntoIter<(usize, SubType)>),
         }
 
         impl Iterator for Iter {

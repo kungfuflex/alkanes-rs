@@ -2,11 +2,11 @@
 //! 
 //! Uses standard library synchronization primitives for native targets.
 
-use crate::{AlkanesArc, AlkanesMutex, AlkanesOnceCell};
+use crate::{AlkanesArc, AlkanesMutex, AlkanesOnceCell, AlkanesRwLock};
 use core::ops::{Deref, DerefMut};
 
 #[cfg(feature = "std")]
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex, Once, RwLock};
 
 #[cfg(feature = "std")]
 use std::cell::UnsafeCell;
@@ -166,7 +166,7 @@ impl<T: Clone> Clone for NativeArc<T> {
     }
 }
 
-impl<T> AlkanesArc<T> for NativeArc<T> {
+impl<T: Clone> AlkanesArc<T> for NativeArc<T> {
     fn new(data: T) -> Self {
         Self::new(data)
     }
@@ -286,10 +286,156 @@ impl<T> AlkanesOnceCell<T> for NativeOnceCell<T> {
     }
 }
 
+/// Native read-write lock
+#[cfg(feature = "std")]
+pub struct NativeRwLock<T> {
+    inner: RwLock<T>,
+}
+
+#[cfg(not(feature = "std"))]
+pub struct NativeRwLock<T> {
+    data: UnsafeCell<T>,
+}
+
+#[cfg(feature = "std")]
+impl<T> NativeRwLock<T> {
+    pub fn new(data: T) -> Self {
+        Self {
+            inner: RwLock::new(data),
+        }
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<T> NativeRwLock<T> {
+    pub const fn new(data: T) -> Self {
+        Self {
+            data: UnsafeCell::new(data),
+        }
+    }
+}
+
+/// Native read guard
+#[cfg(feature = "std")]
+pub struct NativeReadGuard<'a, T> {
+    guard: std::sync::RwLockReadGuard<'a, T>,
+}
+
+#[cfg(not(feature = "std"))]
+pub struct NativeReadGuard<'a, T> {
+    data: &'a T,
+}
+
+#[cfg(feature = "std")]
+impl<'a, T> Deref for NativeReadGuard<'a, T> {
+    type Target = T;
+    
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<'a, T> Deref for NativeReadGuard<'a, T> {
+    type Target = T;
+    
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+/// Native write guard
+#[cfg(feature = "std")]
+pub struct NativeWriteGuard<'a, T> {
+    guard: std::sync::RwLockWriteGuard<'a, T>,
+}
+
+#[cfg(not(feature = "std"))]
+pub struct NativeWriteGuard<'a, T> {
+    data: &'a mut T,
+}
+
+#[cfg(feature = "std")]
+impl<'a, T> Deref for NativeWriteGuard<'a, T> {
+    type Target = T;
+    
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+#[cfg(feature = "std")]
+impl<'a, T> DerefMut for NativeWriteGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<'a, T> Deref for NativeWriteGuard<'a, T> {
+    type Target = T;
+    
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<'a, T> DerefMut for NativeWriteGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data
+    }
+}
+
+impl<T> AlkanesRwLock<T> for NativeRwLock<T> {
+    type ReadGuard<'a> = NativeReadGuard<'a, T>
+    where
+        Self: 'a,
+        T: 'a;
+    
+    type WriteGuard<'a> = NativeWriteGuard<'a, T>
+    where
+        Self: 'a,
+        T: 'a;
+    
+    fn new(data: T) -> Self {
+        Self::new(data)
+    }
+    
+    #[cfg(feature = "std")]
+    fn read(&self) -> Self::ReadGuard<'_> {
+        NativeReadGuard {
+            guard: self.inner.read().unwrap(),
+        }
+    }
+    
+    #[cfg(not(feature = "std"))]
+    fn read(&self) -> Self::ReadGuard<'_> {
+        // SAFETY: Single-threaded no-std native
+        let data = unsafe { &*self.data.get() };
+        NativeReadGuard { data }
+    }
+    
+    #[cfg(feature = "std")]
+    fn write(&self) -> Self::WriteGuard<'_> {
+        NativeWriteGuard {
+            guard: self.inner.write().unwrap(),
+        }
+    }
+    
+    #[cfg(not(feature = "std"))]
+    fn write(&self) -> Self::WriteGuard<'_> {
+        // SAFETY: Single-threaded no-std native
+        let data = unsafe { &mut *self.data.get() };
+        NativeWriteGuard { data }
+    }
+}
+
 /// Default types for native targets
 pub type DefaultMutex<T> = NativeMutex<T>;
 pub type DefaultArc<T> = NativeArc<T>;
 pub type DefaultOnceCell<T> = NativeOnceCell<T>;
+pub type DefaultRwLock<T> = NativeRwLock<T>;
 
 #[cfg(test)]
 mod tests {

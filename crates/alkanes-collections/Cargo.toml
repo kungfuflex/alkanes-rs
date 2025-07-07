@@ -16,6 +16,8 @@ exclude.workspace = true
 [dependencies]
 alkanes-alloc = { path = "../alkanes-alloc", default-features = false }
 hashbrown = { version = "0.15.1", default-features = false, optional = true, features = ["default-hasher", "inline-more"] }
+
+[target.'cfg(not(target_arch = "spirv"))'.dependencies]
 string-interner = { version = "0.19", default-features = false, optional = true, features = ["inline-more", "backends"] }
 
 [features]
@@ -45,7 +47,6 @@ std = ["string-interner?/std"]
 #
 hash-collections = [
   'dep:hashbrown',
-  'dep:string-interner',
 ]
 prefer-btree-collections = []
 

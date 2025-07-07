@@ -64,7 +64,7 @@ use alloc::{
     vec::Vec,
 };
 use core::sync::atomic::{AtomicU32, Ordering};
-use spin::{Mutex, RwLock};
+use alkanes_sync::{DefaultMutex, DefaultRwLock, AlkanesMutex, AlkanesRwLock};
 use wasmparser::{FuncToValidate, FuncValidatorAllocations, ValidatorResources};
 
 #[cfg(doc)]
@@ -437,15 +437,15 @@ pub struct EngineInner {
     ///
     /// The engine deduplicates function types to make the equality
     /// comparison very fast. This helps to speed up indirect calls.
-    func_types: RwLock<FuncTypeRegistry>,
+    func_types: DefaultRwLock<FuncTypeRegistry>,
     /// Reusable allocation stacks.
-    allocs: Mutex<ReusableAllocationStack>,
+    allocs: DefaultMutex<ReusableAllocationStack>,
     /// Reusable engine stacks for Wasm execution.
     ///
     /// Concurrently executing Wasm executions each require their own stack to
     /// operate on. Therefore a Wasm engine is required to provide stacks and
     /// ideally recycles old ones since creation of a new stack is rather expensive.
-    stacks: Mutex<EngineStacks>,
+    stacks: DefaultMutex<EngineStacks>,
 }
 
 /// Stacks to hold and distribute reusable allocations.
@@ -556,9 +556,9 @@ impl EngineInner {
         Self {
             config: config.clone(),
             code_map: CodeMap::new(config),
-            func_types: RwLock::new(FuncTypeRegistry::new(engine_idx)),
-            allocs: Mutex::new(ReusableAllocationStack::default()),
-            stacks: Mutex::new(EngineStacks::new(config)),
+            func_types: DefaultRwLock::new(FuncTypeRegistry::new(engine_idx)),
+            allocs: DefaultMutex::new(ReusableAllocationStack::default()),
+            stacks: DefaultMutex::new(EngineStacks::new(config)),
         }
     }
 

@@ -5,7 +5,7 @@ use crate::{
     ir::{AnyConst32, Const32, FixedRegSpan, Instruction, Reg, RegSpan},
 };
 use core::slice;
-use smallvec::SmallVec;
+use wasmi_collections::SmallVec;
 
 impl Executor<'_> {
     /// Executes a generic `copy` [`Instruction`].
@@ -68,7 +68,7 @@ impl Executor<'_> {
     pub fn execute_copy_span_impl(&mut self, results: RegSpan, values: RegSpan, len: u16) {
         let results = results.iter(len);
         let values = values.iter(len);
-        let mut tmp = <SmallVec<[UntypedVal; 8]>>::default();
+        let mut tmp = SmallVec::<UntypedVal, 8>::default();
         tmp.extend(values.into_iter().map(|value| self.get_register(value)));
         for (result, value) in results.into_iter().zip(tmp) {
             self.set_register(result, value);
@@ -122,7 +122,7 @@ impl Executor<'_> {
         values: &[Reg],
     ) -> InstructionPtr {
         // We need `tmp` since `values[n]` might be overwritten by previous copies.
-        let mut tmp = <SmallVec<[UntypedVal; 8]>>::default();
+        let mut tmp = SmallVec::<UntypedVal, 8>::default();
         let mut ip = ip;
         tmp.extend(values.iter().map(|value| self.get_register(*value)));
         while let Instruction::RegisterList { regs } = ip.get() {

@@ -2,9 +2,13 @@
 use crate::V128;
 use crate::{F32, F64};
 use core::{
-    error::Error,
     fmt::{self, Display},
 };
+
+#[cfg(not(target_arch = "spirv"))]
+use core::error::Error;
+#[cfg(target_arch = "spirv")]
+use crate::std::error::Error;
 
 /// An untyped value.
 ///
@@ -93,11 +97,6 @@ macro_rules! impl_write_as_for_int {
                 }
             }
 
-            impl WriteAs<::core::num::NonZero<$int>> for UntypedVal {
-                fn write_as(&mut self, value: ::core::num::NonZero<$int>) {
-                    <UntypedVal as WriteAs<$int>>::write_as(self, value.get())
-                }
-            }
         )*
     };
 }
@@ -113,11 +112,6 @@ macro_rules! impl_write_as_for_uint {
                 }
             }
 
-            impl WriteAs<::core::num::NonZero<$int>> for UntypedVal {
-                fn write_as(&mut self, value: ::core::num::NonZero<$int>) {
-                    <UntypedVal as WriteAs<$int>>::write_as(self, value.get())
-                }
-            }
         )*
     };
 }
@@ -244,11 +238,6 @@ macro_rules! impl_from_unsigned_prim {
                 }
             }
 
-            impl From<::core::num::NonZero<$prim>> for UntypedVal {
-                fn from(value: ::core::num::NonZero<$prim>) -> Self {
-                    <_ as From<$prim>>::from(value.get())
-                }
-            }
         )*
     };
 }
@@ -274,11 +263,6 @@ macro_rules! impl_from_signed_prim {
                 }
             }
 
-            impl From<::core::num::NonZero<$prim>> for UntypedVal {
-                fn from(value: ::core::num::NonZero<$prim>) -> Self {
-                    <_ as From<$prim>>::from(value.get())
-                }
-            }
         )*
     };
 }
@@ -341,7 +325,11 @@ impl UntypedError {
     }
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl Error for UntypedError {}
+
+#[cfg(target_arch = "spirv")]
+impl crate::std::error::Error for UntypedError {}
 
 impl Display for UntypedError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -1,5 +1,10 @@
 use crate::{TypedVal, UntypedVal, ValType};
-use core::{error::Error, fmt, fmt::Display, ptr::NonNull};
+use core::{fmt, fmt::Display, ptr::NonNull};
+
+#[cfg(not(target_arch = "spirv"))]
+use core::error::Error;
+#[cfg(target_arch = "spirv")]
+use crate::std::error::Error;
 
 /// An error that may occur upon operating on global variables.
 #[derive(Debug)]
@@ -11,7 +16,11 @@ pub enum GlobalError {
     TypeMismatch,
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl Error for GlobalError {}
+
+#[cfg(target_arch = "spirv")]
+impl crate::std::error::Error for GlobalError {}
 
 impl Display for GlobalError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

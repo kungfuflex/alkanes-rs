@@ -20,12 +20,21 @@ mod hint {
 /// A string interner.
 ///
 /// Efficiently interns strings and distributes symbols.
+#[cfg(not(target_arch = "spirv"))]
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StringInterner {
     string2symbol: BTreeMap<LenOrder, Sym>,
     strings: Vec<Arc<str>>,
 }
 
+#[cfg(target_arch = "spirv")]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct StringInterner {
+    // Stub implementation for SPIR-V
+    _marker: core::marker::PhantomData<()>,
+}
+
+#[cfg(not(target_arch = "spirv"))]
 impl GetOrInternWithHint for StringInterner {
     fn get_or_intern_with_hint<T>(&mut self, string: T, hint: InternHint) -> Sym
     where
@@ -39,6 +48,18 @@ impl GetOrInternWithHint for StringInterner {
     }
 }
 
+#[cfg(target_arch = "spirv")]
+impl GetOrInternWithHint for StringInterner {
+    fn get_or_intern_with_hint<T>(&mut self, _string: T, _hint: InternHint) -> Sym
+    where
+        T: AsRef<str>,
+    {
+        // Stub implementation for SPIR-V
+        Sym::from_usize(0)
+    }
+}
+
+#[cfg(not(target_arch = "spirv"))]
 impl StringInterner {
     /// Creates a new empty [`StringInterner`].
     #[inline]
@@ -132,11 +153,49 @@ impl StringInterner {
     }
 }
 
+#[cfg(target_arch = "spirv")]
+impl StringInterner {
+    /// Creates a new empty [`StringInterner`].
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the number of interned strings.
+    #[inline]
+    pub fn len(&self) -> usize {
+        0
+    }
+
+    /// Returns `true` if the [`StringInterner`] is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        true
+    }
+
+    /// Returns the symbol for the string if interned.
+    #[inline]
+    pub fn get<T>(&self, _string: T) -> Option<Sym>
+    where
+        T: AsRef<str>,
+    {
+        None
+    }
+
+    /// Resolves the symbol to the underlying string.
+    #[inline]
+    pub fn resolve(&self, _symbol: Sym) -> Option<&str> {
+        None
+    }
+}
+
 /// An `Arc<str>` that defines its own (more efficient) [`Ord`].
+#[cfg(not(target_arch = "spirv"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct LenOrder(Arc<str>);
 
+#[cfg(not(target_arch = "spirv"))]
 impl Ord for LenOrder {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
@@ -144,6 +203,7 @@ impl Ord for LenOrder {
     }
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl PartialOrd for LenOrder {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -151,6 +211,7 @@ impl PartialOrd for LenOrder {
     }
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl LenOrder {
     #[inline]
     pub fn as_str(&self) -> &LenOrderStr {
@@ -159,10 +220,12 @@ impl LenOrder {
 }
 
 /// A `str` that defines its own (more efficient) [`Ord`].
+#[cfg(not(target_arch = "spirv"))]
 #[derive(Debug, Eq, PartialEq)]
 #[repr(transparent)]
 pub struct LenOrderStr(str);
 
+#[cfg(not(target_arch = "spirv"))]
 impl<'a> From<&'a str> for &'a LenOrderStr {
     #[inline]
     fn from(value: &'a str) -> Self {
@@ -174,6 +237,7 @@ impl<'a> From<&'a str> for &'a LenOrderStr {
     }
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl Borrow<LenOrderStr> for LenOrder {
     #[inline]
     fn borrow(&self) -> &LenOrderStr {
@@ -181,6 +245,7 @@ impl Borrow<LenOrderStr> for LenOrder {
     }
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl PartialOrd for LenOrderStr {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -188,6 +253,7 @@ impl PartialOrd for LenOrderStr {
     }
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl Ord for LenOrderStr {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {

@@ -1,5 +1,9 @@
 use crate::ValType;
+
+#[cfg(not(target_arch = "spirv"))]
 use alloc::{sync::Arc, vec::Vec};
+#[cfg(target_arch = "spirv")]
+use crate::alloc::{sync::Arc, vec::Vec};
 use core::{fmt, fmt::Display};
 
 /// Errors that can occur upon type checking function signatures.
@@ -11,7 +15,11 @@ pub enum FuncTypeError {
     TooManyFunctionResults,
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl core::error::Error for FuncTypeError {}
+
+#[cfg(target_arch = "spirv")]
+impl crate::std::error::Error for FuncTypeError {}
 
 impl Display for FuncTypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -1,9 +1,13 @@
 use crate::{MemoryError, TableError};
 use core::{
-    error::Error,
     fmt,
     fmt::{Debug, Display},
 };
+
+#[cfg(not(target_arch = "spirv"))]
+use core::error::Error;
+#[cfg(target_arch = "spirv")]
+use crate::std::error::Error;
 
 /// An error either returned by a [`ResourceLimiter`] or back to one.
 #[derive(Debug, Copy, Clone)]
@@ -18,7 +22,11 @@ pub enum LimiterError {
     OutOfFuel { required_fuel: u64 },
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl Error for LimiterError {}
+
+#[cfg(target_arch = "spirv")]
+impl crate::std::error::Error for LimiterError {}
 
 impl Display for LimiterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

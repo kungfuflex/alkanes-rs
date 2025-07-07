@@ -1,5 +1,10 @@
 use crate::LimiterError;
-use core::{error::Error, fmt, fmt::Display};
+use core::{fmt, fmt::Display};
+
+#[cfg(not(target_arch = "spirv"))]
+use core::error::Error;
+#[cfg(target_arch = "spirv")]
+use crate::std::error::Error;
 
 /// An error that may occur upon operating with virtual or linear memory.
 #[derive(Debug, Copy, Clone)]
@@ -24,7 +29,11 @@ pub enum MemoryError {
     OutOfFuel { required_fuel: u64 },
 }
 
+#[cfg(not(target_arch = "spirv"))]
 impl Error for MemoryError {}
+
+#[cfg(target_arch = "spirv")]
+impl crate::std::error::Error for MemoryError {}
 
 impl Display for MemoryError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

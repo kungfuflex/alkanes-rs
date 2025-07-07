@@ -1,31 +1,31 @@
 use crate::arena::ArenaIndex;
-#[cfg(not(target_arch = "spirv"))]
-use alloc::vec::Vec;
+use crate::vec::AlkanesVec;
+use alkanes_alloc::AlkanesAllocator;
 use core::{
     fmt::{self, Debug},
     marker::PhantomData,
     ops::{Index, IndexMut},
 };
 
-/// Stores components for entities backed by a [`Vec`].
-pub struct ComponentVec<Idx, T> {
-    components: Vec<Option<T>>,
+/// Stores components for entities backed by a generic vector.
+pub struct ComponentVec<Idx, T, A: AlkanesAllocator = alkanes_alloc::SpirvLayoutAllocator> {
+    components: AlkanesVec<Option<T>, A>,
     marker: PhantomData<fn() -> Idx>,
 }
 
 /// [`ComponentVec`] does not store `Idx` therefore it is `Send` without its bound.
-unsafe impl<Idx, T> Send for ComponentVec<Idx, T> where T: Send {}
+unsafe impl<Idx, T, A: AlkanesAllocator> Send for ComponentVec<Idx, T, A> where T: Send {}
 
 /// [`ComponentVec`] does not store `Idx` therefore it is `Sync` without its bound.
-unsafe impl<Idx, T> Sync for ComponentVec<Idx, T> where T: Sync {}
+unsafe impl<Idx, T, A: AlkanesAllocator> Sync for ComponentVec<Idx, T, A> where T: Sync {}
 
-impl<Idx, T> Debug for ComponentVec<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> Debug for ComponentVec<Idx, T, A>
 where
     T: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ComponentVec")
-            .field("components", &DebugComponents(&self.components))
+            .field("components", &DebugComponents(self.components.as_slice()))
             .finish()
     }
 }
@@ -50,31 +50,31 @@ where
     }
 }
 
-impl<Idx, T> Default for ComponentVec<Idx, T> {
+impl<Idx, T, A: AlkanesAllocator + Default> Default for ComponentVec<Idx, T, A> {
     #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<Idx, T> PartialEq for ComponentVec<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> PartialEq for ComponentVec<Idx, T, A>
 where
     T: PartialEq,
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.components.eq(&other.components)
+        self.components.as_slice().eq(other.components.as_slice())
     }
 }
 
-impl<Idx, T> Eq for ComponentVec<Idx, T> where T: Eq {}
+impl<Idx, T, A: AlkanesAllocator> Eq for ComponentVec<Idx, T, A> where T: Eq {}
 
-impl<Idx, T> ComponentVec<Idx, T> {
+impl<Idx, T, A: AlkanesAllocator + Default> ComponentVec<Idx, T, A> {
     /// Creates a new empty [`ComponentVec`].
     #[inline]
     pub fn new() -> Self {
         Self {
-            components: Vec::new(),
+            components: AlkanesVec::new(A::default()),
             marker: PhantomData,
         }
     }
@@ -86,7 +86,7 @@ impl<Idx, T> ComponentVec<Idx, T> {
     }
 }
 
-impl<Idx, T> ComponentVec<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> ComponentVec<Idx, T, A>
 where
     Idx: ArenaIndex,
 {
@@ -98,7 +98,9 @@ where
         if index >= self.components.len() {
             // The underlying vector does not have enough capacity
             // and is required to be enlarged.
-            self.components.resize_with(index + 1, || None);
+            while self.components.len() <= index {
+                let _ = self.components.push(None);
+            }
         }
         self.components[index].replace(component)
     }
@@ -132,7 +134,7 @@ where
     }
 }
 
-impl<Idx, T> Index<Idx> for ComponentVec<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> Index<Idx> for ComponentVec<Idx, T, A>
 where
     Idx: ArenaIndex,
 {
@@ -145,7 +147,7 @@ where
     }
 }
 
-impl<Idx, T> IndexMut<Idx> for ComponentVec<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> IndexMut<Idx> for ComponentVec<Idx, T, A>
 where
     Idx: ArenaIndex,
 {

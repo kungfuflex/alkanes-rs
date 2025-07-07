@@ -24,16 +24,9 @@ alkanes-sync = { path = "../alkanes-sync", default-features = false }
 wasmi_core = { workspace = true }
 wasmi_collections = { workspace = true }
 wasmi_ir = { workspace = true }
-wasmparser = { workspace = true, features = ["validate", "features"] }
+wasmparser = { workspace = true, default-features = false }
 wat = { workspace = true, optional = true }
-spin = { version = "0.9", default-features = false, features = [
-    "mutex",
-    "spin_mutex",
-    "rwlock",
-] }
-smallvec = { version = "1.13.1", features = ["union"] }
-multi-stash = { version = "0.2.0" }
-arrayvec = { version = "0.7.4", default-features = false }
+arrayvec = { workspace = true, default-features = false }
 
 [dev-dependencies]
 assert_matches = "1.5"
@@ -44,17 +37,13 @@ default = ["std", "wat"]
 std = [
     "wasmi_core/std",
     "wasmi_collections/std",
-    "wasmparser/std",
-    "spin/std",
     "arrayvec/std",
 ]
 hash-collections = [
     "wasmi_collections/hash-collections",
-    "wasmparser/hash-collections",
 ]
 prefer-btree-collections = [
     "wasmi_collections/prefer-btree-collections",
-    "wasmparser/prefer-btree-collections",
 ]
 wat = ["dep:wat", "std"]
 simd = ["wasmi_core/simd", "wasmi_ir/simd", "wasmparser/simd"]

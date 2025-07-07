@@ -91,18 +91,33 @@ impl Hasher for RandomStateHasher {
 
 // When the `std` feature is active reuse the standard library's implementation
 // of hash state and hasher.
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(target_arch = "spirv")))]
 use std::collections::hash_map::RandomState as RandomStateImpl;
 
 // When the `std` feature is NOT active then rely on `hashbrown`'s `RandomState`
 // which relies on ASLR by default for randomness.
-#[derive(Clone, Debug)]
-#[cfg(not(feature = "std"))]
+#[cfg(any(not(feature = "std"), target_arch = "spirv"))]
 struct RandomStateImpl {
     state: hashbrown::DefaultHashBuilder,
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(any(not(feature = "std"), target_arch = "spirv"))]
+impl Clone for RandomStateImpl {
+    fn clone(&self) -> Self {
+        Self {
+            state: hashbrown::DefaultHashBuilder::default(),
+        }
+    }
+}
+
+#[cfg(any(not(feature = "std"), target_arch = "spirv"))]
+impl core::fmt::Debug for RandomStateImpl {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RandomStateImpl").finish()
+    }
+}
+
+#[cfg(any(not(feature = "std"), target_arch = "spirv"))]
 impl Default for RandomStateImpl {
     fn default() -> Self {
         Self {
@@ -111,7 +126,7 @@ impl Default for RandomStateImpl {
     }
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(any(not(feature = "std"), target_arch = "spirv"))]
 impl BuildHasher for RandomStateImpl {
     type Hasher = <hashbrown::DefaultHashBuilder as BuildHasher>::Hasher;
 

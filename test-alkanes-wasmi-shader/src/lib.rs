@@ -7,7 +7,8 @@
 
 use spirv_std::spirv;
 use alkanes_alloc::{DefaultAllocator, AlkanesAllocator};
-use alkanes_sync::{DefaultMutex, DefaultArc, DefaultOnceCell, AlkanesMutex, AlkanesArc, AlkanesOnceCell};
+use alkanes_sync::{DefaultMutex, DefaultArc, DefaultOnceCell, DefaultRwLock, AlkanesMutex, AlkanesArc, AlkanesOnceCell, AlkanesRwLock};
+use wasmi::{Engine, Config};
 
 #[spirv(compute(threads(64)))]
 pub fn main_cs() {
@@ -16,6 +17,12 @@ pub fn main_cs() {
     
     // Test synchronization primitives
     test_sync();
+    
+    // Test read-write locks
+    test_rwlock();
+    
+    // Test alkanes-wasmi
+    test_wasmi();
 }
 
 fn test_allocator() {
@@ -41,6 +48,28 @@ fn test_sync() {
     // Test once cell with compile-time initialization for SPIR-V
     let cell = DefaultOnceCell::with_value(42i32);
     let _ = cell;
+}
+
+fn test_rwlock() {
+    // Test read-write lock
+    let rwlock = DefaultRwLock::new(42i32);
+    
+    // Test read access
+    let read_guard = rwlock.read();
+    let _value = *read_guard;
+    drop(read_guard);
+    
+    // Test write access
+    let mut write_guard = rwlock.write();
+    *write_guard = 84;
+    let _new_value = *write_guard;
+    drop(write_guard);
+}
+
+fn test_wasmi() {
+    // Test basic wasmi engine creation
+    let config = Config::default();
+    let _engine = Engine::new(&config);
 }
 
 // Entry point for non-SPIR-V targets (for testing compilation)

@@ -1,11 +1,19 @@
 use crate::UntypedVal;
+
+#[cfg(not(target_arch = "spirv"))]
 use alloc::sync::Arc;
+#[cfg(target_arch = "spirv")]
+use crate::alloc::sync::Arc;
 use core::{
-    error::Error,
     fmt::{self, Debug},
     mem,
     num::NonZeroU64,
 };
+
+#[cfg(not(target_arch = "spirv"))]
+use core::error::Error;
+#[cfg(target_arch = "spirv")]
+use crate::std::error::Error;
 
 /// Fuel costs for Wasmi IR instructions.
 pub trait FuelCosts {

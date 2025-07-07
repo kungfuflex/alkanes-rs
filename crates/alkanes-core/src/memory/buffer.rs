@@ -1,5 +1,9 @@
 use crate::memory::MemoryError;
+
+#[cfg(not(target_arch = "spirv"))]
 use alloc::{slice, vec::Vec};
+#[cfg(target_arch = "spirv")]
+use crate::alloc::{slice, vec::Vec};
 use core::{iter, mem::ManuallyDrop};
 
 /// A byte buffer implementation.
@@ -78,7 +82,10 @@ impl ByteBuffer {
         if vec.try_reserve(size).is_err() {
             return Err(MemoryError::OutOfSystemMemory);
         };
+        #[cfg(not(target_arch = "spirv"))]
         vec.extend(iter::repeat_n(0x00_u8, size));
+        #[cfg(target_arch = "spirv")]
+        vec.extend((0..size).map(|_| 0x00_u8));
         let (ptr, len, capacity) = vec_into_raw_parts(vec);
         Ok(Self {
             ptr,

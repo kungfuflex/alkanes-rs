@@ -9,8 +9,13 @@ pub(crate) use self::inner::{do_alloc, Allocator, Global};
 #[cfg(feature = "nightly")]
 mod inner {
     #[cfg(test)]
+    #[cfg(not(target_arch = "spirv"))]
     pub use crate::alloc::alloc::AllocError;
+    #[cfg(not(target_arch = "spirv"))]
     use crate::alloc::alloc::Layout;
+    #[cfg(target_arch = "spirv")]
+    use core::alloc::Layout;
+    #[cfg(not(target_arch = "spirv"))]
     pub use crate::alloc::alloc::{Allocator, Global};
     use core::ptr::NonNull;
 
@@ -31,7 +36,10 @@ mod inner {
 // `core::alloc::Allocator`.
 #[cfg(all(not(feature = "nightly"), feature = "allocator-api2"))]
 mod inner {
+    #[cfg(not(target_arch = "spirv"))]
     use crate::alloc::alloc::Layout;
+    #[cfg(target_arch = "spirv")]
+    use core::alloc::Layout;
     #[cfg(test)]
     pub use allocator_api2::alloc::AllocError;
     pub use allocator_api2::alloc::{Allocator, Global};
@@ -56,7 +64,10 @@ mod inner {
 // or `nightly` without disturbing users that don't want to use it.
 #[cfg(not(any(feature = "nightly", feature = "allocator-api2")))]
 mod inner {
+    #[cfg(not(target_arch = "spirv"))]
     use crate::alloc::alloc::{alloc, dealloc, Layout};
+    #[cfg(target_arch = "spirv")]
+    use core::alloc::Layout;
     use core::ptr::NonNull;
 
     #[allow(clippy::missing_safety_doc)] // not exposed outside of this crate
@@ -71,11 +82,19 @@ mod inner {
     unsafe impl Allocator for Global {
         #[inline]
         fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, ()> {
+            #[cfg(not(target_arch = "spirv"))]
             unsafe { NonNull::new(alloc(layout)).ok_or(()) }
+            #[cfg(target_arch = "spirv")]
+            Err(()) // No allocation on SPIR-V
         }
         #[inline]
         unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            #[cfg(not(target_arch = "spirv"))]
             dealloc(ptr.as_ptr(), layout);
+            #[cfg(target_arch = "spirv")]
+            {
+                let _ = (ptr, layout); // Suppress unused warnings
+            }
         }
     }
 

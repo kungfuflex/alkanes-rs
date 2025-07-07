@@ -34,13 +34,25 @@ mod detail {
     #[cfg(not(target_arch = "spirv"))]
     use alloc::collections::btree_set;
 
+    #[cfg(not(target_arch = "spirv"))]
     pub type SetImpl<T> = btree_set::BTreeSet<T>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type IterImpl<'a, T> = btree_set::Iter<'a, T>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type IntoIterImpl<T> = btree_set::IntoIter<T>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type DifferenceImpl<'a, T> = btree_set::Difference<'a, T>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type IntersectionImpl<'a, T> = btree_set::Intersection<'a, T>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type SymmetricDifferenceImpl<'a, T> = btree_set::SymmetricDifference<'a, T>;
+    #[cfg(not(target_arch = "spirv"))]
     pub type UnionImpl<'a, T> = btree_set::Union<'a, T>;
+
+    // For SPIR-V target, we need to provide stub implementations
+    // Since we can't use BTreeSet, we'll need to disable this functionality
+    #[cfg(target_arch = "spirv")]
+    compile_error!("BTreeSet collections are not supported on SPIR-V target. Use hash-collections feature instead.");
 }
 
 /// A default set of values.
