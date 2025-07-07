@@ -1,21 +1,20 @@
 
-use std::cmp;
+use std::cmp::{self, Ord, PartialOrd, Ordering};
 use std::iter;
-use std::mem;
+use std::mem::{self, ManuallyDrop, MaybeUninit};
 use std::ops::{Bound, Deref, DerefMut, RangeBounds};
+use std::option::Option::{self, Some, None};
 use std::ptr;
+use std::result::Result::{self, Ok, Err};
 use std::slice;
 
 // extra traits
 use std::borrow::{Borrow, BorrowMut};
 use std::hash::{Hash, Hasher};
-use std::fmt;
+use std::fmt::{self, Debug, Formatter, Result as FmtResult};
 
 #[cfg(feature="std")]
 use std::io;
-
-use std::mem::ManuallyDrop;
-use std::mem::MaybeUninit;
 
 #[cfg(feature="serde")]
 use serde::{Serialize, Deserialize, Serializer, Deserializer};

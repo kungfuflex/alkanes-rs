@@ -64,7 +64,8 @@ impl AlkanesAllocator for SpirvLayoutAllocator {
     
     fn allocate(&self, size: usize, align: usize) -> Result<*mut u8, Self::Error> {
         if size == 0 {
-            return Err(AllocError::InvalidSize);
+            // SPIR-V compatibility: Avoid Result enum casting by panicking instead
+            panic!("Invalid allocation size: 0");
         }
         
         // For SPIR-V, we use a compile-time approach where allocation
@@ -72,9 +73,9 @@ impl AlkanesAllocator for SpirvLayoutAllocator {
         // This avoids runtime heap management that SPIR-V doesn't support.
         
         // In a real implementation, this would use thread-local storage
-        // or shader-parameter-based memory regions. For now, we return
-        // an error to indicate this needs a different approach.
-        Err(AllocError::OutOfMemory)
+        // or shader-parameter-based memory regions. For now, we panic
+        // to avoid Result enum casting issues in SPIR-V.
+        panic!("SPIR-V allocation not implemented - use compile-time memory layout");
     }
     
     unsafe fn deallocate(&self, _ptr: *mut u8, _size: usize, _align: usize) {
@@ -91,7 +92,8 @@ impl AlkanesAllocator for SpirvLayoutAllocator {
     ) -> Result<*mut u8, Self::Error> {
         // Reallocation not supported in compile-time layout approach
         // Collections should pre-allocate or use different strategies
-        Err(AllocError::OutOfMemory)
+        // SPIR-V compatibility: Avoid Result enum casting by panicking instead
+        panic!("SPIR-V reallocation not supported - use compile-time memory layout");
     }
 }
 

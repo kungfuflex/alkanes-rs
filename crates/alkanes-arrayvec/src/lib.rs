@@ -25,7 +25,11 @@
 #[cfg(feature="serde")]
 extern crate serde;
 
-#[cfg(not(feature="std"))]
+// SPIR-V compatibility: Always use core for SPIR-V target
+#[cfg(target_arch = "spirv")]
+extern crate core as std;
+
+#[cfg(all(not(feature="std"), not(target_arch = "spirv")))]
 extern crate core as std;
 
 #[cfg(not(target_pointer_width = "16"))]
@@ -57,14 +61,29 @@ macro_rules! assert_capacity_limit_const {
     }
 }
 
+// SPIR-V compatibility: Use stub implementations for SPIR-V target
+#[cfg(target_arch = "spirv")]
+mod spirv_stubs;
+
+#[cfg(not(target_arch = "spirv"))]
 mod arrayvec_impl;
+#[cfg(not(target_arch = "spirv"))]
 mod arrayvec;
+#[cfg(not(target_arch = "spirv"))]
 mod array_string;
+#[cfg(not(target_arch = "spirv"))]
 mod char;
+#[cfg(not(target_arch = "spirv"))]
 mod errors;
+#[cfg(not(target_arch = "spirv"))]
 mod utils;
 
-pub use crate::array_string::ArrayString;
-pub use crate::errors::CapacityError;
+#[cfg(target_arch = "spirv")]
+pub use crate::spirv_stubs::{ArrayString, ArrayVec, IntoIter, Drain, CapacityError};
 
+#[cfg(not(target_arch = "spirv"))]
+pub use crate::array_string::ArrayString;
+#[cfg(not(target_arch = "spirv"))]
+pub use crate::errors::CapacityError;
+#[cfg(not(target_arch = "spirv"))]
 pub use crate::arrayvec::{ArrayVec, IntoIter, Drain};

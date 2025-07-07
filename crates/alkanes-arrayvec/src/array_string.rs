@@ -1,17 +1,17 @@
 use std::borrow::{Borrow, BorrowMut};
-use std::cmp;
+use std::cmp::{self, Ord, PartialOrd, Ordering};
 use std::convert::TryFrom;
-use std::fmt;
+use std::fmt::{self, Result as FmtResult, Formatter};
 use std::hash::{Hash, Hasher};
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
+use std::option::Option::{self, Some, None};
+use std::result::Result::{self, Ok, Err};
 #[cfg(feature="std")]
 use std::path::Path;
 use std::ptr;
 use std::slice;
-use std::str;
-use std::str::FromStr;
-use std::str::Utf8Error;
+use std::str::{self, FromStr, Utf8Error};
 
 use crate::CapacityError;
 use crate::LenUint;

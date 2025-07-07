@@ -1,0 +1,80 @@
+name: Rust CI Tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+
+  pull_request:
+
+defaults:
+  run:
+    working-directory: leb128fmt-tests
+
+jobs:
+  test:
+    name: Test
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+        rust:
+          - stable
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Rust Version
+        run: rustc --version
+      - name: Run cargo test (--all-features)
+        run: cargo test --all-features
+  rustfmt:
+    name: Format
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+        rust:
+          - stable
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt
+      - name: Rust Version
+        run: rustc --version
+      - run: cargo fmt --all -- --check
+  clippy:
+    name: Clippy
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+        rust:
+          - stable
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy
+      - name: Run cargo clippy
+        run: cargo clippy --all-targets --all-features

@@ -1,0 +1,24 @@
+[package]
+name = "test-alkanes-deps-simple-shader"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+spirv-std = { git = "https://github.com/EmbarkStudios/rust-gpu", rev = "7e54ed23" }
+
+# Test our generified alkanes dependencies (working ones only)
+alkanes-alloc = { path = "../crates/alkanes-alloc", default-features = false }
+bumpalo = { path = "../crates/alkanes-bumpalo", package = "bumpalo", default-features = false, features = ["spirv-only"] }
+leb128fmt = { path = "../crates/alkanes-leb128fmt", package = "leb128fmt", default-features = false }
+arrayvec = { path = "../crates/alkanes-arrayvec", package = "arrayvec", default-features = false }
+memchr = { path = "../crates/alkanes-memchr", package = "memchr", default-features = false }
+
+[profile.dev]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+debug = false

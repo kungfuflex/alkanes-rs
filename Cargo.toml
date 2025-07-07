@@ -15,7 +15,7 @@ name = "test-spirv-minimal"
 path = "test-spirv-minimal.rs"
 
 [workspace]
-members = [".", "crates/*", "test-alkanes-alloc-shader", "test-alkanes-sync-shader", "test-alkanes-wasmi-shader"]
+members = [".", "crates/*", "test-alkanes-alloc-shader", "test-alkanes-sync-shader", "test-alkanes-wasmi-shader", "test-alkanes-deps-shader", "test-alkanes-deps-simple-shader"]
 
 [workspace.package]
 version = "0.5.2"

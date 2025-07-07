@@ -1,0 +1,5 @@
+[advisories]
+
+[output]
+deny = ["warnings", "yanked", "unsound", "unmaintained"]
+quiet = false

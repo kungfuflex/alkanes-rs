@@ -779,12 +779,21 @@ impl<'a> BinaryReader<'a> {
     /// Returns whether there is an `end` opcode followed by eof remaining in
     /// this reader.
     pub fn is_end_then_eof(&self) -> bool {
-        self.remaining_buffer() == &[0x0b]
+        let remaining = self.remaining_buffer();
+        // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+        remaining.len() == 1 && remaining[0] == 0x0b
     }
 
     pub(crate) fn read_header_version(&mut self) -> Result<u32> {
         let magic_number = self.read_bytes(4)?;
-        if magic_number != WASM_MAGIC_NUMBER {
+        // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+        let magic_matches = magic_number.len() == 4
+            && magic_number[0] == WASM_MAGIC_NUMBER[0]
+            && magic_number[1] == WASM_MAGIC_NUMBER[1]
+            && magic_number[2] == WASM_MAGIC_NUMBER[2]
+            && magic_number[3] == WASM_MAGIC_NUMBER[3];
+        
+        if !magic_matches {
             return Err(BinaryReaderError::new(
                 format!(
                     "magic header not detected: bad magic number - expected={WASM_MAGIC_NUMBER:#x?} actual={magic_number:#x?}"

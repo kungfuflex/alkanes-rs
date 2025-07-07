@@ -1,0 +1,9 @@
+[package]
+name = "leb128fmt"
+version = "0.1.0"
+edition = "2021"
+description = "SPIR-V compatible LEB128 formatting utilities"
+license = "MIT"
+
+[dependencies]
+# No dependencies for SPIR-V compatibility

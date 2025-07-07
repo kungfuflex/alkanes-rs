@@ -3754,8 +3754,42 @@ impl<'a> SubtypeCx<'a> {
                     Flags(_) => "flags",
                     _ => "enum",
                 };
-                if a.len() == b.len() && a.iter().eq(b.iter()) {
-                    Ok(())
+                if a.len() == b.len() {
+                    // Manual element-by-element comparison to avoid raw_eq intrinsic
+                    let mut a_iter = a.iter();
+                    let mut b_iter = b.iter();
+                    let mut all_equal = true;
+                    loop {
+                        match (a_iter.next(), b_iter.next()) {
+                            (Some(a_elem), Some(b_elem)) => {
+                                if a_elem != b_elem {
+                                    all_equal = false;
+                                    break;
+                                }
+                            }
+                            (None, None) => break,
+                            _ => {
+                                all_equal = false;
+                                break;
+                            }
+                        }
+                    }
+                    if all_equal {
+                        Ok(())
+                    } else {
+                        bail!(
+                            offset,
+                            "mismatch in {} elements",
+                            desc
+                        )
+                    }
+                } else {
+                    bail!(
+                        offset,
+                        "mismatch in {} elements",
+                        desc
+                    )
+                }
                 } else {
                     bail!(offset, "mismatch in {desc} elements")
                 }
