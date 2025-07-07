@@ -102,6 +102,13 @@ mod alloc {
                 panic!("Box<[T]>::from array not supported on SPIR-V")
             }
         }
+        
+        // From implementation for trait object conversion
+        impl<T: crate::host_error::HostError> From<Box<T>> for Box<dyn crate::host_error::HostError> {
+            fn from(_boxed: Box<T>) -> Self {
+                panic!("Box<T> to Box<dyn HostError> conversion not supported on SPIR-V")
+            }
+        }
     }
     pub mod sync {
         use core::marker::PhantomData;

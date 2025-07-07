@@ -142,6 +142,7 @@ impl Trap {
     /// Consumes `self` to downcast the [`Trap`] into the `T: HostError` if possible.
     ///
     /// Returns `None` otherwise.
+    #[cfg(not(target_arch = "spirv"))]
     #[inline]
     pub fn downcast<T>(self) -> Option<T>
     where
@@ -151,6 +152,18 @@ impl Trap {
             .into_host()
             .and_then(|error| error.downcast().ok())
             .map(|boxed| *boxed)
+    }
+
+    /// Consumes `self` to downcast the [`Trap`] into the `T: HostError` if possible.
+    ///
+    /// Returns `None` otherwise.
+    #[cfg(target_arch = "spirv")]
+    #[inline]
+    pub fn downcast<T>(self) -> Option<T>
+    where
+        T: HostError,
+    {
+        panic!("Trap::downcast not supported on SPIR-V")
     }
 
     /// Creates a new `Trap` representing an explicit program exit with a classic `i32`
@@ -189,8 +202,9 @@ where
     #[inline]
     #[cold] // see Trap::new
     fn from(host_error: E) -> Self {
-        let boxed: Box<dyn HostError> = Box::new(host_error);
-        Self::with_reason(TrapReason::Host(boxed))
+        let boxed = Box::new(host_error);
+        let trait_object: Box<dyn HostError> = boxed.into();
+        Self::with_reason(TrapReason::Host(trait_object))
     }
 }
 
