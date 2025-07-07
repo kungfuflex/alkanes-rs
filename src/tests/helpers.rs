@@ -143,13 +143,34 @@ pub fn init_with_cellpack_pairs(cellpack_pairs: Vec<BinaryAndCellpack>) -> Block
     init_with_multiple_cellpacks_with_tx(binaries, cellpacks)
 }
 
+/// Helper function that accepts a vector of BinaryAndCellpack structs and calls init_with_multiple_cellpacks_with_tx
+pub fn init_with_cellpack_pairs_w_input(
+    cellpack_pairs: Vec<BinaryAndCellpack>,
+    previous_outpoint: OutPoint,
+) -> Block {
+    let (binaries, cellpacks): (Vec<Vec<u8>>, Vec<Cellpack>) = cellpack_pairs
+        .into_iter()
+        .map(|pair| (pair.binary, pair.cellpack))
+        .unzip();
+
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, Some(previous_outpoint))
+}
+
 pub fn init_with_multiple_cellpacks_with_tx(
     binaries: Vec<Vec<u8>>,
     cellpacks: Vec<Cellpack>,
 ) -> Block {
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, None)
+}
+
+pub fn init_with_multiple_cellpacks_with_tx_w_input(
+    binaries: Vec<Vec<u8>>,
+    cellpacks: Vec<Cellpack>,
+    _previous_out: Option<OutPoint>,
+) -> Block {
     let block_height = 840000;
     let mut test_block = create_block_with_coinbase_tx(block_height);
-    let mut previous_out: Option<OutPoint> = None;
+    let mut previous_out: Option<OutPoint> = _previous_out;
     let mut txs = binaries
         .into_iter()
         .zip(cellpacks.into_iter())
