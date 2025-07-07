@@ -48,11 +48,89 @@ mod detail {
     pub type SymmetricDifferenceImpl<'a, T> = btree_set::SymmetricDifference<'a, T>;
     #[cfg(not(target_arch = "spirv"))]
     pub type UnionImpl<'a, T> = btree_set::Union<'a, T>;
+    
+    // SPIR-V stub implementations
+    #[cfg(target_arch = "spirv")]
+    pub type IterImpl<'a, T> = core::iter::Empty<&'a T>;
+    #[cfg(target_arch = "spirv")]
+    pub type IntoIterImpl<T> = core::iter::Empty<T>;
+    #[cfg(target_arch = "spirv")]
+    pub type DifferenceImpl<'a, T> = core::iter::Empty<&'a T>;
+    #[cfg(target_arch = "spirv")]
+    pub type IntersectionImpl<'a, T> = core::iter::Empty<&'a T>;
+    #[cfg(target_arch = "spirv")]
+    pub type SymmetricDifferenceImpl<'a, T> = core::iter::Empty<&'a T>;
+    #[cfg(target_arch = "spirv")]
+    pub type UnionImpl<'a, T> = core::iter::Empty<&'a T>;
 
     // For SPIR-V target, we need to provide stub implementations
-    // Since we can't use BTreeSet, we'll need to disable this functionality
     #[cfg(target_arch = "spirv")]
-    compile_error!("BTreeSet collections are not supported on SPIR-V target. Use hash-collections feature instead.");
+    #[derive(Debug, Clone)]
+    pub struct SpirvSetStub<T> {
+        _phantom: core::marker::PhantomData<T>,
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<T> SpirvSetStub<T> {
+        pub fn new() -> Self { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn default() -> Self { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn clear(&mut self) { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn retain<F>(&mut self, _f: F) { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn len(&self) -> usize { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn is_empty(&self) -> bool { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn iter(&self) -> core::iter::Empty<&T> { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn contains<Q: ?Sized>(&self, _value: &Q) -> bool { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn get<Q: ?Sized>(&self, _value: &Q) -> Option<&T> { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn insert(&mut self, _value: T) -> bool { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn remove<Q: ?Sized>(&mut self, _value: &Q) -> bool { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn take<Q: ?Sized>(&mut self, _value: &Q) -> Option<T> { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn replace(&mut self, _value: T) -> Option<T> { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn is_disjoint(&self, _other: &Self) -> bool { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn is_subset(&self, _other: &Self) -> bool { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn is_superset(&self, _other: &Self) -> bool { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn difference(&self, _other: &Self) -> core::iter::Empty<&T> { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn symmetric_difference(&self, _other: &Self) -> core::iter::Empty<&T> { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn intersection(&self, _other: &Self) -> core::iter::Empty<&T> { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn union(&self, _other: &Self) -> core::iter::Empty<&T> { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn into_iter(self) -> core::iter::Empty<T> { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn extend<I>(&mut self, _iter: I) { panic!("BTreeSet not supported on SPIR-V") }
+        pub fn from_iter<I>(_iter: I) -> Self { panic!("BTreeSet not supported on SPIR-V") }
+    }
+
+    #[cfg(target_arch = "spirv")]
+    impl<T> PartialEq for SpirvSetStub<T> {
+        fn eq(&self, _other: &Self) -> bool { panic!("BTreeSet not supported on SPIR-V") }
+    }
+
+    #[cfg(target_arch = "spirv")]
+    use core::ops::{BitAnd, BitOr, BitXor, Sub};
+    
+    #[cfg(target_arch = "spirv")]
+    impl<T> BitAnd for &SpirvSetStub<T> {
+        type Output = SpirvSetStub<T>;
+        fn bitand(self, _rhs: Self) -> Self::Output { panic!("BTreeSet not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<T> BitOr for &SpirvSetStub<T> {
+        type Output = SpirvSetStub<T>;
+        fn bitor(self, _rhs: Self) -> Self::Output { panic!("BTreeSet not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<T> BitXor for &SpirvSetStub<T> {
+        type Output = SpirvSetStub<T>;
+        fn bitxor(self, _rhs: Self) -> Self::Output { panic!("BTreeSet not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<T> Sub for &SpirvSetStub<T> {
+        type Output = SpirvSetStub<T>;
+        fn sub(self, _rhs: Self) -> Self::Output { panic!("BTreeSet not supported on SPIR-V") }
+    }
+
+    #[cfg(target_arch = "spirv")]
+    pub type SetImpl<T> = SpirvSetStub<T>;
 }
 
 /// A default set of values.

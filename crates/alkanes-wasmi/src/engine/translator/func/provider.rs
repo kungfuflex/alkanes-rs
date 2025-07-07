@@ -4,7 +4,7 @@ use crate::{
     ir::{AnyConst32, Reg},
     Error,
 };
-use alloc::vec::{Drain, Vec};
+use crate::prelude::{Drain, Vec};
 
 #[cfg(doc)]
 use super::Instruction;

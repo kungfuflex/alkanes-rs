@@ -41,7 +41,9 @@ use crate::{
     module::ModuleHeader,
     Error,
 };
-use alloc::vec::{Drain, Vec};
+
+use crate::prelude::{Vec, Drain};
+
 use core::mem;
 
 /// Encodes Wasmi bytecode instructions to an [`Instruction`] stream.

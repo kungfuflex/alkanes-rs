@@ -5,7 +5,10 @@ use crate::{
     ExternRef,
     FuncRef,
 };
-use core::num::NonZero;
+use core::num::NonZeroU32 as NonZeroU32Type;
+use core::num::NonZeroU64 as NonZeroU64Type;
+use core::num::NonZeroI32 as NonZeroI32Type;
+use core::num::NonZeroI64 as NonZeroI64Type;
 
 macro_rules! impl_typed_for {
     ( $( $ty:ident ),* $(,)? ) => {
@@ -61,24 +64,53 @@ pub trait WasmInteger:
     fn is_zero(self) -> bool;
 }
 
-macro_rules! impl_wasm_integer {
-    ($($ty:ty),*) => {
-        $(
-            impl WasmInteger for $ty {
-                type NonZero = NonZero<Self>;
+impl WasmInteger for i32 {
+    type NonZero = NonZeroI32Type;
 
-                fn non_zero(self) -> Option<Self::NonZero> {
-                    Self::NonZero::new(self)
-                }
+    fn non_zero(self) -> Option<Self::NonZero> {
+        NonZeroI32Type::new(self)
+    }
 
-                fn is_zero(self) -> bool {
-                    self == 0
-                }
-            }
-        )*
-    };
+    fn is_zero(self) -> bool {
+        self == 0
+    }
 }
-impl_wasm_integer!(i32, u32, i64, u64);
+
+impl WasmInteger for u32 {
+    type NonZero = NonZeroU32Type;
+
+    fn non_zero(self) -> Option<Self::NonZero> {
+        NonZeroU32Type::new(self)
+    }
+
+    fn is_zero(self) -> bool {
+        self == 0
+    }
+}
+
+impl WasmInteger for i64 {
+    type NonZero = NonZeroI64Type;
+
+    fn non_zero(self) -> Option<Self::NonZero> {
+        NonZeroI64Type::new(self)
+    }
+
+    fn is_zero(self) -> bool {
+        self == 0
+    }
+}
+
+impl WasmInteger for u64 {
+    type NonZero = NonZeroU64Type;
+
+    fn non_zero(self) -> Option<Self::NonZero> {
+        NonZeroU64Type::new(self)
+    }
+
+    fn is_zero(self) -> bool {
+        self == 0
+    }
+}
 
 /// A WebAssembly float. Either `f32` or `f64`.
 ///

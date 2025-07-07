@@ -58,9 +58,271 @@ mod detail {
     pub type IntoValuesImpl<K, V> = btree_map::IntoValues<K, V>;
 
     // For SPIR-V target, we need to provide stub implementations
-    // Since we can't use BTreeMap, we'll need to disable this functionality
     #[cfg(target_arch = "spirv")]
-    compile_error!("BTreeMap collections are not supported on SPIR-V target. Use hash-collections feature instead.");
+    #[derive(Debug, Clone)]
+    pub struct SpirvMapStub<K, V> {
+        _phantom: core::marker::PhantomData<(K, V)>,
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<K, V> SpirvMapStub<K, V> {
+        pub fn new() -> Self { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn default() -> Self { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn clear(&mut self) { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn len(&self) -> usize { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn is_empty(&self) -> bool { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn iter(&self) -> SpirvIterStub<K, V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn iter_mut(&mut self) -> SpirvIterMutStub<K, V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn keys(&self) -> SpirvKeysStub<K, V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn values(&self) -> SpirvValuesStub<K, V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn values_mut(&mut self) -> SpirvValuesMutStub<K, V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn into_keys(self) -> SpirvIntoKeysStub<K, V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn into_values(self) -> SpirvIntoValuesStub<K, V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn into_iter(self) -> SpirvIntoIterStub<K, V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn contains_key<Q: ?Sized>(&self, _key: &Q) -> bool { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn get<Q: ?Sized>(&self, _key: &Q) -> Option<&V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn get_key_value<Q: ?Sized>(&self, _key: &Q) -> Option<(&K, &V)> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn get_mut<Q: ?Sized>(&mut self, _key: &Q) -> Option<&mut V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn insert(&mut self, _key: K, _value: V) -> Option<V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn remove<Q: ?Sized>(&mut self, _key: &Q) -> Option<V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn remove_entry<Q: ?Sized>(&mut self, _key: &Q) -> Option<(K, V)> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn entry(&mut self, _key: K) -> SpirvEntryStub<K, V> { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn retain<F>(&mut self, _f: F) { panic!("BTreeMap not supported on SPIR-V") }
+        pub fn extend<I>(&mut self, _iter: I) { panic!("BTreeMap not supported on SPIR-V") }
+    }
+
+    #[cfg(target_arch = "spirv")]
+    #[derive(Debug, Clone)]
+    pub struct SpirvIterStub<'a, K, V> { _phantom: core::marker::PhantomData<(&'a K, &'a V)> }
+    #[cfg(target_arch = "spirv")]
+    #[derive(Debug)]
+    pub struct SpirvIterMutStub<'a, K, V> { _phantom: core::marker::PhantomData<(&'a K, &'a mut V)> }
+    #[cfg(target_arch = "spirv")]
+    #[derive(Debug)]
+    pub struct SpirvIntoIterStub<K, V> { _phantom: core::marker::PhantomData<(K, V)> }
+    #[cfg(target_arch = "spirv")]
+    #[derive(Debug, Clone)]
+    pub struct SpirvKeysStub<'a, K, V> { _phantom: core::marker::PhantomData<(&'a K, V)> }
+    #[cfg(target_arch = "spirv")]
+    #[derive(Debug, Clone)]
+    pub struct SpirvValuesStub<'a, K, V> { _phantom: core::marker::PhantomData<(K, &'a V)> }
+    #[cfg(target_arch = "spirv")]
+    #[derive(Debug)]
+    pub struct SpirvValuesMutStub<'a, K, V> { _phantom: core::marker::PhantomData<(K, &'a mut V)> }
+    #[cfg(target_arch = "spirv")]
+    #[derive(Debug)]
+    pub struct SpirvIntoKeysStub<K, V> { _phantom: core::marker::PhantomData<(K, V)> }
+    #[cfg(target_arch = "spirv")]
+    #[derive(Debug)]
+    pub struct SpirvIntoValuesStub<K, V> { _phantom: core::marker::PhantomData<(K, V)> }
+    #[cfg(target_arch = "spirv")]
+    pub enum SpirvEntryStub<'a, K, V> {
+        Occupied(SpirvOccupiedEntryStub<'a, K, V>),
+        Vacant(SpirvVacantEntryStub<'a, K, V>),
+    }
+    #[cfg(target_arch = "spirv")]
+    pub struct SpirvOccupiedEntryStub<'a, K, V> { _phantom: core::marker::PhantomData<(&'a K, &'a V)> }
+    #[cfg(target_arch = "spirv")]
+    pub struct SpirvVacantEntryStub<'a, K, V> { _phantom: core::marker::PhantomData<(&'a K, &'a V)> }
+
+    // Add missing methods for SPIR-V stub types
+    #[cfg(target_arch = "spirv")]
+    impl<K, V> PartialEq for SpirvMapStub<K, V> {
+        fn eq(&self, _other: &Self) -> bool {
+            panic!("BTreeMap PartialEq not supported on SPIR-V")
+        }
+    }
+
+    #[cfg(target_arch = "spirv")]
+    impl<K, V, Q: ?Sized> core::ops::Index<&Q> for SpirvMapStub<K, V> {
+        type Output = V;
+        fn index(&self, _key: &Q) -> &V {
+            panic!("BTreeMap indexing not supported on SPIR-V")
+        }
+    }
+
+    #[cfg(target_arch = "spirv")]
+    impl<K, V> core::iter::FromIterator<(K, V)> for SpirvMapStub<K, V> {
+        fn from_iter<I: IntoIterator<Item = (K, V)>>(_iter: I) -> Self {
+            panic!("BTreeMap from_iter not supported on SPIR-V")
+        }
+    }
+
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> SpirvOccupiedEntryStub<'a, K, V> {
+        pub fn key(&self) -> &K {
+            panic!("OccupiedEntry::key not supported on SPIR-V")
+        }
+        
+        pub fn get(&self) -> &V {
+            panic!("OccupiedEntry::get not supported on SPIR-V")
+        }
+        
+        pub fn get_mut(&mut self) -> &mut V {
+            panic!("OccupiedEntry::get_mut not supported on SPIR-V")
+        }
+        
+        pub fn insert(&mut self, _value: V) -> V {
+            panic!("OccupiedEntry::insert not supported on SPIR-V")
+        }
+        
+        pub fn into_mut(self) -> &'a mut V {
+            panic!("OccupiedEntry::into_mut not supported on SPIR-V")
+        }
+        
+        pub fn remove_entry(self) -> (K, V) {
+            panic!("OccupiedEntry::remove_entry not supported on SPIR-V")
+        }
+        
+        pub fn remove(self) -> V {
+            panic!("OccupiedEntry::remove not supported on SPIR-V")
+        }
+        
+        pub fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            panic!("OccupiedEntry Debug not supported on SPIR-V")
+        }
+    }
+
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> SpirvVacantEntryStub<'a, K, V> {
+        pub fn key(&self) -> &K {
+            panic!("VacantEntry::key not supported on SPIR-V")
+        }
+        
+        pub fn into_key(self) -> K {
+            panic!("VacantEntry::into_key not supported on SPIR-V")
+        }
+        
+        pub fn insert(self, _value: V) -> &'a mut V {
+            panic!("VacantEntry::insert not supported on SPIR-V")
+        }
+        
+        pub fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            panic!("VacantEntry Debug not supported on SPIR-V")
+        }
+    }
+
+    // Iterator implementations for SPIR-V stubs
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> Iterator for SpirvIterStub<'a, K, V> {
+        type Item = (&'a K, &'a V);
+        fn next(&mut self) -> Option<Self::Item> { panic!("BTreeMap not supported on SPIR-V") }
+        fn size_hint(&self) -> (usize, Option<usize>) { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> ExactSizeIterator for SpirvIterStub<'a, K, V> {
+        fn len(&self) -> usize { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> Iterator for SpirvIterMutStub<'a, K, V> {
+        type Item = (&'a K, &'a mut V);
+        fn next(&mut self) -> Option<Self::Item> { panic!("BTreeMap not supported on SPIR-V") }
+        fn size_hint(&self) -> (usize, Option<usize>) { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> ExactSizeIterator for SpirvIterMutStub<'a, K, V> {
+        fn len(&self) -> usize { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<K, V> Iterator for SpirvIntoIterStub<K, V> {
+        type Item = (K, V);
+        fn next(&mut self) -> Option<Self::Item> { panic!("BTreeMap not supported on SPIR-V") }
+        fn size_hint(&self) -> (usize, Option<usize>) { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<K, V> ExactSizeIterator for SpirvIntoIterStub<K, V> {
+        fn len(&self) -> usize { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> Iterator for SpirvKeysStub<'a, K, V> {
+        type Item = &'a K;
+        fn next(&mut self) -> Option<Self::Item> { panic!("BTreeMap not supported on SPIR-V") }
+        fn size_hint(&self) -> (usize, Option<usize>) { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> ExactSizeIterator for SpirvKeysStub<'a, K, V> {
+        fn len(&self) -> usize { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> Iterator for SpirvValuesStub<'a, K, V> {
+        type Item = &'a V;
+        fn next(&mut self) -> Option<Self::Item> { panic!("BTreeMap not supported on SPIR-V") }
+        fn size_hint(&self) -> (usize, Option<usize>) { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> ExactSizeIterator for SpirvValuesStub<'a, K, V> {
+        fn len(&self) -> usize { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> Iterator for SpirvValuesMutStub<'a, K, V> {
+        type Item = &'a mut V;
+        fn next(&mut self) -> Option<Self::Item> { panic!("BTreeMap not supported on SPIR-V") }
+        fn size_hint(&self) -> (usize, Option<usize>) { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<'a, K, V> ExactSizeIterator for SpirvValuesMutStub<'a, K, V> {
+        fn len(&self) -> usize { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<K, V> Iterator for SpirvIntoKeysStub<K, V> {
+        type Item = K;
+        fn next(&mut self) -> Option<Self::Item> { panic!("BTreeMap not supported on SPIR-V") }
+        fn size_hint(&self) -> (usize, Option<usize>) { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<K, V> ExactSizeIterator for SpirvIntoKeysStub<K, V> {
+        fn len(&self) -> usize { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<K, V> Iterator for SpirvIntoValuesStub<K, V> {
+        type Item = V;
+        fn next(&mut self) -> Option<Self::Item> { panic!("BTreeMap not supported on SPIR-V") }
+        fn size_hint(&self) -> (usize, Option<usize>) { panic!("BTreeMap not supported on SPIR-V") }
+    }
+    
+    #[cfg(target_arch = "spirv")]
+    impl<K, V> ExactSizeIterator for SpirvIntoValuesStub<K, V> {
+        fn len(&self) -> usize { panic!("BTreeMap not supported on SPIR-V") }
+    }
+
+    #[cfg(target_arch = "spirv")]
+    pub type MapImpl<K, V> = SpirvMapStub<K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type EntryImpl<'a, K, V> = SpirvEntryStub<'a, K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type OccupiedEntryImpl<'a, K, V> = SpirvOccupiedEntryStub<'a, K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type VacantEntryImpl<'a, K, V> = SpirvVacantEntryStub<'a, K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type IterImpl<'a, K, V> = SpirvIterStub<'a, K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type IterMutImpl<'a, K, V> = SpirvIterMutStub<'a, K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type IntoIterImpl<K, V> = SpirvIntoIterStub<K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type KeysImpl<'a, K, V> = SpirvKeysStub<'a, K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type ValuesImpl<'a, K, V> = SpirvValuesStub<'a, K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type ValuesMutImpl<'a, K, V> = SpirvValuesMutStub<'a, K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type IntoKeysImpl<K, V> = SpirvIntoKeysStub<K, V>;
+    #[cfg(target_arch = "spirv")]
+    pub type IntoValuesImpl<K, V> = SpirvIntoValuesStub<K, V>;
 }
 
 /// A default key-value mapping.
@@ -129,6 +391,7 @@ impl<K, V> Map<K, V> {
     pub fn keys(&self) -> Keys<'_, K, V> {
         Keys {
             inner: self.inner.keys(),
+            _phantom: core::marker::PhantomData,
         }
     }
 
@@ -140,6 +403,7 @@ impl<K, V> Map<K, V> {
     pub fn into_keys(self) -> IntoKeys<K, V> {
         IntoKeys {
             inner: self.inner.into_keys(),
+            _phantom: core::marker::PhantomData,
         }
     }
 
@@ -148,6 +412,7 @@ impl<K, V> Map<K, V> {
     pub fn values(&self) -> Values<'_, K, V> {
         Values {
             inner: self.inner.values(),
+            _phantom: core::marker::PhantomData,
         }
     }
 
@@ -159,6 +424,7 @@ impl<K, V> Map<K, V> {
     pub fn into_values(self) -> IntoValues<K, V> {
         IntoValues {
             inner: self.inner.into_values(),
+            _phantom: core::marker::PhantomData,
         }
     }
 
@@ -167,6 +433,7 @@ impl<K, V> Map<K, V> {
     pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
         ValuesMut {
             inner: self.inner.values_mut(),
+            _phantom: core::marker::PhantomData,
         }
     }
 }
@@ -690,6 +957,7 @@ impl<K, V> FusedIterator for IntoIter<K, V> where detail::IntoIterImpl<K, V>: Fu
 #[derive(Debug, Clone)]
 pub struct Keys<'a, K, V> {
     inner: detail::KeysImpl<'a, K, V>,
+    _phantom: core::marker::PhantomData<V>,
 }
 
 impl<'a, K: 'a, V> Iterator for Keys<'a, K, V> {
@@ -719,6 +987,7 @@ impl<'a, K: 'a, V> FusedIterator for Keys<'a, K, V> where detail::KeysImpl<'a, K
 #[derive(Debug, Clone)]
 pub struct Values<'a, K, V> {
     inner: detail::ValuesImpl<'a, K, V>,
+    _phantom: core::marker::PhantomData<K>,
 }
 
 impl<'a, K, V: 'a> Iterator for Values<'a, K, V> {
@@ -751,6 +1020,7 @@ impl<'a, K, V: 'a> FusedIterator for Values<'a, K, V> where
 #[derive(Debug)]
 pub struct ValuesMut<'a, K, V> {
     inner: detail::ValuesMutImpl<'a, K, V>,
+    _phantom: core::marker::PhantomData<K>,
 }
 
 impl<'a, K, V: 'a> Iterator for ValuesMut<'a, K, V> {
@@ -783,6 +1053,7 @@ impl<'a, K, V: 'a> FusedIterator for ValuesMut<'a, K, V> where
 #[derive(Debug)]
 pub struct IntoKeys<K, V> {
     inner: detail::IntoKeysImpl<K, V>,
+    _phantom: core::marker::PhantomData<V>,
 }
 
 impl<K, V> Iterator for IntoKeys<K, V> {
@@ -812,6 +1083,7 @@ impl<K, V> FusedIterator for IntoKeys<K, V> where detail::IntoKeysImpl<K, V>: Fu
 #[derive(Debug)]
 pub struct IntoValues<K, V> {
     inner: detail::IntoValuesImpl<K, V>,
+    _phantom: core::marker::PhantomData<K>,
 }
 
 impl<K, V> Iterator for IntoValues<K, V> {

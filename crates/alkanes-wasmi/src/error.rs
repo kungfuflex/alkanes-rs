@@ -11,7 +11,8 @@ use crate::{
     engine::{ResumableError, ResumableHostTrapError, ResumableOutOfFuelError, TranslationError},
     module::ReadError,
 };
-use alloc::{boxed::Box, string::String};
+use crate::prelude::Box;
+use crate::prelude::String;
 use core::{fmt, fmt::Display};
 use wasmparser::BinaryReaderError as WasmError;
 

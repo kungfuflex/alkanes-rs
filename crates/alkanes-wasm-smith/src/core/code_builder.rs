@@ -1691,7 +1691,8 @@ fn try_table(
         // Labels with just an `externref` are suitable for `catch_all_refs`,
         // which first pushes nothing since there's no tag and then pushes
         // the caught exception value.
-        if label_types == [ValType::EXNREF] {
+        // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+        if label_types.len() == 1 && label_types.get(0) == Some(&ValType::EXNREF) {
             catch_options.push(Box::new(move |_, _| Ok(Catch::AllRef { label: i })));
         }
 

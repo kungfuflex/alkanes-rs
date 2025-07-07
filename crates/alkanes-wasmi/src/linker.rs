@@ -1,8 +1,4 @@
 use crate::{
-    collections::{
-        string_interner::{InternHint, Sym as Symbol},
-        StringInterner,
-    },
     func::{FuncEntity, HostFuncEntity, HostFuncTrampolineEntity},
     module::{ImportName, ImportType},
     AsContext,
@@ -20,11 +16,21 @@ use crate::{
     Module,
     Val,
 };
-use alloc::{
-    collections::{btree_map::Entry, BTreeMap},
-    sync::Arc,
-    vec::Vec,
+
+#[cfg(not(target_arch = "spirv"))]
+use crate::collections::{
+    string_interner::{InternHint, Sym as Symbol},
+    StringInterner,
 };
+
+#[cfg(target_arch = "spirv")]
+use crate::collections::{
+    string_interner::{InternHint, Sym as Symbol},
+    StringInterner,
+};
+
+#[cfg(not(target_arch = "spirv"))]
+use crate::prelude::{Vec, Arc, BTreeMap, Entry};
 use core::{
     fmt::{self, Debug, Display},
     marker::PhantomData,

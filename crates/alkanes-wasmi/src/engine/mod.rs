@@ -59,10 +59,7 @@ use crate::{
     FuncType,
     StoreContextMut,
 };
-use alloc::{
-    sync::{Arc, Weak},
-    vec::Vec,
-};
+use crate::prelude::{Arc, Vec, Weak};
 use core::sync::atomic::{AtomicU32, Ordering};
 use alkanes_sync::{DefaultMutex, DefaultRwLock, AlkanesMutex, AlkanesRwLock};
 use wasmparser::{FuncToValidate, FuncValidatorAllocations, ValidatorResources};

@@ -4,7 +4,7 @@ use crate::{
     ir::{Reg, RegSpan},
     Error,
 };
-use alloc::collections::BTreeSet;
+use crate::prelude::BTreeSet;
 use core::{
     cmp::{max, min},
     num::NonZeroUsize,

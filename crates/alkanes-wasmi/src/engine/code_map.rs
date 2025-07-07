@@ -15,7 +15,7 @@ use crate::{
     Config,
     Error,
 };
-use alloc::boxed::Box;
+use crate::prelude::Box;
 use core::{
     fmt,
     mem::{self, MaybeUninit},

@@ -1202,7 +1202,8 @@ impl RefType {
 
     const fn u32_to_u24(x: u32) -> [u8; 3] {
         let bytes = x.to_le_bytes();
-        debug_assert!(bytes[3] == 0);
+        // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+        debug_assert!(bytes.len() > 3 && bytes[3] == 0);
         [bytes[0], bytes[1], bytes[2]]
     }
 

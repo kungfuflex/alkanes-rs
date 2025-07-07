@@ -6,7 +6,7 @@ use crate::{
     ir::RegSpan,
     Instance,
 };
-use alloc::vec::Vec;
+use crate::prelude::Vec;
 
 #[cfg(doc)]
 use crate::{

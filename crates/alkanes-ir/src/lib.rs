@@ -1,7 +1,8 @@
 #![no_std]
 
+#[cfg(not(target_arch = "spirv"))]
 extern crate alloc;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(target_arch = "spirv")))]
 extern crate std;
 
 #[macro_use]

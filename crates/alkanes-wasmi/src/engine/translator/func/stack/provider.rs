@@ -1,6 +1,6 @@
 use super::{LocalRefs, RegisterAlloc, TypedVal};
 use crate::{engine::translator::func::PreservedLocal, ir::Reg, Error};
-use alloc::vec::Vec;
+use crate::prelude::Vec;
 use arrayvec::ArrayVec;
 
 #[cfg(doc)]

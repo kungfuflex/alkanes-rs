@@ -15,6 +15,9 @@ mod tests;
 #[cfg(doc)]
 use crate::Engine;
 
+#[cfg(target_arch = "spirv")]
+use crate::prelude::Vec;
+
 pub use self::{
     driver::FuncTranslationDriver,
     error::TranslationError,

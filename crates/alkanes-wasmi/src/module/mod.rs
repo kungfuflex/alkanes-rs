@@ -44,7 +44,7 @@ use crate::{
     MemoryType,
     TableType,
 };
-use alloc::{boxed::Box, sync::Arc};
+use crate::prelude::{Box, Arc};
 use core::{iter, slice::Iter as SliceIter};
 use wasmparser::{FuncValidatorAllocations, Parser, ValidPayload, Validator};
 

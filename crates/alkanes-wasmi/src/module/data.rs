@@ -1,6 +1,6 @@
 use super::{ConstExpr, MemoryIdx};
 use crate::Error;
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use crate::prelude::{Box, Arc, Vec};
 use core::slice;
 
 /// A Wasm [`Module`] data segment.

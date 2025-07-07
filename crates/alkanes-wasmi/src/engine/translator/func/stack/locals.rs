@@ -1,8 +1,5 @@
 use crate::{ir::Reg, Error};
-use alloc::{
-    collections::{btree_map, BTreeMap},
-    vec::Vec,
-};
+use crate::prelude::{BTreeMap, Vec, Entry};
 use core::mem;
 
 #[cfg(doc)]
@@ -144,11 +141,11 @@ impl LocalRefs {
     /// Updates the last index for `local` to `index` and returns the previous last index.
     fn update_last(&mut self, index: EntryIndex, local: Reg) -> Option<EntryIndex> {
         match self.locals_last.entry(local) {
-            btree_map::Entry::Vacant(entry) => {
+            Entry::Vacant(entry) => {
                 entry.insert(index);
                 None
             }
-            btree_map::Entry::Occupied(mut entry) => {
+            Entry::Occupied(mut entry) => {
                 let prev = *entry.get();
                 entry.insert(index);
                 Some(prev)
@@ -197,7 +194,7 @@ impl LocalRefs {
     /// - If the `local` index is out of bounds.
     /// - If there is no `local.get` stack index on the stack.
     pub fn pop_at(&mut self, local: Reg) -> StackIndex {
-        let btree_map::Entry::Occupied(mut last) = self.locals_last.entry(local) else {
+        let Entry::Occupied(mut last) = self.locals_last.entry(local) else {
             panic!("missing stack index for local on the provider stack: {local:?}")
         };
         let index = *last.get();

@@ -1,6 +1,6 @@
 use super::utils::FromWasmparser as _;
 use crate::{GlobalType, MemoryType, TableType};
-use alloc::boxed::Box;
+use crate::prelude::Box;
 use core::fmt::{self, Display};
 use wasmparser::TypeRef;
 

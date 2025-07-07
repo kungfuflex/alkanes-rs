@@ -5,7 +5,7 @@ use crate::{
     AsContextMut,
     StoreContext,
 };
-use alloc::boxed::Box;
+use crate::prelude::Box;
 use core::{any::Any, mem, num::NonZeroU32};
 
 /// A raw index to a function entity.

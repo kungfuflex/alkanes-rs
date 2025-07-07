@@ -67,7 +67,7 @@ use crate::{
     Error,
     FuncType,
 };
-use alloc::vec::Vec;
+use crate::prelude::Vec;
 use core::mem;
 use stack::RegisterSpace;
 use wasmparser::{MemArg, WasmFeatures};

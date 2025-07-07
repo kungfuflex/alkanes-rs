@@ -18,7 +18,7 @@ use crate::{
     MemoryType,
     TableType,
 };
-use alloc::boxed::Box;
+use crate::prelude::Box;
 use core::ops::Range;
 use wasmparser::{
     CustomSectionReader,

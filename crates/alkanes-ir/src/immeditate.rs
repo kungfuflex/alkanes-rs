@@ -1,4 +1,4 @@
-use core::{fmt::Debug, marker::PhantomData, num::NonZero};
+use core::{fmt::Debug, marker::PhantomData, num::{NonZeroI16, NonZeroU16, NonZeroI32, NonZeroU32, NonZeroI64, NonZeroU64}};
 
 /// Error that may occur upon converting values to [`Const16`].
 #[derive(Debug, Copy, Clone)]
@@ -62,11 +62,7 @@ macro_rules! impl_const16_from {
                 }
             }
 
-            impl From<NonZero<$from>> for Const16<NonZero<$to>> {
-                fn from(value: NonZero<$from>) -> Self {
-                    Self::new(AnyConst16::from(value.get()))
-                }
-            }
+            // Note: Removing specific NonZero implementations to avoid conflicts with macro
         )*
     }
 }
@@ -81,13 +77,8 @@ macro_rules! impl_const16_from {
                 }
             }
 
-            impl From<Const16<NonZero<$ty>>> for NonZero<$ty> {
-                fn from(value: Const16<Self>) -> Self {
-                    // SAFETY: Due to construction of `Const16<NonZeroI32>` we are guaranteed
-                    //         that `value.inner` is a valid non-zero value.
-                    unsafe { Self::new_unchecked(<$ty as From<AnyConst16>>::from(value.inner)) }
-                }
-            }
+            // Note: Removing NonZero implementations for SPIR-V compatibility
+            // These would need specific implementations for each NonZero type
 
             impl TryFrom<$ty> for Const16<$ty> {
                 type Error = OutOfBoundsConst;
@@ -97,13 +88,7 @@ macro_rules! impl_const16_from {
                 }
             }
 
-            impl TryFrom<NonZero<$ty>> for Const16<NonZero<$ty>> {
-                type Error = OutOfBoundsConst;
-
-                fn try_from(value: NonZero<$ty>) -> Result<Self, Self::Error> {
-                    AnyConst16::try_from(value).map(Self::new)
-                }
-            }
+            // Note: Removing NonZero TryFrom implementations for SPIR-V compatibility
         )*
     };
 }
@@ -226,16 +211,7 @@ macro_rules! impl_any_const16 {
                 }
             }
 
-            impl TryFrom<NonZero<$ty>> for AnyConst16 {
-                type Error = OutOfBoundsConst;
-
-                fn try_from(value: NonZero<$ty>) -> Result<Self, Self::Error> {
-                    <NonZero<$ty16>>::try_from(value)
-                        .map(<NonZero<$ty16>>::get)
-                        .map(Self::from)
-                        .map_err(|_| OutOfBoundsConst)
-                }
-            }
+            // Note: Removing NonZero TryFrom implementations for SPIR-V compatibility
         )*
     };
 }

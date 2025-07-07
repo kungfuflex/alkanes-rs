@@ -1581,3 +1581,101 @@ pub use crate::validator::*;
 
 #[cfg(feature = "validate")]
 pub mod collections;
+
+// Add missing validator types for SPIR-V compatibility
+#[cfg(target_arch = "spirv")]
+/// Stub validator types for SPIR-V compatibility
+pub mod validator_stubs {
+    use core::marker::PhantomData;
+    
+    /// Stub ValidatorResources for SPIR-V
+    #[derive(Debug, Clone)]
+    pub struct ValidatorResources(PhantomData<()>);
+    
+    impl ValidatorResources {
+        /// Creates a new ValidatorResources stub
+        pub fn new() -> Self {
+            panic!("ValidatorResources not supported on SPIR-V")
+        }
+    }
+    
+    impl Default for ValidatorResources {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+    
+    /// Stub FuncToValidate for SPIR-V
+    #[derive(Debug, Clone)]
+    pub struct FuncToValidate<T> {
+        /// The validator resources
+        pub resources: T,
+        _phantom: PhantomData<T>,
+    }
+    
+    impl<T> FuncToValidate<T> {
+        /// Creates a new FuncToValidate stub
+        pub fn new(_resources: T) -> Self {
+            panic!("FuncToValidate not supported on SPIR-V")
+        }
+    }
+    
+    /// Stub FuncValidatorAllocations for SPIR-V
+    #[derive(Debug, Clone)]
+    pub struct FuncValidatorAllocations(PhantomData<()>);
+    
+    impl FuncValidatorAllocations {
+        /// Creates a new FuncValidatorAllocations stub
+        pub fn new() -> Self {
+            panic!("FuncValidatorAllocations not supported on SPIR-V")
+        }
+    }
+    
+    impl Default for FuncValidatorAllocations {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+    
+    /// Stub FuncValidator for SPIR-V
+    #[derive(Debug)]
+    pub struct FuncValidator<T>(PhantomData<T>);
+    
+    impl<T> FuncValidator<T> {
+        /// Creates a new FuncValidator stub
+        pub fn new(_: T, _: &crate::WasmFeatures) -> Result<Self, crate::BinaryReaderError> {
+            panic!("FuncValidator not supported on SPIR-V")
+        }
+    }
+    
+    /// Stub Validator for SPIR-V
+    #[derive(Debug)]
+    pub struct Validator(PhantomData<()>);
+    
+    impl Validator {
+        /// Creates a new Validator stub
+        pub fn new() -> Self {
+            panic!("Validator not supported on SPIR-V")
+        }
+    }
+    
+    /// Stub ValidPayload for SPIR-V
+    #[derive(Debug, Clone)]
+    pub struct ValidPayload<T> {
+        _phantom: PhantomData<T>,
+    }
+    
+    impl<T> ValidPayload<T> {
+        /// Creates a new ValidPayload stub
+        pub fn new() -> Self {
+            panic!("ValidPayload not supported on SPIR-V")
+        }
+    }
+}
+
+#[cfg(target_arch = "spirv")]
+pub use validator_stubs::*;
+
+#[cfg(not(target_arch = "spirv"))]
+pub use crate::validator::*;
+

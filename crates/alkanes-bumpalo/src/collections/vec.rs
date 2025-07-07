@@ -2418,7 +2418,18 @@ macro_rules! __impl_slice_eq1 {
         {
             #[inline]
             fn eq(&self, other: &$Rhs) -> bool {
-                self[..] == other[..]
+                // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+                let self_slice = &self[..];
+                let other_slice = &other[..];
+                if self_slice.len() != other_slice.len() {
+                    return false;
+                }
+                for (a, b) in self_slice.iter().zip(other_slice.iter()) {
+                    if a != b {
+                        return false;
+                    }
+                }
+                true
             }
         }
     };
@@ -2437,7 +2448,18 @@ macro_rules! __impl_slice_eq1_array {
         {
             #[inline]
             fn eq(&self, other: &$Rhs) -> bool {
-                self[..] == other[..]
+                // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+                let self_slice = &self[..];
+                let other_slice = &other[..];
+                if self_slice.len() != other_slice.len() {
+                    return false;
+                }
+                for (a, b) in self_slice.iter().zip(other_slice.iter()) {
+                    if a != b {
+                        return false;
+                    }
+                }
+                true
             }
         }
     };

@@ -28,7 +28,7 @@ use crate::{
     MemoryType,
     TableType,
 };
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use crate::prelude::{Box, Arc, Vec};
 
 /// A builder for a WebAssembly [`Module`].
 #[derive(Debug)]

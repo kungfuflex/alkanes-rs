@@ -4,7 +4,7 @@ use crate::{
     engine::code_map::CompiledFuncRef,
     ir::Reg,
 };
-use alloc::vec::Vec;
+use crate::prelude::Vec;
 use core::{
     fmt::{self, Debug},
     mem::{self, MaybeUninit},

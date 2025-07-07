@@ -15,7 +15,7 @@ const SPIRV_ALIGNMENT: usize = 16;
 ///
 /// This allocator uses a thread-local approach with compile-time memory layout.
 /// Each shader invocation gets its own memory space without global state.
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct SpirvLayoutAllocator {
     /// Current offset in the thread-local arena
     offset: usize,

@@ -372,7 +372,14 @@ impl CanonicalOptions {
                 callback: Some(idx),
             } => {
                 let func_ty = types[state.core_function_at(idx, offset)?].unwrap_func();
-                if func_ty.params() != [ValType::I32; 3] && func_ty.params() != [ValType::I32] {
+                let params = func_ty.params();
+                // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+                let is_valid_params = (params.len() == 3 &&
+                    params.get(0) == Some(&ValType::I32) &&
+                    params.get(1) == Some(&ValType::I32) &&
+                    params.get(2) == Some(&ValType::I32)) ||
+                    (params.len() == 1 && params.get(0) == Some(&ValType::I32));
+                if !is_valid_params {
                     return Err(BinaryReaderError::new(
                         "canonical option `callback` uses a core function with an incorrect signature",
                         offset,
@@ -594,7 +601,10 @@ impl ComponentState {
                 if let Some(dtor) = dtor {
                     let ty = component.core_function_at(dtor, offset)?;
                     let ty = types[ty].composite_type.unwrap_func();
-                    if ty.params() != [rep] || ty.results() != [] {
+                    // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+                    let params_match = ty.params().len() == 1 && ty.params().get(0) == Some(&rep);
+                    let results_match = ty.results().len() == 0;
+                    if !params_match || !results_match {
                         bail!(
                             offset,
                             "core function {dtor} has wrong signature for a destructor"
@@ -2191,13 +2201,18 @@ impl ComponentState {
         }
         match &sub_ty.composite_type.inner {
             CompositeInnerType::Func(func_ty) => {
-                if func_ty.params() != [ValType::I32] {
+                let params = func_ty.params();
+                let results = func_ty.results();
+                // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+                let params_valid = params.len() == 1 && params.get(0) == Some(&ValType::I32);
+                let results_valid = results.len() == 0;
+                if !params_valid {
                     bail!(
                         offset,
                         "spawn function must take a single `i32` argument (currently)"
                     );
                 }
-                if func_ty.results() != [] {
+                if !results_valid {
                     bail!(offset, "spawn function must not return any values");
                 }
             }
@@ -2424,10 +2439,16 @@ impl ComponentState {
                         None => {
                             let ty_id = self.core_function_at(*idx, offset)?;
                             let func_ty = types[ty_id].unwrap_func();
-                            if func_ty.params()
-                                != [ValType::I32, ValType::I32, ValType::I32, ValType::I32]
-                                || func_ty.results() != [ValType::I32]
-                            {
+                            let params = func_ty.params();
+                            let results = func_ty.results();
+                            // Manual comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+                            let params_valid = params.len() == 4 &&
+                                params.get(0) == Some(&ValType::I32) &&
+                                params.get(1) == Some(&ValType::I32) &&
+                                params.get(2) == Some(&ValType::I32) &&
+                                params.get(3) == Some(&ValType::I32);
+                            let results_valid = results.len() == 1 && results.get(0) == Some(&ValType::I32);
+                            if !params_valid || !results_valid {
                                 return Err(BinaryReaderError::new(
                                     "canonical option `realloc` uses a core function with an incorrect signature",
                                     offset,

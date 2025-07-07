@@ -8,7 +8,7 @@ use crate::{
     Func,
     Global,
 };
-use alloc::boxed::Box;
+use crate::prelude::Box;
 
 /// A raw index to a element segment entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

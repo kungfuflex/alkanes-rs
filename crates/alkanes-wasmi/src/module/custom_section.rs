@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use crate::prelude::Vec;
 use core::{slice, str};
 
 /// Wasm custom sections.

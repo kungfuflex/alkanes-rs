@@ -16,13 +16,11 @@ exclude.workspace = true
 [dependencies]
 alkanes-alloc = { path = "../alkanes-alloc", default-features = false }
 hashbrown = { version = "0.15.1", default-features = false, optional = true, features = ["default-hasher", "inline-more"] }
-
-[target.'cfg(not(target_arch = "spirv"))'.dependencies]
-string-interner = { version = "0.19", default-features = false, optional = true, features = ["inline-more", "backends"] }
+alkanes-string-interner = { path = "../alkanes-string-interner", package = "alkanes-string-interner", default-features = false, optional = true, features = ["inline-more", "backends"] }
 
 [features]
 default = ["std"]
-std = ["string-interner?/std"]
+std = ["alkanes-string-interner?/std"]
 
 # Hash collections usage:
 #
@@ -53,5 +51,5 @@ prefer-btree-collections = []
 [package.metadata.cargo-udeps.ignore]
 normal = [
     # Needed to suppress weird `udep` warnings. Maybe a `cargo-udep` bug?
-    "string-interner"
+    "alkanes-string-interner"
 ]

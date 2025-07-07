@@ -24,4 +24,7 @@ impl fmt::Display for Error {
     }
 }
 
+// Note: Removing core::error::Error implementation for SPIR-V compatibility
+// This uses unstable library features that aren't available in SPIR-V
+#[cfg(not(target_arch = "spirv"))]
 impl core::error::Error for Error {}

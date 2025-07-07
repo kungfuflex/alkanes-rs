@@ -279,7 +279,18 @@ where
     T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.as_slice() == other.as_slice()
+        // Manual element-by-element comparison to avoid raw_eq intrinsic for SPIR-V compatibility
+        let self_slice = self.as_slice();
+        let other_slice = other.as_slice();
+        if self_slice.len() != other_slice.len() {
+            return false;
+        }
+        for i in 0..self_slice.len() {
+            if self_slice[i] != other_slice[i] {
+                return false;
+            }
+        }
+        true
     }
 }
 

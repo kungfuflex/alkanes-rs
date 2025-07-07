@@ -12,10 +12,11 @@ crate-type = ["cdylib", "rlib"]
 spirv-std.workspace = true
 alkanes-alloc = { path = "../alkanes-alloc" }
 alkanes-sync = { path = "../alkanes-sync" }
-# TODO: Re-enable once all wasmi dependencies are SPIR-V compatible
-# wasmi = { path = "../alkanes-wasmi" }
-# wasmi_core = { path = "../alkanes-core" }
-# wasmi_collections = { path = "../alkanes-collections" }
+# Full alkanes-wasmi integration with SPIR-V compatibility
+wasmi = { path = "../alkanes-wasmi", package = "wasmi", default-features = false }
+wasmi_core = { path = "../alkanes-core", package = "wasmi_core", default-features = false }
+wasmi_collections = { path = "../alkanes-collections", package = "wasmi_collections", default-features = false }
+wasmparser = { path = "../alkanes-wasmparser", package = "wasmparser", default-features = false }
 
 [target.'cfg(not(target_arch = "spirv"))'.dependencies]
 spirv-std = { workspace = true, default-features = true }

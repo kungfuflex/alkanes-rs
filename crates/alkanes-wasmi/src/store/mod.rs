@@ -19,7 +19,7 @@ use crate::{
     Memory,
 };
 use alkanes_alloc::DefaultAllocator;
-use alloc::boxed::Box;
+use crate::prelude::Box;
 use core::{
     any::{type_name, TypeId},
     fmt::{self, Debug},

@@ -13,7 +13,7 @@ use crate::{
     FuncRef,
     Val,
 };
-use alloc::boxed::Box;
+use crate::prelude::Box;
 use core::fmt;
 use wasmi_collections::SmallVec;
 use wasmparser::AbstractHeapType;
@@ -219,7 +219,7 @@ impl ConstExpr {
     /// on the input Wasm [`ConstExpr`].
     pub fn new(expr: wasmparser::ConstExpr<'_>) -> Self {
         /// A buffer required for translation of Wasm const expressions.
-        type TranslationBuffer = SmallVec<[Op; 3]>;
+        type TranslationBuffer = SmallVec<Op, 3>;
         /// Convenience function to create the various expression operators.
         fn expr_op<Lhs, Rhs, T>(stack: &mut TranslationBuffer, expr: fn(Lhs, Rhs) -> T)
         where

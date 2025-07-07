@@ -1,5 +1,5 @@
 use crate::{engine::translator::utils::Instr, ir::BranchOffset, Error};
-use alloc::vec::Vec;
+use crate::prelude::Vec;
 use core::{
     fmt::{self, Display},
     slice::Iter as SliceIter,

@@ -22,7 +22,7 @@ use crate::{
     ir::{Reg, RegSpan},
     Error,
 };
-use alloc::vec::Vec;
+use crate::prelude::Vec;
 
 /// Typed inputs to Wasmi bytecode instructions.
 ///

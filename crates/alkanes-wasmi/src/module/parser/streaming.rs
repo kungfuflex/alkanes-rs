@@ -6,7 +6,7 @@ use super::{
     ModuleParser,
 };
 use crate::{Error, Module, Read};
-use alloc::vec::Vec;
+use crate::prelude::Vec;
 use core::ops::{Deref, DerefMut};
 use wasmparser::{Chunk, Payload, Validator};
 

@@ -1,9 +1,6 @@
 use super::Reg;
 use crate::{core::UntypedVal, engine::TranslationError, Error};
-use alloc::{
-    collections::{btree_map, BTreeMap},
-    vec::Vec,
-};
+use crate::prelude::{BTreeMap, Vec, Entry};
 use core::{iter::Rev, slice::Iter as SliceIter};
 
 /// A pool of deduplicated function local constant values.
@@ -72,8 +69,8 @@ impl FuncLocalConsts {
             return Err(Error::from(TranslationError::TooManyFuncLocalConstValues));
         }
         match self.const2idx.entry(value) {
-            btree_map::Entry::Occupied(entry) => Ok(*entry.get()),
-            btree_map::Entry::Vacant(entry) => {
+            Entry::Occupied(entry) => Ok(*entry.get()),
+            Entry::Vacant(entry) => {
                 let register = Reg::from(self.next_idx);
                 self.next_idx -= 1;
                 entry.insert(register);

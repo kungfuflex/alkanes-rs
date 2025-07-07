@@ -4,7 +4,7 @@ use crate::{
     engine::translator::func::{Provider, ProviderSliceStack},
     Error,
 };
-use alloc::vec::{Drain, Vec};
+use crate::prelude::{Drain, Vec};
 
 /// An acquired branch target.
 #[derive(Debug)]

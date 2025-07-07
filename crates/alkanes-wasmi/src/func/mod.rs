@@ -26,7 +26,7 @@ use super::{
     Stored,
 };
 use crate::{collections::arena::ArenaIndex, engine::ResumableCall, Engine, Error, Val};
-use alloc::{boxed::Box, sync::Arc};
+use crate::prelude::{Box, Arc};
 use core::{fmt, fmt::Debug, num::NonZeroU32};
 
 /// A raw index to a function entity.
