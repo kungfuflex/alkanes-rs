@@ -374,6 +374,17 @@ pub fn assert_binary_deployed_to_id(token_id: AlkaneId, binary: Vec<u8>) -> Resu
     return Ok(());
 }
 
+pub fn assert_id_points_to_alkane_id(from_id: AlkaneId, to_id: AlkaneId) -> Result<()> {
+    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
+        .select(&from_id.into())
+        .get()
+        .as_ref()
+        .clone();
+    let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
+    assert_eq!(ptr, to_id);
+    return Ok(());
+}
+
 pub fn assert_token_id_has_no_deployment(token_id: AlkaneId) -> Result<()> {
     let binary = IndexPointer::from_keyword("/alkanes/")
         .select(&token_id.into())
