@@ -1,0 +1,18 @@
+[package]
+name = "test-alkanes-sync-shader"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+spirv-std = { workspace = true }
+alkanes-sync = { path = "../crates/alkanes-sync" }
+alkanes-alloc = { path = "../crates/alkanes-alloc" }
+
+[profile.dev]
+opt-level = 3
+
+[profile.release]
+opt-level = 3

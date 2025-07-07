@@ -15,11 +15,28 @@ name = "test-spirv-minimal"
 path = "test-spirv-minimal.rs"
 
 [workspace]
-members = [".", "crates/*", "test-alkanes-alloc-shader"]
+members = [".", "crates/*", "test-alkanes-alloc-shader", "test-alkanes-sync-shader"]
+
+[workspace.package]
+version = "0.5.2"
+edition = "2021"
+rust-version = "1.70"
+authors = ["alkanes contributors"]
+repository = "https://github.com/kungfuflex/alkanes-rs"
+readme = "README.md"
+license = "MIT"
+keywords = ["wasm", "webassembly", "interpreter"]
+categories = ["wasm"]
+exclude = ["tests/", "benches/", "fuzz/"]
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 
 [workspace.dependencies]
 anyhow = "1.0.90"
+arbitrary = "1.3"
 num = "0.4.3"
+num_cpus = "1.16"
 bitcoin = { version = "0.32.6", features = ["rand"] }
 metashrew-core = { path = "./crates/metashrew-core" }
 metashrew-macros = { path = "./crates/metashrew-macros" }
@@ -46,16 +63,64 @@ ruint = "1.12.3"
 wasm-bindgen = "0.2.100"
 byteorder = "1.5"
 wasm-bindgen-test = "0.3.49"
-wasmi = "0.31"
+wasmi = { path = "./crates/alkanes-wasmi" }
+wasmi_wasi = { path = "./crates/alkanes-wasi" }
+wasmi_core = { path = "./crates/alkanes-core" }
+wasmi_collections = { path = "./crates/alkanes-collections" }
+wasmi_ir = { path = "./crates/alkanes-ir" }
+wasmparser = { path = "./crates/alkanes-wasmparser" }
+wasm-encoder = { path = "./crates/alkanes-wasm-encoder" }
+wat = { path = "./crates/alkanes-wat" }
+wast = { path = "./crates/alkanes-wast" }
+wasmprinter = { path = "./crates/alkanes-wasmprinter" }
+wasm-smith = { path = "./crates/alkanes-wasm-smith" }
+wit-component = { path = "./crates/alkanes-wit-component" }
+wasm-metadata = { path = "./crates/alkanes-wasm-metadata" }
+wit-parser = { path = "./crates/alkanes-wit-parser" }
+wasm-mutate = { path = "./crates/alkanes-wasm-mutate" }
+hashbrown = { path = "./crates/alkanes-hashbrown" }
+ahash = { path = "./crates/alkanes-ahash" }
+arrayvec = { path = "./crates/alkanes-arrayvec" }
+cfg-if = { path = "./crates/alkanes-cfg-if" }
+indexmap = { path = "./crates/alkanes-indexmap" }
+semver = "1.0"
+unicode-width = "0.1"
+leb128 = "0.2"
+leb128fmt = "0.1"
+smallvec = "1.0"
+termcolor = "1.0"
+gimli = "0.28"
+libtest-mimic = "0.6"
+libfuzzer-sys = "0.4"
+criterion = "0.5"
+clap = "4.0"
+env_logger = "0.10"
+log = "0.4"
+rayon = "1.7"
+rand = "0.8"
+memchr = "2.5"
+unicode-xid = "0.2"
+wasmtime = "25.0"
+wasi-common = "25.0"
+wiggle = "25.0"
 serde = "1.0.210"
+serde_derive = "1.0.210"
 serde_json = "1.0.128"
+spdx = "0.10"
+url = "2.5"
 hex = "0.4.3"
+id-arena = "2.2"
+indoc = "2.0"
+itertools = "0.14.0"
+pretty_assertions = "1.4"
 protobuf = "3.4.0"
 wasm-bindgen-futures = "0.4.45"
 web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
 hex_lit = "0.1.1"
 once_cell = "1.20.1"
+alkanes-alloc = { path = "./crates/alkanes-alloc" }
+alkanes-sync = { path = "./crates/alkanes-sync" }
 
 [features]
 test-utils = []
@@ -158,7 +223,7 @@ cfg-if = { path = "./crates/alkanes-cfg-if" }
 lazy_cell = { path = "./crates/alkanes-lazy-cell" }
 
 # Override wasmi_core to use libm 0.2.8 for SPIR-V compatibility
-wasmi_core = { path = "./crates/alkanes-wasmi-core" }
+wasmi_core = { path = "./crates/alkanes-core" }
 
 [patch."https://github.com/sandshrewmetaprotocols/metashrew"]
 # Override git dependency's metashrew-support with our local version

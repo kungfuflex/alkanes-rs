@@ -1,0 +1,15 @@
+[package]
+name = "alkanes-sync"
+version = "0.5.2"
+edition = "2021"
+description = "Synchronization primitives for alkanes with target-specific implementations"
+license = "MIT"
+repository = "https://github.com/kungfuflex/alkanes-rs"
+
+[dependencies]
+alkanes-alloc = { path = "../alkanes-alloc" }
+cfg-if = { path = "../alkanes-cfg-if" }
+
+[features]
+default = ["std"]
+std = []
