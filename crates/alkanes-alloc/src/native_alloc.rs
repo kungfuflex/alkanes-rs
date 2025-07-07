@@ -8,7 +8,7 @@ use crate::{AlkanesAllocator, AllocError};
 use std::alloc::{GlobalAlloc, Layout, System};
 
 /// Native heap allocator
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct NativeHeapAllocator;
 
 impl AlkanesAllocator for NativeHeapAllocator {

@@ -19,6 +19,8 @@ exclude = [
 ]
 
 [dependencies]
+alkanes-alloc = { path = "../alkanes-alloc", default-features = false }
+alkanes-sync = { path = "../alkanes-sync", default-features = false }
 wasmi_core = { workspace = true }
 wasmi_collections = { workspace = true }
 wasmi_ir = { workspace = true }

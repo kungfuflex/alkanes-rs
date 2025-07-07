@@ -30,6 +30,7 @@
     clippy::items_after_statements
 )]
 
+#[cfg(not(target_arch = "spirv"))]
 extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
@@ -41,6 +42,7 @@ mod head_vec;
 pub mod map;
 pub mod set;
 pub mod string_interner;
+pub mod vec;
 
 #[cfg(test)]
 mod tests;

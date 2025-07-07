@@ -1,4 +1,5 @@
 use super::{GetOrInternWithHint, InternHint, Sym};
+#[cfg(not(target_arch = "spirv"))]
 use alloc::{
     borrow::Borrow,
     collections::{btree_map::Entry, BTreeMap},

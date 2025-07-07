@@ -2776,9 +2776,9 @@ dependencies = [
 
 [[package]]
 name = "libm"
-version = "0.2.15"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
+checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
 name = "libredox"
@@ -5514,6 +5514,8 @@ dependencies = [
 name = "wasmi"
 version = "0.5.2"
 dependencies = [
+ "alkanes-alloc",
+ "alkanes-sync",
  "arrayvec",
  "assert_matches",
  "criterion 0.5.1",
@@ -5550,6 +5552,7 @@ checksum = "104a7f73be44570cac297b3035d76b169d6599637631cf37a1703326a0727073"
 name = "wasmi_collections"
 version = "0.5.2"
 dependencies = [
+ "alkanes-alloc",
  "hashbrown 0.15.4",
  "string-interner",
 ]

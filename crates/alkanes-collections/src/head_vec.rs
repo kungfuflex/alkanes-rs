@@ -1,3 +1,4 @@
+#[cfg(not(target_arch = "spirv"))]
 use alloc::vec::Vec;
 use core::mem;
 

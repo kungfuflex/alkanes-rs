@@ -1,5 +1,6 @@
 use super::{Arena, ArenaIndex, Iter, IterMut};
 use crate::{map, Map};
+use alkanes_alloc::AlkanesAllocator;
 use core::{
     hash::Hash,
     ops::{Index, IndexMut},
@@ -9,19 +10,19 @@ use core::{
 ///
 /// For performance reasons the arena cannot deallocate single entities.
 #[derive(Debug)]
-pub struct DedupArena<Idx, T> {
+pub struct DedupArena<Idx, T, A: AlkanesAllocator = alkanes_alloc::DefaultAllocator> {
     entity2idx: Map<T, Idx>,
-    entities: Arena<Idx, T>,
+    entities: Arena<Idx, T, A>,
 }
 
-impl<Idx, T> Default for DedupArena<Idx, T> {
+impl<Idx, T, A: AlkanesAllocator + Default> Default for DedupArena<Idx, T, A> {
     #[inline]
     fn default() -> Self {
-        Self::new()
+        Self::new(A::default())
     }
 }
 
-impl<Idx, T> PartialEq for DedupArena<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> PartialEq for DedupArena<Idx, T, A>
 where
     T: PartialEq,
 {
@@ -31,15 +32,15 @@ where
     }
 }
 
-impl<Idx, T> Eq for DedupArena<Idx, T> where T: Eq {}
+impl<Idx, T, A: AlkanesAllocator> Eq for DedupArena<Idx, T, A> where T: Eq {}
 
-impl<Idx, T> DedupArena<Idx, T> {
+impl<Idx, T, A: AlkanesAllocator> DedupArena<Idx, T, A> {
     /// Creates a new empty deduplicating entity arena.
     #[inline]
-    pub fn new() -> Self {
+    pub fn new(allocator: A) -> Self {
         Self {
             entity2idx: Map::new(),
-            entities: Arena::new(),
+            entities: Arena::new(allocator),
         }
     }
 
@@ -75,7 +76,7 @@ impl<Idx, T> DedupArena<Idx, T> {
     }
 }
 
-impl<Idx, T> DedupArena<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> DedupArena<Idx, T, A>
 where
     Idx: ArenaIndex,
     T: Hash + Ord + Clone,
@@ -110,7 +111,7 @@ where
     }
 }
 
-impl<Idx, T> FromIterator<T> for DedupArena<Idx, T>
+impl<Idx, T, A: AlkanesAllocator + Default> FromIterator<T> for DedupArena<Idx, T, A>
 where
     Idx: ArenaIndex,
     T: Hash + Clone + Ord,
@@ -131,7 +132,7 @@ where
     }
 }
 
-impl<'a, Idx, T> IntoIterator for &'a DedupArena<Idx, T>
+impl<'a, Idx, T, A: AlkanesAllocator> IntoIterator for &'a DedupArena<Idx, T, A>
 where
     Idx: ArenaIndex,
 {
@@ -144,7 +145,7 @@ where
     }
 }
 
-impl<'a, Idx, T> IntoIterator for &'a mut DedupArena<Idx, T>
+impl<'a, Idx, T, A: AlkanesAllocator> IntoIterator for &'a mut DedupArena<Idx, T, A>
 where
     Idx: ArenaIndex,
 {
@@ -157,7 +158,7 @@ where
     }
 }
 
-impl<Idx, T> Index<Idx> for DedupArena<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> Index<Idx> for DedupArena<Idx, T, A>
 where
     Idx: ArenaIndex,
 {
@@ -169,7 +170,7 @@ where
     }
 }
 
-impl<Idx, T> IndexMut<Idx> for DedupArena<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> IndexMut<Idx> for DedupArena<Idx, T, A>
 where
     Idx: ArenaIndex,
 {

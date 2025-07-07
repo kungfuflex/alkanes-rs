@@ -1,4 +1,5 @@
 use crate::arena::ArenaIndex;
+#[cfg(not(target_arch = "spirv"))]
 use alloc::vec::Vec;
 use core::{
     fmt::{self, Debug},

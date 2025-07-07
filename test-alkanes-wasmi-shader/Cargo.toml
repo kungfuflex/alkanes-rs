@@ -1,0 +1,26 @@
+[package]
+name = "test-alkanes-wasmi-shader"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+spirv-std = { git = "https://github.com/EmbarkStudios/rust-gpu", rev = "7e54ed23" }
+libm = { version = "=0.2.8" }
+alkanes-alloc = { path = "../crates/alkanes-alloc", default-features = false }
+alkanes-sync = { path = "../crates/alkanes-sync", default-features = false }
+
+[lib]
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "main_cs"
+path = "src/lib.rs"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = false

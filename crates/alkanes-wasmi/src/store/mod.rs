@@ -18,6 +18,7 @@ use crate::{
     Instance,
     Memory,
 };
+use alkanes_alloc::DefaultAllocator;
 use alloc::boxed::Box;
 use core::{
     any::{type_name, TypeId},
@@ -300,7 +301,7 @@ impl<T> TypedStoreInner<T> {
     /// Creates a new [`TypedStoreInner`] from the given data of type `T`.
     fn new(data: T) -> Self {
         Self {
-            trampolines: Arena::new(),
+            trampolines: Arena::new(DefaultAllocator::default()),
             data: Box::new(data),
             limiter: None,
             call_hook: None,

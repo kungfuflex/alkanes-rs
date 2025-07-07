@@ -2,7 +2,7 @@
 //! 
 //! Uses standard library synchronization primitives for native targets.
 
-use crate::{AlkanesArc, AlkanesMutex, AlkanesOnceCell, SyncError};
+use crate::{AlkanesArc, AlkanesMutex, AlkanesOnceCell};
 use core::ops::{Deref, DerefMut};
 
 #[cfg(feature = "std")]
@@ -172,7 +172,7 @@ impl<T> AlkanesArc<T> for NativeArc<T> {
     }
     
     fn clone(&self) -> Self {
-        Clone::clone(self)
+        Clone::clone(&self)
     }
     
     #[cfg(feature = "std")]

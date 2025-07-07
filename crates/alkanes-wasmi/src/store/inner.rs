@@ -30,6 +30,8 @@ use crate::{
     Table,
     TableIdx,
 };
+use alkanes_alloc::DefaultAllocator;
+use alkanes_sync::{AlkanesArc, DefaultArc};
 use core::{
     fmt::Debug,
     sync::atomic::{AtomicU32, Ordering},
@@ -112,14 +114,14 @@ impl StoreInner {
         StoreInner {
             engine: engine.clone(),
             store_idx: StoreIdx::new(),
-            funcs: Arena::new(),
-            memories: Arena::new(),
-            tables: Arena::new(),
-            globals: Arena::new(),
-            instances: Arena::new(),
-            datas: Arena::new(),
-            elems: Arena::new(),
-            extern_objects: Arena::new(),
+            funcs: Arena::new(DefaultAllocator::default()),
+            memories: Arena::new(DefaultAllocator::default()),
+            tables: Arena::new(DefaultAllocator::default()),
+            globals: Arena::new(DefaultAllocator::default()),
+            instances: Arena::new(DefaultAllocator::default()),
+            datas: Arena::new(DefaultAllocator::default()),
+            elems: Arena::new(DefaultAllocator::default()),
+            extern_objects: Arena::new(DefaultAllocator::default()),
             fuel,
         }
     }

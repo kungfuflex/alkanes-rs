@@ -31,6 +31,7 @@ mod detail {
     feature = "prefer-btree-collections"
 ))]
 mod detail {
+    #[cfg(not(target_arch = "spirv"))]
     use alloc::collections::btree_set;
 
     pub type SetImpl<T> = btree_set::BTreeSet<T>;

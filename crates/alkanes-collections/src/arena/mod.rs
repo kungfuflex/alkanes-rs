@@ -9,7 +9,8 @@ mod dedup;
 mod guarded;
 
 pub use self::{component_vec::ComponentVec, dedup::DedupArena, guarded::GuardedEntity};
-use alloc::vec::Vec;
+use crate::vec::AlkanesVec;
+use alkanes_alloc::AlkanesAllocator;
 use core::{
     iter::Enumerate,
     marker::PhantomData,
@@ -29,24 +30,24 @@ pub trait ArenaIndex: Copy {
 ///
 /// For performance reasons the arena cannot deallocate single entities.
 #[derive(Debug)]
-pub struct Arena<Idx, T> {
-    entities: Vec<T>,
+pub struct Arena<Idx, T, A: AlkanesAllocator = alkanes_alloc::DefaultAllocator> {
+    entities: AlkanesVec<T, A>,
     marker: PhantomData<Idx>,
 }
 
 /// [`Arena`] does not store `Idx` therefore it is `Send` without its bound.
-unsafe impl<Idx, T> Send for Arena<Idx, T> where T: Send {}
+unsafe impl<Idx, T, A: AlkanesAllocator> Send for Arena<Idx, T, A> where T: Send {}
 
 /// [`Arena`] does not store `Idx` therefore it is `Sync` without its bound.
-unsafe impl<Idx, T> Sync for Arena<Idx, T> where T: Sync {}
+unsafe impl<Idx, T, A: AlkanesAllocator> Sync for Arena<Idx, T, A> where T: Sync {}
 
-impl<Idx, T> Default for Arena<Idx, T> {
+impl<Idx, T, A: AlkanesAllocator + Default> Default for Arena<Idx, T, A> {
     fn default() -> Self {
-        Self::new()
+        Self::new(A::default())
     }
 }
 
-impl<Idx, T> PartialEq for Arena<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> PartialEq for Arena<Idx, T, A>
 where
     T: PartialEq,
 {
@@ -55,13 +56,13 @@ where
     }
 }
 
-impl<Idx, T> Eq for Arena<Idx, T> where T: Eq {}
+impl<Idx, T, A: AlkanesAllocator> Eq for Arena<Idx, T, A> where T: Eq {}
 
-impl<Idx, T> Arena<Idx, T> {
+impl<Idx, T, A: AlkanesAllocator> Arena<Idx, T, A> {
     /// Creates a new empty entity [`Arena`].
-    pub fn new() -> Self {
+    pub fn new(allocator: A) -> Self {
         Self {
-            entities: Vec::new(),
+            entities: AlkanesVec::new(allocator),
             marker: PhantomData,
         }
     }
@@ -103,7 +104,7 @@ impl<Idx, T> Arena<Idx, T> {
     }
 }
 
-impl<Idx, T> Arena<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> Arena<Idx, T, A>
 where
     Idx: ArenaIndex,
 {
@@ -116,7 +117,7 @@ where
     #[inline]
     pub fn alloc(&mut self, entity: T) -> Idx {
         let index = self.next_index();
-        self.entities.push(entity);
+        let _ = self.entities.push(entity);
         index
     }
 
@@ -127,7 +128,7 @@ where
         T: Default,
     {
         let start = self.next_index();
-        self.entities
+        let _ = self.entities
             .extend(core::iter::repeat_with(T::default).take(amount));
         let end = self.next_index();
         Range { start, end }
@@ -168,20 +169,20 @@ where
     }
 }
 
-impl<Idx, T> FromIterator<T> for Arena<Idx, T> {
+impl<Idx, T, A: AlkanesAllocator + Default> FromIterator<T> for Arena<Idx, T, A> {
     #[inline]
     fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = T>,
     {
         Self {
-            entities: Vec::from_iter(iter),
+            entities: AlkanesVec::from_iter(iter),
             marker: PhantomData,
         }
     }
 }
 
-impl<'a, Idx, T> IntoIterator for &'a Arena<Idx, T>
+impl<'a, Idx, T, A: AlkanesAllocator> IntoIterator for &'a Arena<Idx, T, A>
 where
     Idx: ArenaIndex,
 {
@@ -194,7 +195,7 @@ where
     }
 }
 
-impl<'a, Idx, T> IntoIterator for &'a mut Arena<Idx, T>
+impl<'a, Idx, T, A: AlkanesAllocator> IntoIterator for &'a mut Arena<Idx, T, A>
 where
     Idx: ArenaIndex,
 {
@@ -303,14 +304,14 @@ where
     }
 }
 
-impl<Idx, T> Arena<Idx, T> {
+impl<Idx, T, A: AlkanesAllocator> Arena<Idx, T, A> {
     /// Panics with an index out of bounds message.
     fn index_out_of_bounds(len: usize, index: usize) -> ! {
         panic!("index out of bounds: the len is {len} but the index is {index}")
     }
 }
 
-impl<Idx, T> Index<Idx> for Arena<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> Index<Idx> for Arena<Idx, T, A>
 where
     Idx: ArenaIndex,
 {
@@ -323,7 +324,7 @@ where
     }
 }
 
-impl<Idx, T> IndexMut<Idx> for Arena<Idx, T>
+impl<Idx, T, A: AlkanesAllocator> IndexMut<Idx> for Arena<Idx, T, A>
 where
     Idx: ArenaIndex,
 {

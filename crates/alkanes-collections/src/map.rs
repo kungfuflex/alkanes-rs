@@ -29,6 +29,7 @@ mod detail {
     feature = "prefer-btree-collections"
 ))]
 mod detail {
+    #[cfg(not(target_arch = "spirv"))]
     use alloc::collections::btree_map;
 
     pub type MapImpl<K, V> = btree_map::BTreeMap<K, V>;
