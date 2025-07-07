@@ -107,6 +107,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-alloc"
+version = "0.5.2"
+dependencies = [
+ "cfg-if",
+ "spirv-std",
+]
+
+[[package]]
 name = "alkanes-build"
 version = "0.5.2"
 dependencies = [
@@ -135,6 +143,11 @@ name = "alkanes-gpu-shader"
 version = "0.5.2"
 dependencies = [
  "alkanes-gpu",
+ "alkanes-support",
+ "anyhow",
+ "bitcoin",
+ "metashrew-support",
+ "protorune-support",
  "spirv-std",
 ]
 
@@ -3830,6 +3843,14 @@ dependencies = [
  "once_cell",
  "rustix 1.0.7",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "test-alkanes-alloc-shader"
+version = "0.1.0"
+dependencies = [
+ "alkanes-alloc",
+ "spirv-std",
 ]
 
 [[package]]

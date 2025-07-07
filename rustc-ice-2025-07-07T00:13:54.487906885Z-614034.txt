@@ -1,0 +1,106 @@
+thread 'rustc' panicked at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:551:61:
+called `Result::unwrap()` on an `Err` value: WordCountZero(925496, 496)
+stack backtrace:
+   0:     0x73f94594a954 - std::backtrace_rs::backtrace::libunwind::trace::h2047b82b78957b16
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/../../backtrace/src/backtrace/libunwind.rs:93:5
+   1:     0x73f94594a954 - std::backtrace_rs::backtrace::trace_unsynchronized::h09d3ba0be92c204a
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/../../backtrace/src/backtrace/mod.rs:66:5
+   2:     0x73f94594a954 - std::backtrace::Backtrace::create::hddfad84d03f4b7b2
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/backtrace.rs:331:13
+   3:     0x73f94594a890 - std::backtrace::Backtrace::force_capture::he42cb7f0d90fd8e6
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/backtrace.rs:313:9
+   4:     0x73f948af697b - std[9021ab7eb1800470]::panicking::update_hook::<alloc[b36931eabff6d458]::boxed::Box<rustc_driver_impl[3b155c69176e0130]::install_ice_hook::{closure#0}>>::{closure#0}
+   5:     0x73f948af681f - std[9021ab7eb1800470]::panicking::update_hook::<alloc[b36931eabff6d458]::boxed::Box<rustc_driver_impl[3b155c69176e0130]::install_ice_hook::{closure#0}>>::{closure#0}
+   6:     0x73f945967831 - <alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call::h0ec3fa0b3629c93a
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/alloc/src/boxed.rs:2021:9
+   7:     0x73f945967831 - std::panicking::rust_panic_with_hook::hdb0a7131bd1f25e3
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/panicking.rs:735:13
+   8:     0x73f9459675b1 - std::panicking::begin_panic_handler::{{closure}}::h2b42e435eaa711ee
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/panicking.rs:609:13
+   9:     0x73f945964866 - std::sys_common::backtrace::__rust_end_short_backtrace::h3652b1b01bc073c5
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/sys_common/backtrace.rs:170:18
+  10:     0x73f945967302 - rust_begin_unwind
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/panicking.rs:597:5
+  11:     0x73f9459c6625 - core::panicking::panic_fmt::h7198c5e2f1cf748f
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/core/src/panicking.rs:72:14
+  12:     0x73f9459c6cb3 - core::result::unwrap_failed::h8d0388eab68cf7db
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/core/src/result.rs:1652:5
+  13:     0x73f93acbd11b - core::result::Result<T,E>::unwrap::habd16a88743def5e
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/core/src/result.rs:1077:23
+  14:     0x73f93af9fb8a - rustc_codegen_spirv::link::do_link::{{closure}}::he9e8c3519788119b
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:551:13
+  15:     0x73f93af9f8b5 - rustc_codegen_spirv::link::do_link::h32da030b67faa985
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:584:17
+  16:     0x73f93af9aa6f - rustc_codegen_spirv::link::link_exe::h8fde6b8652d4db4a
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:171:23
+  17:     0x73f93af99f23 - rustc_codegen_spirv::link::link::h1fc7499fb2bd694d
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:80:21
+  18:     0x73f93afcc8a8 - <rustc_codegen_spirv::SpirvCodegenBackend as rustc_codegen_ssa::traits::backend::CodegenBackend>::link::haa7f5aee185e92c1
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/lib.rs:274:9
+  19:     0x73f9480454a3 - <rustc_interface[6d526cf79e1d2a3f]::queries::Linker>::link
+  20:     0x73f94803420c - rustc_span[a848110e357b7e8b]::set_source_map::<core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>, rustc_interface[6d526cf79e1d2a3f]::interface::run_compiler<core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>, rustc_driver_impl[3b155c69176e0130]::run_compiler::{closure#1}>::{closure#0}::{closure#0}>
+  21:     0x73f94802e180 - std[9021ab7eb1800470]::sys_common::backtrace::__rust_begin_short_backtrace::<rustc_interface[6d526cf79e1d2a3f]::util::run_in_thread_with_globals<rustc_interface[6d526cf79e1d2a3f]::interface::run_compiler<core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>, rustc_driver_impl[3b155c69176e0130]::run_compiler::{closure#1}>::{closure#0}, core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>>::{closure#0}::{closure#0}, core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>>
+  22:     0x73f94835758e - <<std[9021ab7eb1800470]::thread::Builder>::spawn_unchecked_<rustc_interface[6d526cf79e1d2a3f]::util::run_in_thread_with_globals<rustc_interface[6d526cf79e1d2a3f]::interface::run_compiler<core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>, rustc_driver_impl[3b155c69176e0130]::run_compiler::{closure#1}>::{closure#0}, core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>>::{closure#0}::{closure#0}, core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>>::{closure#1} as core[eac01cc03d7c90b2]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+  23:     0x73f945972395 - <alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::h002abea1d29efb77
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/alloc/src/boxed.rs:2007:9
+  24:     0x73f945972395 - <alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::ha19d8c26cc20d38b
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/alloc/src/boxed.rs:2007:9
+  25:     0x73f945972395 - std::sys::unix::thread::Thread::new::thread_start::h6dc2d5714dd5ad65
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/sys/unix/thread.rs:108:17
+  26:     0x73f94569caa4 - <unknown>
+  27:     0x73f945729c3c - <unknown>
+  28:                0x0 - <unknown>
+
+
+rustc version: 1.74.0-nightly (8ce4540bd 2023-09-29)
+platform: x86_64-unknown-linux-gnuthread 'rustc' panicked at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:551:61:
+called `Result::unwrap()` on an `Err` value: WordCountZero(925496, 496)
+stack backtrace:
+   0:     0x73f94594a954 - std::backtrace_rs::backtrace::libunwind::trace::h2047b82b78957b16
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/../../backtrace/src/backtrace/libunwind.rs:93:5
+   1:     0x73f94594a954 - std::backtrace_rs::backtrace::trace_unsynchronized::h09d3ba0be92c204a
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/../../backtrace/src/backtrace/mod.rs:66:5
+   2:     0x73f94594a954 - std::backtrace::Backtrace::create::hddfad84d03f4b7b2
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/backtrace.rs:331:13
+   3:     0x73f94594a890 - std::backtrace::Backtrace::force_capture::he42cb7f0d90fd8e6
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/backtrace.rs:313:9
+   4:     0x73f948af697b - std[9021ab7eb1800470]::panicking::update_hook::<alloc[b36931eabff6d458]::boxed::Box<rustc_driver_impl[3b155c69176e0130]::install_ice_hook::{closure#0}>>::{closure#0}
+   5:     0x73f945967831 - <alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call::h0ec3fa0b3629c93a
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/alloc/src/boxed.rs:2021:9
+   6:     0x73f945967831 - std::panicking::rust_panic_with_hook::hdb0a7131bd1f25e3
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/panicking.rs:735:13
+   7:     0x73f9459675b1 - std::panicking::begin_panic_handler::{{closure}}::h2b42e435eaa711ee
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/panicking.rs:609:13
+   8:     0x73f945964866 - std::sys_common::backtrace::__rust_end_short_backtrace::h3652b1b01bc073c5
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/sys_common/backtrace.rs:170:18
+   9:     0x73f945967302 - rust_begin_unwind
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/panicking.rs:597:5
+  10:     0x73f9459c6625 - core::panicking::panic_fmt::h7198c5e2f1cf748f
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/core/src/panicking.rs:72:14
+  11:     0x73f9459c6cb3 - core::result::unwrap_failed::h8d0388eab68cf7db
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/core/src/result.rs:1652:5
+  12:     0x73f93acbd11b - core::result::Result<T,E>::unwrap::habd16a88743def5e
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/core/src/result.rs:1077:23
+  13:     0x73f93af9fb8a - rustc_codegen_spirv::link::do_link::{{closure}}::he9e8c3519788119b
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:551:13
+  14:     0x73f93af9f8b5 - rustc_codegen_spirv::link::do_link::h32da030b67faa985
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:584:17
+  15:     0x73f93af9aa6f - rustc_codegen_spirv::link::link_exe::h8fde6b8652d4db4a
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:171:23
+  16:     0x73f93af99f23 - rustc_codegen_spirv::link::link::h1fc7499fb2bd694d
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/link.rs:80:21
+  17:     0x73f93afcc8a8 - <rustc_codegen_spirv::SpirvCodegenBackend as rustc_codegen_ssa::traits::backend::CodegenBackend>::link::haa7f5aee185e92c1
+                               at /home/ubuntu/.cargo/git/checkouts/rust-gpu-e0a37a82a46176e6/7e54ed2/crates/rustc_codegen_spirv/src/lib.rs:274:9
+  18:     0x73f9480454a3 - <rustc_interface[6d526cf79e1d2a3f]::queries::Linker>::link
+  19:     0x73f94803420c - rustc_span[a848110e357b7e8b]::set_source_map::<core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>, rustc_interface[6d526cf79e1d2a3f]::interface::run_compiler<core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>, rustc_driver_impl[3b155c69176e0130]::run_compiler::{closure#1}>::{closure#0}::{closure#0}>
+  20:     0x73f94802e180 - std[9021ab7eb1800470]::sys_common::backtrace::__rust_begin_short_backtrace::<rustc_interface[6d526cf79e1d2a3f]::util::run_in_thread_with_globals<rustc_interface[6d526cf79e1d2a3f]::interface::run_compiler<core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>, rustc_driver_impl[3b155c69176e0130]::run_compiler::{closure#1}>::{closure#0}, core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>>::{closure#0}::{closure#0}, core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>>
+  21:     0x73f94835758e - <<std[9021ab7eb1800470]::thread::Builder>::spawn_unchecked_<rustc_interface[6d526cf79e1d2a3f]::util::run_in_thread_with_globals<rustc_interface[6d526cf79e1d2a3f]::interface::run_compiler<core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>, rustc_driver_impl[3b155c69176e0130]::run_compiler::{closure#1}>::{closure#0}, core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>>::{closure#0}::{closure#0}, core[eac01cc03d7c90b2]::result::Result<(), rustc_span[a848110e357b7e8b]::ErrorGuaranteed>>::{closure#1} as core[eac01cc03d7c90b2]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+  22:     0x73f945972395 - <alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::h002abea1d29efb77
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/alloc/src/boxed.rs:2007:9
+  23:     0x73f945972395 - <alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::ha19d8c26cc20d38b
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/alloc/src/boxed.rs:2007:9
+  24:     0x73f945972395 - std::sys::unix::thread::Thread::new::thread_start::h6dc2d5714dd5ad65
+                               at /rustc/8ce4540bd6fe7d58d4bc05f1b137d61937d3cf72/library/std/src/sys/unix/thread.rs:108:17
+  25:     0x73f94569caa4 - <unknown>
+  26:     0x73f945729c3c - <unknown>
+  27:                0x0 - <unknown>

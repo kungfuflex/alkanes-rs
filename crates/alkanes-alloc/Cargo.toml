@@ -1,0 +1,20 @@
+[package]
+name = "alkanes-alloc"
+version = "0.5.2"
+edition = "2021"
+description = "Generic allocation strategy for alkanes - supports SPIR-V, WASM32, and native targets"
+license = "MIT"
+
+[lib]
+name = "alkanes_alloc"
+
+[features]
+default = ["std"]
+std = []
+spirv = []
+
+[dependencies]
+cfg-if = { path = "../alkanes-cfg-if" }
+
+[target.'cfg(target_arch = "spirv")'.dependencies]
+spirv-std = { workspace = true }
