@@ -66,24 +66,51 @@ pub trait HostError: 'static + Display + Debug + Any + Send + Sync {}
 
 impl dyn HostError {
     /// Returns `true` if `self` is of type `T`.
+    #[cfg(not(target_arch = "spirv"))]
     pub fn is<T: HostError>(&self) -> bool {
         (self as &dyn Any).is::<T>()
+    }
+
+    /// Returns `true` if `self` is of type `T`.
+    #[cfg(target_arch = "spirv")]
+    pub fn is<T: HostError>(&self) -> bool {
+        panic!("HostError::is not supported on SPIR-V")
     }
 
     /// Downcasts the [`HostError`] into a shared reference to a `T` if possible.
     ///
     /// Returns `None` otherwise.
+    #[cfg(not(target_arch = "spirv"))]
     #[inline]
     pub fn downcast_ref<T: HostError>(&self) -> Option<&T> {
         (self as &dyn Any).downcast_ref::<T>()
     }
 
+    /// Downcasts the [`HostError`] into a shared reference to a `T` if possible.
+    ///
+    /// Returns `None` otherwise.
+    #[cfg(target_arch = "spirv")]
+    #[inline]
+    pub fn downcast_ref<T: HostError>(&self) -> Option<&T> {
+        panic!("HostError::downcast_ref not supported on SPIR-V")
+    }
+
     /// Downcasts the [`HostError`] into an exclusive reference to a `T` if possible.
     ///
     /// Returns `None` otherwise.
+    #[cfg(not(target_arch = "spirv"))]
     #[inline]
     pub fn downcast_mut<T: HostError>(&mut self) -> Option<&mut T> {
         (self as &mut dyn Any).downcast_mut::<T>()
+    }
+
+    /// Downcasts the [`HostError`] into an exclusive reference to a `T` if possible.
+    ///
+    /// Returns `None` otherwise.
+    #[cfg(target_arch = "spirv")]
+    #[inline]
+    pub fn downcast_mut<T: HostError>(&mut self) -> Option<&mut T> {
+        panic!("HostError::downcast_mut not supported on SPIR-V")
     }
 
     /// Consumes `self` to downcast the [`HostError`] into the `T` if possible.

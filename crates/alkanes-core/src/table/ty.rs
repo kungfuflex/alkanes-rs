@@ -52,9 +52,9 @@ impl TableType {
     ) -> Self {
         let absolute_max = index_ty.max_size();
         assert!(u128::from(min) <= absolute_max);
-        max.inspect(|&max| {
+        if let Some(max) = max {
             assert!(min <= max && u128::from(max) <= absolute_max);
-        });
+        }
         Self {
             element,
             min,

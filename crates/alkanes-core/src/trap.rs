@@ -189,7 +189,8 @@ where
     #[inline]
     #[cold] // see Trap::new
     fn from(host_error: E) -> Self {
-        Self::with_reason(TrapReason::Host(Box::new(host_error)))
+        let boxed: Box<dyn HostError> = Box::new(host_error);
+        Self::with_reason(TrapReason::Host(boxed))
     }
 }
 

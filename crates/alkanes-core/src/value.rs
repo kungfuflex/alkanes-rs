@@ -331,27 +331,27 @@ macro_rules! impl_float {
         impl Float for $ty {
             #[inline]
             fn abs(self) -> Self {
-                WasmFloatExt::abs(self)
+                <$ty as WasmFloatExt>::abs(self)
             }
             #[inline]
             fn floor(self) -> Self {
-                WasmFloatExt::floor(self)
+                <$ty as WasmFloatExt>::floor(self)
             }
             #[inline]
             fn ceil(self) -> Self {
-                WasmFloatExt::ceil(self)
+                <$ty as WasmFloatExt>::ceil(self)
             }
             #[inline]
             fn trunc(self) -> Self {
-                WasmFloatExt::trunc(self)
+                <$ty as WasmFloatExt>::trunc(self)
             }
             #[inline]
             fn nearest(self) -> Self {
-                WasmFloatExt::nearest(self)
+                <$ty as WasmFloatExt>::nearest(self)
             }
             #[inline]
             fn sqrt(self) -> Self {
-                WasmFloatExt::sqrt(self)
+                <$ty as WasmFloatExt>::sqrt(self)
             }
             #[inline]
             fn min(lhs: Self, rhs: Self) -> Self {
@@ -395,12 +395,12 @@ macro_rules! impl_float {
             }
             #[inline]
             fn copysign(lhs: Self, rhs: Self) -> Self {
-                WasmFloatExt::copysign(lhs, rhs)
+                <$ty as WasmFloatExt>::copysign(lhs, rhs)
             }
             #[inline]
             #[cfg(feature = "simd")]
             fn mul_add(a: Self, b: Self, c: Self) -> Self {
-                WasmFloatExt::mul_add(a, b, c)
+                <$ty as WasmFloatExt>::mul_add(a, b, c)
             }
         }
     };
@@ -519,43 +519,56 @@ macro_rules! impl_wasm_float {
         impl WasmFloatExt for $ty {
             #[inline]
             fn abs(self) -> Self {
-                self.abs()
+                <libm::Libm<Self>>::fabs(self)
             }
 
             #[inline]
             fn ceil(self) -> Self {
-                self.ceil()
+                <libm::Libm<Self>>::ceil(self)
             }
 
             #[inline]
             fn floor(self) -> Self {
-                self.floor()
+                <libm::Libm<Self>>::floor(self)
             }
 
             #[inline]
             fn trunc(self) -> Self {
-                self.trunc()
+                <libm::Libm<Self>>::trunc(self)
             }
 
             #[inline]
             fn nearest(self) -> Self {
-                self.round_ties_even()
+                // Custom implementation of round_ties_even for SPIR-V
+                // This is equivalent to the IEEE 754 "round to nearest, ties to even" mode
+                let round = <libm::Libm<Self>>::round(self);
+                if <Self as WasmFloatExt>::abs(self - <Self as WasmFloatExt>::trunc(self)) != 0.5 {
+                    return round;
+                }
+                let rem = round % 2.0;
+                if rem == 1.0 {
+                    <Self as WasmFloatExt>::floor(self)
+                } else if rem == -1.0 {
+                    <Self as WasmFloatExt>::ceil(self)
+                } else {
+                    round
+                }
             }
 
             #[inline]
             fn sqrt(self) -> Self {
-                self.sqrt()
+                <libm::Libm<Self>>::sqrt(self)
             }
 
             #[inline]
             fn copysign(self, other: Self) -> Self {
-                self.copysign(other)
+                <libm::Libm<Self>>::copysign(self, other)
             }
 
             #[inline]
             #[cfg(feature = "simd")]
             fn mul_add(self, a: Self, b: Self) -> Self {
-                self.mul_add(a, b)
+                <libm::Libm<Self>>::fma(self, a, b)
             }
         }
     };

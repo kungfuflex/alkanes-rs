@@ -358,7 +358,7 @@ impl RecGroup {
     pub fn types(&self) -> impl ExactSizeIterator<Item = &SubType> + '_ {
         let types = match &self.inner {
             RecGroupInner::Implicit(ty) => core::slice::from_ref(ty),
-            RecGroupInner::Explicit(types) => types,
+            RecGroupInner::Explicit(types) => types.as_slice(),
         };
         types.iter().map(|(_, ty)| ty)
     }
@@ -689,7 +689,7 @@ impl FuncType {
         let len_params = buffer.len();
         buffer.extend(results);
         Self {
-            params_results: buffer.into(),
+            params_results: buffer.into_boxed_slice(),
             len_params,
         }
     }
@@ -2123,7 +2123,7 @@ impl<'a> FromReader<'a> for FuncType {
         for result in results {
             params_results.push(result?);
         }
-        Ok(FuncType::from_raw_parts(params_results.into(), len_params))
+        Ok(FuncType::from_raw_parts(params_results.into_boxed_slice(), len_params))
     }
 }
 

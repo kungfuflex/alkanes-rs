@@ -201,6 +201,14 @@ mod prelude {
         pub fn extend<I: IntoIterator<Item = T>>(&mut self, _: I) {
             panic!("Vec::extend not supported on SPIR-V")
         }
+        
+        pub fn into_boxed_slice(self) -> Box<[T]> {
+            panic!("Vec::into_boxed_slice not supported on SPIR-V")
+        }
+        
+        pub fn as_slice(&self) -> &[T] {
+            panic!("Vec::as_slice not supported on SPIR-V")
+        }
     }
     
     impl<T> core::iter::FromIterator<T> for Vec<T> {
@@ -276,7 +284,7 @@ mod prelude {
         }
     }
     
-    // Stub format! macro
+    /// Stub format! macro for SPIR-V compatibility
     #[macro_export]
     macro_rules! format {
         ($($arg:tt)*) => {
@@ -285,7 +293,7 @@ mod prelude {
     }
     pub use format;
     
-    // Stub vec! macro
+    /// Stub vec! macro for SPIR-V compatibility
     #[macro_export]
     macro_rules! vec {
         ($($arg:tt)*) => {

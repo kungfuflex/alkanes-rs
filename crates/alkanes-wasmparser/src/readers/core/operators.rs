@@ -68,6 +68,12 @@ pub enum FrameKind {
     LegacyCatchAll,
 }
 
+impl Default for FrameKind {
+    fn default() -> Self {
+        FrameKind::Block
+    }
+}
+
 /// Represents a memory immediate in a WebAssembly memory instruction.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct MemArg {
