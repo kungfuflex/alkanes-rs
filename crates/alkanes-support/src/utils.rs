@@ -86,3 +86,21 @@ pub fn shift_bytes32_or_err(v: &mut Vec<u128>) -> Result<Vec<u8>> {
         .ok_or("")
         .map_err(|_| anyhow!("failed to shift bytes32 from list"))
 }
+
+pub fn string_to_u128_list(_input: String) -> Vec<u128> {
+    use std::convert::TryInto;
+    let mut input = _input.clone();
+    // Append null byte
+    input.push('\0');
+    let mut bytes = input.into_bytes();
+
+    // Pad with zeros to make length a multiple of 16
+    let padding = (16 - (bytes.len() % 16)) % 16;
+    bytes.extend(vec![0u8; padding]);
+
+    // Convert each 16-byte chunk into a u128
+    bytes
+        .chunks(16)
+        .map(|chunk| u128::from_le_bytes(chunk.try_into().unwrap()))
+        .collect()
+}
