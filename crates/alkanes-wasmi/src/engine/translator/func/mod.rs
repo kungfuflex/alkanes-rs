@@ -464,16 +464,23 @@ impl FuncTranslator {
             Ok(())
         })?;
         preserved.reverse();
-        let copy_groups = preserved.chunk_by(|a, b| {
-            // Note: we group copies into groups with continuous result register indices
-            //       because this is what allows us to fuse single `Copy` instructions into
-            //       more efficient `Copy2` or `CopyManyNonOverlapping` instructions.
-            //
-            // At the time of this writing the author was not sure if all result registers
-            // of all preserved locals are always continuous so this can be understood as
-            // a safety guard.
-            (i16::from(b.preserved) - i16::from(a.preserved)) == 1
-        });
+        // Group copies into groups with continuous result register indices
+        // because this allows us to fuse single `Copy` instructions into
+        // more efficient `Copy2` or `CopyManyNonOverlapping` instructions.
+        let mut copy_groups = Vec::new();
+        if !preserved.is_empty() {
+            let mut current_group = vec![preserved[0]];
+            for window in preserved.windows(2) {
+                let (a, b) = (window[0], window[1]);
+                if (i16::from(b.preserved) - i16::from(a.preserved)) == 1 {
+                    current_group.push(b);
+                } else {
+                    copy_groups.push(current_group);
+                    current_group = vec![b];
+                }
+            }
+            copy_groups.push(current_group);
+        }
         for copy_group in copy_groups {
             let len = u16::try_from(copy_group.len()).unwrap_or_else(|error| {
                 panic!(

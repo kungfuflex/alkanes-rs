@@ -12,16 +12,20 @@
 
 use cfg_if::cfg_if;
 
+// Always include spirv_alloc module for type definitions
+mod spirv_alloc;
+pub use spirv_alloc::{SpirvLayoutAllocator, SpirvBox, SpirvVec, spirv_box, spirv_vec, spirv_vec_with_capacity};
+
 cfg_if! {
     if #[cfg(target_arch = "spirv")] {
-        mod spirv_alloc;
-        pub use spirv_alloc::*;
+        // SPIR-V target uses spirv_alloc
+        pub use spirv_alloc::{DefaultAllocator, default_allocator};
     } else if #[cfg(target_arch = "wasm32")] {
         mod wasm_alloc;
-        pub use wasm_alloc::*;
+        pub use wasm_alloc::{DefaultAllocator, default_allocator};
     } else {
         mod native_alloc;
-        pub use native_alloc::*;
+        pub use native_alloc::{DefaultAllocator, default_allocator};
     }
 }
 

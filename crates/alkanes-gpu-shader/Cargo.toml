@@ -10,13 +10,8 @@ crate-type = ["cdylib", "rlib"]
 
 [target.'cfg(target_arch = "spirv")'.dependencies]
 spirv-std.workspace = true
-alkanes-alloc = { path = "../alkanes-alloc" }
-alkanes-sync = { path = "../alkanes-sync" }
-# Full alkanes-wasmi integration with SPIR-V compatibility
-wasmi = { path = "../alkanes-wasmi", package = "wasmi", default-features = false }
-wasmi_core = { path = "../alkanes-core", package = "wasmi_core", default-features = false }
-wasmi_collections = { path = "../alkanes-collections", package = "wasmi_collections", default-features = false }
-wasmparser = { path = "../alkanes-wasmparser", package = "wasmparser", default-features = false }
+# Minimal dependencies for SPIR-V compatibility
+# alkanes-alloc = { path = "../alkanes-alloc" }  # Removed - causes SPIR-V bitcast issues
 
 [target.'cfg(not(target_arch = "spirv"))'.dependencies]
 spirv-std = { workspace = true, default-features = true }
@@ -28,7 +23,7 @@ bitcoin = "0.32"
 anyhow = "1.0"
 
 [dependencies]
-# Only spirv-std for SPIR-V target - no std/alloc dependencies
+# Core dependencies that work in both SPIR-V and non-SPIR-V targets
 
 [package.metadata.rust-gpu.build]
 capabilities = ["Int64", "Int16", "StorageBuffer16BitAccess"]

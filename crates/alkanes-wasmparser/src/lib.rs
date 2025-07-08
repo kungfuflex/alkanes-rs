@@ -1676,6 +1676,6 @@ pub mod validator_stubs {
 #[cfg(target_arch = "spirv")]
 pub use validator_stubs::*;
 
-#[cfg(not(target_arch = "spirv"))]
+#[cfg(all(not(target_arch = "spirv"), feature = "validate"))]
 pub use crate::validator::*;
 

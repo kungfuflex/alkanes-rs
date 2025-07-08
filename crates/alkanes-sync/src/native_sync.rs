@@ -16,6 +16,7 @@ use core::cell::{Cell, UnsafeCell};
 
 /// Native mutex implementation
 #[cfg(feature = "std")]
+#[derive(Debug)]
 pub struct NativeMutex<T> {
     inner: Mutex<T>,
 }
@@ -23,6 +24,15 @@ pub struct NativeMutex<T> {
 #[cfg(not(feature = "std"))]
 pub struct NativeMutex<T> {
     data: UnsafeCell<T>,
+}
+
+#[cfg(not(feature = "std"))]
+impl<T: core::fmt::Debug> core::fmt::Debug for NativeMutex<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("NativeMutex")
+            .field("data", unsafe { &*self.data.get() })
+            .finish()
+    }
 }
 
 #[cfg(feature = "std")]
@@ -288,6 +298,7 @@ impl<T> AlkanesOnceCell<T> for NativeOnceCell<T> {
 
 /// Native read-write lock
 #[cfg(feature = "std")]
+#[derive(Debug)]
 pub struct NativeRwLock<T> {
     inner: RwLock<T>,
 }
@@ -295,6 +306,15 @@ pub struct NativeRwLock<T> {
 #[cfg(not(feature = "std"))]
 pub struct NativeRwLock<T> {
     data: UnsafeCell<T>,
+}
+
+#[cfg(not(feature = "std"))]
+impl<T: core::fmt::Debug> core::fmt::Debug for NativeRwLock<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("NativeRwLock")
+            .field("data", unsafe { &*self.data.get() })
+            .finish()
+    }
 }
 
 #[cfg(feature = "std")]

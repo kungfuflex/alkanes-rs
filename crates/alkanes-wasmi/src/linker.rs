@@ -19,13 +19,13 @@ use crate::{
 
 #[cfg(not(target_arch = "spirv"))]
 use crate::collections::{
-    string_interner::{InternHint, Sym as Symbol},
+    string_interner::{GetOrInternWithHint, InternHint, Sym as Symbol},
     StringInterner,
 };
 
 #[cfg(target_arch = "spirv")]
 use crate::collections::{
-    string_interner::{InternHint, Sym as Symbol},
+    string_interner::{GetOrInternWithHint, InternHint, Sym as Symbol},
     StringInterner,
 };
 
@@ -132,20 +132,20 @@ impl ImportKey {
     /// Creates a new [`ImportKey`] from the given `module` and `name` symbols.
     #[inline]
     pub fn new(module: Symbol, name: Symbol) -> Self {
-        let module_and_name = (u64::from(module.into_u32()) << 32) | u64::from(name.into_u32());
+        let module_and_name = (u64::from(module.into_usize() as u32) << 32) | u64::from(name.into_usize() as u32);
         Self { module_and_name }
     }
 
     /// Returns the `module` [`Symbol`] of the [`ImportKey`].
     #[inline]
     pub fn module(&self) -> Symbol {
-        Symbol::from_u32((self.module_and_name >> 32) as u32)
+        Symbol::from_usize((self.module_and_name >> 32) as usize)
     }
 
     /// Returns the `name` [`Symbol`] of the [`ImportKey`].
     #[inline]
     pub fn name(&self) -> Symbol {
-        Symbol::from_u32(self.module_and_name as u32)
+        Symbol::from_usize((self.module_and_name as u32) as usize)
     }
 }
 

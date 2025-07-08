@@ -21,8 +21,6 @@ use crate::limits::{
     MAX_WASM_FUNCTION_PARAMS, MAX_WASM_FUNCTION_RETURNS, MAX_WASM_STRUCT_FIELDS,
     MAX_WASM_SUPERTYPES, MAX_WASM_TYPES,
 };
-#[cfg(not(target_arch = "spirv"))]
-extern crate alloc;
 
 use crate::prelude::*;
 #[cfg(feature = "validate")]

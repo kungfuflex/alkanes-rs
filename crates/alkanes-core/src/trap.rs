@@ -203,7 +203,7 @@ where
     #[cold] // see Trap::new
     fn from(host_error: E) -> Self {
         let boxed = Box::new(host_error);
-        let trait_object: Box<dyn HostError> = boxed.into();
+        let trait_object: Box<dyn HostError> = boxed as Box<dyn HostError>;
         Self::with_reason(TrapReason::Host(trait_object))
     }
 }

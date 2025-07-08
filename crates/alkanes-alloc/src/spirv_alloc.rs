@@ -59,6 +59,12 @@ impl SpirvLayoutAllocator {
     }
 }
 
+impl Default for SpirvLayoutAllocator {
+    fn default() -> Self {
+        Self::new(SPIRV_ARENA_SIZE)
+    }
+}
+
 impl AlkanesAllocator for SpirvLayoutAllocator {
     type Error = AllocError;
     

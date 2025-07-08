@@ -1,4 +1,5 @@
 #![no_std]
+#![cfg_attr(not(target_arch = "spirv"), feature(error_in_core))]
 
 #[cfg(not(target_arch = "spirv"))]
 extern crate alloc;

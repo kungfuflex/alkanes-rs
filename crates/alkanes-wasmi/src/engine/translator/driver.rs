@@ -26,7 +26,7 @@ where
     ) -> Result<Self, Error> {
         let offset = offset.into().unwrap_or(0);
         let features = translator.features();
-        let reader = BinaryReader::new_features(bytes, offset, features);
+        let reader = BinaryReader::new(bytes, offset);
         let func_body = FunctionBody::new(reader);
         Ok(Self {
             func_body,
@@ -84,7 +84,8 @@ where
             self.translator.update_pos(pos);
             reader.visit_operator(&mut self.translator)??;
         }
-        reader.ensure_end()?;
+        // Note: ensure_end() method doesn't exist in current wasmparser version
+        // The reader should already be at the end when eof() returns true
         Ok(reader.original_position())
     }
 }

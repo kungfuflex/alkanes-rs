@@ -64,22 +64,24 @@ impl Config {
     /// Returns the default [`WasmFeatures`].
     fn default_features() -> WasmFeatures {
         let mut features = WasmFeatures::empty();
-        features.set(WasmFeatures::MUTABLE_GLOBAL, true);
-        features.set(WasmFeatures::MULTI_VALUE, true);
-        features.set(WasmFeatures::MULTI_MEMORY, true);
-        features.set(WasmFeatures::SATURATING_FLOAT_TO_INT, true);
-        features.set(WasmFeatures::SIGN_EXTENSION, true);
-        features.set(WasmFeatures::BULK_MEMORY, true);
-        features.set(WasmFeatures::REFERENCE_TYPES, true);
-        features.set(WasmFeatures::GC_TYPES, true); // required by reference-types
-        features.set(WasmFeatures::TAIL_CALL, true);
-        features.set(WasmFeatures::EXTENDED_CONST, true);
-        features.set(WasmFeatures::FLOATS, true);
-        features.set(WasmFeatures::CUSTOM_PAGE_SIZES, false);
-        features.set(WasmFeatures::MEMORY64, true);
-        features.set(WasmFeatures::WIDE_ARITHMETIC, false);
-        features.set(WasmFeatures::SIMD, cfg!(feature = "simd"));
-        features.set(WasmFeatures::RELAXED_SIMD, cfg!(feature = "simd"));
+        features.insert(WasmFeatures::MUTABLE_GLOBAL);
+        features.insert(WasmFeatures::MULTI_VALUE);
+        features.insert(WasmFeatures::MULTI_MEMORY);
+        features.insert(WasmFeatures::SATURATING_FLOAT_TO_INT);
+        features.insert(WasmFeatures::SIGN_EXTENSION);
+        features.insert(WasmFeatures::BULK_MEMORY);
+        features.insert(WasmFeatures::REFERENCE_TYPES);
+        features.insert(WasmFeatures::GC_TYPES); // required by reference-types
+        features.insert(WasmFeatures::TAIL_CALL);
+        features.insert(WasmFeatures::EXTENDED_CONST);
+        features.insert(WasmFeatures::FLOATS);
+        // CUSTOM_PAGE_SIZES defaults to false, so don't insert
+        features.insert(WasmFeatures::MEMORY64);
+        // WIDE_ARITHMETIC defaults to false, so don't insert
+        if cfg!(feature = "simd") {
+            features.insert(WasmFeatures::SIMD);
+            features.insert(WasmFeatures::RELAXED_SIMD);
+        }
         features
     }
 
@@ -117,7 +119,11 @@ impl Config {
     ///
     /// [`mutable-global`]: https://github.com/WebAssembly/mutable-global
     pub fn wasm_mutable_global(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::MUTABLE_GLOBAL, enable);
+        if enable {
+            self.features.insert(WasmFeatures::MUTABLE_GLOBAL);
+        } else {
+            self.features.remove(WasmFeatures::MUTABLE_GLOBAL);
+        }
         self
     }
 
@@ -129,7 +135,11 @@ impl Config {
     ///
     /// [`sign-extension`]: https://github.com/WebAssembly/sign-extension-ops
     pub fn wasm_sign_extension(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::SIGN_EXTENSION, enable);
+        if enable {
+            self.features.insert(WasmFeatures::SIGN_EXTENSION);
+        } else {
+            self.features.remove(WasmFeatures::SIGN_EXTENSION);
+        }
         self
     }
 
@@ -142,8 +152,11 @@ impl Config {
     /// [`saturating-float-to-int`]:
     /// https://github.com/WebAssembly/nontrapping-float-to-int-conversions
     pub fn wasm_saturating_float_to_int(&mut self, enable: bool) -> &mut Self {
-        self.features
-            .set(WasmFeatures::SATURATING_FLOAT_TO_INT, enable);
+        if enable {
+            self.features.insert(WasmFeatures::SATURATING_FLOAT_TO_INT);
+        } else {
+            self.features.remove(WasmFeatures::SATURATING_FLOAT_TO_INT);
+        }
         self
     }
 
@@ -155,7 +168,11 @@ impl Config {
     ///
     /// [`multi-value`]: https://github.com/WebAssembly/multi-value
     pub fn wasm_multi_value(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::MULTI_VALUE, enable);
+        if enable {
+            self.features.insert(WasmFeatures::MULTI_VALUE);
+        } else {
+            self.features.remove(WasmFeatures::MULTI_VALUE);
+        }
         self
     }
 
@@ -167,7 +184,11 @@ impl Config {
     ///
     /// [`multi-memory`]: https://github.com/WebAssembly/multi-memory
     pub fn wasm_multi_memory(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::MULTI_MEMORY, enable);
+        if enable {
+            self.features.insert(WasmFeatures::MULTI_MEMORY);
+        } else {
+            self.features.remove(WasmFeatures::MULTI_MEMORY);
+        }
         self
     }
 
@@ -179,7 +200,11 @@ impl Config {
     ///
     /// [`bulk-memory`]: https://github.com/WebAssembly/bulk-memory-operations
     pub fn wasm_bulk_memory(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::BULK_MEMORY, enable);
+        if enable {
+            self.features.insert(WasmFeatures::BULK_MEMORY);
+        } else {
+            self.features.remove(WasmFeatures::BULK_MEMORY);
+        }
         self
     }
 
@@ -191,8 +216,13 @@ impl Config {
     ///
     /// [`reference-types`]: https://github.com/WebAssembly/reference-types
     pub fn wasm_reference_types(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::REFERENCE_TYPES, enable);
-        self.features.set(WasmFeatures::GC_TYPES, enable);
+        if enable {
+            self.features.insert(WasmFeatures::REFERENCE_TYPES);
+            self.features.insert(WasmFeatures::GC_TYPES);
+        } else {
+            self.features.remove(WasmFeatures::REFERENCE_TYPES);
+            self.features.remove(WasmFeatures::GC_TYPES);
+        }
         self
     }
 
@@ -204,7 +234,11 @@ impl Config {
     ///
     /// [`tail-call`]: https://github.com/WebAssembly/tail-call
     pub fn wasm_tail_call(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::TAIL_CALL, enable);
+        if enable {
+            self.features.insert(WasmFeatures::TAIL_CALL);
+        } else {
+            self.features.remove(WasmFeatures::TAIL_CALL);
+        }
         self
     }
 
@@ -216,7 +250,11 @@ impl Config {
     ///
     /// [`extended-const`]: https://github.com/WebAssembly/extended-const
     pub fn wasm_extended_const(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::EXTENDED_CONST, enable);
+        if enable {
+            self.features.insert(WasmFeatures::EXTENDED_CONST);
+        } else {
+            self.features.remove(WasmFeatures::EXTENDED_CONST);
+        }
         self
     }
 
@@ -228,7 +266,11 @@ impl Config {
     ///
     /// [`custom-page-sizes`]: https://github.com/WebAssembly/custom-page-sizes
     pub fn wasm_custom_page_sizes(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::CUSTOM_PAGE_SIZES, enable);
+        if enable {
+            self.features.insert(WasmFeatures::CUSTOM_PAGE_SIZES);
+        } else {
+            self.features.remove(WasmFeatures::CUSTOM_PAGE_SIZES);
+        }
         self
     }
 
@@ -240,7 +282,11 @@ impl Config {
     ///
     /// [`memory64`]: https://github.com/WebAssembly/memory64
     pub fn wasm_memory64(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::MEMORY64, enable);
+        if enable {
+            self.features.insert(WasmFeatures::MEMORY64);
+        } else {
+            self.features.remove(WasmFeatures::MEMORY64);
+        }
         self
     }
 
@@ -250,7 +296,11 @@ impl Config {
     ///
     /// [`wide-arithmetic`]: https://github.com/WebAssembly/wide-arithmetic
     pub fn wasm_wide_arithmetic(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::WIDE_ARITHMETIC, enable);
+        if enable {
+            self.features.insert(WasmFeatures::WIDE_ARITHMETIC);
+        } else {
+            self.features.remove(WasmFeatures::WIDE_ARITHMETIC);
+        }
         self
     }
 
@@ -261,7 +311,11 @@ impl Config {
     /// [`simd`]: https://github.com/WebAssembly/simd
     #[cfg(feature = "simd")]
     pub fn wasm_simd(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::SIMD, enable);
+        if enable {
+            self.features.insert(WasmFeatures::SIMD);
+        } else {
+            self.features.remove(WasmFeatures::SIMD);
+        }
         self
     }
 
@@ -272,7 +326,11 @@ impl Config {
     /// [`relaxed-simd`]: https://github.com/WebAssembly/relaxed-simd
     #[cfg(feature = "simd")]
     pub fn wasm_relaxed_simd(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::RELAXED_SIMD, enable);
+        if enable {
+            self.features.insert(WasmFeatures::RELAXED_SIMD);
+        } else {
+            self.features.remove(WasmFeatures::RELAXED_SIMD);
+        }
         self
     }
 
@@ -280,7 +338,11 @@ impl Config {
     ///
     /// Enabled by default.
     pub fn floats(&mut self, enable: bool) -> &mut Self {
-        self.features.set(WasmFeatures::FLOATS, enable);
+        if enable {
+            self.features.insert(WasmFeatures::FLOATS);
+        } else {
+            self.features.remove(WasmFeatures::FLOATS);
+        }
         self
     }
 

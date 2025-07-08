@@ -1,6 +1,7 @@
 #![no_std]
 #![cfg_attr(not(target_arch = "spirv"), feature(error_in_core))]
 #![cfg_attr(not(target_arch = "spirv"), feature(iter_repeat_n))]
+#![cfg_attr(not(target_arch = "spirv"), feature(trait_upcasting))]
 #![warn(
     clippy::cast_lossless,
     clippy::missing_errors_doc,

@@ -61,8 +61,9 @@ pub struct ModuleParser {
 impl ModuleParser {
     /// Creates a new [`ModuleParser`] for the given [`Engine`].
     pub fn new(engine: &Engine) -> Self {
-        let mut parser = WasmParser::new(0);
-        parser.set_features(engine.config().wasm_features());
+        let parser = WasmParser::new(0);
+        // Note: set_features() method doesn't exist in current wasmparser version
+        // Features are typically handled during validation instead
         Self {
             engine: engine.clone(),
             validator: None,

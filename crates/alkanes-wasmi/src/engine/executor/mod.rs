@@ -23,6 +23,7 @@ use crate::{
     Store,
     StoreContextMut,
 };
+use alkanes_sync::AlkanesMutex;
 
 #[cfg(doc)]
 use crate::engine::StackLimits;

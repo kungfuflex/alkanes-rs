@@ -69,7 +69,7 @@ impl ElementSegment {
             }
             module::ElementSegmentKind::Declared => Box::from([]),
         };
-        let entity = CoreElementSegment::new(elem.ty(), items);
+        let entity = CoreElementSegment::new(elem.ty(), items.iter().copied());
         ctx.as_context_mut()
             .store
             .inner

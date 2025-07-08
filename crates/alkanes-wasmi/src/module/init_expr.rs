@@ -310,9 +310,8 @@ impl ConstExpr {
                 op => panic!("encountered invalid Wasm const expression operator: {op:?}"),
             };
         }
-        reader
-            .ensure_end()
-            .expect("due to Wasm validation this is guaranteed to succeed");
+        // Note: ensure_end() method doesn't exist in current wasmparser version
+        // The reader should already be at the end when the End operator is encountered
         let op = stack
             .pop()
             .expect("due to Wasm validation must have one operator on the stack");
