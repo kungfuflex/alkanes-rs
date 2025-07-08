@@ -15,12 +15,8 @@ spirv-std.workspace = true
 
 [target.'cfg(not(target_arch = "spirv"))'.dependencies]
 spirv-std = { workspace = true, default-features = true }
-alkanes-gpu = { path = "../alkanes-gpu" }
-alkanes-support = { path = "../alkanes-support" }
-metashrew-support = { path = "../metashrew-support" }
-protorune-support = { path = "../protorune-support" }
-bitcoin = "0.32"
-anyhow = "1.0"
+# Removed alkanes-gpu and related dependencies to avoid pulling in alkanes-wasmi
+# The GPU shader should be self-contained for SPIR-V compilation
 
 [dependencies]
 # Core dependencies that work in both SPIR-V and non-SPIR-V targets

@@ -3,7 +3,7 @@
 //! This parser handles the minimal subset of WASM needed for alkanes message processing.
 //! It's designed to work within SPIR-V constraints (no allocation, compile-time bounds).
 
-use crate::wasm_interpreter::{WasmOpcode, WasmValue, WasmValueType, WasmFuncType};
+use crate::wasm_interpreter::{WasmOpcode, WasmValueType, WasmFuncType};
 
 /// WASM section IDs
 pub mod sections {
@@ -355,26 +355,14 @@ impl SpirvWasmParser {
     
     /// Expose check_magic for testing
     #[cfg(test)]
-    pub fn check_magic(&mut self) -> Result<bool, &'static str> {
-        const WASM_MAGIC: [u8; 4] = [0x00, 0x61, 0x73, 0x6D];
-        for &expected in &WASM_MAGIC {
-            if self.read_u8()? != expected {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+    pub fn test_check_magic(&mut self) -> Result<bool, &'static str> {
+        self.check_magic()
     }
     
     /// Expose check_version for testing
     #[cfg(test)]
-    pub fn check_version(&mut self) -> Result<bool, &'static str> {
-        const WASM_VERSION: [u8; 4] = [0x01, 0x00, 0x00, 0x00];
-        for &expected in &WASM_VERSION {
-            if self.read_u8()? != expected {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+    pub fn test_check_version(&mut self) -> Result<bool, &'static str> {
+        self.check_version()
     }
     
     fn read_u8(&mut self) -> Result<u8, &'static str> {

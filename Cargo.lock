@@ -151,12 +151,6 @@ dependencies = [
 name = "alkanes-gpu-shader"
 version = "0.5.2"
 dependencies = [
- "alkanes-gpu",
- "alkanes-support",
- "anyhow",
- "bitcoin",
- "metashrew-support",
- "protorune-support",
  "spirv-std",
 ]
 
