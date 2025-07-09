@@ -17,7 +17,7 @@ cache = []
 
 [dependencies]
 anyhow = "1.0.89"
-bitcoin = { version = "0.32.4", features = ["rand"] }
+bitcoin.workspace = true
 metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
 protorune-support = { path = "../protorune-support" }
