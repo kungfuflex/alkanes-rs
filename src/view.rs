@@ -456,8 +456,6 @@ pub fn simulate_parcel(
     )));
     let mut atomic = parcel.atomic.derive(&IndexPointer::default());
     let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
-
-    println!("myself: {:?}, incoming runes: {:?}", myself, parcel.runes);
     credit_balances(&mut atomic, &myself, &parcel.runes)?;
     prepare_context(context.clone(), &caller, &myself, false);
     let (response, gas_used) = run_after_special(context.clone(), binary, fuel)?;
