@@ -7,7 +7,9 @@ use crate::utils::{
 };
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
-use crate::vm::utils::{sequence_pointer, prepare_context, run_after_special, run_special_cellpacks};
+use crate::vm::utils::{
+    prepare_context, run_after_special, run_special_cellpacks, sequence_pointer,
+};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransfer;
@@ -265,7 +267,10 @@ pub fn to_alkanes_outpoints(
 }
 
 pub fn sequence() -> Result<Vec<u8>> {
-  Ok(sequence_pointer(&AtomicPointer::default()).get_value::<u128>().to_le_bytes().to_vec())
+    Ok(sequence_pointer(&AtomicPointer::default())
+        .get_value::<u128>()
+        .to_le_bytes()
+        .to_vec())
 }
 
 pub fn protorunes_by_address(
