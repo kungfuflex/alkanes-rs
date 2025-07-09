@@ -17,7 +17,7 @@ members = [".", "crates/*"]
 [workspace.dependencies]
 anyhow = "1.0.90"
 num = "0.4.3"
-bitcoin = { version = "0.32.6", features = ["rand", "psbt"] }
+bitcoin = { version = "0.32.6", features = ["rand"] }
 metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 ordinals = { path = "./crates/ordinals" }
