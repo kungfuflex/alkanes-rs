@@ -99,7 +99,7 @@ pub trait MintableToken {
         let tx = consensus_decode::<Transaction>(&mut std::io::Cursor::new(CONTEXT.transaction()))?;
         self.data_pointer()
             .set(Arc::new(find_witness_payload(&tx, 0).ok_or_else(|| {
-                anyhow!("owned-token-factory: witness envelope at index 0 does not contain data")
+                anyhow!("mintable token: witness envelope at index 0 does not contain data")
             })?));
         Ok(())
     }
