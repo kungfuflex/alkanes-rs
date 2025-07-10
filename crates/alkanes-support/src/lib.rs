@@ -152,8 +152,8 @@ impl From<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
 impl Into<ProtoruneRuneId> for proto::alkanes::AlkaneId {
     fn into(self) -> ProtoruneRuneId {
         ProtoruneRuneId {
-            block: self.tx.as_ref().unwrap().clone().into(),
-            tx: self.block.as_ref().unwrap().clone().into(),
+            block: self.block.as_ref().unwrap().clone().into(),
+            tx: self.tx.as_ref().unwrap().clone().into(),
         }
     }
 }

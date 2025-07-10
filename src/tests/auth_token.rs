@@ -1,23 +1,26 @@
+use crate::index_block;
+use crate::tests::helpers::{
+    self as alkane_helpers, assert_binary_deployed_to_id, assert_id_points_to_alkane_id,
+};
+use crate::tests::std::alkanes_std_owned_token_build;
 use crate::{message::AlkaneMessageContext, tests::std::alkanes_std_auth_token_build};
+use alkane_helpers::clear;
+use alkanes::view;
 use alkanes_support::id::AlkaneId;
+use alkanes_support::utils::string_to_u128_list;
 use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
-use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
-use protorune_support::balance_sheet::BalanceSheetOperations;
-
-use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
-use crate::tests::std::alkanes_std_owned_token_build;
-use alkane_helpers::clear;
-use alkanes::view;
 use bitcoin::Witness;
+use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
+use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
+use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
+use protorune_support::balance_sheet::BalanceSheetOperations;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -212,10 +215,13 @@ fn test_auth_and_owned_token() -> Result<()> {
         _auth_token_id_factory.clone(),
         alkanes_std_auth_token_build::get_bytes(),
     );
-    let _ = assert_binary_deployed_to_id(
+    assert_id_points_to_alkane_id(
         auth_token_id_deployment.clone(),
-        alkanes_std_auth_token_build::get_bytes(),
-    );
+        AlkaneId {
+            block: 4,
+            tx: AUTH_TOKEN_FACTORY_ID,
+        },
+    )?;
 
     Ok(())
 }
@@ -234,29 +240,18 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
         inputs: vec![100],
     };
 
-    // Create a cellpack to set the name and symbol
-    // For the set_name_and_symbol method (opcode 88)
-    // The format for string parameters is now null-terminated strings
-
-    // For a long name that spans multiple u128s
-    // "SuperLongCustomTokenNameThatSpansMultipleU128Values" (49 characters)
-    let name_data1 = u128::from_le_bytes(*b"SuperLongCustomT");
-    let name_data2 = u128::from_le_bytes(*b"ok\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
-
-    // For "SLCT" symbol (4 characters)
-    let symbol_data = u128::from_le_bytes(*b"SLCT\0\0\0\0\0\0\0\0\0\0\0\0");
+    let mut inputs = vec![
+        1,    /* opcode (to init new token) */
+        1,    /* auth_token units */
+        1000, /* owned_token token_units */
+    ];
+    inputs.extend(string_to_u128_list("SuperLongCustomToken".to_string()));
+    inputs.extend(string_to_u128_list("SLCT".to_string()));
 
     // Initialize the OwnedToken with auth token and token units
     let init_cellpack = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
-        inputs: vec![
-            1,           /* opcode (to init new token) */
-            1,           /* auth_token units */
-            1000,        /* owned_token token_units */
-            name_data1,  // first part of the name
-            name_data2,  // second part of the name
-            symbol_data, // null-terminated symbol data
-        ],
+        inputs: inputs,
     };
 
     // Create a cellpack to get the name
@@ -317,7 +312,7 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
 
     println!("trace {:?}", trace_str);
 
-    let expected_name = "SuperLongCustomTok";
+    let expected_name = "SuperLongCustomToken";
     let expected_symbol = "SLCT";
 
     // Check if the trace data contains the expected name
@@ -450,35 +445,12 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         _auth_token_id_factory.clone(),
         alkanes_std_auth_token_build::get_bytes(),
     );
-    let _ = assert_binary_deployed_to_id(
+    assert_id_points_to_alkane_id(
         auth_token_id_deployment.clone(),
-        alkanes_std_auth_token_build::get_bytes(),
-    );
-
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 3 },
-        alkanes_std_owned_token_build::get_bytes(),
-    );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 4 },
-        alkanes_std_auth_token_build::get_bytes(),
-    );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 5 },
-        alkanes_std_owned_token_build::get_bytes(),
-    );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 6 },
-        alkanes_std_auth_token_build::get_bytes(),
-    );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 7 },
-        alkanes_std_owned_token_build::get_bytes(),
-    );
-    let _ = assert_binary_deployed_to_id(
-        AlkaneId { block: 2, tx: 8 },
-        alkanes_std_auth_token_build::get_bytes(),
-    );
-
+        AlkaneId {
+            block: 4,
+            tx: AUTH_TOKEN_FACTORY_ID,
+        },
+    )?;
     Ok(())
 }

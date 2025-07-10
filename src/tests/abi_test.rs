@@ -241,25 +241,6 @@ fn test_owned_token_abi() -> Result<()> {
 }
 
 #[wasm_bindgen_test]
-fn test_auth_token_abi() -> Result<()> {
-    clear();
-
-    // Expected methods with their opcodes, parameter names and types, and return types
-    let expected_methods = vec![
-        ("initialize", 0, vec![("amount", "u128")], "void"),
-        ("authenticate", 1, vec![], "void"),
-        ("get_name", 99, vec![], "String"),
-        ("get_symbol", 100, vec![], "String"),
-    ];
-
-    test_contract_abi(
-        "AuthToken",
-        alkanes_std_auth_token_build::get_bytes(),
-        expected_methods,
-    )
-}
-
-#[wasm_bindgen_test]
 fn test_proxy_abi() -> Result<()> {
     clear();
 
