@@ -97,10 +97,8 @@ pub trait MintableToken {
     }
     fn set_data(&self) -> Result<()> {
         let tx = consensus_decode::<Transaction>(&mut std::io::Cursor::new(CONTEXT.transaction()))?;
-        self.data_pointer()
-            .set(Arc::new(find_witness_payload(&tx, 0).ok_or_else(|| {
-                anyhow!("mintable token: witness envelope at index 0 does not contain data")
-            })?));
+        let data: Vec<u8> = find_witness_payload(&tx, 0).unwrap_or_else(|| vec![]);
+        self.data_pointer().set(Arc::new(data));
         Ok(())
     }
 }
