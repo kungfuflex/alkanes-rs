@@ -3,6 +3,7 @@ use super::{
     get_memory, read_arraybuffer, send_to_arraybuffer, sequence_pointer, AlkanesState, Extcall,
     Saveable, SaveableExtendedCallResponse,
 };
+use std::fmt::Write;
 use crate::alkane_log;
 use crate::logging::{record_alkane_creation, AlkaneCreation, determine_creation_method};
 use crate::utils::{balance_pointer, pipe_storagemap_to, transfer_from};
@@ -20,9 +21,9 @@ use alkanes_support::{
 use anyhow::{anyhow, Result};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_core::metashrew_println::{
     print, println,
-    stdio::{stdout, Write},
+    stdout,
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 

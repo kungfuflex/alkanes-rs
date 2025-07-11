@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 #[allow(unused_imports)]
 use {
-    metashrew_core::{println, stdio::stdout},
+    metashrew_println::{println, stdout},
     std::fmt::Write,
 };
 

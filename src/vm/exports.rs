@@ -7,7 +7,8 @@ use metashrew_support::utils::{consume_exact, consume_sized_int, consume_to_end}
 use wasmi::*;
 
 #[allow(unused_imports)]
-use metashrew_core::{println, stdio::{stdout, Write}};
+use metashrew_core::metashrew_println::{println, stdout};
+use std::io::Write;
 
 pub struct AlkanesExportsImpl(());
 impl AlkanesExportsImpl {

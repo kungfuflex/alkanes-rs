@@ -20,7 +20,7 @@ num = "0.4.3"
 bitcoin = { version = "0.32.6", features = ["rand"] }
 metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache" }
 metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache" }
-lru-mem = "0.3.0"
+metashrew-println = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache" }
 ordinals = { path = "./crates/ordinals" }
 protorune = { path = "./crates/protorune" }
 protorune-support = { path = "./crates/protorune-support" }

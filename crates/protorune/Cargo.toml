@@ -21,6 +21,7 @@ anyhow = "1.0.89"
 bitcoin = { version = "0.32.6", features = ["rand"] }
 metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
+metashrew-println = { workspace = true }
 protorune-support = { path = "../protorune-support" }
 ordinals = { path = "../ordinals" }
 ruint = { workspace = true }
@@ -32,7 +33,6 @@ serde = { version = "1.0.210", features = ["derive"] }
 serde_json = { workspace = true }
 hex = { workspace = true }
 protobuf = { workspace = true }
-lru-mem = { workspace = true }
 
 [dev-dependencies]
 metashrew-core = { workspace = true, features = ["test-utils"] }

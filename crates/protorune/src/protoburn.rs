@@ -3,10 +3,7 @@ use anyhow::{anyhow, Result};
 use bitcoin::{OutPoint, Txid};
 use metashrew_core::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
-};
+use metashrew_println::{println};
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::{
     cmp::min,

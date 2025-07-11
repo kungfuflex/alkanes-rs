@@ -18,7 +18,6 @@ bitcoin = { workspace = true }
 serde = "1.0.213"
 flate2 = "1.0.34"
 protobuf = { workspace = true }
-lru-mem = { workspace = true }
 
 [build-dependencies]
 anyhow = "1.0.90"
