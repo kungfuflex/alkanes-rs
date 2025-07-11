@@ -4,10 +4,11 @@ use crate::vm::fuel::FuelTank;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_core::metashrew_println::{
     println,
-    stdio::{stdout, Write},
+    stdout,
 };
+use std::io::Write;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;
@@ -144,7 +145,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                         .set(Arc::new(filtered_response.write_to_bytes()?));
                 }
                 Err(e) => {
-                    println!("Error caching wallet response for address: {:?}", e);
+                    crate::alkane_log!("Error caching wallet response for address: {:?}", e);
                 }
             }
         }

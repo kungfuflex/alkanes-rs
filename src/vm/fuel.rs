@@ -1,4 +1,6 @@
 use crate::{
+    alkane_log,
+    logging::{record_excess_fuel_unused},
     message::AlkaneMessageContext,
     vm::{AlkanesInstance, AlkanesState},
 };
@@ -16,7 +18,7 @@ use wasmi::*;
 
 #[allow(unused_imports)]
 use {
-    metashrew_core::{println, stdio::stdout},
+    metashrew_core::metashrew_println::{println, stdout},
     std::fmt::Write,
 };
 
@@ -223,47 +225,32 @@ impl FuelTank {
         tank.block_fuel = tank.block_fuel - std::cmp::min(tank.block_fuel, tank.block_metered_fuel);
         tank.txsize = txsize;
 
-        #[cfg(feature = "debug-log")]
-        {
-            println!("Fuel allocation for transaction {}:", txindex);
-            println!("  - Transaction size: {} bytes", txsize);
-            println!("  - Block size: {} bytes", tank.size);
-            println!("  - Block fuel before: {}", _block_fuel_before);
-            println!("  - Block fuel after: {}", tank.block_fuel);
-            println!("  - Allocated fuel: {}", tank.transaction_fuel);
-            println!("  - Minimum fuel: {}", minimum_fuel(height));
-        }
+        // Log fuel allocation only with --features logs
+        alkane_log!(
+            "Fuel allocation tx {}: size={} bytes, allocated={}, minimum={}",
+            txindex, txsize, tank.transaction_fuel, minimum_fuel(height)
+        );
     }
 
     pub fn refuel_block() {
         let mut tank = _FUEL_TANK.write().unwrap();
         let tank = tank.as_mut().unwrap();
 
-        #[cfg(feature = "debug-log")]
-        {
-            // Log refunding details before refunding
-            println!(
-                "Refunding fuel to block after transaction {}:",
-                tank.current_txindex
-            );
-            println!("  - Block fuel before refund: {}", tank.block_fuel);
-            println!("  - Remaining metered fuel: {}", tank.block_metered_fuel);
-            println!("  - Transaction size: {} bytes", tank.txsize);
-            println!("  - Block size before update: {} bytes", tank.size);
+        // Record excess fuel that wasn't used (under minimum fuel requirements)
+        if tank.block_metered_fuel > 0 {
+            record_excess_fuel_unused(tank.block_metered_fuel);
         }
+
+        alkane_log!(
+            "Refunding fuel after tx {}: {} units back to block",
+            tank.current_txindex, tank.block_metered_fuel
+        );
 
         // Only refund the remaining fuel (block_metered_fuel) that wasn't consumed
         // This value is updated by consume_fuel() to reflect the remaining amount
         // after transaction execution
         tank.block_fuel = tank.block_fuel + tank.block_metered_fuel;
         tank.size = tank.size - tank.txsize;
-
-        #[cfg(feature = "debug-log")]
-        {
-            // Log refunding details after refunding
-            println!("  - Block fuel after refund: {}", tank.block_fuel);
-            println!("  - Block size after update: {} bytes", tank.size);
-        }
     }
 
     pub fn consume_fuel(n: u64) -> Result<()> {

@@ -15,8 +15,6 @@ use protorune_support::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-use metashrew_core::{println, stdio::stdout};
-use std::fmt::Write;
 
 static mut PROTOCOLS: Option<BTreeSet<u128>> = None;
 
@@ -94,29 +92,7 @@ impl MessageProcessor for Protostone {
             return Err(anyhow::anyhow!("Invalid output pointer"));
         }
 
-        // Log the Bitcoin address that can spend the output pointed to by the "pointer" field
-        if pointer < num_outputs as u32 {
-            if let Ok(address) = protorune_support::network::to_address_str(
-                &transaction.output[pointer as usize].script_pubkey,
-            ) {
-                println!(
-                    "Protostone pointer ({}) points to Bitcoin address: {}",
-                    pointer, address
-                );
-            }
-        }
-
-        // Log the Bitcoin address that can spend the output pointed to by the "refund_pointer" field
-        if refund_pointer < num_outputs as u32 {
-            if let Ok(address) = protorune_support::network::to_address_str(
-                &transaction.output[refund_pointer as usize].script_pubkey,
-            ) {
-                println!(
-                    "Protostone refund_pointer ({}) points to Bitcoin address: {}",
-                    refund_pointer, address
-                );
-            }
-        }
+        // Removed excessive logging of Bitcoin addresses for pointer and refund_pointer
 
         // Validate protomessage vout to prevent overflow attacks
         // Add a reasonable maximum based on transaction size
@@ -166,17 +142,10 @@ impl MessageProcessor for Protostone {
                         Ok(true)
                     }
                     Err(e) => {
-                        println!("Got error inside reconcile! {:?} \n\n", e);
-                        println!("Refunding to refund_pointer: {}", refund_pointer);
+                        // Error in reconcile - refunding to refund pointer
+                        // Removed excessive logging per user request
 
-                        // Log the Bitcoin address again to make it clear this is the refund address being used
-                        if refund_pointer < num_outputs as u32 {
-                            if let Ok(address) = protorune_support::network::to_address_str(
-                                &transaction.output[refund_pointer as usize].script_pubkey,
-                            ) {
-                                println!("RECONCILE ERROR REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}", refund_pointer, address);
-                            }
-                        }
+                        // Removed excessive logging of refund address
 
                         refund_to_refund_pointer(
                             balances_by_output,
@@ -189,20 +158,10 @@ impl MessageProcessor for Protostone {
                 }
             }
             Err(e) => {
-                println!("Alkanes message reverted with error: {:?}", e);
-                println!("Refunding to refund_pointer: {}", refund_pointer);
+                // Alkanes message reverted - refunding to refund pointer
+                // Removed excessive logging per user request
 
-                // Log the Bitcoin address again to make it clear this is the refund address being used
-                if refund_pointer < num_outputs as u32 {
-                    if let Ok(address) = protorune_support::network::to_address_str(
-                        &transaction.output[refund_pointer as usize].script_pubkey,
-                    ) {
-                        println!(
-                            "REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}",
-                            refund_pointer, address
-                        );
-                    }
-                }
+                // Removed excessive logging of refund address
 
                 refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
                 atomic.rollback();

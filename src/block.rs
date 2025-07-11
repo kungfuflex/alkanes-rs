@@ -12,7 +12,7 @@ use std::io::Cursor;
 
 #[allow(unused_imports)]
 use {
-    metashrew_core::{println, stdio::stdout},
+    metashrew_core::metashrew_println::{println, stdout},
     std::fmt::Write,
 };
 

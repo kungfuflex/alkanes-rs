@@ -17,9 +17,10 @@ members = [".", "crates/*"]
 [workspace.dependencies]
 anyhow = "1.0.90"
 num = "0.4.3"
-bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
+bitcoin = { version = "0.32.6", features = ["rand"] }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache" }
+metashrew-println = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache" }
 ordinals = { path = "./crates/ordinals" }
 protorune = { path = "./crates/protorune" }
 protorune-support = { path = "./crates/protorune-support" }
@@ -41,6 +42,7 @@ web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
 hex_lit = "0.1.1"
 once_cell = "1.20.1"
+uuid = { version = "1.17.0", features = ["v4", "js"] }
 
 [features]
 test-utils = []
@@ -74,6 +76,8 @@ merkle_distributor = []
 free_mint = []
 upgradeable = []
 debug-log = []
+logs = ["protorune/logs"]
+lru-debug = []
 
 
 [dependencies]
@@ -100,6 +104,7 @@ web-sys = { workspace = true }
 js-sys = { workspace = true }
 hex_lit = { workspace = true }
 once_cell = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 
@@ -111,7 +116,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/lru-cache", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]

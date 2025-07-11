@@ -19,11 +19,9 @@ use bitcoin::hashes::Hash;
 use bitcoin::OutPoint;
 //use metashrew_core::utils::{ consume_exact, consume_sized_int };
 #[allow(unused_imports)]
-use metashrew_core::{println, stdio::stdout};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protobuf::{Message, MessageField, SpecialFields};
 #[allow(unused_imports)]
-use std::fmt::Write;
 use std::io::Cursor;
 
 pub fn outpoint_to_bytes(outpoint: &OutPoint) -> Result<Vec<u8>> {

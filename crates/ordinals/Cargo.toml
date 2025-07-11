@@ -12,7 +12,7 @@ rust-version = "1.74.0"
 dogecoin = []
 
 [dependencies]
-bitcoin = { version = "0.32.4", features = ["rand"] }
+bitcoin = { version = "0.32.6", features = ["rand"] }
 derive_more = { version = "1.0.0", features = ["display", "from_str"] }
 serde = { version = "1.0.137", features = ["derive"] }
 serde_with = "3.7.0"

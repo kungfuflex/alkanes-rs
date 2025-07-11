@@ -6,6 +6,10 @@ use anyhow::{anyhow, Result};
 use metashrew_support::utils::{consume_exact, consume_sized_int, consume_to_end};
 use wasmi::*;
 
+#[allow(unused_imports)]
+use metashrew_core::metashrew_println::{println, stdout};
+use std::io::Write;
+
 pub struct AlkanesExportsImpl(());
 impl AlkanesExportsImpl {
     pub fn _get_export(vm: &mut AlkanesInstance, name: &str) -> Result<Func> {
@@ -54,7 +58,7 @@ impl AlkanesExportsImpl {
         let mut result = [Val::I32(0)];
         let func = Self::_get_export(vm, "__execute")?;
         func.call(&mut vm.store, &[], &mut result)?;
-        println!("fuel left: {}", vm.store.get_fuel()?);
+        crate::alkane_log!("fuel left: {}", vm.store.get_fuel()?);
         let response = ExtendedCallResponse::parse(&mut std::io::Cursor::new(Self::_get_result(
             vm, &result,
         )?))?;

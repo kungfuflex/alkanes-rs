@@ -12,10 +12,11 @@ use std::sync::{Arc, Mutex};
 use wasmi::*;
 
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_core::metashrew_println::{
     print, println,
-    stdio::{stdout, Write},
+    stdout,
 };
+use std::io::Write;
 
 pub struct AlkanesInstance {
     pub(crate) instance: Instance,

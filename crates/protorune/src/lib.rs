@@ -1,8 +1,20 @@
+/// Log function for individual alkanes (only active with --features logs)
+#[macro_export]
+macro_rules! alkane_log {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "logs")]
+        {
+            use metashrew_println::println;
+            println!("🧪 [ALKANE] {}", format!($($arg)*));
+        }
+    };
+}
+
 use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
-    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
+    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor,
 };
 use crate::tables::RuneTable;
 use anyhow::{anyhow, Ok, Result};
@@ -10,12 +22,11 @@ use balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
-use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut, Txid};
+use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
-    flush, input, println,
-    stdio::{stdout, Write},
+    flush, input
 };
 use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;
@@ -445,7 +456,7 @@ impl Protorune {
                 .get())
             .clone(),
         ) {
-            println!(
+            crate::alkane_log!(
                 "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
                 name, rune_id
             );
@@ -539,7 +550,7 @@ impl Protorune {
         // TODO: chain name
         let minimum_name = Rune::minimum_at_height(Network::Bitcoin, ordinals::Height(block));
         if rune.n() < minimum_name.n() {
-            println!("error not unlocked");
+            crate::alkane_log!("error not unlocked");
             return Err(anyhow!("Given name is not unlocked yet"));
         }
         if rune.n() >= constants::RESERVED_NAME {
@@ -589,7 +600,7 @@ impl Protorune {
                     runestone_output_index,
                 ) {
                     Err(e) => {
-                        println!("err: {:?}", e);
+                        crate::alkane_log!("err: {:?}", e);
                         atomic.rollback();
                     }
                     _ => {
@@ -844,7 +855,7 @@ impl Protorune {
             match tx_hex_to_txid(blacklisted_hash) {
                 std::result::Result::Ok(blacklisted_txid) => {
                     if tx_id == blacklisted_txid {
-                        println!("Ignoring blacklisted transaction: {}", blacklisted_hash);
+                        crate::alkane_log!("Ignoring blacklisted transaction: {}", blacklisted_hash);
                         return Ok(());
                     }
                 }
@@ -910,6 +921,13 @@ impl Protorune {
             protostones_iter
                 .enumerate()
                 .map(|(i, stone)| {
+                    // Count all protostones for subprotocol ID 1 (alkanes)
+                    if stone.protocol_tag == 1 {
+                        // Call external callback to record protostone execution
+                        // We need to define a trait or callback mechanism for this
+                        T::on_protostone_processed();
+                    }
+                    
                     let shadow_vout = (i as u32) + (tx.output.len() as u32) + 1;
                     if !proto_balances_by_output.contains_key(&shadow_vout) {
                         proto_balances_by_output.insert(shadow_vout, BalanceSheet::default());

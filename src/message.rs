@@ -1,3 +1,5 @@
+use crate::logging::{record_protostone_run, record_protostone_with_cellpack, record_fuel_consumed};
+use crate::alkane_log;
 use crate::network::{genesis::GENESIS_BLOCK, is_active};
 use crate::trace::save_trace;
 use crate::utils::{balance_pointer, credit_balances, debit_balances, pipe_storagemap_to};
@@ -16,10 +18,11 @@ use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_core::metashrew_println::{
     println,
-    stdio::{stdout, Write},
+    stdout,
 };
+use std::io::Write;
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::balance_sheet::MintableDebit;
 use protorune::message::{MessageContext, MessageContextParcel};
@@ -43,30 +46,22 @@ pub fn handle_message(
     let cellpack: Cellpack =
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
 
-    #[cfg(feature = "debug-log")]
-    {
-        // Log cellpack information at the beginning of transaction processing
-        println!("=== TRANSACTION CELLPACK INFO ===");
-        println!(
-            "Transaction index: {}, Transaction height: {}, vout: {}, txid: {}",
-            parcel.txindex,
-            parcel.height,
-            parcel.vout,
-            parcel.transaction.compute_txid()
-        );
-        println!(
-            "Target contract: [block={}, tx={}]",
-            cellpack.target.block, cellpack.target.tx
-        );
-        println!("Input count: {}", cellpack.inputs.len());
-        if !cellpack.inputs.is_empty() {
-            println!("First opcode: {}", cellpack.inputs[0]);
-
-            // Print all inputs for detailed debugging
-            println!("All inputs: {:?}", cellpack.inputs);
-        }
-        println!("================================");
+    // Record protostone with cellpack if it has payload
+    // Note: record_protostone_run() is now called via on_protostone_processed() for ALL protostones
+    if !parcel.calldata.is_empty() {
+        record_protostone_with_cellpack();
     }
+
+    // Log cellpack information only with --features logs
+    alkane_log!(
+        "Transaction {}: target=[{},{}], opcode={}, inputs={:?}, txid={}",
+        parcel.txindex,
+        cellpack.target.block,
+        cellpack.target.tx,
+        if !cellpack.inputs.is_empty() { cellpack.inputs[0] } else { 0 },
+        cellpack.inputs,
+        parcel.transaction.compute_txid()
+    );
 
     let target = cellpack.target.clone();
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
@@ -75,16 +70,11 @@ pub fn handle_message(
     let mut atomic = parcel.atomic.derive(&IndexPointer::default());
     let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
 
-    #[cfg(feature = "debug-log")]
-    {
-        // Log the resolved contract addresses
-        println!("Caller: [block={}, tx={}]", caller.block, caller.tx);
-        println!(
-            "Target resolved to: [block={}, tx={}]",
-            myself.block, myself.tx
-        );
-        println!("Parcel runes: {:?}", parcel.runes);
-    }
+    // Log resolved contract addresses only with --features logs
+    alkane_log!(
+        "Resolved: caller=[{},{}], target=[{},{}], runes={:?}",
+        caller.block, caller.tx, myself.block, myself.tx, parcel.runes
+    );
 
     credit_balances(&mut atomic, &myself, &parcel.runes)?;
     prepare_context(context.clone(), &caller, &myself, false);
@@ -111,6 +101,10 @@ pub fn handle_message(
     run_after_special(context.clone(), binary, fuel)
         .and_then(|(response, gas_used)| {
             FuelTank::consume_fuel(gas_used)?;
+            
+            // Record fuel consumption for block statistics
+            record_fuel_consumed(gas_used);
+            
             pipe_storagemap_to(
                 &response.storage,
                 &mut atomic.derive(
@@ -142,40 +136,18 @@ pub fn handle_message(
                 trace.clone(),
             )?;
 
+            alkane_log!("Transaction {} completed successfully, fuel used: {}", parcel.txindex, gas_used);
             Ok((response_alkanes.into(), combined))
         })
         .or_else(|e| {
-            #[cfg(feature = "debug-log")]
-            {
-                // Log detailed error information
-                println!("=== TRANSACTION ERROR ===");
-                println!("Transaction index: {}", parcel.txindex);
-                println!(
-                    "Target contract: [block={}, tx={}]",
-                    cellpack.target.block, cellpack.target.tx
-                );
-                println!(
-                    "Resolved target: [block={}, tx={}]",
-                    myself.block, myself.tx
-                );
-                println!("Error: {}", e);
-
-                // If it's a fuel-related error, provide more context
-                if e.to_string().contains("fuel") || e.to_string().contains("gas") {
-                    println!("This appears to be a fuel-related error.");
-                    println!(
-                        "Contract at [block={}, tx={}] with opcode {} consumed too much fuel.",
-                        myself.block,
-                        myself.tx,
-                        if !cellpack.inputs.is_empty() {
-                            cellpack.inputs[0].to_string()
-                        } else {
-                            "unknown".to_string()
-                        }
-                    );
-                }
-                println!("========================");
-            }
+            // Log error information only with --features logs
+            alkane_log!(
+                "Transaction {} failed: target=[{},{}] -> [{},{}], error: {}",
+                parcel.txindex,
+                cellpack.target.block, cellpack.target.tx,
+                myself.block, myself.tx,
+                e
+            );
 
             FuelTank::drain_fuel();
             let mut response = ExtendedCallResponse::default();
@@ -210,7 +182,7 @@ impl MessageContext for AlkaneMessageContext {
             match handle_message(_parcel) {
                 Ok((outgoing, runtime)) => Ok((outgoing, runtime)),
                 Err(e) => {
-                    println!("{:?}", e);
+                    crate::alkane_log!("{:?}", e);
                     Err(e) // Print the error
                 }
             }
@@ -220,5 +192,11 @@ impl MessageContext for AlkaneMessageContext {
                 GENESIS_BLOCK
             ))
         }
+    }
+    
+    /// Called by protorune library when any protostone for subprotocol ID 1 is processed
+    /// This ensures we count ALL protostones, not just those with cellpacks
+    fn on_protostone_processed() {
+        record_protostone_run();
     }
 }
