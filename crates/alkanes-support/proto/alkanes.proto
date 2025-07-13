@@ -161,3 +161,11 @@ message BlockResponse {
   bytes block = 1;
   uint32 height = 2;
 }
+
+message TransactionRequest {
+  bytes txid = 1;
+}
+
+message TransactionResponse {
+  bytes transaction = 1;
+}
