@@ -23,13 +23,17 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::index_pointer::KeyValuePointer;
+use num::traits::ToBytes;
+use ordinals::Artifact;
+use ordinals::Runestone;
+use protorune_support::protostone::Protostone;
 
 use crate::vm::fuel::{
     consume_fuel, fuel_extcall_deploy, fuel_per_store_byte, Fuelable, FUEL_BALANCE, FUEL_EXTCALL,
     FUEL_FUEL, FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE,
     FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
-use protorune_support::utils::consensus_encode;
+use protorune_support::utils::{consensus_encode, decode_varint_list};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
@@ -582,6 +586,50 @@ impl AlkanesHostFunctionsImpl {
         response.data = tx_bytes;
         Ok(response)
     }
+
+    fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+        // Return the current block header
+        #[cfg(feature = "debug-log")]
+        {
+            println!("Precompiled contract: returning total number of diesel mints in this block");
+        }
+
+        // Get the block header from the current context
+        let block = {
+            let context_guard = caller.data_mut().context.lock().unwrap();
+            context_guard.message.block.clone()
+        };
+        let mut counter: u128 = 0;
+        for tx in &block.txdata {
+            if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
+                let protostones = Protostone::from_runestone(runestone)?;
+                let mut found_diesel_mint_in_tx = false;
+                for protostone in protostones {
+                    let calldata: Vec<u8> = protostone
+                        .message
+                        .iter()
+                        .flat_map(|v| v.to_be_bytes())
+                        .collect();
+                    let cellpack: Cellpack =
+                        decode_varint_list(&mut Cursor::new(calldata))?.try_into()?;
+                    if cellpack.target == AlkaneId::new(2, 0)
+                        && cellpack.inputs.len() != 0
+                        && cellpack.inputs[0] == 77
+                    {
+                        counter += 1;
+                        found_diesel_mint_in_tx = true;
+                        break;
+                    }
+                }
+                if found_diesel_mint_in_tx {
+                    break;
+                }
+            }
+        }
+        let mut response = CallResponse::default();
+        response.data = counter.to_le_bytes().to_vec();
+        Ok(response)
+    }
     fn _handle_special_extcall(
         caller: &mut Caller<'_, AlkanesState>,
         cellpack: Cellpack,
@@ -597,6 +645,7 @@ impl AlkanesHostFunctionsImpl {
         let response = match cellpack.target.tx {
             0 => Self::_get_block_header(caller),
             1 => Self::_get_coinbase_tx(caller),
+            2 => Self::_get_number_diesel_mints(caller),
             _ => {
                 return Err(anyhow!(
                     "Unknown precompiled contract: [{}, {}]",
