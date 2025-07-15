@@ -840,6 +840,7 @@ impl Protorune {
     ) -> Result<()> {
         // Check if this transaction is in the blacklist
         let tx_id = tx.compute_txid();
+        println!("Processing protostone tx: {}", tx_id);
         for blacklisted_hash in BLACKLISTED_TX_HASHES.iter() {
             match tx_hex_to_txid(blacklisted_hash) {
                 std::result::Result::Ok(blacklisted_txid) => {
