@@ -16,6 +16,7 @@ use alkanes_support::{
 };
 #[allow(unused_imports)]
 use anyhow::{anyhow, Result};
+use bitcoin::Transaction;
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -564,7 +565,15 @@ impl AlkanesHostFunctionsImpl {
         Ok(response)
     }
 
-    fn _get_coinbase_tx(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+    fn _get_coinbase_tx(caller: &mut Caller<'_, AlkanesState>) -> Result<Transaction> {
+        let context_guard = caller.data_mut().context.lock().unwrap();
+        if context_guard.message.block.txdata.is_empty() {
+            return Err(anyhow!("Block has no transactions"));
+        }
+        Ok(context_guard.message.block.txdata[0].clone())
+    }
+
+    fn _get_coinbase_tx_response(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
         // Return the coinbase transaction bytes
         #[cfg(feature = "debug-log")]
         {
@@ -572,18 +581,32 @@ impl AlkanesHostFunctionsImpl {
         }
 
         // Get the coinbase transaction from the current block
-        let coinbase_tx = {
-            let context_guard = caller.data_mut().context.lock().unwrap();
-            if context_guard.message.block.txdata.is_empty() {
-                return Err(anyhow!("Block has no transactions"));
-            }
-            context_guard.message.block.txdata[0].clone()
-        };
+        let coinbase_tx = Self::_get_coinbase_tx(caller)?;
 
         // Serialize the coinbase transaction
         let tx_bytes = consensus_encode(&coinbase_tx)?;
         let mut response = CallResponse::default();
         response.data = tx_bytes;
+        Ok(response)
+    }
+
+    fn _get_total_miner_fee(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+        // Return the coinbase transaction bytes
+        #[cfg(feature = "debug-log")]
+        {
+            println!("Precompiled contract: returning total miner fee");
+        }
+
+        // Get the coinbase transaction from the current block
+        let coinbase_tx = Self::_get_coinbase_tx(caller)?;
+        let total_fees: u128 = coinbase_tx
+            .output
+            .iter()
+            .map(|out| out.value.to_sat() as u128)
+            .sum();
+
+        let mut response = CallResponse::default();
+        response.data = total_fees.to_le_bytes().to_vec();
         Ok(response)
     }
 
@@ -644,7 +667,7 @@ impl AlkanesHostFunctionsImpl {
 
         let response = match cellpack.target.tx {
             0 => Self::_get_block_header(caller),
-            1 => Self::_get_coinbase_tx(caller),
+            1 => Self::_get_coinbase_tx_response(caller),
             2 => Self::_get_number_diesel_mints(caller),
             _ => {
                 return Err(anyhow!(
