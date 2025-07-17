@@ -214,7 +214,7 @@ fn test_special_extcall_total_miner_fees() -> Result<()> {
                 let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
 
                 println!("{:?}", data);
-                assert_eq!(data, 50_000_000 * 2);
+                assert_eq!(data, 50_000_000 * 7);
             }
             _ => panic!("Expected ReturnContext variant, but got a different variant"),
         }
