@@ -140,7 +140,7 @@ pub fn create_coinbase_transaction(height: u32) -> Transaction {
         version: Version::TWO,
         lock_time: locktime,
         input: vec![coinbase_input],
-        output: vec![coinbase_output],
+        output: vec![coinbase_output.clone(), coinbase_output.clone()],
     }
 }
 

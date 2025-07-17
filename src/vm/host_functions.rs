@@ -626,7 +626,6 @@ impl AlkanesHostFunctionsImpl {
         for tx in &block.txdata {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
                 let protostones = Protostone::from_runestone(runestone)?;
-                let mut found_diesel_mint_in_tx = false;
                 for protostone in protostones {
                     let calldata: Vec<u8> = protostone
                         .message
@@ -640,12 +639,8 @@ impl AlkanesHostFunctionsImpl {
                         && cellpack.inputs[0] == 77
                     {
                         counter += 1;
-                        found_diesel_mint_in_tx = true;
                         break;
                     }
-                }
-                if found_diesel_mint_in_tx {
-                    break;
                 }
             }
         }
@@ -669,6 +664,7 @@ impl AlkanesHostFunctionsImpl {
             0 => Self::_get_block_header(caller),
             1 => Self::_get_coinbase_tx_response(caller),
             2 => Self::_get_number_diesel_mints(caller),
+            3 => Self::_get_total_miner_fee(caller),
             _ => {
                 return Err(anyhow!(
                     "Unknown precompiled contract: [{}, {}]",

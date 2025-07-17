@@ -356,6 +356,36 @@ pub trait AlkaneResponder: 'static {
         consensus_decode::<Transaction>(&mut std::io::Cursor::new(result.data))
     }
 
+    fn number_diesel_mints(&self) -> Result<u128> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 2,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
+    }
+
+    fn total_miner_fee(&self) -> Result<u128> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 3,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
+    }
+
     /// Fallback function that gets called when an opcode is not recognized
     ///
     /// This default implementation reverts with an error.
