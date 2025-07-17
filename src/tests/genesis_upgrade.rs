@@ -2,16 +2,18 @@ use crate::index_block;
 use crate::tests::helpers::{
     self as alkane_helpers, get_last_outpoint_sheet, get_sheet_for_outpoint,
 };
-use crate::tests::std::alkanes_std_genesis_alkane_upgrade_build;
+use crate::tests::std::{alkanes_std_auth_token_build, alkanes_std_genesis_alkane_upgrade_build};
 use alkane_helpers::clear;
 use alkanes::view;
 use alkanes_support::cellpack::Cellpack;
+use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::block::Header;
 use bitcoin::Transaction;
 use bitcoin::{OutPoint, Witness};
+
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
@@ -27,9 +29,19 @@ use wasm_bindgen_test::wasm_bindgen_test;
 fn test_new_genesis_contract() -> Result<()> {
     clear();
 
-    // Initialize the contract and execute the cellpacks
-    let mut test_block = create_block_with_coinbase_tx(0);
+    let auth_cellpack = Cellpack {
+        target: AlkaneId {
+            block: 3,
+            tx: AUTH_TOKEN_FACTORY_ID,
+        },
+        inputs: vec![100],
+    };
 
+    // Initialize the contract and execute the cellpacks
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        [alkanes_std_auth_token_build::get_bytes()].into(),
+        [auth_cellpack].into(),
+    );
     index_block(&test_block, 0)?; // just to init the diesel
 
     let block_height = 890_000;

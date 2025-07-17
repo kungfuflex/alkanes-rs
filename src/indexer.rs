@@ -88,15 +88,13 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     configure_network();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
-        genesis(&block).unwrap();
+        genesis(&block, false).unwrap();
     }
     if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
         let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
         if upgrade_ptr.get().len() == 0 {
             upgrade_ptr.set_value::<u8>(0x01);
-            IndexPointer::from_keyword("/alkanes/")
-                .select(&(AlkaneId { block: 2, tx: 0 }).into())
-                .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
+            genesis(&block, true).unwrap();
         }
     }
     FuelTank::initialize(&block, height);

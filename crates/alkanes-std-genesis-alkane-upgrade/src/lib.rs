@@ -1,7 +1,7 @@
 use std::cmp::min;
 
-use alkanes_runtime::declare_alkane;
 use alkanes_runtime::message::MessageDispatch;
+use alkanes_runtime::{auth::AuthenticatedResponder, declare_alkane};
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,

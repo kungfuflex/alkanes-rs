@@ -100,6 +100,9 @@ pub mod genesis {
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 1;
+    pub const GENESIS_UPGRADE_OUTPOINT: &str =
+        "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
+    pub const GENESIS_UPGRADE_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -109,6 +112,9 @@ pub mod genesis {
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 908_888;
+    pub const GENESIS_UPGRADE_OUTPOINT: &str =
+        "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
+    pub const GENESIS_UPGRADE_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
 }
 
 #[cfg(feature = "fractal")]
@@ -177,10 +183,14 @@ pub fn is_genesis(height: u64) -> bool {
     is_genesis
 }
 
-pub fn genesis(block: &Block) -> Result<()> {
+pub fn genesis(block: &Block, is_upgrade: bool) -> Result<()> {
     IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 2, tx: 0 }).into())
-        .set(Arc::new(compress(genesis_alkane_bytes())?));
+        .set(Arc::new(compress(if is_upgrade {
+            genesis_alkane_upgrade_bytes()
+        } else {
+            genesis_alkane_bytes()
+        })?));
     let mut atomic: AtomicPointer = AtomicPointer::default();
     sequence_pointer(&atomic).set_value::<u128>(1);
     let myself = AlkaneId { block: 2, tx: 0 };
@@ -194,7 +204,11 @@ pub fn genesis(block: &Block) -> Result<()> {
             lock_time: bitcoin::absolute::LockTime::ZERO,
         },
         block: block.clone(),
-        height: genesis::GENESIS_BLOCK,
+        height: if is_upgrade {
+            genesis::GENESIS_UPGRADE_BLOCK_HEIGHT as u64
+        } else {
+            genesis::GENESIS_BLOCK
+        },
         pointer: 0,
         refund_pointer: 0,
         calldata: (Cellpack {
@@ -214,8 +228,13 @@ pub fn genesis(block: &Block) -> Result<()> {
             Err(e)
         }
     })?;
+    let genesis_outpoint = if is_upgrade {
+        genesis::GENESIS_UPGRADE_OUTPOINT
+    } else {
+        genesis::GENESIS_OUTPOINT
+    };
     let outpoint_bytes = outpoint_encode(&OutPoint {
-        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
+        txid: tx_hex_to_txid(genesis_outpoint)?,
         vout: 0,
     })?;
     <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
@@ -234,17 +253,23 @@ pub fn genesis(block: &Block) -> Result<()> {
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
     );
 
+    let block_height = if is_upgrade {
+        genesis::GENESIS_UPGRADE_OUTPOINT_BLOCK_HEIGHT
+    } else {
+        genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT
+    };
+
     atomic
         .derive(&RUNES.OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
-        .set_value(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT);
+        .set_value(block_height);
     atomic
         .derive(
             &RUNES
                 .HEIGHT_TO_TRANSACTION_IDS
-                .select_value::<u64>(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT),
+                .select_value::<u64>(block_height),
         )
         .append(Arc::new(
-            hex::decode(genesis::GENESIS_OUTPOINT)?
+            hex::decode(genesis_outpoint)?
                 .iter()
                 .cloned()
                 .rev()
