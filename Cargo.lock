@@ -101,6 +101,7 @@ name = "alkanes-std-auth-token"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
+ "alkanes-std-factory-support",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.6",

@@ -218,7 +218,6 @@ impl FuelTank {
         // Calculate fuel allocation based on transaction size
         let _block_fuel_before = tank.block_fuel;
         tank.block_metered_fuel = tank.block_fuel * txsize / tank.size;
-
         tank.transaction_fuel = FuelTank::_calculate_transaction_fuel(&tank, height);
 
         // Deduct allocated fuel from block fuel

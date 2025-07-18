@@ -942,7 +942,7 @@ impl Protorune {
                     // if there is no protomessage, all incoming runes will be available to be transferred by the edict
                     let mut prior_balance_sheet = BalanceSheet::default();
                     let mut did_message_fail_and_refund = false;
-                    if stone.is_message() {
+                    if stone.is_message() && stone.protocol_tag == T::protocol_tag() {
                         let success = stone.process_message::<T>(
                             &mut atomic.derive(&IndexPointer::default()),
                             tx,

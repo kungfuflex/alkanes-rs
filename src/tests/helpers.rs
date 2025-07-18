@@ -143,13 +143,34 @@ pub fn init_with_cellpack_pairs(cellpack_pairs: Vec<BinaryAndCellpack>) -> Block
     init_with_multiple_cellpacks_with_tx(binaries, cellpacks)
 }
 
+/// Helper function that accepts a vector of BinaryAndCellpack structs and calls init_with_multiple_cellpacks_with_tx
+pub fn init_with_cellpack_pairs_w_input(
+    cellpack_pairs: Vec<BinaryAndCellpack>,
+    previous_outpoint: OutPoint,
+) -> Block {
+    let (binaries, cellpacks): (Vec<Vec<u8>>, Vec<Cellpack>) = cellpack_pairs
+        .into_iter()
+        .map(|pair| (pair.binary, pair.cellpack))
+        .unzip();
+
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, Some(previous_outpoint))
+}
+
 pub fn init_with_multiple_cellpacks_with_tx(
     binaries: Vec<Vec<u8>>,
     cellpacks: Vec<Cellpack>,
 ) -> Block {
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, None)
+}
+
+pub fn init_with_multiple_cellpacks_with_tx_w_input(
+    binaries: Vec<Vec<u8>>,
+    cellpacks: Vec<Cellpack>,
+    _previous_out: Option<OutPoint>,
+) -> Block {
     let block_height = 840000;
     let mut test_block = create_block_with_coinbase_tx(block_height);
-    let mut previous_out: Option<OutPoint> = None;
+    let mut previous_out: Option<OutPoint> = _previous_out;
     let mut txs = binaries
         .into_iter()
         .zip(cellpacks.into_iter())
@@ -371,6 +392,17 @@ pub fn assert_binary_deployed_to_id(token_id: AlkaneId, binary: Vec<u8>) -> Resu
     let binary_2: Vec<u8> = compress(binary)?;
     assert_eq!(binary_1.len(), binary_2.len());
     //    assert_eq!(binary_1, binary_2);
+    return Ok(());
+}
+
+pub fn assert_id_points_to_alkane_id(from_id: AlkaneId, to_id: AlkaneId) -> Result<()> {
+    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
+        .select(&from_id.into())
+        .get()
+        .as_ref()
+        .clone();
+    let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
+    assert_eq!(ptr, to_id);
     return Ok(());
 }
 
