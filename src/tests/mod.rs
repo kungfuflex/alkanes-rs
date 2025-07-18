@@ -30,6 +30,8 @@ pub mod fuel;
 #[cfg(test)]
 pub mod genesis;
 #[cfg(test)]
+pub mod genesis_upgrade;
+#[cfg(test)]
 pub mod memory_security_tests;
 #[cfg(test)]
 pub mod networks;

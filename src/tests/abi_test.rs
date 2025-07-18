@@ -146,7 +146,7 @@ fn test_contract_abi(
 #[wasm_bindgen_test]
 fn test_meta_call() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create test blocks with cellpacks
     let test_cellpack = Cellpack {

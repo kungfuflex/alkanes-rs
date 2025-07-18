@@ -68,7 +68,7 @@ fn display_benchmark_footer() {
 #[wasm_bindgen_test]
 fn test_genesis() -> Result<()> {
     clear();
-    let block_height = 850_000;
+    let block_height = 0;
 
     // Initialize fuel benchmarks collection
     let mut benchmarks = Vec::new();
@@ -147,7 +147,7 @@ fn test_genesis() -> Result<()> {
     };
 
     // Process the mint block
-    index_block(&test_block2, block_height + 1)?;
+    index_block(&test_block2, block_height)?;
 
     // Get fuel state after mint block
     let post_mint_fuel = unsafe {
@@ -224,7 +224,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
     use bitcoin::Txid;
 
     clear();
-    let block_height = 880_000;
+    let block_height = 0;
 
     let test_block = create_block_with_coinbase_tx(block_height);
 
@@ -274,7 +274,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
         }],
     );
     spend_block.txdata.push(spend_tx.clone());
-    index_block(&spend_block, 880_001)?;
+    index_block(&spend_block, 0)?;
     let new_outpoint = OutPoint {
         txid: spend_tx.compute_txid(),
         vout: 0,

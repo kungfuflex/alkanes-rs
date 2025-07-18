@@ -164,6 +164,7 @@ impl Extcall for Staticcall {
 
 pub trait AlkaneResponder: 'static {
     fn observe_initialization(&self) -> Result<()> {
+        println!("observe_initialization");
         let mut pointer = StoragePointer::from_keyword("/initialized");
         if pointer.get().len() == 0 {
             pointer.set_value::<u8>(0x01);
@@ -354,6 +355,36 @@ pub trait AlkaneResponder: 'static {
             self.fuel(),
         )?;
         consensus_decode::<Transaction>(&mut std::io::Cursor::new(result.data))
+    }
+
+    fn number_diesel_mints(&self) -> Result<u128> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 2,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
+    }
+
+    fn total_miner_fee(&self) -> Result<u128> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 3,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
     }
 
     /// Fallback function that gets called when an opcode is not recognized

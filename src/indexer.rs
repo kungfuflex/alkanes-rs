@@ -1,8 +1,11 @@
 use crate::message::AlkaneMessageContext;
-use crate::network::{genesis, is_genesis};
+use crate::network::{genesis, genesis_alkane_upgrade_bytes, is_genesis};
 use crate::vm::fuel::FuelTank;
+use alkanes_support::gz::compress;
+use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
+use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
@@ -12,6 +15,7 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;
 use protorune_support::network::{set_network, NetworkParams};
+use std::sync::Arc;
 
 #[cfg(all(
     not(feature = "mainnet"),
@@ -84,7 +88,14 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     configure_network();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
-        genesis(&block).unwrap();
+        genesis(&block, false).unwrap();
+    }
+    if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
+        let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
+        if upgrade_ptr.get().len() == 0 {
+            upgrade_ptr.set_value::<u8>(0x01);
+            genesis(&block, true).unwrap();
+        }
     }
     FuelTank::initialize(&block, height);
 

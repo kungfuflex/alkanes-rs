@@ -22,7 +22,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_special_extcall() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     let get_header = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
@@ -98,6 +98,123 @@ fn test_special_extcall() -> Result<()> {
 
                 println!("{:?}", data);
                 assert_eq!(data.version, bitcoin::transaction::Version(2));
+            }
+            _ => panic!("Expected ReturnContext variant, but got a different variant"),
+        }
+    } else {
+        panic!("Failed to get trace_event_1 from trace data");
+    }
+
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_special_extcall_number_diesel_mints() -> Result<()> {
+    clear();
+    let block_height = 0;
+
+    let diesel_mint = Cellpack {
+        target: AlkaneId { block: 2, tx: 0 },
+        inputs: vec![77],
+    };
+
+    let get_num_diesel = Cellpack {
+        target: AlkaneId { block: 1, tx: 0 },
+        inputs: vec![106],
+    };
+
+    // Initialize the contract and execute the cellpacks
+    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        [
+            [].into(),
+            [].into(),
+            [].into(),
+            [].into(),
+            [].into(),
+            alkanes_std_test_build::get_bytes(),
+        ]
+        .into(),
+        [
+            diesel_mint.clone(),
+            diesel_mint.clone(),
+            diesel_mint.clone(),
+            diesel_mint.clone(),
+            diesel_mint.clone(),
+            get_num_diesel,
+        ]
+        .into(),
+    );
+
+    index_block(&test_block, block_height)?;
+
+    let outpoint_1 = OutPoint {
+        txid: test_block.txdata.last().unwrap().compute_txid(),
+        vout: 3,
+    };
+
+    let raw_trace_data = view::trace(&outpoint_1)?;
+    let trace_data: Trace = raw_trace_data.clone().try_into()?;
+
+    let trace_event_1 = trace_data.0.lock().expect("Mutex poisoned").last().cloned();
+
+    // Access the data field from the trace response
+    if let Some(return_context) = trace_event_1 {
+        // Use pattern matching to extract the data field from the TraceEvent enum
+        match return_context {
+            TraceEvent::ReturnContext(trace_response) => {
+                // Now we have the TraceResponse, access the data field
+                let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
+
+                println!("{:?}", data);
+                assert_eq!(data, 5);
+            }
+            _ => panic!("Expected ReturnContext variant, but got a different variant"),
+        }
+    } else {
+        panic!("Failed to get trace_event_1 from trace data");
+    }
+
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_special_extcall_total_miner_fees() -> Result<()> {
+    clear();
+    let block_height = 0;
+
+    let get_miner_fee = Cellpack {
+        target: AlkaneId { block: 1, tx: 0 },
+        inputs: vec![107],
+    };
+
+    // Initialize the contract and execute the cellpacks
+    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        [alkanes_std_test_build::get_bytes()].into(),
+        [get_miner_fee].into(),
+    );
+
+    index_block(&test_block, block_height)?;
+
+    let outpoint_1 = OutPoint {
+        txid: test_block.txdata.last().unwrap().compute_txid(),
+        vout: 3,
+    };
+
+    let raw_trace_data = view::trace(&outpoint_1)?;
+    let trace_data: Trace = raw_trace_data.clone().try_into()?;
+
+    let trace_event_1 = trace_data.0.lock().expect("Mutex poisoned").last().cloned();
+
+    // Access the data field from the trace response
+    if let Some(return_context) = trace_event_1 {
+        // Use pattern matching to extract the data field from the TraceEvent enum
+        match return_context {
+            TraceEvent::ReturnContext(trace_response) => {
+                // Now we have the TraceResponse, access the data field
+                let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
+
+                println!("{:?}", data);
+                assert_eq!(data, 50_000_000 * 7);
             }
             _ => panic!("Expected ReturnContext variant, but got a different variant"),
         }

@@ -11,3 +11,6 @@ pub mod alkanes_std_proxy_build;
 pub mod alkanes_std_upgradeable_beacon_build;
 pub mod alkanes_std_upgradeable_build;
 pub mod free_mint_build;
+
+pub mod alkanes_std_genesis_alkane_upgrade_mainnet_build;
+pub mod alkanes_std_genesis_alkane_upgrade_regtest_build;
