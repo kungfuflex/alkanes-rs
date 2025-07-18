@@ -1,6 +1,6 @@
 [package]
 name = "alkanes-std-factory-support"
-version = "0.5.2"
+version.workspace = true
 edition = "2021"
 
 [lib]
@@ -11,7 +11,7 @@ test = []
 
 [dependencies]
 alkanes-support = { workspace = true }
-alkanes-runtime = { workspace = true }
+alkanes-runtime = { workspace = true, features = ["panic-hook"] }
 metashrew-support = { workspace = true }
 ordinals = { workspace = true }
 anyhow = { workspace = true }

@@ -23,8 +23,8 @@ mod tests {
     #[allow(unused_imports)]
     use metashrew_core::{
         println,
-        stdio::{stdout, Write},
     };
+    use std::fmt::Write;
     use metashrew_support::index_pointer::KeyValuePointer;
     use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
 

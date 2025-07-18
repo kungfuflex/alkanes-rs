@@ -5,7 +5,6 @@ use anyhow::Result;
 use bitcoin::blockdata::block::Block;
 #[allow(unused_imports)]
 use metashrew_println::println;
-use std::fmt::Write;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;

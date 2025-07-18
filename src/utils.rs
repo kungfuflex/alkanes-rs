@@ -1,13 +1,11 @@
 use alkanes_support::parcel::AlkaneTransferParcel;
 use alkanes_support::storage::StorageMap;
-use alkanes_support::utils::overflow_error;
 use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_println::println;
-use std::fmt::Write;
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_decode;
@@ -128,7 +126,7 @@ pub fn transfer_from(
     for transfer in &parcel.0 {
         let mut from_pointer =
             balance_pointer(atomic, &from.clone().into(), &transfer.id.clone().into());
-        let mut balance = from_pointer.get_value::<u128>();
+        let balance = from_pointer.get_value::<u128>();
         from_pointer.set_value::<u128>(checked_debit_with_minting(transfer, from, balance)?);
         let mut to_pointer =
             balance_pointer(atomic, &to.clone().into(), &transfer.id.clone().into());

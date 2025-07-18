@@ -1,12 +1,9 @@
 use alkanes_runtime::declare_alkane;
+use alkanes_runtime::compat::to_arraybuffer_layout;
 use alkanes_runtime::message::MessageDispatch;
-use {
-  alkanes_runtime::{println, stdio::{stdout}},
-  std::fmt::Write
-};
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
 use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use hex_lit::hex;
 use metashrew_support::index_pointer::KeyValuePointer;
 

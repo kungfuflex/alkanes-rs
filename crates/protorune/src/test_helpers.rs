@@ -12,7 +12,6 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::str::FromStr;
 use hex::decode;
 use metashrew_core::{get_cache, println};
-use metashrew_println::stdout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::format_key;
 use ordinals::{Edict, Etching, Rune, RuneId, Runestone};

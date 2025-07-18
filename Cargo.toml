@@ -1,6 +1,6 @@
 [package]
 name = "alkanes"
-version = "0.5.2"
+version.workspace = true
 edition = "2021"
 description = "ALKANES metaprotocol indexer"
 license = "MIT"
@@ -12,7 +12,8 @@ crate-type = ["cdylib", "rlib"]
 
 [workspace]
 members = [".", "crates/*"]
-
+[workspace.package]
+version = "0.6.2"
 
 [workspace.dependencies]
 anyhow = "1.0.90"
@@ -21,13 +22,13 @@ bitcoin = { version = "0.32.6", features = ["rand"] }
 metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/moka", features = ["panic-hook"] }
 metashrew-println = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/moka" }
 metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/moka" }
-ordinals = { path = "./crates/ordinals" }
-protorune = { path = "./crates/protorune" }
-protorune-support = { path = "./crates/protorune-support" }
-alkanes-support = { path = "./crates/alkanes-support" }
-alkanes-runtime = { path = "./crates/alkanes-runtime" }
-alkanes-macros = { path = "./crates/alkanes-macros" }
-alkanes-std-factory-support = { path = "./crates/alkanes-std-factory-support" }
+ordinals = { path = "./crates/ordinals", version = "0.6.2" }
+protorune = { path = "./crates/protorune", version = "0.6.2" }
+protorune-support = { path = "./crates/protorune-support", version = "0.6.2" }
+alkanes-support = { path = "./crates/alkanes-support", version = "0.6.2" }
+alkanes-runtime = { path = "./crates/alkanes-runtime", version = "0.6.2" }
+alkanes-macros = { path = "./crates/alkanes-macros", version = "0.6.2" }
+alkanes-std-factory-support = { path = "./crates/alkanes-std-factory-support", version = "0.6.2" }
 ruint = "1.12.3"
 wasm-bindgen = "0.2.100"
 byteorder = "1.5"

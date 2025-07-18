@@ -1,15 +1,12 @@
 use alkanes_runtime::auth::AuthenticatedResponder;
 use alkanes_runtime::declare_alkane;
 use alkanes_runtime::message::MessageDispatch;
-use {
-  alkanes_runtime::{println, stdio::{stdout}},
-  std::fmt::Write
-};
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer};
 use alkanes_support::{
     cellpack::Cellpack, id::AlkaneId, parcel::AlkaneTransferParcel, response::CallResponse,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result};
+use alkanes_runtime::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::sync::Arc;
 

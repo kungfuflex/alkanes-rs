@@ -11,7 +11,7 @@ test = []
 
 [dependencies]
 alkanes-support = { workspace = true }
-alkanes-runtime = { workspace = true }
+alkanes-runtime = { workspace = true, features = ["panic-hook"] }
 metashrew-support = { workspace = true }
 protorune-support = { workspace = true }
 alkanes-std-factory-support = { workspace = true }

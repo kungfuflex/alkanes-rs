@@ -1,14 +1,11 @@
 use alkanes_runtime::declare_alkane;
 use alkanes_runtime::message::MessageDispatch;
-use {
-  alkanes_runtime::{println, stdio::{stdout}},
-  std::fmt::Write
-};
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
 use alkanes_support::{
     context::Context, id::AlkaneId, parcel::AlkaneTransfer, response::CallResponse,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+use alkanes_runtime::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 
 #[derive(Default)]
@@ -80,7 +77,7 @@ impl GenesisProtorune {
     fn initialize(&self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         // No initialization logic
 

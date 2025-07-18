@@ -15,11 +15,8 @@ use metashrew_support::{
     utils::consensus_encode,
 };
 use sha2::{Digest, Sha256};
-#[allow(unused_imports)]
-use {
-    alkanes_runtime::{imports::__request_transaction, println, stdio::{stdout}},
-    std::fmt::Write,
-};
+use alkanes_runtime::{println, compat::to_arraybuffer_layout, stdio::stdout};
+use std::fmt::Write;
 
 #[derive(Default)]
 pub struct LoggerAlkane(());
@@ -202,7 +199,7 @@ impl LoggerAlkane {
 
     fn test_ordered_incoming(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
         let transfers = context.incoming_alkanes.0;
         println!("{:?}", transfers);
         for i in 1..transfers.len() {
@@ -216,7 +213,7 @@ impl LoggerAlkane {
 
     fn get_transaction(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         self.transaction();
 
@@ -225,7 +222,7 @@ impl LoggerAlkane {
 
     fn hash_loop(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         let mut data = vec![0x01, 0x02];
         loop {
@@ -243,7 +240,7 @@ impl LoggerAlkane {
 
     fn test_infinite_loop(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         loop {}
 

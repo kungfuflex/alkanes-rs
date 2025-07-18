@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes",
  "alkanes-support",
@@ -47,7 +47,7 @@ dependencies = [
  "metashrew-support",
  "num",
  "once_cell",
- "ordinals 0.5.2",
+ "ordinals 0.6.2",
  "protobuf 3.7.2",
  "protobuf-codegen 3.7.2",
  "protoc-bin-vendored",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-build"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "clap",
  "hex",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-macros"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "ciborium",
  "proc-macro2",
@@ -86,12 +86,13 @@ dependencies = [
 
 [[package]]
 name = "alkanes-runtime"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-macros",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.6",
+ "metashrew-println",
  "metashrew-support",
  "wasm-bindgen",
  "wasm-bindgen-test",
@@ -124,14 +125,14 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-factory-support"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.6",
  "metashrew-support",
- "ordinals 0.5.2",
+ "ordinals 0.6.2",
 ]
 
 [[package]]
@@ -170,7 +171,7 @@ dependencies = [
  "bitcoin 0.32.6",
  "metashrew-support",
  "num",
- "ordinals 0.5.2",
+ "ordinals 0.6.2",
  "protorune-support",
  "rs_merkle",
  "ruint",
@@ -200,7 +201,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
  "metashrew-support",
- "ordinals 0.5.2",
+ "ordinals 0.6.2",
  "protorune-support",
 ]
 
@@ -266,7 +267,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-support"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
@@ -1658,7 +1659,7 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 [[package]]
 name = "metashrew-cache"
 version = "9.0.1"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#00aa96846b2d4344f2216bae52a7b6f9c72c12a0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-epoch",
@@ -1676,7 +1677,7 @@ dependencies = [
 [[package]]
 name = "metashrew-core"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#00aa96846b2d4344f2216bae52a7b6f9c72c12a0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
@@ -1699,7 +1700,7 @@ dependencies = [
 [[package]]
 name = "metashrew-macros"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#00aa96846b2d4344f2216bae52a7b6f9c72c12a0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1709,12 +1710,12 @@ dependencies = [
 [[package]]
 name = "metashrew-println"
 version = "0.1.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#00aa96846b2d4344f2216bae52a7b6f9c72c12a0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 
 [[package]]
 name = "metashrew-support"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#00aa96846b2d4344f2216bae52a7b6f9c72c12a0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
@@ -1919,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "ordinals"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "bitcoin 0.32.6",
  "derive_more 1.0.0",
@@ -2268,7 +2269,7 @@ dependencies = [
 
 [[package]]
 name = "protorune"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
@@ -2279,7 +2280,7 @@ dependencies = [
  "metashrew-println",
  "metashrew-support",
  "once_cell",
- "ordinals 0.5.2",
+ "ordinals 0.6.2",
  "protobuf 3.7.2",
  "protorune",
  "protorune-support",
@@ -2293,14 +2294,14 @@ dependencies = [
 
 [[package]]
 name = "protorune-support"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
  "bitcoin 0.32.6",
  "hex",
  "metashrew-support",
- "ordinals 0.5.2",
+ "ordinals 0.6.2",
  "protobuf 3.7.2",
  "protobuf-codegen 3.7.2",
  "protoc-bin-vendored",

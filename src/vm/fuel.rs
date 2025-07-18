@@ -11,7 +11,6 @@ use ordinals::{Artifact, Runestone};
 use protorune::message::MessageContext;
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::decode_varint_list;
-use ruint::aliases::U32;
 use std::io::Cursor;
 use std::sync::RwLock;
 use wasmi::*;

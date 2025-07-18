@@ -20,8 +20,8 @@ mod tests {
     #[allow(unused_imports)]
     use metashrew_core::{
         println,
-        stdio::{stdout, Write},
     };
+    use std::fmt::Write;
 
     use helpers::clear;
     use metashrew_support::index_pointer::KeyValuePointer;

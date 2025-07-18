@@ -1,12 +1,9 @@
 use alkanes_runtime::declare_alkane;
 use alkanes_runtime::message::MessageDispatch;
-use {
-  alkanes_runtime::{println, stdio::{stdout}},
-  std::fmt::Write
-};
+use alkanes_runtime::compat::to_arraybuffer_layout;
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
 use alkanes_support::utils::overflow_error;
-use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
+use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash;
 use bitcoin::Block;
@@ -111,7 +108,7 @@ impl ChainConfiguration for GenesisAlkane {
         return (25e8 as u128) / (1u128 << ((n as u128) / 2100000u128));
     }
     fn genesis_block(&self) -> u64 {
-        0e64
+        0u64
     }
     fn average_payout_from_genesis(&self) -> u128 {
         2_500_000_000
@@ -127,7 +124,7 @@ impl ChainConfiguration for GenesisAlkane {
         1_000_000_000
     }
     fn genesis_block(&self) -> u64 {
-        0e64
+        0u64
     }
     fn average_payout_from_genesis(&self) -> u128 {
         1_000_000_000

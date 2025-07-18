@@ -15,8 +15,8 @@ mod tests {
     #[allow(unused_imports)]
     use metashrew_core::{
         println,
-        stdio::{stdout, Write},
     };
+    use std::fmt::Write;
     use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
 
     use std::str::FromStr;

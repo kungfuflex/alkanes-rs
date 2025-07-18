@@ -18,7 +18,7 @@ macro_rules! declare_alkane {
         pub extern "C" fn __execute() -> i32 {
             use alkanes_runtime::runtime::AlkaneResponder;
             use alkanes_runtime::runtime::{handle_error, handle_success, prepare_response};
-            use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+            use alkanes_runtime::compat::{to_arraybuffer_layout, to_passback_ptr};
 
             let mut context = $struct_name::default().context().unwrap();
             let mut inputs = context.inputs.clone();

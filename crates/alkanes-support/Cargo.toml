@@ -1,6 +1,6 @@
 [package]
 name = "alkanes-support"
-version = "0.5.2"
+version.workspace = true
 edition = "2021"
 description = "ALKANES support"
 license = "MIT"

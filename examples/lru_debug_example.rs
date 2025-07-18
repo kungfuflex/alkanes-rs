@@ -8,11 +8,10 @@
 //! cargo run --example lru_debug_example --features lru-debug
 //! ```
 
-use alkanes::logging::{self, BlockStats, CacheStats};
+use alkanes::logging::{self};
 use bitcoin::{Block, Transaction, TxOut, ScriptBuf};
 use bitcoin::blockdata::block::Header;
 use bitcoin::blockdata::transaction::{TxIn, OutPoint};
-use bitcoin::hashes::Hash;
 use bitcoin::pow::CompactTarget;
 use std::str::FromStr;
 

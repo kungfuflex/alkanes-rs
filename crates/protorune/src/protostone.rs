@@ -15,8 +15,6 @@ use protorune_support::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-use metashrew_core::metashrew_println::{println};
-use std::fmt::Write;
 
 static mut PROTOCOLS: Option<BTreeSet<u128>> = None;
 

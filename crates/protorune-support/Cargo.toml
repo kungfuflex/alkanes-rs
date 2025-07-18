@@ -1,6 +1,6 @@
 [package]
 name = "protorune-support"
-version = "0.5.2"
+version.workspace = true
 edition = "2021"
 description = "protorunes support libs for Rust sources"
 license = "MIT"

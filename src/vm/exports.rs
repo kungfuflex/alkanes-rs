@@ -8,7 +8,6 @@ use wasmi::*;
 
 #[allow(unused_imports)]
 use metashrew_println::{println};
-use std::fmt::Write;
 
 pub struct AlkanesExportsImpl(());
 impl AlkanesExportsImpl {

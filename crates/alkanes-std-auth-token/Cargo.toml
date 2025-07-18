@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-alkanes-runtime = { workspace = true }
+alkanes-runtime = { workspace = true, features = ["panic-hook"] }
 alkanes-support = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }

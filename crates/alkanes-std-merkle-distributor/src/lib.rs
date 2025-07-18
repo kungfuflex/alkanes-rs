@@ -1,18 +1,15 @@
 use alkanes_runtime::storage::StoragePointer;
 use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
-use {
-  alkanes_runtime::{println, stdio::{stdout}},
-  std::fmt::Write
-};
 use alkanes_support::{
     id::AlkaneId,
     parcel::AlkaneTransfer,
     response::CallResponse,
-    utils::{shift_bytes32_or_err, shift_or_err},
+    utils::shift_bytes32_or_err,
     witness::find_witness_payload,
 };
 use anyhow::{anyhow, Result};
 use bitcoin::Transaction;
+use alkanes_runtime::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::{
     utils::{consume_exact, consume_sized_int, consume_to_end},

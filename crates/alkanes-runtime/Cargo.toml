@@ -1,6 +1,6 @@
 [package]
 name = "alkanes-runtime"
-version = "0.5.2"
+version.workspace = true
 edition = "2021"
 description = "ALKANES runtime library"
 license = "MIT"
@@ -20,5 +20,6 @@ alkanes-macros = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
 metashrew-support = { workspace = true }
+metashrew-println = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-test = { workspace = true }
