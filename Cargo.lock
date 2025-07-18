@@ -1659,7 +1659,7 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 [[package]]
 name = "metashrew-cache"
 version = "9.0.1"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-epoch",
@@ -1677,7 +1677,7 @@ dependencies = [
 [[package]]
 name = "metashrew-core"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
@@ -1700,7 +1700,7 @@ dependencies = [
 [[package]]
 name = "metashrew-macros"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1710,12 +1710,12 @@ dependencies = [
 [[package]]
 name = "metashrew-println"
 version = "0.1.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 
 [[package]]
 name = "metashrew-support"
 version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=kungfuflex/moka#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",

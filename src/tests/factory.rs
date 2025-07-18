@@ -15,8 +15,9 @@ use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
-    stdio::{stdout, Write},
+    stdio::{stdout},
 };
+use std::fmt::Write;
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::protostone::ProtostoneEdict;

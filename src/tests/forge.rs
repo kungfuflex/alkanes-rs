@@ -22,8 +22,9 @@ use alkane_helpers::clear;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
-    stdio::{stdout, Write},
+    stdio::{stdout},
 };
+use std::fmt::Write;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 pub fn create_protostone_encoded_transaction(

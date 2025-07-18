@@ -19,9 +19,9 @@ version = "0.6.2"
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.6", features = ["rand"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/moka", features = ["panic-hook"] }
-metashrew-println = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/moka" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/moka" }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/v9.1.0", features = ["panic-hook"] }
+metashrew-println = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/v9.1.0" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/v9.1.0" }
 ordinals = { path = "./crates/ordinals", version = "0.6.2" }
 protorune = { path = "./crates/protorune", version = "0.6.2" }
 protorune-support = { path = "./crates/protorune-support", version = "0.6.2" }
@@ -118,7 +118,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "kungfuflex/moka", features = ["test-utils"] }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/v9.1.0", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]
