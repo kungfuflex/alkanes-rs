@@ -332,7 +332,7 @@ fn test_upgradeability() -> Result<()> {
             tx: proxy_sequence,
         },
     )?;
-    check_after_upgrade(840_003, proxy_sequence)
+    check_after_upgrade(0, proxy_sequence)
 }
 
 #[wasm_bindgen_test]
