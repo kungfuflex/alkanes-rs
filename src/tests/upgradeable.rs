@@ -320,7 +320,7 @@ fn test_upgradeability() -> Result<()> {
         0,
         AlkaneId { block: 2, tx: 1 },
     )?;
-    upgradeability_harness(proxy_sequence, 840_002, AlkaneId { block: 2, tx: 1 })?;
+    upgradeability_harness(proxy_sequence, 0, AlkaneId { block: 2, tx: 1 })?;
     upgrade_implementation(
         0,
         OutPoint {
