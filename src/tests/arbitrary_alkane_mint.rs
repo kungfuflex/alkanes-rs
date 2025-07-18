@@ -81,7 +81,7 @@ fn test_transfer_overflow() -> Result<()> {
         ),
     );
 
-    index_block(&test_block2, block_height + 1)?;
+    index_block(&test_block2, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
 

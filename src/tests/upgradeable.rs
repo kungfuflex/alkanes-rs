@@ -172,7 +172,7 @@ fn upgradeability_harness(
     // Initialize the contract and execute the cellpacks
     let mut test_block2 = alkane_helpers::init_with_cellpack_pairs([proxy_through_extcall].into());
 
-    index_block(&test_block2, block_height + 1)?;
+    index_block(&test_block2, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
     assert_eq!(
@@ -305,10 +305,10 @@ fn test_proxy() -> Result<()> {
     setup_env()?;
     let (_, proxy_sequence) = deploy_upgradeable_proxy(
         alkanes_std_upgradeable_build::get_bytes(),
-        840_001,
+        0,
         AlkaneId { block: 2, tx: 1 },
     )?;
-    upgradeability_harness(proxy_sequence, 840_002, AlkaneId { block: 2, tx: 1 })?;
+    upgradeability_harness(proxy_sequence, 0, AlkaneId { block: 2, tx: 1 })?;
     Ok(())
 }
 
@@ -317,12 +317,12 @@ fn test_upgradeability() -> Result<()> {
     setup_env()?;
     let (init_block, proxy_sequence) = deploy_upgradeable_proxy(
         alkanes_std_upgradeable_build::get_bytes(),
-        840_001,
+        0,
         AlkaneId { block: 2, tx: 1 },
     )?;
     upgradeability_harness(proxy_sequence, 840_002, AlkaneId { block: 2, tx: 1 })?;
     upgrade_implementation(
-        840_002,
+        0,
         OutPoint {
             txid: init_block.txdata[init_block.txdata.len() - 1].compute_txid(),
             vout: 0,
@@ -342,7 +342,7 @@ fn test_beacon_proxy() -> Result<()> {
     println!("deployed upgradeable beacon");
     let (_, proxy_sequence_1) = deploy_upgradeable_proxy(
         alkanes_std_beacon_proxy_build::get_bytes(),
-        840_002,
+        0,
         AlkaneId {
             block: 4,
             tx: BEACON_ID,
@@ -351,7 +351,7 @@ fn test_beacon_proxy() -> Result<()> {
     println!("deployed first beacon proxy");
     upgradeability_harness(
         proxy_sequence_1,
-        840_003,
+        0,
         AlkaneId {
             block: 4,
             tx: BEACON_ID,
@@ -361,7 +361,7 @@ fn test_beacon_proxy() -> Result<()> {
 
     let (_, proxy_sequence_2) = deploy_upgradeable_proxy(
         alkanes_std_beacon_proxy_build::get_bytes(),
-        840_004,
+        0,
         AlkaneId {
             block: 4,
             tx: BEACON_ID,
@@ -370,7 +370,7 @@ fn test_beacon_proxy() -> Result<()> {
     println!("deployed second beacon proxy");
     upgradeability_harness(
         proxy_sequence_2,
-        840_005,
+        0,
         AlkaneId {
             block: 4,
             tx: BEACON_ID,
@@ -378,7 +378,7 @@ fn test_beacon_proxy() -> Result<()> {
     )?;
     println!("tested second beacon proxy");
     upgrade_implementation(
-        840_006,
+        0,
         OutPoint {
             txid: init_block.txdata[init_block.txdata.len() - 1].compute_txid(),
             vout: 0,
@@ -388,6 +388,6 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    check_after_upgrade(840_007, proxy_sequence_1)?;
-    check_after_upgrade(840_008, proxy_sequence_2)
+    check_after_upgrade(0, proxy_sequence_1)?;
+    check_after_upgrade(0, proxy_sequence_2)
 }

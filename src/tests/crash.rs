@@ -106,7 +106,7 @@ fn test_owned_token_mint_crash() -> Result<()> {
 
     println!("STEP 7: About to index mint block...");
 
-    index_block(&mint_block, block_height + 1)?;
+    index_block(&mint_block, block_height)?;
     println!("STEP 8: Mint block indexed successfully");
 
     // Get the mint transaction info

@@ -158,7 +158,7 @@ fn test_edict_message_same_protostone() -> Result<()> {
 
     index_block(&test_block, block_height)?;
 
-    let mut test_block2 = create_block_with_coinbase_tx(block_height + 1);
+    let mut test_block2 = create_block_with_coinbase_tx(block_height);
 
     let input_script = ScriptBuf::new();
     let txin1 = TxIn {
@@ -188,7 +188,7 @@ fn test_edict_message_same_protostone() -> Result<()> {
         ),
     );
 
-    index_block(&test_block2, block_height + 1)?;
+    index_block(&test_block2, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
 
@@ -218,7 +218,7 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
 
     index_block(&test_block, block_height)?;
 
-    let mut test_block2 = create_block_with_coinbase_tx(block_height + 1);
+    let mut test_block2 = create_block_with_coinbase_tx(0);
 
     let input_script = ScriptBuf::new();
     let txin1 = TxIn {
@@ -248,7 +248,7 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
         ),
     );
 
-    index_block(&test_block2, block_height + 1)?;
+    index_block(&test_block2, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
 
