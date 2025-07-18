@@ -20,9 +20,9 @@ use alkanes_support::{
 use anyhow::{anyhow, Result};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
-use metashrew_core::{
-    print, println,
-    stdio::{stdout, Write},
+use {
+  metashrew_println::{print, println},
+  std::fmt::Write
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 

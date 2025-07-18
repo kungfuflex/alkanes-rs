@@ -3,9 +3,8 @@ use anyhow::{anyhow, Result};
 use bitcoin::{OutPoint, Txid};
 use metashrew_core::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_core::metashrew_println::{
     println,
-    stdio::{stdout, Write},
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::{

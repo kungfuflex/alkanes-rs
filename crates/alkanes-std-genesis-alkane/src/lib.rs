@@ -1,9 +1,8 @@
 use alkanes_runtime::declare_alkane;
 use alkanes_runtime::message::MessageDispatch;
-#[allow(unused_imports)]
-use alkanes_runtime::{
-    println,
-    stdio::{stdout, Write},
+use {
+  alkanes_runtime::{println, stdio::{stdout}},
+  std::fmt::Write
 };
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
 use alkanes_support::utils::overflow_error;
@@ -13,7 +12,6 @@ use bitcoin::hashes::Hash;
 use bitcoin::Block;
 use hex;
 use metashrew_support::block::AuxpowBlock;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::io::Cursor;
 pub mod chain;

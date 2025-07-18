@@ -26,8 +26,7 @@ use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut, Txid};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
-    flush, input, println,
-    stdio::{stdout, Write},
+    flush, input
 };
 use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;

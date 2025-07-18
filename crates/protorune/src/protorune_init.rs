@@ -3,8 +3,10 @@ use crate::tables::RuneTable;
 use metashrew_core::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
-    flush, input, println,
-    stdio::{stdout, Write},
+    flush, input
+};
+use metashrew_core::metashrew_println::{
+    println,
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::ProtoruneRuneId;

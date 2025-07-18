@@ -21,10 +21,11 @@ use std::sync::Mutex;
 use std::cell::RefCell;
 
 #[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
+use {
+  metashrew_println::{println},
+  std::fmt::Write
 };
+
 
 /// Statistics for a single block's processing
 #[derive(Debug, Default, Clone)]

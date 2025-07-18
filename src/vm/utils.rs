@@ -11,9 +11,13 @@ use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
+use {
+  metashrew_println::{println},
+  std::fmt::Write
+};
+#[allow(unused_imports)]
 use metashrew_core::{
-    clear as clear_base, println,
-    stdio::{stdout, Write},
+    clear as clear_base
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::utils::consensus_encode;

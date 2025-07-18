@@ -14,7 +14,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use bitcoin::{block::Header, Transaction};
 #[allow(unused_imports)]
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr, to_ptr};
+use metashrew_println::wasm::{to_arraybuffer_layout, to_passback_ptr, to_ptr};
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_decode};
 use std::io::Cursor;
 

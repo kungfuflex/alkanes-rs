@@ -28,7 +28,8 @@ use bitcoin::{
 };
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew_core::{println, stdio::stdout, cache_get, cache_set};
+use metashrew_core::{cache_get, cache_set};
+use metashrew_println::{println};
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
 use protobuf::{Message, MessageField};
 use protorune::balance_sheet::MintableDebit;

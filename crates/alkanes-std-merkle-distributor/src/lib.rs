@@ -1,9 +1,8 @@
 use alkanes_runtime::storage::StoragePointer;
 use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
-#[allow(unused_imports)]
-use alkanes_runtime::{
-    println,
-    stdio::{stdout, Write},
+use {
+  alkanes_runtime::{println, stdio::{stdout}},
+  std::fmt::Write
 };
 use alkanes_support::{
     id::AlkaneId,
@@ -16,7 +15,6 @@ use anyhow::{anyhow, Result};
 use bitcoin::Transaction;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::{
-    compat::{to_arraybuffer_layout, to_passback_ptr},
     utils::{consume_exact, consume_sized_int, consume_to_end},
 };
 use ordinals::{Artifact, Runestone};

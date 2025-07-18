@@ -11,14 +11,13 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use metashrew_support::{
-    compat::{to_arraybuffer_layout, to_passback_ptr},
     index_pointer::KeyValuePointer,
     utils::consensus_encode,
 };
 use sha2::{Digest, Sha256};
 #[allow(unused_imports)]
 use {
-    alkanes_runtime::{imports::__request_transaction, println, stdio::stdout},
+    alkanes_runtime::{imports::__request_transaction, println, stdio::{stdout}},
     std::fmt::Write,
 };
 

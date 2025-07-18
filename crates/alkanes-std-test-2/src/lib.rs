@@ -9,7 +9,6 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use metashrew_support::{
-    compat::{to_arraybuffer_layout, to_passback_ptr},
     index_pointer::KeyValuePointer,
     utils::consensus_encode,
 };

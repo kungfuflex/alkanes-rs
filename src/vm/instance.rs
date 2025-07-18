@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 use wasmi::*;
 
 #[allow(unused_imports)]
-use metashrew_core::{
-    print, println,
-    stdio::{stdout, Write},
+use {
+  metashrew_println::{println},
+  std::fmt::Write
 };
 
 pub struct AlkanesInstance {

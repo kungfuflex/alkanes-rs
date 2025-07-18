@@ -1,10 +1,9 @@
 use alkanes_runtime::declare_alkane;
 use alkanes_runtime::message::MessageDispatch;
 use alkanes_runtime::runtime::AlkaneResponder;
-#[allow(unused_imports)]
-use alkanes_runtime::{
-    println,
-    stdio::{stdout, Write},
+use {
+  alkanes_runtime::{println, stdio::{stdout}},
+  std::fmt::Write
 };
 use alkanes_support::{
     cellpack::Cellpack, context::Context, parcel::AlkaneTransfer, response::CallResponse,
@@ -12,7 +11,6 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Transaction;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use protorune_support::utils::consensus_decode;
 
 #[derive(Default)]

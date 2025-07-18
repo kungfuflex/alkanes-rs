@@ -3,13 +3,8 @@ use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate
 use alkanes_support::proto;
 use bitcoin::{Block, OutPoint};
 #[allow(unused_imports)]
-use metashrew_core::{
-    flush, input, println,
-    stdio::{stdout, Write},
-};
-#[allow(unused_imports)]
-use metashrew_support::block::AuxpowBlock;
-use metashrew_support::compat::export_bytes;
+use metashrew_core::{flush, input};
+use metashrew_core::export_bytes;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
