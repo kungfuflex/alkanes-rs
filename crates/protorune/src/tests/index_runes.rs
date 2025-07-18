@@ -276,7 +276,7 @@ mod tests {
     fn rune_name_test_reserved_name_taken() {
         clear();
 
-        let block_height = 0;
+        let block_height = 840000;
         // tx0 etches to address 1
         let tx0 = helpers::create_tx_from_runestone(
             Runestone {

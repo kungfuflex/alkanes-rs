@@ -108,7 +108,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn rune_with_no_mint_terms() {
         clear();
-        let block_height = 0;
+        let block_height = 840000;
         let test_block = rune_mint_base_template(block_height, None);
         let stored_minted_amount = helpers::get_rune_balance_by_outpoint(
             OutPoint {
@@ -127,7 +127,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn rune_with_mint_terms_outside_height() {
         clear();
-        let block_height = 0;
+        let block_height = 840000;
         let test_block = rune_mint_base_template(
             block_height,
             Some(Terms {
@@ -154,7 +154,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn rune_with_mint_exceed_cap() {
         clear();
-        let block_height = 0;
+        let block_height = 840000;
         let tx0 = get_default_etching_tx(Some(Terms {
             amount: Some(200),
             cap: Some(1),
@@ -195,7 +195,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn rune_with_mint_in_same_tx_as_terms() {
         clear();
-        let block_height = 0;
+        let block_height = 840000;
         let tx0 = helpers::create_tx_from_runestone(
             Runestone {
                 etching: Some(Etching {
@@ -263,7 +263,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn rune_with_mint_terms() {
         clear();
-        let block_height = 0;
+        let block_height = 840000;
         let test_block = rune_mint_base_template(
             block_height,
             Some(Terms {
@@ -290,7 +290,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn rune_with_mint_terms_offset() {
         clear();
-        let block_height = 0;
+        let block_height = 840000;
         let test_block = rune_mint_base_template(
             block_height,
             Some(Terms {
@@ -317,7 +317,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn rune_with_multiple_mint_terms_offset() {
         clear();
-        let block_height = 0;
+        let block_height = 840000;
 
         let tx0 = get_default_etching_tx(Some(Terms {
             amount: Some(200),

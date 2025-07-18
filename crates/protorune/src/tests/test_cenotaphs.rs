@@ -84,7 +84,7 @@ mod tests {
         mint: Option<RuneId>,
         is_cenotaph: bool,
     ) {
-        let block_height = 0;
+        let block_height = 840000;
 
         // tx0 etches rune0
         let tx0 = get_etching_for_tx_num("AAAAAAAAAAAAATESTER", 'A', None);

@@ -73,7 +73,7 @@ fn multi_protomessage_protocol_test_template<T: MessageContext>(
     BalanceSheet<IndexPointer>,
 ) {
     clear();
-    let block_height = 0;
+    let block_height = 840000;
     let protocol_ids = vec![122, 123];
 
     let test_block = protomessages_from_protocol_ids(protocol_ids);
