@@ -2,8 +2,9 @@ use crate::parcel::AlkaneTransferParcel;
 use crate::storage::StorageMap;
 use anyhow::Result;
 use metashrew_support::utils::consume_to_end;
+use serde::{Deserialize, Serialize};
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CallResponse {
     pub alkanes: AlkaneTransferParcel,
     pub data: Vec<u8>,
@@ -40,7 +41,7 @@ impl CallResponse {
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtendedCallResponse {
     pub alkanes: AlkaneTransferParcel,
     pub storage: StorageMap,

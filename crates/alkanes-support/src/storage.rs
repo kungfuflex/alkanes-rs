@@ -1,9 +1,10 @@
 use anyhow::Result;
 use metashrew_support::utils::{consume_exact, consume_sized_int};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageMap(pub BTreeMap<Vec<u8>, Vec<u8>>);
 
 impl FromIterator<(Vec<u8>, Vec<u8>)> for StorageMap {

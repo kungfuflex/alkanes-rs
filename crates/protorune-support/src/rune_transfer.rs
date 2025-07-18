@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use metashrew_support::index_pointer::KeyValuePointer;
+use serde::{Deserialize, Serialize};
 
 use crate::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use anyhow::{anyhow, Result};
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RuneTransfer {
     pub id: ProtoruneRuneId,
     pub value: u128,

@@ -5,22 +5,23 @@ use crate::proto;
 use crate::response::ExtendedCallResponse;
 use crate::utils::field_or_default;
 use protobuf::{Message, MessageField};
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TraceContext {
     pub inner: Context,
     pub target: AlkaneId,
     pub fuel: u64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TraceResponse {
     pub inner: ExtendedCallResponse,
     pub fuel_used: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TraceEvent {
     EnterDelegatecall(TraceContext),
     EnterStaticcall(TraceContext),

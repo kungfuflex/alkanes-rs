@@ -2,9 +2,10 @@ use crate::id::AlkaneId;
 use anyhow::Result;
 use metashrew_support::utils::consume_sized_int;
 use protorune_support::utils::encode_varint_list;
+use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Cellpack {
     pub target: AlkaneId,
     pub inputs: Vec<u128>,

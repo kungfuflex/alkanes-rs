@@ -1,9 +1,10 @@
 use anyhow::Result;
 use metashrew_support::utils::consume_sized_int;
 use protorune_support::balance_sheet::ProtoruneRuneId;
+use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AlkaneId {
     pub block: u128,
     pub tx: u128,

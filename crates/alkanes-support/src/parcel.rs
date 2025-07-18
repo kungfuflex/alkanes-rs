@@ -4,8 +4,9 @@ use metashrew_support::utils::consume_sized_int;
 use metashrew_support::{byte_view::ByteView, index_pointer::KeyValuePointer};
 use protorune_support::balance_sheet::CachedBalanceSheet;
 use protorune_support::{balance_sheet::BalanceSheet, rune_transfer::RuneTransfer};
+use serde::{Deserialize, Serialize};
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AlkaneTransfer {
     pub id: AlkaneId,
     pub value: u128,
@@ -53,7 +54,7 @@ impl TryInto<CachedBalanceSheet> for AlkaneTransferParcel {
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AlkaneTransferParcel(pub Vec<AlkaneTransfer>);
 
 impl AlkaneTransferParcel {

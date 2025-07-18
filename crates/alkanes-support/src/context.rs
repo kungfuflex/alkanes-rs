@@ -2,9 +2,10 @@ use crate::{id::AlkaneId, parcel::AlkaneTransferParcel};
 use anyhow::Result;
 use metashrew_support::utils::consume_sized_int;
 use metashrew_support::utils::is_empty;
+use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Context {
     pub myself: AlkaneId,
     pub caller: AlkaneId,

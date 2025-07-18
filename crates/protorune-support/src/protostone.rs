@@ -1,6 +1,7 @@
 use crate::{balance_sheet::ProtoruneRuneId, byte_utils::ByteUtils};
 use anyhow::{anyhow, Result};
 use ordinals::{runestone::tag::Tag, Edict, RuneId, Runestone};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub fn next_protostone_edict_id(
@@ -18,7 +19,7 @@ pub fn next_protostone_edict_id(
     })
 }
 
-#[derive(Clone, Default, PartialEq, Debug)]
+#[derive(Clone, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ProtostoneEdict {
     pub id: ProtoruneRuneId,
     pub amount: u128,
@@ -144,7 +145,7 @@ pub fn to_fields(values: &Vec<u128>) -> BTreeMap<u128, Vec<u128>> {
     map
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Protostone {
     pub burn: Option<u128>,
     pub message: Vec<u8>,
