@@ -30,7 +30,7 @@ pub const BEACON_ID: u128 = 0xbeac0;
 
 fn setup_env() -> Result<Block> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
@@ -60,7 +60,7 @@ fn setup_env() -> Result<Block> {
 }
 
 fn deploy_upgradeable_beacon() -> Result<Block> {
-    let block_height = 840_001;
+    let block_height = 0;
     let beacon = Cellpack {
         target: AlkaneId {
             block: 3,

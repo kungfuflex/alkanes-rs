@@ -68,7 +68,7 @@ fn display_benchmark_footer() {
 #[wasm_bindgen_test]
 fn test_genesis() -> Result<()> {
     clear();
-    let block_height = 850_000;
+    let block_height = 0;
 
     // Initialize fuel benchmarks collection
     let mut benchmarks = Vec::new();
@@ -224,7 +224,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
     use bitcoin::Txid;
 
     clear();
-    let block_height = 880_000;
+    let block_height = 0;
 
     let test_block = create_block_with_coinbase_tx(block_height);
 

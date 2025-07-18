@@ -21,7 +21,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_incoming_alkanes_ordered() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let self_mint_cellpack = Cellpack {

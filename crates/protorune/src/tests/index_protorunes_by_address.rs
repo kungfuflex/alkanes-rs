@@ -63,7 +63,7 @@ mod tests {
     // #[wasm_bindgen_test]
     // fn test_protorunes_by_address() -> Result<()> {
     //     clear();
-    //     let block_height = 840000;
+    //     let block_height = 0;
     //     let protocol_id = 122;
 
     //     // Create and index a block with a transaction that has OP_RETURN at the end

@@ -25,7 +25,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_factory_wasm_load() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {

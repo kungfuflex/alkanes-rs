@@ -29,7 +29,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_edict_to_protomessage() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
     let mut test_block: Block = helpers::create_block_with_coinbase_tx(block_height);
     let tx = Transaction {
         version: Version::ONE,
@@ -142,7 +142,7 @@ fn test_edict_to_protomessage() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_edict_message_same_protostone() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -202,7 +202,7 @@ fn test_edict_message_same_protostone() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_edict_message_same_protostone_revert() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {

@@ -84,7 +84,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn test_op_return_not_last() -> Result<()> {
         clear();
-        let block_height = 840000;
+        let block_height = 0;
         let protocol_id = 122;
 
         // Test with OP_RETURN at the end (should work)

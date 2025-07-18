@@ -2,20 +2,23 @@ use crate::{message::AlkaneMessageContext, tests::std::alkanes_std_auth_token_bu
 use alkanes_support::id::AlkaneId;
 use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
 use anyhow::{anyhow, Result};
-use bitcoin::{Sequence, Witness, Transaction, Address, Amount, Block, TxOut, TxIn, ScriptBuf, OutPoint};
-use ordinals::{Runestone};
-use bitcoin::address::{NetworkChecked};
-use protorune_support::balance_sheet::ProtoruneRuneId; 
+use bitcoin::address::NetworkChecked;
+use bitcoin::transaction::Version;
+use bitcoin::{
+    Address, Amount, Block, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+};
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
-use protorune::{test_helpers as helpers, balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
-use bitcoin::transaction::{Version};
-use protorune::test_helpers::{get_address};
-use protorune::protostone::Protostones; 
-use protorune_support::protostone::ProtostoneEdict;    
-use ordinals::{Artifact};
+use ordinals::Artifact;
+use ordinals::Runestone;
+use protorune::protostone::Protostones;
+use protorune::test_helpers::get_address;
+use protorune::{
+    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
+};
+use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::protostone::ProtostoneEdict;
 
 use crate::index_block;
-use protorune_support::protostone::Protostone;
 use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
 use crate::tests::std::alkanes_std_owned_token_build;
 use alkane_helpers::clear;
@@ -24,6 +27,7 @@ use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
+use protorune_support::protostone::Protostone;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 pub fn create_protostone_encoded_transaction(
@@ -78,32 +82,34 @@ pub fn create_protostone_encoded_transaction(
 #[wasm_bindgen_test]
 fn test_cant_forge_edicts() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
     let mut test_block: Block = helpers::create_block_with_coinbase_tx(block_height);
     let outpoint = OutPoint {
-      txid: test_block.txdata[0].compute_txid(),
-      vout: 0
+        txid: test_block.txdata[0].compute_txid(),
+        vout: 0,
     };
-    test_block.txdata.push(create_protostone_encoded_transaction(outpoint, vec![Protostone {
-      protocol_tag: 1,
-      from: None,
-      edicts: vec![ProtostoneEdict {
-        id: ProtoruneRuneId {
-          block: 2,
-          tx: 100
-        },
-        amount: 100000,
-        output: 0
-      }],
-      pointer: Some(0),
-      refund: Some(0),
-      message: vec![],
-      burn: None
-    }]));
+    test_block
+        .txdata
+        .push(create_protostone_encoded_transaction(
+            outpoint,
+            vec![Protostone {
+                protocol_tag: 1,
+                from: None,
+                edicts: vec![ProtostoneEdict {
+                    id: ProtoruneRuneId { block: 2, tx: 100 },
+                    amount: 100000,
+                    output: 0,
+                }],
+                pointer: Some(0),
+                refund: Some(0),
+                message: vec![],
+                burn: None,
+            }],
+        ));
     index_block(&test_block, block_height)?;
     let edict_outpoint = OutPoint {
-      txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
-      vout: 0
+        txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
+        vout: 0,
     };
     let sheet = load_sheet(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())

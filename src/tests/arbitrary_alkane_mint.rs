@@ -24,7 +24,7 @@ fn test_transfer_overflow() -> Result<()> {
     println!(
         "USER SHOULD EXPECT ERROR IN LOGS: 'err: overflow error during balance sheet increase'"
     );
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -96,7 +96,7 @@ fn test_transfer_overflow() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_mint_overflow() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -158,7 +158,7 @@ fn test_mint_overflow() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_mint_underflow() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -193,7 +193,7 @@ fn test_mint_underflow() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_transfer_runtime() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -260,7 +260,7 @@ fn test_transfer_runtime() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_extcall_mint() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let init_cellpack = Cellpack {
@@ -313,7 +313,7 @@ fn test_extcall_mint() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_delegatecall_mint() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let init_cellpack = Cellpack {
@@ -366,7 +366,7 @@ fn test_delegatecall_mint() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let init_cellpack = Cellpack {
@@ -431,7 +431,7 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_multiple_extcall_err_and_good() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let init_cellpack = Cellpack {

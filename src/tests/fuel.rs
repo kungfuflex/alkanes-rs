@@ -19,7 +19,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_infinite_loop() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let infinite_exec_cellpack = Cellpack {
@@ -58,7 +58,7 @@ fn test_infinite_loop() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_infinite_extcall_loop() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let infinite_exec_cellpack = Cellpack {

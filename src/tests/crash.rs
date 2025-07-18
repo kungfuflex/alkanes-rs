@@ -21,7 +21,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_owned_token_mint_crash() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // First deploy auth token factory
     let auth_factory_cellpack = Cellpack {

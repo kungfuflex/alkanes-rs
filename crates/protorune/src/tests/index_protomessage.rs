@@ -360,7 +360,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn protomessage_same_tx_as_protoburn_test() {
         clear();
-        let block_height = 840000;
+        let block_height = 0;
         let protocol_id = 122;
 
         let test_block = protomessage_from_protoburn_fixture(protocol_id);
@@ -407,7 +407,7 @@ mod tests {
         BalanceSheet<IndexPointer>,
     ) {
         clear();
-        let block_height = 840000;
+        let block_height = 0;
         let protocol_id = 122;
 
         let test_block = protomessage_from_edict_fixture(protocol_id, block_height);
@@ -472,7 +472,7 @@ mod tests {
         clear();
 
         let protocol_id = 122;
-        let block_height = 840001;
+        let block_height = 0;
 
         let mut test_block = protomessage_from_edict_fixture(protocol_id, block_height);
         let protorune_id = ProtoruneRuneId {
@@ -579,7 +579,7 @@ mod tests {
     fn protomessage_modify_atomic_then_ok_test() {
         protomessage_from_edict_test_template::<ModifyAtomicWithoutErr>(0, 1000, 0);
 
-        let block_height = 840000;
+        let block_height = 0;
         let protocol_id = 122;
 
         let protorune_id = ProtoruneRuneId {
@@ -597,7 +597,7 @@ mod tests {
     fn protomessage_modify_atomic_then_err_test() {
         protomessage_from_edict_test_template::<ModifyAtomicThenErr>(0, 1000, 0);
 
-        let block_height = 840000;
+        let block_height = 0;
         let protocol_id = 122;
 
         let protorune_id = ProtoruneRuneId {

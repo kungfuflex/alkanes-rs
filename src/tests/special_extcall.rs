@@ -22,7 +22,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_special_extcall() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     let get_header = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
@@ -111,7 +111,7 @@ fn test_special_extcall() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_special_extcall_number_diesel_mints() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     let diesel_mint = Cellpack {
         target: AlkaneId { block: 2, tx: 0 },
@@ -180,7 +180,7 @@ fn test_special_extcall_number_diesel_mints() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_special_extcall_total_miner_fees() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     let get_miner_fee = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
