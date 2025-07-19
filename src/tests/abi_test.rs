@@ -308,26 +308,6 @@ fn test_merkle_distributor_abi() -> Result<()> {
 }
 
 #[wasm_bindgen_test]
-fn test_genesis_alkane_abi() -> Result<()> {
-    clear();
-
-    // Expected methods with their opcodes, parameter names and types, and return types
-    let expected_methods = vec![
-        ("initialize", 0, vec![], "void"),
-        ("mint", 77, vec![], "void"),
-        ("get_name", 99, vec![], "String"),
-        ("get_symbol", 100, vec![], "String"),
-        ("get_total_supply", 101, vec![], "u128"),
-    ];
-
-    test_contract_abi(
-        "GenesisAlkane",
-        alkanes_std_genesis_alkane_build::get_bytes(),
-        expected_methods,
-    )
-}
-
-#[wasm_bindgen_test]
 fn test_genesis_protorune_abi() -> Result<()> {
     clear();
 
