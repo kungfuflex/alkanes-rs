@@ -20,9 +20,9 @@ use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 #[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
+use {
+    metashrew_println::println,
+    std::fmt::Write,
 };
 use protorune::message::MessageContext;
 use protorune::message::MessageContextParcel;

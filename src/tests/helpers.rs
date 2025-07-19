@@ -13,9 +13,10 @@ use bitcoin::{
 use bitcoin::{Block, Transaction};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
-use metashrew_core::{
-    clear as clear_base, println,
-    stdio::{stdout, Write},
+use {
+    metashrew_core::clear as clear_base,
+    metashrew_println::println,
+    std::fmt::Write,
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_encode;

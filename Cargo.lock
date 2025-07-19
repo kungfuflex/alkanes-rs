@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-auth-token"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-std-factory-support",
@@ -113,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-beacon-proxy"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-genesis-alkane"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -150,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-genesis-protorune"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-merkle-distributor"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-orbital"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-owned-token"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-std-factory-support",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-proxy"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-test"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-test-2"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-upgradeable"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-upgradeable-beacon"
-version = "0.5.2"
+version = "0.6.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -1658,8 +1658,8 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 
 [[package]]
 name = "metashrew-cache"
-version = "9.0.1"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+version = "9.1.0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-epoch",
@@ -1676,8 +1676,8 @@ dependencies = [
 
 [[package]]
 name = "metashrew-core"
-version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+version = "9.1.0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
@@ -1694,13 +1694,12 @@ dependencies = [
  "protoc-bin-vendored",
  "protoc-rust",
  "wasm-bindgen",
- "wasm-bindgen-test",
 ]
 
 [[package]]
 name = "metashrew-macros"
-version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+version = "9.1.0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1709,13 +1708,16 @@ dependencies = [
 
 [[package]]
 name = "metashrew-println"
-version = "0.1.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+version = "9.1.0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
+dependencies = [
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "metashrew-support"
-version = "9.0.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#e97083aebba2912d106e0e9dce7983ebc8185ff6"
+version = "9.1.0"
+source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",

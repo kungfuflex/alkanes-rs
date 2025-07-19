@@ -83,11 +83,11 @@ lru-debug = []
 
 [dependencies]
 anyhow = { workspace = true }
-metashrew-println = { workspace = true }
 num = { workspace = true }
 bitcoin = { workspace = true }
 metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
+metashrew-println = { workspace = true }
 ordinals = { workspace = true }
 protorune = { workspace = true }
 protorune-support = { workspace = true }
@@ -118,6 +118,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
+metashrew-println = { workspace = true, features = ["test-utils"] }
 metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/v9.1.0", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 

@@ -29,6 +29,7 @@ use protorune_support::{
 };
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
+use std::fmt::Write;
 
 #[derive(Clone, Default)]
 pub struct AlkaneMessageContext(());

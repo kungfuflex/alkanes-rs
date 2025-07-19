@@ -12,10 +12,10 @@ mod tests {
     use alkane_helpers::clear;
     use alkanes_support::gz::{compress, decompress};
     #[allow(unused_imports)]
-    use metashrew_core::{
-        index_pointer::IndexPointer,
-        println,
-        stdio::{stdout, Write},
+    use {
+        metashrew_core::index_pointer::IndexPointer,
+        metashrew_println::println,
+        std::fmt::Write,
     };
     use wasm_bindgen_test::wasm_bindgen_test;
 

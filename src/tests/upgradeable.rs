@@ -15,10 +15,9 @@ use bitcoin::block::Header;
 use bitcoin::{Block, Transaction};
 use bitcoin::{OutPoint, Witness};
 use metashrew_core::index_pointer::AtomicPointer;
-#[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
+use {
+    metashrew_println::{println},
+    std::fmt::Write
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};

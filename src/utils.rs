@@ -11,6 +11,7 @@ use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_decode;
 use std::io::Cursor;
 use std::sync::Arc;
+use std::fmt::Write;
 
 pub fn from_protobuf(v: alkanes_support::proto::alkanes::AlkaneId) -> AlkaneId {
     AlkaneId {

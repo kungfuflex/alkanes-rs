@@ -11,6 +11,7 @@ use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_e
 use protobuf::{Message, MessageField};
 use std::io::Cursor;
 use view::parcels_from_protobuf;
+use std::fmt::Write;
 pub mod block;
 pub mod etl;
 pub mod indexer;

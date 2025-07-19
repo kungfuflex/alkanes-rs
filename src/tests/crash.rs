@@ -12,9 +12,9 @@ use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id
 use crate::tests::std::alkanes_std_owned_token_build;
 use alkane_helpers::clear;
 #[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
+use {
+  metashrew_println::{println},
+  std::fmt::Write
 };
 use wasm_bindgen_test::wasm_bindgen_test;
 

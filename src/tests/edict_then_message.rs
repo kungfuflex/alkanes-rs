@@ -10,11 +10,10 @@ use anyhow::Result;
 use bitcoin::address::NetworkChecked;
 use bitcoin::{transaction::Version, ScriptBuf, Sequence};
 use bitcoin::{Address, Amount, Block, OutPoint, Transaction, TxIn, TxOut, Witness};
-use metashrew_core::{
-    println,
-    stdio::{stdout},
+use {
+    metashrew_println::println,
+    std::fmt::Write,
 };
-use std::fmt::Write;
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
 use ordinals::Runestone;
 use protorune::protostone::Protostones;

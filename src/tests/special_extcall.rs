@@ -10,10 +10,9 @@ use anyhow::Result;
 use bitcoin::block::Header;
 use bitcoin::OutPoint;
 use bitcoin::Transaction;
-#[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
+use {
+    metashrew_println::{println},
+    std::fmt::Write
 };
 use protorune::test_helpers::create_coinbase_transaction;
 use protorune_support::utils::consensus_decode;

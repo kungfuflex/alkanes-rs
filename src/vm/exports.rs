@@ -5,9 +5,10 @@ use alkanes_support::{
 use anyhow::{anyhow, Result};
 use metashrew_support::utils::{consume_exact, consume_sized_int, consume_to_end};
 use wasmi::*;
+use std::fmt::Write;
 
 #[allow(unused_imports)]
-use metashrew_println::{println};
+use metashrew_core::metashrew_println::{println};
 
 pub struct AlkanesExportsImpl(());
 impl AlkanesExportsImpl {
