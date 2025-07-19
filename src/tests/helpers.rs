@@ -168,7 +168,7 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
     cellpacks: Vec<Cellpack>,
     _previous_out: Option<OutPoint>,
 ) -> Block {
-    let block_height = 0;
+    let block_height = 880_000;
     let mut test_block = create_block_with_coinbase_tx(block_height);
     let mut previous_out: Option<OutPoint> = _previous_out;
     let mut txs = binaries

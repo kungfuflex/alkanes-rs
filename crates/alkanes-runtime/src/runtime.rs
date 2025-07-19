@@ -164,7 +164,6 @@ impl Extcall for Staticcall {
 
 pub trait AlkaneResponder: 'static {
     fn observe_initialization(&self) -> Result<()> {
-        println!("observe_initialization");
         let mut pointer = StoragePointer::from_keyword("/initialized");
         if pointer.get().len() == 0 {
             pointer.set_value::<u8>(0x01);

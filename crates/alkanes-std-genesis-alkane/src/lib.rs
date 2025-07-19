@@ -1,5 +1,5 @@
-use alkanes_runtime::declare_alkane;
 use alkanes_runtime::message::MessageDispatch;
+use alkanes_runtime::{auth::AuthenticatedResponder, declare_alkane};
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -27,8 +27,14 @@ enum GenesisAlkaneMessage {
     #[opcode(0)]
     Initialize,
 
+    #[opcode(1)]
+    Upgrade,
+
     #[opcode(77)]
     Mint,
+
+    #[opcode(78)]
+    CollectFees,
 
     #[opcode(99)]
     #[returns(String)]
@@ -67,6 +73,9 @@ impl ChainConfiguration for GenesisAlkane {
     fn genesis_block(&self) -> u64 {
         0
     }
+    fn premine(&self) -> Result<u128> {
+        Ok(50_000_000)
+    }
     fn average_payout_from_genesis(&self) -> u128 {
         50_000_000
     }
@@ -84,7 +93,7 @@ impl ChainConfiguration for GenesisAlkane {
         800000
     }
     fn average_payout_from_genesis(&self) -> u128 {
-        468750000
+        468_750_000
     }
     fn max_supply(&self) -> u128 {
         156250000000000
@@ -156,8 +165,21 @@ impl ChainConfiguration for GenesisAlkane {
 }
 
 impl GenesisAlkane {
-    fn block(&self) -> Result<Block> {
-        Ok(AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(CONTEXT_HANDLE.block()))?.to_consensus())
+    pub fn claimable_fees_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/fees")
+    }
+
+    pub fn claimable_fees(&self) -> u128 {
+        self.claimable_fees_pointer().get_value::<u128>()
+    }
+
+    pub fn increase_claimable_fees(&self, v: u128) -> Result<()> {
+        self.set_claimable_fees(overflow_error(self.claimable_fees().checked_add(v))?);
+        Ok(())
+    }
+
+    pub fn set_claimable_fees(&self, v: u128) {
+        self.claimable_fees_pointer().set_value::<u128>(v);
     }
 
     pub fn seen_pointer(&self, hash: &Vec<u8>) -> StoragePointer {
@@ -186,17 +208,31 @@ impl GenesisAlkane {
     }
 
     pub fn observe_mint(&self) -> Result<()> {
-        let hash = self.height().to_le_bytes().to_vec();
-        let mut pointer = self.seen_pointer(&hash);
+        let height = self.height().to_le_bytes().to_vec();
+        let mut pointer = self.seen_pointer(&height);
         if pointer.get().len() == 0 {
             pointer.set_value::<u32>(1);
             Ok(())
         } else {
             Err(anyhow!(format!(
                 "already minted for block {}",
-                hex::encode(&hash)
+                hex::encode(&height)
             )))
         }
+    }
+
+    pub fn observe_upgraded_mint(&self, diesel_fee: u128) -> Result<()> {
+        let height = self.height().to_le_bytes().to_vec();
+        let mut pointer = self.seen_pointer(&height);
+        if pointer.get().len() == 0 {
+            pointer.set_value::<u32>(1);
+            if self.claimable_fees_pointer().get().len() == 0 {
+                self.set_claimable_fees(0);
+            }
+            self.increase_claimable_fees(diesel_fee)?;
+            self.increase_total_supply(diesel_fee)?;
+        }
+        Ok(())
     }
 
     // Helper method that creates a mint transfer
@@ -216,6 +252,50 @@ impl GenesisAlkane {
         })
     }
 
+    // Helper method that creates a mint transfer
+    pub fn create_upgraded_mint_transfer(&self) -> Result<AlkaneTransfer> {
+        let context = self.context()?;
+        let total_mints = self.number_diesel_mints()?;
+        let total_miner_fee = self.total_miner_fee()?;
+        let block_reward = self.current_block_reward();
+        let total_tx_fee = total_miner_fee
+            .checked_sub(block_reward)
+            .ok_or("")
+            .map_err(|_| anyhow!("total miner fee is less than block reward"))?;
+        let diesel_fee = std::cmp::min(block_reward / 2, total_tx_fee); // fee is capped at 50% of the block reward
+        let value_per_mint = (block_reward - diesel_fee) / total_mints;
+        self.observe_upgraded_mint(diesel_fee)?;
+
+        if self.total_supply() >= self.max_supply() {
+            return Err(anyhow!("total supply has been reached"));
+        }
+        self.increase_total_supply(value_per_mint)?;
+        Ok(AlkaneTransfer {
+            id: context.myself.clone(),
+            value: value_per_mint,
+        })
+    }
+
+    fn observe_upgrade_initialization(&self) -> Result<()> {
+        let context = self.context()?;
+        let premine = self.premine()?;
+        if !context
+            .incoming_alkanes
+            .0
+            .iter()
+            .any(|i| (i.id == context.myself && i.value == premine))
+        {
+            return Err(anyhow!("Premine is not spent into the upgrade"));
+        }
+        let mut pointer = StoragePointer::from_keyword("/upgrade_initialized");
+        if pointer.get().len() == 0 {
+            pointer.set_value::<u8>(0x01);
+            Ok(())
+        } else {
+            Err(anyhow!("already upgraded diesel"))
+        }
+    }
+
     fn initialize(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -227,7 +307,17 @@ impl GenesisAlkane {
             id: context.myself.clone(),
             value: premine,
         });
-        self.increase_total_supply(premine)?;
+        self.set_total_supply(premine);
+
+        Ok(response)
+    }
+
+    fn upgrade(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        self.observe_upgrade_initialization()?;
+        response.alkanes.0.push(self.deploy_auth_token(5)?); // hardcode 5 auth tokens
 
         Ok(response)
     }
@@ -236,9 +326,31 @@ impl GenesisAlkane {
     fn mint(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
+        if StoragePointer::from_keyword("/upgrade_initialized")
+            .get()
+            .len()
+            == 0
+        {
+            response.alkanes.0.push(self.create_mint_transfer()?);
+        } else {
+            response
+                .alkanes
+                .0
+                .push(self.create_upgraded_mint_transfer()?);
+        }
 
-        response.alkanes.0.push(self.create_mint_transfer()?);
+        Ok(response)
+    }
 
+    fn collect_fees(&self) -> Result<CallResponse> {
+        self.only_owner()?;
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.alkanes.pay(AlkaneTransfer {
+            id: context.myself,
+            value: self.claimable_fees(),
+        });
+        self.set_claimable_fees(0);
         Ok(response)
     }
 
@@ -270,6 +382,7 @@ impl GenesisAlkane {
     }
 }
 
+impl AuthenticatedResponder for GenesisAlkane {}
 impl AlkaneResponder for GenesisAlkane {}
 
 // Use the new macro format

@@ -2,7 +2,7 @@ use crate::index_block;
 use crate::tests::helpers::{
     self as alkane_helpers, get_last_outpoint_sheet, get_sheet_for_outpoint,
 };
-use crate::tests::std::{alkanes_std_auth_token_build, alkanes_std_genesis_alkane_upgrade_build};
+use crate::tests::std::alkanes_std_auth_token_build;
 use alkane_helpers::clear;
 use alkanes::view;
 use alkanes_support::cellpack::Cellpack;
@@ -15,6 +15,7 @@ use crate::network::genesis;
 use alkanes::message::AlkaneMessageContext;
 use bitcoin::hashes::Hash;
 use bitcoin::Block;
+use bitcoin::Txid;
 #[allow(unused_imports)]
 use metashrew_core::{get_cache, index_pointer::IndexPointer};
 #[allow(unused_imports)]
@@ -45,11 +46,59 @@ fn setup_pre_upgrade() -> Result<()> {
         [alkanes_std_auth_token_build::get_bytes()].into(),
         [auth_cellpack].into(),
     );
-    index_block(&test_block, 0)?; // just to init the diesel
+    index_block(&test_block, 880_000)?; // just to init the diesel
     Ok(())
 }
 
-fn mint_after_upgrade(num_mints: usize) -> Result<Block> {
+fn upgrade() -> Result<Block> {
+    let block_height = 890_000;
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    let outpoint = OutPoint {
+        txid: Txid::from_byte_array(
+            <Vec<u8> as AsRef<[u8]>>::as_ref(
+                &hex::decode(genesis::GENESIS_OUTPOINT)?
+                    .iter()
+                    .cloned()
+                    .rev()
+                    .collect::<Vec<u8>>(),
+            )
+            .try_into()?,
+        ),
+        vout: 0,
+    };
+
+    let upgrade = Cellpack {
+        target: diesel.clone(),
+        inputs: vec![1],
+    };
+
+    // Initialize the contract and execute the cellpacks
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+    let upgrade_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+        Witness::new(),
+        vec![upgrade],
+        outpoint.clone(),
+        false,
+    );
+    test_block.txdata.push(upgrade_tx.clone());
+
+    index_block(&test_block, block_height)?;
+    let new_outpoint = OutPoint {
+        txid: upgrade_tx.compute_txid(),
+        vout: 0,
+    };
+    let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        .OUTPOINT_TO_RUNES
+        .select(&consensus_encode(&new_outpoint)?);
+    let new_sheet = load_sheet(&new_ptr);
+
+    let auth_token = ProtoruneRuneId { block: 2, tx: 1 };
+    assert_eq!(new_sheet.get(&auth_token), 5);
+    Ok(test_block)
+}
+
+fn mint(num_mints: usize) -> Result<Block> {
     let block_height = 890_000;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
@@ -67,7 +116,7 @@ fn mint_after_upgrade(num_mints: usize) -> Result<Block> {
         false,
     );
 
-    for i in 1..=num_mints {
+    for _ in 1..=num_mints {
         test_block.txdata.push(mint_tx.clone());
     }
 
@@ -79,8 +128,9 @@ fn mint_after_upgrade(num_mints: usize) -> Result<Block> {
 fn test_new_genesis_contract() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
+    upgrade()?;
     let num_mints = 5;
-    let test_block = mint_after_upgrade(num_mints)?;
+    let test_block = mint(num_mints)?;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
     for i in 1..=num_mints {
@@ -97,37 +147,16 @@ fn test_new_genesis_contract() -> Result<()> {
 
 #[wasm_bindgen_test]
 fn test_new_genesis_collect_fees() -> Result<()> {
-    use bitcoin::Txid;
     clear();
     setup_pre_upgrade()?;
-    mint_after_upgrade(5)?;
+    let upgrade_block = upgrade()?;
+    mint(5)?;
+
+    let genesis_id = AlkaneId { block: 2, tx: 0 };
     let outpoint = OutPoint {
-        txid: Txid::from_byte_array(
-            <Vec<u8> as AsRef<[u8]>>::as_ref(
-                &hex::decode(genesis::GENESIS_OUTPOINT)?
-                    .iter()
-                    .cloned()
-                    .rev()
-                    .collect::<Vec<u8>>(),
-            )
-            .try_into()?,
-        ),
+        txid: upgrade_block.txdata.last().unwrap().compute_txid(),
         vout: 0,
     };
-    // Check final balances
-    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
-        .OUTPOINT_TO_RUNES
-        .select(&consensus_encode(&outpoint)?);
-    let sheet = load_sheet(&ptr);
-
-    let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
-    let auth_token = ProtoruneRuneId { block: 2, tx: 1 };
-    assert_eq!(sheet.get(&auth_token), 5);
-    let out = protorune_outpoint_to_outpoint_response(&outpoint, 1)?;
-    let out_sheet: BalanceSheet<IndexPointer> = out.into();
-    assert_eq!(sheet, out_sheet);
-
-    // make sure premine is spendable
     let block_height = 890_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
     let collect_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
@@ -151,6 +180,9 @@ fn test_new_genesis_collect_fees() -> Result<()> {
     let new_sheet = load_sheet(&new_ptr);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
-    assert_eq!(new_sheet.get(&genesis_id), 350000000 - 312500000);
+    assert_eq!(
+        new_sheet.get(&genesis_id),
+        50_000_000u128 + 350000000 - 312500000
+    );
     Ok(())
 }
