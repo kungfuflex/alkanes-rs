@@ -3,8 +3,7 @@ use crate::message::AlkaneMessageContext;
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
     alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
-    alkanes_std_genesis_alkane_regtest_build, alkanes_std_genesis_alkane_upgrade_mainnet_build,
-    alkanes_std_genesis_alkane_upgrade_regtest_build,
+    alkanes_std_genesis_alkane_regtest_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -69,23 +68,6 @@ pub fn genesis_alkane_bytes() -> Vec<u8> {
     alkanes_std_genesis_alkane_luckycoin_build::get_bytes()
 }
 
-#[cfg(feature = "mainnet")]
-pub fn genesis_alkane_upgrade_bytes() -> Vec<u8> {
-    alkanes_std_genesis_alkane_upgrade_mainnet_build::get_bytes()
-}
-
-//use if regtest
-#[cfg(all(
-    not(feature = "mainnet"),
-    not(feature = "dogecoin"),
-    not(feature = "bellscoin"),
-    not(feature = "fractal"),
-    not(feature = "luckycoin")
-))]
-pub fn genesis_alkane_upgrade_bytes() -> Vec<u8> {
-    alkanes_std_genesis_alkane_upgrade_regtest_build::get_bytes()
-}
-
 //use if regtest
 #[cfg(all(
     not(feature = "mainnet"),
@@ -99,10 +81,6 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 1;
-    pub const GENESIS_UPGRADE_OUTPOINT: &str =
-        "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
-    pub const GENESIS_UPGRADE_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -111,10 +89,6 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 908_888;
-    pub const GENESIS_UPGRADE_OUTPOINT: &str =
-        "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
-    pub const GENESIS_UPGRADE_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
 }
 
 #[cfg(feature = "fractal")]
@@ -123,7 +97,6 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 228_194;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 759_865;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -132,7 +105,6 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 5_730_675;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -141,7 +113,6 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 1_664_317;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -150,7 +121,6 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "2c58484a86e117a445c547d8f3acb56b569f7ea036637d909224d52a5b990259";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 288_906;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 533_970;
 }
 
 pub fn is_active(height: u64) -> bool {
@@ -172,6 +142,7 @@ pub fn get_view_mode() -> bool {
 pub fn is_genesis(height: u64) -> bool {
     let mut init_ptr = IndexPointer::from_keyword("/seen-genesis");
     let has_not_seen_genesis = init_ptr.get().len() == 0;
+    println!("has_not_seen_genesis: {}", has_not_seen_genesis);
     let is_genesis = if has_not_seen_genesis {
         get_view_mode() || height >= genesis::GENESIS_BLOCK
     } else {
@@ -183,14 +154,10 @@ pub fn is_genesis(height: u64) -> bool {
     is_genesis
 }
 
-pub fn genesis(block: &Block, is_upgrade: bool) -> Result<()> {
+pub fn genesis(block: &Block) -> Result<()> {
     IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 2, tx: 0 }).into())
-        .set(Arc::new(compress(if is_upgrade {
-            genesis_alkane_upgrade_bytes()
-        } else {
-            genesis_alkane_bytes()
-        })?));
+        .set(Arc::new(compress(genesis_alkane_bytes())?));
     let mut atomic: AtomicPointer = AtomicPointer::default();
     sequence_pointer(&atomic).set_value::<u128>(1);
     let myself = AlkaneId { block: 2, tx: 0 };
@@ -204,11 +171,7 @@ pub fn genesis(block: &Block, is_upgrade: bool) -> Result<()> {
             lock_time: bitcoin::absolute::LockTime::ZERO,
         },
         block: block.clone(),
-        height: if is_upgrade {
-            genesis::GENESIS_UPGRADE_BLOCK_HEIGHT as u64
-        } else {
-            genesis::GENESIS_BLOCK
-        },
+        height: genesis::GENESIS_BLOCK,
         pointer: 0,
         refund_pointer: 0,
         calldata: (Cellpack {
@@ -228,13 +191,8 @@ pub fn genesis(block: &Block, is_upgrade: bool) -> Result<()> {
             Err(e)
         }
     })?;
-    let genesis_outpoint = if is_upgrade {
-        genesis::GENESIS_UPGRADE_OUTPOINT
-    } else {
-        genesis::GENESIS_OUTPOINT
-    };
     let outpoint_bytes = outpoint_encode(&OutPoint {
-        txid: tx_hex_to_txid(genesis_outpoint)?,
+        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
     })?;
     <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
@@ -253,23 +211,17 @@ pub fn genesis(block: &Block, is_upgrade: bool) -> Result<()> {
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
     );
 
-    let block_height = if is_upgrade {
-        genesis::GENESIS_UPGRADE_OUTPOINT_BLOCK_HEIGHT
-    } else {
-        genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT
-    };
-
     atomic
         .derive(&RUNES.OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
-        .set_value(block_height);
+        .set_value(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT);
     atomic
         .derive(
             &RUNES
                 .HEIGHT_TO_TRANSACTION_IDS
-                .select_value::<u64>(block_height),
+                .select_value::<u64>(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT),
         )
         .append(Arc::new(
-            hex::decode(genesis_outpoint)?
+            hex::decode(genesis::GENESIS_OUTPOINT)?
                 .iter()
                 .cloned()
                 .rev()

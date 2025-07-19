@@ -73,6 +73,9 @@ impl ChainConfiguration for GenesisAlkane {
     fn genesis_block(&self) -> u64 {
         0
     }
+    fn premine(&self) -> Result<u128> {
+        Ok(50_000_000)
+    }
     fn average_payout_from_genesis(&self) -> u128 {
         50_000_000
     }
@@ -90,7 +93,7 @@ impl ChainConfiguration for GenesisAlkane {
         800000
     }
     fn average_payout_from_genesis(&self) -> u128 {
-        468750000
+        468_750_000
     }
     fn max_supply(&self) -> u128 {
         156250000000000
@@ -304,7 +307,7 @@ impl GenesisAlkane {
             id: context.myself.clone(),
             value: premine,
         });
-        self.increase_total_supply(premine)?;
+        self.set_total_supply(premine);
 
         Ok(response)
     }
