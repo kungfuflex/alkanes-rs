@@ -16,7 +16,7 @@ use bitcoin::{Block, Transaction};
 use bitcoin::{OutPoint, Witness};
 use metashrew_core::index_pointer::AtomicPointer;
 use {
-    metashrew_println::{println},
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write
 };
 use metashrew_support::index_pointer::KeyValuePointer;

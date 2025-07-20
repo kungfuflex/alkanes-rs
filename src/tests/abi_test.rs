@@ -21,7 +21,7 @@ use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 #[allow(unused_imports)]
 use {
-    metashrew_println::println,
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
 use protorune::message::MessageContext;

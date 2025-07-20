@@ -8,6 +8,7 @@ pub mod stdio;
 pub mod storage;
 pub mod token;
 pub use crate::stdio::stdout;
+pub mod wasm;
 
 #[macro_export]
 macro_rules! declare_alkane {
@@ -18,7 +19,7 @@ macro_rules! declare_alkane {
         pub extern "C" fn __execute() -> i32 {
             use alkanes_runtime::runtime::AlkaneResponder;
             use alkanes_runtime::runtime::{handle_error, handle_success, prepare_response};
-            use alkanes_runtime::compat::{to_arraybuffer_layout, to_passback_ptr};
+            use alkanes_runtime::wasm::{to_arraybuffer_layout, to_passback_ptr};
 
             let mut context = $struct_name::default().context().unwrap();
             let mut inputs = context.inputs.clone();

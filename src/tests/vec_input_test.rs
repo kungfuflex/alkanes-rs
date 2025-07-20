@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_support::utils::consensus_encode;
 #[allow(unused_imports)]
-use { metashrew_println::{println}, std::fmt::Write };
+use { metashrew_core::{println, stdio::stdout}, std::fmt::Write };
 
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};

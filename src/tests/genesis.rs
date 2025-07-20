@@ -20,7 +20,7 @@ use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, Pro
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::consensus_encode;
 use {
-    metashrew_println::println,
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
 use wasm_bindgen_test::wasm_bindgen_test;

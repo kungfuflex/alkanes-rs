@@ -1,26 +1,29 @@
-use crate::balance_sheet::load_sheet;
-use crate::protostone::Protostones;
-use crate::tables;
-use bitcoin::address::NetworkChecked;
-use bitcoin::blockdata::block::{Block, Header};
-use bitcoin::blockdata::script::ScriptBuf;
-use bitcoin::blockdata::transaction::Version;
-use bitcoin::blockdata::transaction::{Transaction, TxIn, TxOut};
-use bitcoin::hashes::Hash;
-use bitcoin::{Address, Amount, BlockHash, Network, OutPoint, Script, Sequence, Witness};
-use byteorder::{ByteOrder, LittleEndian};
-use core::str::FromStr;
-use hex::decode;
-use metashrew_core::{get_cache, println};
-use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::utils::format_key;
-use ordinals::{Edict, Etching, Rune, RuneId, Runestone};
-use protorune_support::balance_sheet::ProtoruneRuneId;
-use protorune_support::network::{set_network, to_address_str, NetworkParams};
-use protorune_support::protostone::{Protostone, ProtostoneEdict};
-use protorune_support::utils::consensus_encode;
-use std::fmt::Write;
-use std::sync::Arc;
+use {
+	crate::{balance_sheet::load_sheet, protostone::Protostones, tables},
+	bitcoin::{
+		address::NetworkChecked,
+		blockdata::{
+			block::{Block, Header},
+			script::ScriptBuf,
+			transaction::{Transaction, TxIn, TxOut, Version},
+		},
+		hashes::Hash,
+		Address, Amount, BlockHash, Network, OutPoint, Script, Sequence, Witness,
+	},
+	byteorder::{ByteOrder, LittleEndian},
+	core::str::FromStr,
+	hex::decode,
+	metashrew_core::{get_cache, println, stdio::stdout},
+	metashrew_support::{index_pointer::KeyValuePointer, utils::format_key},
+	ordinals::{Edict, Etching, Rune, RuneId, Runestone},
+	protorune_support::{
+		balance_sheet::ProtoruneRuneId,
+		network::{set_network, to_address_str, NetworkParams},
+		protostone::{Protostone, ProtostoneEdict},
+		utils::consensus_encode,
+	},
+	std::{fmt::Write, sync::Arc},
+};
 
 #[cfg(feature = "mainnet")]
 pub fn get_btc_network() -> Network {

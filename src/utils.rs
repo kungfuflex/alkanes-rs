@@ -3,9 +3,9 @@ use alkanes_support::storage::StorageMap;
 use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_support::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew_println::println;
+use metashrew_core::{println, stdio::stdout};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_decode;

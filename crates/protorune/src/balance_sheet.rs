@@ -7,13 +7,9 @@ use std::collections::BTreeMap;
 
 #[allow(unused_imports)]
 use {
-    metashrew_core::metashrew_println::{println},
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
-
-// use metashrew_core::{println, stdio::stdout};
-// use std::fmt::Write;
-//
 
 pub trait PersistentRecord: BalanceSheetOperations {
     fn save<T: KeyValuePointer>(&self, ptr: &T, is_cenotaph: bool) {

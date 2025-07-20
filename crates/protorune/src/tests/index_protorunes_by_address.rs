@@ -6,8 +6,10 @@ mod tests {
     use anyhow::Result;
     use bitcoin::OutPoint;
     use metashrew_core::index_pointer::AtomicPointer;
-    use metashrew_println::println;
-    use std::fmt::Write;
+    use {
+        metashrew_core::{println, stdio::stdout},
+        std::fmt::Write,
+    };
     use protobuf::{Message, MessageField};
     use protorune_support::balance_sheet::BalanceSheet;
     use protorune_support::proto::protorune::{ProtorunesWalletRequest, WalletResponse};

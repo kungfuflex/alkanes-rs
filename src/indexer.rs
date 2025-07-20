@@ -3,8 +3,7 @@ use crate::network::{genesis, is_genesis};
 use crate::vm::fuel::FuelTank;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
-#[allow(unused_imports)]
-use metashrew_println::println;
+use metashrew_core::{println, stdio::stdout};
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;

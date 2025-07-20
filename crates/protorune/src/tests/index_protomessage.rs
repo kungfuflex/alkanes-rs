@@ -18,10 +18,10 @@ mod tests {
     use protorune_support::utils::consensus_encode;
 
     #[allow(unused_imports)]
-    use metashrew_core::{
-        println,
+    use {
+        metashrew_core::{println, stdio::stdout},
+        std::fmt::Write,
     };
-    use std::fmt::Write;
 
     use helpers::clear;
     use metashrew_support::index_pointer::KeyValuePointer;

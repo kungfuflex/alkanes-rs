@@ -1,5 +1,4 @@
-use metashrew_core::index_pointer::IndexPointer;
-use metashrew_support::index_pointer::KeyValuePointer;
+use metashrew_core::index_pointer::{IndexPointer, KeyValuePointer};
 use once_cell::sync::Lazy;
 
 #[allow(non_snake_case)]

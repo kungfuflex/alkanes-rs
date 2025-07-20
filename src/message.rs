@@ -1,35 +1,44 @@
-use crate::logging::{record_protostone_run, record_protostone_with_cellpack, record_fuel_consumed};
-use crate::alkane_log;
-use crate::network::{genesis::GENESIS_BLOCK, is_active};
-use crate::trace::save_trace;
-use crate::utils::{credit_balances, debit_balances, pipe_storagemap_to};
-use crate::vm::{
-    fuel::{FuelTank, VirtualFuelBytes},
-    runtime::AlkanesRuntimeContext,
-    utils::{prepare_context, run_after_special, run_special_cellpacks},
+use {
+	crate::{
+		alkane_log,
+		logging::{record_fuel_consumed, record_protostone_run, record_protostone_with_cellpack},
+		network::{genesis::GENESIS_BLOCK, is_active},
+		trace::save_trace,
+		utils::{credit_balances, debit_balances, pipe_storagemap_to},
+		vm::{
+			fuel::{FuelTank, VirtualFuelBytes},
+			runtime::AlkanesRuntimeContext,
+			utils::{prepare_context, run_after_special, run_special_cellpacks},
+		},
+	},
+	alkanes_support::{
+		cellpack::Cellpack,
+		response::ExtendedCallResponse,
+		trace::{TraceContext, TraceEvent, TraceResponse},
+	},
+	anyhow::{anyhow, Result},
+	bitcoin::OutPoint,
+	metashrew_core::{
+		println,
+		stdio::stdout,
+	},
+	metashrew_support::{AtomicPointer, IndexPointer, KeyValuePointer},
+	protorune::{
+		balance_sheet::MintableDebit,
+		message::{MessageContext, MessageContextParcel},
+		protorune_init::index_unique_protorunes,
+	},
+	protorune_support::{
+		balance_sheet::{BalanceSheet, BalanceSheetOperations},
+		rune_transfer::RuneTransfer,
+		utils::decode_varint_list,
+	},
+	std::{
+		fmt::Write,
+		io::Cursor,
+		sync::{Arc, Mutex},
+	},
 };
-use alkanes_support::{
-    cellpack::Cellpack,
-    response::ExtendedCallResponse,
-    trace::{TraceContext, TraceEvent, TraceResponse},
-};
-use anyhow::{anyhow, Result};
-use bitcoin::OutPoint;
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
-#[allow(unused_imports)]
-use metashrew_println::println;
-use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::balance_sheet::MintableDebit;
-use protorune::message::{MessageContext, MessageContextParcel};
-#[allow(unused_imports)]
-use protorune::protorune_init::index_unique_protorunes;
-use protorune_support::balance_sheet::BalanceSheetOperations;
-use protorune_support::{
-    balance_sheet::BalanceSheet, rune_transfer::RuneTransfer, utils::decode_varint_list,
-};
-use std::io::Cursor;
-use std::sync::{Arc, Mutex};
-use std::fmt::Write;
 
 #[derive(Clone, Default)]
 pub struct AlkaneMessageContext(());

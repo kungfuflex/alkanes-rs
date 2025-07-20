@@ -4,7 +4,7 @@ use crate::rune_transfer::RuneTransfer;
 use anyhow::{anyhow, Result};
 use hex;
 use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::utils::consume_sized_int;
+use metashrew_core::utils::consume_sized_int;
 use ordinals::RuneId;
 use protobuf::{MessageField, SpecialFields};
 use serde::{Deserialize, Serialize};

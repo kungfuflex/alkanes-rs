@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use bitcoin;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::consensus::encode::Decodable;
-use metashrew_core::index_pointer::IndexPointer;
+use metashrew_support::IndexPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 use once_cell::sync::Lazy;
 use std::io::Cursor;

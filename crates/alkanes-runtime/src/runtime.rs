@@ -1,37 +1,32 @@
-#[allow(unused_imports)]
-use crate::imports::{
-    __balance, __call, __delegatecall, __fuel, __height, __load_block, __load_context,
-    __load_storage, __load_transaction, __log, __request_block, __request_context,
-    __request_storage, __request_transaction, __returndatacopy, __sequence, __staticcall,
-    abort, /*, __load_output, __request_output */
+use {
+	crate::{
+		imports::{
+			__balance, __call, __delegatecall, __fuel, __height, __load_block, __load_context,
+			__load_storage, __load_transaction, __log, __request_block, __request_context,
+			__request_storage, __request_transaction, __returndatacopy, __sequence, __staticcall,
+			abort, /*, __load_output, __request_output */
+		},
+		println,
+		storage::StoragePointer,
+		stdio::{stdout, Write},
+	},
+	alkanes_support::{
+		cellpack::Cellpack,
+		context::Context,
+		id::AlkaneId,
+		parcel::{AlkaneTransfer, AlkaneTransferParcel},
+		response::{CallResponse, ExtendedCallResponse},
+		storage::StorageMap,
+	},
+	anyhow::{anyhow, Result},
+	bitcoin::{block::Header, Transaction},
+	crate::wasm::{to_arraybuffer_layout, to_passback_ptr, to_ptr},
+	metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_decode},
+	std::io::Cursor,
 };
-use crate::storage::StoragePointer;
-#[allow(unused_imports)]
-use crate::{
-    println,
-    stdio::{stdout, Write},
-};
-use anyhow::{anyhow, Result};
-use bitcoin::{block::Header, Transaction};
-#[allow(unused_imports)]
-use metashrew_println::wasm::{to_arraybuffer_layout, to_passback_ptr, to_ptr};
-use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_decode};
-use std::io::Cursor;
 
 #[cfg(feature = "panic-hook")]
-use crate::compat::panic_hook;
-
-#[allow(unused_imports)]
-use alkanes_support::{
-    cellpack::Cellpack,
-    context::Context,
-    id::AlkaneId,
-    parcel::{AlkaneTransfer, AlkaneTransferParcel},
-    response::{CallResponse, ExtendedCallResponse},
-    storage::StorageMap,
-};
-#[cfg(feature = "panic-hook")]
-use std::panic;
+use {crate::compat::panic_hook, std::panic};
 
 fn _abort() {
     unsafe {
@@ -80,7 +75,7 @@ pub fn prepare_response(response: ExtendedCallResponse) -> Vec<u8> {
 
 pub fn response_to_i32(response: ExtendedCallResponse) -> i32 {
     let serialized = prepare_response(response);
-    let response_bytes = to_arraybuffer_layout(&serialized);
+    let response_bytes = to_arraybuffer_layout(serialized);
     Box::leak(Box::new(response_bytes)).as_mut_ptr() as usize as i32 + 4
 }
 
@@ -104,7 +99,7 @@ pub trait Extcall {
         );
         if _call_result < 0 {
             let call_result = _call_result.abs() as usize;
-            let mut returndata = to_arraybuffer_layout(&vec![0; call_result]);
+            let mut returndata = to_arraybuffer_layout(vec![0; call_result]);
             unsafe {
                 __returndatacopy(to_passback_ptr(&mut returndata));
             }
@@ -122,7 +117,7 @@ pub trait Extcall {
             return Err(anyhow!("Extcall failed: {}", error_message));
         } else {
             let call_result = _call_result as usize;
-            let mut returndata = to_arraybuffer_layout(&vec![0; call_result]);
+            let mut returndata = to_arraybuffer_layout(vec![0; call_result]);
             unsafe {
                 __returndatacopy(to_passback_ptr(&mut returndata));
             }
@@ -245,7 +240,7 @@ pub trait AlkaneResponder: 'static {
                     .map(|v| v.clone())
                     .unwrap_or_else(|| Vec::<u8>::new())
             } else {
-                let mut key_bytes = to_arraybuffer_layout(&k);
+                let mut key_bytes = to_arraybuffer_layout(k);
                 let key = to_passback_ptr(&mut key_bytes);
                 let buf_size = __request_storage(key) as usize;
                 let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; buf_size]);

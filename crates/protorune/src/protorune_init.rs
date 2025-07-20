@@ -1,6 +1,6 @@
 use crate::message::MessageContext;
 use crate::tables::RuneTable;
-use metashrew_core::index_pointer::AtomicPointer;
+use metashrew_support::AtomicPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     flush, input

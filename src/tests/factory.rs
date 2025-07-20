@@ -14,7 +14,7 @@ use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use {
-    metashrew_println::println,
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
 use metashrew_support::index_pointer::KeyValuePointer;

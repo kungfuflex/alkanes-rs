@@ -25,12 +25,12 @@ use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
 use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_support::index_pointer::KeyValuePointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     flush, input
 };
 use metashrew_support::address::Payload;
-use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
 use ordinals::{Etching, Rune};
 use protobuf::{Message, SpecialFields};

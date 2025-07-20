@@ -15,6 +15,7 @@ bitcoin = { version = "0.32.6", features = ["rand"] }
 serde = "1.0.210"
 ordinals = { path = "../ordinals" }
 anyhow = "1.0.90"
+metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
 hex = "0.4.3"
 protobuf = "3.6.0"

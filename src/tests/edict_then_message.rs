@@ -11,7 +11,7 @@ use bitcoin::address::NetworkChecked;
 use bitcoin::{transaction::Version, ScriptBuf, Sequence};
 use bitcoin::{Address, Amount, Block, OutPoint, Transaction, TxIn, TxOut, Witness};
 use {
-    metashrew_println::println,
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};

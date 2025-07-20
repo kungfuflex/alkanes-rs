@@ -43,7 +43,6 @@ dependencies = [
  "hex_lit",
  "js-sys",
  "metashrew-core",
- "metashrew-println",
  "metashrew-support",
  "num",
  "once_cell",
@@ -92,7 +91,6 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.6",
- "metashrew-println",
  "metashrew-support",
  "wasm-bindgen",
  "wasm-bindgen-test",
@@ -1607,9 +1605,9 @@ checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
 name = "libredox"
-version = "0.1.4"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1580801010e535496706ba011c15f8532df6b42297d2e471fec38ceadd8c0638"
+checksum = "4488594b9328dee448adb906d8b126d9b7deb7cf5c22161ee591610bb1be83c0"
 dependencies = [
  "bitflags",
  "libc",
@@ -1659,7 +1657,6 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 [[package]]
 name = "metashrew-cache"
 version = "9.1.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-epoch",
@@ -1677,7 +1674,6 @@ dependencies = [
 [[package]]
 name = "metashrew-core"
 version = "9.1.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.6",
@@ -1685,10 +1681,11 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.16",
  "hex",
+ "metashrew-cache",
  "metashrew-macros",
- "metashrew-println",
  "metashrew-support",
  "ordinals 0.0.8",
+ "prost",
  "protobuf 3.7.2",
  "protobuf-codegen 3.7.2",
  "protoc-bin-vendored",
@@ -1699,7 +1696,6 @@ dependencies = [
 [[package]]
 name = "metashrew-macros"
 version = "9.1.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1707,17 +1703,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "metashrew-println"
-version = "9.1.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
-dependencies = [
- "wasm-bindgen",
-]
-
-[[package]]
 name = "metashrew-support"
 version = "9.1.0"
-source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/v9.1.0#26cad41f84f2f8d9f99a4fe7bee24f3609361c7f"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
@@ -1727,7 +1714,6 @@ dependencies = [
  "hex",
  "log",
  "metashrew-cache",
- "metashrew-println",
  "prost",
  "protobuf 3.7.2",
  "protobuf-codegen 3.7.2",
@@ -2279,7 +2265,6 @@ dependencies = [
  "getrandom 0.2.16",
  "hex",
  "metashrew-core",
- "metashrew-println",
  "metashrew-support",
  "once_cell",
  "ordinals 0.6.2",
@@ -2302,6 +2287,7 @@ dependencies = [
  "bech32 0.11.0",
  "bitcoin 0.32.6",
  "hex",
+ "metashrew-core",
  "metashrew-support",
  "ordinals 0.6.2",
  "protobuf 3.7.2",

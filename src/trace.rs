@@ -9,7 +9,7 @@ use protobuf::Message;
 use std::sync::Arc;
 #[allow(unused_imports)]
 use {
-    metashrew_println::println,
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
 

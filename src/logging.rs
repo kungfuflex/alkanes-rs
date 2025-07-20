@@ -20,9 +20,8 @@ use std::sync::Mutex;
 #[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
 
-#[allow(unused_imports)]
 use {
-  metashrew_println::{println},
+  metashrew_core::{println, stdio::stdout},
   std::fmt::Write
 };
 

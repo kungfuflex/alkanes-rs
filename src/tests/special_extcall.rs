@@ -11,7 +11,7 @@ use bitcoin::block::Header;
 use bitcoin::OutPoint;
 use bitcoin::Transaction;
 use {
-    metashrew_println::{println},
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write
 };
 use protorune::test_helpers::create_coinbase_transaction;

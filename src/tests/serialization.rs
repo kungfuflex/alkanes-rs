@@ -3,7 +3,7 @@ use hex_lit::hex;
 use protobuf::{Message, MessageField};
 use protorune_support::proto::protorune::ProtorunesWalletRequest;
 use {
-    metashrew_println::println,
+    metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
 use wasm_bindgen_test::*;

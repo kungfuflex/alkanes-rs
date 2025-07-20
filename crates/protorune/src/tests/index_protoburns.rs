@@ -14,8 +14,10 @@ mod tests {
     use protorune_support::utils::consensus_encode;
 
     use helpers::clear;
-    use metashrew_println::println;
-    use std::fmt::Write;
+    use {
+        metashrew_core::{println, stdio::stdout},
+        std::fmt::Write,
+    };
     use metashrew_support::index_pointer::KeyValuePointer;
     use std::str::FromStr;
     use wasm_bindgen_test::*;

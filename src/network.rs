@@ -1,33 +1,35 @@
-use crate::message::AlkaneMessageContext;
-#[allow(unused_imports)]
-use crate::precompiled::{
-    alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
-    alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
-    alkanes_std_genesis_alkane_regtest_build,
-};
-use crate::utils::pipe_storagemap_to;
-use crate::view::simulate_parcel;
-use crate::vm::utils::sequence_pointer;
-use alkanes_support::cellpack::Cellpack;
-use alkanes_support::gz::compress;
-use alkanes_support::id::AlkaneId;
-use alkanes_support::parcel::AlkaneTransferParcel;
-use anyhow::Result;
-use bitcoin::{Block, OutPoint, Transaction};
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
-use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::balance_sheet::PersistentRecord;
-use protorune::message::{MessageContext, MessageContextParcel};
-#[allow(unused_imports)]
-use protorune::tables::{RuneTable, RUNES};
-use protorune_support::balance_sheet::BalanceSheet;
-use protorune_support::utils::{outpoint_encode, tx_hex_to_txid};
-use std::sync::Arc;
-
-#[allow(unused_imports)]
 use {
-    metashrew_println::println,
-    std::fmt::Write,
+	crate::{
+		message::AlkaneMessageContext,
+		precompiled::{
+			alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
+			alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
+			alkanes_std_genesis_alkane_regtest_build,
+		},
+		utils::pipe_storagemap_to,
+		view::simulate_parcel,
+		vm::utils::sequence_pointer,
+	},
+	alkanes_support::{
+		cellpack::Cellpack, gz::compress, id::AlkaneId, parcel::AlkaneTransferParcel,
+	},
+	anyhow::Result,
+	bitcoin::{Block, OutPoint, Transaction},
+	metashrew_core::{
+		println,
+		stdio::stdout,
+	},
+	metashrew_support::{AtomicPointer, IndexPointer, KeyValuePointer},
+	protorune::{
+		balance_sheet::PersistentRecord,
+		message::{MessageContext, MessageContextParcel},
+		tables::{RuneTable, RUNES},
+	},
+	protorune_support::{
+		balance_sheet::BalanceSheet,
+		utils::{outpoint_encode, tx_hex_to_txid},
+	},
+	std::{fmt::Write, sync::Arc},
 };
 
 #[cfg(feature = "mainnet")]

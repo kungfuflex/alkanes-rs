@@ -5,7 +5,7 @@ mod tests {
     #[allow(unused_imports)]
     use {
         metashrew_core::index_pointer::IndexPointer,
-        metashrew_println::println,
+        metashrew_core::{println, stdio::stdout},
         std::fmt::Write,
     };
     use wasm_bindgen_test::wasm_bindgen_test;

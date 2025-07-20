@@ -19,9 +19,8 @@ version = "0.6.2"
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.6", features = ["rand"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/v9.1.0", features = ["panic-hook"] }
-metashrew-println = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/v9.1.0" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/v9.1.0" }
+metashrew-core = { path = "../metashrew/crates/metashrew-core", features = ["panic-hook"] }
+metashrew-support = { path = "../metashrew/crates/metashrew-support" }
 ordinals = { path = "./crates/ordinals", version = "0.6.2" }
 protorune = { path = "./crates/protorune", version = "0.6.2" }
 protorune-support = { path = "./crates/protorune-support", version = "0.6.2" }
@@ -77,7 +76,7 @@ merkle_distributor = []
 free_mint = []
 upgradeable = []
 debug-log = []
-logs = ["protorune/logs"]
+logs = []
 lru-debug = []
 
 
@@ -87,7 +86,6 @@ num = { workspace = true }
 bitcoin = { workspace = true }
 metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
-metashrew-println = { workspace = true }
 ordinals = { workspace = true }
 protorune = { workspace = true }
 protorune-support = { workspace = true }
@@ -118,8 +116,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew-println = { workspace = true, features = ["test-utils"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/v9.1.0", features = ["test-utils"] }
+metashrew-core = { path = "../metashrew/crates/metashrew-core", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]

@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use bitcoin::{Block, Transaction, Txid};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::Runestone;
 use protorune_support::{
     balance_sheet::BalanceSheet,

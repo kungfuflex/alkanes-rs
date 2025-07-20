@@ -5,8 +5,8 @@ use alkanes_support::{
 };
 #[allow(unused_imports)]
 use {
-  metashrew_println::{println},
-  std::fmt::Write
+    metashrew_core::{println, stdio::stdout},
+    std::fmt::Write,
 };
 
 use protorune::message::MessageContextParcel;

@@ -1,22 +1,19 @@
-use crate::tables::{RuneTable, RUNES};
-use anyhow::{anyhow, Result};
-use bitcoin::{OutPoint, Txid};
-use metashrew_core::index_pointer::AtomicPointer;
-#[allow(unused_imports)]
-use metashrew_core::metashrew_println::{
-    println,
+use {
+	crate::tables::{RuneTable, RUNES},
+	anyhow::{anyhow, Result},
+	bitcoin::{OutPoint, Txid},
+	metashrew_core::{println, stdio::stdout},
+	metashrew_support::AtomicPointer,
+	metashrew_support::index_pointer::KeyValuePointer,
+	ordinals::Edict,
+	protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId},
+	std::{
+		cmp::min,
+		collections::{BTreeMap, BTreeSet},
+		ops::Deref,
+		sync::Arc,
+	},
 };
-use metashrew_support::index_pointer::KeyValuePointer;
-use std::{
-    cmp::min,
-    collections::{BTreeMap, BTreeSet},
-    ops::Deref,
-    sync::Arc,
-};
-
-use ordinals::Edict;
-
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 
 #[derive(Clone, Debug)]
 pub struct Protoburn {
