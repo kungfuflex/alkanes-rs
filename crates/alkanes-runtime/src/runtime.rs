@@ -12,7 +12,7 @@ use crate::{
     stdio::{stdout, Write},
 };
 use anyhow::{anyhow, Result};
-use bitcoin::{block::Header, Transaction};
+use bitcoin::{block::Header, Transaction, Txid};
 #[allow(unused_imports)]
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr, to_ptr};
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_decode};
@@ -214,6 +214,12 @@ pub trait AlkaneResponder: 'static {
             __load_transaction(to_ptr(&mut buffer) + 4);
             (&buffer[4..]).to_vec()
         }
+    }
+    fn transaction_id(&self) -> Result<Txid> {
+        Ok(
+            consensus_decode::<Transaction>(&mut std::io::Cursor::new(self.transaction()))?
+                .compute_txid(),
+        )
     }
     /*
     fn output(&self, v: &OutPoint) -> Result<Vec<u8>> {
