@@ -10,7 +10,7 @@ use alkanes_support::utils::overflow_error;
 use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash;
-use bitcoin::Block;
+use bitcoin::{Block, Txid};
 use hex;
 use metashrew_support::block::AuxpowBlock;
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
@@ -252,9 +252,37 @@ impl GenesisAlkane {
         })
     }
 
+    /// Check if a transaction hash has been used for minting
+    pub fn has_tx_hash(&self, txid: &Txid) -> bool {
+        StoragePointer::from_keyword("/tx-hashes/")
+            .select(&txid.as_byte_array().to_vec())
+            .get_value::<u8>()
+            == 1
+    }
+
+    /// Add a transaction hash to the used set
+    pub fn add_tx_hash(&self, txid: &Txid) -> Result<()> {
+        StoragePointer::from_keyword("/tx-hashes/")
+            .select(&txid.as_byte_array().to_vec())
+            .set_value::<u8>(0x01);
+        Ok(())
+    }
+
     // Helper method that creates a mint transfer
     pub fn create_upgraded_mint_transfer(&self) -> Result<AlkaneTransfer> {
         let context = self.context()?;
+
+        // Get transaction ID
+        let txid = self.transaction_id()?;
+
+        // Enforce one mint per transaction
+        if self.has_tx_hash(&txid) {
+            return Err(anyhow!("Transaction already used for minting"));
+        }
+
+        // Record transaction hash
+        self.add_tx_hash(&txid)?;
+
         let total_mints = self.number_diesel_mints()?;
         let total_miner_fee = self.total_miner_fee()?;
         let block_reward = self.current_block_reward();
