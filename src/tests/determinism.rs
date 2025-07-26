@@ -76,20 +76,7 @@ fn test_incoming_alkanes_ordered() -> Result<()> {
         vout: 3,
     };
 
-    let trace_data: Trace = view::trace(&outpoint)?.try_into()?;
-
-    let last_trace_event = trace_data.0.lock().expect("Mutex poisoned").last().cloned();
-
-    // Access the data field from the trace response
-    if let Some(return_context) = last_trace_event {
-        // Use pattern matching to extract the data field from the TraceEvent enum
-        match return_context {
-            TraceEvent::ReturnContext(trace_response) => {}
-            _ => panic!("Expected ReturnContext variant, but got a different variant"),
-        }
-    } else {
-        panic!("Failed to get last_trace_event from trace data");
-    }
+    alkane_helpers::assert_return_context(&outpoint, |trace_response| Ok(()))?;
 
     Ok(())
 }
