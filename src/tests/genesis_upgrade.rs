@@ -113,11 +113,11 @@ fn mint(num_mints: usize) -> Result<Block> {
     for i in 1..=num_mints {
         let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
             Witness::new(),
-            vec![mint.clone()],
+            vec![mint.clone(), mint.clone()], // note that multiple mints in one protostone is ignored
             OutPoint::new(test_block.txdata[0].compute_txid(), (i - 1) as u32),
             false,
         );
-        test_block.txdata.push(mint_tx.clone());
+        test_block.txdata.push(mint_tx);
     }
 
     index_block(&test_block, block_height)?;
