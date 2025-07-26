@@ -517,30 +517,27 @@ pub fn assert_revert_context_at_index(
     }
 }
 
-pub fn assert_return_context<F>(outpoint: &OutPoint, check_function: F) -> Result<()>
+pub fn assert_return_context<F, T>(outpoint: &OutPoint, check_function: F) -> Result<T>
 where
-    F: Fn(TraceResponse) -> Result<()>,
+    F: Fn(TraceResponse) -> Result<T>,
 {
     assert_return_context_at_index(outpoint, check_function, None)
 }
 
-pub fn assert_return_context_at_index<F>(
+pub fn assert_return_context_at_index<F, T>(
     outpoint: &OutPoint,
     check_function: F,
     index: Option<isize>,
-) -> Result<()>
+) -> Result<T>
 where
-    F: Fn(TraceResponse) -> Result<()>,
+    F: Fn(TraceResponse) -> Result<T>,
 {
     let event = get_trace_event_at_index(outpoint, index)?;
     match event {
-        TraceEvent::ReturnContext(trace_response) => {
-            check_function(trace_response)?;
-        }
+        TraceEvent::ReturnContext(trace_response) => check_function(trace_response),
         _ => panic!(
             "Expected ReturnContext variant, but got a different variant: {:?}",
             event
         ),
     }
-    Ok(())
 }
