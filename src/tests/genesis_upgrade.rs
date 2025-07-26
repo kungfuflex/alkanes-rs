@@ -109,14 +109,14 @@ fn mint(num_mints: usize) -> Result<Block> {
 
     // Initialize the contract and execute the cellpacks
     let mut test_block = create_block_with_coinbase_tx(block_height);
-    let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
-        Witness::new(),
-        vec![mint.clone()],
-        OutPoint::default(),
-        false,
-    );
 
-    for _ in 1..=num_mints {
+    for i in 1..=num_mints {
+        let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![mint.clone()],
+            OutPoint::new(test_block.txdata[0].compute_txid(), (i - 1) as u32),
+            false,
+        );
         test_block.txdata.push(mint_tx.clone());
     }
 
