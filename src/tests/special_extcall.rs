@@ -1,5 +1,5 @@
 use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers};
+use crate::tests::helpers::{self as alkane_helpers, assert_return_context};
 use crate::tests::std::alkanes_std_test_build;
 use alkane_helpers::clear;
 use alkanes::view;
@@ -52,58 +52,28 @@ fn test_special_extcall() -> Result<()> {
         vout: 3,
     };
 
-    let raw_trace_data = view::trace(&outpoint_1)?;
-    let trace_data: Trace = raw_trace_data.clone().try_into()?;
+    assert_return_context(&outpoint_1, |trace_response| {
+        let data =
+            consensus_decode::<Header>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
-    let trace_event_1 = trace_data.0.lock().expect("Mutex poisoned").last().cloned();
-
-    // Access the data field from the trace response
-    if let Some(return_context) = trace_event_1 {
-        // Use pattern matching to extract the data field from the TraceEvent enum
-        match return_context {
-            TraceEvent::ReturnContext(trace_response) => {
-                // Now we have the TraceResponse, access the data field
-                let data = consensus_decode::<Header>(&mut std::io::Cursor::new(
-                    trace_response.inner.data,
-                ))?;
-
-                println!("{:?}", data);
-                assert_eq!(data.time, 1231006505);
-            }
-            _ => panic!("Expected ReturnContext variant, but got a different variant"),
-        }
-    } else {
-        panic!("Failed to get trace_event_1 from trace data");
-    }
+        println!("{:?}", data);
+        assert_eq!(data.time, 1231006505);
+        Ok(())
+    })?;
 
     let outpoint_2 = OutPoint {
         txid: test_block.txdata[2].compute_txid(),
         vout: 3,
     };
 
-    let raw_trace_data = view::trace(&outpoint_2)?;
-    let trace_data: Trace = raw_trace_data.clone().try_into()?;
+    assert_return_context(&outpoint_2, |trace_response| {
+        let data =
+            consensus_decode::<Transaction>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
-    let trace_event_1 = trace_data.0.lock().expect("Mutex poisoned").last().cloned();
-
-    // Access the data field from the trace response
-    if let Some(return_context) = trace_event_1 {
-        // Use pattern matching to extract the data field from the TraceEvent enum
-        match return_context {
-            TraceEvent::ReturnContext(trace_response) => {
-                // Now we have the TraceResponse, access the data field
-                let data = consensus_decode::<Transaction>(&mut std::io::Cursor::new(
-                    trace_response.inner.data,
-                ))?;
-
-                println!("{:?}", data);
-                assert_eq!(data.version, bitcoin::transaction::Version(2));
-            }
-            _ => panic!("Expected ReturnContext variant, but got a different variant"),
-        }
-    } else {
-        panic!("Failed to get trace_event_1 from trace data");
-    }
+        println!("{:?}", data);
+        assert_eq!(data.version, bitcoin::transaction::Version(2));
+        Ok(())
+    })?;
 
     Ok(())
 }
@@ -152,27 +122,13 @@ fn test_special_extcall_number_diesel_mints() -> Result<()> {
         vout: 3,
     };
 
-    let raw_trace_data = view::trace(&outpoint_1)?;
-    let trace_data: Trace = raw_trace_data.clone().try_into()?;
+    assert_return_context(&outpoint_1, |trace_response| {
+        let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
 
-    let trace_event_1 = trace_data.0.lock().expect("Mutex poisoned").last().cloned();
-
-    // Access the data field from the trace response
-    if let Some(return_context) = trace_event_1 {
-        // Use pattern matching to extract the data field from the TraceEvent enum
-        match return_context {
-            TraceEvent::ReturnContext(trace_response) => {
-                // Now we have the TraceResponse, access the data field
-                let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
-
-                println!("{:?}", data);
-                assert_eq!(data, 5);
-            }
-            _ => panic!("Expected ReturnContext variant, but got a different variant"),
-        }
-    } else {
-        panic!("Failed to get trace_event_1 from trace data");
-    }
+        println!("{:?}", data);
+        assert_eq!(data, 5);
+        Ok(())
+    })?;
 
     Ok(())
 }
@@ -200,27 +156,12 @@ fn test_special_extcall_total_miner_fees() -> Result<()> {
         vout: 3,
     };
 
-    let raw_trace_data = view::trace(&outpoint_1)?;
-    let trace_data: Trace = raw_trace_data.clone().try_into()?;
+    assert_return_context(&outpoint_1, |trace_response| {
+        let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
 
-    let trace_event_1 = trace_data.0.lock().expect("Mutex poisoned").last().cloned();
-
-    // Access the data field from the trace response
-    if let Some(return_context) = trace_event_1 {
-        // Use pattern matching to extract the data field from the TraceEvent enum
-        match return_context {
-            TraceEvent::ReturnContext(trace_response) => {
-                // Now we have the TraceResponse, access the data field
-                let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
-
-                println!("{:?}", data);
-                assert_eq!(data, 50_000_000 * 7);
-            }
-            _ => panic!("Expected ReturnContext variant, but got a different variant"),
-        }
-    } else {
-        panic!("Failed to get trace_event_1 from trace data");
-    }
-
+        println!("{:?}", data);
+        assert_eq!(data, 50_000_000 * 7);
+        Ok(())
+    })?;
     Ok(())
 }

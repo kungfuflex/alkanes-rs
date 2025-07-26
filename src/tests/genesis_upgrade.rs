@@ -109,19 +109,53 @@ fn mint(num_mints: usize) -> Result<Block> {
 
     // Initialize the contract and execute the cellpacks
     let mut test_block = create_block_with_coinbase_tx(block_height);
-    let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
-        Witness::new(),
-        vec![mint.clone()],
-        OutPoint::default(),
-        false,
-    );
 
-    for _ in 1..=num_mints {
-        test_block.txdata.push(mint_tx.clone());
+    for i in 1..=num_mints {
+        let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![mint.clone(), mint.clone()], // note that multiple mints in one protostone is ignored
+            OutPoint::new(test_block.txdata[0].compute_txid(), (i - 1) as u32),
+            false,
+        );
+        test_block.txdata.push(mint_tx);
     }
 
     index_block(&test_block, block_height)?;
     Ok(test_block)
+}
+
+fn get_total_supply() -> Result<u128> {
+    let block_height = 890_000;
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    let get_total_sup = Cellpack {
+        target: diesel.clone(),
+        inputs: vec![101],
+    };
+
+    // Initialize the contract and execute the cellpacks
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+    let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+        Witness::new(),
+        vec![get_total_sup.clone()],
+        OutPoint::default(),
+        false,
+    );
+    test_block.txdata.push(mint_tx.clone());
+
+    index_block(&test_block, block_height)?;
+
+    alkane_helpers::assert_return_context(
+        &OutPoint {
+            txid: test_block.txdata.last().unwrap().compute_txid(),
+            vout: 3,
+        },
+        |trace_response| {
+            Ok(u128::from_le_bytes(
+                trace_response.inner.data[0..16].try_into()?,
+            ))
+        },
+    )
 }
 
 #[wasm_bindgen_test]
@@ -129,6 +163,7 @@ fn test_new_genesis_contract() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
     upgrade()?;
+    let prev_total_supply = get_total_supply()?;
     let num_mints = 5;
     let test_block = mint(num_mints)?;
     let diesel = AlkaneId { block: 2, tx: 0 };
@@ -142,6 +177,7 @@ fn test_new_genesis_contract() -> Result<()> {
                 .unwrap(),
         )
     }
+    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
     Ok(())
 }
 

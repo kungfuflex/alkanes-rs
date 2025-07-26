@@ -268,26 +268,12 @@ fn check_after_upgrade(block_height: u32, proxy_sequence: u128) -> Result<()> {
         vout: 4,
     };
 
-    let raw_trace_data = view::trace(&outpoint)?;
-    let trace_data: Trace = raw_trace_data.clone().try_into()?;
+    alkane_helpers::assert_return_context(&outpoint, |trace_response| {
+        let data = trace_response.inner.data;
 
-    let trace_event_1 = trace_data.0.lock().expect("Mutex poisoned").last().cloned();
-
-    // Access the data field from the trace response
-    if let Some(return_context) = trace_event_1 {
-        // Use pattern matching to extract the data field from the TraceEvent enum
-        match return_context {
-            TraceEvent::ReturnContext(trace_response) => {
-                // Now we have the TraceResponse, access the data field
-                let data = trace_response.inner.data;
-
-                assert_eq!(data[0], 12);
-            }
-            _ => panic!("Expected ReturnContext variant, but got a different variant"),
-        }
-    } else {
-        panic!("Failed to get trace_event_1 from trace data");
-    }
+        assert_eq!(data[0], 12);
+        Ok(())
+    })?;
 
     assert_revert_context(
         &OutPoint {
