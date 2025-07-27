@@ -286,10 +286,11 @@ impl GenesisAlkane {
         let total_mints = self.number_diesel_mints()?;
         let total_miner_fee = self.total_miner_fee()?;
         let block_reward = self.current_block_reward();
-        let total_tx_fee = total_miner_fee
-            .checked_sub(block_reward)
-            .ok_or("")
-            .map_err(|_| anyhow!("total miner fee is less than block reward"))?;
+        let total_tx_fee = if total_miner_fee > block_reward {
+            total_miner_fee - block_reward
+        } else {
+            0
+        };
         let diesel_fee = std::cmp::min(block_reward / 2, total_tx_fee); // fee is capped at 50% of the block reward
         let value_per_mint = (block_reward - diesel_fee) / total_mints;
         self.observe_upgraded_mint(diesel_fee)?;
