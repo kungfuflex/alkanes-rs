@@ -1,3 +1,4 @@
+#![allow(long_running_const_eval)]
 use crate::indexer::configure_network;
 use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate_safe};
 use alkanes_support::proto;
