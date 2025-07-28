@@ -34,6 +34,7 @@ name = "alkanes"
 version = "0.5.2"
 dependencies = [
  "alkanes",
+ "alkanes-std-genesis-alkane",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",

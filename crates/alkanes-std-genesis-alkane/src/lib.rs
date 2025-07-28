@@ -74,7 +74,6 @@ impl ChainConfiguration for GenesisAlkane {
         0
     }
     fn premine(&self) -> Result<u128> {
-        println!("Using hardcoded premine for test networks");
         Ok(50_000_000)
     }
     fn average_payout_from_genesis(&self) -> u128 {

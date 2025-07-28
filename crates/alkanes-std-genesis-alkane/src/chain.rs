@@ -19,7 +19,6 @@ pub trait ChainConfiguration {
     fn genesis_block(&self) -> u64;
     fn average_payout_from_genesis(&self) -> u128;
     fn premine(&self) -> Result<u128> {
-        println!("calculating dynamic premine");
         let blocks =
             overflow_error(CONTEXT_HANDLE.height().checked_sub(self.genesis_block()))? as u128;
         Ok(overflow_error(
