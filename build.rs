@@ -165,7 +165,6 @@ fn main() {
 
                 // Also build for the default feature set
                 build_alkane(wasm_str, vec!["regtest"])?;
-                return Ok(v.replace("-", "_"));
             } else {
                 build_alkane(wasm_str, vec![])?;
             }
