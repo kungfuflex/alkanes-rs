@@ -3,7 +3,7 @@ use crate::message::AlkaneMessageContext;
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
     alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
-    alkanes_std_genesis_alkane_regtest_build, fr_btc_mainnet_build,
+    alkanes_std_genesis_alkane_regtest_build, fr_btc_mainnet_build, fr_sigil_build
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -161,10 +161,14 @@ pub fn genesis(block: &Block) -> Result<()> {
     IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 32, tx: 0 }).into())
         .set(Arc::new(compress(fr_btc_mainnet_build::get_bytes())?));
+    IndexPointer::from_keyword("/alkanes/")
+        .select(&(AlkaneId { block: 32, tx: 1 }).into())
+        .set(Arc::new(compress(fr_sigil_build::get_bytes())?));
     let mut atomic: AtomicPointer = AtomicPointer::default();
     sequence_pointer(&atomic).set_value::<u128>(1);
     let myself = AlkaneId { block: 2, tx: 0 };
     let fr_btc = AlkaneId { block: 32, tx: 0 };
+    let fr_sigil = AlkaneId { block: 32, tx: 1 };
     let parcel = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
@@ -211,7 +215,37 @@ pub fn genesis(block: &Block) -> Result<()> {
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
     };
+    let parcel3 = MessageContextParcel {
+        atomic: atomic.derive(&IndexPointer::default()),
+        runes: vec![],
+        transaction: Transaction {
+            version: bitcoin::blockdata::transaction::Version::ONE,
+            input: vec![],
+            output: vec![],
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+        },
+        block: block.clone(),
+        height: genesis::GENESIS_BLOCK,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: (Cellpack {
+            target: fr_sigil.clone(),
+            inputs: vec![0, 1],
+        })
+        .encipher(),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+    };
     let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
+        Ok((a, b)) => Ok((a, b)),
+        Err(e) => {
+            println!("{:?}", e);
+            Err(e)
+        }
+    })?;
+    let (response3, _gas_used3) = (match simulate_parcel(&parcel3, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
             println!("{:?}", e);
