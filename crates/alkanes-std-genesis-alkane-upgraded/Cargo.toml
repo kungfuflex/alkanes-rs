@@ -1,0 +1,24 @@
+[package]
+name = "alkanes-std-genesis-alkane-upgraded"
+version = "0.5.2"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+regtest = []
+dogecoin = []
+luckycoin = []
+mainnet = []
+fractal = []
+bellscoin = []
+
+[dependencies]
+alkanes-runtime = { workspace = true }
+alkanes-support = { workspace = true }
+anyhow = { workspace = true }
+bitcoin = { workspace = true }
+hex = { workspace = true }
+metashrew-support = { workspace = true }
+protorune-support = { workspace = true }
