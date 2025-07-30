@@ -115,7 +115,7 @@ fn main() {
     files.into_iter()
         .map(|v| -> Result<String> {
             std::env::set_current_dir(&crates_dir.clone().join(v.clone()))?;
-            if v == "alkanes-std-genesis-alkane" {
+            if v == "alkanes-std-genesis-alkane" || v == "alkanes-std-genesis-alkane-upgraded" {
                 let precompiled_dir = write_dir.join("precompiled");
                 fs::create_dir_all(&precompiled_dir)?;
 

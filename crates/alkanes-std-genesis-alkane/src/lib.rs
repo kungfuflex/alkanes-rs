@@ -67,6 +67,9 @@ impl ChainConfiguration for GenesisAlkane {
     fn genesis_block(&self) -> u64 {
         0
     }
+    fn premine(&self) -> Result<u128> {
+        Ok(50_000_000)
+    }
     fn average_payout_from_genesis(&self) -> u128 {
         50_000_000
     }
