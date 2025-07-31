@@ -138,7 +138,7 @@ fn upgrade() -> Result<Block> {
 }
 
 fn mint(num_mints: usize) -> Result<Block> {
-    let block_height = 890_000;
+    let block_height = 890_001;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
     let mint = Cellpack {
