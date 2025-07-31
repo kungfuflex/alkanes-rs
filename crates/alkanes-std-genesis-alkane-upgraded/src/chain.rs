@@ -21,6 +21,12 @@ pub trait ChainConfiguration {
     fn premine(&self) -> Result<u128> {
         let blocks =
             overflow_error(CONTEXT_HANDLE.height().checked_sub(self.genesis_block()))? as u128;
+        println!("height {}", CONTEXT_HANDLE.height());
+        println!("genesis_block {}", self.genesis_block());
+        println!(
+            "self.average_payout_from_genesis() {}",
+            self.average_payout_from_genesis()
+        );
         Ok(overflow_error(
             blocks.checked_mul(self.average_payout_from_genesis()),
         )?)

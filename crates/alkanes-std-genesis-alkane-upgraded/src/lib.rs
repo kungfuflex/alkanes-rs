@@ -27,9 +27,6 @@ enum GenesisAlkaneMessage {
     #[opcode(0)]
     Initialize,
 
-    #[opcode(1)]
-    Upgrade,
-
     #[opcode(77)]
     Mint,
 
@@ -93,7 +90,7 @@ impl ChainConfiguration for GenesisAlkane {
         800000
     }
     fn average_payout_from_genesis(&self) -> u128 {
-        550_000_000
+        468750000
     }
     fn max_supply(&self) -> u128 {
         156250000000000
@@ -207,20 +204,6 @@ impl GenesisAlkane {
         self.total_supply_pointer().set_value::<u128>(v);
     }
 
-    pub fn observe_mint(&self) -> Result<()> {
-        let height = self.height().to_le_bytes().to_vec();
-        let mut pointer = self.seen_pointer(&height);
-        if pointer.get().len() == 0 {
-            pointer.set_value::<u32>(1);
-            Ok(())
-        } else {
-            Err(anyhow!(format!(
-                "already minted for block {}",
-                hex::encode(&height)
-            )))
-        }
-    }
-
     pub fn observe_upgraded_mint(&self, diesel_fee: u128) -> Result<()> {
         let height = self.height().to_le_bytes().to_vec();
         let mut pointer = self.seen_pointer(&height);
@@ -233,23 +216,6 @@ impl GenesisAlkane {
             self.increase_total_supply(diesel_fee)?;
         }
         Ok(())
-    }
-
-    // Helper method that creates a mint transfer
-    pub fn create_mint_transfer(&self) -> Result<AlkaneTransfer> {
-        let context = self.context()?;
-        self.observe_mint()?;
-        let value = self.current_block_reward();
-        let mut total_supply_pointer = self.total_supply_pointer();
-        let total_supply = total_supply_pointer.get_value::<u128>();
-        if total_supply >= self.max_supply() {
-            return Err(anyhow!("total supply has been reached"));
-        }
-        total_supply_pointer.set_value::<u128>(total_supply + value);
-        Ok(AlkaneTransfer {
-            id: context.myself.clone(),
-            value,
-        })
     }
 
     /// Check if a transaction hash has been used for minting
@@ -306,16 +272,6 @@ impl GenesisAlkane {
     }
 
     fn observe_upgrade_initialization(&self) -> Result<()> {
-        let context = self.context()?;
-        let premine = self.premine()?;
-        if !context
-            .incoming_alkanes
-            .0
-            .iter()
-            .any(|i| (i.id == context.myself && i.value == premine))
-        {
-            return Err(anyhow!("Premine is not spent into the upgrade"));
-        }
         let mut pointer = StoragePointer::from_keyword("/upgrade_initialized");
         if pointer.get().len() == 0 {
             pointer.set_value::<u8>(0x01);
@@ -329,22 +285,6 @@ impl GenesisAlkane {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
-        self.observe_mint()?;
-        self.observe_initialization()?;
-        let premine = self.premine()?;
-        response.alkanes.0.push(AlkaneTransfer {
-            id: context.myself.clone(),
-            value: premine,
-        });
-        self.set_total_supply(premine);
-
-        Ok(response)
-    }
-
-    fn upgrade(&self) -> Result<CallResponse> {
-        let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-
         self.observe_upgrade_initialization()?;
         response.alkanes.0.push(self.deploy_auth_token(5)?); // hardcode 5 auth tokens
 
@@ -355,18 +295,10 @@ impl GenesisAlkane {
     fn mint(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        if StoragePointer::from_keyword("/upgrade_initialized")
-            .get()
-            .len()
-            == 0
-        {
-            response.alkanes.0.push(self.create_mint_transfer()?);
-        } else {
-            response
-                .alkanes
-                .0
-                .push(self.create_upgraded_mint_transfer()?);
-        }
+        response
+            .alkanes
+            .0
+            .push(self.create_upgraded_mint_transfer()?);
 
         Ok(response)
     }
