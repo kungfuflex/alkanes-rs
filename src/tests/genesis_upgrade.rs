@@ -82,13 +82,13 @@ fn upgrade() -> Result<Block> {
     let mut test_block = create_block_with_coinbase_tx(block_height);
     let mint_tx_0 = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
         Witness::new(),
-        vec![mint],
+        vec![mint.clone()],
         OutPoint::new(create_coinbase_transaction(1).compute_txid(), 0),
         false,
     );
     let mint_tx_1 = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
         Witness::new(),
-        vec![mint],
+        vec![mint.clone()],
         OutPoint::new(create_coinbase_transaction(1).compute_txid(), 1),
         false,
     );
