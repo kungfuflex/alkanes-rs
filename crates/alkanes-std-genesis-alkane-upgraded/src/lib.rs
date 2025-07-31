@@ -189,6 +189,10 @@ impl GenesisAlkane {
         StoragePointer::from_keyword("/seen/").select(&hash)
     }
 
+    pub fn upgraded_seen_pointer(&self, hash: &Vec<u8>) -> StoragePointer {
+        StoragePointer::from_keyword("/upgraded_seen/").select(&hash)
+    }
+
     pub fn hash(&self, block: &Block) -> Vec<u8> {
         block.block_hash().as_byte_array().to_vec()
     }
@@ -226,7 +230,7 @@ impl GenesisAlkane {
 
     pub fn observe_upgraded_mint(&self, diesel_fee: u128) -> Result<()> {
         let height = self.height().to_le_bytes().to_vec();
-        let mut pointer = self.seen_pointer(&height);
+        let mut pointer = self.upgraded_seen_pointer(&height);
         if pointer.get().len() == 0 {
             pointer.set_value::<u32>(1);
             if self.claimable_fees_pointer().get().len() == 0 {
@@ -271,10 +275,7 @@ impl GenesisAlkane {
         Ok(())
     }
 
-    // Helper method that creates a mint transfer
-    pub fn create_upgraded_mint_transfer(&self) -> Result<AlkaneTransfer> {
-        let context = self.context()?;
-
+    fn enforce_one_mint_per_tx(&self) -> Result<()> {
         // Get transaction ID
         let txid = self.transaction_id()?;
 
@@ -285,6 +286,26 @@ impl GenesisAlkane {
 
         // Record transaction hash
         self.add_tx_hash(&txid)?;
+        Ok(())
+    }
+
+    fn enforce_no_upgraded_mints_with_legacy_mints(&self) -> Result<()> {
+        let legacy_mint_pointer = self.seen_pointer(&self.height().to_le_bytes().to_vec());
+        if legacy_mint_pointer.get().len() == 0 {
+            Ok(())
+        } else {
+            Err(anyhow!(format!(
+                "upgraded mint in the same block as legacy mint",
+            )))
+        }
+    }
+
+    // Helper method that creates a mint transfer
+    pub fn create_upgraded_mint_transfer(&self) -> Result<AlkaneTransfer> {
+        let context = self.context()?;
+
+        self.enforce_one_mint_per_tx()?;
+        self.enforce_no_upgraded_mints_with_legacy_mints()?;
 
         let total_mints = self.number_diesel_mints()?;
         let total_miner_fee = self.total_miner_fee()?;
