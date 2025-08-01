@@ -50,7 +50,7 @@ fn setup_pre_upgrade() -> Result<()> {
     Ok(())
 }
 
-fn upgrade() -> Result<Block> {
+fn upgrade() -> Result<OutPoint> {
     let block_height = 890_000;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
@@ -134,7 +134,7 @@ fn upgrade() -> Result<Block> {
         "upgraded mint in the same block as legacy mint",
     )?;
 
-    Ok(test_block)
+    Ok(new_outpoint)
 }
 
 fn mint(num_mints: usize) -> Result<Block> {
@@ -224,14 +224,10 @@ fn test_new_genesis_contract() -> Result<()> {
 fn test_new_genesis_collect_fees() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
-    let upgrade_block = upgrade()?;
+    let auth_token_outpoint = upgrade()?;
     mint(5)?;
 
     let genesis_id = AlkaneId { block: 2, tx: 0 };
-    let outpoint = OutPoint {
-        txid: upgrade_block.txdata.last().unwrap().compute_txid(),
-        vout: 0,
-    };
     let block_height = 890_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
     let collect_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
@@ -240,7 +236,7 @@ fn test_new_genesis_collect_fees() -> Result<()> {
             target: genesis_id.clone().into(),
             inputs: vec![78],
         }],
-        outpoint.clone(),
+        auth_token_outpoint.clone(),
         false,
     );
     spend_block.txdata.push(collect_tx.clone());
