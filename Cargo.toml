@@ -18,8 +18,8 @@ members = [".", "crates/*"]
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew-core = { path = "../metashrew/crates/metashrew-core" }
-metashrew-support = { path = "../metashrew/crates/metashrew-support" }
+metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/prost" }
+metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", branch = "sandshrewmetadev/prost" }
 prost = "0.12.6"
 prost-build = "0.12.6"
 ordinals = { path = "./crates/ordinals" }
