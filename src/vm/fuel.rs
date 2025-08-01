@@ -9,7 +9,6 @@ use ordinals::{Artifact, Runestone};
 use protorune::message::MessageContext;
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::decode_varint_list;
-use ruint::aliases::U32;
 use std::io::Cursor;
 use std::sync::RwLock;
 use wasmi::*;
@@ -192,7 +191,7 @@ impl FuelTank {
         feature = "fractal",
         feature = "luckycoin"
     )))]
-    pub fn _calculate_transaction_fuel(tank: &FuelTank, height: u32) -> u64 {
+    pub fn _calculate_transaction_fuel(_tank: &FuelTank, height: u32) -> u64 {
         // for testing it is useful to assume we always get minimum fuel
         minimum_fuel(height)
     }

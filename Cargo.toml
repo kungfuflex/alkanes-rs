@@ -18,8 +18,10 @@ members = [".", "crates/*"]
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
+metashrew-core = { path = "../metashrew/crates/metashrew-core" }
+metashrew-support = { path = "../metashrew/crates/metashrew-support" }
+prost = "0.12.6"
+prost-build = "0.12.6"
 ordinals = { path = "./crates/ordinals" }
 protorune = { path = "./crates/protorune" }
 protorune-support = { path = "./crates/protorune-support" }
@@ -35,7 +37,6 @@ wasmi = "0.37.2"
 serde = "1.0.210"
 serde_json = "1.0.128"
 hex = "0.4.3"
-protobuf = "3.7.1"
 wasm-bindgen-futures = "0.4.45"
 web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
@@ -94,7 +95,7 @@ wasmi = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
-protobuf = { workspace = true }
+prost = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 web-sys = { workspace = true }
 js-sys = { workspace = true }
@@ -111,13 +112,11 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
+metashrew-core = { workspace = true, features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]
 anyhow = "1.0.90"
-protobuf-codegen = "3.4.0"
+prost-build = { workspace = true }
 flate2 = "1.0.34"
-protoc-rust = { version = "2.28.0" }
-protoc-bin-vendored = "3.0.0"
 hex = "0.4.3"

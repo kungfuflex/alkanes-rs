@@ -2,7 +2,7 @@ use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
-    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
+    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor,
 };
 use crate::tables::RuneTable;
 use anyhow::{anyhow, Ok, Result};
@@ -10,7 +10,7 @@ use balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
-use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut, Txid};
+use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -21,7 +21,7 @@ use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
 use ordinals::{Etching, Rune};
-use protobuf::{Message, SpecialFields};
+use prost::Message;
 use protorune_support::balance_sheet::BalanceSheetOperations;
 use protorune_support::constants;
 use protorune_support::network::to_address_str;
@@ -758,9 +758,8 @@ impl Protorune {
                         (proto::protorune::Output {
                             script: tx.output[i].clone().script_pubkey.into_bytes(),
                             value: tx.output[i].clone().value.to_sat(),
-                            special_fields: SpecialFields::new(),
                         })
-                        .write_to_bytes()?,
+                        .encode_to_vec(),
                     ));
             }
         }
@@ -835,8 +834,8 @@ impl Protorune {
         height: u64,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        unallocated_to: u32,
+        _balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        _unallocated_to: u32,
     ) -> Result<()> {
         // Check if this transaction is in the blacklist
         let tx_id = tx.compute_txid();
