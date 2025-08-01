@@ -24,7 +24,7 @@ fn create_malformed_cellpack_large_inputs() -> Cellpack {
 #[wasm_bindgen_test]
 fn test_integer_overflow_in_memory_operations() -> Result<()> {
     alkane_helpers::clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a cellpack with extremely large inputs
     let overflow_cellpack = create_malformed_cellpack_large_inputs();
@@ -52,7 +52,7 @@ fn test_integer_overflow_in_memory_operations() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_malformed_transfer_parcel() -> Result<()> {
     alkane_helpers::clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a normal cellpack first
     let init_cellpack = Cellpack {
@@ -95,7 +95,7 @@ fn test_malformed_transfer_parcel() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_malformed_transfer_parcel_extcall() -> Result<()> {
     alkane_helpers::clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create a normal cellpack first
     let init_cellpack = Cellpack {
@@ -137,7 +137,7 @@ fn test_malformed_transfer_parcel_extcall() -> Result<()> {
 // #[wasm_bindgen_test]
 // fn test_malformed_storage_map() -> Result<()> {
 //     alkane_helpers::clear();
-//     let block_height = 840_000;
+//     let block_height = 0;
 
 //     // Create a normal cellpack first
 //     let init_cellpack = Cellpack {
