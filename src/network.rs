@@ -3,9 +3,8 @@ use crate::message::AlkaneMessageContext;
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
     alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
-    fr_btc_mainnet_build, fr_sigil_build,
     alkanes_std_genesis_alkane_regtest_build, alkanes_std_genesis_alkane_upgraded_mainnet_build,
-    alkanes_std_genesis_alkane_upgraded_regtest_build
+    alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_mainnet_build, fr_sigil_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
