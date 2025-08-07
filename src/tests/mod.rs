@@ -18,7 +18,11 @@ pub mod auth_token;
 #[cfg(test)]
 pub mod crash;
 #[cfg(test)]
+pub mod determinism;
+#[cfg(test)]
 pub mod edict_then_message;
+#[cfg(test)]
+pub mod factory;
 #[cfg(test)]
 pub mod forge;
 #[cfg(test)]
@@ -26,11 +30,19 @@ pub mod fuel;
 #[cfg(test)]
 pub mod genesis;
 #[cfg(test)]
+pub mod genesis_upgrade;
+#[cfg(test)]
+pub mod memory_security_tests;
+#[cfg(test)]
 pub mod merkle_distributor;
 #[cfg(test)]
 pub mod networks;
 #[cfg(test)]
 pub mod serialization;
+#[cfg(test)]
+pub mod special_extcall;
+#[cfg(test)]
+pub mod upgradeable;
 #[cfg(test)]
 pub mod vec_input_test;
 #[cfg(test)]

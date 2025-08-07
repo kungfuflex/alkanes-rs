@@ -3,12 +3,12 @@ use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::rune_transfer::{increase_balances_using_sheet, RuneTransfer};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[allow(unused_imports)]
 use {
-  metashrew_core::{println, stdio::stdout},
-  std::fmt::Write
+    metashrew_core::{println, stdio::stdout},
+    std::fmt::Write,
 };
 
 // use metashrew_core::{println, stdio::stdout};
@@ -66,6 +66,7 @@ pub trait Mintable {
 
 impl Mintable for ProtoruneRuneId {
     fn mintable_in_protocol(&self, atomic: &mut AtomicPointer) -> bool {
+        // if it was not etched via runes-like etch in the Runestone and protoburned, then it is considered mintable
         atomic
             .derive(
                 &IndexPointer::from_keyword("/etching/byruneid/").select(&(self.clone().into())),
@@ -80,7 +81,7 @@ pub trait OutgoingRunes<P: KeyValuePointer + Clone> {
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
         refund_pointer: u32,
@@ -93,6 +94,11 @@ pub trait MintableDebit<P: KeyValuePointer + Clone> {
 }
 
 impl<P: KeyValuePointer + Clone> MintableDebit<P> for BalanceSheet<P> {
+    // logically, this will debit the input sheet from the self sheet, and if it would produce a negative value
+    // it will check if the rune id is mintable (if it was etched and protoburned or if it is an alkane).
+    // if it is mintable, we assume the extra amount was minted and do not decrease the amount.
+    // NOTE: if it was a malicious case where an alkane was minted by another alkane, this will not check for that.
+    // such a case should be checked in debit_balances in src/utils.rs
     fn debit_mintable(
         &mut self,
         sheet: &BalanceSheet<P>,
@@ -105,7 +111,7 @@ impl<P: KeyValuePointer + Clone> MintableDebit<P> for BalanceSheet<P> {
                 if rune.mintable_in_protocol(atomic) {
                     amount = current;
                 } else {
-                    return Err(anyhow!("balance underflow during debit"));
+                    return Err(anyhow!("balance underflow during debit_mintable"));
                 }
             }
             self.decrease(rune, amount);
@@ -117,7 +123,7 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<P>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
         refund_pointer: u32,
@@ -131,11 +137,11 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
             .ok_or("")
             .map_err(|_| anyhow!("balance sheet not found"))?
             .clone();
-        let mut initial = BalanceSheet::merge(&incoming_initial, &runtime_initial);
+        let mut initial = BalanceSheet::merge(&incoming_initial, &runtime_initial)?;
 
         // self.0 is the amount to forward to the pointer
         // self.1 is the amount to put into the runtime balance
-        let outgoing: BalanceSheet<P> = self.0.clone().into();
+        let outgoing: BalanceSheet<P> = self.0.clone().try_into()?;
         let outgoing_runtime = self.1.clone();
 
         // we want to subtract outgoing and the outgoing runtime balance
@@ -149,14 +155,14 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
         balances_by_output.remove(&vout);
 
         // increase the pointer by the outgoing runes balancesheet
-        increase_balances_using_sheet(balances_by_output, &outgoing, pointer);
+        increase_balances_using_sheet(balances_by_output, &outgoing, pointer)?;
 
         // set the runtime to the ending runtime balance sheet
         // note that u32::MAX is the runtime vout
         balances_by_output.insert(u32::MAX, outgoing_runtime);
 
         // refund the remaining amount to the refund pointer
-        increase_balances_using_sheet(balances_by_output, &initial, refund_pointer);
+        increase_balances_using_sheet(balances_by_output, &initial, refund_pointer)?;
         Ok(())
     }
 }

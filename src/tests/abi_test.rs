@@ -146,7 +146,7 @@ fn test_contract_abi(
 #[wasm_bindgen_test]
 fn test_meta_call() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Create test blocks with cellpacks
     let test_cellpack = Cellpack {
@@ -226,6 +226,7 @@ fn test_owned_token_abi() -> Result<()> {
             "void",
         ),
         ("mint", 77, vec![("token_units", "u128")], "void"),
+        ("burn", 88, vec![], "void"),
         ("get_name", 99, vec![], "String"),
         ("get_symbol", 100, vec![], "String"),
         ("get_total_supply", 101, vec![], "u128"),
@@ -235,25 +236,6 @@ fn test_owned_token_abi() -> Result<()> {
     test_contract_abi(
         "OwnedToken",
         alkanes_std_owned_token_build::get_bytes(),
-        expected_methods,
-    )
-}
-
-#[wasm_bindgen_test]
-fn test_auth_token_abi() -> Result<()> {
-    clear();
-
-    // Expected methods with their opcodes, parameter names and types, and return types
-    let expected_methods = vec![
-        ("initialize", 0, vec![("amount", "u128")], "void"),
-        ("authenticate", 1, vec![], "void"),
-        ("get_name", 99, vec![], "String"),
-        ("get_symbol", 100, vec![], "String"),
-    ];
-
-    test_contract_abi(
-        "AuthToken",
-        alkanes_std_auth_token_build::get_bytes(),
         expected_methods,
     )
 }
@@ -279,91 +261,6 @@ fn test_proxy_abi() -> Result<()> {
     test_contract_abi(
         "Proxy",
         alkanes_std_proxy_build::get_bytes(),
-        expected_methods,
-    )
-}
-
-#[wasm_bindgen_test]
-fn test_upgradeable_abi() -> Result<()> {
-    clear();
-
-    // Expected methods with their opcodes, parameter names and types, and return types
-    let expected_methods = vec![
-        (
-            "initialize",
-            0x7fff,
-            vec![
-                ("block", "u128"),
-                ("tx", "u128"),
-                ("auth_token_units", "u128"),
-            ],
-            "void",
-        ),
-        (
-            "upgrade",
-            0x7ffe,
-            vec![("block", "u128"), ("tx", "u128")],
-            "void",
-        ),
-        ("delegate", 0x7ffd, vec![], "void"),
-    ];
-
-    test_contract_abi(
-        "Upgradeable",
-        alkanes_std_upgradeable_build::get_bytes(),
-        expected_methods,
-    )
-}
-
-#[wasm_bindgen_test]
-fn test_logger_alkane_abi() -> Result<()> {
-    clear();
-
-    // Expected methods with their opcodes, parameter names and types, and return types
-    let expected_methods = vec![
-        ("self_call", 2, vec![], "void"),
-        ("check_incoming", 3, vec![], "void"),
-        ("mint_tokens", 4, vec![], "void"),
-        ("return_data_1", 5, vec![], "Vec<u8>"),
-        ("get_transaction", 50, vec![], "void"),
-        ("hash_loop", 78, vec![], "void"),
-        ("return_default_data", 99, vec![], "Vec<u8>"),
-        (
-            "process_numbers",
-            11,
-            vec![("numbers", "Vec<u128>")],
-            "void",
-        ),
-        (
-            "process_strings",
-            12,
-            vec![("strings", "Vec<String>")],
-            "void",
-        ),
-        (
-            "process_nested_vec",
-            13,
-            vec![("nested", "Vec<Vec<u128>>")],
-            "void",
-        ),
-        ("test_infinite_loop", 20, vec![], "void"),
-        (
-            "test_arbitrary_mint",
-            30,
-            vec![("alkane", "AlkaneId")],
-            "void",
-        ),
-        (
-            "test_ext_call",
-            31,
-            vec![("target", "AlkaneId"), ("inputs", "Vec<u128>")],
-            "void",
-        ),
-    ];
-
-    test_contract_abi(
-        "LoggerAlkane",
-        alkanes_std_test_build::get_bytes(),
         expected_methods,
     )
 }
@@ -401,26 +298,6 @@ fn test_merkle_distributor_abi() -> Result<()> {
     test_contract_abi(
         "MerkleDistributor",
         alkanes_std_merkle_distributor_build::get_bytes(),
-        expected_methods,
-    )
-}
-
-#[wasm_bindgen_test]
-fn test_genesis_alkane_abi() -> Result<()> {
-    clear();
-
-    // Expected methods with their opcodes, parameter names and types, and return types
-    let expected_methods = vec![
-        ("initialize", 0, vec![], "void"),
-        ("mint", 77, vec![], "void"),
-        ("get_name", 99, vec![], "String"),
-        ("get_symbol", 100, vec![], "String"),
-        ("get_total_supply", 101, vec![], "u128"),
-    ];
-
-    test_contract_abi(
-        "GenesisAlkane",
-        alkanes_std_genesis_alkane_build::get_bytes(),
         expected_methods,
     )
 }

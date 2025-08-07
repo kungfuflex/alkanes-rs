@@ -115,7 +115,7 @@ fn main() {
     files.into_iter()
         .map(|v| -> Result<String> {
             std::env::set_current_dir(&crates_dir.clone().join(v.clone()))?;
-            if v == "alkanes-std-genesis-alkane" {
+            if v == "alkanes-std-genesis-alkane" || v == "alkanes-std-genesis-alkane-upgraded" {
                 let precompiled_dir = write_dir.join("precompiled");
                 fs::create_dir_all(&precompiled_dir)?;
 
@@ -154,6 +154,13 @@ fn main() {
                     )?;
 
                     // Write network-specific build file
+                    let data: String = hex::encode(&f);
+                    fs::write(
+                        &write_dir.join("std").join(format!("{}_{}_build.rs", subbed, network)),
+                        String::from("use hex_lit::hex;\n#[allow(long_running_const_eval)]\npub fn get_bytes() -> Vec<u8> { (&hex!(\"")
+                            + data.as_str()
+                            + "\")).to_vec() }",
+                    )?;
                 }
 
                 // Also build for the default feature set

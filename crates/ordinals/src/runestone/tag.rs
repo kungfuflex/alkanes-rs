@@ -32,7 +32,7 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub fn take_all(self, fields: &mut HashMap<u128, VecDeque<u128>>) -> Option<Vec<u128>> {
+    pub fn take_all(self, fields: &mut BTreeMap<u128, VecDeque<u128>>) -> Option<Vec<u128>> {
         let field = fields.get_mut(&self.into())?;
 
         let mut values: Vec<u128> = vec![];
@@ -45,7 +45,7 @@ impl Tag {
     }
     pub fn take<const N: usize, T>(
         self,
-        fields: &mut HashMap<u128, VecDeque<u128>>,
+        fields: &mut BTreeMap<u128, VecDeque<u128>>,
         with: impl Fn([u128; N]) -> Option<T>,
     ) -> Option<T> {
         let field = fields.get_mut(&self.into())?;
@@ -115,7 +115,7 @@ mod tests {
     fn take() {
         let mut fields = vec![(2, vec![3].into_iter().collect())]
             .into_iter()
-            .collect::<HashMap<u128, VecDeque<u128>>>();
+            .collect::<BTreeMap<u128, VecDeque<u128>>>();
 
         assert_eq!(Tag::Flags.take(&mut fields, |[_]| None::<u128>), None);
 
@@ -132,7 +132,7 @@ mod tests {
     fn take_leaves_unconsumed_values() {
         let mut fields = vec![(2, vec![1, 2, 3].into_iter().collect())]
             .into_iter()
-            .collect::<HashMap<u128, VecDeque<u128>>>();
+            .collect::<BTreeMap<u128, VecDeque<u128>>>();
 
         assert_eq!(fields[&2].len(), 3);
 

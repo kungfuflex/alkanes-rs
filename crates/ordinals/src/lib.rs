@@ -14,7 +14,7 @@ use {
     serde_with::{DeserializeFromStr, SerializeDisplay},
     std::{
         cmp,
-        collections::{HashMap, VecDeque},
+        collections::{BTreeMap, VecDeque},
         fmt::{self, Formatter},
         num::ParseIntError,
         ops::{Add, AddAssign, Sub},

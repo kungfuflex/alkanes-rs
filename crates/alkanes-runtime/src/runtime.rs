@@ -12,9 +12,10 @@ use crate::{
     stdio::{stdout, Write},
 };
 use anyhow::{anyhow, Result};
+use bitcoin::{block::Header, Transaction, Txid};
 #[allow(unused_imports)]
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr, to_ptr};
-use metashrew_support::index_pointer::KeyValuePointer;
+use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_decode};
 use std::io::Cursor;
 
 #[cfg(feature = "panic-hook")]
@@ -94,8 +95,7 @@ pub trait Extcall {
         let mut cellpack_buffer = to_arraybuffer_layout::<&[u8]>(&cellpack.serialize());
         let mut outgoing_alkanes_buffer: Vec<u8> =
             to_arraybuffer_layout::<&[u8]>(&outgoing_alkanes.serialize());
-        let mut storage_map_buffer =
-            to_arraybuffer_layout::<&[u8]>(&unsafe { _CACHE.as_ref().unwrap().serialize() });
+        let mut storage_map_buffer = to_arraybuffer_layout::<&[u8]>(&get_cache().serialize());
         let _call_result = Self::__call(
             to_passback_ptr(&mut cellpack_buffer),
             to_passback_ptr(&mut outgoing_alkanes_buffer),
@@ -108,6 +108,12 @@ pub trait Extcall {
             unsafe {
                 __returndatacopy(to_passback_ptr(&mut returndata));
             }
+            if returndata.len() < 20 {
+                return Err(anyhow!(format!(
+                    "Extcall failed, and returndatacopy len ({}) < AlkanesTransferParcel min size 20 ",
+                    returndata.len()
+                )));
+            }
             let response = CallResponse::parse(&mut Cursor::new((&returndata[4..]).to_vec()))?;
             if response.data.len() <= 4 || &response.data[0..4] != &[0x08, 0xc3, 0x79, 0xa0] {
                 return Err(anyhow!("Extcall failed (no details available)"));
@@ -119,6 +125,12 @@ pub trait Extcall {
             let mut returndata = to_arraybuffer_layout(&vec![0; call_result]);
             unsafe {
                 __returndatacopy(to_passback_ptr(&mut returndata));
+            }
+            if returndata.len() < 20 {
+                return Err(anyhow!(format!(
+                    "Extcall succeeded, but returndatacopy len ({}) < AlkanesTransferParcel min size 20 ",
+                    returndata.len()
+                )));
             }
             let response = CallResponse::parse(&mut Cursor::new((&returndata[4..]).to_vec()))?;
             Ok(response)
@@ -160,6 +172,15 @@ pub trait AlkaneResponder: 'static {
             Err(anyhow!("already initialized"))
         }
     }
+    fn observe_proxy_initialization(&self) -> Result<()> {
+        let mut pointer = StoragePointer::from_keyword("/proxy_initialized");
+        if pointer.get().len() == 0 {
+            pointer.set_value::<u8>(0x01);
+            Ok(())
+        } else {
+            Err(anyhow!("proxy already initialized"))
+        }
+    }
     fn context(&self) -> Result<Context> {
         unsafe {
             let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; __request_context() as usize]);
@@ -193,6 +214,12 @@ pub trait AlkaneResponder: 'static {
             __load_transaction(to_ptr(&mut buffer) + 4);
             (&buffer[4..]).to_vec()
         }
+    }
+    fn transaction_id(&self) -> Result<Txid> {
+        Ok(
+            consensus_decode::<Transaction>(&mut std::io::Cursor::new(self.transaction()))?
+                .compute_txid(),
+        )
     }
     /*
     fn output(&self, v: &OutPoint) -> Result<Vec<u8>> {
@@ -303,5 +330,73 @@ pub trait AlkaneResponder: 'static {
         fuel: u64,
     ) -> Result<CallResponse> {
         self.extcall::<Staticcall>(cellpack, outgoing_alkanes, fuel)
+    }
+
+    fn block_header(&self) -> Result<Header> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 0,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        consensus_decode::<Header>(&mut std::io::Cursor::new(result.data))
+    }
+
+    fn coinbase_tx(&self) -> Result<Transaction> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 1,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        consensus_decode::<Transaction>(&mut std::io::Cursor::new(result.data))
+    }
+
+    fn number_diesel_mints(&self) -> Result<u128> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 2,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
+    }
+
+    fn total_miner_fee(&self) -> Result<u128> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 3,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
+    }
+
+    /// Fallback function that gets called when an opcode is not recognized
+    ///
+    /// This default implementation reverts with an error.
+    /// Contracts can override this method to provide custom fallback behavior.
+    fn fallback(&self) -> Result<CallResponse> {
+        Err(anyhow!("Unrecognized opcode"))
     }
 }

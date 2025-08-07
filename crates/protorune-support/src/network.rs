@@ -1,3 +1,4 @@
+use anyhow::Result;
 use bech32::Hrp;
 use bitcoin::Script;
 use metashrew_support::address::{AddressEncoding, Payload};
@@ -27,15 +28,13 @@ pub fn get_network_option() -> Option<&'static NetworkParams> {
     unsafe { _NETWORK.as_ref().clone() }
 }
 
-pub fn to_address_str(script: &Script) -> Option<String> {
+pub fn to_address_str(script: &Script) -> Result<String> {
     let config = get_network();
-    Some(
-        AddressEncoding {
-            p2pkh_prefix: config.p2pkh_prefix,
-            p2sh_prefix: config.p2sh_prefix,
-            hrp: Hrp::parse_unchecked(&config.bech32_prefix),
-            payload: &Payload::from_script(script).ok()?,
-        }
-        .to_string(),
-    )
+    Ok(AddressEncoding {
+        p2pkh_prefix: config.p2pkh_prefix,
+        p2sh_prefix: config.p2sh_prefix,
+        hrp: Hrp::parse_unchecked(&config.bech32_prefix),
+        payload: &Payload::from_script(script)?,
+    }
+    .to_string())
 }

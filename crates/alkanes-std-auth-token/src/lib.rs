@@ -1,12 +1,11 @@
 use alkanes_runtime::runtime::AlkaneResponder;
-use alkanes_runtime::{
-    declare_alkane, message::MessageDispatch, storage::StoragePointer, token::Token,
-};
+use alkanes_runtime::{declare_alkane, message::MessageDispatch, storage::StoragePointer};
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
+use alkanes_std_factory_support::MintableToken;
 use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
@@ -16,19 +15,16 @@ use std::sync::Arc;
 #[derive(Default)]
 pub struct AuthToken(());
 
-impl Token for AuthToken {
-    fn name(&self) -> String {
-        String::from("AUTH")
-    }
-    fn symbol(&self) -> String {
-        String::from("AUTH")
-    }
-}
+impl MintableToken for AuthToken {}
 
 #[derive(MessageDispatch)]
 enum AuthTokenMessage {
     #[opcode(0)]
-    Initialize { amount: u128 },
+    Initialize {
+        name: String,
+        symbol: String,
+        amount: u128,
+    },
 
     #[opcode(1)]
     Authenticate,
@@ -43,9 +39,10 @@ enum AuthTokenMessage {
 }
 
 impl AuthToken {
-    fn initialize(&self, amount: u128) -> Result<CallResponse> {
+    fn initialize(&self, name: String, symbol: String, amount: u128) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
+        self.set_name_and_symbol_str(name, symbol);
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
         response.alkanes = context.incoming_alkanes.clone();
         response.alkanes.0.push(AlkaneTransfer {

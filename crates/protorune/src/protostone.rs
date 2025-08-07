@@ -3,7 +3,7 @@ use crate::{
     message::{MessageContext, MessageContextParcel},
     protoburn::{Protoburn, Protoburns},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bitcoin::{Block, Transaction, Txid};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use ordinals::Runestone;
@@ -13,16 +13,16 @@ use protorune_support::{
     rune_transfer::{refund_to_refund_pointer, RuneTransfer},
     utils::encode_varint_list,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use metashrew_core::{println, stdio::stdout};
 use std::fmt::Write;
 
-static mut PROTOCOLS: Option<HashSet<u128>> = None;
+static mut PROTOCOLS: Option<BTreeSet<u128>> = None;
 
 #[allow(static_mut_refs)]
 pub fn initialized_protocol_index() -> Result<()> {
-    unsafe { PROTOCOLS = Some(HashSet::new()) }
+    unsafe { PROTOCOLS = Some(BTreeSet::new()) }
     Ok(())
 }
 
@@ -53,6 +53,7 @@ pub trait MessageProcessor {
     ///                 will hold balances before the process message
     ///   balances_by_output: The running store of balances by each transaction output for
     ///                       the current transaction being handled.
+    /// Return: true if success, false if failure and refunded to refund pointer
     fn process_message<T: MessageContext>(
         &self,
         atomic: &mut AtomicPointer,
@@ -62,10 +63,9 @@ pub trait MessageProcessor {
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
-        default_output: u32,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         num_protostones: usize,
-    ) -> Result<()>;
+    ) -> Result<bool>;
 }
 impl MessageProcessor for Protostone {
     fn process_message<T: MessageContext>(
@@ -77,14 +77,15 @@ impl MessageProcessor for Protostone {
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
-        default_output: u32,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         num_protostones: usize,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Validate output indexes and protomessage_vout
         let num_outputs = transaction.output.len();
-        let pointer = self.pointer.unwrap_or(default_output);
-        let refund_pointer = self.refund.unwrap_or(default_output);
+        let pointer = self.pointer.ok_or_else(|| anyhow!("Missing pointer"))?;
+        let refund_pointer = self
+            .refund
+            .ok_or_else(|| anyhow!("Missing refund pointer"))?;
 
         // Ensure pointers are valid transaction outputs
         if pointer > (num_outputs + num_protostones) as u32
@@ -95,7 +96,7 @@ impl MessageProcessor for Protostone {
 
         // Log the Bitcoin address that can spend the output pointed to by the "pointer" field
         if pointer < num_outputs as u32 {
-            if let Some(address) = protorune_support::network::to_address_str(
+            if let Ok(address) = protorune_support::network::to_address_str(
                 &transaction.output[pointer as usize].script_pubkey,
             ) {
                 println!(
@@ -107,7 +108,7 @@ impl MessageProcessor for Protostone {
 
         // Log the Bitcoin address that can spend the output pointed to by the "refund_pointer" field
         if refund_pointer < num_outputs as u32 {
-            if let Some(address) = protorune_support::network::to_address_str(
+            if let Ok(address) = protorune_support::network::to_address_str(
                 &transaction.output[refund_pointer as usize].script_pubkey,
             ) {
                 println!(
@@ -160,14 +161,17 @@ impl MessageProcessor for Protostone {
                     pointer,
                     refund_pointer,
                 ) {
-                    Ok(_) => atomic.commit(),
+                    Ok(_) => {
+                        atomic.commit();
+                        Ok(true)
+                    }
                     Err(e) => {
                         println!("Got error inside reconcile! {:?} \n\n", e);
                         println!("Refunding to refund_pointer: {}", refund_pointer);
 
                         // Log the Bitcoin address again to make it clear this is the refund address being used
                         if refund_pointer < num_outputs as u32 {
-                            if let Some(address) = protorune_support::network::to_address_str(
+                            if let Ok(address) = protorune_support::network::to_address_str(
                                 &transaction.output[refund_pointer as usize].script_pubkey,
                             ) {
                                 println!("RECONCILE ERROR REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}", refund_pointer, address);
@@ -178,8 +182,9 @@ impl MessageProcessor for Protostone {
                             balances_by_output,
                             protomessage_vout,
                             refund_pointer,
-                        );
-                        atomic.rollback()
+                        )?;
+                        atomic.rollback();
+                        Ok(false)
                     }
                 }
             }
@@ -189,7 +194,7 @@ impl MessageProcessor for Protostone {
 
                 // Log the Bitcoin address again to make it clear this is the refund address being used
                 if refund_pointer < num_outputs as u32 {
-                    if let Some(address) = protorune_support::network::to_address_str(
+                    if let Ok(address) = protorune_support::network::to_address_str(
                         &transaction.output[refund_pointer as usize].script_pubkey,
                     ) {
                         println!(
@@ -199,11 +204,12 @@ impl MessageProcessor for Protostone {
                     }
                 }
 
-                refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer);
+                refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
                 atomic.rollback();
+
+                Ok(false)
             }
         }
-        Ok(())
     }
 }
 
@@ -214,8 +220,8 @@ pub trait Protostones {
         atomic: &mut AtomicPointer,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
@@ -249,8 +255,8 @@ impl Protostones for Vec<Protostone> {
         atomic: &mut AtomicPointer,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {

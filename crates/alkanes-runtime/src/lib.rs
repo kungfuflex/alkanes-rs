@@ -31,9 +31,14 @@ macro_rules! declare_alkane {
             let opcode = inputs[0];
             inputs.remove(0);
 
-            let result = match $message_type::from_opcode(opcode, inputs) {
+            let result = match $message_type::from_opcode(opcode, inputs.clone()) {
                 Ok(message) => message.dispatch(&$struct_name::default()),
-                Err(err) => Err(anyhow::anyhow!("Failed to parse message: {}", err)),
+                Err(err) => {
+                    // Call the fallback method on the AlkaneResponder
+                    // This will use the default implementation if not overridden by the contract
+                    let instance = $struct_name::default();
+                    instance.fallback()
+                }
             };
 
             let extended = match result {

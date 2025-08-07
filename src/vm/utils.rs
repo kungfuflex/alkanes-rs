@@ -1,6 +1,6 @@
 use super::{AlkanesInstance, AlkanesRuntimeContext, AlkanesState};
 use crate::utils::{pipe_storagemap_to, transfer_from};
-use crate::vm::fuel::compute_extcall_fuel;
+use crate::vm::fuel::fuel_per_store_byte;
 use alkanes_support::trace::TraceEvent;
 use alkanes_support::{
     cellpack::Cellpack, gz::decompress, id::AlkaneId, parcel::AlkaneTransferParcel,
@@ -8,6 +8,7 @@ use alkanes_support::{
     witness::find_witness_payload,
 };
 use anyhow::{anyhow, Result};
+use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -15,7 +16,7 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::index_pointer::KeyValuePointer;
-
+use protorune_support::utils::consensus_encode;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
 
@@ -48,6 +49,49 @@ pub fn sequence_pointer(ptr: &AtomicPointer) -> AtomicPointer {
     ptr.derive(&IndexPointer::from_keyword("/alkanes/sequence"))
 }
 
+fn set_alkane_id_to_tx_id(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
+    alkane_id: &AlkaneId,
+) -> Result<()> {
+    // Acquire the mutex once and keep the guard for the duration of the function
+    let context_guard = context.lock().unwrap();
+
+    let outpoint = OutPoint {
+        txid: context_guard.message.transaction.compute_txid(),
+        vout: context_guard.message.vout,
+    };
+    let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
+
+    context_guard
+        .message
+        .atomic
+        .keyword("/alkanes_id_to_outpoint/")
+        .select(&alkane_id.clone().into())
+        .set(Arc::new(outpoint_bytes));
+
+    Ok(())
+}
+
+pub fn get_alkane_binary(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
+    alkane_id: &AlkaneId,
+) -> Result<Arc<Vec<u8>>> {
+    let wasm_payload_arc = context
+        .lock()
+        .unwrap()
+        .message
+        .atomic
+        .keyword("/alkanes/")
+        .select(&alkane_id.clone().into())
+        .get();
+    let wasm_payload = wasm_payload_arc.as_ref();
+    if wasm_payload.len() == 32 {
+        let factory_id = wasm_payload.to_vec().try_into()?;
+        return get_alkane_binary(context, &factory_id);
+    }
+    Ok(Arc::new(decompress(wasm_payload.clone())?))
+}
+
 pub fn run_special_cellpacks(
     context: Arc<Mutex<AlkanesRuntimeContext>>,
     cellpack: &Cellpack,
@@ -58,16 +102,10 @@ pub fn run_special_cellpacks(
     let next_sequence = next_sequence_pointer.get_value::<u128>();
     let original_target = cellpack.target.clone();
     if cellpack.target.is_created(next_sequence) {
-        let wasm_payload = context
-            .lock()
-            .unwrap()
-            .message
-            .atomic
-            .keyword("/alkanes/")
-            .select(&payload.target.clone().into())
-            .get();
-        binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
+        binary = get_alkane_binary(context.clone(), &payload.target)?;
     } else if cellpack.target.is_create() {
+        // contract not created, create it by first loading the wasm from the witness
+        // then storing it in the index.
         let wasm_payload = Arc::new(
             find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
                 .ok_or("finding witness payload failed for creation of alkane")
@@ -87,7 +125,11 @@ pub fn run_special_cellpacks(
         pointer.set(wasm_payload.clone());
         binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
         next_sequence_pointer.set_value(next_sequence + 1);
+
+        set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
     } else if let Some(number) = cellpack.target.reserved() {
+        // we have already reserved an alkane id, find the binary and
+        // set it in the index
         let wasm_payload = Arc::new(
             find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
                 .ok_or("finding witness payload failed for creation of alkane")
@@ -108,6 +150,7 @@ pub fn run_special_cellpacks(
             .select(&payload.target.clone().into());
         if ptr.get().as_ref().len() == 0 {
             ptr.set(wasm_payload.clone());
+            set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
         } else {
             return Err(anyhow!(format!(
                 "used CREATERESERVED cellpack but {} already holds a binary",
@@ -116,19 +159,10 @@ pub fn run_special_cellpacks(
         }
         binary = Arc::new(decompress(wasm_payload.clone().as_ref().clone())?);
     } else if let Some(factory) = cellpack.target.factory() {
+        // we find the factory alkane wasm and set the current alkane to the factory wasm
         payload.target = AlkaneId::new(2, next_sequence);
         next_sequence_pointer.set_value(next_sequence + 1);
-        let context_binary: Vec<u8> = context
-            .lock()
-            .unwrap()
-            .message
-            .atomic
-            .keyword("/alkanes/")
-            .select(&factory.clone().into())
-            .get()
-            .as_ref()
-            .clone();
-        let rc = Arc::new(context_binary);
+        let factory_payload: Vec<u8> = factory.into();
         context
             .lock()
             .unwrap()
@@ -136,8 +170,9 @@ pub fn run_special_cellpacks(
             .atomic
             .keyword("/alkanes/")
             .select(&payload.target.clone().into())
-            .set(rc.clone());
-        binary = Arc::new(decompress(rc.as_ref().clone())?);
+            .set(Arc::new(factory_payload));
+        set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
+        binary = get_alkane_binary(context.clone(), &factory)?;
     }
     if &original_target != &payload.target {
         context
@@ -195,18 +230,21 @@ pub trait Saveable {
     fn to(&self) -> AlkaneId;
     fn storage_map(&self) -> StorageMap;
     fn alkanes(&self) -> AlkaneTransferParcel;
-    fn save(&self, atomic: &mut AtomicPointer) -> Result<()> {
+    fn save(&self, atomic: &mut AtomicPointer, is_delegate: bool) -> Result<()> {
         pipe_storagemap_to(
             &self.storage_map(),
             &mut atomic
                 .derive(&IndexPointer::from_keyword("/alkanes/").select(&self.from().into())),
         );
-        transfer_from(
-            &self.alkanes(),
-            &mut atomic.derive(&IndexPointer::default()),
-            &self.from().into(),
-            &self.to().into(),
-        )?;
+        if !is_delegate {
+            // delegate call retains caller and myself, so no alkanes are transferred from the subcontext to myself
+            transfer_from(
+                &self.alkanes(),
+                &mut atomic.derive(&IndexPointer::default()),
+                &self.from().into(),
+                &self.to().into(),
+            )?;
+        }
         Ok(())
     }
 }
@@ -228,8 +266,9 @@ pub fn run_after_special(
     let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
     let response = instance.execute()?;
 
-    let remaining_fuel = instance.store.get_fuel().unwrap();
+    let remaining_fuel = instance.store.get_fuel()?;
     let storage_len = response.storage.serialize().len() as u64;
+    let height = context.lock().unwrap().message.height as u32;
 
     #[cfg(feature = "debug-log")]
     {
@@ -244,13 +283,16 @@ pub fn run_after_special(
     #[cfg(feature = "debug-log")]
     {
         // Log storage fuel cost
-        let computed_storage_fuel = compute_extcall_fuel(storage_len).unwrap_or(0);
+        let computed_storage_fuel = fuel_per_store_byte(height)
+            .checked_mul(storage_len)
+            .unwrap_or(0);
         println!("  - Storage fuel cost: {}", computed_storage_fuel);
     }
 
     let fuel_used = overflow_error(start_fuel.checked_sub(remaining_fuel).and_then(
         |v: u64| -> Option<u64> {
-            let computed_fuel = compute_extcall_fuel(storage_len).ok()?;
+            let computed_fuel =
+                overflow_error(fuel_per_store_byte(height).checked_mul(storage_len)).ok()?;
             let opt = v.checked_add(computed_fuel);
             #[cfg(feature = "debug-log")]
             {
@@ -274,17 +316,6 @@ pub fn prepare_context(
         inner.caller = caller.clone();
         inner.myself = myself.clone();
     }
-}
-
-pub fn run(
-    context: Arc<Mutex<AlkanesRuntimeContext>>,
-    cellpack: &Cellpack,
-    start_fuel: u64,
-    delegate: bool,
-) -> Result<(ExtendedCallResponse, u64)> {
-    let (caller, myself, binary) = run_special_cellpacks(context.clone(), cellpack)?;
-    prepare_context(context.clone(), &caller, &myself, delegate);
-    run_after_special(context, binary, start_fuel)
 }
 
 pub fn send_to_arraybuffer<'a>(

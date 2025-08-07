@@ -63,8 +63,7 @@ pub const ADDRESS2_BYTES: &'static str = "a9140000000000000000000000000000000000
 pub fn get_address_from_bytes(hex: &str) -> String {
     let bytes = decode(hex.to_string()).unwrap();
     let pk = Script::from_bytes(bytes.as_slice());
-    let address = to_address_str(pk);
-    address.unwrap()
+    to_address_str(pk).unwrap()
 }
 
 #[allow(non_snake_case)]
@@ -141,7 +140,15 @@ pub fn create_coinbase_transaction(height: u32) -> Transaction {
         version: Version::TWO,
         lock_time: locktime,
         input: vec![coinbase_input],
-        output: vec![coinbase_output],
+        output: vec![
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+        ],
     }
 }
 
@@ -351,6 +358,13 @@ pub fn create_tx_from_runestone(
         script_pubkey: runestone_script,
     };
 
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
+
     let mut txouts = additional_txouts.clone();
     txouts.push(op_return);
 
@@ -411,6 +425,13 @@ pub fn create_rune_etching_transaction(config: &RunesTestingConfig) -> Transacti
         script_pubkey: runestone,
     };
 
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
+
     Transaction {
         version: Version::ONE,
         lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -467,6 +488,13 @@ pub fn create_rune_transfer_transaction(
         value: Amount::from_sat(0),
         script_pubkey: runestone,
     };
+
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
 
     Transaction {
         version: Version::ONE,
@@ -574,6 +602,13 @@ pub fn create_transaction_with_middle_op_return(
         value: Amount::from_sat(40_000_000),
         script_pubkey: script_pubkey.clone(),
     };
+
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
 
     Transaction {
         version: Version::ONE,
@@ -705,6 +740,13 @@ pub fn create_protostone_encoded_tx(
         script_pubkey: runestone,
     };
 
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
+
     Transaction {
         version: Version::ONE,
         lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -778,6 +820,13 @@ pub fn create_multi_protoburn_transaction(
         script_pubkey: runestone,
     };
 
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
+
     let mut output = burn_protocol_ids
         .into_iter()
         .map(|_| txout.clone())
@@ -808,7 +857,7 @@ pub fn create_default_protoburn_transaction(
     );
 }
 
-/// Create a protoburn given an input that holds runes
+/// Create a protoburn given an input that holds runes.
 /// Outpoint with protorunes is the txid and vout 0
 /// This outpoint holds 1000 protorunes
 pub fn create_protostone_transaction(
@@ -880,6 +929,13 @@ pub fn create_protostone_transaction(
         value: Amount::from_sat(0),
         script_pubkey: runestone,
     };
+
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
 
     Transaction {
         version: Version::ONE,
@@ -955,6 +1011,13 @@ pub fn create_multiple_protomessage_from_edict_tx(
         value: Amount::from_sat(0),
         script_pubkey: runestone,
     };
+
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
     outs.push(op_return);
     Transaction {
         version: Version::ONE,
@@ -1031,6 +1094,13 @@ pub fn create_protomessage_from_edict_tx(
         value: Amount::from_sat(0),
         script_pubkey: runestone,
     };
+
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
 
     Transaction {
         version: Version::ONE,

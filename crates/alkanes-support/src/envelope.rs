@@ -9,9 +9,15 @@ use {
         },
         witness::Witness,
     },
+    bitcoin::psbt,
     bitcoin::script,
     bitcoin::script::Script,
+    bitcoin::secp256k1::{Secp256k1, XOnlyPublicKey},
+    bitcoin::taproot::{ControlBlock, LeafVersion, TaprootBuilder, TaprootSpendInfo},
     bitcoin::transaction::Transaction,
+    bitcoin::Address,
+    bitcoin::Network,
+    bitcoin::TxOut,
     serde::{Deserialize, Serialize},
     std::iter::Peekable,
 };
@@ -91,7 +97,7 @@ impl RawEnvelope {
             Ok(false)
         }
     }
-    fn append_reveal_script(&self, mut builder: script::Builder) -> script::ScriptBuf {
+    pub fn append_reveal_script(&self, mut builder: script::Builder) -> script::ScriptBuf {
         builder = builder
             .push_opcode(opcodes::OP_FALSE)
             .push_opcode(opcodes::all::OP_IF)
@@ -232,5 +238,66 @@ impl RawEnvelope {
                 Some(_) => return Ok((false, None)),
             }
         }
+    }
+
+    pub fn to_taproot_spend_info(&self, internal_key: XOnlyPublicKey) -> Result<TaprootSpendInfo> {
+        let secp = Secp256k1::new();
+        let builder = script::Builder::new();
+        let reveal_script = self.append_reveal_script(builder);
+
+        let taproot_spend_info = TaprootBuilder::new()
+            .add_leaf(0, reveal_script)
+            .map_err(|_| script::Error::EarlyEndOfScript)?
+            .finalize(&secp, internal_key)
+            .map_err(|_| script::Error::EarlyEndOfScript)?;
+
+        Ok(taproot_spend_info)
+    }
+
+    pub fn to_control_block(&self, internal_key: XOnlyPublicKey) -> Result<ControlBlock> {
+        let taproot_spend_info = self.to_taproot_spend_info(internal_key)?;
+        let builder = script::Builder::new();
+        let reveal_script = self.append_reveal_script(builder);
+
+        taproot_spend_info
+            .control_block(&(reveal_script, LeafVersion::TapScript))
+            .ok_or(script::Error::EarlyEndOfScript)
+    }
+
+    pub fn prepare_psbt_input(
+        &self,
+        psbt_input: &mut psbt::Input,
+        internal_key: XOnlyPublicKey,
+        witness_utxo: TxOut,
+    ) -> Result<()> {
+        let control_block = self.to_control_block(internal_key)?;
+        let builder = script::Builder::new();
+        let reveal_script = self.append_reveal_script(builder);
+
+        psbt_input.witness_utxo = Some(witness_utxo);
+        psbt_input.tap_internal_key = Some(internal_key);
+        psbt_input
+            .tap_scripts
+            .insert(control_block, (reveal_script, LeafVersion::TapScript));
+
+        Ok(())
+    }
+
+    pub fn to_commit_address(
+        &self,
+        network: Network,
+        internal_key: XOnlyPublicKey,
+    ) -> Result<Address> {
+        let secp = Secp256k1::new();
+        let taproot_spend_info = self.to_taproot_spend_info(internal_key)?;
+
+        let address = Address::p2tr(
+            &secp,
+            internal_key,
+            taproot_spend_info.merkle_root(),
+            network,
+        );
+
+        Ok(address)
     }
 }

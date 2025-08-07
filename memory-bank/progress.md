@@ -72,11 +72,25 @@ The project appears to have a solid foundation with the core protocol implementa
 
 ### In Progress:
 
-1. **Advanced DeFi Primitives**: Development of more sophisticated financial instruments.
-2. **Developer Experience**: Improving tools and documentation for developers.
-3. **Performance Optimizations**: Enhancing system efficiency and scalability.
-4. **Security Enhancements**: Strengthening the security posture of the system.
-5. **Ecosystem Development**: Building a community and integrations with other projects.
+1. **OYL Feature**: Planning and initial development of a new feature or module called "OYL":
+   - Planning documents are being created (OYL_ACTION_PLAN.md, OYL_REFERENCE_MATERIAL.md, OYL_IMPLEMENTATION_STRATEGY.md)
+   - Module structure is being designed (utils.rs, view.rs, mod.rs, indexer.rs)
+   - Protocol buffer definition is being prepared (oyl.proto)
+   - This feature is in the early planning stages with no committed code yet
+
+2. **ABI Enhancements**: Adding return type attributes to function definitions in the ABI:
+   - Specifying what gets put in the .data field of the CallResponse
+   - For example, defining the get_name function in the owned token contract with a return type of string
+
+3. **Advanced DeFi Primitives**: Development of more sophisticated financial instruments.
+
+4. **Developer Experience**: Improving tools and documentation for developers.
+
+5. **Performance Optimizations**: Enhancing system efficiency and scalability.
+
+6. **Security Enhancements**: Strengthening the security posture of the system.
+
+7. **Ecosystem Development**: Building a community and integrations with other projects.
 
 ## Known Issues
 
@@ -97,7 +111,17 @@ Based on the documentation, the following issues or challenges may exist:
 
 ## Recently Fixed Issues
 
-1. **Fuel Management**: Fixed multiple issues in the fuel management system:
+1. **Precompiled Contract Implementation**: Implemented a concept similar to Ethereum's precompiled contracts:
+   - Added special handling in the staticcall host function for specific AlkaneId values
+   - AlkaneId with { block: 8e8, tx: 0 } now returns the block header from the current block
+   - AlkaneId with { block: 8e8, tx: 1 } now returns the bytes of the coinbase transaction
+   - Implementation provides efficient access to blockchain data directly from the execution environment
+   - Added debug logging for precompiled contract calls
+   - Implemented proper error handling for invalid precompiled contract addresses
+   - Ensured trace events are properly recorded for precompiled contract calls
+   - No fuel is consumed for these efficient native operations
+
+2. **Fuel Management**: Fixed multiple issues in the fuel management system:
    - **Fuel Refunding**: Fixed an issue where the fuel refunded to the block was the entire initially allocated amount rather than the actual remaining fuel leftover from running the transaction.
    - **Fuel Consumption**: Fixed an issue where WebAssembly execution was consuming all available fuel, leading to "ALKANES: revert: all fuel consumed by WebAssembly" errors.
    - **Diagnostic Logging**: Added comprehensive logging throughout the fuel management system to provide detailed information for debugging fuel-related issues.

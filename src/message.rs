@@ -1,11 +1,12 @@
 use crate::network::{genesis::GENESIS_BLOCK, is_active};
 use crate::trace::save_trace;
-use crate::utils::{credit_balances, debit_balances, pipe_storagemap_to};
+use crate::utils::{balance_pointer, credit_balances, debit_balances, pipe_storagemap_to};
 use crate::vm::{
     fuel::{FuelTank, VirtualFuelBytes},
     runtime::AlkanesRuntimeContext,
     utils::{prepare_context, run_after_special, run_special_cellpacks},
 };
+use alkanes_support::id::AlkaneId;
 use alkanes_support::{
     cellpack::Cellpack,
     response::ExtendedCallResponse,
@@ -46,7 +47,13 @@ pub fn handle_message(
     {
         // Log cellpack information at the beginning of transaction processing
         println!("=== TRANSACTION CELLPACK INFO ===");
-        println!("Transaction index: {}", parcel.txindex);
+        println!(
+            "Transaction index: {}, Transaction height: {}, vout: {}, txid: {}",
+            parcel.txindex,
+            parcel.height,
+            parcel.vout,
+            parcel.transaction.compute_txid()
+        );
         println!(
             "Target contract: [block={}, tx={}]",
             cellpack.target.block, cellpack.target.tx
@@ -76,18 +83,24 @@ pub fn handle_message(
             "Target resolved to: [block={}, tx={}]",
             myself.block, myself.tx
         );
+        println!("Parcel runes: {:?}", parcel.runes);
     }
 
-    credit_balances(&mut atomic, &myself, &parcel.runes);
+    credit_balances(&mut atomic, &myself, &parcel.runes)?;
     prepare_context(context.clone(), &caller, &myself, false);
     let txsize = parcel.transaction.vfsize() as u64;
     if FuelTank::is_top() {
-        FuelTank::fuel_transaction(txsize, parcel.txindex);
+        FuelTank::fuel_transaction(txsize, parcel.txindex, parcel.height as u32);
     } else if FuelTank::should_advance(parcel.txindex) {
         FuelTank::refuel_block();
-        FuelTank::fuel_transaction(txsize, parcel.txindex);
+        FuelTank::fuel_transaction(txsize, parcel.txindex, parcel.height as u32);
     }
     let fuel = FuelTank::start_fuel();
+    // NOTE: we  want to keep unwrap for cases where we lock a mutex guard,
+    // it's better if it panics, so then metashrew will retry that block again
+    // whereas if we do .map_err(|e| anyhow!("Mutex lock poisoned: {}", e))?
+    // it could produce inconsistent indexes if the unlocking fails due to concurrency problem
+    // but may pass on retry
     let inner = context.lock().unwrap().flat();
     let trace = context.lock().unwrap().trace.clone();
     trace.clock(TraceEvent::EnterCall(TraceContext {
@@ -105,11 +118,13 @@ pub fn handle_message(
                 ),
             );
             let mut combined = parcel.runtime_balances.as_ref().clone();
-            <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(parcel.runes.clone())
-                .pipe(&mut combined);
-            let sheet = <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(
+            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
+                parcel.runes.clone(),
+            )?
+            .pipe(&mut combined)?;
+            let sheet = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 response.alkanes.clone().into(),
-            );
+            )?;
             combined.debit_mintable(&sheet, &mut atomic)?;
             debit_balances(&mut atomic, &myself, &response.alkanes)?;
             let cloned = context.clone().lock().unwrap().trace.clone();

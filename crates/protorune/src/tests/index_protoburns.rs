@@ -40,7 +40,7 @@ mod tests {
             runes[0].value = runes[0].value / 2;
             let transfer = runes[0].clone();
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(runes)?
-                .pipe(&mut new_runtime_balances);
+                .pipe(&mut new_runtime_balances)?;
             // transfer protorunes to the pointer
             Ok((vec![transfer], *new_runtime_balances))
         }
@@ -274,6 +274,56 @@ mod tests {
         );
         assert_eq!(protoburn_protorunes_balances[0], 222);
     }
+
+    /// This is supported, but the op return exceeds the 80 byte limit which makes it
+    /// hard for miners to pick up.
+    // #[wasm_bindgen_test]
+    // fn protostone_many_edict_test() {
+    //     // the only valid protorune id
+    //     let protorune_id = ProtoruneRuneId {
+    //         block: BLOCK_HEIGHT as u128,
+    //         tx: 1,
+    //     };
+
+    //     // transfer all remaining protorunes to the op return to burn it
+    //     let test_block = protostone_transfer_test_template(
+    //         1,
+    //         vec![
+    //             ProtostoneEdict {
+    //                 id: protorune_id,
+    //                 amount: 1,
+    //                 output: 0,
+    //             };
+    //             1000
+    //         ],
+    //     );
+    //     let tx2_outpoint: OutPoint = OutPoint {
+    //         txid: test_block.txdata[2].compute_txid(),
+    //         vout: 0,
+    //     };
+
+    //     let tx2_rune_balances =
+    //         helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
+    //     assert_eq!(tx2_rune_balances[0], 0);
+
+    //     let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
+    //         PROTOCOL_ID,
+    //         tx2_outpoint,
+    //         vec![protorune_id],
+    //     );
+    //     assert_eq!(protoburn_protorunes_balances[0], 1000);
+    //     assert_eq!(
+    //         helpers::get_protorune_balance_by_outpoint(
+    //             PROTOCOL_ID,
+    //             OutPoint {
+    //                 txid: test_block.txdata[2].compute_txid(),
+    //                 vout: 1,
+    //             },
+    //             vec![protorune_id],
+    //         )[0],
+    //         0
+    //     );
+    // }
 
     #[wasm_bindgen_test]
     fn protostone_edict_burn_test() {

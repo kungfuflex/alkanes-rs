@@ -29,11 +29,15 @@ use protorune_support::proto;
 use protorune_support::{
     balance_sheet::{BalanceSheet, ProtoruneRuneId},
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
-    utils::{consensus_encode, field_to_name, outpoint_encode},
+    utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Sub;
 use std::sync::Arc;
+
+/// Blacklisted transaction IDs that should be ignored during processing
+const BLACKLISTED_TX_HASHES: [&str; 1] =
+    ["5cbb0c466dd08d7af9223d45105fbbf0fdc9fb7cda4831c183d6b0cb5ba60fb0"];
 
 pub mod balance_sheet;
 pub mod message;
@@ -48,8 +52,6 @@ pub mod tests;
 pub mod view;
 
 pub struct Protorune(());
-
-// TODO: these library functions could move to support modules (ie protorune-support)
 
 pub fn default_output(tx: &Transaction) -> u32 {
     for i in 0..tx.output.len() {
@@ -83,9 +85,9 @@ pub fn handle_transfer_runes_to_vout(
     amount: u128,
     max_amount: u128,
     tx: &Transaction,
-) -> HashMap<u32, u128> {
+) -> Result<BTreeMap<u32, u128>> {
     // pointer should not call this function if amount is 0
-    let mut output: HashMap<u32, u128> = HashMap::<u32, u128>::new();
+    let mut output: BTreeMap<u32, u128> = BTreeMap::<u32, u128>::new();
     if (vout as usize) == tx.output.len() {
         // "special vout" -- give amount to all non-op_return vouts
         if amount == 0 {
@@ -127,13 +129,13 @@ pub fn handle_transfer_runes_to_vout(
         // every vout should try to get the amount until we run out
         if amount == 0 {
             // we should transfer everything to this vout
-            output.insert(vout.try_into().unwrap(), max_amount);
+            output.insert(vout.try_into()?, max_amount);
         } else {
-            output.insert(vout.try_into().unwrap(), amount);
+            output.insert(vout.try_into()?, amount);
         }
     }
 
-    return output;
+    Ok(output)
 }
 
 #[cfg(not(test))]
@@ -199,8 +201,8 @@ impl Protorune {
                 )))
             })
             .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
-        let mut balance_sheet = BalanceSheet::concat(sheets);
-        let mut balances_by_output = HashMap::<u32, BalanceSheet<AtomicPointer>>::new();
+        let mut balance_sheet = BalanceSheet::concat(sheets)?;
+        let mut balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
         let unallocated_to = match runestone.pointer {
             Some(v) => v,
             None => default_output(tx),
@@ -258,7 +260,7 @@ impl Protorune {
         Ok(())
     }
     pub fn update_balances_for_edict(
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balance_sheet: &mut BalanceSheet<AtomicPointer>,
         edict_amount: u128,
         edict_output: u32,
@@ -279,13 +281,13 @@ impl Protorune {
         // Ensure we decrease the source balance first
         balance_sheet.decrease(rune_id, amount);
         // Then increase the destination balance
-        sheet.increase(rune_id, amount);
+        sheet.increase(rune_id, amount)?;
         Ok(())
     }
     pub fn process_edict(
         tx: &Transaction,
         edict: &ProtostoneEdict,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         _outs: &Vec<TxOut>,
     ) -> Result<()> {
@@ -295,7 +297,7 @@ impl Protorune {
             let max = balances.get_and_update(&edict.id.into());
 
             let transfer_targets =
-                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx);
+                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx)?;
 
             transfer_targets.iter().try_for_each(|(vout, amount)| {
                 Self::update_balances_for_edict(
@@ -313,7 +315,7 @@ impl Protorune {
     pub fn process_edicts(
         tx: &Transaction,
         edicts: &Vec<ProtostoneEdict>,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         outs: &Vec<TxOut>,
     ) -> Result<()> {
@@ -324,13 +326,13 @@ impl Protorune {
     }
     pub fn handle_leftover_runes(
         remaining_balances: &mut BalanceSheet<AtomicPointer>,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
     ) -> Result<()> {
         // grab the balances of the vout to send unallocated to
         match balances_by_output.get_mut(&unallocated_to) {
             // if it already has balances, then send the remaining balances over
-            Some(v) => remaining_balances.pipe(v),
+            Some(v) => remaining_balances.pipe(v)?,
             None => {
                 balances_by_output.insert(unallocated_to, remaining_balances.clone());
             }
@@ -401,7 +403,7 @@ impl Protorune {
                         tx: u128::from(mint.tx),
                     }),
                     amount,
-                );
+                )?;
             } else {
                 return Ok(());
             }
@@ -414,7 +416,7 @@ impl Protorune {
         etching: &Etching,
         index: u32,
         height: u64,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
         tx: &Transaction,
     ) -> Result<()> {
@@ -603,13 +605,13 @@ impl Protorune {
         }
         Ok(())
     }
-    pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<HashSet<Vec<u8>>> {
+    pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
         // Track unique addresses that have their spendable outpoints updated
         #[cfg(feature = "cache")]
-        let mut updated_addresses: HashSet<Vec<u8>> = HashSet::new();
+        let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         #[cfg(not(feature = "cache"))]
-        let updated_addresses: HashSet<Vec<u8>> = HashSet::new();
+        let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
@@ -630,7 +632,7 @@ impl Protorune {
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey).unwrap();
+                    let address_str = to_address_str(output_script_pubkey)?;
                     let address = address_str.into_bytes();
 
                     // Add address to the set of updated addresses
@@ -650,13 +652,13 @@ impl Protorune {
         // Return the set of updated addresses
         Ok(updated_addresses)
     }
-    pub fn index_spendables_ll(txdata: &Vec<Transaction>) -> Result<HashSet<Vec<u8>>> {
+    pub fn index_spendables_ll(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
         // Track unique addresses that have their spendable outpoints updated
         #[cfg(feature = "cache")]
-        let mut updated_addresses: HashSet<Vec<u8>> = HashSet::new();
+        let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         #[cfg(not(feature = "cache"))]
-        let updated_addresses: HashSet<Vec<u8>> = HashSet::new();
+        let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
@@ -672,7 +674,7 @@ impl Protorune {
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey).unwrap();
+                    let address_str = to_address_str(output_script_pubkey)?;
                     let address = address_str.into_bytes();
 
                     // Add address to the set of updated addresses
@@ -758,8 +760,7 @@ impl Protorune {
                             value: tx.output[i].clone().value.to_sat(),
                             special_fields: SpecialFields::new(),
                         })
-                        .write_to_bytes()
-                        .unwrap(),
+                        .write_to_bytes()?,
                     ));
             }
         }
@@ -771,7 +772,7 @@ impl Protorune {
         atomic: &mut AtomicPointer,
         table: &RuneTable,
         tx: &Transaction,
-        map: &HashMap<u32, BalanceSheet<AtomicPointer>>,
+        map: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
     ) -> Result<()> {
         // Process all outputs, including the last one
         // The OP_RETURN doesn't have to be at the end
@@ -812,10 +813,10 @@ impl Protorune {
             atomic,
             height,
             map.iter()
-                .fold(BalanceSheet::default(), |mut r, (_k, v)| {
-                    v.pipe(&mut r);
-                    r
-                })
+                .try_fold(BalanceSheet::default(), |mut r, (_k, v)| {
+                    v.pipe(&mut r)?;
+                    Ok(r)
+                })?
                 .balances()
                 .keys()
                 .clone()
@@ -834,13 +835,27 @@ impl Protorune {
         height: u64,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
     ) -> Result<()> {
+        // Check if this transaction is in the blacklist
+        let tx_id = tx.compute_txid();
+        for blacklisted_hash in BLACKLISTED_TX_HASHES.iter() {
+            match tx_hex_to_txid(blacklisted_hash) {
+                std::result::Result::Ok(blacklisted_txid) => {
+                    if tx_id == blacklisted_txid {
+                        println!("Ignoring blacklisted transaction: {}", blacklisted_hash);
+                        return Ok(());
+                    }
+                }
+                std::result::Result::Err(_) => continue,
+            }
+        }
+
         let protostones = Protostone::from_runestone(runestone)?;
 
         if protostones.len() != 0 {
-            let mut proto_balances_by_output = HashMap::<u32, BalanceSheet<AtomicPointer>>::new();
+            let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
             let table = tables::RuneTable::for_protocol(T::protocol_tag());
 
             // set the starting runtime balance
@@ -863,16 +878,20 @@ impl Protorune {
                     ))
                 })
                 .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
-            let mut balance_sheet = BalanceSheet::concat(sheets);
-            protostones.process_burns(
-                &mut atomic.derive(&IndexPointer::default()),
-                runestone,
-                runestone_output_index,
-                balances_by_output,
-                &mut proto_balances_by_output,
-                unallocated_to,
-                tx.compute_txid(),
-            )?;
+            let mut balance_sheet = BalanceSheet::concat(sheets)?;
+            // TODO: Enable this at a future block when protoburns have been fully tested. For now only enabled in tests
+            #[cfg(test)]
+            {
+                protostones.process_burns(
+                    &mut atomic.derive(&IndexPointer::default()),
+                    runestone,
+                    runestone_output_index,
+                    balances_by_output,
+                    &mut proto_balances_by_output,
+                    unallocated_to,
+                    tx.compute_txid(),
+                )?;
+            }
 
             let num_protostones = protostones.len();
             let protostones_iter = protostones.into_iter();
@@ -900,20 +919,12 @@ impl Protorune {
                         None => default_output(tx),
                     };
                     // README: now calculates the amount left over for edicts in this fashion:
-                    // the protomessage is executed first, and all the runes that go to the refund pointer are available for the edicts to then transfer
+                    // the protomessage is executed first, and all the runes that go to the pointer are available for the edicts to then transfer, as long as the protomessage succeeded
                     // if there is no protomessage, all incoming runes will be available to be transferred by the edict
                     let mut prior_balance_sheet = BalanceSheet::default();
-                    let is_message = stone.is_message();
-                    if is_message {
-                        let refund = stone
-                            .refund
-                            .ok_or_else(|| anyhow!("Missing refund pointer"))?;
-                        // Start with a fresh balance sheet for edicts
-                        prior_balance_sheet = match proto_balances_by_output.get(&refund) {
-                            Some(sheet) => sheet.clone(),
-                            None => BalanceSheet::default(),
-                        };
-                        stone.process_message::<T>(
+                    let mut did_message_fail_and_refund = false;
+                    if stone.is_message() && stone.protocol_tag == T::protocol_tag() {
+                        let success = stone.process_message::<T>(
                             &mut atomic.derive(&IndexPointer::default()),
                             tx,
                             txindex,
@@ -922,32 +933,35 @@ impl Protorune {
                             runestone_output_index,
                             shadow_vout,
                             &mut proto_balances_by_output,
-                            protostone_unallocated_to,
                             num_protostones,
                         )?;
-                        // Get the post-message balance to use for edicts
-                        prior_balance_sheet = match proto_balances_by_output.get(&refund) {
-                            Some(sheet) => sheet.clone(),
-                            None => prior_balance_sheet,
-                        };
+                        did_message_fail_and_refund = !success;
+                        if success {
+                            // Get the post-message balance to use for edicts
+                            prior_balance_sheet =
+                                match proto_balances_by_output.remove(&protostone_unallocated_to) {
+                                    Some(sheet) => sheet.clone(),
+                                    None => prior_balance_sheet,
+                                };
+                        }
                     } else {
                         prior_balance_sheet = match proto_balances_by_output.remove(&shadow_vout) {
                             Some(sheet) => sheet.clone(),
                             None => prior_balance_sheet,
                         };
                     }
+                    // edicts should only transfer protostones that did not fail the protomessage (if there is one)
+                    if !did_message_fail_and_refund {
+                        // Process edicts using the current balance state
+                        Self::process_edicts(
+                            tx,
+                            &stone.edicts,
+                            &mut proto_balances_by_output,
+                            &mut prior_balance_sheet,
+                            &tx.output,
+                        )?;
 
-                    // Process edicts using the current balance state
-                    Self::process_edicts(
-                        tx,
-                        &stone.edicts,
-                        &mut proto_balances_by_output,
-                        &mut prior_balance_sheet,
-                        &tx.output,
-                    )?;
-
-                    // Handle any remaining balance
-                    if !is_message {
+                        // Handle any remaining balance
                         Self::handle_leftover_runes(
                             &mut prior_balance_sheet,
                             &mut proto_balances_by_output,
@@ -958,11 +972,6 @@ impl Protorune {
                     Ok(())
                 })
                 .collect::<Result<()>>()?;
-            // println!(
-            //     "protocol id: {}, saving sheets: {:#?}",
-            //     T::protocol_tag(),
-            //     proto_balances_by_output
-            // );
             Self::save_balances::<T>(
                 height,
                 &mut atomic.derive(&IndexPointer::default()),
@@ -979,7 +988,7 @@ impl Protorune {
         Ok(())
     }
 
-    pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<HashSet<Vec<u8>>> {
+    pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));

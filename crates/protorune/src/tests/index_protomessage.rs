@@ -78,7 +78,7 @@ mod tests {
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
                 transfer_to_runtime,
             ])?
-            .pipe(&mut new_runtime_balances);
+            .pipe(&mut new_runtime_balances)?;
             Ok((vec![transfer], *new_runtime_balances))
         }
     }
@@ -114,7 +114,7 @@ mod tests {
                 value: 10001,
             };
             let mut runtime = BalanceSheet::default();
-            runtime.increase(&mint_rune, 12345);
+            runtime.increase(&mint_rune, 12345)?;
             Ok((vec![transfer, mint], runtime))
         }
     }
@@ -138,7 +138,7 @@ mod tests {
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
                 transfer_to_runtime,
             ])?
-            .pipe(&mut new_runtime_balances);
+            .pipe(&mut new_runtime_balances)?;
             Ok((vec![transfer], *new_runtime_balances))
         }
     }
@@ -233,7 +233,7 @@ mod tests {
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
                 transfer_to_runtime,
             ])?
-            .pipe(&mut new_runtime_balances);
+            .pipe(&mut new_runtime_balances)?;
             Ok((vec![transfer], new_runtime_balances))
         }
     }
@@ -311,6 +311,13 @@ mod tests {
             value: Amount::from_sat(0),
             script_pubkey: runestone,
         };
+
+        // op return must be less than 80 bytes or else miners will not accept it
+        assert!(
+            op_return.size() <= 80,
+            "op return ({}) > 80 bytes",
+            op_return.size()
+        );
 
         helpers::create_block_with_txs(vec![Transaction {
             version: bitcoin::transaction::Version(2),

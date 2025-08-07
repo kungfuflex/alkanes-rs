@@ -1,8 +1,10 @@
 use crate::message::AlkaneMessageContext;
+use crate::view;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
+use alkanes_support::trace::{Trace, TraceEvent, TraceResponse};
 use anyhow::Result;
 use bitcoin::blockdata::transaction::Version;
 use bitcoin::{
@@ -25,7 +27,7 @@ use protorune::tables::RuneTable;
 use protorune::test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1};
 use protorune_support::balance_sheet::BalanceSheet;
 use protorune_support::network::{set_network, NetworkParams};
-use protorune_support::protostone::Protostone;
+use protorune_support::protostone::{Protostone, ProtostoneEdict};
 use std::str::FromStr;
 
 #[cfg(test)]
@@ -94,7 +96,7 @@ pub fn clear() {
 
 #[cfg(test)]
 pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
-    let block_height = 840000;
+    let block_height = 0;
     let mut test_block = create_block_with_coinbase_tx(block_height);
 
     let wasm_binary = alkanes_std_test_build::get_bytes();
@@ -110,13 +112,65 @@ pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
     test_block
 }
 
+/// A struct that combines a binary and its corresponding cellpack for cleaner initialization
+#[derive(Debug, Clone)]
+pub struct BinaryAndCellpack {
+    pub binary: Vec<u8>,
+    pub cellpack: Cellpack,
+}
+
+impl BinaryAndCellpack {
+    pub fn new(binary: Vec<u8>, cellpack: Cellpack) -> Self {
+        Self { binary, cellpack }
+    }
+
+    /// Creates a BinaryAndCellpack with an empty binary (useful when only cellpack data is needed)
+    pub fn cellpack_only(cellpack: Cellpack) -> Self {
+        Self {
+            binary: Vec::new(),
+            cellpack,
+        }
+    }
+}
+
+/// Helper function that accepts a vector of BinaryAndCellpack structs and calls init_with_multiple_cellpacks_with_tx
+pub fn init_with_cellpack_pairs(cellpack_pairs: Vec<BinaryAndCellpack>) -> Block {
+    let (binaries, cellpacks): (Vec<Vec<u8>>, Vec<Cellpack>) = cellpack_pairs
+        .into_iter()
+        .map(|pair| (pair.binary, pair.cellpack))
+        .unzip();
+
+    init_with_multiple_cellpacks_with_tx(binaries, cellpacks)
+}
+
+/// Helper function that accepts a vector of BinaryAndCellpack structs and calls init_with_multiple_cellpacks_with_tx
+pub fn init_with_cellpack_pairs_w_input(
+    cellpack_pairs: Vec<BinaryAndCellpack>,
+    previous_outpoint: OutPoint,
+) -> Block {
+    let (binaries, cellpacks): (Vec<Vec<u8>>, Vec<Cellpack>) = cellpack_pairs
+        .into_iter()
+        .map(|pair| (pair.binary, pair.cellpack))
+        .unzip();
+
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, Some(previous_outpoint))
+}
+
 pub fn init_with_multiple_cellpacks_with_tx(
     binaries: Vec<Vec<u8>>,
     cellpacks: Vec<Cellpack>,
 ) -> Block {
-    let block_height = 840000;
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, None)
+}
+
+pub fn init_with_multiple_cellpacks_with_tx_w_input(
+    binaries: Vec<Vec<u8>>,
+    cellpacks: Vec<Cellpack>,
+    _previous_out: Option<OutPoint>,
+) -> Block {
+    let block_height = 880_000;
     let mut test_block = create_block_with_coinbase_tx(block_height);
-    let mut previous_out: Option<OutPoint> = None;
+    let mut previous_out: Option<OutPoint> = _previous_out;
     let mut txs = binaries
         .into_iter()
         .zip(cellpacks.into_iter())
@@ -154,7 +208,7 @@ pub fn init_with_multiple_cellpacks_with_tx(
 }
 
 pub fn init_with_multiple_cellpacks(binary: Vec<u8>, cellpacks: Vec<Cellpack>) -> Block {
-    let block_height = 840000;
+    let block_height = 0;
 
     let mut test_block = create_block_with_coinbase_tx(block_height);
 
@@ -186,6 +240,14 @@ pub fn create_protostone_tx_with_inputs_and_default_pointer(
         value: Amount::from_sat(0),
         script_pubkey: runestone,
     };
+
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
+
     let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
     let _script_pubkey = address.script_pubkey();
     let mut _outputs = outputs.clone();
@@ -212,7 +274,6 @@ pub fn create_multiple_cellpack_with_witness_and_in(
     previous_output: OutPoint,
     etch: bool,
 ) -> Transaction {
-    let protocol_id = 1;
     let input_script = ScriptBuf::new();
     let txin = TxIn {
         previous_output,
@@ -220,6 +281,16 @@ pub fn create_multiple_cellpack_with_witness_and_in(
         sequence: Sequence::MAX,
         witness,
     };
+    create_multiple_cellpack_with_witness_and_txins_edicts(cellpacks, vec![txin], etch, vec![])
+}
+
+pub fn create_multiple_cellpack_with_witness_and_txins_edicts(
+    cellpacks: Vec<Cellpack>,
+    txins: Vec<TxIn>,
+    etch: bool,
+    edicts: Vec<ProtostoneEdict>,
+) -> Transaction {
+    let protocol_id = 1;
     let protostones = [
         match etch {
             true => vec![Protostone {
@@ -239,7 +310,7 @@ pub fn create_multiple_cellpack_with_witness_and_in(
                 message: cellpack.encipher(),
                 pointer: Some(0),
                 refund: Some(0),
-                edicts: vec![],
+                edicts: edicts.clone(),
                 from: None,
                 burn: None,
                 protocol_tag: protocol_id as u128,
@@ -277,6 +348,7 @@ pub fn create_multiple_cellpack_with_witness_and_in(
         value: Amount::from_sat(0),
         script_pubkey: runestone,
     };
+
     let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
 
     let script_pubkey = address.script_pubkey();
@@ -287,7 +359,7 @@ pub fn create_multiple_cellpack_with_witness_and_in(
     Transaction {
         version: Version::ONE,
         lock_time: bitcoin::absolute::LockTime::ZERO,
-        input: vec![txin],
+        input: txins,
         output: vec![txout, op_return],
     }
 }
@@ -323,6 +395,17 @@ pub fn assert_binary_deployed_to_id(token_id: AlkaneId, binary: Vec<u8>) -> Resu
     return Ok(());
 }
 
+pub fn assert_id_points_to_alkane_id(from_id: AlkaneId, to_id: AlkaneId) -> Result<()> {
+    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
+        .select(&from_id.into())
+        .get()
+        .as_ref()
+        .clone();
+    let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
+    assert_eq!(ptr, to_id);
+    return Ok(());
+}
+
 pub fn assert_token_id_has_no_deployment(token_id: AlkaneId) -> Result<()> {
     let binary = IndexPointer::from_keyword("/alkanes/")
         .select(&token_id.into())
@@ -333,7 +416,7 @@ pub fn assert_token_id_has_no_deployment(token_id: AlkaneId) -> Result<()> {
     return Ok(());
 }
 
-fn get_sheet_for_outpoint(
+pub fn get_sheet_for_outpoint(
     test_block: &Block,
     tx_num: usize,
     vout: u32,
@@ -369,4 +452,92 @@ pub fn get_lazy_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
 pub fn get_last_outpoint_sheet(test_block: &Block) -> Result<BalanceSheet<IndexPointer>> {
     let len = test_block.txdata.len();
     get_sheet_for_outpoint(test_block, len - 1, 0)
+}
+
+fn get_trace_event_at_index(outpoint: &OutPoint, index: Option<isize>) -> Result<TraceEvent> {
+    let trace_data: Trace = view::trace(outpoint)?.try_into()?;
+    let trace_events = trace_data.0.lock().expect("Mutex poisoned");
+
+    if trace_events.is_empty() {
+        panic!("No trace events found");
+    }
+
+    // Determine which event to check
+    let event_index = match index {
+        Some(idx) if idx >= 0 => idx as usize,
+        Some(idx) => {
+            // Handle negative indices (counting from the end)
+            let abs_idx = idx.abs() as usize;
+            if abs_idx > trace_events.len() {
+                panic!(
+                    "Index out of bounds: requested event {} but only {} events available",
+                    idx,
+                    trace_events.len()
+                );
+            }
+            trace_events.len() - abs_idx
+        }
+        None => trace_events.len() - 1, // Default to last event
+    };
+
+    // Get the event at the calculated index
+    let event = trace_events
+        .get(event_index)
+        .cloned()
+        .unwrap_or_else(|| panic!("Failed to get trace event at index {}", event_index));
+    Ok(event)
+}
+
+pub fn assert_revert_context(outpoint: &OutPoint, expected_error_message: &str) -> Result<()> {
+    // This is a convenience wrapper around assert_revert_context_at_index that checks the last event
+    assert_revert_context_at_index(outpoint, expected_error_message, None)
+}
+
+pub fn assert_revert_context_at_index(
+    outpoint: &OutPoint,
+    expected_error_message: &str,
+    index: Option<isize>,
+) -> Result<()> {
+    let event = get_trace_event_at_index(outpoint, index)?;
+    match event {
+        TraceEvent::RevertContext(trace_response) => {
+            let data = String::from_utf8_lossy(&trace_response.inner.data);
+            assert!(
+                data.contains(expected_error_message),
+                "Expected error message '{}' not found in: '{}'",
+                expected_error_message,
+                data
+            );
+            Ok(())
+        }
+        _ => panic!(
+            "Expected RevertContext variant, but got a different variant: {:?}",
+            event
+        ),
+    }
+}
+
+pub fn assert_return_context<F, T>(outpoint: &OutPoint, check_function: F) -> Result<T>
+where
+    F: Fn(TraceResponse) -> Result<T>,
+{
+    assert_return_context_at_index(outpoint, check_function, None)
+}
+
+pub fn assert_return_context_at_index<F, T>(
+    outpoint: &OutPoint,
+    check_function: F,
+    index: Option<isize>,
+) -> Result<T>
+where
+    F: Fn(TraceResponse) -> Result<T>,
+{
+    let event = get_trace_event_at_index(outpoint, index)?;
+    match event {
+        TraceEvent::ReturnContext(trace_response) => check_function(trace_response),
+        _ => panic!(
+            "Expected ReturnContext variant, but got a different variant: {:?}",
+            event
+        ),
+    }
 }

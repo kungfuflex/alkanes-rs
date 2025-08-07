@@ -10,7 +10,7 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::{
     cmp::min,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     ops::Deref,
     sync::Arc,
 };
@@ -31,7 +31,7 @@ impl Protoburn {
         &mut self,
         atomic: &mut AtomicPointer,
         balance_sheet: BalanceSheet<AtomicPointer>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         outpoint: OutPoint,
     ) -> Result<()> {
         let table = RuneTable::for_protocol(self.tag.ok_or(anyhow!("no tag found"))?);
@@ -58,7 +58,12 @@ impl Protoburn {
         if !proto_balances_by_output.contains_key(&outpoint.vout) {
             proto_balances_by_output.insert(outpoint.vout, BalanceSheet::default());
         }
-        balance_sheet.pipe(proto_balances_by_output.get_mut(&outpoint.vout).unwrap());
+        balance_sheet.pipe(
+            proto_balances_by_output
+                .get_mut(&outpoint.vout)
+                .ok_or("")
+                .map_err(|_| anyhow!("outpoint vout not in proto_balances_by_output"))?,
+        )?;
         Ok(())
     }
 }
@@ -73,8 +78,8 @@ pub trait Protoburns<T>: Deref<Target = [T]> {
         atomic: &mut AtomicPointer,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
@@ -86,8 +91,8 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
         atomic: &mut AtomicPointer,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &HashMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut HashMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {
@@ -96,10 +101,10 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
             let sheet = balances_by_output
                 .get(&runestone_output_index)
                 .ok_or(anyhow!("cannot find balance sheet"))?;
-            sheet.pipe(&mut runestone_balance_sheet);
+            sheet.pipe(&mut runestone_balance_sheet)?;
         }
         let mut burn_cycles = self.construct_burncycle()?;
-        let mut pull_set = HashMap::<u32, bool>::new();
+        let mut pull_set = BTreeMap::<u32, bool>::new();
         let mut burn_sheets = self
             .into_iter()
             .map(|_a| BalanceSheet::new())
@@ -108,7 +113,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
         // from field in Protoburn is provided, which means the burn doesn't cycle through the inputs, just pulls the inputs from the "from" field and burns those
         for (i, burn) in self.into_iter().enumerate() {
             if let Some(_from) = burn.clone().from {
-                let from = _from.into_iter().collect::<HashSet<u32>>();
+                let from = _from.into_iter().collect::<BTreeSet<u32>>();
                 for j in from {
                     pull_set.insert(j, true);
                     if runestone_edicts
@@ -124,7 +129,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
                             continue;
                         }
                         runestone_balance_sheet.decrease(&rune.clone().into(), to_apply);
-                        burn_sheets[i].increase(&rune.into(), to_apply);
+                        burn_sheets[i].increase(&rune.into(), to_apply)?;
                     }
                 }
             }
@@ -145,7 +150,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
                 };
                 burn_cycles.next(&(rune.into()))?;
                 runestone_balance_sheet.decrease(&rune.clone().into(), to_apply);
-                burn_sheets[cycle as usize].increase(&rune.into(), to_apply);
+                burn_sheets[cycle as usize].increase(&rune.into(), to_apply)?;
             }
         }
 
@@ -160,7 +165,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
                 };
                 burn_cycles.next(rune)?;
                 runestone_balance_sheet.decrease(rune, to_apply);
-                burn_sheets[cycle as usize].increase(rune, to_apply);
+                burn_sheets[cycle as usize].increase(rune, to_apply)?;
             }
         }
 
@@ -179,14 +184,14 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
 
 pub struct BurnCycle {
     max: u32,
-    cycles: HashMap<ProtoruneRuneId, i32>,
+    cycles: BTreeMap<ProtoruneRuneId, i32>,
 }
 
 impl BurnCycle {
     pub fn new(max: u32) -> Self {
         BurnCycle {
             max,
-            cycles: HashMap::<ProtoruneRuneId, i32>::new(),
+            cycles: BTreeMap::<ProtoruneRuneId, i32>::new(),
         }
     }
     pub fn next(&mut self, rune: &ProtoruneRuneId) -> Result<i32> {
@@ -219,7 +224,7 @@ mod tests {
     use metashrew_core::index_pointer::AtomicPointer;
     use ordinals::RuneId;
     use protorune_support::balance_sheet::ProtoruneRuneId;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_protoburn_process_success() {
@@ -239,7 +244,7 @@ mod tests {
             ],
             vec![100 as u128, 200 as u128],
         );
-        let mut proto_balances_by_output = HashMap::new();
+        let mut proto_balances_by_output = BTreeMap::new();
         let outpoint = OutPoint {
             txid: Hash::from_byte_array([
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -277,7 +282,7 @@ mod tests {
         // Create mock objects for dependencies
         let mut atomic = AtomicPointer::default();
         let balance_sheet = BalanceSheet::new();
-        let mut proto_balances_by_output = HashMap::new();
+        let mut proto_balances_by_output = BTreeMap::new();
         let outpoint = OutPoint {
             txid: Hash::from_byte_array([
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -316,8 +321,8 @@ mod tests {
 
         // Create mock objects for dependencies
         let mut atomic = AtomicPointer::default();
-        let balances_by_output = HashMap::new();
-        let mut proto_balances_by_output = HashMap::new();
+        let balances_by_output = BTreeMap::new();
+        let mut proto_balances_by_output = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -375,8 +380,8 @@ mod tests {
             vec![300 as u128, 400 as u128],
         );
         let balances_by_output =
-            HashMap::from([(0, balance_sheet_0.clone()), (1, balance_sheet_1.clone())]);
-        let mut proto_balances_by_output = HashMap::new();
+            BTreeMap::from([(0, balance_sheet_0.clone()), (1, balance_sheet_1.clone())]);
+        let mut proto_balances_by_output = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -435,11 +440,11 @@ mod tests {
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = HashMap::from([
+        let balances_by_output = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = HashMap::new();
+        let mut proto_balances_by_output = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -512,11 +517,11 @@ mod tests {
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = HashMap::from([
+        let balances_by_output = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = HashMap::new();
+        let mut proto_balances_by_output = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -600,11 +605,11 @@ mod tests {
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = HashMap::from([
+        let balances_by_output = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = HashMap::new();
+        let mut proto_balances_by_output = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -693,11 +698,11 @@ mod tests {
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = HashMap::from([
+        let balances_by_output = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = HashMap::new();
+        let mut proto_balances_by_output = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -769,11 +774,11 @@ mod tests {
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = HashMap::from([
+        let balances_by_output = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = HashMap::new();
+        let mut proto_balances_by_output = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -856,11 +861,11 @@ mod tests {
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = HashMap::from([
+        let balances_by_output = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = HashMap::new();
+        let mut proto_balances_by_output = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,

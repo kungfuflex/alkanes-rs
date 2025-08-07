@@ -39,15 +39,17 @@ impl Into<Vec<RuneTransfer>> for AlkaneTransferParcel {
     }
 }
 
-impl<P: KeyValuePointer + Clone> Into<BalanceSheet<P>> for AlkaneTransferParcel {
-    fn into(self) -> BalanceSheet<P> {
-        <AlkaneTransferParcel as Into<Vec<RuneTransfer>>>::into(self).into()
+impl<P: KeyValuePointer + Clone> TryInto<BalanceSheet<P>> for AlkaneTransferParcel {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<BalanceSheet<P>> {
+        <AlkaneTransferParcel as Into<Vec<RuneTransfer>>>::into(self).try_into()
     }
 }
 
-impl Into<CachedBalanceSheet> for AlkaneTransferParcel {
-    fn into(self) -> CachedBalanceSheet {
-        <AlkaneTransferParcel as Into<Vec<RuneTransfer>>>::into(self).into()
+impl TryInto<CachedBalanceSheet> for AlkaneTransferParcel {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<CachedBalanceSheet> {
+        <AlkaneTransferParcel as Into<Vec<RuneTransfer>>>::into(self).try_into()
     }
 }
 

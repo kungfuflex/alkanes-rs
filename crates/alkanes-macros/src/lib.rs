@@ -133,21 +133,21 @@ fn get_vec_inner_type(ty: &Type) -> Option<&Type> {
     None
 }
 
-/// Generate code to extract a String parameter from inputs
+/// Generate code to extract a String parameter from __macro_inputs
 fn generate_string_extraction(field_name: &Ident) -> proc_macro2::TokenStream {
     quote! {
         let #field_name = {
             // Check if we have at least one input for the string
-            if input_index >= inputs.len() {
+            if input_index >= __macro_inputs.len() {
                 return Err(anyhow::anyhow!("Not enough parameters provided for string"));
             }
             
-            // Extract the string bytes from the inputs until we find a null terminator
+            // Extract the string bytes from the __macro_inputs until we find a null terminator
             let mut string_bytes = Vec::new();
             let mut found_null = false;
             
-            while input_index < inputs.len() && !found_null {
-                let value = inputs[input_index];
+            while input_index < __macro_inputs.len() && !found_null {
+                let value = __macro_inputs[input_index];
                 input_index += 1;
                 
                 let bytes = value.to_le_bytes();
@@ -171,19 +171,19 @@ fn generate_string_extraction(field_name: &Ident) -> proc_macro2::TokenStream {
     }
 }
 
-/// Generate code to extract an AlkaneId parameter from inputs
+/// Generate code to extract an AlkaneId parameter from __macro_inputs
 fn generate_alkane_id_extraction(field_name: &Ident) -> proc_macro2::TokenStream {
     quote! {
         let #field_name = {
             // AlkaneId consists of two u128 values (block and tx)
-            if input_index + 1 >= inputs.len() {
+            if input_index + 1 >= __macro_inputs.len() {
                 return Err(anyhow::anyhow!("Not enough parameters provided for AlkaneId"));
             }
             
-            let block = inputs[input_index];
+            let block = __macro_inputs[input_index];
             input_index += 1;
             
-            let tx = inputs[input_index];
+            let tx = __macro_inputs[input_index];
             input_index += 1;
             
             alkanes_support::id::AlkaneId::new(block, tx)
@@ -191,14 +191,14 @@ fn generate_alkane_id_extraction(field_name: &Ident) -> proc_macro2::TokenStream
     }
 }
 
-/// Generate code to extract a u128 parameter from inputs
+/// Generate code to extract a u128 parameter from __macro_inputs
 fn generate_u128_extraction(field_name: &Ident) -> proc_macro2::TokenStream {
     quote! {
         let #field_name = {
-            if input_index >= inputs.len() {
-                return Err(anyhow::anyhow!("Missing parameter"));
+            if input_index >= __macro_inputs.len() {
+                return Err(anyhow::anyhow!("Missing u128 parameter"));
             }
-            let value = inputs[input_index];
+            let value = __macro_inputs[input_index];
             input_index += 1;
             value
         };
@@ -226,7 +226,7 @@ fn generate_element_extraction(ty: &Type, element_name: &Ident) -> proc_macro2::
     }
 }
 
-/// Generate code to extract a Vec parameter from inputs
+/// Generate code to extract a Vec parameter from __macro_inputs
 fn generate_vec_extraction(field_name: &Ident, inner_type: &Type) -> proc_macro2::TokenStream {
     // Create a temporary element name for the extraction
     let element_name = format_ident!("element");
@@ -237,10 +237,10 @@ fn generate_vec_extraction(field_name: &Ident, inner_type: &Type) -> proc_macro2
     quote! {
         let #field_name = {
             // First read the length
-            if input_index >= inputs.len() {
+            if input_index >= __macro_inputs.len() {
                 return Err(anyhow::anyhow!("Missing length parameter for Vec"));
             }
-            let length = inputs[input_index] as usize;
+            let length = __macro_inputs[input_index] as usize;
             input_index += 1;
             
             // Create a vector to hold the elements
@@ -313,6 +313,11 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
                 for field in fields_named.named.iter() {
                     let field_name = field.ident.as_ref().unwrap();
                     
+                    // Panic if the field name is "__macro_inputs"
+                    if field_name == "__macro_inputs" {
+                        panic!("Field name '__macro_inputs' is reserved and cannot be used");
+                    }
+                    
                     // Use the element extraction helper for all field types
                     extractions.push(generate_element_extraction(&field.ty, field_name));
                     
@@ -328,8 +333,8 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
                 
                 quote! {
                     #opcode => {
-                        if inputs.len() < #field_count {
-                            return Err(anyhow::anyhow!("Not enough parameters provided: expected {} but got {}", #field_count, inputs.len()));
+                        if __macro_inputs.len() < #field_count {
+                            return Err(anyhow::anyhow!("Not enough parameters provided: expected {} but got {}", #field_count, __macro_inputs.len()));
                         }
                         
                         #(#extractions)*
@@ -476,7 +481,7 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl alkanes_runtime::message::MessageDispatch<#concrete_type_name> for #name {
-            fn from_opcode(opcode: u128, inputs: Vec<u128>) -> Result<Self, anyhow::Error> {
+            fn from_opcode(opcode: u128, __macro_inputs: Vec<u128>) -> Result<Self, anyhow::Error> {
                 match opcode {
                     #(#from_opcode_arms)*
                     _ => Err(anyhow::anyhow!("Unknown opcode: {}", opcode)),

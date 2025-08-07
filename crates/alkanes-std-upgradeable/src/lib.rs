@@ -20,40 +20,39 @@ pub struct Upgradeable(());
 enum UpgradeableMessage {
     #[opcode(0x7fff)]
     Initialize {
-        block: u128,
-        tx: u128,
+        implementation: AlkaneId,
         auth_token_units: u128,
     },
 
     #[opcode(0x7ffe)]
-    Upgrade { block: u128, tx: u128 },
-
-    #[opcode(0x7ffd)]
-    Delegate,
+    Upgrade { implementation: AlkaneId },
+    #[opcode(0x8fff)]
+    Forward {},
 }
 
 impl Upgradeable {
-    pub fn alkane_pointer(&self) -> StoragePointer {
+    fn forward(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let response = CallResponse::forward(&context.incoming_alkanes);
+        Ok(response)
+    }
+    pub fn alkane_pointer() -> StoragePointer {
         StoragePointer::from_keyword("/implementation")
     }
 
-    pub fn alkane(&self) -> Result<AlkaneId> {
-        Ok(self.alkane_pointer().get().as_ref().clone().try_into()?)
+    pub fn alkane() -> Result<AlkaneId> {
+        Ok(Self::alkane_pointer().get().as_ref().clone().try_into()?)
     }
 
-    pub fn set_alkane(&self, v: AlkaneId) {
-        self.alkane_pointer()
-            .set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
+    pub fn set_alkane(v: AlkaneId) {
+        Self::alkane_pointer().set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
     }
 
-    fn initialize(&self, block: u128, tx: u128, auth_token_units: u128) -> Result<CallResponse> {
-        self.observe_initialization()?;
+    fn initialize(&self, implementation: AlkaneId, auth_token_units: u128) -> Result<CallResponse> {
+        self.observe_proxy_initialization()?;
         let context = self.context()?;
 
-        // Construct AlkaneId from block and tx
-        let implementation = AlkaneId::new(block, tx);
-
-        self.set_alkane(implementation);
+        Self::set_alkane(implementation);
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
 
         response
@@ -63,31 +62,29 @@ impl Upgradeable {
         Ok(response)
     }
 
-    fn upgrade(&self, block: u128, tx: u128) -> Result<CallResponse> {
+    fn upgrade(&self, implementation: AlkaneId) -> Result<CallResponse> {
         let context = self.context()?;
 
         self.only_owner()?;
 
-        // Construct AlkaneId from block and tx
-        let implementation = AlkaneId::new(block, tx);
-
-        self.set_alkane(implementation);
+        Self::set_alkane(implementation);
         Ok(CallResponse::forward(&context.incoming_alkanes))
-    }
-
-    fn delegate(&self) -> Result<CallResponse> {
-        let context = self.context()?;
-        let cellpack = Cellpack {
-            target: self.alkane()?,
-            inputs: context.inputs.clone(),
-        };
-        Ok(self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())?)
     }
 }
 
 impl AuthenticatedResponder for Upgradeable {}
 
-impl AlkaneResponder for Upgradeable {}
+impl AlkaneResponder for Upgradeable {
+    fn fallback(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let inputs: Vec<u128> = context.inputs.clone();
+        let cellpack = Cellpack {
+            target: Self::alkane()?,
+            inputs: inputs,
+        };
+        self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())
+    }
+}
 
 // Use the new macro format
 declare_alkane! {

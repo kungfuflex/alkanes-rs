@@ -78,6 +78,10 @@ pub trait MintableToken {
         self.set_total_supply(overflow_error(self.total_supply().checked_add(v))?);
         Ok(())
     }
+    fn decrease_total_supply(&self, v: u128) -> Result<()> {
+        self.set_total_supply(overflow_error(self.total_supply().checked_sub(v))?);
+        Ok(())
+    }
     fn mint(&self, context: &Context, value: u128) -> Result<AlkaneTransfer> {
         self.increase_total_supply(value)?;
         Ok(AlkaneTransfer {
@@ -95,7 +99,7 @@ pub trait MintableToken {
         let tx = consensus_decode::<Transaction>(&mut std::io::Cursor::new(CONTEXT.transaction()))?;
         self.data_pointer()
             .set(Arc::new(find_witness_payload(&tx, 0).ok_or_else(|| {
-                anyhow!("owned-token-factory: witness envelope at index 0 does not contain data")
+                anyhow!("mintable token: witness envelope at index 0 does not contain data")
             })?));
         Ok(())
     }

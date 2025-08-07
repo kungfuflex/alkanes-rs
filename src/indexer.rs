@@ -1,17 +1,21 @@
 use crate::message::AlkaneMessageContext;
-use crate::network::{genesis, is_genesis};
+use crate::network::{genesis, genesis_alkane_upgrade_bytes, is_genesis};
 use crate::vm::fuel::FuelTank;
+use alkanes_support::gz::compress;
+use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
+use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
-use protorune::Protorune;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
+use protorune::Protorune;
 use protorune_support::network::{set_network, NetworkParams};
+use std::sync::Arc;
 
 #[cfg(all(
     not(feature = "mainnet"),
@@ -86,11 +90,20 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     if really_is_genesis {
         genesis(&block).unwrap();
     }
-    FuelTank::initialize(&block);
+    if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
+        let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
+        if upgrade_ptr.get().len() == 0 {
+            upgrade_ptr.set_value::<u8>(0x01);
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 2, tx: 0 }).into())
+                .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
+        }
+    }
+    FuelTank::initialize(&block, height);
 
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
-      Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
+        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 
     #[cfg(feature = "cache")]
     {

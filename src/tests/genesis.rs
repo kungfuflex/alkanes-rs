@@ -2,7 +2,7 @@ use crate::index_block;
 use crate::network::genesis;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_genesis_alkane_build;
-use crate::vm::fuel::{FuelTank, TOTAL_FUEL};
+use crate::vm::fuel::{FuelTank, TOTAL_FUEL_START};
 use alkane_helpers::clear;
 use alkanes::message::AlkaneMessageContext;
 use alkanes_support::cellpack::Cellpack;
@@ -33,7 +33,7 @@ struct FuelBenchmark {
 impl FuelBenchmark {
     fn new(operation: &str, initial_fuel: u64, final_fuel: u64) -> Self {
         let fuel_consumed = initial_fuel - final_fuel;
-        let fuel_percentage = (fuel_consumed as f64 / TOTAL_FUEL as f64) * 100.0;
+        let fuel_percentage = (fuel_consumed as f64 / TOTAL_FUEL_START as f64) * 100.0;
 
         Self {
             operation: operation.to_string(),
@@ -68,13 +68,13 @@ fn display_benchmark_footer() {
 #[wasm_bindgen_test]
 fn test_genesis() -> Result<()> {
     clear();
-    let block_height = 850_000;
+    let block_height = 0;
 
     // Initialize fuel benchmarks collection
     let mut benchmarks = Vec::new();
 
     // Track initial fuel state
-    let initial_total_fuel = TOTAL_FUEL;
+    let initial_total_fuel = TOTAL_FUEL_START;
 
     println!(
         "Starting Genesis Test with total fuel: {}",
@@ -108,8 +108,8 @@ fn test_genesis() -> Result<()> {
     );
 
     // Initialize FuelTank for the first block
-    FuelTank::initialize(&test_block);
-    let pre_genesis_fuel = TOTAL_FUEL;
+    FuelTank::initialize(&test_block, block_height);
+    let pre_genesis_fuel = TOTAL_FUEL_START;
 
     // Process the genesis block
     index_block(&test_block, block_height)?;
@@ -138,7 +138,7 @@ fn test_genesis() -> Result<()> {
     let test_block2 = alkane_helpers::init_with_multiple_cellpacks_with_tx([].into(), cellpacks2);
 
     // Initialize FuelTank for the second block
-    FuelTank::initialize(&test_block2);
+    FuelTank::initialize(&test_block2, block_height);
     let pre_mint_fuel = unsafe {
         match &FuelTank::get_fuel_tank_copy() {
             Some(tank) => tank.block_fuel,
@@ -147,7 +147,7 @@ fn test_genesis() -> Result<()> {
     };
 
     // Process the mint block
-    index_block(&test_block2, block_height + 1)?;
+    index_block(&test_block2, block_height)?;
 
     // Get fuel state after mint block
     let post_mint_fuel = unsafe {
@@ -224,7 +224,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
     use bitcoin::Txid;
 
     clear();
-    let block_height = 880_000;
+    let block_height = 0;
 
     let test_block = create_block_with_coinbase_tx(block_height);
 
@@ -251,10 +251,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
 
     println!("Balances at end: {:?}", sheet);
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
-    assert_eq!(
-        sheet.get(&genesis_id),
-        50_000_000u128 * (genesis::GENESIS_BLOCK as u128)
-    );
+    assert_eq!(sheet.get(&genesis_id), 50_000_000u128);
     let out = protorune_outpoint_to_outpoint_response(&outpoint, 1)?;
     let out_sheet: BalanceSheet<IndexPointer> = out.into();
     assert_eq!(sheet, out_sheet);
@@ -274,7 +271,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
         }],
     );
     spend_block.txdata.push(spend_tx.clone());
-    index_block(&spend_block, 880_001)?;
+    index_block(&spend_block, 0)?;
     let new_outpoint = OutPoint {
         txid: spend_tx.compute_txid(),
         vout: 0,
@@ -285,9 +282,6 @@ fn test_genesis_indexer_premine() -> Result<()> {
     let new_sheet = load_sheet(&new_ptr);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
-    assert_eq!(
-        new_sheet.get(&genesis_id),
-        50_000_000u128 * (genesis::GENESIS_BLOCK as u128)
-    );
+    assert_eq!(new_sheet.get(&genesis_id), 50_000_000u128);
     Ok(())
 }

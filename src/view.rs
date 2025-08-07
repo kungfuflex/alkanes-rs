@@ -2,16 +2,22 @@ use crate::message::AlkaneMessageContext;
 use crate::network::set_view_mode;
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
 use crate::utils::{
-    alkane_inventory_pointer, balance_pointer, credit_balances, debit_balances, pipe_storagemap_to,
+    alkane_id_to_outpoint, alkane_inventory_pointer, balance_pointer, credit_balances,
+    debit_balances, pipe_storagemap_to,
 };
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
-use crate::vm::utils::{prepare_context, run_after_special, run_special_cellpacks};
+use crate::vm::utils::{
+    prepare_context, run_after_special, run_special_cellpacks, sequence_pointer,
+};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransfer;
 use alkanes_support::proto;
-use alkanes_support::proto::alkanes::{AlkaneInventoryRequest, AlkaneInventoryResponse};
+use alkanes_support::proto::alkanes::{
+    AlkaneIdToOutpointRequest, AlkaneIdToOutpointResponse, AlkaneInventoryRequest,
+    AlkaneInventoryResponse,
+};
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Version;
@@ -33,7 +39,7 @@ use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::{consensus_decode, decode_varint_list};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 #[allow(unused_imports)]
 use std::fmt::Write;
 use std::io::Cursor;
@@ -142,8 +148,8 @@ pub const NAME_OPCODE: u128 = 99;
 pub const SYMBOL_OPCODE: u128 = 100;
 
 // Cache for storing name and symbol values for AlkaneIds
-static STATICS_CACHE: LazyLock<Mutex<HashMap<AlkaneId, (String, String)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static STATICS_CACHE: LazyLock<Mutex<BTreeMap<AlkaneId, (String, String)>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 pub fn get_statics(id: &AlkaneId) -> (String, String) {
     // Try to get from cache first
@@ -260,6 +266,13 @@ pub fn to_alkanes_outpoints(
     cloned
 }
 
+pub fn sequence() -> Result<Vec<u8>> {
+    Ok(sequence_pointer(&AtomicPointer::default())
+        .get_value::<u128>()
+        .to_le_bytes()
+        .to_vec())
+}
+
 pub fn protorunes_by_address(
     input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
@@ -331,6 +344,18 @@ pub fn protorunes_by_height(
         }
         Ok(response)
     })
+}
+
+pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {
+    let request = AlkaneIdToOutpointRequest::parse_from_bytes(input)?;
+    let mut response = AlkaneIdToOutpointResponse::new();
+    let outpoint = alkane_id_to_outpoint(&request.id.unwrap().into())?;
+    // get the human readable txid (LE byte order), but comes out as a string
+    let hex_string = outpoint.txid.to_string();
+    // convert the hex string to a byte array
+    response.txid = hex::decode(hex_string).unwrap();
+    response.vout = outpoint.vout;
+    return Ok(response);
 }
 
 pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
@@ -431,7 +456,7 @@ pub fn simulate_parcel(
     )));
     let mut atomic = parcel.atomic.derive(&IndexPointer::default());
     let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
-    credit_balances(&mut atomic, &myself, &parcel.runes);
+    credit_balances(&mut atomic, &myself, &parcel.runes)?;
     prepare_context(context.clone(), &caller, &myself, false);
     let (response, gas_used) = run_after_special(context.clone(), binary, fuel)?;
     pipe_storagemap_to(
@@ -439,11 +464,11 @@ pub fn simulate_parcel(
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
     );
     let mut combined = parcel.runtime_balances.as_ref().clone();
-    <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(parcel.runes.clone())
-        .pipe(&mut combined);
-    let sheet = <BalanceSheet<AtomicPointer> as From<Vec<RuneTransfer>>>::from(
+    <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(parcel.runes.clone())?
+        .pipe(&mut combined)?;
+    let sheet = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
         response.alkanes.clone().into(),
-    );
+    )?;
     combined.debit_mintable(&sheet, &mut atomic)?;
     debit_balances(&mut atomic, &myself, &response.alkanes)?;
     Ok((response, gas_used))
@@ -478,7 +503,7 @@ pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
         .select(&alkane_id.into())
         .get();
 
-    // Return the uncompressed bytecode
+    // Return the uncompressed bytecode. Note that gzip bomb is not possible since these bytecodes are upper bound by the size of the Witness
     if bytecode.len() > 0 {
         Ok(alkanes_support::gz::decompress(bytecode.to_vec())?)
     } else {

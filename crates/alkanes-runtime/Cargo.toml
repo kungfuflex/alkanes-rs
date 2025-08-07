@@ -1,6 +1,6 @@
 [package]
 name = "alkanes-runtime"
-version = "0.2.3"
+version = "0.5.2"
 edition = "2021"
 description = "ALKANES runtime library"
 license = "MIT"
