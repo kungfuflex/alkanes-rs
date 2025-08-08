@@ -1,3 +1,7 @@
+pub mod utils;
+use crate::utils::{
+    calc_merkle_root, decode_from_vec, extract_witness_payload, SchemaMerkleLeaf, SchemaMerkleProof,
+};
 use alkanes_runtime::storage::StoragePointer;
 use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
 #[allow(unused_imports)]
@@ -12,14 +16,16 @@ use alkanes_support::{
     utils::{shift_bytes32_or_err, shift_or_err},
     witness::find_witness_payload,
 };
-use anyhow::{anyhow, Result};
-use bitcoin::Transaction;
+use anyhow::{anyhow, ensure, Context, Result};
+use bitcoin::{Address, Transaction};
+use borsh::BorshDeserialize;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::{
     compat::{to_arraybuffer_layout, to_passback_ptr},
     utils::{consume_exact, consume_sized_int, consume_to_end},
 };
 use ordinals::{Artifact, Runestone};
+use protorune_support::utils::get_network;
 use protorune_support::{protostone::Protostone, utils::consensus_decode};
 use rs_merkle::{algorithms::Sha256, Hasher, MerkleProof};
 use std::io::Cursor;
@@ -31,7 +37,12 @@ pub struct MerkleDistributor(());
 #[derive(MessageDispatch)]
 enum MerkleDistributorMessage {
     #[opcode(0)]
-    Initialize { length: u128 },
+    Initialize {
+        length: u128,
+        end_height: u128,
+        root_first_half: u128,
+        root_second_half: u128,
+    },
 
     #[opcode(1)]
     Claim,
@@ -45,58 +56,8 @@ pub fn sub_fees(v: u128) -> Result<u128> {
     Ok(overflow_error(v.checked_mul(997))? / 1000)
 }
 
+// storage
 impl MerkleDistributor {
-    pub fn verify_output(&self, vout: u32) -> Result<u128> {
-        let tx = consensus_decode::<Transaction>(&mut std::io::Cursor::new(self.transaction()))?;
-        if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(&tx) {
-            let protostones = Protostone::from_runestone(runestone)?;
-            let message = &protostones[(vout as usize) - tx.output.len() - 1];
-            if message.edicts.len() != 0 {
-                panic!("message cannot contain edicts, only a pointer")
-            }
-            let pointer = message
-                .pointer
-                .ok_or("")
-                .map_err(|_| anyhow!("no pointer in message"))?;
-            if pointer as usize >= tx.output.len() {
-                panic!("pointer cannot be a protomessage");
-            }
-            let mut cursor: Cursor<Vec<u8>> =
-                Cursor::<Vec<u8>>::new(find_witness_payload(&tx, 0).ok_or("").map_err(|_| {
-                    anyhow!("merkle-distributor: witness envelope at index 0 does not contain data")
-                })?);
-            let leaf = consume_exact(&mut cursor, 40)?;
-            let leaf_hash = Sha256::hash(&leaf);
-            let proof = consume_to_end(&mut cursor)?;
-            let mut leaf_cursor = Cursor::new(leaf.clone());
-            let p2sh = consume_exact(&mut leaf_cursor, 20)?;
-            let index = consume_sized_int::<u32>(&mut leaf_cursor)? as usize;
-            let amount = consume_sized_int::<u128>(&mut leaf_cursor)?;
-            if MerkleProof::<Sha256>::try_from(proof)?.verify(
-                self.root()?,
-                &[index],
-                &[leaf_hash],
-                self.length(),
-            ) {
-                if tx.output[(vout as usize) as usize]
-                    .script_pubkey
-                    .clone()
-                    .into_bytes()
-                    .to_vec()
-                    != p2sh
-                {
-                    Err(anyhow!("spendable output created does not match proof"))
-                } else {
-                    Ok(amount)
-                }
-            } else {
-                Err(anyhow!("proof verification failure"))
-            }
-        } else {
-            Err(anyhow!("runestone decipher failed"))
-        }
-    }
-
     pub fn length_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/length")
     }
@@ -115,6 +76,18 @@ impl MerkleDistributor {
 
     pub fn length(&self) -> usize {
         self.length_pointer().get_value::<usize>()
+    }
+
+    pub fn end_height_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/end_height")
+    }
+
+    pub fn set_end_height(&self, v: u128) {
+        self.end_height_pointer().set_value::<u128>(v);
+    }
+
+    pub fn end_height(&self) -> u128 {
+        self.end_height_pointer().get_value::<u128>()
     }
 
     pub fn root(&self) -> Result<[u8; 32]> {
@@ -137,18 +110,138 @@ impl MerkleDistributor {
         self.alkane_pointer().set(Arc::<Vec<u8>>::new(v.into()));
     }
 
-    fn initialize(&self, length: u128) -> Result<CallResponse> {
+    fn get_used_leaf_pointer(&self, leaf_bytes: &Vec<u8>) -> StoragePointer {
+        StoragePointer::from_keyword("/used").select(leaf_bytes)
+    }
+}
+
+impl MerkleDistributor {
+    fn validate_proof(&self, proof: &SchemaMerkleProof) -> Result<()> {
+        let merkle_root = self.root()?;
+        let airdrop_end_height = self.end_height();
+
+        let root_from_proof = calc_merkle_root(&proof.leaf, &proof.proofs);
+
+        let still_in_window = self.height() as u128 <= airdrop_end_height;
+        let root_matches = merkle_root == root_from_proof;
+
+        ensure!(
+            root_matches && still_in_window,
+            "Proof invalid or claim window expired"
+        );
+
+        Ok(())
+    }
+    pub fn validate_protostone_tx(&self, ctx: &alkanes_support::context::Context) -> Result<()> {
+        let tx = consensus_decode::<Transaction>(&mut Cursor::new(self.transaction()))
+            .map_err(|_| anyhow!("failed to decode transaction bytes"))?;
+
+        let runestone = match Runestone::decipher(&tx) {
+            Some(Artifact::Runestone(r)) => r,
+            _ => return Err(anyhow!("transaction does not contain a runestone")),
+        };
+
+        let protostones = Protostone::from_runestone(&runestone)
+            .map_err(|e| anyhow!("failed to parse protostone: {e}"))?;
+
+        let pm_index =
+            ctx.vout
+                .checked_sub(tx.output.len() as u32 + 1)
+                .ok_or_else(|| anyhow!("vout is not a protomessage index"))? as usize;
+
+        let message = protostones
+            .get(pm_index)
+            .ok_or_else(|| anyhow!("no protostone message at computed index"))?;
+
+        if !message.edicts.is_empty() {
+            return Err(anyhow!("protostone message must have zero edicts"));
+        }
+
+        let pointer = message
+            .pointer
+            .ok_or_else(|| anyhow!("protostone message has no pointer"))?;
+
+        if pointer as usize >= tx.output.len() {
+            return Err(anyhow!(
+                "pointer index {pointer} points outside real user outputs"
+            ));
+        }
+
+        if pointer != 0 {
+            return Err(anyhow!("pointer must be set to 0! found {pointer}"));
+        }
+
+        Ok(())
+    }
+    pub fn verify_output(&self, vout: u32) -> Result<u128> {
+        let ctx = self.context()?;
+
+        self.validate_protostone_tx(&ctx)?;
+
+        let tx = self.transaction_object()?;
+
+        let witness_payload = match extract_witness_payload(&tx) {
+            Some(bytes) => bytes,
+            None => return Err(anyhow!("MERKLE DISTRIBUTOR: Failed to decode tx")),
+        };
+
+        let merkle_proof = decode_from_vec!(witness_payload, SchemaMerkleProof)
+            .context("MERKLE DISTRIBUTOR: Failed to decode merkle proof from witness data")?;
+
+        self.validate_proof(&merkle_proof)?;
+
+        let mut ptr_used_leaf = self.get_used_leaf_pointer(&merkle_proof.leaf);
+        let used_leaf_check = ptr_used_leaf.get_value::<u8>();
+
+        ensure!(
+            used_leaf_check == 0u8,
+            "MERKLE DISTRIBUTOR: This leaf has already been used to claim"
+        );
+
+        let leaf = decode_from_vec!(merkle_proof.leaf, SchemaMerkleLeaf)?;
+
+        let caller_script_pub_key = tx
+            .tx_out(0)
+            .context("MERKLE DISTRIBUTOR: vout #0 not present")?
+            .clone()
+            .script_pubkey;
+
+        let tx_address = Address::from_script(&caller_script_pub_key, get_network())?;
+
+        ensure!(
+            tx_address.to_string() == leaf.address,
+            "MERKLE DISTRIBUTOR: vout #0 doesnt contain the address in merkle proof"
+        );
+
+        ptr_used_leaf.set_value(1u8);
+        Ok(leaf.amount)
+    }
+
+    fn initialize(
+        &self,
+        length: u128,
+        end_height: u128,
+        root_first_half: u128,
+        root_second_half: u128,
+    ) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
-        let mut inputs = context.inputs.clone();
         if context.incoming_alkanes.0.len() != 1 {
             return Err(anyhow!("must send 1 alkane to lock for distribution"));
         }
         self.set_alkane(context.incoming_alkanes.0[0].id.clone());
+        self.set_end_height(end_height);
 
         // Extract the remaining parameters from inputs
         self.set_length(length.try_into().unwrap());
-        self.set_root(shift_bytes32_or_err(&mut inputs)?);
+        let root = (&[root_first_half, root_second_half])
+            .to_vec()
+            .into_iter()
+            .fold(Vec::<u8>::new(), |mut r, v| {
+                r.extend(&v.to_le_bytes());
+                r
+            });
+        self.set_root(root);
 
         Ok(CallResponse::default())
     }

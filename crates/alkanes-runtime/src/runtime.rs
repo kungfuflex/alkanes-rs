@@ -215,11 +215,13 @@ pub trait AlkaneResponder: 'static {
             (&buffer[4..]).to_vec()
         }
     }
+    fn transaction_object(&self) -> Result<Transaction> {
+        Ok(consensus_decode::<Transaction>(&mut std::io::Cursor::new(
+            self.transaction(),
+        ))?)
+    }
     fn transaction_id(&self) -> Result<Txid> {
-        Ok(
-            consensus_decode::<Transaction>(&mut std::io::Cursor::new(self.transaction()))?
-                .compute_txid(),
-        )
+        Ok(self.transaction_object()?.compute_txid())
     }
     /*
     fn output(&self, v: &OutPoint) -> Result<Vec<u8>> {

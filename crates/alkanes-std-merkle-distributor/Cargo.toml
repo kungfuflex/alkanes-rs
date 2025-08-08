@@ -17,3 +17,5 @@ protorune-support = { workspace = true }
 ordinals = { workspace = true }
 rs_merkle = "1.4.2"
 ruint = { workspace = true }
+borsh = { version = "1.5.7", features = ["derive"] }
+sha2 = "0.10.9"
