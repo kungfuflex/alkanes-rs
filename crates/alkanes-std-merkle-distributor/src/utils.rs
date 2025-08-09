@@ -29,7 +29,9 @@ pub fn extract_witness_payload(tx: &Transaction) -> Option<Vec<u8>> {
 }
 
 pub fn calc_merkle_root(leaf: &[u8], proofs: &[Vec<u8>]) -> [u8; 32] {
-    let mut node: Vec<u8> = leaf.to_vec();
+    let mut hasher = Sha256::new();
+    hasher.update(leaf);
+    let mut node: Vec<u8> = hasher.finalize().to_vec();
 
     for sib in proofs {
         let (left, right) = if node <= *sib {

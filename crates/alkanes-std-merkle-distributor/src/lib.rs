@@ -111,7 +111,6 @@ impl MerkleDistributor {
         let airdrop_end_height = self.end_height();
 
         let root_from_proof = calc_merkle_root(&proof.leaf, &proof.proofs);
-        println!("proof {:?}", proof);
         ensure!(merkle_root == root_from_proof, "Proof invalid");
         ensure!(self.height() as u128 <= airdrop_end_height, "Expired claim");
 
@@ -192,7 +191,8 @@ impl MerkleDistributor {
             .script_pubkey;
 
         let tx_address = Address::from_script(&caller_script_pub_key, get_network())?;
-
+        println!("tx_address.to_string(): {:?}", tx_address.to_string());
+        println!("leaf.address: {:?}", leaf.address);
         ensure!(
             tx_address.to_string() == leaf.address,
             "MERKLE DISTRIBUTOR: vout #0 doesnt contain the address in merkle proof"
