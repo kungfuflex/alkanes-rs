@@ -34,6 +34,8 @@ pub mod genesis_upgrade;
 #[cfg(test)]
 pub mod memory_security_tests;
 #[cfg(test)]
+pub mod merkle_distributor;
+#[cfg(test)]
 pub mod networks;
 #[cfg(test)]
 pub mod serialization;
