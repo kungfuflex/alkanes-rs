@@ -9,25 +9,15 @@ use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
-use alkanes_support::{
-    id::AlkaneId,
-    parcel::AlkaneTransfer,
-    response::CallResponse,
-    utils::{shift_bytes32_or_err, shift_or_err},
-    witness::find_witness_payload,
-};
+use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, ensure, Context, Result};
 use bitcoin::{Address, Transaction};
 use borsh::BorshDeserialize;
+use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::{
-    compat::{to_arraybuffer_layout, to_passback_ptr},
-    utils::{consume_exact, consume_sized_int, consume_to_end},
-};
 use ordinals::{Artifact, Runestone};
 use protorune_support::utils::get_network;
 use protorune_support::{protostone::Protostone, utils::consensus_decode};
-use rs_merkle::{algorithms::Sha256, Hasher, MerkleProof};
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -121,21 +111,17 @@ impl MerkleDistributor {
         let airdrop_end_height = self.end_height();
 
         let root_from_proof = calc_merkle_root(&proof.leaf, &proof.proofs);
-
-        let still_in_window = self.height() as u128 <= airdrop_end_height;
-        let root_matches = merkle_root == root_from_proof;
-
-        ensure!(
-            root_matches && still_in_window,
-            "Proof invalid or claim window expired"
-        );
+        println!("proof {:?}", proof);
+        ensure!(merkle_root == root_from_proof, "Proof invalid");
+        ensure!(self.height() as u128 <= airdrop_end_height, "Expired claim");
 
         Ok(())
     }
-    pub fn validate_protostone_tx(&self, ctx: &alkanes_support::context::Context) -> Result<()> {
-        let tx = consensus_decode::<Transaction>(&mut Cursor::new(self.transaction()))
-            .map_err(|_| anyhow!("failed to decode transaction bytes"))?;
-
+    pub fn validate_protostone_tx(
+        &self,
+        ctx: &alkanes_support::context::Context,
+        tx: &Transaction,
+    ) -> Result<()> {
         let runestone = match Runestone::decipher(&tx) {
             Some(Artifact::Runestone(r)) => r,
             _ => return Err(anyhow!("transaction does not contain a runestone")),
@@ -173,12 +159,11 @@ impl MerkleDistributor {
 
         Ok(())
     }
-    pub fn verify_output(&self, vout: u32) -> Result<u128> {
+    pub fn verify_output(&self) -> Result<u128> {
         let ctx = self.context()?;
-
-        self.validate_protostone_tx(&ctx)?;
-
         let tx = self.transaction_object()?;
+
+        self.validate_protostone_tx(&ctx, &tx)?;
 
         let witness_payload = match extract_witness_payload(&tx) {
             Some(bytes) => bytes,
@@ -251,7 +236,7 @@ impl MerkleDistributor {
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
         response.alkanes.0.push(AlkaneTransfer {
-            value: self.verify_output(context.vout)?,
+            value: self.verify_output()?,
             id: self.alkane()?,
         });
 

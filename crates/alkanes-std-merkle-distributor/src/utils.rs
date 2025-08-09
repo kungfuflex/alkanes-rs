@@ -1,10 +1,4 @@
-use alkanes_support::{
-    id::AlkaneId,
-    parcel::AlkaneTransfer,
-    response::CallResponse,
-    utils::{shift_bytes32_or_err, shift_or_err},
-    witness::find_witness_payload,
-};
+use alkanes_support::witness::find_witness_payload;
 use bitcoin::Transaction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use sha2::{Digest, Sha256};
@@ -61,7 +55,7 @@ macro_rules! decode_from_vec {
         // Accept anything that turns into a byte slice; `&Vec<u8>` or `&[u8]` both work.
         let mut rdr = Cursor::new(&$bytes[..]);
         <$ty>::deserialize_reader(&mut rdr)
-            .map_err(|_| ::anyhow::anyhow!("TORTILLA: failed to decode {}", stringify!($ty)))
+            .map_err(|_| ::anyhow::anyhow!("failed to decode {}", stringify!($ty)))
     }};
 }
 pub(crate) use decode_from_vec;
