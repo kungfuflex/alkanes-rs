@@ -16,7 +16,6 @@ use borsh::BorshDeserialize;
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
-use protorune_support::utils::get_network;
 use protorune_support::{protostone::Protostone, utils::consensus_decode};
 use std::io::Cursor;
 use std::sync::Arc;
@@ -106,6 +105,18 @@ impl MerkleDistributor {
 }
 
 impl MerkleDistributor {
+    #[cfg(not(any(feature = "mainnet", feature = "regtest",)))]
+    pub fn get_network(&self) -> bitcoin::Network {
+        bitcoin::Network::Regtest
+    }
+    #[cfg(feature = "regtest")]
+    pub fn get_network(&self) -> bitcoin::Network {
+        bitcoin::Network::Regtest
+    }
+    #[cfg(feature = "mainnet")]
+    pub fn get_network(&self) -> bitcoin::Network {
+        bitcoin::Network::Bitcoin
+    }
     fn validate_proof(&self, proof: &SchemaMerkleProof) -> Result<()> {
         let merkle_root = self.root()?;
         let airdrop_end_height = self.end_height();
@@ -189,10 +200,9 @@ impl MerkleDistributor {
             .context("MERKLE DISTRIBUTOR: vout #0 not present")?
             .clone()
             .script_pubkey;
+        println!("caller_script_pub_key {:?}", caller_script_pub_key);
 
-        let tx_address = Address::from_script(&caller_script_pub_key, get_network())?;
-        println!("tx_address.to_string(): {:?}", tx_address.to_string());
-        println!("leaf.address: {:?}", leaf.address);
+        let tx_address = Address::from_script(&caller_script_pub_key, self.get_network())?;
         ensure!(
             tx_address.to_string() == leaf.address,
             "MERKLE DISTRIBUTOR: vout #0 doesnt contain the address in merkle proof"

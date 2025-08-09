@@ -3,7 +3,6 @@ use crate::tests::helpers::{
     assert_binary_deployed_to_id, clear, create_multiple_cellpack_with_witness_and_in,
     init_with_multiple_cellpacks_with_tx,
 };
-use crate::tests::std::alkanes_std_merkle_distributor_build;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
@@ -157,18 +156,20 @@ fn test_merkle_distributor() -> Result<()> {
         inputs: vec![77],
     };
 
+    let merkle_testnet_build = include_bytes!(
+        "../../target/alkanes/wasm32-unknown-unknown/release/alkanes_std_merkle_distributor_regtest.wasm"
+    )
+    .to_vec();
+
     let test_block = init_with_multiple_cellpacks_with_tx(
-        vec![[].into(), alkanes_std_merkle_distributor_build::get_bytes()],
+        vec![[].into(), merkle_testnet_build.clone()],
         vec![mint_diesel, init_cellpack],
     );
 
     index_block(&test_block, block_height)?;
 
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
-    assert_binary_deployed_to_id(
-        merkle_distributor_id.clone(),
-        alkanes_std_merkle_distributor_build::get_bytes(),
-    )?;
+    assert_binary_deployed_to_id(merkle_distributor_id.clone(), merkle_testnet_build.clone())?;
 
     let proof_hashes = generate_proof(&leaf_hashes, 0);
     let merkle_proof = SchemaMerkleProof {

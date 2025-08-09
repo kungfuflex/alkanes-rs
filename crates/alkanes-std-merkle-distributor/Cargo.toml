@@ -3,6 +3,10 @@ name = "alkanes-std-merkle-distributor"
 version = "0.5.2"
 edition = "2021"
 
+[features]
+regtest = []
+mainnet = []
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
