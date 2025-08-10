@@ -38,7 +38,7 @@ fn test_edict_to_protomessage() -> Result<()> {
             previous_output: OutPoint::null(),
             script_sig: ScriptBuf::new(),
             sequence: Sequence::MAX,
-            witness: RawEnvelope::from(alkanes_std_test_build::get_bytes()).to_gzipped_witness(),
+            witness: RawEnvelope::from(alkanes_std_test_build::get_bytes()).to_witness(true),
         }],
         output: vec![
             TxOut {
