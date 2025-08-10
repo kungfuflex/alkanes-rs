@@ -100,7 +100,6 @@ web-sys = { workspace = true }
 js-sys = { workspace = true }
 hex_lit = { workspace = true }
 once_cell = { workspace = true }
-rs_merkle = "1.4.2"
 borsh = { version = "1.5.7", features = ["derive"] }
 sha2 = "0.10.9"
 

@@ -35,6 +35,9 @@ enum MerkleDistributorMessage {
 
     #[opcode(1)]
     Claim,
+
+    #[opcode(50)]
+    ForwardIncoming,
 }
 
 pub fn overflow_error(v: Option<u128>) -> Result<u128> {
@@ -105,13 +108,17 @@ impl MerkleDistributor {
 }
 
 impl MerkleDistributor {
-    #[cfg(not(any(feature = "mainnet", feature = "regtest",)))]
+    #[cfg(not(any(feature = "mainnet", feature = "regtest", feature = "signet",)))]
     pub fn get_network(&self) -> bitcoin::Network {
         bitcoin::Network::Regtest
     }
     #[cfg(feature = "regtest")]
     pub fn get_network(&self) -> bitcoin::Network {
         bitcoin::Network::Regtest
+    }
+    #[cfg(feature = "signet")]
+    pub fn get_network(&self) -> bitcoin::Network {
+        bitcoin::Network::Signet
     }
     #[cfg(feature = "mainnet")]
     pub fn get_network(&self) -> bitcoin::Network {
@@ -251,6 +258,11 @@ impl MerkleDistributor {
         });
 
         Ok(response)
+    }
+
+    fn forward_incoming(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 }
 
