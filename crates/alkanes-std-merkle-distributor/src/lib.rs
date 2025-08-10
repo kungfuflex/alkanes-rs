@@ -35,6 +35,9 @@ enum MerkleDistributorMessage {
 
     #[opcode(1)]
     Claim,
+
+    #[opcode(50)]
+    ForwardIncoming,
 }
 
 pub fn overflow_error(v: Option<u128>) -> Result<u128> {
@@ -255,6 +258,11 @@ impl MerkleDistributor {
         });
 
         Ok(response)
+    }
+
+    fn forward_incoming(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 }
 
