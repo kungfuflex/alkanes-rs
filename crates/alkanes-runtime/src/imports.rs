@@ -9,7 +9,6 @@ extern "C" {
     pub fn abort(a: i32, b: i32, c: i32, d: i32);
     pub fn __load_storage(k: i32, v: i32) -> i32;
     pub fn __request_storage(k: i32) -> i32;
-    pub fn __log(v: i32);
     pub fn __balance(who: i32, what: i32, output: i32);
     pub fn __request_context() -> i32;
     pub fn __load_context(output: i32) -> i32;
@@ -69,9 +68,6 @@ mod exports {
     }
     pub fn __request_storage(k: i32) -> i32 {
         0
-    }
-    pub fn __log(ptr: i32) -> () {
-        externs::write(format!("{}", String::from_utf8(ptr_to_vec(ptr)).unwrap()).as_str());
     }
     pub fn __balance(who: i32, what: i32, output: i32) -> i32 {
         0

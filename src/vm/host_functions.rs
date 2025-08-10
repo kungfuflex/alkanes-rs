@@ -30,7 +30,7 @@ use ordinals::Runestone;
 use protorune_support::protostone::Protostone;
 
 use crate::vm::fuel::{
-    consume_fuel, fuel_extcall_deploy, fuel_per_store_byte, Fuelable, FUEL_BALANCE, FUEL_EXTCALL,
+    consume_fuel, fuel_extcall_deploy, Fuelable, FUEL_BALANCE,
     FUEL_FUEL, FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE,
     FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
