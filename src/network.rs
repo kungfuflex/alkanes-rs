@@ -31,6 +31,14 @@ use {
     std::fmt::Write,
 };
 
+pub fn fr_btc_bytes() -> &'static [u8] {
+    include_bytes!("../../../vendor/fr_btc.wasm")
+}
+
+pub fn fr_sigil_bytes() -> &'static [u8] {
+    include_bytes!("../../../vendor/fr_sigil.wasm")
+}
+
 #[cfg(feature = "mainnet")]
 pub fn genesis_alkane_bytes() -> Vec<u8> {
     alkanes_std_genesis_alkane_mainnet_build::get_bytes()
@@ -180,6 +188,12 @@ pub fn genesis(block: &Block) -> Result<()> {
     IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 2, tx: 0 }).into())
         .set(Arc::new(compress(genesis_alkane_bytes())?));
+    IndexPointer::from_keyword("/alkanes/")
+        .select(&(AlkaneId { block: 32, tx: 0 }).into())
+        .set(Arc::new(compress(fr_btc_bytes().to_vec())?));
+    IndexPointer::from_keyword("/alkanes/")
+        .select(&(AlkaneId { block: 32, tx: 1 }).into())
+        .set(Arc::new(compress(fr_sigil_bytes().to_vec())?));
     let mut atomic: AtomicPointer = AtomicPointer::default();
     sequence_pointer(&atomic).set_value::<u128>(1);
     let myself = AlkaneId { block: 2, tx: 0 };
@@ -231,6 +245,38 @@ pub fn genesis(block: &Block) -> Result<()> {
     pipe_storagemap_to(
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
+    );
+
+    // Initialize frBTC
+    let fr_btc_id = AlkaneId { block: 32, tx: 0 };
+    let fr_btc_parcel = MessageContextParcel {
+        calldata: (Cellpack {
+            target: fr_btc_id.clone(),
+            inputs: vec![0],
+        })
+        .encipher(),
+        ..parcel.clone()
+    };
+    let (fr_btc_response, _) = simulate_parcel(&fr_btc_parcel, u64::MAX)?;
+    pipe_storagemap_to(
+        &fr_btc_response.storage,
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc_id.into())),
+    );
+
+    // Initialize frSIGIL
+    let fr_sigil_id = AlkaneId { block: 32, tx: 1 };
+    let fr_sigil_parcel = MessageContextParcel {
+        calldata: (Cellpack {
+            target: fr_sigil_id.clone(),
+            inputs: vec![0],
+        })
+        .encipher(),
+        ..parcel.clone()
+    };
+    let (fr_sigil_response, _) = simulate_parcel(&fr_sigil_parcel, u64::MAX)?;
+    pipe_storagemap_to(
+        &fr_sigil_response.storage,
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_sigil_id.into())),
     );
 
     atomic
