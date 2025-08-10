@@ -14,8 +14,7 @@ use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransferParcel;
 use anyhow::Result;
-use bitcoin::hashes::Hash;
-use bitcoin::{Block, OutPoint, Transaction, Txid};
+use bitcoin::{Block, OutPoint, Transaction};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::balance_sheet::PersistentRecord;
@@ -31,6 +30,7 @@ use {
     metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
+
 
 #[cfg(feature = "mainnet")]
 pub fn genesis_alkane_bytes() -> Vec<u8> {
@@ -182,9 +182,6 @@ pub fn genesis(block: &Block) -> Result<()> {
         .select(&(AlkaneId { block: 2, tx: 0 }).into())
         .set(Arc::new(compress(genesis_alkane_bytes())?));
     IndexPointer::from_keyword("/alkanes/")
-        .select(&(AlkaneId { block: 32, tx: 0 }).into())
-        .set(Arc::new(compress(fr_btc_mainnet_build::get_bytes())?));
-    IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 32, tx: 1 }).into())
         .set(Arc::new(compress(fr_sigil_build::get_bytes())?));
     let mut atomic: AtomicPointer = AtomicPointer::default();
@@ -316,7 +313,6 @@ pub fn genesis(block: &Block) -> Result<()> {
         &response2.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
     );
-
     atomic
         .derive(&RUNES.OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
         .set_value(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT);

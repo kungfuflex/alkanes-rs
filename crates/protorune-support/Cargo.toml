@@ -17,10 +17,8 @@ ordinals = { path = "../ordinals" }
 anyhow = "1.0.90"
 metashrew-support = { workspace = true }
 hex = "0.4.3"
-protobuf = "3.6.0"
+prost = { workspace = true }
 bech32 = "0.11.0"
 
 [build-dependencies]
-protobuf-codegen = "3.4.0"
-protoc-rust = { version = "2.28.0" }
-protoc-bin-vendored = "3.0.0"
+prost-build = { workspace = true }
