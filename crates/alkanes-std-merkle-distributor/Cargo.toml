@@ -7,6 +7,10 @@ edition = "2021"
 regtest = []
 signet = []
 mainnet = []
+dogecoin = []
+luckycoin = []
+fractal = []
+bellscoin = []
 
 [lib]
 crate-type = ["cdylib", "rlib"]
