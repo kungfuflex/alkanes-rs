@@ -4,7 +4,7 @@ use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
     alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
     alkanes_std_genesis_alkane_regtest_build, alkanes_std_genesis_alkane_upgraded_mainnet_build,
-    alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_mainnet_build, fr_sigil_build,
+    alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_signet_build, fr_btc_mainnet_build, fr_sigil_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -35,6 +35,20 @@ use {
 #[cfg(feature = "mainnet")]
 pub fn genesis_alkane_bytes() -> Vec<u8> {
     alkanes_std_genesis_alkane_mainnet_build::get_bytes()
+}
+
+#[cfg(feature = "testnet")]
+pub fn fr_btc_bytes() -> Vec<u8> {
+  fr_btc_signet_build::get_bytes()
+}
+
+#[cfg(feature = "mainnet")]
+pub fn fr_btc_bytes() -> Vec<u8> {
+  fr_btc_mainnet_build::get_bytes()
+}
+
+pub fn fr_sigil_bytes() -> Vec<u8> {
+  fr_sigil_build::get_bytes()
 }
 
 //use if regtest
@@ -182,6 +196,9 @@ pub fn genesis(block: &Block) -> Result<()> {
         .select(&(AlkaneId { block: 2, tx: 0 }).into())
         .set(Arc::new(compress(genesis_alkane_bytes())?));
     IndexPointer::from_keyword("/alkanes/")
+        .select(&(AlkaneId { block: 32, tx: 0 }).into())
+        .set(Arc::new(compress(fr_btc_bytes())?));
+    IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 32, tx: 1 }).into())
         .set(Arc::new(compress(fr_sigil_build::get_bytes())?));
     let mut atomic: AtomicPointer = AtomicPointer::default();
@@ -227,7 +244,7 @@ pub fn genesis(block: &Block) -> Result<()> {
         refund_pointer: 0,
         calldata: (Cellpack {
             target: fr_btc.clone(),
-            inputs: vec![0, 1],
+            inputs: vec![0],
         })
         .encipher(),
         sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
@@ -265,14 +282,14 @@ pub fn genesis(block: &Block) -> Result<()> {
             Err(e)
         }
     })?;
-    let (response3, _gas_used3) = (match simulate_parcel(&parcel3, u64::MAX) {
+    let (response3, _gas_used3) = (match simulate_parcel(&parcel2, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
             println!("{:?}", e);
             Err(e)
         }
     })?;
-    let (response2, _gas_used2) = (match simulate_parcel(&parcel2, u64::MAX) {
+    let (response2, _gas_used2) = (match simulate_parcel(&parcel3, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
             println!("{:?}", e);
