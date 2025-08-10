@@ -535,10 +535,9 @@ pub fn gettransaction(input: &Vec<u8>) -> Result<Vec<u8>> {
     use crate::etl;
     use alkanes_support::proto::alkanes::{TransactionRequest, TransactionResponse};
     use bitcoin::Txid;
-    use protobuf::Message;
     use std::str::FromStr;
 
-    let request = TransactionRequest::parse_from_bytes(input)?;
+    let request = TransactionRequest::decode(&input[..])?;
     let txid = Txid::from_slice(&request.txid)?;
 
     // Get the transaction from the etl module
@@ -547,9 +546,8 @@ pub fn gettransaction(input: &Vec<u8>) -> Result<Vec<u8>> {
     // Create a response with the transaction data
     let response = TransactionResponse {
         transaction: serialize(&transaction),
-        special_fields: protobuf::SpecialFields::new(),
     };
 
     // Serialize the response
-    response.write_to_bytes().map_err(|e| anyhow!("{:?}", e))
+    Ok(response.encode_to_vec())
 }

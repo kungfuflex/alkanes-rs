@@ -181,7 +181,6 @@ pub fn genesis(block: &Block) -> Result<()> {
     IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 2, tx: 0 }).into())
         .set(Arc::new(compress(genesis_alkane_bytes())?));
-        .set(Arc::new(compress(fr_btc_mainnet_build::get_bytes())?));
     IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 32, tx: 1 }).into())
         .set(Arc::new(compress(fr_sigil_build::get_bytes())?));

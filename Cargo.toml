@@ -10,6 +10,7 @@ resolver = "2"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+
 [workspace]
 members = [".", "crates/*"]
 
