@@ -105,13 +105,17 @@ impl MerkleDistributor {
 }
 
 impl MerkleDistributor {
-    #[cfg(not(any(feature = "mainnet", feature = "regtest",)))]
+    #[cfg(not(any(feature = "mainnet", feature = "regtest", feature = "signet",)))]
     pub fn get_network(&self) -> bitcoin::Network {
         bitcoin::Network::Regtest
     }
     #[cfg(feature = "regtest")]
     pub fn get_network(&self) -> bitcoin::Network {
         bitcoin::Network::Regtest
+    }
+    #[cfg(feature = "signet")]
+    pub fn get_network(&self) -> bitcoin::Network {
+        bitcoin::Network::Signet
     }
     #[cfg(feature = "mainnet")]
     pub fn get_network(&self) -> bitcoin::Network {

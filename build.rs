@@ -130,6 +130,7 @@ fn main() {
                     ("mainnet", vec!["mainnet"]),
                     ("fractal", vec!["fractal"]),
                     ("regtest", vec!["regtest"]),
+                    ("signet", vec!["signet"]),
                     ("testnet", vec!["regtest"]), // testnet uses regtest features
                 ];
 
