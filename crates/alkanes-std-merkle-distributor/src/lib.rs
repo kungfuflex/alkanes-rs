@@ -2,6 +2,7 @@ pub mod utils;
 use crate::utils::{
     calc_merkle_root, decode_from_vec, extract_witness_payload, SchemaMerkleLeaf, SchemaMerkleProof,
 };
+use alkanes_runtime::auth::AuthenticatedResponder;
 use alkanes_runtime::storage::StoragePointer;
 use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
 #[allow(unused_imports)]
@@ -9,6 +10,7 @@ use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
+use alkanes_support::parcel::AlkaneTransferParcel;
 use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, ensure, Context, Result};
 use bitcoin::{Address, Transaction};
@@ -27,6 +29,8 @@ pub struct MerkleDistributor(());
 enum MerkleDistributorMessage {
     #[opcode(0)]
     Initialize {
+        input_alkane: AlkaneId,
+        input_amount: u128,
         length: u128,
         end_height: u128,
         root_first_half: u128,
@@ -36,8 +40,14 @@ enum MerkleDistributorMessage {
     #[opcode(1)]
     Claim,
 
+    #[opcode(2)]
+    AuthCleanup { alkane: AlkaneId },
+
     #[opcode(50)]
     ForwardIncoming,
+
+    #[opcode(51)]
+    Donate,
 }
 
 pub fn overflow_error(v: Option<u128>) -> Result<u128> {
@@ -207,7 +217,6 @@ impl MerkleDistributor {
             .context("MERKLE DISTRIBUTOR: vout #0 not present")?
             .clone()
             .script_pubkey;
-        println!("caller_script_pub_key {:?}", caller_script_pub_key);
 
         let tx_address = Address::from_script(&caller_script_pub_key, self.get_network())?;
         ensure!(
@@ -219,8 +228,31 @@ impl MerkleDistributor {
         Ok(leaf.amount)
     }
 
+    fn _return_leftovers(
+        &self,
+        input_alkane: AlkaneId,
+        input_amount: u128,
+        input_alkanes: AlkaneTransferParcel,
+    ) -> Result<CallResponse> {
+        let mut response = CallResponse::default();
+        for id in input_alkanes.0 {
+            let value = if id.id == input_alkane {
+                id.value - input_amount
+            } else {
+                id.value
+            };
+            response.alkanes.pay(AlkaneTransfer {
+                id: id.id,
+                value: value,
+            });
+        }
+        Ok(response)
+    }
+
     fn initialize(
         &self,
+        input_alkane: AlkaneId,
+        input_amount: u128,
         length: u128,
         end_height: u128,
         root_first_half: u128,
@@ -228,10 +260,13 @@ impl MerkleDistributor {
     ) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
-        if context.incoming_alkanes.0.len() != 1 {
-            return Err(anyhow!("must send 1 alkane to lock for distribution"));
+        let myself = context.myself;
+        if self.balance(&myself, &input_alkane) < input_amount {
+            return Err(anyhow!(
+                "user specified input amount is greater than actual input amount"
+            ));
         }
-        self.set_alkane(context.incoming_alkanes.0[0].id.clone());
+        self.set_alkane(input_alkane.clone());
         self.set_end_height(end_height);
 
         // Extract the remaining parameters from inputs
@@ -245,7 +280,10 @@ impl MerkleDistributor {
             });
         self.set_root(root);
 
-        Ok(CallResponse::default())
+        let mut response =
+            self._return_leftovers(input_alkane, input_amount, context.incoming_alkanes)?;
+        response.alkanes.pay(self.deploy_self_auth_token(5)?);
+        Ok(response)
     }
 
     fn claim(&self) -> Result<CallResponse> {
@@ -260,13 +298,30 @@ impl MerkleDistributor {
         Ok(response)
     }
 
+    fn auth_cleanup(&self, alkane: AlkaneId) -> Result<CallResponse> {
+        self.only_owner()?;
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.alkanes.0.push(AlkaneTransfer {
+            value: self.balance(&context.myself, &alkane),
+            id: alkane,
+        });
+
+        Ok(response)
+    }
+
     fn forward_incoming(&self) -> Result<CallResponse> {
         let context = self.context()?;
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
+
+    fn donate(&self) -> Result<CallResponse> {
+        Ok(CallResponse::default())
+    }
 }
 
 impl AlkaneResponder for MerkleDistributor {}
+impl AuthenticatedResponder for MerkleDistributor {}
 
 // Use the new macro format
 declare_alkane! {
