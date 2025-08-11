@@ -1,7 +1,7 @@
 use crate::index_block;
 use crate::tests::helpers::{
     assert_binary_deployed_to_id, clear, create_multiple_cellpack_with_witness_and_in,
-    init_with_multiple_cellpacks_with_tx,
+    get_last_outpoint_sheet, init_with_multiple_cellpacks_with_tx,
 };
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
@@ -9,6 +9,7 @@ use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::{OutPoint, Witness};
 use protorune::test_helpers::{create_block_with_coinbase_tx, ADDRESS1, ADDRESS2};
+use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -115,7 +116,6 @@ fn test_merkle_distributor() -> Result<()> {
         address: ADDRESS1(),
         amount: 1_000_000,
     })?;
-    println!("leaf1 {:?}", leaf1);
     let leaf2 = borsh::to_vec(&SchemaMerkleLeaf {
         address: ADDRESS2(),
         amount: 1_000_000,
@@ -143,8 +143,10 @@ fn test_merkle_distributor() -> Result<()> {
     let init_cellpack = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
         inputs: vec![
-            0,       // opcode 0 = initialize
-            4,       // length of the merkle tree
+            0, // opcode 0 = initialize
+            2,
+            0, // alkane id of input alkane
+            312500000,
             900_000, // block deadline
             root_first_half,
             root_second_half,
@@ -199,6 +201,9 @@ fn test_merkle_distributor() -> Result<()> {
         ));
 
     index_block(&claim_block, block_height + 1)?;
+
+    let sheet = get_last_outpoint_sheet(&claim_block)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }), 1_000_000);
 
     Ok(())
 }
