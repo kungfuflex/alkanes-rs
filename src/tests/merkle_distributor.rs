@@ -116,7 +116,6 @@ fn test_merkle_distributor() -> Result<()> {
         address: ADDRESS1(),
         amount: 1_000_000,
     })?;
-    println!("leaf1 {:?}", leaf1);
     let leaf2 = borsh::to_vec(&SchemaMerkleLeaf {
         address: ADDRESS2(),
         amount: 1_000_000,
@@ -148,7 +147,6 @@ fn test_merkle_distributor() -> Result<()> {
             2,
             0, // alkane id of input alkane
             312500000,
-            4,       // length of the merkle tree
             900_000, // block deadline
             root_first_half,
             root_second_half,

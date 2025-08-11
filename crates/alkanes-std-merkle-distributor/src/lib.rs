@@ -31,7 +31,6 @@ enum MerkleDistributorMessage {
     Initialize {
         input_alkane: AlkaneId,
         input_amount: u128,
-        length: u128,
         end_height: u128,
         root_first_half: u128,
         root_second_half: u128,
@@ -60,24 +59,12 @@ pub fn sub_fees(v: u128) -> Result<u128> {
 
 // storage
 impl MerkleDistributor {
-    pub fn length_pointer(&self) -> StoragePointer {
-        StoragePointer::from_keyword("/length")
-    }
-
     pub fn root_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/root")
     }
 
-    pub fn set_length(&self, v: usize) {
-        self.length_pointer().set_value::<usize>(v);
-    }
-
     pub fn set_root(&self, v: Vec<u8>) {
         self.root_pointer().set(Arc::new(v))
-    }
-
-    pub fn length(&self) -> usize {
-        self.length_pointer().get_value::<usize>()
     }
 
     pub fn end_height_pointer(&self) -> StoragePointer {
@@ -253,7 +240,6 @@ impl MerkleDistributor {
         &self,
         input_alkane: AlkaneId,
         input_amount: u128,
-        length: u128,
         end_height: u128,
         root_first_half: u128,
         root_second_half: u128,
@@ -269,8 +255,6 @@ impl MerkleDistributor {
         self.set_alkane(input_alkane.clone());
         self.set_end_height(end_height);
 
-        // Extract the remaining parameters from inputs
-        self.set_length(length.try_into().unwrap());
         let root = (&[root_first_half, root_second_half])
             .to_vec()
             .into_iter()
