@@ -16,7 +16,7 @@ use alkanes_support::{
 };
 #[allow(unused_imports)]
 use anyhow::{anyhow, Result};
-use bitcoin::Transaction;
+use bitcoin::{BlockHash, Transaction};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -35,9 +35,13 @@ use crate::vm::fuel::{
     FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
 use protorune_support::utils::{consensus_encode, decode_varint_list};
+use std::collections::BTreeMap;
 use std::io::Cursor;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use wasmi::*;
+
+static DIESEL_MINTS_CACHE: LazyLock<Mutex<BTreeMap<BlockHash, u128>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 pub struct AlkanesHostFunctionsImpl(());
 
@@ -622,6 +626,15 @@ impl AlkanesHostFunctionsImpl {
             let context_guard = caller.data_mut().context.lock().unwrap();
             context_guard.message.block.clone()
         };
+        let block_hash = block.block_hash();
+
+        if let Ok(cache) = DIESEL_MINTS_CACHE.lock() {
+            if let Some(count) = cache.get(&block_hash) {
+                let mut response = CallResponse::default();
+                response.data = count.to_le_bytes().to_vec();
+                return Ok(response);
+            }
+        }
         let mut counter: u128 = 0;
         for tx in &block.txdata {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
@@ -643,6 +656,9 @@ impl AlkanesHostFunctionsImpl {
                     }
                 }
             }
+        }
+        if let Ok(mut cache) = DIESEL_MINTS_CACHE.lock() {
+            cache.insert(block_hash, counter);
         }
         let mut response = CallResponse::default();
         response.data = counter.to_le_bytes().to_vec();
