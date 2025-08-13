@@ -40,8 +40,8 @@ use std::io::Cursor;
 use std::sync::{Arc, LazyLock, Mutex};
 use wasmi::*;
 
-// static DIESEL_MINTS_CACHE: LazyLock<Mutex<BTreeMap<BlockHash, u128>>> =
-//     LazyLock::new(|| Mutex::new(BTreeMap::new()));
+static DIESEL_MINTS_CACHE: LazyLock<Mutex<BTreeMap<BlockHash, u128>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 pub struct AlkanesHostFunctionsImpl(());
 
@@ -626,53 +626,45 @@ impl AlkanesHostFunctionsImpl {
             let context_guard = caller.data_mut().context.lock().unwrap();
             context_guard.message.block.clone()
         };
-        println!("got block");
         let block_hash = block.block_hash();
 
-        // if let Ok(cache) = DIESEL_MINTS_CACHE.lock() {
-        //     if let Some(count) = cache.get(&block_hash) {
-        //         let mut response = CallResponse::default();
-        //         response.data = count.to_le_bytes().to_vec();
-        //         return Ok(response);
-        //     }
-        // }
+        if let Ok(cache) = DIESEL_MINTS_CACHE.lock() {
+            if let Some(count) = cache.get(&block_hash) {
+                let mut response = CallResponse::default();
+                response.data = count.to_le_bytes().to_vec();
+                return Ok(response);
+            }
+        }
         let mut counter: u128 = 0;
         for tx in &block.txdata {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
-                println!("found mint");
                 let protostones = Protostone::from_runestone(runestone)?;
                 for protostone in protostones {
-                    println!("processing protostone {:?}", protostone);
                     let calldata: Vec<u8> = protostone
                         .message
                         .iter()
                         .flat_map(|v| v.to_be_bytes())
                         .collect();
-                    println!("calldata {:?}", calldata);
                     if calldata.len() == 0 {
                         continue;
                     }
                     let cellpack: Cellpack =
                         decode_varint_list(&mut Cursor::new(calldata))?.try_into()?;
-                    println!("cellpack {:?}", cellpack);
                     if cellpack.target == AlkaneId::new(2, 0)
                         && cellpack.inputs.len() != 0
                         && cellpack.inputs[0] == 77
                     {
-                        println!("increasing counter {:?}", counter);
                         counter += 1;
                         break;
                     }
                 }
             }
         }
-        println!("finished counting, found {:?} mints", counter);
-        // if let Ok(mut cache) = DIESEL_MINTS_CACHE.lock() {
-        //     cache.insert(block_hash, counter);
-        // }
+        if let Ok(mut cache) = DIESEL_MINTS_CACHE.lock() {
+            cache.insert(block_hash, counter);
+        }
         let mut response = CallResponse::default();
         response.data = counter.to_le_bytes().to_vec();
-        println!("response {:?}", response);
         Ok(response)
     }
     fn _handle_special_extcall(
