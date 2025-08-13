@@ -988,7 +988,10 @@ impl Protorune {
         Ok(())
     }
 
-    pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_block<T: MessageContext>(
+        block: Arc<Block>,
+        height: u64,
+    ) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));

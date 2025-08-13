@@ -20,9 +20,11 @@ use bitcoin::Transaction;
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
-    print, println,
+    print,
+    println,
     stdio::{stdout, Write},
 };
+use std::fmt::Write as FmtWrite;
 use metashrew_support::index_pointer::KeyValuePointer;
 use num::traits::ToBytes;
 use ordinals::Artifact;
@@ -612,38 +614,44 @@ impl AlkanesHostFunctionsImpl {
 
     fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
         // Return the current block header
-        #[cfg(feature = "debug-log")]
-        {
-            println!("Precompiled contract: returning total number of diesel mints in this block");
-        }
+        println!("[DIESEL] Precompiled contract: returning total number of diesel mints in this block");
 
         // Get the block header from the current context
         let block = {
             let context_guard = caller.data_mut().context.lock().unwrap();
             context_guard.message.block.clone()
         };
+        println!("[DIESEL] Block cloned");
         let mut counter: u128 = 0;
-        for tx in &block.txdata {
+        for (i, tx) in block.txdata.iter().enumerate() {
+            println!("[DIESEL] Processing tx {}", i);
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
+                println!("[DIESEL] Runestone deciphered");
                 let protostones = Protostone::from_runestone(runestone)?;
+                println!("[DIESEL] Protostones from runestone");
                 for protostone in protostones {
+                    println!("[DIESEL] Processing protostone");
                     let calldata: Vec<u8> = protostone
                         .message
                         .iter()
                         .flat_map(|v| v.to_be_bytes())
                         .collect();
+                    println!("[DIESEL] Calldata collected");
                     let cellpack: Cellpack =
                         decode_varint_list(&mut Cursor::new(calldata))?.try_into()?;
+                    println!("[DIESEL] Cellpack decoded");
                     if cellpack.target == AlkaneId::new(2, 0)
                         && cellpack.inputs.len() != 0
                         && cellpack.inputs[0] == 77
                     {
+                        println!("[DIESEL] DIESEL mint found!");
                         counter += 1;
                         break;
                     }
                 }
             }
         }
+        println!("[DIESEL] Loop finished, returning {} mints", counter);
         let mut response = CallResponse::default();
         response.data = counter.to_le_bytes().to_vec();
         Ok(response)

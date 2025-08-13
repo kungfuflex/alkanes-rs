@@ -84,11 +84,11 @@ use protorune_support::proto::protorune::ProtorunesWalletRequest;
 #[cfg(feature = "cache")]
 use std::sync::Arc;
 
-pub fn index_block(block: &Block, height: u32) -> Result<()> {
+pub fn index_block(block: &Arc<Block>, height: u32) -> Result<()> {
     configure_network();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
-        genesis(&block).unwrap();
+        genesis(block).unwrap();
     }
     if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
         let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
@@ -99,11 +99,11 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
         }
     }
-    FuelTank::initialize(&block, height);
+    FuelTank::initialize(block, height);
 
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
-        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
+        Protorune::index_block::<AlkaneMessageContext>(Arc::clone(block), height.into())?;
 
     #[cfg(feature = "cache")]
     {

@@ -75,6 +75,12 @@ Based on the existing codebase, the project appears to have established:
        - Previously would have cost ~3,000,000 fuel units (2 units per byte)
        - Significant savings that prevent "all fuel consumed" errors
 
+6. **Zero-Copy Block Handling**: The block handling logic has been optimized to reduce memory copies and improve performance:
+   - Changed `bitcoin::Block` to `Arc<bitcoin::Block>` in function arguments to avoid cloning the entire block.
+   - Updated `index_extensions` and `get_block` in `src/etl.rs` to work with `Arc<bitcoin::Block>`, eliminating unnecessary serialization and deserialization copies.
+   - Modified `index_block` in `src/indexer.rs` and `crates/protorune/src/lib.rs` to accept `Arc<bitcoin::Block>`, propagating the zero-copy pattern through the call stack.
+   - This ensures that the large `Block` object is not repeatedly cloned during indexing, leading to significant performance improvements.
+
 ## Next Steps
 
 Based on the project structure and documentation, potential next steps could include:

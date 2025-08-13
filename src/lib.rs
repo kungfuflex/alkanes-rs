@@ -15,6 +15,7 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
 use protobuf::{Message, MessageField};
 use std::io::Cursor;
+use std::sync::Arc;
 use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
@@ -393,8 +394,9 @@ pub fn _start() {
         .unwrap()
         .to_consensus();
     #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin")))]
-    let block: Block =
-        consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
+    let block: Arc<Block> = Arc::new(
+        consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap(),
+    );
 
     index_block(&block, height).unwrap();
     etl::index_extensions(height, &block);
