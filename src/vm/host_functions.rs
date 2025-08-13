@@ -649,6 +649,9 @@ impl AlkanesHostFunctionsImpl {
                         .flat_map(|v| v.to_be_bytes())
                         .collect();
                     println!("calldata {:?}", calldata);
+                    if calldata.len() == 0 {
+                        continue;
+                    }
                     let cellpack: Cellpack =
                         decode_varint_list(&mut Cursor::new(calldata))?.try_into()?;
                     println!("cellpack {:?}", cellpack);
