@@ -626,6 +626,7 @@ impl AlkanesHostFunctionsImpl {
             let context_guard = caller.data_mut().context.lock().unwrap();
             context_guard.message.block.clone()
         };
+        println!("got block");
         let block_hash = block.block_hash();
 
         if let Ok(cache) = DIESEL_MINTS_CACHE.lock() {
@@ -638,6 +639,7 @@ impl AlkanesHostFunctionsImpl {
         let mut counter: u128 = 0;
         for tx in &block.txdata {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
+                println!("found mint");
                 let protostones = Protostone::from_runestone(runestone)?;
                 for protostone in protostones {
                     let calldata: Vec<u8> = protostone
