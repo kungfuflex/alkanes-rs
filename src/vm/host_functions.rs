@@ -624,7 +624,7 @@ impl AlkanesHostFunctionsImpl {
         };
         let mut counter: u128 = 0;
         for tx in &block.txdata {
-            if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
+            if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(&tx.clone()) {
                 let protostones = Protostone::from_runestone(runestone)?;
                 for protostone in protostones {
                     let calldata: Vec<u8> = protostone
