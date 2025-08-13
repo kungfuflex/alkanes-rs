@@ -16,7 +16,7 @@ use alkanes_support::{
 };
 #[allow(unused_imports)]
 use anyhow::{anyhow, Result};
-use bitcoin::Transaction;
+use bitcoin::{BlockHash, Transaction};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -35,8 +35,9 @@ use crate::vm::fuel::{
     FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
 use protorune_support::utils::{consensus_encode, decode_varint_list};
+use std::collections::BTreeMap;
 use std::io::Cursor;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use wasmi::*;
 
 pub struct AlkanesHostFunctionsImpl(());
@@ -632,6 +633,9 @@ impl AlkanesHostFunctionsImpl {
                         .iter()
                         .flat_map(|v| v.to_be_bytes())
                         .collect();
+                    if calldata.len() == 0 {
+                        continue;
+                    }
                     let cellpack: Cellpack =
                         decode_varint_list(&mut Cursor::new(calldata))?.try_into()?;
                     if cellpack.target == AlkaneId::new(2, 0)
