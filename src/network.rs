@@ -98,6 +98,7 @@ pub mod genesis {
     pub const GENESIS_BLOCK: u64 = 0;
     pub const GENESIS_OUTPOINT: &str =
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
+    pub const GENESIS_ADDRESS: &str = "bc1qr43vnp5j8uwwqdw93acajakem37rxd448wjw9h";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 0;
 }
@@ -107,6 +108,7 @@ pub mod genesis {
     pub const GENESIS_BLOCK: u64 = 880_000;
     pub const GENESIS_OUTPOINT: &str =
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
+    pub const GENESIS_ADDRESS: &str = "bc1qr43vnp5j8uwwqdw93acajakem37rxd448wjw9h";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 908_888;
 }
@@ -116,6 +118,7 @@ pub mod genesis {
     pub const GENESIS_BLOCK: u64 = 400_000;
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
+    pub const GENESIS_ADDRESS: &str = "TODO";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 228_194;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 759_865;
 }
@@ -125,6 +128,7 @@ pub mod genesis {
     pub const GENESIS_BLOCK: u64 = 6_000_000;
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
+    pub const GENESIS_ADDRESS: &str = "TODO";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 5_730_675;
 }
@@ -134,6 +138,7 @@ pub mod genesis {
     pub const GENESIS_BLOCK: u64 = 400_000;
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
+    pub const GENESIS_ADDRESS: &str = "TODO";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 1_664_317;
 }
@@ -250,6 +255,9 @@ pub fn genesis(block: &Block) -> Result<()> {
                 .rev()
                 .collect::<Vec<u8>>(),
         ));
+    atomic
+        .derive(tables::OUTPOINTS_FOR_ADDRESS.select(&address.clone()))
+        .append(Arc::new(outpoint_bytes.clone()));
     atomic.commit();
     Ok(())
 }
