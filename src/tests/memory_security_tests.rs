@@ -1,16 +1,11 @@
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_test_build;
-use crate::vm::utils::{get_memory, read_arraybuffer};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::parcel::{AlkaneTransfer, AlkaneTransferParcel};
-use alkanes_support::storage::StorageMap;
-use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::{OutPoint, Witness};
 use protorune_support::balance_sheet::BalanceSheetOperations;
-use std::io::Cursor;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 // Helper function to create a malformed cellpack with extremely large inputs

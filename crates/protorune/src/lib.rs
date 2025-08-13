@@ -2,15 +2,16 @@ use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
-    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
+    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor,
 };
 use crate::tables::RuneTable;
 use anyhow::{anyhow, Ok, Result};
 use balance_sheet::clear_balances;
+use alkanes_support::logging;
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
-use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut, Txid};
+use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -741,8 +742,10 @@ impl Protorune {
     }
     pub fn index_outpoints(block: &Block, height: u64) -> Result<()> {
         let mut atomic = AtomicPointer::default();
+        let mut outpoint_count = 0;
         for tx in &block.txdata {
             for i in 0..tx.output.len() {
+                outpoint_count += 1;
                 let outpoint_bytes = outpoint_encode(
                     &(OutPoint {
                         txid: tx.compute_txid(),
@@ -764,6 +767,7 @@ impl Protorune {
                     ));
             }
         }
+        logging::record_outpoints(outpoint_count);
         atomic.commit();
         Ok(())
     }
@@ -835,8 +839,8 @@ impl Protorune {
         height: u64,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        unallocated_to: u32,
+        _balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        _unallocated_to: u32,
     ) -> Result<()> {
         // Check if this transaction is in the blacklist
         let tx_id = tx.compute_txid();
@@ -853,6 +857,7 @@ impl Protorune {
         }
 
         let protostones = Protostone::from_runestone(runestone)?;
+        logging::record_protostone_run();
 
         if protostones.len() != 0 {
             let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
@@ -924,6 +929,7 @@ impl Protorune {
                     let mut prior_balance_sheet = BalanceSheet::default();
                     let mut did_message_fail_and_refund = false;
                     if stone.is_message() && stone.protocol_tag == T::protocol_tag() {
+                        logging::record_protostone_with_cellpack();
                         let success = stone.process_message::<T>(
                             &mut atomic.derive(&IndexPointer::default()),
                             tx,

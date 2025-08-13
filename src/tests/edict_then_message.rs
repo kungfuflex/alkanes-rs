@@ -7,7 +7,6 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-use bitcoin::address::NetworkChecked;
 use bitcoin::{transaction::Version, ScriptBuf, Sequence};
 use bitcoin::{Address, Amount, Block, OutPoint, Transaction, TxIn, TxOut, Witness};
 use metashrew_core::{

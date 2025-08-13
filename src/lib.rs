@@ -1,6 +1,10 @@
 use crate::indexer::configure_network;
 use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate_safe};
 use alkanes_support::proto;
+use metashrew_support::compat::export_bytes;
+use metashrew_support::utils::consensus_decode;
+use protobuf::MessageField;
+use view::parcels_from_protobuf;
 use bitcoin::{Block, OutPoint};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -9,13 +13,11 @@ use metashrew_core::{
 };
 #[allow(unused_imports)]
 use metashrew_support::block::AuxpowBlock;
-use metashrew_support::compat::export_bytes;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
-use protobuf::{Message, MessageField};
+use metashrew_support::utils::{consume_sized_int, consume_to_end};
+use protobuf::Message;
 use std::io::Cursor;
-use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
 pub mod indexer;

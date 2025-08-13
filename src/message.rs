@@ -1,16 +1,16 @@
 use crate::network::{genesis::GENESIS_BLOCK, is_active};
 use crate::trace::save_trace;
-use crate::utils::{balance_pointer, credit_balances, debit_balances, pipe_storagemap_to};
+use crate::utils::{credit_balances, debit_balances, pipe_storagemap_to};
 use crate::vm::{
-    fuel::{FuelTank, VirtualFuelBytes},
+    fuel::{AlkanesTransaction, FuelTank},
     runtime::AlkanesRuntimeContext,
     utils::{prepare_context, run_after_special, run_special_cellpacks},
 };
-use alkanes_support::id::AlkaneId;
 use alkanes_support::{
     cellpack::Cellpack,
     response::ExtendedCallResponse,
     trace::{TraceContext, TraceEvent, TraceResponse},
+    virtual_fuel::VirtualFuelBytes,
 };
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
@@ -88,7 +88,7 @@ pub fn handle_message(
 
     credit_balances(&mut atomic, &myself, &parcel.runes)?;
     prepare_context(context.clone(), &caller, &myself, false);
-    let txsize = parcel.transaction.vfsize() as u64;
+    let txsize = AlkanesTransaction(&parcel.transaction).vfsize() as u64;
     if FuelTank::is_top() {
         FuelTank::fuel_transaction(txsize, parcel.txindex, parcel.height as u32);
     } else if FuelTank::should_advance(parcel.txindex) {

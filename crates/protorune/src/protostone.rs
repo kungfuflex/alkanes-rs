@@ -99,10 +99,6 @@ impl MessageProcessor for Protostone {
             if let Ok(address) = protorune_support::network::to_address_str(
                 &transaction.output[pointer as usize].script_pubkey,
             ) {
-                println!(
-                    "Protostone pointer ({}) points to Bitcoin address: {}",
-                    pointer, address
-                );
             }
         }
 
@@ -111,10 +107,6 @@ impl MessageProcessor for Protostone {
             if let Ok(address) = protorune_support::network::to_address_str(
                 &transaction.output[refund_pointer as usize].script_pubkey,
             ) {
-                println!(
-                    "Protostone refund_pointer ({}) points to Bitcoin address: {}",
-                    refund_pointer, address
-                );
             }
         }
 
@@ -166,15 +158,12 @@ impl MessageProcessor for Protostone {
                         Ok(true)
                     }
                     Err(e) => {
-                        println!("Got error inside reconcile! {:?} \n\n", e);
-                        println!("Refunding to refund_pointer: {}", refund_pointer);
 
                         // Log the Bitcoin address again to make it clear this is the refund address being used
                         if refund_pointer < num_outputs as u32 {
                             if let Ok(address) = protorune_support::network::to_address_str(
                                 &transaction.output[refund_pointer as usize].script_pubkey,
                             ) {
-                                println!("RECONCILE ERROR REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}", refund_pointer, address);
                             }
                         }
 
@@ -189,18 +178,12 @@ impl MessageProcessor for Protostone {
                 }
             }
             Err(e) => {
-                println!("Alkanes message reverted with error: {:?}", e);
-                println!("Refunding to refund_pointer: {}", refund_pointer);
 
                 // Log the Bitcoin address again to make it clear this is the refund address being used
                 if refund_pointer < num_outputs as u32 {
                     if let Ok(address) = protorune_support::network::to_address_str(
                         &transaction.output[refund_pointer as usize].script_pubkey,
                     ) {
-                        println!(
-                            "REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}",
-                            refund_pointer, address
-                        );
                     }
                 }
 

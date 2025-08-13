@@ -4,7 +4,6 @@ mod tests {
     use alkanes_support::cellpack::Cellpack;
     use alkanes_support::id::AlkaneId;
     use anyhow::Result;
-    use hex;
     use metashrew_support::index_pointer::KeyValuePointer;
 
     use crate::index_block;
