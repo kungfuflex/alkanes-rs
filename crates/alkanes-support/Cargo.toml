@@ -1,10 +1,10 @@
 [package]
 name = "alkanes-support"
-version = "0.5.2"
-edition = "2021"
-description = "ALKANES support"
-license = "MIT"
-repository = "https://github.com/kungfuflex/alkanes-rs"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
 resolver = "2"
 
 [lib]
@@ -20,9 +20,9 @@ flate2 = "1.0.34"
 protobuf = { workspace = true }
 
 [build-dependencies]
-anyhow = "1.0.90"
+anyhow = { workspace = true }
 protobuf-codegen = "3.4.0"
 flate2 = "1.0.34"
 protoc-rust = { version = "2.28.0" }
 protoc-bin-vendored = "3.0.0"
-hex = "0.4.3"
+hex = { workspace = true }
