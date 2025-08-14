@@ -64,7 +64,6 @@ fn test_factory_wasm_load() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
 
-    println!("Last sheet: {:?}", sheet);
     let runtime_sheet = get_sheet_for_runtime();
     let orig_alkane = AlkaneId { block: 2, tx: 1 };
     let copy_alkane = AlkaneId { block: 2, tx: 2 };
