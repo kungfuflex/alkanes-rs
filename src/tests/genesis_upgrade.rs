@@ -221,6 +221,90 @@ fn test_new_genesis_contract() -> Result<()> {
 }
 
 #[wasm_bindgen_test]
+fn test_new_genesis_contract_empty_calldata() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    upgrade()?;
+    let prev_total_supply = get_total_supply()?;
+    let num_mints = 5;
+    let mut test_block = mint(num_mints)?;
+
+    // add some dummy txs that should not be indexed
+    let empty_calldata = alkane_helpers::create_protostone_tx_with_inputs(
+        vec![],
+        vec![],
+        Protostone {
+            burn: None,
+            message: vec![],
+            edicts: vec![],
+            pointer: Some(0),
+            refund: Some(0),
+            from: None,
+            protocol_tag: 1,
+        },
+    );
+    test_block.txdata.push(empty_calldata);
+
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    for i in 1..=num_mints {
+        let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
+        assert_eq!(
+            sheet.get(&diesel.clone().into()),
+            ((312500000 - (350000000 - 312500000)) / num_mints)
+                .try_into()
+                .unwrap(),
+        )
+    }
+    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_new_genesis_contract_wrong_id() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    upgrade()?;
+    let prev_total_supply = get_total_supply()?;
+    let num_mints = 5;
+    let mut test_block = mint(num_mints)?;
+
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    // add some dummy txs that should not be indexed
+    let protocol_tag_2 = alkane_helpers::create_protostone_tx_with_inputs(
+        vec![],
+        vec![],
+        Protostone {
+            burn: None,
+            message: Cellpack {
+                target: diesel.clone(),
+                inputs: vec![77],
+            }
+            .encipher(),
+            edicts: vec![],
+            pointer: Some(0),
+            refund: Some(0),
+            from: None,
+            protocol_tag: 2,
+        },
+    );
+    test_block.txdata.push(protocol_tag_2);
+
+    for i in 1..=num_mints {
+        let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
+        assert_eq!(
+            sheet.get(&diesel.clone().into()),
+            ((312500000 - (350000000 - 312500000)) / num_mints)
+                .try_into()
+                .unwrap(),
+        )
+    }
+    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    Ok(())
+}
+
+#[wasm_bindgen_test]
 fn test_new_genesis_collect_fees() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
