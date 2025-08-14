@@ -1,23 +1,23 @@
 [package]
 name = "protorune-support"
-version = "0.5.2"
-edition = "2021"
-description = "protorunes support libs for Rust sources"
-license = "MIT"
-repository = "https://github.com/kungfuflex/protorune-rs"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
 resolver = "2"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-bitcoin = { version = "0.32.4", features = ["rand"] }
-serde = "1.0.210"
-ordinals = { path = "../ordinals" }
-anyhow = "1.0.90"
+bitcoin = { workspace = true }
+serde = { workspace = true }
+ordinals = { workspace = true }
+anyhow = { workspace = true }
 metashrew-support = { workspace = true }
-hex = "0.4.3"
-protobuf = "3.6.0"
+hex = { workspace = true }
+protobuf = { workspace = true }
 bech32 = "0.11.0"
 
 [build-dependencies]
