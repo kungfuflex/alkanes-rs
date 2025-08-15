@@ -1,15 +1,12 @@
 use crate::tests::std::alkanes_std_test_build;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
-use protorune_support::protostone::ProtostoneEdict;
 
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};
 use alkane_helpers::clear;
-use alkanes::view;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
@@ -21,9 +18,6 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_transfer_overflow() -> Result<()> {
     clear();
-    println!(
-        "USER SHOULD EXPECT ERROR IN LOGS: 'err: overflow error during balance sheet increase'"
-    );
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -84,9 +78,6 @@ fn test_transfer_overflow() -> Result<()> {
     index_block(&test_block2, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
-
-    println!("Last sheet: {:?}", sheet);
-
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -137,9 +128,6 @@ fn test_mint_overflow() -> Result<()> {
     index_block(&test_block, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
-
-    println!("Last sheet: {:?}", sheet);
-
     assert_eq!(
         sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
         340282366920938463463374607431768211455
@@ -175,9 +163,6 @@ fn test_mint_underflow() -> Result<()> {
     index_block(&test_block, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
-
-    println!("Last sheet: {:?}", sheet);
-
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -237,8 +222,6 @@ fn test_transfer_runtime() -> Result<()> {
     index_block(&test_block, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
-
-    println!("Last sheet: {:?}", sheet);
     let runtime_sheet = get_sheet_for_runtime();
 
     assert_eq!(
@@ -291,9 +274,6 @@ fn test_extcall_mint() -> Result<()> {
     index_block(&test_block, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
-
-    println!("Last sheet: {:?}", sheet);
-
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -344,9 +324,6 @@ fn test_delegatecall_mint() -> Result<()> {
     index_block(&test_block, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
-
-    println!("Last sheet: {:?}", sheet);
-
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -401,9 +378,6 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
     index_block(&test_block, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
-
-    println!("Last sheet: {:?}", sheet);
-
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -463,9 +437,6 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
     index_block(&test_block, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
-
-    println!("Last sheet: {:?}", sheet);
-
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 

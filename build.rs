@@ -1,7 +1,6 @@
 use anyhow::Result;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use hex;
 use std::env;
 use std::fs;
 use std::io::prelude::*;

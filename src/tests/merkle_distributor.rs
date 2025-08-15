@@ -7,7 +7,7 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-use bitcoin::{OutPoint, Witness};
+use bitcoin::{OutPoint};
 use protorune::test_helpers::{create_block_with_coinbase_tx, ADDRESS1, ADDRESS2};
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -15,7 +15,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use borsh::{BorshDeserialize, BorshSerialize};
 use metashrew_core::{
     println,
-    stdio::{stdout, Write},
+    stdio::{stdout},
 };
 use sha2::{Digest, Sha256};
 

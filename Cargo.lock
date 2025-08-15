@@ -286,6 +286,7 @@ dependencies = [
  "bitcoin 0.32.5",
  "flate2",
  "hex",
+ "metashrew-core",
  "metashrew-support",
  "protobuf 3.7.2",
  "protobuf-codegen 3.7.2",
@@ -2249,6 +2250,7 @@ dependencies = [
 name = "protorune"
 version = "1.2.3"
 dependencies = [
+ "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",
  "byteorder",

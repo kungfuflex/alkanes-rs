@@ -7,7 +7,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, Txid};
 use metashrew_support::utils::{is_empty, remaining_slice};
 use ordinals::varint;
-use std::{io::BufRead, string};
+use std::io::BufRead;
 pub fn consensus_encode<T: Encodable>(v: &T) -> Result<Vec<u8>> {
     let mut result = Vec::<u8>::new();
     <T as Encodable>::consensus_encode::<Vec<u8>>(v, &mut result)?;

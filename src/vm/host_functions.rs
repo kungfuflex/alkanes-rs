@@ -5,6 +5,9 @@ use super::{
 };
 use crate::utils::{balance_pointer, pipe_storagemap_to, transfer_from};
 use crate::vm::{run_after_special, run_special_cellpacks};
+use alkanes_support::logging::{
+    self, calculate_wasm_size_kb, determine_creation_method, AlkaneCreation,
+};
 use alkanes_support::{
     cellpack::Cellpack,
     id::AlkaneId,
@@ -16,7 +19,7 @@ use alkanes_support::{
 };
 #[allow(unused_imports)]
 use anyhow::{anyhow, Result};
-use bitcoin::{BlockHash, Transaction};
+use bitcoin::Transaction;
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -30,12 +33,11 @@ use ordinals::Runestone;
 use protorune_support::protostone::Protostone;
 
 use crate::vm::fuel::{
-    consume_fuel, fuel_extcall_deploy, fuel_per_store_byte, Fuelable, FUEL_BALANCE, FUEL_EXTCALL,
+    consume_fuel, fuel_extcall_deploy, Fuelable, FUEL_BALANCE,
     FUEL_FUEL, FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE,
     FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
 use protorune_support::utils::{consensus_encode, decode_varint_list};
-use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use wasmi::*;
@@ -750,6 +752,12 @@ impl AlkanesHostFunctionsImpl {
 
             let (_subcaller, submyself, binary) =
                 run_special_cellpacks(caller.data_mut().context.clone(), &cellpack)?;
+
+            logging::record_alkane_creation(AlkaneCreation {
+                alkane_id: submyself.clone(),
+                wasm_size_kb: calculate_wasm_size_kb(&binary),
+                creation_method: determine_creation_method(&cellpack.target, &submyself),
+            });
 
             let context_guard = caller.data_mut().context.lock().unwrap();
 
