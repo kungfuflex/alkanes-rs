@@ -168,7 +168,7 @@ pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) ->
                 .get_value();
 
             // add 1 to follow the ordinals spec: https://github.com/ordinals/ord/blob/master/src/index/updater/rune_updater.rs#L454
-            let confirmations = height - h + 1;
+            let confirmations = height.checked_sub(h).unwrap() + 1;
             if confirmations >= 6 {
                 return Ok(true);
             }
