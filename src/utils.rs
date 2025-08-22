@@ -1,6 +1,5 @@
 use alkanes_support::parcel::AlkaneTransferParcel;
 use alkanes_support::storage::StorageMap;
-use alkanes_support::utils::overflow_error;
 use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
@@ -130,7 +129,7 @@ pub fn transfer_from(
     for transfer in &parcel.0 {
         let mut from_pointer =
             balance_pointer(atomic, &from.clone().into(), &transfer.id.clone().into());
-        let mut balance = from_pointer.get_value::<u128>();
+        let balance = from_pointer.get_value::<u128>();
         from_pointer.set_value::<u128>(checked_debit_with_minting(transfer, from, balance)?);
         let mut to_pointer =
             balance_pointer(atomic, &to.clone().into(), &transfer.id.clone().into());
