@@ -81,6 +81,8 @@ pub trait AuthenticatedResponder: AlkaneResponder {
     fn only_owner(&self) -> Result<()> {
         let context = self.context()?;
         let auth_token = self.auth_token()?;
+        println!("auth_token: {:?}", auth_token);
+        println!("context: {:?}", context);
         if !context
             .incoming_alkanes
             .0

@@ -541,3 +541,153 @@ where
         ),
     }
 }
+
+pub enum CellpackOrEdict {
+    Cellpack(Cellpack),
+    Edict(Vec<ProtostoneEdict>),
+}
+
+pub fn create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers(
+    witness: Witness,
+    cellpacks_or_edicts: Vec<CellpackOrEdict>,
+    previous_output: OutPoint,
+    etch: bool,
+    with_leftovers_to_separate: bool,
+) -> Transaction {
+    let protocol_id = 1;
+    let input_script = ScriptBuf::new();
+    let txin = TxIn {
+        previous_output,
+        script_sig: input_script,
+        sequence: Sequence::MAX,
+        witness,
+    };
+    let protostones = [
+        match etch {
+            true => vec![Protostone {
+                burn: Some(protocol_id),
+                edicts: vec![],
+                pointer: Some(5),
+                refund: None,
+                from: None,
+                protocol_tag: 13, // this value must be 13 if protoburn
+                message: vec![],
+            }],
+            false => vec![],
+        },
+        cellpacks_or_edicts
+            .into_iter()
+            .enumerate()
+            .map(|(i, cellpack_or_edict)| match cellpack_or_edict {
+                CellpackOrEdict::Cellpack(cellpack) => Protostone {
+                    message: cellpack.encipher(),
+                    pointer: Some(0),
+                    refund: Some(0),
+                    edicts: vec![],
+                    from: None,
+                    burn: None,
+                    protocol_tag: protocol_id as u128,
+                },
+                CellpackOrEdict::Edict(edicts) => Protostone {
+                    message: vec![],
+                    pointer: if with_leftovers_to_separate {
+                        Some(2)
+                    } else {
+                        Some(0)
+                    },
+                    refund: if with_leftovers_to_separate {
+                        Some(2)
+                    } else {
+                        Some(0)
+                    },
+                    //lazy way of mapping edicts onto next protomessage
+                    edicts: edicts
+                        .into_iter()
+                        .map(|edict| {
+                            let mut edict = edict;
+                            edict.output = if etch { 5 + i as u128 } else { 4 + i as u128 };
+                            if with_leftovers_to_separate {
+                                edict.output += 1;
+                            }
+                            edict
+                        })
+                        .collect(),
+                    from: None,
+                    burn: None,
+                    protocol_tag: protocol_id as u128,
+                },
+            })
+            .collect(),
+    ]
+    .concat();
+    let etching = if etch {
+        Some(Etching {
+            divisibility: Some(2),
+            premine: Some(1000),
+            rune: Some(Rune::from_str("TESTTESTTESTTEST").unwrap()),
+            spacers: Some(0),
+            symbol: Some(char::from_str("A").unwrap()),
+            turbo: true,
+            terms: None,
+        })
+    } else {
+        None
+    };
+    let runestone: ScriptBuf = (Runestone {
+        etching,
+        pointer: match etch {
+            true => Some(1),
+            false => Some(0),
+        }, // points to the OP_RETURN, so therefore targets the protoburn
+        edicts: Vec::new(),
+        mint: None,
+        protocol: protostones.encipher().ok(),
+    })
+    .encipher();
+
+    //     // op return is at output 1
+    let op_return = TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: runestone,
+    };
+    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+
+    let script_pubkey = address.script_pubkey();
+    let txout = TxOut {
+        value: Amount::from_sat(100_000_000),
+        script_pubkey: script_pubkey.clone(),
+    };
+    let outputs = if with_leftovers_to_separate {
+        vec![
+            txout,
+            op_return,
+            TxOut {
+                value: Amount::from_sat(546),
+                script_pubkey,
+            },
+        ]
+    } else {
+        vec![txout, op_return]
+    };
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![txin],
+        output: outputs,
+    }
+}
+
+pub fn create_multiple_cellpack_with_witness_and_in_with_edicts(
+    witness: Witness,
+    cellpacks_or_edicts: Vec<CellpackOrEdict>,
+    previous_output: OutPoint,
+    etch: bool,
+) -> Transaction {
+    create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers(
+        witness,
+        cellpacks_or_edicts,
+        previous_output,
+        etch,
+        false,
+    )
+}
