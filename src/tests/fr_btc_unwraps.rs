@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 use super::helpers::{
-    self as alkane_helpers, create_block_with_coinbase_tx,
+    self as alkane_helpers,
     create_multiple_cellpack_with_witness_and_txins_edicts, init_with_cellpack_pairs,
     BinaryAndCellpack,
 };
@@ -10,8 +10,9 @@ use crate::view;
 use anyhow::Result;
 use bitcoin::{
     consensus::{deserialize, encode},
+    secp256k1::{rand, Secp256k1},
     transaction::Version,
-    Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    Address, Amount, OutPoint, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use alkanes_support::{
     cellpack::Cellpack,
@@ -20,8 +21,9 @@ use alkanes_support::{
     parcel::AlkaneTransfer,
     response::{CallResponse, ExtendedCallResponse},
 };
-use protorune::Protorune;
-use secp256k1::{rand, Secp256k1};
+use ordinals::RuneId;
+use protorune::{test_helpers::create_block_with_coinbase_tx, Protorune};
+use protorune_support::{balance_sheet::ProtoruneRuneId, protostone::ProtostoneEdict};
 
 const FR_BTC_ID: AlkaneId = AlkaneId { block: 4, tx: 0 };
 const AUTH_TOKEN_ID: AlkaneId = AlkaneId { block: 2, tx: 1 };
@@ -32,19 +34,19 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
 
     // 1. Setup test environment
     let secp = Secp256k1::new();
-    let (user_sk, user_pk) = secp.generate_keypair(&mut rand::thread_rng());
-    let user_address = Address::p2wpkh(&user_pk.into(), bitcoin::Network::Regtest)?;
+    let (_user_sk, user_pk) = secp.generate_keypair(&mut rand::thread_rng());
+    let user_address = Address::p2wpkh(&PublicKey::new(user_pk), bitcoin::Network::Regtest).unwrap();
 
-    let (signer_sk, signer_pk) = secp.generate_keypair(&mut rand::thread_rng());
-    let signer_address = Address::p2wpkh(&signer_pk.into(), bitcoin::Network::Regtest)?;
+    let (_signer_sk, signer_pk) = secp.generate_keypair(&mut rand::thread_rng());
+    let signer_address = Address::p2wpkh(&PublicKey::new(signer_pk), bitcoin::Network::Regtest).unwrap();
 
     let mut block0 = create_block_with_coinbase_tx(0);
-    let coinbase_txid = block0.txdata[0].txid();
+    let coinbase_txid = block0.txdata[0].compute_txid();
     let user_utxo = OutPoint {
         txid: coinbase_txid,
         vout: 0,
     };
-    let signer_utxo = OutPoint {
+    let _signer_utxo = OutPoint {
         txid: coinbase_txid,
         vout: 1,
     };
@@ -60,7 +62,7 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
         BinaryAndCellpack::new(
             alkanes_std_auth_token_build::get_bytes(),
             Cellpack {
-                target: AUTH_TOKEN_FACTORY_ID,
+                target: AlkaneId::from(ProtoruneRuneId::from(RuneId::from_u128(AUTH_TOKEN_FACTORY_ID))),
                 inputs: vec![100],
             },
         ),
@@ -87,11 +89,12 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
         false,
         vec![],
     );
-    let set_signer_block = create_block_with_coinbase_tx(2, vec![set_signer_tx]);
+    let mut set_signer_block = create_block_with_coinbase_tx(2);
+    set_signer_block.txdata.push(set_signer_tx);
     Protorune::index_block::<AlkaneMessageContext>(set_signer_block.clone(), 2)?;
 
     // 4. Wrap BTC to get frBTC
-    let wrap_amount = Amount::from_sat(100_000_000); // 1 BTC
+    let _wrap_amount = Amount::from_sat(100_000_000); // 1 BTC
     let wrap_tx = create_multiple_cellpack_with_witness_and_txins_edicts(
         vec![Cellpack {
             target: FR_BTC_ID,
@@ -99,7 +102,7 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
         }],
         vec![TxIn {
             previous_output: OutPoint {
-                txid: set_signer_block.txdata[1].txid(),
+                txid: set_signer_block.txdata[1].compute_txid(),
                 vout: 0,
             },
             ..Default::default()
@@ -107,7 +110,8 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
         false,
         vec![],
     );
-    let wrap_block = create_block_with_coinbase_tx(3, vec![wrap_tx.clone()]);
+    let mut wrap_block = create_block_with_coinbase_tx(3);
+    wrap_block.txdata.push(wrap_tx.clone());
     Protorune::index_block::<AlkaneMessageContext>(wrap_block.clone(), 3)?;
 
     // 5. First unwrap
@@ -119,43 +123,47 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
         }],
         vec![TxIn {
             previous_output: OutPoint {
-                txid: wrap_tx.txid(),
+                txid: wrap_tx.compute_txid(),
                 vout: 0,
             },
             ..Default::default()
         }],
         false,
-        vec![(AUTH_TOKEN_ID, 1), (FR_BTC_ID, unwrap_amount)],
+        vec![
+            ProtostoneEdict {
+                id: AUTH_TOKEN_ID.into(),
+                amount: 1,
+                output: 0,
+            },
+            ProtostoneEdict {
+                id: FR_BTC_ID.into(),
+                amount: unwrap_amount,
+                output: 0,
+            },
+        ],
     );
-    let unwrap_block = create_block_with_coinbase_tx(4, vec![unwrap_tx.clone()]);
+    let mut unwrap_block = create_block_with_coinbase_tx(4);
+    unwrap_block.txdata.push(unwrap_tx.clone());
     Protorune::index_block::<AlkaneMessageContext>(unwrap_block.clone(), 4)?;
 
     // 6. Get pending unwraps
-    let pending_unwraps_res: CallResponse =
-        view::call_view(&FR_BTC_ID, &vec![105], u64::MAX)?.try_into()?;
-    let mut data = std::io::Cursor::new(pending_unwraps_res.data);
-    let inputs: Vec<TxIn> = deserialize(data.get_ref())?;
-    let outputs: Vec<TxOut> = deserialize(&data.get_ref()[data.position() as usize..])?;
+    let pending_unwraps_res = view::call_view(&FR_BTC_ID, &vec![105], u64::MAX)?;
+    let payout_tx: Transaction = deserialize(&pending_unwraps_res)?;
 
     assert_eq!(
-        inputs.len(),
+        payout_tx.input.len(),
         2,
         "Should have one accounting and one funding input"
     );
     assert_eq!(
-        outputs.len(),
+        payout_tx.output.len(),
         2,
         "Should have one payout and one change output"
     );
 
     // 7. Simulate the signer payout transaction
-    let payout_tx = Transaction {
-        version: bitcoin::transaction::Version(2),
-        lock_time: bitcoin::absolute::LockTime::ZERO,
-        input: inputs,
-        output: outputs,
-    };
-    let payout_block = create_block_with_coinbase_tx(5, vec![payout_tx]);
+    let mut payout_block = create_block_with_coinbase_tx(5);
+    payout_block.txdata.push(payout_tx);
     Protorune::index_block::<AlkaneMessageContext>(payout_block.clone(), 5)?;
 
     // 8. Second unwrap
@@ -166,31 +174,33 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
         }],
         vec![TxIn {
             previous_output: OutPoint {
-                txid: unwrap_tx.txid(),
+                txid: unwrap_tx.compute_txid(),
                 vout: 0,
             },
             ..Default::default()
         }],
         false,
-        vec![(FR_BTC_ID, 25_000_000)], // 0.25 BTC
+        vec![ProtostoneEdict {
+            id: FR_BTC_ID.into(),
+            amount: 25_000_000,
+            output: 0,
+        }], // 0.25 BTC
     );
-    let unwrap_block_2 = create_block_with_coinbase_tx(6, vec![unwrap_tx_2]);
+    let mut unwrap_block_2 = create_block_with_coinbase_tx(6);
+    unwrap_block_2.txdata.push(unwrap_tx_2);
     Protorune::index_block::<AlkaneMessageContext>(unwrap_block_2.clone(), 6)?;
 
     // 9. Get pending unwraps again
-    let pending_unwraps_res_2: CallResponse =
-        view::call_view(&FR_BTC_ID, &vec![105], u64::MAX)?.try_into()?;
-    let mut data_2 = std::io::Cursor::new(pending_unwraps_res_2.data);
-    let inputs_2: Vec<TxIn> = deserialize(data_2.get_ref())?;
-    let outputs_2: Vec<TxOut> = deserialize(&data_2.get_ref()[data_2.position() as usize..])?;
+    let pending_unwraps_res_2 = view::call_view(&FR_BTC_ID, &vec![105], u64::MAX)?;
+    let pending_tx: Transaction = deserialize(&pending_unwraps_res_2)?;
 
     assert_eq!(
-        inputs_2.len(),
+        pending_tx.input.len(),
         2,
         "Should have one new accounting input and one funding input"
     );
     assert_eq!(
-        outputs_2.len(),
+        pending_tx.output.len(),
         2,
         "Should have one new payout output and one change output"
     );

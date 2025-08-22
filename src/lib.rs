@@ -446,8 +446,7 @@ mod unit_tests {
         let req_height: Vec<u8> = (RunesByHeightRequest {
             height: 849236,
         })
-        .encode_to_vec()
-        .unwrap();
+        .encode_to_vec();
         let runes = runes_by_height(&req_height).unwrap();
         assert!(runes.runes.len() == 2);
 
@@ -457,8 +456,7 @@ mod unit_tests {
                 .as_bytes()
                 .to_vec(),
         })
-        .encode_to_vec()
-        .unwrap();
+        .encode_to_vec();
 
         let runes_for_addr = runes_by_address(&req_wallet).unwrap();
         // assert!(runes_for_addr.balances > 0);
