@@ -50,7 +50,7 @@ fn setup_pre_upgrade() -> Result<()> {
     Ok(())
 }
 
-fn upgrade() -> Result<Block> {
+fn upgrade() -> Result<OutPoint> {
     let block_height = 890_000;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
@@ -134,7 +134,7 @@ fn upgrade() -> Result<Block> {
         "upgraded mint in the same block as legacy mint",
     )?;
 
-    Ok(test_block)
+    Ok(new_outpoint)
 }
 
 fn mint(num_mints: usize) -> Result<Block> {
@@ -221,17 +221,97 @@ fn test_new_genesis_contract() -> Result<()> {
 }
 
 #[wasm_bindgen_test]
+fn test_new_genesis_contract_empty_calldata() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    upgrade()?;
+    let prev_total_supply = get_total_supply()?;
+    let num_mints = 5;
+    let mut test_block = mint(num_mints)?;
+
+    // add some dummy txs that should not be indexed
+    let empty_calldata = alkane_helpers::create_protostone_tx_with_inputs(
+        vec![],
+        vec![],
+        Protostone {
+            burn: None,
+            message: vec![],
+            edicts: vec![],
+            pointer: Some(0),
+            refund: Some(0),
+            from: None,
+            protocol_tag: 1,
+        },
+    );
+    test_block.txdata.push(empty_calldata);
+
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    for i in 1..=num_mints {
+        let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
+        assert_eq!(
+            sheet.get(&diesel.clone().into()),
+            ((312500000 - (350000000 - 312500000)) / num_mints)
+                .try_into()
+                .unwrap(),
+        )
+    }
+    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_new_genesis_contract_wrong_id() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    upgrade()?;
+    let prev_total_supply = get_total_supply()?;
+    let num_mints = 5;
+    let mut test_block = mint(num_mints)?;
+
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    // add some dummy txs that should not be indexed
+    let protocol_tag_2 = alkane_helpers::create_protostone_tx_with_inputs(
+        vec![],
+        vec![],
+        Protostone {
+            burn: None,
+            message: Cellpack {
+                target: diesel.clone(),
+                inputs: vec![77],
+            }
+            .encipher(),
+            edicts: vec![],
+            pointer: Some(0),
+            refund: Some(0),
+            from: None,
+            protocol_tag: 2,
+        },
+    );
+    test_block.txdata.push(protocol_tag_2);
+
+    for i in 1..=num_mints {
+        let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
+        assert_eq!(
+            sheet.get(&diesel.clone().into()),
+            ((312500000 - (350000000 - 312500000)) / num_mints)
+                .try_into()
+                .unwrap(),
+        )
+    }
+    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    Ok(())
+}
+
+#[wasm_bindgen_test]
 fn test_new_genesis_collect_fees() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
-    let upgrade_block = upgrade()?;
+    let auth_token_outpoint = upgrade()?;
     mint(5)?;
 
     let genesis_id = AlkaneId { block: 2, tx: 0 };
-    let outpoint = OutPoint {
-        txid: upgrade_block.txdata.last().unwrap().compute_txid(),
-        vout: 0,
-    };
     let block_height = 890_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
     let collect_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
@@ -240,7 +320,7 @@ fn test_new_genesis_collect_fees() -> Result<()> {
             target: genesis_id.clone().into(),
             inputs: vec![78],
         }],
-        outpoint.clone(),
+        auth_token_outpoint.clone(),
         false,
     );
     spend_block.txdata.push(collect_tx.clone());

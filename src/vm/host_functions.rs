@@ -16,7 +16,7 @@ use alkanes_support::{
 };
 #[allow(unused_imports)]
 use anyhow::{anyhow, Result};
-use bitcoin::Transaction;
+use bitcoin::{BlockHash, Transaction};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -35,9 +35,19 @@ use crate::vm::fuel::{
     FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
 use protorune_support::utils::{consensus_encode, decode_varint_list};
+use std::collections::BTreeMap;
 use std::io::Cursor;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use wasmi::*;
+
+static DIESEL_MINTS_CACHE: LazyLock<Arc<RwLock<Option<Vec<u8>>>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(None)));
+
+pub fn clear_diesel_mints_cache() {
+    if let Ok(mut cache) = DIESEL_MINTS_CACHE.try_write() {
+        *cache = None;
+    }
+}
 
 pub struct AlkanesHostFunctionsImpl(());
 
@@ -611,10 +621,18 @@ impl AlkanesHostFunctionsImpl {
     }
 
     fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
-        // Return the current block header
+        if let Some(cached_data) = DIESEL_MINTS_CACHE.read().unwrap().clone() {
+            #[cfg(feature = "debug-log")]
+            {
+                println!("Precompiled contract: returning cached total number of diesel mints");
+            }
+            let mut response = CallResponse::default();
+            response.data = cached_data;
+            return Ok(response);
+        }
         #[cfg(feature = "debug-log")]
         {
-            println!("Precompiled contract: returning total number of diesel mints in this block");
+            println!("Precompiled contract: calculating total number of diesel mints in this block");
         }
 
         // Get the block header from the current context
@@ -627,25 +645,36 @@ impl AlkanesHostFunctionsImpl {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
                 let protostones = Protostone::from_runestone(runestone)?;
                 for protostone in protostones {
+                    if protostone.protocol_tag != 1 {
+                        continue;
+                    }
                     let calldata: Vec<u8> = protostone
                         .message
                         .iter()
                         .flat_map(|v| v.to_be_bytes())
                         .collect();
-                    let cellpack: Cellpack =
-                        decode_varint_list(&mut Cursor::new(calldata))?.try_into()?;
-                    if cellpack.target == AlkaneId::new(2, 0)
-                        && cellpack.inputs.len() != 0
-                        && cellpack.inputs[0] == 77
-                    {
-                        counter += 1;
-                        break;
+                    if calldata.is_empty() {
+                        continue;
+                    }
+                    let varint_list = decode_varint_list(&mut Cursor::new(calldata))?;
+                    if varint_list.len() < 2 {
+                        continue;
+                    }
+                    if let Ok(cellpack) = TryInto::<Cellpack>::try_into(varint_list) {
+                        if cellpack.target == AlkaneId::new(2, 0)
+                            && !cellpack.inputs.is_empty()
+                            && cellpack.inputs[0] == 77
+                        {
+                            counter += 1;
+                            break;
+                        }
                     }
                 }
             }
         }
         let mut response = CallResponse::default();
         response.data = counter.to_le_bytes().to_vec();
+        *DIESEL_MINTS_CACHE.write().unwrap() = Some(response.data.clone());
         Ok(response)
     }
     fn _handle_special_extcall(

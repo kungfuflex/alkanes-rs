@@ -1,10 +1,10 @@
 [package]
 name = "alkanes-runtime"
-version = "0.5.2"
-edition = "2021"
-description = "ALKANES runtime library"
-license = "MIT"
-repository = "https://github.com/kungfuflex/alkanes-rs"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
 resolver = "2"
 
 [features]

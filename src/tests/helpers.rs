@@ -10,7 +10,7 @@ use bitcoin::blockdata::transaction::Version;
 use bitcoin::{
     address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness,
 };
-use bitcoin::{Block, Transaction};
+use bitcoin::{Block, Network, Transaction};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -102,7 +102,7 @@ pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
     let wasm_binary = alkanes_std_test_build::get_bytes();
     let raw_envelope = RawEnvelope::from(wasm_binary);
 
-    let witness = raw_envelope.to_gzipped_witness();
+    let witness = raw_envelope.to_witness(true);
 
     // Create a transaction input
 
@@ -179,7 +179,7 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
             let witness = if binary.len() == 0 {
                 Witness::new()
             } else {
-                RawEnvelope::from(binary).to_gzipped_witness()
+                RawEnvelope::from(binary).to_witness(true)
             };
             if let Some(previous_output) = previous_out {
                 let tx = create_multiple_cellpack_with_witness_and_in(
@@ -213,7 +213,7 @@ pub fn init_with_multiple_cellpacks(binary: Vec<u8>, cellpacks: Vec<Cellpack>) -
     let mut test_block = create_block_with_coinbase_tx(block_height);
 
     let raw_envelope = RawEnvelope::from(binary);
-    let witness = raw_envelope.to_gzipped_witness();
+    let witness = raw_envelope.to_witness(true);
     test_block
         .txdata
         .push(create_multiple_cellpack_with_witness(

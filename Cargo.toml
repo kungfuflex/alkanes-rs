@@ -1,10 +1,10 @@
 [package]
 name = "alkanes"
-version = "0.5.2"
-edition = "2021"
-description = "ALKANES metaprotocol indexer"
-license = "MIT"
-repository = "https://github.com/kungfuflex/alkanes-rs"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
 resolver = "2"
 
 [lib]
@@ -13,6 +13,12 @@ crate-type = ["cdylib", "rlib"]
 [workspace]
 members = [".", "crates/*"]
 
+[workspace.package]
+version = "1.2.3"
+edition = "2021"
+description = "ALKANES metaprotocol indexer"
+license = "MIT"
+repository = "https://github.com/kungfuflex/alkanes-rs"
 
 [workspace.dependencies]
 anyhow = "1.0.90"
@@ -100,6 +106,8 @@ web-sys = { workspace = true }
 js-sys = { workspace = true }
 hex_lit = { workspace = true }
 once_cell = { workspace = true }
+borsh = { version = "1.5.7", features = ["derive"] }
+sha2 = "0.10.9"
 
 [dev-dependencies]
 
@@ -115,9 +123,9 @@ metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", 
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]
-anyhow = "1.0.90"
+anyhow = { workspace = true }
 protobuf-codegen = "3.4.0"
 flate2 = "1.0.34"
 protoc-rust = { version = "2.28.0" }
 protoc-bin-vendored = "3.0.0"
-hex = "0.4.3"
+hex = { workspace = true }

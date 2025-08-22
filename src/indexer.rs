@@ -1,6 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::{genesis, genesis_alkane_upgrade_bytes, is_genesis};
 use crate::vm::fuel::FuelTank;
+use crate::vm::host_functions::clear_diesel_mints_cache;
 use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
@@ -86,6 +87,7 @@ use std::sync::Arc;
 
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
     configure_network();
+    clear_diesel_mints_cache();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
         genesis(&block).unwrap();
