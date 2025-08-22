@@ -284,7 +284,7 @@ fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
         txid: collect_tx.compute_txid(),
         vout: 3,
     };
-    assert_revert_context(&new_outpoint, "Auth token is not in incoming alkanes");
+    assert_revert_context(&new_outpoint, "Auth token is not in incoming alkanes")?;
     Ok(())
 }
 // #[wasm_bindgen_test]
