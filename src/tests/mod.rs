@@ -47,3 +47,5 @@ pub mod upgradeable;
 pub mod vec_input_test;
 #[cfg(test)]
 pub mod view;
+#[cfg(test)]
+pub mod fr_btc_unwraps;
