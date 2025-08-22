@@ -1,4 +1,5 @@
 pub mod alkanes_std_auth_token_build;
+pub mod fr_btc_build;
 pub mod fr_btc_mainnet_build;
 pub mod fr_btc_signet_build;
 pub mod fr_sigil_build;

@@ -4,7 +4,7 @@ use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
     alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
     alkanes_std_genesis_alkane_regtest_build, alkanes_std_genesis_alkane_upgraded_mainnet_build,
-    alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_signet_build, fr_btc_mainnet_build, fr_sigil_build,
+    alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_signet_build, fr_btc_build, fr_btc_mainnet_build, fr_sigil_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -45,6 +45,11 @@ pub fn fr_btc_bytes() -> Vec<u8> {
 #[cfg(feature = "mainnet")]
 pub fn fr_btc_bytes() -> Vec<u8> {
   fr_btc_mainnet_build::get_bytes()
+}
+
+#[cfg(all(not(feature = "mainnet"), not(feature = "testnet")))]
+pub fn fr_btc_bytes() -> Vec<u8> {
+  fr_btc_build::get_bytes()
 }
 
 pub fn fr_sigil_bytes() -> Vec<u8> {
