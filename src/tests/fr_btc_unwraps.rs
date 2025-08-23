@@ -25,8 +25,8 @@ use ordinals::RuneId;
 use protorune::{test_helpers::create_block_with_coinbase_tx, Protorune};
 use protorune_support::{balance_sheet::ProtoruneRuneId, protostone::ProtostoneEdict};
 
-const FR_BTC_ID: AlkaneId = AlkaneId { block: 4, tx: 0 };
-const AUTH_TOKEN_ID: AlkaneId = AlkaneId { block: 2, tx: 1 };
+const FR_BTC_ID: AlkaneId = AlkaneId { block: 32, tx: 0 };
+const FR_SIGIL_ID: AlkaneId = AlkaneId { block: 32, tx: 1 };
 
 #[test]
 fn test_fr_btc_unwrap_workflow() -> Result<()> {
@@ -57,25 +57,6 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
     });
     Protorune::index_block::<AlkaneMessageContext>(block0.clone(), 0)?;
 
-    // 2. Initialize fr-btc and auth-token
-    let init_block = init_with_cellpack_pairs(vec![
-        BinaryAndCellpack::new(
-            alkanes_std_auth_token_build::get_bytes(),
-            Cellpack {
-                target: AlkaneId::from(ProtoruneRuneId::from(RuneId::from_u128(AUTH_TOKEN_FACTORY_ID))),
-                inputs: vec![100],
-            },
-        ),
-        BinaryAndCellpack::new(
-            fr_btc_build::get_bytes(),
-            Cellpack {
-                target: FR_BTC_ID,
-                inputs: vec![0],
-            },
-        ),
-    ]);
-    Protorune::index_block::<AlkaneMessageContext>(init_block.clone(), 1)?;
-
     // 3. Set the signer
     let set_signer_tx = create_multiple_cellpack_with_witness_and_txins_edicts(
         vec![Cellpack {
@@ -98,7 +79,7 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
     let wrap_tx = create_multiple_cellpack_with_witness_and_txins_edicts(
         vec![Cellpack {
             target: FR_BTC_ID,
-            inputs: vec![77, 1], // Opcode 77: Wrap, pointer to vout 1
+            inputs: vec![77], // Opcode 77: Wrap, pointer to vout 1
         }],
         vec![TxIn {
             previous_output: OutPoint {
@@ -131,11 +112,6 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
         false,
         vec![
             ProtostoneEdict {
-                id: AUTH_TOKEN_ID.into(),
-                amount: 1,
-                output: 0,
-            },
-            ProtostoneEdict {
                 id: FR_BTC_ID.into(),
                 amount: unwrap_amount,
                 output: 0,
@@ -147,7 +123,7 @@ fn test_fr_btc_unwrap_workflow() -> Result<()> {
     Protorune::index_block::<AlkaneMessageContext>(unwrap_block.clone(), 4)?;
 
     // 6. Get pending unwraps
-    let pending_unwraps_res = view::call_view(&FR_BTC_ID, &vec![105], u64::MAX)?;
+    let pending_unwraps_res = view::unwrap()?;
     let payout_tx: Transaction = deserialize(&pending_unwraps_res)?;
 
     assert_eq!(
