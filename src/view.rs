@@ -120,8 +120,8 @@ pub fn call_view(id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>
     Ok(response.data)
 }
 
-pub fn unwrap() -> Result<Vec<u8>> {
-  unwrap::view()
+pub fn unwrap(height: u128) -> Result<Vec<u8>> {
+  unwrap::view(height)
 }
 
 pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> Result<Vec<u8>> {

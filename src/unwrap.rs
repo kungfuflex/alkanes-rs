@@ -56,3 +56,21 @@ pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
 pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
   fr_btc_storage_pointer().select(format!("/payments/byheight/{}", v)).get_list().into_iter().map(|v| v.as_ref().clone()).collect::<Vec<Vec<u8>>>()
 }
+
+
+pub fn view(height: u128) -> Result<Vec<Vec<u8>>> {
+  let last_block = fr_btc_storage_pointer().select(b"/last_block").get_value_or_default::<u128>();
+  let mut payments: Vec<Vec<u8>> = vec![];
+  for i in last_block..=height {
+    for payment in fr_btc_payments_at_block(i) {
+      payments.push(payment);
+    }
+  }
+  Ok(payments)
+}
+
+use anyhow::{Result};
+use alkanes_support::{
+  alkane::AlkaneId,
+  is_empty,
+};
