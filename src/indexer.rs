@@ -165,5 +165,37 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         }
     }
 
+    index_cleanup(height)?;
+    Ok(())
+}
+
+use crate::unwrap::{fr_btc_payments_at_block, fr_btc_storage_pointer, deserialize_payments};
+use metashrew_support::utils::consensus_encode;
+use protorune::tables::OUTPOINT_SPENDABLE_BY;
+
+pub fn index_cleanup(height: u32) -> Result<()> {
+    let mut last_block_ptr = fr_btc_storage_pointer().select(b"/last_block");
+    let mut last_block = last_block_ptr.get_value_or_default::<u128>();
+    for i in last_block..=height as u128 {
+        let payments = fr_btc_payments_at_block(i);
+        let mut all_spent = true;
+        for payment_list_bytes in payments {
+            let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
+            for payment in deserialized_payments {
+                let spendable_bytes = consensus_encode(&payment.spendable)?;
+                if OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get().len() > 0 {
+                    all_spent = false;
+                    break;
+                }
+            }
+            if !all_spent {
+                break;
+            }
+        }
+        if all_spent {
+            last_block = i;
+        }
+    }
+    last_block_ptr.set_value(last_block);
     Ok(())
 }

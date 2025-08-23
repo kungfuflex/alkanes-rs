@@ -120,8 +120,10 @@ pub fn call_view(id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>
     Ok(response.data)
 }
 
+use prost::Message;
+
 pub fn unwrap(height: u128) -> Result<Vec<u8>> {
-  unwrap::view(height)
+    Ok(unwrap::view(height)?.encode_to_vec())
 }
 
 pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> Result<Vec<u8>> {

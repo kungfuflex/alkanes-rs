@@ -488,6 +488,6 @@ pub fn pending_unwraps() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let height = consume_sized_int::<u32>(&mut data).unwrap();
-    let result: Vec<u8> = view::unwrap(height as u128).unwrap_or_else(|_| vec![]);
+    let result = view::unwrap(height as u128).unwrap_or_else(|_| vec![]);
     export_bytes(result)
 }
