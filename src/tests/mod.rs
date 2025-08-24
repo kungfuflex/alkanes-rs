@@ -24,6 +24,8 @@ pub mod edict_then_message;
 #[cfg(test)]
 pub mod factory;
 #[cfg(test)]
+pub mod fr_btc;
+#[cfg(test)]
 pub mod forge;
 #[cfg(test)]
 pub mod fuel;

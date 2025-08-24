@@ -1,8 +1,6 @@
-use crate::tests::std::fr_btc_build;
 use crate::message::AlkaneMessageContext;
-use crate::view::unwrap;
-use crate::precompiled::alkanes_std_auth_token_build;
-use crate::view::{self, simulate_parcel};
+use crate::precompiled::{fr_btc_build, alkanes_std_auth_token_build};
+use crate::view::{self, simulate_parcel, unwrap};
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
@@ -33,20 +31,19 @@ use protorune::{
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::Protostone;
 
-use protorune_support::utils::consensus_encode;
-
-use alkane_helpers::clear;
 use crate::indexer::index_block;
 use crate::network::set_view_mode;
 use crate::tests::helpers::{
-    self as alkane_helpers, assert_return_context, assert_revert_context, get_last_outpoint_sheet,
+    self as alkane_helpers, assert_return_context, assert_revert_context, clear,
+    get_last_outpoint_sheet,
 };
 use alkanes_support::cellpack::Cellpack;
+use crate::unwrap::{deserialize_payments, Payment};
 #[allow(unused_imports)]
 use metashrew_core::{get_cache, index_pointer::IndexPointer, println, stdio::stdout};
 use ordinals::{Artifact, Runestone};
+use protorune_support::utils::consensus_encode;
 use std::fmt::Write;
-use types_support::{deserialize_payments, Payment};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 pub fn simulate_cellpack(height: u64, cellpack: Cellpack) -> Result<(ExtendedCallResponse, u64)> {
@@ -205,7 +202,7 @@ fn unwrap_btc(
     )?;
 
     let payments = deserialize_payments(&response.data)?;
-    assert(crate::view::unwrap().is_ok());
+    assert!(crate::view::unwrap(height as u128).is_ok());
     assert_eq!(
         payments[0],
         Payment {
