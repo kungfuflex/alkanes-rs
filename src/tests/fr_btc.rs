@@ -214,6 +214,7 @@ fn unwrap_btc(
                 txid: unwrap_tx.compute_txid(),
                 vout: desired_vout.try_into()?,
             },
+            fulfilled: false,
         }
     );
 
