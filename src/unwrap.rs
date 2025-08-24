@@ -1,6 +1,7 @@
 use anyhow::Result;
 use bitcoin::{OutPoint, TxOut};
 use std::io::Cursor;
+use std::sync::Arc;
 use metashrew_support::index_pointer::KeyValuePointer;
 use bitcoin::hashes::Hash;
 
@@ -114,4 +115,42 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
         }
     }
     Ok(response)
+}
+
+pub fn update_last_block(height: u128) -> Result<()> {
+    let mut last_block_key = fr_btc_storage_pointer().keyword("/last_block");
+    let last_block_bytes = last_block_key.get();
+    let mut last_block = if last_block_bytes.is_empty() {
+        0u128
+    } else {
+        u128::from_le_bytes(last_block_bytes[0..16].try_into().unwrap())
+    };
+    for i in last_block..=height {
+        let mut all_fulfilled = true;
+        for payment_list_bytes in fr_btc_payments_at_block(i) {
+            let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
+            for payment in deserialized_payments {
+                let spendable_bytes = consensus_encode(&payment.spendable)?;
+                if OUTPOINT_SPENDABLE_BY
+                    .select(&spendable_bytes)
+                    .get()
+                    .len()
+                    > 0
+                {
+                    all_fulfilled = false;
+                    break;
+                }
+            }
+            if !all_fulfilled {
+                break;
+            }
+        }
+        if all_fulfilled {
+            last_block = i;
+        } else {
+            break;
+        }
+    }
+    last_block_key.set(Arc::new(last_block.to_le_bytes().to_vec()));
+    Ok(())
 }
