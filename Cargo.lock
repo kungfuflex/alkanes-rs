@@ -31,12 +31,13 @@ dependencies = [
 
 [[package]]
 name = "alkanes"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",
+ "borsh",
  "byteorder",
  "flate2",
  "hex",
@@ -54,6 +55,7 @@ dependencies = [
  "ruint",
  "serde",
  "serde_json",
+ "sha2",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
@@ -63,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-build"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "clap",
  "hex",
@@ -71,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-macros"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "ciborium",
  "proc-macro2",
@@ -82,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-runtime"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-macros",
  "alkanes-support",
@@ -95,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-auth-token"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-std-factory-support",
@@ -108,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-beacon-proxy"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -120,19 +122,19 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-factory-support"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",
  "metashrew-support",
- "ordinals 0.5.2",
+ "ordinals 1.2.3",
 ]
 
 [[package]]
 name = "alkanes-std-genesis-alkane"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -145,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-genesis-alkane-upgraded"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -158,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-genesis-protorune"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -171,23 +173,24 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-merkle-distributor"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",
+ "borsh",
  "metashrew-support",
  "num",
- "ordinals 0.5.2",
+ "ordinals 1.2.3",
  "protorune-support",
- "rs_merkle",
  "ruint",
+ "sha2",
 ]
 
 [[package]]
 name = "alkanes-std-orbital"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -201,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-owned-token"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-std-factory-support",
@@ -209,13 +212,13 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.5",
  "metashrew-support",
- "ordinals 0.5.2",
+ "ordinals 1.2.3",
  "protorune-support",
 ]
 
 [[package]]
 name = "alkanes-std-proxy"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -227,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-test"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -239,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-test-2"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -251,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-upgradeable"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -263,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-upgradeable-beacon"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -275,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-support"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.5",
@@ -710,6 +713,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "borsh"
+version = "1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad8646f98db542e39fc66e68a20b2144f6a732636df7c2354e74645faaa433ce"
+dependencies = [
+ "borsh-derive",
+ "cfg_aliases",
+]
+
+[[package]]
+name = "borsh-derive"
+version = "1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd1d3c0c2f5833f22386f252fe8ed005c7f59fdcddeef025c01b4c3b9fd9ac3"
+dependencies = [
+ "once_cell",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "brotli-decompressor"
 version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -767,6 +793,12 @@ name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
@@ -1908,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "ordinals"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "bitcoin 0.32.5",
  "derive_more 1.0.0",
@@ -2130,7 +2162,7 @@ dependencies = [
 
 [[package]]
 name = "protorune"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.5",
@@ -2154,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "protorune-support"
-version = "0.5.2"
+version = "1.2.3"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
@@ -2364,15 +2396,6 @@ dependencies = [
  "time",
  "tiny_http",
  "url",
-]
-
-[[package]]
-name = "rs_merkle"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb09b49230ba22e8c676e7b75dfe2887dea8121f18b530ae0ba519ce442d2b21"
-dependencies = [
- "sha2",
 ]
 
 [[package]]
@@ -2664,9 +2687,9 @@ checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"
-version = "0.10.8"
+version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures",

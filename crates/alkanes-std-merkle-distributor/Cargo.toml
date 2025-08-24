@@ -1,7 +1,16 @@
 [package]
 name = "alkanes-std-merkle-distributor"
-version = "0.5.2"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+
+[features]
+regtest = []
+signet = []
+mainnet = []
+dogecoin = []
+luckycoin = []
+fractal = []
+bellscoin = []
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -15,5 +24,6 @@ metashrew-support = { workspace = true }
 num = { workspace = true }
 protorune-support = { workspace = true }
 ordinals = { workspace = true }
-rs_merkle = "1.4.2"
 ruint = { workspace = true }
+borsh = { version = "1.5.7", features = ["derive"] }
+sha2 = "0.10.9"
