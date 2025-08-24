@@ -1,10 +1,9 @@
 use crate::index_block;
 use crate::tests::helpers::{
-    self as alkane_helpers, assert_revert_context, get_last_outpoint_sheet, get_sheet_for_outpoint,
+    self as alkane_helpers, assert_revert_context, get_sheet_for_outpoint,
 };
 use crate::tests::std::alkanes_std_auth_token_build;
 use alkane_helpers::clear;
-use alkanes::view;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
@@ -25,10 +24,8 @@ use metashrew_core::{
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
-use protorune::view::protorune_outpoint_to_outpoint_response;
 use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
-use protorune_support::protostone::Protostone;
+use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::utils::consensus_encode;
 use wasm_bindgen_test::wasm_bindgen_test;
 

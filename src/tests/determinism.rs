@@ -1,21 +1,17 @@
 use crate::tests::std::alkanes_std_test_build;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
-use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
-use protorune_support::protostone::ProtostoneEdict;
+use bitcoin::{OutPoint, Witness};
 
 use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};
+use crate::tests::helpers as alkane_helpers;
 use alkane_helpers::clear;
-use alkanes::view;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
-use protorune_support::balance_sheet::ProtoruneRuneId;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -76,7 +72,7 @@ fn test_incoming_alkanes_ordered() -> Result<()> {
         vout: 3,
     };
 
-    alkane_helpers::assert_return_context(&outpoint, |trace_response| Ok(()))?;
+    alkane_helpers::assert_return_context(&outpoint, |_trace_response| Ok(()))?;
 
     Ok(())
 }

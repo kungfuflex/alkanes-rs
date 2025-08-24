@@ -4,8 +4,7 @@ mod tests {
     use alkanes_support::cellpack::Cellpack;
     use alkanes_support::id::AlkaneId;
     use anyhow::Result;
-    use hex;
-    use metashrew_support::index_pointer::KeyValuePointer;
+    
 
     use crate::index_block;
     use crate::tests::helpers as alkane_helpers;
@@ -78,7 +77,7 @@ mod tests {
             },
         ];
 
-        let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
             [alkanes_std_test_build::get_bytes(), vec![]].into(),
             test_cellpacks.to_vec(),
         );

@@ -5,14 +5,11 @@ use crate::tests::std::{
     alkanes_std_test_build, alkanes_std_upgradeable_beacon_build, alkanes_std_upgradeable_build,
 };
 use alkane_helpers::clear;
-use alkanes::view;
 use alkanes::vm::utils::sequence_pointer;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::trace::{Trace, TraceEvent};
 use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
 use anyhow::Result;
-use bitcoin::block::Header;
-use bitcoin::{Block, Transaction};
+use bitcoin::Block;
 use bitcoin::{OutPoint, Witness};
 use metashrew_core::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
@@ -21,9 +18,8 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
+use protorune::test_helpers::create_block_with_coinbase_tx;
 use protorune_support::balance_sheet::ProtoruneRuneId;
-use protorune_support::utils::consensus_decode;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 pub const BEACON_ID: u128 = 0xbeac0;
@@ -70,7 +66,7 @@ fn deploy_upgradeable_beacon() -> Result<Block> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_upgradeable_beacon_build::get_bytes()].into(),
         [beacon].into(),
     );
@@ -85,7 +81,7 @@ fn deploy_upgradeable_proxy(
     block_height: u32,
     delegate_target: AlkaneId,
 ) -> Result<(Block, u128)> {
-    let mut next_sequence_pointer = sequence_pointer(&mut AtomicPointer::default());
+    let next_sequence_pointer = sequence_pointer(&mut AtomicPointer::default());
     let proxy_sequence = next_sequence_pointer.get_value::<u128>();
     let proxy = alkane_helpers::BinaryAndCellpack {
         binary: proxy_build,
@@ -96,7 +92,7 @@ fn deploy_upgradeable_proxy(
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_cellpack_pairs([proxy].into());
+    let test_block = alkane_helpers::init_with_cellpack_pairs([proxy].into());
 
     index_block(&test_block, block_height)?;
 
@@ -138,7 +134,7 @@ fn upgradeability_harness(
     });
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_cellpack_pairs(
+    let test_block = alkane_helpers::init_with_cellpack_pairs(
         [initialize, set_claimable, mint, double_init].into(),
     );
 
@@ -170,7 +166,7 @@ fn upgradeability_harness(
     });
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block2 = alkane_helpers::init_with_cellpack_pairs([proxy_through_extcall].into());
+    let test_block2 = alkane_helpers::init_with_cellpack_pairs([proxy_through_extcall].into());
 
     index_block(&test_block2, block_height)?;
 

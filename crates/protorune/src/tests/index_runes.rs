@@ -30,7 +30,7 @@ mod tests {
     use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
 
     use metashrew_core::index_pointer::AtomicPointer;
-    use protobuf::{Message, SpecialFields};
+    use prost::Message;
 
     use std::str::FromStr;
     use std::sync::Arc;
@@ -136,10 +136,8 @@ mod tests {
         let _ = Protorune::index_block::<MyMessageContext>(test_block.clone(), 840001);
         let req = (WalletRequest {
             wallet: helpers::ADDRESS1().as_bytes().to_vec(),
-            special_fields: SpecialFields::new(),
         })
-        .write_to_bytes()
-        .unwrap();
+        .encode_to_vec();
         let test_val = view::runes_by_address(&req).unwrap();
         let runes: Vec<OutpointResponse> = test_val.clone().outpoints;
         println!("{:?}", runes);
@@ -165,10 +163,8 @@ mod tests {
             Protorune::index_block::<MyMessageContext>(test_block.clone(), config.rune_etch_height);
         let req: Vec<u8> = (RunesByHeightRequest {
             height: config.rune_etch_height,
-            special_fields: SpecialFields::new(),
         })
-        .write_to_bytes()
-        .unwrap();
+        .encode_to_vec();
         let test_val = view::runes_by_height(&req).unwrap();
         let runes: Vec<RuneProto> = test_val.clone().runes;
         return runes;
@@ -331,10 +327,8 @@ mod tests {
         // assert rune exists
         let req: Vec<u8> = (RunesByHeightRequest {
             height: block_height,
-            special_fields: SpecialFields::new(),
         })
-        .write_to_bytes()
-        .unwrap();
+        .encode_to_vec();
         let test_val = view::runes_by_height(&req).unwrap();
         let runes: Vec<RuneProto> = test_val.clone().runes;
         assert_eq!(runes.len(), 1);

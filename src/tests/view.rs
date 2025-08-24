@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
     use crate::tests::helpers::clear;
-    use crate::view::{call_view, get_statics, NAME_OPCODE, STATIC_FUEL, SYMBOL_OPCODE};
+    use crate::view::get_statics;
     use alkanes_support::id::AlkaneId;
     use anyhow::Result;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    
     use wasm_bindgen_test::wasm_bindgen_test;
 
     // Create a static counter to track the number of calls to call_view

@@ -28,7 +28,7 @@ fn test_infinite_loop() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [infinite_exec_cellpack].into(),
     );
@@ -67,7 +67,7 @@ fn test_infinite_extcall_loop() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [infinite_exec_cellpack].into(),
     );

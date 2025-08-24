@@ -7,7 +7,6 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-use bitcoin::address::NetworkChecked;
 use bitcoin::{transaction::Version, ScriptBuf, Sequence};
 use bitcoin::{Address, Amount, Block, OutPoint, Transaction, TxIn, TxOut, Witness};
 use metashrew_core::{
@@ -151,7 +150,7 @@ fn test_edict_message_same_protostone() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [arb_mint_cellpack].into(),
     );
@@ -211,7 +210,7 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [arb_mint_cellpack].into(),
     );

@@ -2,7 +2,7 @@ use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
-    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor,
+    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
 };
 use crate::tables::RuneTable;
 use anyhow::{anyhow, Ok, Result};
@@ -885,9 +885,9 @@ impl Protorune {
                     &mut atomic.derive(&IndexPointer::default()),
                     runestone,
                     runestone_output_index,
-                    balances_by_output,
+                    _balances_by_output,
                     &mut proto_balances_by_output,
-                    unallocated_to,
+                    _unallocated_to,
                     tx.compute_txid(),
                 )?;
             }

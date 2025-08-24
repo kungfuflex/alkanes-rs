@@ -1,9 +1,8 @@
-use crate::{message::AlkaneMessageContext, tests::std::alkanes_std_test_build};
+use crate::tests::std::alkanes_std_test_build;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_support::utils::consensus_encode;
 
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};

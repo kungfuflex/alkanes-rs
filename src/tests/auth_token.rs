@@ -12,7 +12,6 @@ use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use bitcoin::Witness;
-use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
@@ -54,7 +53,7 @@ fn test_owned_token() -> Result<()> {
     );
 
     index_block(&test_block, block_height)?;
-    let owned_token_id = AlkaneId { block: 2, tx: 1 };
+    let _owned_token_id = AlkaneId { block: 2, tx: 1 };
     let tx = test_block.txdata.last().ok_or(anyhow!("no last el"))?;
     let outpoint = OutPoint {
         txid: tx.compute_txid(),

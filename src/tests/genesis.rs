@@ -115,11 +115,9 @@ fn test_genesis() -> Result<()> {
     index_block(&test_block, block_height)?;
 
     // Get fuel state after genesis block
-    let post_genesis_fuel = unsafe {
-        match &FuelTank::get_fuel_tank_copy() {
-            Some(tank) => tank.block_fuel,
-            None => 0,
-        }
+    let post_genesis_fuel = match &FuelTank::get_fuel_tank_copy() {
+        Some(tank) => tank.block_fuel,
+        None => 0,
     };
 
     // Record benchmark for genesis block
@@ -139,22 +137,18 @@ fn test_genesis() -> Result<()> {
 
     // Initialize FuelTank for the second block
     FuelTank::initialize(&test_block2, block_height);
-    let pre_mint_fuel = unsafe {
-        match &FuelTank::get_fuel_tank_copy() {
-            Some(tank) => tank.block_fuel,
-            None => 0,
-        }
+    let pre_mint_fuel = match &FuelTank::get_fuel_tank_copy() {
+        Some(tank) => tank.block_fuel,
+        None => 0,
     };
 
     // Process the mint block
     index_block(&test_block2, block_height)?;
 
     // Get fuel state after mint block
-    let post_mint_fuel = unsafe {
-        match &FuelTank::get_fuel_tank_copy() {
-            Some(tank) => tank.block_fuel,
-            None => 0,
-        }
+    let post_mint_fuel = match &FuelTank::get_fuel_tank_copy() {
+        Some(tank) => tank.block_fuel,
+        None => 0,
     };
 
     // Record benchmark for mint operation
