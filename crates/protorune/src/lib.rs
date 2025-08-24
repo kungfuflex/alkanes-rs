@@ -438,18 +438,20 @@ impl Protorune {
         let indexer_rune_name = name.as_bytes().to_vec();
 
         // check if rune name alredy exists
-        if let std::result::Result::Ok(rune_id) = ProtoruneRuneId::try_from(
-            (*tables::RUNES
-                .ETCHING_TO_RUNE_ID
-                .select(&indexer_rune_name)
-                .get())
-            .clone(),
-        ) {
-            println!(
-                "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
-                name, rune_id
-            );
-            return Ok(());
+        let etching_to_rune_id = tables::RUNES
+            .ETCHING_TO_RUNE_ID
+            .select(&indexer_rune_name)
+            .get();
+        if etching_to_rune_id.len() > 0 {
+            if let std::result::Result::Ok(rune_id) =
+                ProtoruneRuneId::try_from((*etching_to_rune_id).clone())
+            {
+                println!(
+                    "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
+                    name, rune_id
+                );
+                return Ok(());
+            }
         }
         let rune_id = ProtoruneRuneId::new(height.into(), index.into());
         atomic
