@@ -145,4 +145,3 @@ pub fn pipe_storagemap_to<T: KeyValuePointer>(map: &StorageMap, pointer: &mut T)
             .set(Arc::new(v.clone()));
     });
 }
-

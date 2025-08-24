@@ -1,10 +1,10 @@
 [package]
 name = "protorune"
-version.workspace = true
-edition.workspace = true
-description.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.5.2"
+edition = "2021"
+description = "protorunes support libs for Rust sources"
+license = "MIT"
+repository = "https://github.com/kungfuflex/protorune-rs"
 resolver = "2"
 
 [lib]
@@ -16,18 +16,18 @@ mainnet = []
 cache = []
 
 [dependencies]
-anyhow = { workspace = true }
-bitcoin = { workspace = true }
+anyhow = "1.0.89"
+bitcoin = { version = "0.32.4", features = ["rand"] }
 metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
-protorune-support = { workspace = true }
-ordinals = { workspace = true }
+protorune-support = { path = "../protorune-support" }
+ordinals = { path = "../ordinals" }
 ruint = { workspace = true }
 wasm-bindgen = { workspace = true }
 byteorder = { workspace = true }
 wasm-bindgen-test = { workspace = true }
-once_cell = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+once_cell = "1.20.1"
+serde = { version = "1.0.210", features = ["derive"] }
 serde_json = { workspace = true }
 hex = { workspace = true }
 prost = { workspace = true }

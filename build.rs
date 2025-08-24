@@ -112,14 +112,10 @@ fn main() {
             }
         })
         .collect::<Vec<String>>();
-    files
-        .into_iter()
+    files.into_iter()
         .map(|v| -> Result<String> {
             std::env::set_current_dir(&crates_dir.clone().join(v.clone()))?;
-            if v == "alkanes-std-genesis-alkane"
-                || v == "alkanes-std-genesis-alkane-upgraded"
-                || v == "alkanes-std-merkle-distributor"
-            {
+            if v == "alkanes-std-genesis-alkane" || v == "alkanes-std-genesis-alkane-upgraded" {
                 let precompiled_dir = write_dir.join("precompiled");
                 fs::create_dir_all(&precompiled_dir)?;
 
@@ -130,7 +126,6 @@ fn main() {
                     ("mainnet", vec!["mainnet"]),
                     ("fractal", vec!["fractal"]),
                     ("regtest", vec!["regtest"]),
-                    ("signet", vec!["signet"]),
                     ("testnet", vec!["regtest"]), // testnet uses regtest features
                 ];
 
@@ -141,27 +136,30 @@ fn main() {
                     let subbed = v.clone().replace("-", "_");
 
                     // Read the built wasm
+                    let f: Vec<u8> = fs::read(
+                        &Path::new(&wasm_str)
+                            .join("wasm32-unknown-unknown")
+                            .join("release")
+                            .join(subbed.clone() + ".wasm"),
+                    )?;
 
-                    let file_path = Path::new(&wasm_str)
-                        .join("wasm32-unknown-unknown")
-                        .join("release")
-                        .join(subbed.clone() + ".wasm");
-                    let f: Vec<u8> = fs::read(&file_path)?;
-
+                    // Compress
+                    let compressed: Vec<u8> = compress(f.clone())?;
                     fs::write(
                         &Path::new(&wasm_str)
                             .join("wasm32-unknown-unknown")
                             .join("release")
-                            .join(format!("{}_{}.wasm", subbed, network)),
-                        &f,
+                            .join(format!("{}_{}.wasm.gz", subbed, network)),
+                        &compressed
                     )?;
+
+                    // Write network-specific build file
+                    let data: String = hex::encode(&f);
                     fs::write(
-                        &write_dir
-                            .join("std")
-                            .join(format!("{}_{}_build.rs", subbed, network)),
-                        String::from("pub fn get_bytes() -> Vec<u8> { include_bytes!(\"")
-                            + file_path.as_os_str().to_str().unwrap()
-                            + "\").to_vec() }",
+                        &write_dir.join("std").join(format!("{}_{}_build.rs", subbed, network)),
+                        String::from("use hex_lit::hex;\n#[allow(long_running_const_eval)]\npub fn get_bytes() -> Vec<u8> { (&hex!(\"")
+                            + data.as_str()
+                            + "\")).to_vec() }",
                     )?;
                 }
 
@@ -182,24 +180,20 @@ fn main() {
                     .to_str()
                     .unwrap()
             );
-            let file_path = Path::new(&wasm_str)
-                .join("wasm32-unknown-unknown")
-                .join("release")
-                .join(subbed.clone() + ".wasm");
-            let f: Vec<u8> = fs::read(&file_path)?;
-            let compressed: Vec<u8> = compress(f.clone())?;
-            fs::write(
+            let f: Vec<u8> = fs::read(
                 &Path::new(&wasm_str)
                     .join("wasm32-unknown-unknown")
                     .join("release")
-                    .join(subbed.clone() + ".wasm.gz"),
-                &compressed,
+                    .join(subbed.clone() + ".wasm"),
             )?;
+            let compressed: Vec<u8> = compress(f.clone())?;
+            fs::write(&Path::new(&wasm_str).join("wasm32-unknown-unknown").join("release").join(subbed.clone() + ".wasm.gz"), &compressed)?;
+            let data: String = hex::encode(&f);
             fs::write(
                 &write_dir.join("std").join(subbed.clone() + "_build.rs"),
-                String::from("pub fn get_bytes() -> Vec<u8> { include_bytes!(\"")
-                    + file_path.as_os_str().to_str().unwrap()
-                    + "\").to_vec() }",
+                String::from("use hex_lit::hex;\n#[allow(long_running_const_eval)]\npub fn get_bytes() -> Vec<u8> { (&hex!(\"")
+                    + data.as_str()
+                    + "\")).to_vec() }",
             )?;
             eprintln!(
                 "build: {}",
@@ -245,9 +239,14 @@ fn main() {
         mod_content.push_str(&format!("pub mod {}_{}_build;\n", genesis_base, network));
     }
 
-    let merkle_base = "alkanes_std_merkle_distributor";
-    for network in networks {
-        mod_content.push_str(&format!("pub mod {}_{}_build;\n", merkle_base, network));
-    }
     fs::write(&write_dir.join("std").join("mod.rs"), mod_content).unwrap();
+    fs::write(
+        &write_dir.join("std").join("mod.rs"),
+        mods.into_iter()
+            .map(|v| v.replace("-", "_"))
+            .fold(String::default(), |r, v| {
+                r + "pub mod " + v.as_str() + "_build;\n"
+            }),
+    )
+    .unwrap();
 }

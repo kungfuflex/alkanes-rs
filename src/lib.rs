@@ -1,4 +1,3 @@
-#![allow(long_running_const_eval)]
 use crate::indexer::configure_network;
 use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate_safe};
 use alkanes_support::proto;
@@ -225,17 +224,6 @@ pub fn getblock() -> i32 {
     export_bytes(view::getblock(&input_data).unwrap())
 }
 
-#[cfg(not(test))]
-#[no_mangle]
-pub fn gettransaction() -> i32 {
-    configure_network();
-    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-    let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let input_data = consume_to_end(&mut data).unwrap();
-    export_bytes(view::gettransaction(&input_data).unwrap())
-}
-
-
 // #[cfg(not(test))]
 // #[no_mangle]
 // pub fn protorunesbyaddress2() -> i32 {
@@ -447,7 +435,8 @@ mod unit_tests {
         let req_height: Vec<u8> = (RunesByHeightRequest {
             height: 849236,
         })
-        .encode_to_vec();
+        .encode_to_vec()
+        .unwrap();
         let runes = runes_by_height(&req_height).unwrap();
         assert!(runes.runes.len() == 2);
 
@@ -457,7 +446,8 @@ mod unit_tests {
                 .as_bytes()
                 .to_vec(),
         })
-        .encode_to_vec();
+        .encode_to_vec()
+        .unwrap();
 
         let runes_for_addr = runes_by_address(&req_wallet).unwrap();
         // assert!(runes_for_addr.balances > 0);

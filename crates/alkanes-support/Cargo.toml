@@ -20,7 +20,5 @@ flate2 = "1.0.34"
 prost = { workspace = true }
 
 [build-dependencies]
-anyhow = { workspace = true }
-flate2 = "1.0.34"
-hex = { workspace = true }
+anyhow = "1.0.90"
 prost-build = { workspace = true }

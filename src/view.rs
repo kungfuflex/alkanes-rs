@@ -120,10 +120,8 @@ pub fn call_view(id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>
     Ok(response.data)
 }
 
-use prost::Message;
-
 pub fn unwrap(height: u128) -> Result<Vec<u8>> {
-    Ok(unwrap::view(height)?.encode_to_vec())
+    Ok(unwrap::view(height).unwrap().encode_to_vec())
 }
 
 pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> Result<Vec<u8>> {
@@ -538,23 +536,3 @@ pub fn getblock(input: &Vec<u8>) -> Result<Vec<u8>> {
     Ok(response.encode_to_vec())
 }
 
-pub fn gettransaction(input: &Vec<u8>) -> Result<Vec<u8>> {
-    use crate::etl;
-    use alkanes_support::proto::alkanes::{TransactionRequest, TransactionResponse};
-    use bitcoin::Txid;
-    use std::str::FromStr;
-
-    let request = TransactionRequest::decode(&input[..])?;
-    let txid = Txid::from_slice(&request.txid)?;
-
-    // Get the transaction from the etl module
-    let transaction = etl::get_transaction(&txid)?;
-
-    // Create a response with the transaction data
-    let response = TransactionResponse {
-        transaction: serialize(&transaction),
-    };
-
-    // Serialize the response
-    Ok(response.encode_to_vec())
-}

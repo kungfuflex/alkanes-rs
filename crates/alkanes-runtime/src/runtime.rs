@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use crate::imports::{
     __balance, __call, __delegatecall, __fuel, __height, __load_block, __load_context,
-    __load_storage, __load_transaction, __request_block, __request_context,
+    __load_storage, __load_transaction, __log, __request_block, __request_context,
     __request_storage, __request_transaction, __returndatacopy, __sequence, __staticcall,
     abort, /*, __load_output, __request_output */
 };
@@ -215,13 +215,11 @@ pub trait AlkaneResponder: 'static {
             (&buffer[4..]).to_vec()
         }
     }
-    fn transaction_object(&self) -> Result<Transaction> {
-        Ok(consensus_decode::<Transaction>(&mut std::io::Cursor::new(
-            self.transaction(),
-        ))?)
-    }
     fn transaction_id(&self) -> Result<Txid> {
-        Ok(self.transaction_object()?.compute_txid())
+        Ok(
+            consensus_decode::<Transaction>(&mut std::io::Cursor::new(self.transaction()))?
+                .compute_txid(),
+        )
     }
     /*
     fn output(&self, v: &OutPoint) -> Result<Vec<u8>> {

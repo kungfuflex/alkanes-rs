@@ -34,8 +34,6 @@ pub mod genesis_upgrade;
 #[cfg(test)]
 pub mod memory_security_tests;
 #[cfg(test)]
-pub mod merkle_distributor;
-#[cfg(test)]
 pub mod networks;
 #[cfg(test)]
 pub mod serialization;
@@ -47,5 +45,3 @@ pub mod upgradeable;
 pub mod vec_input_test;
 #[cfg(test)]
 pub mod view;
-#[cfg(test)]
-pub mod fr_btc_unwraps;
