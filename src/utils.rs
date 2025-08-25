@@ -1,8 +1,8 @@
-use alkanes_support::parcel::AlkaneTransferParcel;
+a -m "uuse alkanes_support::parcel::AlkaneTransferParcel;
 use alkanes_support::storage::StorageMap;
 use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer};
 use anyhow::{anyhow, Result};
-use bitcoin::OutPoint;
+use bitcoin::{consensus::Decodable, OutPoint};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -144,4 +144,9 @@ pub fn pipe_storagemap_to<T: KeyValuePointer>(map: &StorageMap, pointer: &mut T)
             .select(k)
             .set(Arc::new(v.clone()));
     });
+}
+
+pub fn consensus_decode_from_bytes<T: Decodable>(bytes: &[u8]) -> Result<T> {
+    let mut cursor = Cursor::new(bytes);
+    Ok(T::consensus_decode(&mut cursor)?)
 }
