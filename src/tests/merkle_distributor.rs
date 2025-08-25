@@ -287,13 +287,3 @@ fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
     assert_revert_context(&new_outpoint, "Auth token is not in incoming alkanes")?;
     Ok(())
 }
-// #[wasm_bindgen_test]
-// fn test_merkle_distributor_incorrect_address() -> Result<()> {
-//     clear();
-//     helper_test_merkle_distributor(840_000, 900_000, ADDRESS2(), 0)
-// }
-
-// #[wasm_bindgen_test]
-// fn test_merkle_distributor_incorrect_proof() {
-//     helper_test_merkle_distributor(840_000, 900_000, "incorrect_proof".to_string(), 0).unwrap();
-// }
