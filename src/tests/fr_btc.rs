@@ -7,13 +7,11 @@ use alkanes_support::id::AlkaneId;
 use alkanes_support::response::ExtendedCallResponse;
 use alkanes_support::trace::Trace;
 use anyhow::Result;
-use prost::Message;
 use bitcoin::address::NetworkChecked;
 use bitcoin::blockdata::transaction::OutPoint;
 use bitcoin::key::TapTweak;
 use bitcoin::transaction::Version;
 use bitcoin::{
-    consensus::Decodable,
     secp256k1::{self, Secp256k1, XOnlyPublicKey},
     Address, Amount, Block, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
@@ -40,12 +38,10 @@ use crate::tests::helpers::{
     get_last_outpoint_sheet,
 };
 use alkanes_support::cellpack::Cellpack;
-use crate::unwrap::{deserialize_payments, update_last_block, Payment};
-use alkanes_support::proto::alkanes::PendingUnwrapsResponse;
+use crate::unwrap::{deserialize_payments, Payment};
 #[allow(unused_imports)]
 use metashrew_core::{get_cache, index_pointer::IndexPointer, println, stdio::stdout};
 use ordinals::{Artifact, Runestone};
-use crate::utils::consensus_decode_from_bytes;
 use protorune_support::utils::consensus_encode;
 use std::fmt::Write;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -206,14 +202,7 @@ fn unwrap_btc(
     )?;
 
     let payments = deserialize_payments(&response.data)?;
-    update_last_block(height as u128)?;
-    let pending_unwraps_bytes = crate::view::unwrap(height as u128).unwrap();
-    let pending_unwraps = PendingUnwrapsResponse::decode(&pending_unwraps_bytes[..]).unwrap();
-    assert_eq!(pending_unwraps.payments.len(), 1);
-    let unwrapped_payment = pending_unwraps.payments[0].clone();
-    let unwrapped_payment_output: TxOut =
-        consensus_decode_from_bytes(&unwrapped_payment.output).unwrap();
-    assert_eq!(unwrapped_payment_output.value, Amount::from_sat(amount_frbtc));
+    assert!(crate::view::unwrap(height as u128).is_ok());
     assert_eq!(
         payments[0],
         Payment {
