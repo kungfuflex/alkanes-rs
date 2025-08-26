@@ -1,20 +1,14 @@
-use crate::message::AlkaneMessageContext;
-use crate::precompiled::{fr_btc_build, alkanes_std_auth_token_build};
-use crate::view::{self, simulate_parcel, unwrap};
-use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
-use alkanes_support::gz::compress;
+use crate::view::{simulate_parcel};
 use alkanes_support::id::AlkaneId;
 use alkanes_support::response::ExtendedCallResponse;
-use alkanes_support::trace::Trace;
 use anyhow::Result;
-use bitcoin::address::NetworkChecked;
 use bitcoin::blockdata::transaction::OutPoint;
 use bitcoin::key::TapTweak;
 use bitcoin::transaction::Version;
 use crate::unwrap::fr_btc_storage_pointer;
 use bitcoin::{
-    secp256k1::{self, Secp256k1, XOnlyPublicKey},
-    Address, Amount, Block, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    secp256k1::{Secp256k1, XOnlyPublicKey},
+    Amount, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 #[allow(unused_imports)]
 use hex;
@@ -25,10 +19,7 @@ use metashrew_support::utils::format_key;
 use protorune::message::MessageContextParcel;
 use protorune::protostone::Protostones;
 use protorune::test_helpers::{get_address, ADDRESS1, create_block_with_coinbase_tx};
-use protorune::{
-    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable
-};
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
+use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations};
 use protorune_support::protostone::Protostone;
 use {
   metashrew_core::{println, stdio::stdout},
@@ -36,17 +27,15 @@ use {
 };
 
 use crate::indexer::index_block;
-use crate::network::set_view_mode;
 use crate::tests::helpers::{
-    self as alkane_helpers, assert_return_context, assert_revert_context, clear,
+    self as alkane_helpers, assert_revert_context, clear,
     get_last_outpoint_sheet,
 };
 use alkanes_support::cellpack::Cellpack;
 use crate::unwrap::{deserialize_payments, Payment};
 #[allow(unused_imports)]
 use metashrew_core::{get_cache, index_pointer::IndexPointer};
-use ordinals::{Artifact, Runestone};
-use protorune_support::utils::consensus_encode;
+use ordinals::{Runestone};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 pub fn simulate_cellpack(height: u64, cellpack: Cellpack) -> Result<(ExtendedCallResponse, u64)> {

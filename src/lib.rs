@@ -1,8 +1,16 @@
 use crate::indexer::configure_network;
+#[allow(unused_imports)]
 use crate::view::{
     meta_safe, multi_simulate_safe, parcel_from_protobuf, parcels_from_protobuf, simulate_safe,
 };
+#[allow(unused_imports)]
 use alkanes_support::proto;
+#[allow(unused_imports)]
+use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
+#[allow(unused_imports)]
+use prost::Message;
+#[allow(unused_imports)]
+use protorune::view::protorunes_by_address;
 use bitcoin::{Block, OutPoint};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -13,8 +21,6 @@ use metashrew_core::{
 use metashrew_support::block::AuxpowBlock;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::utils::{consume_sized_int, consume_to_end, consensus_decode};
-use prost::Message;
 use std::io::Cursor;
 pub mod block;
 pub mod etl;
@@ -163,7 +169,7 @@ pub fn spendablesbyaddress() -> i32 {
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::WalletResponse =
-        view::protorunes_by_address(&consume_to_end(&mut data).unwrap())
+        protorunes_by_address(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
     export_bytes(result.encode_to_vec())
 }
@@ -190,7 +196,7 @@ pub fn protorunesbyaddress() -> i32 {
     //  let _request = protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(&input_data).unwrap();
 
     let mut result: protorune_support::proto::protorune::WalletResponse =
-        view::protorunes_by_address(&input_data)
+        protorunes_by_address(&input_data)
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
 
     result.outpoints = result
@@ -306,6 +312,15 @@ pub fn alkanes_id_to_outpoint() -> i32 {
             alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::default()
         });
     export_bytes(result.encode_to_vec())
+}
+
+#[cfg(not(test))]
+#[no_mangle]
+pub fn unwrap() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let height = consume_sized_int::<u32>(&mut data).unwrap();
+    export_bytes(view::unwrap(height).unwrap())
 }
 
 #[cfg(not(test))]
@@ -476,6 +491,6 @@ pub fn pending_unwraps() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let height = consume_sized_int::<u32>(&mut data).unwrap();
-    let result = view::unwrap(height as u128).unwrap_or_else(|_| vec![]);
+    let result = view::unwrap(height as u128).unwrap();
     export_bytes(result)
 }

@@ -1,7 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::{genesis, genesis_alkane_upgrade_bytes, is_genesis};
 use crate::unwrap::{
-    fr_btc_payments_at_block, fr_btc_storage_pointer, deserialize_payments, update_last_block,
+    update_last_block,
 };
 use crate::vm::fuel::FuelTank;
 use alkanes_support::gz::compress;
@@ -17,10 +17,8 @@ use metashrew_core::{
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;
-use protorune::tables::OUTPOINT_SPENDABLE_BY;
 use protorune_support::network::{set_network, NetworkParams};
 use std::sync::Arc;
-use metashrew_support::utils::consensus_encode;
 
 #[cfg(all(
     not(feature = "mainnet"),

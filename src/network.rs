@@ -286,7 +286,7 @@ pub fn genesis(block: &Block) -> Result<()> {
             Err(e)
         }
     })?;
-    let (response3, _gas_used3) = (match simulate_parcel(&parcel2, u64::MAX) {
+    let (_response3, _gas_used3) = (match simulate_parcel(&parcel2, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
             println!("{:?}", e);

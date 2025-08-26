@@ -1,8 +1,6 @@
 use anyhow::Result;
-use hex;
 use bitcoin::{OutPoint, TxOut};
 use std::io::Cursor;
-use std::sync::Arc;
 use metashrew_support::index_pointer::KeyValuePointer;
 use bitcoin::hashes::Hash;
 
@@ -13,10 +11,6 @@ use alkanes_support::{
 use metashrew_support::utils::{is_empty, consensus_encode, consensus_decode};
 use metashrew_core::index_pointer::IndexPointer;
 use protorune::tables::OUTPOINT_SPENDABLE_BY;
-use {
-  metashrew_core::{println, stdio::{stdout}},
-  std::fmt::Write
-};
 
 pub fn fr_btc_storage_pointer() -> IndexPointer {
     IndexPointer::from_keyword("/alkanes/")

@@ -2,7 +2,7 @@ use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
-    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
+    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor,
 };
 use crate::tables::RuneTable;
 use anyhow::{anyhow, Ok, Result};
