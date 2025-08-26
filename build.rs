@@ -157,7 +157,7 @@ fn main() {
                     let data: String = hex::encode(&f);
                     fs::write(
                         &write_dir.join("std").join(format!("{}_{}_build.rs", subbed, network)),
-                        String::from("use hex_lit::hex;\n#[allow(long_running_const_eval)]\npub fn get_bytes() -> Vec<u8> { (&hex!(\"")
+                        String::from("use hex_lit::hex;\n#[allow(long_running_const_eval)]\n#[allow(deprecated)]\npub fn get_bytes() -> Vec<u8> { (&hex!(\"")
                             + data.as_str()
                             + "\")).to_vec() }",
                     )?;

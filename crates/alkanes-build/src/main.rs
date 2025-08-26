@@ -25,7 +25,7 @@ fn main() -> std::io::Result<()> {
 
     // Generate build.rs content
     let build_content = format!(
-        "use hex_lit::hex;\n#[allow(long_running_const_eval)]\npub fn get_bytes() -> Vec<u8> {{ (&hex!(\"{}\")).to_vec() }}",
+        "use hex_lit::hex;\n#[allow(long_running_const_eval)]\n#[allow(deprecated)]\npub fn get_bytes() -> Vec<u8> {{ (&hex!(\"{}\")).to_vec() }}",
         hex_string
     );
 
