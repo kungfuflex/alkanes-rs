@@ -320,7 +320,7 @@ pub fn unwrap() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let height = consume_sized_int::<u32>(&mut data).unwrap();
-    export_bytes(view::unwrap(height).unwrap())
+    export_bytes(view::unwrap(height.into()).unwrap())
 }
 
 #[cfg(not(test))]

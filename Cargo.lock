@@ -34,9 +34,9 @@ name = "alkanes"
 version = "1.2.3"
 dependencies = [
  "alkanes",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "borsh",
  "byteorder",
  "flate2",
@@ -51,7 +51,7 @@ dependencies = [
  "prost",
  "prost-build",
  "protorune",
- "protorune-support",
+ "protorune-support 1.2.3",
  "ruint",
  "serde",
  "serde_json",
@@ -87,9 +87,9 @@ name = "alkanes-runtime"
 version = "0.5.2"
 dependencies = [
  "alkanes-macros",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "metashrew-support",
  "wasm-bindgen",
  "wasm-bindgen-test",
@@ -101,11 +101,11 @@ version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-std-factory-support",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "metashrew-support",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -113,11 +113,11 @@ name = "alkanes-std-beacon-proxy"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "metashrew-support",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -125,11 +125,22 @@ name = "alkanes-std-factory-support"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "metashrew-support",
  "ordinals 0.5.2",
+]
+
+[[package]]
+name = "alkanes-std-frbtc"
+version = "0.1.0"
+dependencies = [
+ "alkanes-support 1.2.3",
+ "bitcoin 0.31.2",
+ "prost",
+ "protorune-support 1.2.3",
+ "types-support",
 ]
 
 [[package]]
@@ -137,12 +148,12 @@ name = "alkanes-std-genesis-alkane"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "hex",
  "metashrew-support",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -150,12 +161,12 @@ name = "alkanes-std-genesis-alkane-upgraded"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "hex",
  "metashrew-support",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -163,12 +174,12 @@ name = "alkanes-std-genesis-protorune"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "hex",
  "metashrew-support",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -176,13 +187,13 @@ name = "alkanes-std-merkle-distributor"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "metashrew-support",
  "num",
  "ordinals 0.5.2",
- "protorune-support",
+ "protorune-support 1.2.3",
  "rs_merkle",
  "ruint",
 ]
@@ -192,13 +203,13 @@ name = "alkanes-std-orbital"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "hex",
  "hex_lit",
  "metashrew-support",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -207,12 +218,12 @@ version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-std-factory-support",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "metashrew-support",
  "ordinals 0.5.2",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -220,11 +231,11 @@ name = "alkanes-std-proxy"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "metashrew-support",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -232,7 +243,7 @@ name = "alkanes-std-test"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
  "hex",
  "metashrew-support",
@@ -244,7 +255,7 @@ name = "alkanes-std-test-2"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
  "hex",
  "metashrew-support",
@@ -256,11 +267,11 @@ name = "alkanes-std-upgradeable"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "metashrew-support",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -268,11 +279,11 @@ name = "alkanes-std-upgradeable-beacon"
 version = "0.5.2"
 dependencies = [
  "alkanes-runtime",
- "alkanes-support",
+ "alkanes-support 1.2.3",
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "metashrew-support",
- "protorune-support",
+ "protorune-support 1.2.3",
 ]
 
 [[package]]
@@ -280,12 +291,27 @@ name = "alkanes-support"
 version = "1.2.3"
 dependencies = [
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "flate2",
  "metashrew-support",
  "prost",
  "prost-build",
- "protorune-support",
+ "protorune-support 1.2.3",
+ "serde",
+]
+
+[[package]]
+name = "alkanes-support"
+version = "1.2.3"
+source = "git+https://github.com/kungfuflex/alkanes-rs?branch=subfrostdev/subfrost#1bb8155ea6578d2e55d26fffbb8d6b5ef3e882e3"
+dependencies = [
+ "anyhow",
+ "bitcoin 0.32.6",
+ "flate2",
+ "metashrew-support",
+ "prost",
+ "prost-build",
+ "protorune-support 1.2.3 (git+https://github.com/kungfuflex/alkanes-rs?branch=subfrostdev/subfrost)",
  "serde",
 ]
 
@@ -607,9 +633,9 @@ dependencies = [
 
 [[package]]
 name = "bitcoin"
-version = "0.32.5"
+version = "0.32.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce6bc65742dea50536e35ad42492b234c27904a27f0abdcbce605015cb4ea026"
+checksum = "ad8929a18b8e33ea6b3c09297b687baaa71fb1b97353243a3f1029fad5c59c5b"
 dependencies = [
  "base58ck",
  "bech32 0.11.0",
@@ -620,6 +646,7 @@ dependencies = [
  "hex-conservative 0.2.1",
  "hex_lit",
  "secp256k1 0.29.1",
+ "serde",
 ]
 
 [[package]]
@@ -633,6 +660,9 @@ name = "bitcoin-internals"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30bdbe14aa07b06e6cfeffc529a1f099e5fbe249524f8125358604df99a4bed2"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "bitcoin-io"
@@ -653,6 +683,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5285c8bcaa25876d07f37e3d30c303f2609179716e11d688f51e8f1fe70063e2"
 dependencies = [
  "bitcoin-internals 0.3.0",
+ "serde",
 ]
 
 [[package]]
@@ -682,6 +713,7 @@ checksum = "bb18c03d0db0247e147a21a6faafd5a7eb851c743db062de72018b6b7e8e4d16"
 dependencies = [
  "bitcoin-io",
  "hex-conservative 0.2.1",
+ "serde",
 ]
 
 [[package]]
@@ -1748,7 +1780,7 @@ source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshr
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "hex",
  "prost",
  "prost-build",
@@ -1941,11 +1973,23 @@ dependencies = [
 name = "ordinals"
 version = "0.5.2"
 dependencies = [
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "derive_more 1.0.0",
  "pretty_assertions",
  "serde",
  "serde_json",
+ "serde_with",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "ordinals"
+version = "0.5.2"
+source = "git+https://github.com/kungfuflex/alkanes-rs?branch=subfrostdev/subfrost#1bb8155ea6578d2e55d26fffbb8d6b5ef3e882e3"
+dependencies = [
+ "bitcoin 0.32.6",
+ "derive_more 1.0.0",
+ "serde",
  "serde_with",
  "thiserror 1.0.69",
 ]
@@ -2164,7 +2208,7 @@ name = "protorune"
 version = "0.5.2"
 dependencies = [
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "byteorder",
  "getrandom 0.2.16",
  "hex",
@@ -2174,7 +2218,7 @@ dependencies = [
  "ordinals 0.5.2",
  "prost",
  "protorune",
- "protorune-support",
+ "protorune-support 1.2.3",
  "ruint",
  "serde",
  "serde_json",
@@ -2189,10 +2233,26 @@ version = "1.2.3"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "hex",
  "metashrew-support",
  "ordinals 0.5.2",
+ "prost",
+ "prost-build",
+ "serde",
+]
+
+[[package]]
+name = "protorune-support"
+version = "1.2.3"
+source = "git+https://github.com/kungfuflex/alkanes-rs?branch=subfrostdev/subfrost#1bb8155ea6578d2e55d26fffbb8d6b5ef3e882e3"
+dependencies = [
+ "anyhow",
+ "bech32 0.11.0",
+ "bitcoin 0.32.6",
+ "hex",
+ "metashrew-support",
+ "ordinals 0.5.2 (git+https://github.com/kungfuflex/alkanes-rs?branch=subfrostdev/subfrost)",
  "prost",
  "prost-build",
  "serde",
@@ -2571,6 +2631,7 @@ dependencies = [
  "bitcoin_hashes 0.14.0",
  "rand 0.8.5",
  "secp256k1-sys 0.10.1",
+ "serde",
 ]
 
 [[package]]
@@ -2944,6 +3005,18 @@ name = "typenum"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1dccffe3ce07af9386bfd29e80c0ab1a8205a2fc34e4bcd40364df902cfa8f3f"
+
+[[package]]
+name = "types-support"
+version = "0.1.0"
+dependencies = [
+ "alkanes-support 1.2.3 (git+https://github.com/kungfuflex/alkanes-rs?branch=subfrostdev/subfrost)",
+ "anyhow",
+ "bitcoin 0.32.6",
+ "metashrew-support",
+ "protorune-support 1.2.3 (git+https://github.com/kungfuflex/alkanes-rs?branch=subfrostdev/subfrost)",
+ "serde",
+]
 
 [[package]]
 name = "ucd-trie"

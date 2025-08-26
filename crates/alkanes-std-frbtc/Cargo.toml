@@ -1,0 +1,14 @@
+[package]
+name = "alkanes-std-frbtc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alkanes-support = { path = "../alkanes-support" }
+types-support = { path = "../../../../crates/types-support" }
+protorune-support = { path = "../protorune-support" }
+prost = "0.12.3"
+bitcoin = "0.31.1"
+
+[features]
+test-hooks = []
