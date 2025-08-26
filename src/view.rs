@@ -1,6 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::set_view_mode;
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
+use crate::unwrap;
 use crate::utils::{
     alkane_id_to_outpoint, alkane_inventory_pointer, balance_pointer, credit_balances,
     debit_balances, pipe_storagemap_to,
@@ -117,6 +118,10 @@ pub fn call_view(id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>
         fuel,
     )?;
     Ok(response.data)
+}
+
+pub fn unwrap(height: u128) -> Result<Vec<u8>> {
+    Ok(unwrap::view(height).unwrap().write_to_bytes()?)
 }
 
 pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> Result<Vec<u8>> {
