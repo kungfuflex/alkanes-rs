@@ -82,7 +82,7 @@ impl AlkaneTransferParcel {
         let v = self
             .to_vec()
             .into_iter()
-            .map(|v| (v.to_bytes()))
+            .map(|v| v.to_bytes())
             .flatten()
             .collect::<Vec<u8>>();
         v

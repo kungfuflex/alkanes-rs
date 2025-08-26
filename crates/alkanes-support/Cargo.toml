@@ -1,10 +1,10 @@
 [package]
 name = "alkanes-support"
-version.workspace = true
-edition.workspace = true
-description.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.1.0"
+edition = "2021"
+description = "Support crate for Alkanes"
+license = "MIT"
+repository = "https://github.com/subfrost/subfrost"
 resolver = "2"
 
 [lib]
