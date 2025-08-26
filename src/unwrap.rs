@@ -1,4 +1,5 @@
 use anyhow::Result;
+use hex;
 use bitcoin::{OutPoint, TxOut};
 use std::io::Cursor;
 use std::sync::Arc;
@@ -12,11 +13,15 @@ use alkanes_support::{
 use metashrew_support::utils::{is_empty, consensus_encode, consensus_decode};
 use metashrew_core::index_pointer::IndexPointer;
 use protorune::tables::OUTPOINT_SPENDABLE_BY;
+use {
+  metashrew_core::{println, stdio::{stdout}},
+  std::fmt::Write
+};
 
 pub fn fr_btc_storage_pointer() -> IndexPointer {
     IndexPointer::from_keyword("/alkanes/")
         .select(&AlkaneId { block: 32, tx: 0 }.into())
-        .keyword("/storage")
+        .keyword("/storage/")
 }
 
 pub fn fr_btc_fulfilled_pointer() -> IndexPointer {
@@ -70,8 +75,9 @@ pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
 }
 
 pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
-    fr_btc_storage_pointer()
-        .select(&format!("/payments/byheight/{}", v).as_bytes().to_vec())
+    let key = format!("/payments/byheight/");
+    let full_key = fr_btc_storage_pointer().keyword(key.as_str()).select_value::<u64>(v as u64);
+    full_key
         .get_list()
         .into_iter()
         .map(|v| v.as_ref().clone())
@@ -79,14 +85,9 @@ pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
 }
 
 pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
-    let last_block_bytes = fr_btc_storage_pointer()
+    let last_block = fr_btc_storage_pointer()
         .keyword("/last_block")
-        .get();
-    let last_block = if last_block_bytes.is_empty() {
-        0u128
-    } else {
-        u128::from_le_bytes(last_block_bytes[0..16].try_into().unwrap())
-    };
+        .get_value::<u128>();
     let mut response = PendingUnwrapsResponse::default();
     for i in last_block..=height {
         for payment_list_bytes in fr_btc_payments_at_block(i) {
@@ -119,12 +120,7 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
 
 pub fn update_last_block(height: u128) -> Result<()> {
     let mut last_block_key = fr_btc_storage_pointer().keyword("/last_block");
-    let last_block_bytes = last_block_key.get();
-    let mut last_block = if last_block_bytes.is_empty() {
-        0u128
-    } else {
-        u128::from_le_bytes(last_block_bytes[0..16].try_into().unwrap())
-    };
+    let mut last_block = last_block_key.get_value::<u128>();
     for i in last_block..=height {
         let mut all_fulfilled = true;
         for payment_list_bytes in fr_btc_payments_at_block(i) {
@@ -151,6 +147,6 @@ pub fn update_last_block(height: u128) -> Result<()> {
             break;
         }
     }
-    last_block_key.set(Arc::new(last_block.to_le_bytes().to_vec()));
+    last_block_key.set_value::<u128>(last_block);
     Ok(())
 }

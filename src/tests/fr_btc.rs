@@ -11,6 +11,7 @@ use bitcoin::address::NetworkChecked;
 use bitcoin::blockdata::transaction::OutPoint;
 use bitcoin::key::TapTweak;
 use bitcoin::transaction::Version;
+use crate::unwrap::fr_btc_storage_pointer;
 use bitcoin::{
     secp256k1::{self, Secp256k1, XOnlyPublicKey},
     Address, Amount, Block, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
@@ -208,7 +209,7 @@ fn unwrap_btc(
     )?;
 
     let payments = deserialize_payments(&response.data)?;
-    println!("{:?}", crate::view::unwrap(height as u128));
+    println!("{:?}", crate::unwrap::view(height as u128));
     assert_eq!(
         payments[0],
         Payment {
@@ -264,6 +265,7 @@ fn test_fr_btc_wrap_correct_signer() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_fr_btc_unwrap() -> Result<()> {
     clear();
+    fr_btc_storage_pointer().keyword("/last_block").set_value::<u128>(880000);
     let (wrap_out, amt) = wrap_btc()?;
     unwrap_btc(wrap_out, amt, 0, 880_002)
 }
