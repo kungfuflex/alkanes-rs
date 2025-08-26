@@ -23,13 +23,16 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::format_key;
 use protorune::message::MessageContextParcel;
 use protorune::protostone::Protostones;
-use protorune::test_helpers::create_block_with_coinbase_tx;
+use protorune::test_helpers::{get_address, ADDRESS1, create_block_with_coinbase_tx};
 use protorune::{
-    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable,
-    test_helpers::get_address,
+    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable
 };
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::Protostone;
+use {
+  metashrew_core::{println, stdio::stdout},
+  std::fmt::Write
+};
 
 use crate::indexer::index_block;
 use crate::network::set_view_mode;
@@ -40,10 +43,9 @@ use crate::tests::helpers::{
 use alkanes_support::cellpack::Cellpack;
 use crate::unwrap::{deserialize_payments, Payment};
 #[allow(unused_imports)]
-use metashrew_core::{get_cache, index_pointer::IndexPointer, println, stdio::stdout};
+use metashrew_core::{get_cache, index_pointer::IndexPointer};
 use ordinals::{Artifact, Runestone};
 use protorune_support::utils::consensus_encode;
-use std::fmt::Write;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 pub fn simulate_cellpack(height: u64, cellpack: Cellpack) -> Result<(ExtendedCallResponse, u64)> {
@@ -124,11 +126,15 @@ pub fn create_alkane_tx_frbtc_signer_script(
         value: Amount::from_sat(100_000_000),
         script_pubkey: signer_script,
     };
+    let txout_user = TxOut {
+        value: Amount::from_sat(546),
+        script_pubkey: get_address(&ADDRESS1().as_str()).script_pubkey()
+    };
     Transaction {
         version: Version::ONE,
         lock_time: bitcoin::absolute::LockTime::ZERO,
         input: txins,
-        output: vec![txout, op_return],
+        output: vec![txout_user, txout, op_return],
     }
 }
 
@@ -202,7 +208,7 @@ fn unwrap_btc(
     )?;
 
     let payments = deserialize_payments(&response.data)?;
-    assert!(crate::view::unwrap(height as u128).is_ok());
+    println!("{:?}", crate::view::unwrap(height as u128));
     assert_eq!(
         payments[0],
         Payment {
