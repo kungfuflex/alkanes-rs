@@ -1,17 +1,17 @@
-use anyhow::Result;
-use bitcoin::hashes::Hash;
-use bitcoin::{OutPoint, TxOut};
-use metashrew_support::index_pointer::KeyValuePointer;
-use std::io::Cursor;
-use std::sync::Arc;
-
 use alkanes_support::{
     id::AlkaneId,
     proto::alkanes::{self as pb, Payment as ProtoPayment, PendingUnwrapsResponse},
 };
+use anyhow::Result;
+use bitcoin::hashes::Hash;
+use bitcoin::{OutPoint, TxOut};
 use metashrew_core::index_pointer::IndexPointer;
+use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consensus_encode, is_empty};
+use protobuf::{MessageField, SpecialFields};
 use protorune::tables::OUTPOINT_SPENDABLE_BY;
+use std::io::Cursor;
+use std::sync::Arc;
 
 pub fn fr_btc_storage_pointer() -> IndexPointer {
     IndexPointer::from_keyword("/alkanes/")
@@ -94,7 +94,7 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
                 }
                 if !payment.fulfilled {
                     response.payments.push(ProtoPayment {
-                        spendable: Some(pb::Outpoint {
+                        spendable: MessageField::some(pb::Outpoint {
                             txid: payment.spendable.txid.as_byte_array().to_vec(),
                             vout: payment.spendable.vout,
                             special_fields: SpecialFields::default(),
