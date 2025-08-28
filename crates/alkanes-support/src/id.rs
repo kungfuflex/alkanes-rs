@@ -55,7 +55,7 @@ impl AlkaneId {
         AlkaneId { block, tx }
     }
     pub fn is_created(&self, next_sequence: u128) -> bool {
-        self.block == 2 && self.tx < next_sequence || self.block == 4
+        self.block == 2 && self.tx < next_sequence || self.block == 4 || self.block == 32
     }
     pub fn is_create(&self) -> bool {
         self.block == 1 && self.tx == 0
