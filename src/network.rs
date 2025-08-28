@@ -332,8 +332,13 @@ pub fn genesis(block: &Block) -> Result<()> {
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
     );
     pipe_storagemap_to(
-        &response2.storage,
+        &response3.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
+    );
+    pipe_storagemap_to(
+        &response2.storage,
+        &mut atomic
+            .derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_sigil.clone().into())),
     );
     atomic
         .derive(&RUNES.OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))

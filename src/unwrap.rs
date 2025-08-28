@@ -77,12 +77,9 @@ pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
 }
 
 pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
-    let last_block_bytes = fr_btc_storage_pointer().keyword("/last_block").get();
-    let last_block = if last_block_bytes.is_empty() {
-        0u128
-    } else {
-        u128::from_le_bytes(last_block_bytes[0..16].try_into().unwrap())
-    };
+    let last_block_bytes = fr_btc_storage_pointer()
+        .keyword("/last_block")
+        .get_value::<u128>();
     let mut response = PendingUnwrapsResponse::default();
     for i in last_block..=height {
         for payment_list_bytes in fr_btc_payments_at_block(i) {
@@ -112,12 +109,7 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
 
 pub fn update_last_block(height: u128) -> Result<()> {
     let mut last_block_key = fr_btc_storage_pointer().keyword("/last_block");
-    let last_block_bytes = last_block_key.get();
-    let mut last_block = if last_block_bytes.is_empty() {
-        0u128
-    } else {
-        u128::from_le_bytes(last_block_bytes[0..16].try_into().unwrap())
-    };
+    let last_block_bytes = last_block_key.get_value::<u128>();
     for i in last_block..=height {
         let mut all_fulfilled = true;
         for payment_list_bytes in fr_btc_payments_at_block(i) {
@@ -139,6 +131,6 @@ pub fn update_last_block(height: u128) -> Result<()> {
             break;
         }
     }
-    last_block_key.set(Arc::new(last_block.to_le_bytes().to_vec()));
+    last_block_key.set_value::<u128>(last_block);
     Ok(())
 }
