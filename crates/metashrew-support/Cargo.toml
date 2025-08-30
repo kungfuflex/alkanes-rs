@@ -18,12 +18,14 @@ log = "0.4"
 metashrew-cache = { path = "../metashrew-cache", features = ["sync"] }
 prost.workspace = true
 rlp = "0.5.2"
-getrandom = { workspace = true }
-uuid = { version = "1.17", features = ["v4", "js"] }
 # WASM-specific dependencies to fix uuid/getrandom compatibility
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { workspace = true }
-uuid = { version = "1.17", features = ["js"] }
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { version = "1.17", features = ["v4", "js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom = "0.2"
+uuid = { version = "1.17", features = ["v4"] }
 
 [build-dependencies]
 anyhow = "1.0.90"

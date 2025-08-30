@@ -14,5 +14,11 @@ proc-macro = true
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
+phf = { version = "0.11.2", features = ["macros"] }
+lazy_static = "1.4.0"
+
+[build-dependencies]
+phf_codegen = "0.11.2"
+
 [features]
 native-deps = []

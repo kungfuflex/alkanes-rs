@@ -34,8 +34,10 @@ serde_json = { workspace = true }
 hex = { workspace = true }
 protobuf = { workspace = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2.15", features = ["js"] }
+
 [dev-dependencies]
 wasm-bindgen-cli = "0.2.99"
-getrandom = { version = "0.2.15", features = ["js"] }
 protorune = { path = ".", features = ["test-utils"] }
 

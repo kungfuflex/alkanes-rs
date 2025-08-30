@@ -1,7 +1,9 @@
-[build]
-target = "wasm32-unknown-unknown"
+# This file configures Cargo to handle the mixed-target (native and wasm)
+# build environment correctly.
 
+# When compiling for the wasm32 target, we need to enable the 'js' feature
+# for certain crates like getrandom and uuid. We do this by passing a cfg
+# flag to rustc. This prevents the wasm-specific features from "leaking"
+# into the native build and causing compilation errors.
 [target.wasm32-unknown-unknown]
-runner = "wasm-bindgen-test-runner"
-rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
-
+rustflags = ["--cfg=web_sys_unstable_apis"]

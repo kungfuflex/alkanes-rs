@@ -5,6 +5,7 @@ use metashrew_sync::{MetashrewSync, SyncConfig, SyncEngine};
 
 mod adapters;
 mod shred_host;
+mod rpc;
 
 #[derive(ValueEnum, Debug, Clone)]
 pub enum Network {
@@ -20,6 +21,8 @@ pub struct Args {
     pub daemon_rpc_url: String,
     #[arg(long)]
     pub db_path: std::path::PathBuf,
+    #[arg(long, default_value = "127.0.0.1:8080")]
+    pub rpc_bind: String,
     #[arg(long, value_enum, default_value_t = Network::Regtest)]
     pub network: Network,
     #[arg(long)]
@@ -53,7 +56,7 @@ async fn main() -> Result<()> {
 
     let mut sync_engine = MetashrewSync::new(
         node_adapter,
-        storage_adapter,
+        storage_adapter.clone(),
         runtime_adapter,
         config,
     );

@@ -16,7 +16,7 @@ serde = "1.0.217"
 log = "0.4.25"
 env_logger = "0.11.6"
 hex = "0.4.3"
-rocksdb = { version = "0.21.0", features = ["multi-threaded-cf"] }
+rocksdb = { version = "0.21.0", features = ["multi-threaded-cf"], optional = true }
 tokio = { version = "1.43.0", features = ["full", "tracing"] }
 clap = { version = "4.5", features = ["unstable-doc", "derive"] }
 actix-cors = "0.7.0"
@@ -40,7 +40,7 @@ default = []
 console = ["console-subscriber"]
 debug-tracing = ["tracing-subscriber/json"]
 ssh_e2e_tests = []
-native-deps = []
+native-deps = ["rocksdb"]
 
 [dev-dependencies]
 tokio-test = "0.4"

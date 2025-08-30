@@ -6,6 +6,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, FnArg, ItemFn, Pat, Type};
+use std::fs::OpenOptions;
+use std::io::Write;
 
 /// Procedural macro to generate the `_start` function for a Metashrew indexer
 ///
@@ -241,6 +243,16 @@ pub fn view(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Extract the function block
     let fn_block = &input_fn.block;
 
+    let out_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| ".".to_string());
+    let path = std::path::Path::new(&out_dir).join("view_functions.txt");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    writeln!(file, "{}", original_fn_name.to_string()).unwrap();
+
     // Generate the external view function
     let expanded = quote! {
         // Keep the original function with __ prefix
@@ -249,7 +261,7 @@ pub fn view(_attr: TokenStream, item: TokenStream) -> TokenStream {
             #fn_block
 
         // Generate the WASM export function
-        #[cfg(not(test))]
+        #[cfg(all(target_arch = "wasm32", not(test)))]
         #[no_mangle]
         pub fn #original_fn_name() -> i32 {
             use metashrew_core;

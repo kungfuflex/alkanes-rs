@@ -399,6 +399,8 @@ pub fn alkanes_indexer(height: u32, block_data: &[u8]) -> Result<(), Box<dyn std
     Ok(())
 }
 
+include!(concat!(env!("OUT_DIR"), "/view_functions.rs"));
+
 #[cfg(test)]
 mod unit_tests {
     use super::*;

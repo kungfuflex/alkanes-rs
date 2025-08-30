@@ -1,253 +1,45 @@
-use anyhow::Result;
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use hex;
+use phf_codegen::Map;
 use std::env;
-use std::fs;
-use std::io::prelude::*;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
-
-fn compress(binary: Vec<u8>) -> Result<Vec<u8>> {
-    let mut writer = GzEncoder::new(Vec::<u8>::with_capacity(binary.len()), Compression::best());
-    writer.write_all(&binary)?;
-    Ok(writer.finish()?)
-}
-
-fn build_alkane(wasm_str: &str, features: Vec<&'static str>) -> Result<()> {
-    if features.len() != 0 {
-        let _ = Command::new("cargo")
-            .env("CARGO_TARGET_DIR", wasm_str)
-            .arg("build")
-            .arg("--release")
-            .arg("--features")
-            .arg(features.join(","))
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()?
-            .wait()?;
-        Ok(())
-    } else {
-        Command::new("cargo")
-            .env("CARGO_TARGET_DIR", wasm_str)
-            .arg("build")
-            .arg("--release")
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()?
-            .wait()?;
-        Ok(())
-    }
-}
 
 fn main() {
-    println!("cargo:rerun-if-changed=crates/");
-    let env_var = env::var_os("OUT_DIR").unwrap();
-    let base_dir = Path::new(&env_var)
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let dest_path = Path::new(&out_dir).join("view_functions.rs");
+    let mut f = File::create(&dest_path).unwrap();
+
+    let view_functions_path = Path::new(&out_dir).join("../../../metashrew-macros/view_functions.txt");
+    if !view_functions_path.exists() {
+        // If the file doesn't exist, create an empty map
+        writeln!(
+            f,
+            "pub static VIEW_FUNCTIONS: phf::Map<&'static str, fn(&[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>>> = phf::phf_map! {{}};"
+        )
         .unwrap();
-    let out_dir = base_dir.join("release");
-    let wasm_dir = base_dir.parent().unwrap().join("alkanes");
-    fs::create_dir_all(&wasm_dir).unwrap();
-    let wasm_str = wasm_dir.to_str().unwrap();
-    let write_dir = Path::new(&out_dir)
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("src")
-        .join("tests");
-
-    fs::create_dir_all(&write_dir.join("std")).unwrap();
-    let crates_dir = out_dir
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("crates");
-    match std::env::set_current_dir(&crates_dir) {
-        Err(_) => return,
-        _ => {}
-    };
-    let mods = fs::read_dir(&crates_dir)
-        .unwrap()
-        .filter_map(|v| {
-            let name = v.ok()?.file_name().into_string().ok()?;
-            if name.starts_with("alkanes-std-") {
-                Some(name)
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<String>>();
-    let files = mods
-        .clone()
-        .into_iter()
-        .filter_map(|name| {
-            let mut vars = env::vars_os();
-            if let Some(feature_name) = name.strip_prefix("alkanes-std-") {
-                let final_name = feature_name.to_uppercase().replace("-", "_");
-                if let Some(_) = env::var(format!("CARGO_FEATURE_{}", final_name.as_str())).ok() {
-                    Some(name)
-                } else if vars
-                    .position(|(k, _v)| k.to_owned().into_string().unwrap().contains("ALL"))
-                    .is_some()
-                {
-                    Some(name)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<String>>();
-    files
-        .into_iter()
-        .map(|v| -> Result<String> {
-            std::env::set_current_dir(&crates_dir.clone().join(v.clone()))?;
-            if v == "alkanes-std-genesis-alkane"
-                || v == "alkanes-std-genesis-alkane-upgraded"
-                || v == "alkanes-std-merkle-distributor"
-            {
-                let precompiled_dir = write_dir.join("precompiled");
-                fs::create_dir_all(&precompiled_dir)?;
-
-                // Build and process for each network
-                let networks = vec![
-                    ("bellscoin", vec!["bellscoin"]),
-                    ("luckycoin", vec!["luckycoin"]),
-                    ("mainnet", vec!["mainnet"]),
-                    ("fractal", vec!["fractal"]),
-                    ("regtest", vec!["regtest"]),
-                    ("signet", vec!["signet"]),
-                    ("testnet", vec!["regtest"]), // testnet uses regtest features
-                ];
-
-                for (network, features) in networks {
-                    // Build with specific features
-                    build_alkane(wasm_str, features)?;
-
-                    let subbed = v.clone().replace("-", "_");
-
-                    // Read the built wasm
-
-                    let file_path = Path::new(&wasm_str)
-                        .join("wasm32-unknown-unknown")
-                        .join("release")
-                        .join(subbed.clone() + ".wasm");
-                    let f: Vec<u8> = fs::read(&file_path)?;
-
-                    fs::write(
-                        &Path::new(&wasm_str)
-                            .join("wasm32-unknown-unknown")
-                            .join("release")
-                            .join(format!("{}_{}.wasm", subbed, network)),
-                        &f,
-                    )?;
-                    fs::write(
-                        &write_dir
-                            .join("std")
-                            .join(format!("{}_{}_build.rs", subbed, network)),
-                        String::from("pub fn get_bytes() -> Vec<u8> { include_bytes!(\"")
-                            + file_path.as_os_str().to_str().unwrap()
-                            + "\").to_vec() }",
-                    )?;
-                }
-
-                // Also build for the default feature set
-                build_alkane(wasm_str, vec!["regtest"])?;
-            } else {
-                build_alkane(wasm_str, vec![])?;
-            }
-
-            std::env::set_current_dir(&crates_dir)?;
-            let subbed = v.clone().replace("-", "_");
-            eprintln!(
-                "write: {}",
-                write_dir
-                    .join("std")
-                    .join(subbed.clone() + "_build.rs")
-                    .into_os_string()
-                    .to_str()
-                    .unwrap()
-            );
-            let file_path = Path::new(&wasm_str)
-                .join("wasm32-unknown-unknown")
-                .join("release")
-                .join(subbed.clone() + ".wasm");
-            let f: Vec<u8> = fs::read(&file_path)?;
-            let compressed: Vec<u8> = compress(f.clone())?;
-            fs::write(
-                &Path::new(&wasm_str)
-                    .join("wasm32-unknown-unknown")
-                    .join("release")
-                    .join(subbed.clone() + ".wasm.gz"),
-                &compressed,
-            )?;
-            fs::write(
-                &write_dir.join("std").join(subbed.clone() + "_build.rs"),
-                String::from("pub fn get_bytes() -> Vec<u8> { include_bytes!(\"")
-                    + file_path.as_os_str().to_str().unwrap()
-                    + "\").to_vec() }",
-            )?;
-            eprintln!(
-                "build: {}",
-                write_dir
-                    .join("std")
-                    .join(subbed.clone() + "_build.rs")
-                    .into_os_string()
-                    .to_str()
-                    .unwrap()
-            );
-            Ok(subbed)
-        })
-        .collect::<Result<Vec<String>>>()
-        .unwrap();
-    eprintln!(
-        "write test builds to: {}",
-        write_dir
-            .join("std")
-            .join("mod.rs")
-            .into_os_string()
-            .to_str()
-            .unwrap()
-    );
-    let mut mod_content = mods
-        .clone()
-        .into_iter()
-        .map(|v| v.replace("-", "_"))
-        .fold(String::default(), |r, v| {
-            r + "pub mod " + v.as_str() + "_build;\n"
-        });
-
-    // Add precompiled modules for genesis-alkane
-    let networks = [
-        "bellscoin",
-        "luckycoin",
-        "mainnet",
-        "fractal",
-        "regtest",
-        "testnet",
-    ];
-    let genesis_base = "alkanes_std_genesis_alkane";
-    for network in networks {
-        mod_content.push_str(&format!("pub mod {}_{}_build;\n", genesis_base, network));
+        return;
     }
 
-    let merkle_base = "alkanes_std_merkle_distributor";
-    for network in networks {
-        mod_content.push_str(&format!("pub mod {}_{}_build;\n", merkle_base, network));
+    let file = File::open(&view_functions_path).unwrap();
+    let reader = BufReader::new(file);
+
+    let mut map = Map::new();
+    for line in reader.lines() {
+        let line = line.unwrap();
+        let internal_fn_name = format!("__{}", line);
+        map.entry(
+            line,
+            &format!("crate::{}", internal_fn_name),
+        );
     }
-    fs::write(&write_dir.join("std").join("mod.rs"), mod_content).unwrap();
+
+    writeln!(
+        f,
+        "pub static VIEW_FUNCTIONS: phf::Map<&'static str, fn(&[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>>> = {};",
+        map.build()
+    )
+    .unwrap();
+    
+    // Clean up the file for the next build
+    fs::remove_file(view_functions_path).unwrap();
 }
