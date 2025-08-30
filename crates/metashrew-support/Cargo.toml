@@ -1,0 +1,34 @@
+[package]
+name = "metashrew-support"
+version.workspace = true
+edition = "2021"
+description = "Support library for Metashrew indexers"
+license = "MIT"
+repository = "https://github.com/sandshrewmetaprotocols/metashrew"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1.0.90"
+bech32 = "0.11.0"
+bitcoin = "0.32.6"
+hex = "0.4.3"
+log = "0.4"
+metashrew-cache = { path = "../metashrew-cache", features = ["sync"] }
+prost.workspace = true
+rlp = "0.5.2"
+getrandom = { workspace = true }
+uuid = { version = "1.17", features = ["v4", "js"] }
+# WASM-specific dependencies to fix uuid/getrandom compatibility
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { workspace = true }
+uuid = { version = "1.17", features = ["js"] }
+
+[build-dependencies]
+anyhow = "1.0.90"
+prost-build.workspace = true
+
+[features]
+native-deps = []
+

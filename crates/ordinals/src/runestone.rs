@@ -22,7 +22,7 @@ enum Payload {
 
 impl Runestone {
     #[cfg(not(feature = "dogecoin"))]
-    pub const MAGIC_NUMBER: opcodes::Opcode = opcodes::all::OP_PUSHNUM_13;
+    pub const MAGIC_NUMBER: bitcoin::blockdata::opcodes::Opcode = bitcoin::blockdata::opcodes::all::OP_PUSHNUM_13;
 
     #[cfg(feature = "dogecoin")]
     pub const PROTOCOL_ID: &'static [u8] = b"D";
@@ -207,11 +207,11 @@ impl Runestone {
 
         #[cfg(not(feature = "dogecoin"))]
         let mut builder = script::Builder::new()
-            .push_opcode(opcodes::all::OP_RETURN)
+            .push_opcode(bitcoin::blockdata::opcodes::all::OP_RETURN)
             .push_opcode(Runestone::MAGIC_NUMBER);
         #[cfg(feature = "dogecoin")]
         let mut builder = script::Builder::new()
-            .push_opcode(opcodes::all::OP_RETURN)
+            .push_opcode(bitcoin::blockdata::opcodes::all::OP_RETURN)
             .push_slice(b"D");
 
         for chunk in payload.chunks(MAX_SCRIPT_ELEMENT_SIZE) {
@@ -228,7 +228,7 @@ impl Runestone {
             let mut instructions = output.script_pubkey.instructions();
 
             // payload starts with OP_RETURN
-            if instructions.next() != Some(Ok(Instruction::Op(opcodes::all::OP_RETURN))) {
+            if instructions.next() != Some(Ok(Instruction::Op(bitcoin::blockdata::opcodes::all::OP_RETURN))) {
                 continue;
             }
 

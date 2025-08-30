@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use bitcoin::{OutPoint, Txid};
 use metashrew_core::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
-use metashrew_core::metashrew_println::{
+use metashrew_core::{
     println,
 };
 use metashrew_support::index_pointer::KeyValuePointer;
@@ -220,7 +220,7 @@ mod tests {
     use super::*;
     use bitcoin::hashes::Hash;
     use bitcoin::OutPoint;
-    use metashrew_core::index_pointer::AtomicPointer;
+    use crate::metashrew_core::index_pointer::AtomicPointer;
     use ordinals::RuneId;
     use protorune_support::balance_sheet::ProtoruneRuneId;
     use std::collections::BTreeMap;

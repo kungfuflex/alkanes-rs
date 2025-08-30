@@ -4,13 +4,13 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::trace::{Trace, TraceEvent};
+use alkanes_support::trace::{Trace, TraceEvent, TraceResponse};
 use anyhow::Result;
 use bitcoin::blockdata::transaction::Version;
 use bitcoin::{
     address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness,
 };
-use bitcoin::{Block, Transaction};
+use bitcoin::{Block, Network, Transaction};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use {
@@ -97,13 +97,13 @@ pub fn clear() {
 
 #[cfg(test)]
 pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
-    let block_height = 840000;
+    let block_height = 0;
     let mut test_block = create_block_with_coinbase_tx(block_height);
 
     let wasm_binary = alkanes_std_test_build::get_bytes();
     let raw_envelope = RawEnvelope::from(wasm_binary);
 
-    let witness = raw_envelope.to_gzipped_witness();
+    let witness = raw_envelope.to_witness(true);
 
     // Create a transaction input
 
@@ -169,7 +169,7 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
     cellpacks: Vec<Cellpack>,
     _previous_out: Option<OutPoint>,
 ) -> Block {
-    let block_height = 840000;
+    let block_height = 880_000;
     let mut test_block = create_block_with_coinbase_tx(block_height);
     let mut previous_out: Option<OutPoint> = _previous_out;
     let mut txs = binaries
@@ -180,7 +180,7 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
             let witness = if binary.len() == 0 {
                 Witness::new()
             } else {
-                RawEnvelope::from(binary).to_gzipped_witness()
+                RawEnvelope::from(binary).to_witness(true)
             };
             if let Some(previous_output) = previous_out {
                 let tx = create_multiple_cellpack_with_witness_and_in(
@@ -209,12 +209,12 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
 }
 
 pub fn init_with_multiple_cellpacks(binary: Vec<u8>, cellpacks: Vec<Cellpack>) -> Block {
-    let block_height = 840000;
+    let block_height = 0;
 
     let mut test_block = create_block_with_coinbase_tx(block_height);
 
     let raw_envelope = RawEnvelope::from(binary);
-    let witness = raw_envelope.to_gzipped_witness();
+    let witness = raw_envelope.to_witness(true);
     test_block
         .txdata
         .push(create_multiple_cellpack_with_witness(
@@ -455,16 +455,7 @@ pub fn get_last_outpoint_sheet(test_block: &Block) -> Result<BalanceSheet<IndexP
     get_sheet_for_outpoint(test_block, len - 1, 0)
 }
 
-pub fn assert_revert_context(outpoint: &OutPoint, expected_error_message: &str) -> Result<()> {
-    // This is a convenience wrapper around assert_revert_context_at_index that checks the last event
-    assert_revert_context_at_index(outpoint, expected_error_message, None)
-}
-
-pub fn assert_revert_context_at_index(
-    outpoint: &OutPoint,
-    expected_error_message: &str,
-    index: Option<isize>,
-) -> Result<()> {
+fn get_trace_event_at_index(outpoint: &OutPoint, index: Option<isize>) -> Result<TraceEvent> {
     let trace_data: Trace = view::trace(outpoint)?.try_into()?;
     let trace_events = trace_data.0.lock().expect("Mutex poisoned");
 
@@ -495,7 +486,20 @@ pub fn assert_revert_context_at_index(
         .get(event_index)
         .cloned()
         .unwrap_or_else(|| panic!("Failed to get trace event at index {}", event_index));
+    Ok(event)
+}
 
+pub fn assert_revert_context(outpoint: &OutPoint, expected_error_message: &str) -> Result<()> {
+    // This is a convenience wrapper around assert_revert_context_at_index that checks the last event
+    assert_revert_context_at_index(outpoint, expected_error_message, None)
+}
+
+pub fn assert_revert_context_at_index(
+    outpoint: &OutPoint,
+    expected_error_message: &str,
+    index: Option<isize>,
+) -> Result<()> {
+    let event = get_trace_event_at_index(outpoint, index)?;
     match event {
         TraceEvent::RevertContext(trace_response) => {
             let data = String::from_utf8_lossy(&trace_response.inner.data);
@@ -508,8 +512,33 @@ pub fn assert_revert_context_at_index(
             Ok(())
         }
         _ => panic!(
-            "Expected RevertContext variant at index {}, but got a different variant: {:?}",
-            event_index, event
+            "Expected RevertContext variant, but got a different variant: {:?}",
+            event
+        ),
+    }
+}
+
+pub fn assert_return_context<F, T>(outpoint: &OutPoint, check_function: F) -> Result<T>
+where
+    F: Fn(TraceResponse) -> Result<T>,
+{
+    assert_return_context_at_index(outpoint, check_function, None)
+}
+
+pub fn assert_return_context_at_index<F, T>(
+    outpoint: &OutPoint,
+    check_function: F,
+    index: Option<isize>,
+) -> Result<T>
+where
+    F: Fn(TraceResponse) -> Result<T>,
+{
+    let event = get_trace_event_at_index(outpoint, index)?;
+    match event {
+        TraceEvent::ReturnContext(trace_response) => check_function(trace_response),
+        _ => panic!(
+            "Expected ReturnContext variant, but got a different variant: {:?}",
+            event
         ),
     }
 }

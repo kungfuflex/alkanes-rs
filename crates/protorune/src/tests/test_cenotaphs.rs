@@ -2,8 +2,8 @@
 mod tests {
     use crate::balance_sheet::load_sheet;
     use crate::message::MessageContext;
-    use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
-    use metashrew_support::proto;
+    use crate::metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+    use crate::metashrew_support::proto;
     use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
     use protorune_support::protostone::Protostone;
 
@@ -21,11 +21,11 @@ mod tests {
 
     use helpers::clear;
     #[allow(unused_imports)]
-    use metashrew_core::{
+    use crate::metashrew_core::{
         println,
     };
     use std::fmt::Write;
-    use metashrew_support::index_pointer::KeyValuePointer;
+    use crate::metashrew_support::index_pointer::KeyValuePointer;
     use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
 
     use wasm_bindgen_test::*;

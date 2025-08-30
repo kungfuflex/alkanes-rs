@@ -1,0 +1,301 @@
+# Debshrew-Mono CDC Configuration Example
+# This file demonstrates how to configure Change Data Capture for Bitcoin indexing
+
+# Global CDC settings
+global_settings:
+  max_buffer_size: 1000
+  flush_interval_ms: 1000
+  retry_attempts: 3
+  retry_backoff_ms: 1000
+  enable_deduplication: true
+  include_block_metadata: true
+
+# Kafka producer configuration
+kafka_config:
+  bootstrap_servers: "localhost:9092"
+  topic_prefix: "bitcoin.cdc"
+  acks: "all"
+  compression: "gzip"
+  batch_size: 1000
+  linger_ms: 100
+  additional_properties:
+    "security.protocol": "PLAINTEXT"
+    "client.id": "debshrew-mono"
+
+# Optional schema registry configuration
+# schema_registry:
+#   url: "http://localhost:8081"
+#   auth:
+#     username: "schema-user"
+#     password: "schema-pass"
+#   subject_naming_strategy: "TableName"
+
+# CDC relationship definitions
+relationships:
+  # Bitcoin addresses
+  - name: "bitcoin_addresses"
+    key_pattern: "^address:([13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{39,59})$"
+    table_name: "addresses"
+    operation_type: "CreateUpdate"
+    key_mapping:
+      primary_key_fields: ["address"]
+      extraction_pattern: "^address:(.+)$"
+    value_mapping:
+      value_format: "Json"
+      fields:
+        - name: "address"
+          path: "$.address"
+          data_type: "varchar"
+          nullable: false
+        - name: "balance"
+          path: "$.balance"
+          data_type: "bigint"
+          nullable: false
+        - name: "tx_count"
+          path: "$.tx_count"
+          data_type: "integer"
+          nullable: false
+        - name: "first_seen_height"
+          path: "$.first_seen"
+          data_type: "integer"
+          nullable: true
+        - name: "last_seen_height"
+          path: "$.last_seen"
+          data_type: "integer"
+          nullable: true
+
+  # Bitcoin transactions
+  - name: "bitcoin_transactions"
+    key_pattern: "^tx:([a-fA-F0-9]{64})$"
+    table_name: "transactions"
+    operation_type: "CreateOnly"
+    key_mapping:
+      primary_key_fields: ["txid"]
+      extraction_pattern: "^tx:(.+)$"
+    value_mapping:
+      value_format: "Json"
+      fields:
+        - name: "txid"
+          path: "$.txid"
+          data_type: "varchar"
+          nullable: false
+        - name: "block_height"
+          path: "$.height"
+          data_type: "integer"
+          nullable: false
+        - name: "block_hash"
+          path: "$.block_hash"
+          data_type: "varchar"
+          nullable: false
+        - name: "fee"
+          path: "$.fee"
+          data_type: "bigint"
+          nullable: false
+        - name: "size"
+          path: "$.size"
+          data_type: "integer"
+          nullable: false
+        - name: "vsize"
+          path: "$.vsize"
+          data_type: "integer"
+          nullable: false
+        - name: "input_count"
+          path: "$.inputs"
+          data_type: "integer"
+          nullable: false
+        - name: "output_count"
+          path: "$.outputs"
+          data_type: "integer"
+          nullable: false
+
+  # UTXOs (Unspent Transaction Outputs)
+  - name: "bitcoin_utxos"
+    key_pattern: "^utxo:([a-fA-F0-9]{64}):([0-9]+)$"
+    table_name: "utxos"
+    operation_type: "CreateUpdateDelete"
+    key_mapping:
+      primary_key_fields: ["txid", "vout"]
+      extraction_pattern: "^utxo:([a-fA-F0-9]{64}):([0-9]+)$"
+    value_mapping:
+      value_format: "Json"
+      fields:
+        - name: "txid"
+          path: "$.txid"
+          data_type: "varchar"
+          nullable: false
+        - name: "vout"
+          path: "$.vout"
+          data_type: "integer"
+          nullable: false
+        - name: "value"
+          path: "$.value"
+          data_type: "bigint"
+          nullable: false
+        - name: "script_pubkey"
+          path: "$.script"
+          data_type: "text"
+          nullable: false
+        - name: "address"
+          path: "$.address"
+          data_type: "varchar"
+          nullable: true
+        - name: "spent_height"
+          path: "$.spent_height"
+          data_type: "integer"
+          nullable: true
+        - name: "spent_txid"
+          path: "$.spent_txid"
+          data_type: "varchar"
+          nullable: true
+
+  # Block headers
+  - name: "bitcoin_blocks"
+    key_pattern: "^block:([0-9]+)$"
+    table_name: "blocks"
+    operation_type: "CreateOnly"
+    key_mapping:
+      primary_key_fields: ["height"]
+      extraction_pattern: "^block:([0-9]+)$"
+    value_mapping:
+      value_format: "Json"
+      fields:
+        - name: "height"
+          path: "$.height"
+          data_type: "integer"
+          nullable: false
+        - name: "hash"
+          path: "$.hash"
+          data_type: "varchar"
+          nullable: false
+        - name: "prev_hash"
+          path: "$.prev_hash"
+          data_type: "varchar"
+          nullable: true
+        - name: "merkle_root"
+          path: "$.merkle_root"
+          data_type: "varchar"
+          nullable: false
+        - name: "timestamp"
+          path: "$.timestamp"
+          data_type: "timestamp"
+          nullable: false
+        - name: "bits"
+          path: "$.bits"
+          data_type: "varchar"
+          nullable: false
+        - name: "nonce"
+          path: "$.nonce"
+          data_type: "bigint"
+          nullable: false
+        - name: "tx_count"
+          path: "$.tx_count"
+          data_type: "integer"
+          nullable: false
+        - name: "size"
+          path: "$.size"
+          data_type: "integer"
+          nullable: false
+
+  # Ordinals inscriptions (example for metaprotocol data)
+  - name: "ordinals_inscriptions"
+    key_pattern: "^inscription:([a-fA-F0-9]{64}):([0-9]+)$"
+    table_name: "inscriptions"
+    operation_type: "CreateUpdate"
+    key_mapping:
+      primary_key_fields: ["txid", "vout"]
+      extraction_pattern: "^inscription:([a-fA-F0-9]{64}):([0-9]+)$"
+    value_mapping:
+      value_format: "Json"
+      fields:
+        - name: "txid"
+          path: "$.txid"
+          data_type: "varchar"
+          nullable: false
+        - name: "vout"
+          path: "$.vout"
+          data_type: "integer"
+          nullable: false
+        - name: "inscription_id"
+          path: "$.inscription_id"
+          data_type: "varchar"
+          nullable: false
+        - name: "content_type"
+          path: "$.content_type"
+          data_type: "varchar"
+          nullable: true
+        - name: "content_length"
+          path: "$.content_length"
+          data_type: "integer"
+          nullable: true
+        - name: "content_hash"
+          path: "$.content_hash"
+          data_type: "varchar"
+          nullable: true
+        - name: "inscription_number"
+          path: "$.number"
+          data_type: "bigint"
+          nullable: true
+        - name: "genesis_height"
+          path: "$.genesis_height"
+          data_type: "integer"
+          nullable: false
+
+  # BRC-20 tokens (example for token protocol)
+  - name: "brc20_tokens"
+    key_pattern: "^brc20:([a-zA-Z0-9]+):balance:([13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{39,59})$"
+    table_name: "brc20_balances"
+    operation_type: "CreateUpdate"
+    key_mapping:
+      primary_key_fields: ["token", "address"]
+      extraction_pattern: "^brc20:([a-zA-Z0-9]+):balance:(.+)$"
+    value_mapping:
+      value_format: "Json"
+      fields:
+        - name: "token"
+          path: "$.token"
+          data_type: "varchar"
+          nullable: false
+        - name: "address"
+          path: "$.address"
+          data_type: "varchar"
+          nullable: false
+        - name: "balance"
+          path: "$.balance"
+          data_type: "decimal"
+          nullable: false
+        - name: "available"
+          path: "$.available"
+          data_type: "decimal"
+          nullable: false
+        - name: "transferable"
+          path: "$.transferable"
+          data_type: "decimal"
+          nullable: false
+        - name: "last_updated_height"
+          path: "$.last_updated"
+          data_type: "integer"
+          nullable: false
+
+  # Generic key-value store for debugging/monitoring
+  - name: "debug_all_keys"
+    key_pattern: "^debug:.*$"
+    table_name: "debug_data"
+    operation_type: "CreateUpdate"
+    key_mapping:
+      primary_key_fields: ["key"]
+      extraction_pattern: "^debug:(.+)$"
+    value_mapping:
+      value_format: "Raw"
+      fields:
+        - name: "key"
+          path: "$.key"
+          data_type: "text"
+          nullable: false
+        - name: "raw_value"
+          path: "$.raw_value"
+          data_type: "text"
+          nullable: false
+        - name: "raw_length"
+          path: "$.raw_length"
+          data_type: "integer"
+          nullable: false

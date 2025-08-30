@@ -17,7 +17,7 @@ use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
-use metashrew_println::println;
+use metashrew_core::println;
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::balance_sheet::MintableDebit;
 use protorune::message::{MessageContext, MessageContextParcel};

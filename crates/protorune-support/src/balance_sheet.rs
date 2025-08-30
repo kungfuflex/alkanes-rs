@@ -428,7 +428,12 @@ impl<P: KeyValuePointer + Clone> BalanceSheet<P> {
                 .keyword("/id_to_balance")
                 .select(&rune_clone.into());
             if runes_to_balances_ptr.get().len() != 0 {
-                let stored_balance = runes_to_balances_ptr.get_value::<u128>();
+                let stored_balance_vec = runes_to_balances_ptr.get();
+                let stored_balance = if stored_balance_vec.len() > 0 {
+                	u128::from_le_bytes((&stored_balance_vec[..]).try_into().unwrap())
+                } else {
+                	0
+                };
                 total_stored_balance += stored_balance;
             }
         }

@@ -1,10 +1,10 @@
 [package]
 name = "alkanes-runtime"
 version.workspace = true
-edition = "2021"
-description = "ALKANES runtime library"
-license = "MIT"
-repository = "https://github.com/kungfuflex/alkanes-rs"
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
 resolver = "2"
 
 [features]
@@ -19,7 +19,8 @@ alkanes-support = { workspace = true }
 alkanes-macros = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
+metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
-metashrew-println = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-test = { workspace = true }
+

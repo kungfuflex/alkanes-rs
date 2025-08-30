@@ -1,3 +1,4 @@
+pub mod metashrew_support;
 pub mod cellpack;
 pub mod constants;
 pub mod context;

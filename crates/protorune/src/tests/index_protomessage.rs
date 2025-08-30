@@ -11,20 +11,20 @@ mod tests {
         address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut,
         Witness,
     };
-    use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+    use crate::metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
     use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
     use protorune_support::protostone::Protostone;
     use protorune_support::rune_transfer::RuneTransfer;
     use protorune_support::utils::consensus_encode;
 
     #[allow(unused_imports)]
-    use metashrew_core::{
+    use crate::metashrew_core::{
         println,
     };
     use std::fmt::Write;
 
     use helpers::clear;
-    use metashrew_support::index_pointer::KeyValuePointer;
+    use crate::metashrew_support::index_pointer::KeyValuePointer;
     use ordinals::{Etching, Rune, Runestone};
     use std::str::FromStr;
     use wasm_bindgen_test::*;

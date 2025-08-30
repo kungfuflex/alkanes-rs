@@ -6,7 +6,7 @@ mod tests {
     use crate::{tables, Protorune};
     use anyhow::Result;
     use bitcoin::{OutPoint, Transaction};
-    use metashrew_core::index_pointer::AtomicPointer;
+    use crate::metashrew_core::index_pointer::AtomicPointer;
     use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
     use protorune_support::proto::{self, protorune};
     use protorune_support::protostone::{Protostone, ProtostoneEdict};
@@ -16,7 +16,7 @@ mod tests {
     use helpers::clear;
     use metashrew_println::println;
     use std::fmt::Write;
-    use metashrew_support::index_pointer::KeyValuePointer;
+    use crate::metashrew_support::index_pointer::KeyValuePointer;
     use std::str::FromStr;
     use wasm_bindgen_test::*;
 

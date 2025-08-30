@@ -97,31 +97,36 @@ impl RawEnvelope {
             Ok(false)
         }
     }
-    pub fn append_reveal_script(&self, mut builder: script::Builder) -> script::ScriptBuf {
+    pub fn append_reveal_script(
+        &self,
+        mut builder: script::Builder,
+        should_compress: bool,
+    ) -> script::ScriptBuf {
         builder = builder
             .push_opcode(opcodes::OP_FALSE)
             .push_opcode(opcodes::all::OP_IF)
             .push_slice(PROTOCOL_ID);
 
         builder = builder.push_slice(BODY_TAG);
-        for chunk in compress(
-            self.payload
-                .clone()
-                .into_iter()
-                .flatten()
-                .collect::<Vec<u8>>(),
-        )
-        .unwrap()
-        .chunks(MAX_SCRIPT_ELEMENT_SIZE)
-        {
+        let mut payload = self
+            .payload
+            .clone()
+            .into_iter()
+            .flatten()
+            .collect::<Vec<u8>>();
+        if should_compress {
+            payload = compress(payload).unwrap();
+        }
+
+        for chunk in payload.chunks(MAX_SCRIPT_ELEMENT_SIZE) {
             builder = builder.push_slice::<&script::PushBytes>(chunk.try_into().unwrap());
         }
         builder.push_opcode(opcodes::all::OP_ENDIF).into_script()
     }
-    pub fn to_gzipped_witness(&self) -> Witness {
+    pub fn to_witness(&self, should_compress: bool) -> Witness {
         let builder = script::Builder::new();
 
-        let script = self.append_reveal_script(builder);
+        let script = self.append_reveal_script(builder, should_compress);
 
         let mut witness = Witness::new();
         witness.push(script);
@@ -243,7 +248,7 @@ impl RawEnvelope {
     pub fn to_taproot_spend_info(&self, internal_key: XOnlyPublicKey) -> Result<TaprootSpendInfo> {
         let secp = Secp256k1::new();
         let builder = script::Builder::new();
-        let reveal_script = self.append_reveal_script(builder);
+        let reveal_script = self.append_reveal_script(builder, true);
 
         let taproot_spend_info = TaprootBuilder::new()
             .add_leaf(0, reveal_script)
@@ -257,7 +262,7 @@ impl RawEnvelope {
     pub fn to_control_block(&self, internal_key: XOnlyPublicKey) -> Result<ControlBlock> {
         let taproot_spend_info = self.to_taproot_spend_info(internal_key)?;
         let builder = script::Builder::new();
-        let reveal_script = self.append_reveal_script(builder);
+        let reveal_script = self.append_reveal_script(builder, true);
 
         taproot_spend_info
             .control_block(&(reveal_script, LeafVersion::TapScript))
@@ -272,7 +277,7 @@ impl RawEnvelope {
     ) -> Result<()> {
         let control_block = self.to_control_block(internal_key)?;
         let builder = script::Builder::new();
-        let reveal_script = self.append_reveal_script(builder);
+        let reveal_script = self.append_reveal_script(builder, true);
 
         psbt_input.witness_utxo = Some(witness_utxo);
         psbt_input.tap_internal_key = Some(internal_key);

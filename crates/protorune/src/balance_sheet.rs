@@ -7,11 +7,11 @@ use std::collections::BTreeMap;
 
 #[allow(unused_imports)]
 use {
-    metashrew_core::metashrew_println::{println},
+    metashrew_core::println,
     std::fmt::Write,
 };
 
-// use metashrew_core::{println, stdio::stdout};
+// use crate::metashrew_core::{println, stdio::stdout};
 // use std::fmt::Write;
 //
 

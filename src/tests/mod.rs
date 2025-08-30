@@ -30,9 +30,15 @@ pub mod fuel;
 #[cfg(test)]
 pub mod genesis;
 #[cfg(test)]
+<<<<<<< HEAD
 pub mod logging_test;
+=======
+pub mod genesis_upgrade;
+>>>>>>> main
 #[cfg(test)]
 pub mod memory_security_tests;
+#[cfg(test)]
+pub mod merkle_distributor;
 #[cfg(test)]
 pub mod networks;
 #[cfg(test)]

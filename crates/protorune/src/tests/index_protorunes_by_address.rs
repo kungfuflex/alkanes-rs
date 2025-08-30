@@ -5,7 +5,7 @@ mod tests {
     use crate::{view, Protorune};
     use anyhow::Result;
     use bitcoin::OutPoint;
-    use metashrew_core::index_pointer::AtomicPointer;
+    use crate::metashrew_core::index_pointer::AtomicPointer;
     use metashrew_println::println;
     use std::fmt::Write;
     use protobuf::{Message, MessageField};

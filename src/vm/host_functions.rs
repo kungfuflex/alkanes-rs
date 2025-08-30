@@ -18,23 +18,38 @@ use alkanes_support::{
 };
 #[allow(unused_imports)]
 use anyhow::{anyhow, Result};
+use bitcoin::{BlockHash, Transaction};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use {
-  metashrew_println::{print, println},
+  metashrew_core::println,
   std::fmt::Write
 };
 use metashrew_support::index_pointer::KeyValuePointer;
+use num::traits::ToBytes;
+use ordinals::Artifact;
+use ordinals::Runestone;
+use protorune_support::protostone::Protostone;
 
 use crate::vm::fuel::{
     consume_fuel, fuel_extcall_deploy, Fuelable, FUEL_BALANCE,
     FUEL_FUEL, FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE,
     FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
-use protorune_support::utils::consensus_encode;
+use protorune_support::utils::{consensus_encode, decode_varint_list};
+use std::collections::BTreeMap;
 use std::io::Cursor;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use wasmi::*;
+
+static DIESEL_MINTS_CACHE: LazyLock<Arc<RwLock<Option<Vec<u8>>>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(None)));
+
+pub fn clear_diesel_mints_cache() {
+    if let Ok(mut cache) = DIESEL_MINTS_CACHE.try_write() {
+        *cache = None;
+    }
+}
 
 pub struct AlkanesHostFunctionsImpl(());
 
@@ -505,6 +520,128 @@ impl AlkanesHostFunctionsImpl {
             Err(e) => Self::_handle_extcall_abort::<T>(caller, e, false),
         }
     }
+    fn _get_block_header(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+        // Return the current block header
+        #[cfg(feature = "debug-log")]
+        {
+            println!("Precompiled contract: returning current block header");
+        }
+
+        // Get the block header from the current context
+        let block = {
+            let context_guard = caller.data_mut().context.lock().unwrap();
+            context_guard.message.block.clone()
+        };
+
+        // Serialize just the header (not the full block with transactions)
+        let header_bytes = consensus_encode(&block.header)?;
+        let mut response = CallResponse::default();
+        response.data = header_bytes;
+        Ok(response)
+    }
+
+    fn _get_coinbase_tx(caller: &mut Caller<'_, AlkanesState>) -> Result<Transaction> {
+        let context_guard = caller.data_mut().context.lock().unwrap();
+        if context_guard.message.block.txdata.is_empty() {
+            return Err(anyhow!("Block has no transactions"));
+        }
+        Ok(context_guard.message.block.txdata[0].clone())
+    }
+
+    fn _get_coinbase_tx_response(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+        // Return the coinbase transaction bytes
+        #[cfg(feature = "debug-log")]
+        {
+            println!("Precompiled contract: returning coinbase transaction");
+        }
+
+        // Get the coinbase transaction from the current block
+        let coinbase_tx = Self::_get_coinbase_tx(caller)?;
+
+        // Serialize the coinbase transaction
+        let tx_bytes = consensus_encode(&coinbase_tx)?;
+        let mut response = CallResponse::default();
+        response.data = tx_bytes;
+        Ok(response)
+    }
+
+    fn _get_total_miner_fee(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+        // Return the coinbase transaction bytes
+        #[cfg(feature = "debug-log")]
+        {
+            println!("Precompiled contract: returning total miner fee");
+        }
+
+        // Get the coinbase transaction from the current block
+        let coinbase_tx = Self::_get_coinbase_tx(caller)?;
+        let total_fees: u128 = coinbase_tx
+            .output
+            .iter()
+            .map(|out| out.value.to_sat() as u128)
+            .sum();
+
+        let mut response = CallResponse::default();
+        response.data = total_fees.to_le_bytes().to_vec();
+        Ok(response)
+    }
+
+    fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+        if let Some(cached_data) = DIESEL_MINTS_CACHE.read().unwrap().clone() {
+            #[cfg(feature = "debug-log")]
+            {
+                println!("Precompiled contract: returning cached total number of diesel mints");
+            }
+            let mut response = CallResponse::default();
+            response.data = cached_data;
+            return Ok(response);
+        }
+        #[cfg(feature = "debug-log")]
+        {
+            println!("Precompiled contract: calculating total number of diesel mints in this block");
+        }
+
+        // Get the block header from the current context
+        let block = {
+            let context_guard = caller.data_mut().context.lock().unwrap();
+            context_guard.message.block.clone()
+        };
+        let mut counter: u128 = 0;
+        for tx in &block.txdata {
+            if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
+                let protostones = Protostone::from_runestone(runestone)?;
+                for protostone in protostones {
+                    if protostone.protocol_tag != 1 {
+                        continue;
+                    }
+                    let calldata: Vec<u8> = protostone
+                        .message
+                        .iter()
+                        .flat_map(|v| v.to_be_bytes())
+                        .collect();
+                    if calldata.is_empty() {
+                        continue;
+                    }
+                    let varint_list = decode_varint_list(&mut Cursor::new(calldata))?;
+                    if varint_list.len() < 2 {
+                        continue;
+                    }
+                    if let Ok(cellpack) = TryInto::<Cellpack>::try_into(varint_list) {
+                        if cellpack.target == AlkaneId::new(2, 0)
+                            && !cellpack.inputs.is_empty()
+                            && cellpack.inputs[0] == 77
+                        {
+                            counter += 1;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let mut response = CallResponse::default();
+        response.data = counter.to_le_bytes().to_vec();
+        *DIESEL_MINTS_CACHE.write().unwrap() = Some(response.data.clone());
+        Ok(response)
+    }
     fn _handle_special_extcall(
         caller: &mut Caller<'_, AlkanesState>,
         cellpack: Cellpack,
@@ -514,40 +651,11 @@ impl AlkanesHostFunctionsImpl {
             cellpack.target.block, cellpack.target.tx
         );
 
-        let mut response = CallResponse::default();
-
-        match cellpack.target.tx {
-            0 => {
-                // Return the current block header
-                alkane_log!("Precompiled contract: returning current block header");
-
-                // Get the block header from the current context
-                let block = {
-                    let context_guard = caller.data_mut().context.lock().unwrap();
-                    context_guard.message.block.clone()
-                };
-
-                // Serialize just the header (not the full block with transactions)
-                let header_bytes = consensus_encode(&block.header)?;
-                response.data = header_bytes;
-            }
-            1 => {
-                // Return the coinbase transaction bytes
-                alkane_log!("Precompiled contract: returning coinbase transaction");
-
-                // Get the coinbase transaction from the current block
-                let coinbase_tx = {
-                    let context_guard = caller.data_mut().context.lock().unwrap();
-                    if context_guard.message.block.txdata.is_empty() {
-                        return Err(anyhow!("Block has no transactions"));
-                    }
-                    context_guard.message.block.txdata[0].clone()
-                };
-
-                // Serialize the coinbase transaction
-                let tx_bytes = consensus_encode(&coinbase_tx)?;
-                response.data = tx_bytes;
-            }
+        let response = match cellpack.target.tx {
+            0 => Self::_get_block_header(caller),
+            1 => Self::_get_coinbase_tx_response(caller),
+            2 => Self::_get_number_diesel_mints(caller),
+            3 => Self::_get_total_miner_fee(caller),
             _ => {
                 return Err(anyhow!(
                     "Unknown precompiled contract: [{}, {}]",
@@ -555,7 +663,7 @@ impl AlkanesHostFunctionsImpl {
                     cellpack.target.tx
                 ));
             }
-        }
+        }?;
 
         // Serialize the response and return
         let serialized = response.serialize();
@@ -698,7 +806,7 @@ impl AlkanesHostFunctionsImpl {
             let data = mem.data(&caller);
             read_arraybuffer(data, v)?
         };
-        print!("{}", String::from_utf8(message)?);
+        println!("{}", String::from_utf8(message)?);
         Ok(())
     }
 }

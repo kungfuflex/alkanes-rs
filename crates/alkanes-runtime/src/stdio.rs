@@ -1,5 +1,5 @@
 use crate::imports::__log;
-use metashrew_println::wasm::{to_arraybuffer_layout, to_passback_ptr};
+use metashrew_core::wasm::{to_arraybuffer_layout, to_passback_ptr};
 pub use std::fmt::{Error, Write};
 
 pub struct Stdout(());

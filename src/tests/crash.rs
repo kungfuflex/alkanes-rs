@@ -21,7 +21,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_owned_token_mint_crash() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // First deploy auth token factory
     let auth_factory_cellpack = Cellpack {
@@ -106,7 +106,7 @@ fn test_owned_token_mint_crash() -> Result<()> {
 
     println!("STEP 7: About to index mint block...");
 
-    index_block(&mint_block, block_height + 1)?;
+    index_block(&mint_block, block_height)?;
     println!("STEP 8: Mint block indexed successfully");
 
     // Get the mint transaction info

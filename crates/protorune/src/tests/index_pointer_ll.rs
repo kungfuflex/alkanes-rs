@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::test_helpers::{self as helpers};
-    use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
-    use metashrew_support::index_pointer::KeyValuePointer;
+    use crate::metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+    use crate::metashrew_support::index_pointer::KeyValuePointer;
     use std::sync::Arc;
     use wasm_bindgen_test::*;
 

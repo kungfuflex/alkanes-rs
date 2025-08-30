@@ -12,6 +12,7 @@
 use crate::vm::fuel::VirtualFuelBytes;
 use alkanes_support::id::AlkaneId;
 use bitcoin::Block;
+use metashrew_core;
 
 // Conditional compilation for different targets
 #[cfg(not(target_arch = "wasm32"))]
@@ -22,7 +23,7 @@ use std::cell::RefCell;
 
 #[allow(unused_imports)]
 use {
-  metashrew_println::{println},
+  metashrew_core::{println},
   std::fmt::Write
 };
 
@@ -289,30 +290,30 @@ pub fn update_cache_stats(cache_stats: CacheStats) {
 /// Enable LRU cache debugging mode (only available with lru-debug feature)
 #[cfg(feature = "lru-debug")]
 pub fn enable_lru_debug_mode() {
-    metashrew_support::lru_cache::enable_lru_debug_mode();
+    metashrew_core::lru_cache::enable_lru_debug_mode();
 }
 
 /// Disable LRU cache debugging mode (only available with lru-debug feature)
 #[cfg(feature = "lru-debug")]
 pub fn disable_lru_debug_mode() {
-    metashrew_support::lru_cache::disable_lru_debug_mode();
+    metashrew_core::lru_cache::disable_lru_debug_mode();
 }
 
 /// Generate detailed LRU cache debug report (only available with lru-debug feature)
 #[cfg(feature = "lru-debug")]
 pub fn generate_lru_debug_report() -> String {
-    metashrew_support::lru_cache::generate_lru_debug_report()
+    metashrew_core::lru_cache::generate_lru_debug_report()
 }
 
 /// Get current cache statistics from metashrew-support
 pub fn get_cache_stats() -> CacheStats {
     // Get actual cache stats from metashrew-support LRU cache
-    let metashrew_stats = metashrew_support::lru_cache::get_cache_stats();
+    let metashrew_stats = metashrew_core::lru_cache::get_cache_stats();
 
     #[cfg(feature = "lru-debug")]
     let top_prefixes = {
         // Get debug stats and extract top prefixes
-        let debug_stats = metashrew_support::lru_cache::get_lru_debug_stats();
+        let debug_stats = metashrew_core::lru_cache::get_lru_debug_stats();
         debug_stats
             .prefix_stats
             .into_iter()

@@ -1,7 +1,7 @@
 [package]
 name = "alkanes-std-upgradeable"
-version = "0.6.2"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -11,5 +11,7 @@ alkanes-runtime = { workspace = true, features = ["panic-hook"] }
 alkanes-support = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
-metashrew-support = { workspace = true }
 protorune-support = { workspace = true }
+
+[features]
+

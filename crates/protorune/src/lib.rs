@@ -4,7 +4,7 @@ macro_rules! alkane_log {
     ($($arg:tt)*) => {
         #[cfg(feature = "logs")]
         {
-            use metashrew_core::println;
+            use crate::metashrew_core::println;
             use std::fmt::Write;
             println!("🧪 [ALKANE] {}", format!($($arg)*));
         }

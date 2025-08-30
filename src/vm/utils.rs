@@ -12,7 +12,7 @@ use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use {
-  metashrew_println::{println},
+  metashrew_core::{println},
   std::fmt::Write
 };
 #[allow(unused_imports)]

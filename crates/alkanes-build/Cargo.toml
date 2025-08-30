@@ -1,8 +1,12 @@
 [package]
 name = "alkanes-build"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 hex = "0.4"
+
+[features]
+native-deps = []
+

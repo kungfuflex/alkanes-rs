@@ -11,9 +11,9 @@ use bitcoin::{Address, Amount, BlockHash, Network, OutPoint, Script, Sequence, W
 use byteorder::{ByteOrder, LittleEndian};
 use core::str::FromStr;
 use hex::decode;
-use metashrew_core::{get_cache, println};
-use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::utils::format_key;
+use crate::metashrew_core::{get_cache, println};
+use crate::metashrew_support::index_pointer::KeyValuePointer;
+use crate::metashrew_support::utils::format_key;
 use ordinals::{Edict, Etching, Rune, RuneId, Runestone};
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::network::{set_network, to_address_str, NetworkParams};
@@ -51,7 +51,7 @@ pub fn init_network() {
 }
 
 pub fn clear() {
-    metashrew_core::clear();
+    crate::metashrew_core::clear();
     init_network();
 }
 
@@ -140,7 +140,15 @@ pub fn create_coinbase_transaction(height: u32) -> Transaction {
         version: Version::TWO,
         lock_time: locktime,
         input: vec![coinbase_input],
-        output: vec![coinbase_output],
+        output: vec![
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+        ],
     }
 }
 

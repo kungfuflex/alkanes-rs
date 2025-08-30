@@ -29,7 +29,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn test_extcall() -> Result<()> {
         clear();
-        let block_height = 840_000;
+        let block_height = 0;
 
         let test_cellpacks = [
             //create alkane
@@ -58,7 +58,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn test_transaction() -> Result<()> {
         clear();
-        let block_height = 840_000;
+        let block_height = 0;
 
         let test_cellpacks = [
             //create alkane
@@ -88,7 +88,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn test_benchmark() -> Result<()> {
         clear();
-        let block_height = 840_000;
+        let block_height = 0;
 
         let test_cellpacks = [
             //create alkane

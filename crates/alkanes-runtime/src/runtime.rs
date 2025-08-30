@@ -12,9 +12,9 @@ use crate::{
     stdio::{stdout, Write},
 };
 use anyhow::{anyhow, Result};
-use bitcoin::{block::Header, Transaction};
+use bitcoin::{block::Header, Transaction, Txid};
 #[allow(unused_imports)]
-use metashrew_println::wasm::{to_arraybuffer_layout, to_passback_ptr, to_ptr};
+use metashrew_core::wasm::{to_arraybuffer_layout, to_passback_ptr, to_ptr};
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_decode};
 use std::io::Cursor;
 
@@ -215,6 +215,14 @@ pub trait AlkaneResponder: 'static {
             (&buffer[4..]).to_vec()
         }
     }
+    fn transaction_object(&self) -> Result<Transaction> {
+        Ok(consensus_decode::<Transaction>(&mut std::io::Cursor::new(
+            self.transaction(),
+        ))?)
+    }
+    fn transaction_id(&self) -> Result<Txid> {
+        Ok(self.transaction_object()?.compute_txid())
+    }
     /*
     fn output(&self, v: &OutPoint) -> Result<Vec<u8>> {
         let mut buffer = to_arraybuffer_layout(consensus_encode(v)?);
@@ -354,6 +362,36 @@ pub trait AlkaneResponder: 'static {
             self.fuel(),
         )?;
         consensus_decode::<Transaction>(&mut std::io::Cursor::new(result.data))
+    }
+
+    fn number_diesel_mints(&self) -> Result<u128> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 2,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
+    }
+
+    fn total_miner_fee(&self) -> Result<u128> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 3,
+                },
+                inputs: vec![],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
     }
 
     /// Fallback function that gets called when an opcode is not recognized

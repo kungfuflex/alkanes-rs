@@ -115,6 +115,12 @@ enum LoggerAlkaneMessage {
     #[opcode(105)]
     IncClaimableFees,
 
+    #[opcode(106)]
+    MyGetNumberDieselMints,
+
+    #[opcode(107)]
+    MyGetTotalMinerFee,
+
     #[opcode(110)]
     TestExtCallReturnLeftovers { target: AlkaneId, inputs: Vec<u128> },
 }
@@ -459,6 +465,24 @@ impl LoggerAlkane {
         let mut response = CallResponse::forward(&context.incoming_alkanes);
         let tx = self.coinbase_tx()?;
         response.data = consensus_encode(&tx)?;
+
+        Ok(response)
+    }
+
+    fn my_get_number_diesel_mints(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let v = self.number_diesel_mints()?;
+        response.data = v.to_le_bytes().to_vec();
+
+        Ok(response)
+    }
+
+    fn my_get_total_miner_fee(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let v = self.total_miner_fee()?;
+        response.data = v.to_le_bytes().to_vec();
 
         Ok(response)
     }

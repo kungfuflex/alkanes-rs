@@ -4,19 +4,19 @@ use crate::test_helpers::{self as helpers};
 use crate::{tables, Protorune};
 use anyhow::Result;
 use bitcoin::{OutPoint, Transaction};
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+use crate::metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_encode;
 
 #[allow(unused_imports)]
-use metashrew_core::{
+use crate::metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
 
 use helpers::clear;
-use metashrew_support::index_pointer::KeyValuePointer;
+use crate::metashrew_support::index_pointer::KeyValuePointer;
 use std::str::FromStr;
 use wasm_bindgen_test::*;
 

@@ -10,7 +10,7 @@ use wasmi::*;
 
 #[allow(unused_imports)]
 use {
-  metashrew_println::{println},
+  metashrew_core::{println},
   std::fmt::Write
 };
 

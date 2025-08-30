@@ -26,7 +26,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn test_owned_token() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     let test_cellpack = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
@@ -76,7 +76,7 @@ fn test_owned_token() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_auth_and_owned_token_noop() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     let auth_cellpack = Cellpack {
         target: AlkaneId {
@@ -146,7 +146,7 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_auth_and_owned_token() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     let auth_cellpack = Cellpack {
         target: AlkaneId {
@@ -229,7 +229,7 @@ fn test_auth_and_owned_token() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_owned_token_set_name_and_symbol() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     // Initialize the OwnedToken contract
     let auth_cellpack = Cellpack {
@@ -346,7 +346,7 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_auth_and_owned_token_multiple() -> Result<()> {
     clear();
-    let block_height = 840_000;
+    let block_height = 0;
 
     let auth_cellpack = Cellpack {
         target: AlkaneId {

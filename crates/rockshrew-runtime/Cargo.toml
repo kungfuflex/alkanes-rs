@@ -1,0 +1,21 @@
+[package]
+name = "rockshrew-runtime"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+log = "0.4.22"
+rocksdb = { version = "0.21.0", features = ["multi-threaded-cf"] }
+metashrew-runtime = { path = "../metashrew-runtime" }
+metashrew-sync = { path = "../metashrew-sync" }
+async-trait = "0.1.83"
+tokio = { version = "1.43.0", features = ["full"] }
+num_cpus = "1.16.0"
+fs2 = "0.4.3"
+
+[dev-dependencies]
+tempfile = "3.8.1"
+[features]
+native-deps = []
+

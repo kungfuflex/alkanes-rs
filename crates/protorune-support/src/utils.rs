@@ -5,7 +5,13 @@ use bitcoin::consensus::{
 };
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, Txid};
-use metashrew_support::utils::{is_empty, remaining_slice};
+// use metashrew_support::utils::{is_empty, remaining_slice};
+pub fn is_empty(cursor: &std::io::Cursor<Vec<u8>>) -> bool {
+    cursor.position() as usize == cursor.get_ref().len()
+}
+pub fn remaining_slice<'a>(cursor: &'a std::io::Cursor<Vec<u8>>) -> &'a [u8] {
+    &cursor.get_ref()[cursor.position() as usize..]
+}
 use ordinals::varint;
 use std::io::BufRead;
 pub fn consensus_encode<T: Encodable>(v: &T) -> Result<Vec<u8>> {
