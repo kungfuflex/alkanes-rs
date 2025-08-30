@@ -1,10 +1,17 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use adapters::{NativeRuntimeAdapter, RpcAdapter, RocksDBAdapter};
 use metashrew_sync::{MetashrewSync, SyncConfig, SyncEngine};
 
 mod adapters;
 mod shred_host;
+
+#[derive(ValueEnum, Debug, Clone)]
+pub enum Network {
+    Mainnet,
+    Regtest,
+    Signet,
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
@@ -13,6 +20,8 @@ pub struct Args {
     pub daemon_rpc_url: String,
     #[arg(long)]
     pub db_path: std::path::PathBuf,
+    #[arg(long, value_enum, default_value_t = Network::Regtest)]
+    pub network: Network,
     #[arg(long)]
     pub start_block: Option<u32>,
     #[arg(long)]
@@ -29,7 +38,7 @@ pub struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let node_adapter = RpcAdapter::new(&args.daemon_rpc_url, "", "")?;
+    let node_adapter = RpcAdapter::new(&args.daemon_rpc_url, "", "", args.network.clone())?;
     let storage_adapter = RocksDBAdapter::new(&args.db_path.to_string_lossy())?;
     shred_host::set_storage_adapter(storage_adapter.clone());
     let runtime_adapter = NativeRuntimeAdapter;

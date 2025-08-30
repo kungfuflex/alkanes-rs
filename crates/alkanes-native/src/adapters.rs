@@ -18,18 +18,21 @@ use metashrew_sync::{
     SyncError, SyncResult, AtomicBlockResult, ViewCall, ViewResult, PreviewCall, RuntimeStats
 };
 use bitcoin::consensus::serialize;
+use bitcoin::Network as BitcoinNetwork;
 use rocksdb::{DB, Options};
 use std::sync::Arc;
 use alkanes::alkanes_indexer;
+use crate::Network;
 
 pub struct RpcAdapter {
     rpc: Client,
+    network: Network,
 }
 
 impl RpcAdapter {
-    pub fn new(url: &str, user: &str, pass: &str) -> Result<Self> {
+    pub fn new(url: &str, user: &str, pass: &str, network: Network) -> Result<Self> {
         let rpc = Client::new(url, Auth::UserPass(user.to_string(), pass.to_string()))?;
-        Ok(Self { rpc })
+        Ok(Self { rpc, network })
     }
 }
 
@@ -40,18 +43,52 @@ impl BitcoinNodeAdapter for RpcAdapter {
     }
 
     async fn get_block_hash(&self, height: u32) -> SyncResult<Vec<u8>> {
+        if height == 0 {
+            let genesis_hash = match self.network {
+                Network::Mainnet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin).block_hash(),
+                Network::Regtest => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Regtest).block_hash(),
+                Network::Signet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Signet).block_hash(),
+            };
+            return Ok(<bitcoin::BlockHash as AsRef<[u8]>>::as_ref(&genesis_hash).to_vec());
+        }
         self.rpc.get_block_hash(height as u64).map(|h| <bitcoin::BlockHash as AsRef<[u8]>>::as_ref(&h).to_vec()).map_err(|e| SyncError::BitcoinNode(e.to_string()))
     }
 
     async fn get_block_data(&self, height: u32) -> SyncResult<Vec<u8>> {
-        let hash = self.rpc.get_block_hash(height as u64).map_err(|e| SyncError::BitcoinNode(e.to_string()))?;
+        let hash = if height == 0 {
+            match self.network {
+                Network::Mainnet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin).block_hash(),
+                Network::Regtest => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Regtest).block_hash(),
+                Network::Signet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Signet).block_hash(),
+            }
+        } else {
+            self.rpc.get_block_hash(height as u64).map_err(|e| SyncError::BitcoinNode(e.to_string()))?
+        };
+        if height == 0 {
+            let block = match self.network {
+                Network::Mainnet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin),
+                Network::Regtest => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Regtest),
+                Network::Signet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Signet),
+            };
+            return Ok(serialize(&block));
+        }
         let block = self.rpc.get_block(&hash).map_err(|e| SyncError::BitcoinNode(e.to_string()))?;
         Ok(serialize(&block))
     }
 
     async fn get_block_info(&self, height: u32) -> SyncResult<BlockInfo> {
-        let hash = self.rpc.get_block_hash(height as u64).map_err(|e| SyncError::BitcoinNode(e.to_string()))?;
-        let block = self.rpc.get_block(&hash).map_err(|e| SyncError::BitcoinNode(e.to_string()))?;
+        let (hash, block) = if height == 0 {
+            let block = match self.network {
+                Network::Mainnet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin),
+                Network::Regtest => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Regtest),
+                Network::Signet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Signet),
+            };
+            (block.block_hash(), block)
+        } else {
+            let hash = self.rpc.get_block_hash(height as u64).map_err(|e| SyncError::BitcoinNode(e.to_string()))?;
+            let block = self.rpc.get_block(&hash).map_err(|e| SyncError::BitcoinNode(e.to_string()))?;
+            (hash, block)
+        };
         let data = serialize(&block);
         Ok(BlockInfo {
             height,
