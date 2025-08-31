@@ -8,8 +8,10 @@ pub use adapter::{MemStoreAdapter, MemStoreBatch};
 // Re-export core runtime with MemStore adapter
 pub use metashrew_runtime::{MetashrewRuntime, MetashrewRuntimeContext};
 
+use metashrew_core::indexer::Indexer;
+
 /// Type alias for MetashrewRuntime using in-memory backend
-pub type MemStoreRuntime = MetashrewRuntime<MemStoreAdapter>;
+pub type MemStoreRuntime<I: Indexer> = MetashrewRuntime<MemStoreAdapter, I>;
 
 /// Type alias for MetashrewRuntimeContext using in-memory backend
 pub type MemStoreRuntimeContext = MetashrewRuntimeContext<MemStoreAdapter>;

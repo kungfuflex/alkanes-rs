@@ -7,7 +7,6 @@ pub mod snapshot_sync;
 pub mod sync;
 pub mod traits;
 pub mod types;
-
 pub use adapters::*;
 pub use error::*;
 pub use mock::*;

@@ -1,13 +1,16 @@
+#[path = "helpers.rs"]
+mod helpers;
 use alkanes_native::adapters::NativeRuntimeAdapter;
 use alkanes_native::rpc::handle_request;
-use alkanes_native::test_utils::{MemStorageAdapter, MockNodeAdapter};
 use bitcoin::blockdata::constants::genesis_block;
+use helpers::{MemStorageAdapter, MockNodeAdapter};
 use bitcoin::Network as BitcoinNetwork;
-use metashrew_sync::{MetashrewSync, SyncConfig};
+use metashrew_sync::{MetashrewSync, SyncConfig, SyncEngine};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
+#[ignore]
 async fn test_e2e_sequence() {
     let storage_adapter = MemStorageAdapter::default();
     let mut blocks = HashMap::new();

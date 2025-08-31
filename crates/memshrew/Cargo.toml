@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 metashrew-runtime = { path = "../metashrew-runtime" }
+metashrew-core = { path = "../metashrew-core" }
 anyhow = "1.0.86"
 log = "0.4.22"
 metashrew-sync = { path = "../metashrew-sync" }

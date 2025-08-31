@@ -25,16 +25,13 @@
 // context, and the closure will receive the correct type, which can then be
 // passed to `set_storage_adapter`.
 //
-use crate::adapters::RocksDBAdapter;
 use anyhow::Result;
-use jsonrpsee::RpcModule;
 use jsonrpsee::types::ErrorObjectOwned;
-use alkanes_indexer::VIEW_FUNCTIONS;
-use serde_json::Value;
+use metashrew_core::native_host::StorageAdapter;
 use std::sync::Arc;
 
-pub async fn handle_request(
-    storage: Arc<RocksDBAdapter>,
+pub async fn handle_request<T: StorageAdapter>(
+    storage: T,
     request: &str,
 ) -> Result<String, ErrorObjectOwned> {
     // TODO: This is dead code and needs to be removed. The RPC logic is handled
