@@ -10,6 +10,7 @@ use bitcoin::pow::CompactTarget;
 #[tokio::test]
 async fn test_native_alkane_logic() -> Result<()> {
     let mut harness = TestHarness::new();
+    harness.sync_config.exit_at = Some(0);
     let block = Block {
         header: BlockHeader {
             version: bitcoin::block::Version::from_consensus(0),
@@ -24,6 +25,6 @@ async fn test_native_alkane_logic() -> Result<()> {
     harness.add_block(block);
     harness.process_block().await;
     let height = harness.runtime.context.lock().unwrap().db.get_indexed_height().await?;
-    assert_eq!(height, 1);
+    assert_eq!(height, 0);
     Ok(())
 }

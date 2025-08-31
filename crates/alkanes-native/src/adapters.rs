@@ -208,8 +208,13 @@ pub struct NativeRuntimeAdapter;
 
 #[async_trait]
 impl RuntimeAdapter for NativeRuntimeAdapter {
-    async fn process_block(&mut self, _height: u32, _block_data: &[u8]) -> SyncResult<()> {
-        unimplemented!("process_block is not used in the native indexer")
+    async fn process_block(&mut self, height: u32, block_data: &[u8]) -> SyncResult<()> {
+        let block_hash = bitcoin::consensus::deserialize::<bitcoin::Block>(block_data)
+            .map(|b| b.header.block_hash())
+            .map_err(|e| SyncError::Runtime(e.to_string()))?;
+        self.process_block_atomic(height, block_data, &block_hash[..])
+            .await
+            .map(|_| ())
     }
 
     async fn process_block_atomic(
