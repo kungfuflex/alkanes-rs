@@ -46,7 +46,7 @@ alkanes-indexer = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-protorune = { path = "../protorune", features = ["test-utils"] }
+protorune = { path = "../protorune" }
 metashrew-core = { workspace = true, features = ["test-utils"] }
 
 [build-dependencies]
