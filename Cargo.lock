@@ -338,21 +338,28 @@ name = "alkanes-native"
 version = "1.2.3"
 dependencies = [
  "alkanes-indexer",
+ "alkanes-support",
  "anyhow",
  "async-trait",
  "bitcoin 0.32.7",
  "bitcoincore-rpc",
  "clap",
+ "hex_lit",
  "jsonrpsee",
  "memshrew-runtime",
  "metashrew-core",
+ "metashrew-support",
  "metashrew-sync",
  "once_cell",
+ "ordinals 1.2.3",
+ "protorune",
+ "protorune-support",
  "rocksdb",
  "rockshrew-mono",
  "serde",
  "serde_json",
  "tokio",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

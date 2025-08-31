@@ -13,9 +13,15 @@ use bitcoin::{
 use bitcoin::{Block, Network, Transaction};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
+#[cfg(test)]
 use {
     metashrew_core::clear as clear_base,
     metashrew_println::println,
+    std::fmt::Write,
+};
+#[cfg(not(test))]
+use {
+    metashrew_core::clear as clear_base,
     std::fmt::Write,
 };
 use metashrew_support::index_pointer::KeyValuePointer;

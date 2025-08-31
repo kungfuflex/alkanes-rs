@@ -1,6 +1,6 @@
 #[cfg(any(feature = "test-utils", test))]
 pub mod helpers;
-#[cfg(test)]
+#[cfg(any(feature = "test-utils", test))]
 pub mod std;
 #[cfg(test)]
 pub mod utils;
@@ -31,6 +31,7 @@ pub mod fuel;
 pub mod genesis;
 #[cfg(test)]
 pub mod logging_test;
+#[cfg(test)]
 pub mod genesis_upgrade;
 #[cfg(test)]
 pub mod memory_security_tests;

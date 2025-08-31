@@ -148,3 +148,226 @@ impl BitcoinNodeAdapter for MockNodeAdapter {
         true
     }
 }
+use alkanes_support::cellpack::Cellpack;
+use alkanes_support::envelope::RawEnvelope;
+use bitcoin::{
+    blockdata::transaction::Version,
+    {Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness},
+};
+use ordinals::{Etching, Rune, Runestone};
+use protorune::{
+    protostone::{Protostones},
+    test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1},
+};
+use protorune_support::protostone::{Protostone, ProtostoneEdict};
+use std::str::FromStr;
+
+/// A struct that combines a binary and its corresponding cellpack for cleaner initialization
+#[derive(Debug, Clone)]
+pub struct BinaryAndCellpack {
+    pub binary: Vec<u8>,
+    pub cellpack: Cellpack,
+}
+
+impl BinaryAndCellpack {
+    pub fn new(binary: Vec<u8>, cellpack: Cellpack) -> Self {
+        Self { binary, cellpack }
+    }
+
+    /// Creates a BinaryAndCellpack with an empty binary (useful when only cellpack data is needed)
+    pub fn cellpack_only(cellpack: Cellpack) -> Self {
+        Self {
+            binary: Vec::new(),
+            cellpack,
+        }
+    }
+}
+
+/// Helper function that accepts a vector of BinaryAndCellpack structs and calls init_with_multiple_cellpacks_with_tx
+pub fn init_with_cellpack_pairs(cellpack_pairs: Vec<BinaryAndCellpack>) -> bitcoin::Block {
+    let (binaries, cellpacks): (Vec<Vec<u8>>, Vec<Cellpack>) = cellpack_pairs
+        .into_iter()
+        .map(|pair| (pair.binary, pair.cellpack))
+        .unzip();
+
+    init_with_multiple_cellpacks_with_tx(binaries, cellpacks)
+}
+
+/// Helper function that accepts a vector of BinaryAndCellpack structs and calls init_with_multiple_cellpacks_with_tx
+pub fn init_with_cellpack_pairs_w_input(
+    cellpack_pairs: Vec<BinaryAndCellpack>,
+    previous_outpoint: OutPoint,
+) -> bitcoin::Block {
+    let (binaries, cellpacks): (Vec<Vec<u8>>, Vec<Cellpack>) = cellpack_pairs
+        .into_iter()
+        .map(|pair| (pair.binary, pair.cellpack))
+        .unzip();
+
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, Some(previous_outpoint))
+}
+
+pub fn init_with_multiple_cellpacks_with_tx(
+    binaries: Vec<Vec<u8>>,
+    cellpacks: Vec<Cellpack>,
+) -> bitcoin::Block {
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, None)
+}
+
+pub fn init_with_multiple_cellpacks_with_tx_w_input(
+    binaries: Vec<Vec<u8>>,
+    cellpacks: Vec<Cellpack>,
+    _previous_out: Option<OutPoint>,
+) -> bitcoin::Block {
+    let block_height = 880_000;
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+    let mut previous_out: Option<OutPoint> = _previous_out;
+    let mut txs = binaries
+        .into_iter()
+        .zip(cellpacks.into_iter())
+        .map(|i| {
+            let (binary, cellpack) = i;
+            let witness = if binary.len() == 0 {
+                Witness::new()
+            } else {
+                RawEnvelope::from(binary).to_witness(true)
+            };
+            if let Some(previous_output) = previous_out {
+                let tx = create_multiple_cellpack_with_witness_and_in(
+                    witness,
+                    [cellpack].into(),
+                    previous_output,
+                    false,
+                );
+                previous_out = Some(OutPoint {
+                    txid: tx.compute_txid(),
+                    vout: 0,
+                });
+                tx
+            } else {
+                let tx = create_multiple_cellpack_with_witness(witness, [cellpack].into(), false);
+                previous_out = Some(OutPoint {
+                    txid: tx.compute_txid(),
+                    vout: 0,
+                });
+                tx
+            }
+        })
+        .collect::<Vec<bitcoin::Transaction>>();
+    test_block.txdata.append(&mut txs);
+    test_block
+}
+
+pub fn create_multiple_cellpack_with_witness_and_in(
+    witness: Witness,
+    cellpacks: Vec<Cellpack>,
+    previous_output: OutPoint,
+    etch: bool,
+) -> bitcoin::Transaction {
+    let input_script = ScriptBuf::new();
+    let txin = TxIn {
+        previous_output,
+        script_sig: input_script,
+        sequence: Sequence::MAX,
+        witness,
+    };
+    create_multiple_cellpack_with_witness_and_txins_edicts(cellpacks, vec![txin], etch, vec![])
+}
+
+pub fn create_multiple_cellpack_with_witness_and_txins_edicts(
+    cellpacks: Vec<Cellpack>,
+    txins: Vec<TxIn>,
+    etch: bool,
+    edicts: Vec<ProtostoneEdict>,
+) -> bitcoin::Transaction {
+    let protocol_id = 1;
+    let protostones = [
+        match etch {
+            true => vec![Protostone {
+                burn: Some(protocol_id),
+                edicts: vec![],
+                pointer: Some(4),
+                refund: None,
+                from: None,
+                protocol_tag: 13, // this value must be 13 if protoburn
+                message: vec![],
+            }],
+            false => vec![],
+        },
+        cellpacks
+            .into_iter()
+            .map(|cellpack| Protostone {
+                message: cellpack.encipher(),
+                pointer: Some(0),
+                refund: Some(0),
+                edicts: edicts.clone(),
+                from: None,
+                burn: None,
+                protocol_tag: protocol_id as u128,
+            })
+            .collect(),
+    ]
+    .concat();
+    let etching = if etch {
+        Some(Etching {
+            divisibility: Some(2),
+            premine: Some(1000),
+            rune: Some(Rune::from_str("TESTTESTTESTTEST").unwrap()),
+            spacers: Some(0),
+            symbol: Some(char::from_str("A").unwrap()),
+            turbo: true,
+            terms: None,
+        })
+    } else {
+        None
+    };
+    let runestone: ScriptBuf = (Runestone {
+        etching,
+        pointer: match etch {
+            true => Some(1),
+            false => Some(0),
+        }, // points to the OP_RETURN, so therefore targets the protoburn
+        edicts: Vec::new(),
+        mint: None,
+        protocol: protostones.encipher().ok(),
+    })
+    .encipher();
+
+    //     // op return is at output 1
+    let op_return = TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: runestone,
+    };
+
+    let address: Address = get_address(&ADDRESS1().as_str());
+
+    let script_pubkey = address.script_pubkey();
+    let txout = TxOut {
+        value: Amount::from_sat(100_000_000),
+        script_pubkey,
+    };
+    bitcoin::Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: txins,
+        output: vec![txout, op_return],
+    }
+}
+
+pub fn create_cellpack_with_witness(witness: Witness, cellpack: Cellpack) -> bitcoin::Transaction {
+    create_multiple_cellpack_with_witness(witness, [cellpack].into(), false)
+}
+
+pub fn create_multiple_cellpack_with_witness(
+    witness: Witness,
+    cellpacks: Vec<Cellpack>,
+    etch: bool,
+) -> bitcoin::Transaction {
+    let previous_output = OutPoint {
+        txid: bitcoin::Txid::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap(),
+        vout: 0,
+    };
+    create_multiple_cellpack_with_witness_and_in(witness, cellpacks, previous_output, etch)
+}
