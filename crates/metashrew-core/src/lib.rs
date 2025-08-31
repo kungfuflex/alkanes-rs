@@ -86,6 +86,7 @@ pub mod allocator;
 pub mod byte_view;
 pub mod compat;
 pub mod imports;
+pub mod indexer;
 pub mod index_pointer;
 pub mod macros;
 pub mod stdio;
@@ -93,6 +94,9 @@ pub mod wasm;
 pub mod utils;
 pub mod lru_cache;
 pub mod proto;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native_host;
 
 // Re-export the procedural macros from metashrew-macros
 pub use metashrew_macros::{main, view};
@@ -105,6 +109,7 @@ pub mod tests;
 
 #[cfg(feature = "panic-hook")]
 use crate::compat::panic_hook;
+#[cfg(target_arch = "wasm32")]
 use crate::imports::{__flush, __get, __get_len, __host_len, __load_input};
 pub use crate::{
     lru_cache::{
@@ -151,6 +156,11 @@ static mut TO_FLUSH: Option<Vec<Arc<Vec<u8>>>> = None;
 #[allow(static_mut_refs)]
 pub fn get_cache() -> &'static HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>> {
     unsafe { CACHE.as_ref().unwrap() }
+}
+
+#[allow(static_mut_refs)]
+pub fn get_to_flush() -> &'static Vec<Arc<Vec<u8>>> {
+    unsafe { TO_FLUSH.as_ref().unwrap() }
 }
 
 /// Get a value from the database with caching
@@ -232,39 +242,46 @@ pub fn get(v: Arc<Vec<u8>>) -> Arc<Vec<u8>> {
         }
 
         // Third fallback: host calls (__get_len and __get)
-        let length: i32 = __get_len(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())));
-
-        // CRITICAL FIX: Validate length to prevent capacity overflow
-        // Reject negative lengths - this indicates corrupted host response
-        if length < 0 {
-            panic!("FATAL: Invalid negative length {} returned from __get_len for key: {:?}. This indicates corrupted host response and indexer must halt to prevent incorrect results.",
-                    length, String::from_utf8_lossy(v.as_ref()));
-        }
-
-        if length == 0 {
-            let value = Arc::new(vec![]);
-            CACHE.as_mut().unwrap().insert(v.clone(), value.clone());
-            if is_lru_cache_initialized() {
-                if let Some(height) = get_view_height() {
-                    set_height_partitioned_cache(height, v.clone(), value.clone());
-                } else {
-                    set_lru_cache(v.clone(), value.clone());
-                }
+        #[cfg(target_arch = "wasm32")]
+        let (length, buffer) = {
+            let length: i32 = __get_len(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())));
+            if length < 0 {
+                panic!("FATAL: Invalid negative length {} returned from __get_len for key: {:?}. This indicates corrupted host response and indexer must halt to prevent incorrect results.",
+                        length, String::from_utf8_lossy(v.as_ref()));
             }
-            return value;
-        }
-
-        let length_usize = length as usize;
-        let mut buffer = Vec::with_capacity(length_usize + 4);
-        buffer.extend_from_slice(&length.to_le_bytes());
-        buffer.resize(length_usize + 4, 0);
-        __get(
-            to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())),
-            to_passback_ptr(&mut buffer),
-        );
-
+            if length == 0 {
+                return Arc::new(vec![]);
+            }
+            let length_usize = length as usize;
+            let mut buffer = Vec::with_capacity(length_usize + 4);
+            buffer.extend_from_slice(&length.to_le_bytes());
+            buffer.resize(length_usize + 4, 0);
+            __get(
+                to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())),
+                to_passback_ptr(&mut buffer),
+            );
+            (length, buffer)
+        };
         #[cfg(not(target_arch = "wasm32"))]
-        let buffer = crate::wasm::take_native_ptr().unwrap();
+        let (length, buffer) = {
+            let length = native_host::get_len(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())));
+             if length < 0 {
+                panic!("FATAL: Invalid negative length {} returned from __get_len for key: {:?}. This indicates corrupted host response and indexer must halt to prevent incorrect results.",
+                        length, String::from_utf8_lossy(v.as_ref()));
+            }
+            if length == 0 {
+                return Arc::new(vec![]);
+            }
+            let length_usize = length as usize;
+            let mut buffer = Vec::with_capacity(length_usize + 4);
+            buffer.extend_from_slice(&length.to_le_bytes());
+            buffer.resize(length_usize + 4, 0);
+            native_host::get(
+                to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())),
+                to_passback_ptr(&mut buffer),
+            );
+            (length, crate::wasm::take_native_ptr().unwrap())
+        };
         
         let value = Arc::new(buffer[4..].to_vec());
 
@@ -415,7 +432,10 @@ pub fn flush() {
 
         // Handle serialization errors gracefully
         let serialized = buffer.encode_to_vec();
+        #[cfg(target_arch = "wasm32")]
         __flush(to_ptr(&mut to_arraybuffer_layout(&serialized)) + 4);
+        #[cfg(not(target_arch = "wasm32"))]
+        native_host::flush(to_ptr(&mut to_arraybuffer_layout(&serialized)) + 4);
 
         // Always clear the immediate cache after flushing, regardless of success
         // This maintains consistency and prevents accumulation of stale data
@@ -463,9 +483,30 @@ pub fn flush() {
 pub fn input() -> Vec<u8> {
     initialize();
 
+    #[cfg(all(target_arch = "wasm32", not(feature = "test-utils")))]
+    unsafe {
+        let length: i32 = __host_len().into();
+        if length < 0 {
+            panic!("FATAL: Invalid negative length {} returned from __host_len. This indicates corrupted host response and indexer must halt to prevent incorrect results.", length);
+        }
+        const MAX_ALLOCATION_SIZE: usize = 512 * 1024 * 1024; // 512MB
+        let length_usize = length as usize;
+        let total_size = length_usize + 4;
+        let mut buffer = Vec::<u8>::new();
+        if buffer.try_reserve_exact(total_size).is_err() {
+            force_evict_to_target_percentage(50);
+            if buffer.try_reserve_exact(total_size).is_err() {
+                 panic!("FATAL: Failed to allocate {} bytes for input buffer even after LRU cache eviction.", total_size);
+            }
+        }
+        buffer.extend_from_slice(&length.to_le_bytes());
+        buffer.resize(total_size, 0);
+        __load_input(to_ptr(&mut buffer) + 4);
+        buffer[4..].to_vec()
+    }
+
     #[cfg(feature = "test-utils")]
     {
-        // In test mode, return the mock input data directly
         use crate::imports::_INPUT;
         unsafe {
             match _INPUT.as_ref() {
@@ -474,73 +515,19 @@ pub fn input() -> Vec<u8> {
             }
         }
     }
-
-    #[cfg(not(feature = "test-utils"))]
-    unsafe {
-        let length: i32 = __host_len().into();
-
-        // CRITICAL FIX: Validate length to prevent capacity overflow
-        // Reject negative lengths - this indicates corrupted host response
+    
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let length: i32 = native_host::host_len();
         if length < 0 {
             panic!("FATAL: Invalid negative length {} returned from __host_len. This indicates corrupted host response and indexer must halt to prevent incorrect results.", length);
         }
-
-        // CRITICAL FIX: Handle large allocations with LRU cache eviction and retry
-        const MAX_ALLOCATION_SIZE: usize = 512 * 1024 * 1024; // 512MB
         let length_usize = length as usize;
         let total_size = length_usize + 4;
-
-        // First attempt: Try allocation normally
-        let mut buffer = Vec::<u8>::new();
-        let allocation_result = buffer.try_reserve_exact(total_size);
-
-        match allocation_result {
-            Ok(()) => {
-                // Allocation succeeded, proceed normally
-                buffer.extend_from_slice(&length.to_le_bytes());
-                buffer.resize(total_size, 0);
-            }
-            Err(allocation_error) => {
-                println!("WARNING: Initial input allocation failed for {} bytes. Attempting LRU cache eviction and retry. Error: {:?}",
-                         total_size, allocation_error);
-
-                // Second attempt: Force LRU cache eviction to ~50% utilization and retry
-                if is_lru_cache_initialized() {
-                    println!("Forcing LRU cache eviction to 50% utilization to free memory...");
-                    force_evict_to_target_percentage(50); // Evict to 50% of current usage
-
-                    // Retry allocation after eviction
-                    let mut retry_buffer = Vec::<u8>::new();
-                    match retry_buffer.try_reserve_exact(total_size) {
-                        Ok(()) => {
-                            println!(
-                                "SUCCESS: Input allocation succeeded after LRU cache eviction"
-                            );
-                            buffer = retry_buffer;
-                            buffer.extend_from_slice(&length.to_le_bytes());
-                            buffer.resize(total_size, 0);
-                        }
-                        Err(retry_error) => {
-                            // Final failure: Panic to halt indexer and prevent incorrect results
-                            panic!("FATAL: Failed to allocate {} bytes for input buffer even after LRU cache eviction. Initial error: {:?}. Retry error: {:?}. Indexer must halt to prevent incorrect results.",
-                                   total_size, allocation_error, retry_error);
-                        }
-                    }
-                } else {
-                    // No LRU cache available for eviction, check if size is unreasonable
-                    if length_usize > MAX_ALLOCATION_SIZE {
-                        panic!("FATAL: Requested input allocation size {} bytes exceeds maximum reasonable size {} bytes. This likely indicates corrupted host response. Indexer must halt to prevent incorrect results.",
-                               length_usize, MAX_ALLOCATION_SIZE);
-                    } else {
-                        // Reasonable size but allocation failed - system memory issue
-                        panic!("FATAL: Failed to allocate {} bytes for input buffer (reasonable size but insufficient system memory). Error: {:?}. Indexer must halt to prevent incorrect results.",
-                               total_size, allocation_error);
-                    }
-                }
-            }
-        };
-
-        __load_input(to_ptr(&mut buffer) + 4);
+        let mut buffer = Vec::with_capacity(total_size);
+        buffer.extend_from_slice(&length.to_le_bytes());
+        buffer.resize(total_size, 0);
+        native_host::load_input(to_ptr(&mut buffer) + 4);
         buffer[4..].to_vec()
     }
 }

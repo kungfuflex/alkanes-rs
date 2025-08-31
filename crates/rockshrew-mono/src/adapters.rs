@@ -8,9 +8,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use hex;
+use bitcoin::Block;
+use bitcoin::consensus::Decodable;
+use metashrew_core::indexer::Indexer;
 use metashrew_runtime::{
-    KeyValueStoreLike, MetashrewRuntime, ViewPoolConfig, ViewPoolStats, ViewPoolSupport,
-    ViewRuntimePool,
+    KeyValueStoreLike, MetashrewRuntime,
 };
 use metashrew_sync::{
     AtomicBlockResult, BitcoinNodeAdapter, BlockInfo, ChainTip, PreviewCall, RuntimeAdapter,
@@ -230,59 +232,24 @@ impl BitcoinNodeAdapter for BitcoinRpcAdapter {
 
 /// MetashrewRuntime adapter that wraps the actual MetashrewRuntime and is snapshot-aware.
 /// Now includes a parallelized view pool for concurrent view execution.
+use std::marker::PhantomData;
+
 #[derive(Clone)]
-pub struct MetashrewRuntimeAdapter<T: KeyValueStoreLike + Clone + Send + Sync + 'static> {
-    runtime: Arc<RwLock<MetashrewRuntime<T>>>,
+pub struct MetashrewRuntimeAdapter<T: KeyValueStoreLike + Clone + Send + Sync + 'static, I: Indexer> {
+    runtime: Arc<RwLock<MetashrewRuntime<T, I>>>,
     snapshot_manager: Arc<RwLock<Option<Arc<RwLock<crate::snapshot::SnapshotManager>>>>>,
-    view_pool: Arc<RwLock<Option<ViewRuntimePool<T>>>>,
     disable_lru_cache: Arc<std::sync::atomic::AtomicBool>,
+    _indexer: PhantomData<I>,
 }
 
-impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntimeAdapter<T> {
-    pub fn new(runtime: Arc<RwLock<MetashrewRuntime<T>>>) -> Self {
+impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static, I: Indexer> MetashrewRuntimeAdapter<T, I> {
+    pub fn new(runtime: Arc<RwLock<MetashrewRuntime<T, I>>>) -> Self {
         Self {
             runtime,
             snapshot_manager: Arc::new(RwLock::new(None)),
-            view_pool: Arc::new(RwLock::new(None)),
             disable_lru_cache: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            _indexer: PhantomData,
         }
-    }
-
-    /// Initialize the view pool with the specified configuration
-    pub async fn initialize_view_pool(&self, config: ViewPoolConfig) -> Result<()> {
-        let runtime = self.runtime.read().await;
-        let pool = runtime
-            .create_view_pool(config)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create view pool: {}", e))?;
-
-        let mut view_pool_guard = self.view_pool.write().await;
-        *view_pool_guard = Some(pool);
-
-        log::info!("View pool initialized successfully");
-        Ok(())
-    }
-
-    /// Get view pool statistics for monitoring
-    pub async fn get_view_pool_stats(&self) -> Option<ViewPoolStats> {
-        if let Some(pool) = self.view_pool.read().await.as_ref() {
-            Some(pool.get_stats().await)
-        } else {
-            None
-        }
-    }
-
-    /// Disable stateful views to use non-stateful async wasmtime
-    pub async fn disable_stateful_views(&self) {
-        let mut runtime = self.runtime.write().await;
-        runtime.disable_stateful_views();
-        log::info!("Stateful views disabled - will use non-stateful async wasmtime");
-    }
-
-    /// Check if stateful views are enabled
-    pub async fn is_stateful_views_enabled(&self) -> bool {
-        let runtime = self.runtime.read().await;
-        runtime.is_stateful_views_enabled()
     }
 
     /// Set the disable LRU cache flag
@@ -316,96 +283,24 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntimeAdapt
 }
 
 #[async_trait]
-impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> RuntimeAdapter for MetashrewRuntimeAdapter<T> {
+
+impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static, I: Indexer + Send + Sync + Default> RuntimeAdapter for MetashrewRuntimeAdapter<T, I> {
     async fn process_block(&mut self, height: u32, block_data: &[u8]) -> SyncResult<()> {
-        if let Some(manager_arc) = self.get_snapshot_manager().await {
-            {
-                let mut manager = manager_arc.write().await;
-                manager.set_current_height(height);
-            }
-            let mut runtime = self.runtime.write().await;
-            {
-                let mut context = runtime
-                    .context
-                    .lock()
-                    .map_err(|e| SyncError::Runtime(format!("Failed to lock context: {}", e)))?;
-                let manager_arc_clone = manager_arc.clone();
-                let tracker_fn: metashrew_runtime::KVTrackerFn =
-                    Box::new(move |key: Vec<u8>, value: Vec<u8>| {
-                        tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::current().block_on(async {
-                                if let Ok(mut manager) = manager_arc_clone.try_write() {
-                                    manager.track_key_change(key, value);
-                                }
-                            })
-                        });
-                    });
-                context.db.set_kv_tracker(Some(tracker_fn));
-                context.block = block_data.to_vec();
-                context.height = height;
-                context.db.set_height(height);
-            }
-            runtime
-                .run()
-                .map_err(|e| SyncError::Runtime(format!("Runtime execution failed: {}", e)))?;
-            {
-                let mut context = runtime
-                    .context
-                    .lock()
-                    .map_err(|e| SyncError::Runtime(format!("Failed to lock context: {}", e)))?;
-                context.db.set_kv_tracker(None);
-            }
-            
-            // Refresh memory after each block if LRU cache is disabled
-            if self.is_lru_cache_disabled() {
-                log::debug!("Refreshing WASM memory after block {} (LRU cache disabled)", height);
-                runtime
-                    .refresh_memory()
-                    .map_err(|e| SyncError::Runtime(format!("Failed to refresh memory after block: {}", e)))?;
-            }
-        } else {
-            let mut runtime = self.runtime.write().await;
-            {
-                let mut context = runtime
-                    .context
-                    .lock()
-                    .map_err(|e| SyncError::Runtime(format!("Failed to lock context: {}", e)))?;
-                context.block = block_data.to_vec();
-                context.height = height;
-                context.db.set_height(height);
-            }
-            runtime
-                .run()
-                .map_err(|e| SyncError::Runtime(format!("Runtime execution failed: {}", e)))?;
-            
-            // Refresh memory after each block if LRU cache is disabled
-            if self.is_lru_cache_disabled() {
-                log::debug!("Refreshing WASM memory after block {} (LRU cache disabled)", height);
-                runtime
-                    .refresh_memory()
-                    .map_err(|e| SyncError::Runtime(format!("Failed to refresh memory after block: {}", e)))?;
-            }
-        }
+        let mut runtime = self.runtime.write().await;
+        let block = bitcoin::consensus::deserialize(block_data)
+            .map_err(|e| SyncError::Runtime(format!("Failed to decode block: {}", e)))?;
+        runtime.process_block(height, &block)
+            .map_err(|e| SyncError::Runtime(format!("Runtime execution failed: {}", e)))?;
         Ok(())
     }
 
     async fn process_block_atomic(
         &mut self,
-        height: u32,
-        block_data: &[u8],
-        block_hash: &[u8],
+        _height: u32,
+        _block_data: &[u8],
+        _block_hash: &[u8],
     ) -> SyncResult<AtomicBlockResult> {
-        let mut runtime = self.runtime.write().await;
-        runtime
-            .process_block_atomic(height, block_data, block_hash)
-            .await
-            .map(|res| AtomicBlockResult {
-                state_root: res.state_root,
-                batch_data: res.batch_data,
-                height: res.height,
-                block_hash: res.block_hash,
-            })
-            .map_err(|e| SyncError::Runtime(format!("Atomic block processing failed: {}", e)))
+        unimplemented!();
     }
 
     async fn get_state_root(&self, height: u32) -> SyncResult<Vec<u8>> {
@@ -425,50 +320,16 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> RuntimeAdapter for Me
         }
     }
 
-    async fn execute_view(&self, call: ViewCall) -> SyncResult<ViewResult> {
-        // Try to use view pool first if available
-        if let Some(pool) = self.view_pool.read().await.as_ref() {
-            log::debug!("Using view pool for function: {}", call.function_name);
-            let result = pool
-                .view(call.function_name, &call.input_data, call.height)
-                .await
-                .map_err(|e| {
-                    SyncError::ViewFunction(format!("View pool execution failed: {}", e))
-                })?;
-            Ok(ViewResult { data: result })
-        } else {
-            // Fallback to direct runtime execution
-            log::debug!("Using direct runtime for function: {}", call.function_name);
-            let runtime = self.runtime.read().await;
-            let result = runtime
-                .view(call.function_name, &call.input_data, call.height)
-                .await
-                .map_err(|e| SyncError::ViewFunction(format!("View function failed: {}", e)))?;
-            Ok(ViewResult { data: result })
-        }
+    async fn execute_view(&self, _call: ViewCall) -> SyncResult<ViewResult> {
+        unimplemented!();
     }
 
-    async fn execute_preview(&self, call: PreviewCall) -> SyncResult<ViewResult> {
-        let runtime = self.runtime.read().await;
-        let result = runtime
-            .preview_async(
-                &call.block_data,
-                call.function_name,
-                &call.input_data,
-                call.height,
-            )
-            .await
-            .map_err(|e| SyncError::ViewFunction(format!("Preview function failed: {}", e)))?;
-        Ok(ViewResult { data: result })
+    async fn execute_preview(&self, _call: PreviewCall) -> SyncResult<ViewResult> {
+        unimplemented!();
     }
 
     async fn refresh_memory(&mut self) -> SyncResult<()> {
-        log::info!("Memory refresh requested (typically during chain reorganization)");
-        let mut runtime = self.runtime.write().await;
-        runtime
-            .refresh_memory()
-            .map_err(|e| SyncError::Runtime(format!("Failed to refresh runtime memory: {}", e)))?;
-        Ok(())
+        unimplemented!();
     }
 
     async fn is_ready(&self) -> bool {

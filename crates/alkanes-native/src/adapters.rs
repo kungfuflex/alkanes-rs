@@ -19,10 +19,10 @@ use metashrew_sync::{
 };
 use bitcoin::consensus::serialize;
 use bitcoin::Network as BitcoinNetwork;
+use bitcoin::Network;
 use rocksdb::{DB, Options};
 use std::sync::Arc;
-use alkanes::alkanes_indexer;
-use crate::Network;
+use alkanes_indexer::alkanes_indexer;
 
 pub struct RpcAdapter {
     rpc: Client,
@@ -45,9 +45,10 @@ impl BitcoinNodeAdapter for RpcAdapter {
     async fn get_block_hash(&self, height: u32) -> SyncResult<Vec<u8>> {
         if height == 0 {
             let genesis_hash = match self.network {
-                Network::Mainnet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin).block_hash(),
+                Network::Bitcoin => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin).block_hash(),
                 Network::Regtest => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Regtest).block_hash(),
                 Network::Signet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Signet).block_hash(),
+                _ => panic!("Unsupported network"),
             };
             return Ok(<bitcoin::BlockHash as AsRef<[u8]>>::as_ref(&genesis_hash).to_vec());
         }
@@ -57,18 +58,20 @@ impl BitcoinNodeAdapter for RpcAdapter {
     async fn get_block_data(&self, height: u32) -> SyncResult<Vec<u8>> {
         let hash = if height == 0 {
             match self.network {
-                Network::Mainnet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin).block_hash(),
+                Network::Bitcoin => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin).block_hash(),
                 Network::Regtest => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Regtest).block_hash(),
                 Network::Signet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Signet).block_hash(),
+                _ => panic!("Unsupported network"),
             }
         } else {
             self.rpc.get_block_hash(height as u64).map_err(|e| SyncError::BitcoinNode(e.to_string()))?
         };
         if height == 0 {
             let block = match self.network {
-                Network::Mainnet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin),
+                Network::Bitcoin => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin),
                 Network::Regtest => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Regtest),
                 Network::Signet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Signet),
+                _ => panic!("Unsupported network"),
             };
             return Ok(serialize(&block));
         }
@@ -79,9 +82,10 @@ impl BitcoinNodeAdapter for RpcAdapter {
     async fn get_block_info(&self, height: u32) -> SyncResult<BlockInfo> {
         let (hash, block) = if height == 0 {
             let block = match self.network {
-                Network::Mainnet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin),
+                Network::Bitcoin => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Bitcoin),
                 Network::Regtest => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Regtest),
                 Network::Signet => bitcoin::blockdata::constants::genesis_block(BitcoinNetwork::Signet),
+                _ => panic!("Unsupported network"),
             };
             (block.block_hash(), block)
         } else {
@@ -122,6 +126,13 @@ impl RocksDBAdapter {
         opts.create_if_missing(true);
         let db = DB::open(&opts, path)?;
         Ok(Self { db: Arc::new(db) })
+    }
+}
+
+#[async_trait]
+impl metashrew_core::native_host::StorageAdapter for RocksDBAdapter {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.db.get(key).map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 }
 

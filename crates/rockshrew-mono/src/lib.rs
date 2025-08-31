@@ -67,9 +67,9 @@ use tokio::signal;
 use tracing::{debug, instrument};
 
 use crate::adapters::BitcoinRpcAdapter;
-use crate::adapters::MetashrewRuntimeAdapter;
 use crate::ssh_tunnel::parse_daemon_rpc_url;
-use metashrew_runtime::{set_label, MetashrewRuntime, ViewPoolConfig};
+use metashrew_core::indexer::Indexer;
+use metashrew_runtime::{set_label, MetashrewRuntime};
 use metashrew_sync::{
     BitcoinNodeAdapter, JsonRpcProvider, RuntimeAdapter, SnapshotMetashrewSync, SnapshotProvider,
     SnapshotSyncEngine, StorageAdapter, SyncConfig, SyncMode,
@@ -79,6 +79,8 @@ use rockshrew_runtime::{
     fork_adapter::{ForkAdapter, LegacyRocksDBRuntimeAdapter},
     query_height, RocksDBStorageAdapter,
 };
+use alkanes_indexer::indexer::AlkanesIndexer;
+use std::marker::PhantomData;
 
 /// Command-line arguments for `rockshrew-mono`.
 #[derive(Parser, Debug, Clone)]
@@ -86,8 +88,6 @@ use rockshrew_runtime::{
 pub struct Args {
     #[arg(long)]
     pub daemon_rpc_url: String,
-    #[arg(long)]
-    pub indexer: PathBuf,
     #[arg(long)]
     pub db_path: PathBuf,
     #[arg(long)]
@@ -122,47 +122,32 @@ pub struct Args {
     pub reorg_check_threshold: u32,
     #[arg(long)]
     pub prefixroot: Vec<String>,
-    /// Enable view pool for parallel view execution
-    #[arg(long)]
-    pub enable_view_pool: bool,
-    /// Number of view runtimes in the pool (default: number of CPU cores)
-    #[arg(long)]
-    pub view_pool_size: Option<usize>,
-    /// Maximum concurrent view requests (default: pool_size * 2)
-    #[arg(long)]
-    pub view_pool_max_concurrent: Option<usize>,
-    /// Enable view pool logging for debugging
-    #[arg(long)]
-    pub view_pool_logging: bool,
-    /// Disable LRU cache and refresh memory for each WASM invocation
-    #[arg(long)]
-    pub disable_lru_cache: bool,
-    /// Disable WASM __log host function (silently ignore WASM log calls)
-    #[arg(long)]
-    pub disable_wasmtime_log: bool,
 }
 
 /// Shared application state for the JSON-RPC server.
 #[derive(Clone)]
-pub struct AppState<N, S, R>
+pub struct AppState<N, S, R, I>
 where
     N: BitcoinNodeAdapter + 'static,
     S: StorageAdapter + 'static,
     R: RuntimeAdapter + 'static,
+    I: Indexer + 'static,
 {
     pub sync_engine: Arc<tokio::sync::RwLock<SnapshotMetashrewSync<N, S, R>>>,
+    _indexer: PhantomData<I>,
 }
 
 /// Handles JSON-RPC requests.
 #[instrument(skip(body, state))]
-async fn handle_jsonrpc<N, S, R>(
+async fn handle_jsonrpc<N, S, R, I>(
     body: web::Json<serde_json::Value>,
-    state: web::Data<AppState<N, S, R>>,
+    state: web::Data<AppState<N, S, R, I>>,
 ) -> ActixResult<impl Responder>
 where
     N: BitcoinNodeAdapter + 'static,
     S: StorageAdapter + 'static,
     R: RuntimeAdapter + 'static,
+    I: Indexer + 'static,
 {
     let request: serde_json::Value = body.into_inner();
     let method = request["method"].as_str().unwrap_or_default();
@@ -320,7 +305,7 @@ async fn setup_signal_handler() -> Arc<AtomicBool> {
 }
 
 /// Main run function, generic over the adapter traits.
-pub async fn run<N, S, R>(
+pub async fn run<N, S, R, I>(
     args: Args,
     node_adapter: N,
     storage_adapter: S,
@@ -331,6 +316,7 @@ where
     N: BitcoinNodeAdapter + 'static,
     S: StorageAdapter + 'static,
     R: RuntimeAdapter + 'static,
+    I: Indexer + 'static + Send + Sync,
 {
     if let Some(ref label) = args.label {
         set_label(label.clone());
@@ -382,6 +368,7 @@ where
     let sync_engine_arc = Arc::new(tokio::sync::RwLock::new(sync_engine));
     let app_state = web::Data::new(AppState {
         sync_engine: sync_engine_arc.clone(),
+        _indexer: PhantomData::<I>,
     });
 
     let (indexer_handle, indexer_abort_handle) = {
@@ -481,7 +468,7 @@ where
                 App::new()
                     .wrap(cors)
                     .app_data(app_state.clone())
-                    .service(web::resource("/").route(web::post().to(handle_jsonrpc::<N, S, R>)))
+                    .service(web::resource("/").route(web::post().to(handle_jsonrpc::<N, S, R, I>)))
             })
             .bind((args.host.as_str(), args.port))?
             .run()
@@ -550,15 +537,17 @@ where
 use hex::FromHex;
 
 /// Production-specific run function.
-async fn run_generic<R: RuntimeAdapter + 'static>(
+async fn run_generic<I: Indexer + Send + Sync + Default + 'static>(
     args: Args,
-    runtime_adapter: R,
     storage_adapter: RocksDBStorageAdapter,
+    runtime: MetashrewRuntime<RocksDBRuntimeAdapter, I>,
 ) -> Result<()> {
     let (rpc_url, bypass_ssl, tunnel_config) =
         parse_daemon_rpc_url(&args.daemon_rpc_url).await?;
     let node_adapter = BitcoinRpcAdapter::new(rpc_url, args.auth.clone(), bypass_ssl, tunnel_config);
-    run(args, node_adapter, storage_adapter, runtime_adapter, None).await
+    let runtime_adapter =
+        crate::adapters::MetashrewRuntimeAdapter::new(Arc::new(tokio::sync::RwLock::new(runtime)));
+    run::<_, _, _, I>(args, node_adapter, storage_adapter, runtime_adapter, None).await
 }
 
 pub async fn run_prod(args: Args) -> Result<()> {
@@ -581,76 +570,10 @@ pub async fn run_prod(args: Args) -> Result<()> {
             Ok((name, prefix))
         })
         .collect::<Result<Vec<(String, Vec<u8>)>>>()?;
-    if let Some(fork_path) = args.fork.clone() {
-        info!("Fork mode enabled, forking from: {}", fork_path.display());
-        let db_path = args.db_path.to_string_lossy().to_string();
-        let fork_path_str = fork_path.to_string_lossy().to_string();
-        let opts = RocksDBRuntimeAdapter::get_optimized_options();
-        let adapter = if args.legacy_fork {
-            info!("Using legacy fork adapter.");
-            let primary_db = rocksdb::DB::open(&opts, db_path)?;
-            let fork_db = rocksdb::DB::open_for_read_only(&opts, fork_path_str, false)?;
-            let legacy_adapter = LegacyRocksDBRuntimeAdapter {
-                db: Arc::new(primary_db),
-                fork_db: Some(Arc::new(fork_db)),
-                height: 0,
-                kv_tracker: Arc::new(std::sync::Mutex::new(None)),
-            };
-            ForkAdapter::Legacy(legacy_adapter)
-        } else {
-            let modern_adapter = RocksDBRuntimeAdapter::open_fork(db_path, fork_path_str, opts)?;
-            ForkAdapter::Modern(modern_adapter)
-        };
-        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter, prefix_configs)?;
-        let storage_adapter = match runtime.context.lock().unwrap().db {
-            ForkAdapter::Modern(ref modern_adapter) => {
-                RocksDBStorageAdapter::new(modern_adapter.db.clone())
-            }
-            ForkAdapter::Legacy(ref legacy_adapter) => {
-                RocksDBStorageAdapter::new(legacy_adapter.db.clone())
-            }
-        };
-        let runtime_adapter =
-            MetashrewRuntimeAdapter::new(Arc::new(tokio::sync::RwLock::new(runtime)));
-        run_generic(args, runtime_adapter, storage_adapter).await
-    } else {
-        let adapter =
-            RocksDBRuntimeAdapter::open_optimized(args.db_path.to_string_lossy().to_string())?;
-        let mut runtime = MetashrewRuntime::load(args.indexer.clone(), adapter.clone(), prefix_configs)?;
-        if args.disable_wasmtime_log {
-            runtime.set_disable_wasmtime_log(true);
-        }
-        let storage_adapter = RocksDBStorageAdapter::new(adapter.db.clone());
-        let runtime_adapter =
-            MetashrewRuntimeAdapter::new(Arc::new(tokio::sync::RwLock::new(runtime)));
-        if args.disable_lru_cache {
-            runtime_adapter.set_disable_lru_cache(true);
-        }
-        if args.enable_view_pool && !args.disable_lru_cache {
-            let pool_size = args.view_pool_size.unwrap_or_else(num_cpus::get);
-            let max_concurrent = args.view_pool_max_concurrent.unwrap_or(pool_size * 2);
-            let view_pool_config = ViewPoolConfig {
-                pool_size,
-                max_concurrent_requests: Some(max_concurrent),
-                enable_logging: args.view_pool_logging,
-            };
-            info!(
-                "Initializing view pool with {} runtimes, max {} concurrent requests",
-                pool_size, max_concurrent
-            );
-            if let Err(e) = runtime_adapter.initialize_view_pool(view_pool_config).await {
-                error!("Failed to initialize view pool: {}", e);
-                return Err(e);
-            }
-            info!("View pool initialized successfully - using stateful view runtimes for parallel execution");
-        } else {
-            runtime_adapter.disable_stateful_views().await;
-            if args.disable_lru_cache {
-                info!("LRU cache disabled - view pool disabled, will refresh memory for each WASM invocation");
-            } else {
-                info!("View pool disabled - using non-stateful async wasmtime for view execution");
-            }
-        }
-        run_generic(args, runtime_adapter, storage_adapter).await
-    }
+    
+    let adapter =
+        RocksDBRuntimeAdapter::open_optimized(args.db_path.to_string_lossy().to_string())?;
+    let runtime = MetashrewRuntime::<_, AlkanesIndexer>::new(adapter.clone(), prefix_configs)?;
+    let storage_adapter = RocksDBStorageAdapter::new(adapter.db.clone());
+    run_generic(args, storage_adapter, runtime).await
 }

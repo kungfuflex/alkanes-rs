@@ -17,9 +17,10 @@ pub use optimized_config::{
 
 // Re-export core runtime with RocksDB adapter
 pub use metashrew_runtime::{MetashrewRuntime, MetashrewRuntimeContext};
+pub use metashrew_core::indexer::Indexer;
 
 /// Type alias for MetashrewRuntime using RocksDB backend
-pub type RocksDBRuntime = MetashrewRuntime<RocksDBRuntimeAdapter>;
+pub type RocksDBRuntime<I> = MetashrewRuntime<RocksDBRuntimeAdapter, I>;
 
 /// Type alias for MetashrewRuntimeContext using RocksDB backend
 pub type RocksDBRuntimeContext = MetashrewRuntimeContext<RocksDBRuntimeAdapter>;

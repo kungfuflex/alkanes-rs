@@ -10,7 +10,6 @@ pub mod proto;
 pub mod runtime;
 pub mod smt;
 pub mod traits;
-pub mod view_pool;
 
 #[cfg(test)]
 pub mod tests;
@@ -18,9 +17,9 @@ pub mod test_utils;
 
 // Re-export core types and traits
 pub use context::MetashrewRuntimeContext;
-pub use runtime::{MetashrewRuntime, State, StatefulViewRuntime, TIP_HEIGHT_KEY};
+pub use runtime::{MetashrewRuntime, TIP_HEIGHT_KEY};
 pub use traits::{BatchLike, KVTrackerFn, KeyValueStoreLike};
-pub use view_pool::{ViewPoolConfig, ViewPoolStats, ViewPoolSupport, ViewRuntimePool};
+pub use metashrew_core::indexer::Indexer;
 
 // Re-export helper types
 pub use key_utils::decode_historical_key;

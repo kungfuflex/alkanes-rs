@@ -13,19 +13,22 @@ use metashrew_sync::{
     SnapshotProvider, SnapshotServer, SnapshotServerStatus, StorageAdapter, SyncError, SyncResult,
 };
 
-use crate::adapters::{MetashrewRuntimeAdapter};
+use crate::adapters::MetashrewRuntimeAdapter;
+use metashrew_core::indexer::Indexer;
 use rockshrew_runtime::fork_adapter::ForkAdapter;
 use crate::snapshot::{RepoIndex, SnapshotConfig, SnapshotManager};
 use rockshrew_runtime::RocksDBStorageAdapter;
+use std::marker::PhantomData;
 
 /// Production snapshot provider using the existing SnapshotManager
-pub struct RockshrewSnapshotProvider {
+pub struct RockshrewSnapshotProvider<I: Indexer> {
     manager: Arc<RwLock<SnapshotManager>>,
     storage: Arc<RwLock<RocksDBStorageAdapter>>,
-    runtime_adapter: Option<Arc<RwLock<MetashrewRuntimeAdapter<ForkAdapter>>>>,
+    runtime_adapter: Option<Arc<RwLock<MetashrewRuntimeAdapter<ForkAdapter, I>>>>,
+    _indexer: PhantomData<I>,
 }
 
-impl RockshrewSnapshotProvider {
+impl<I: Indexer> RockshrewSnapshotProvider<I> {
     #[allow(dead_code)]
     pub fn new(config: SnapshotConfig, storage: Arc<RwLock<RocksDBStorageAdapter>>) -> Self {
         let manager = Arc::new(RwLock::new(SnapshotManager::new(config)));
@@ -33,12 +36,13 @@ impl RockshrewSnapshotProvider {
             manager,
             storage,
             runtime_adapter: None,
+            _indexer: PhantomData,
         }
     }
 
     /// Set the runtime adapter to get tracked changes from
     #[allow(dead_code)]
-    pub fn set_runtime_adapter(&mut self, runtime_adapter: Arc<RwLock<MetashrewRuntimeAdapter<ForkAdapter>>>) {
+    pub fn set_runtime_adapter(&mut self, runtime_adapter: Arc<RwLock<MetashrewRuntimeAdapter<ForkAdapter, I>>>) {
         self.runtime_adapter = Some(runtime_adapter);
     }
 
@@ -67,7 +71,7 @@ impl RockshrewSnapshotProvider {
 }
 
 #[async_trait]
-impl SnapshotProvider for RockshrewSnapshotProvider {
+impl<I: Indexer + Send + Sync + 'static> SnapshotProvider for RockshrewSnapshotProvider<I> {
     /// Create a snapshot at the current height
     async fn create_snapshot(&mut self, height: u32) -> SyncResult<GenericMetadata> {
         info!("Creating snapshot at height {}", height);
@@ -487,15 +491,15 @@ impl SnapshotConsumer for RockshrewSnapshotConsumer {
 }
 
 /// HTTP-based snapshot server implementation
-pub struct RockshrewSnapshotServer {
-    provider: Arc<RwLock<RockshrewSnapshotProvider>>,
+pub struct RockshrewSnapshotServer<I: Indexer> {
+    provider: Arc<RwLock<RockshrewSnapshotProvider<I>>>,
     status: Arc<RwLock<SnapshotServerStatus>>,
     snapshots: Arc<RwLock<HashMap<u32, Vec<u8>>>>,
 }
 
-impl RockshrewSnapshotServer {
+impl<I: Indexer> RockshrewSnapshotServer<I> {
     #[allow(dead_code)]
-    pub fn new(provider: RockshrewSnapshotProvider) -> Self {
+    pub fn new(provider: RockshrewSnapshotProvider<I>) -> Self {
         let status = SnapshotServerStatus {
             is_running: false,
             total_snapshots: 0,
@@ -513,7 +517,7 @@ impl RockshrewSnapshotServer {
 }
 
 #[async_trait]
-impl SnapshotServer for RockshrewSnapshotServer {
+impl<I: Indexer + Send + Sync + 'static> SnapshotServer for RockshrewSnapshotServer<I> {
     /// Start the snapshot server
     async fn start(&mut self) -> SyncResult<()> {
         let mut status = self.status.write().await;

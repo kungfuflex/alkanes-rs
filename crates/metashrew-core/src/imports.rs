@@ -13,7 +13,7 @@ pub fn __set_input(v: Vec<u8>) {
     }
 }
 
-#[cfg(not(feature = "test-utils"))]
+#[cfg(all(target_arch = "wasm32", not(feature = "test-utils")))]
 #[link(wasm_import_module = "env")]
 extern "C" {
     pub fn __host_len() -> i32;

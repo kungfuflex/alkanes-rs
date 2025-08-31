@@ -88,9 +88,13 @@
 
 use async_trait::async_trait;
 use log::info;
+use metashrew_core::indexer::Indexer;
 use metashrew_runtime::{KeyValueStoreLike, MetashrewRuntime};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use std::marker::PhantomData;
+use bitcoin::{Block, consensus::Decodable};
+
 
 use crate::{
     AtomicBlockResult, PreviewCall, RuntimeAdapter, RuntimeStats, SyncError, SyncResult, ViewCall,
@@ -98,19 +102,21 @@ use crate::{
 };
 
 /// Real runtime adapter that wraps MetashrewRuntime
-pub struct MetashrewRuntimeAdapter<T: KeyValueStoreLike + Clone + Send + Sync + 'static> {
-    runtime: Arc<Mutex<MetashrewRuntime<T>>>,
+pub struct MetashrewRuntimeAdapter<T: KeyValueStoreLike + Clone + Send + Sync + 'static, I: Indexer> {
+    runtime: Arc<Mutex<MetashrewRuntime<T, I>>>,
+    _indexer: PhantomData<I>,
 }
 
-impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntimeAdapter<T> {
-    pub fn new(runtime: MetashrewRuntime<T>) -> Self {
+impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static, I: Indexer + Default> MetashrewRuntimeAdapter<T, I> {
+    pub fn new(runtime: MetashrewRuntime<T, I>) -> Self {
         Self {
             runtime: Arc::new(Mutex::new(runtime)),
+            _indexer: PhantomData,
         }
     }
 
-    pub fn from_arc(runtime: Arc<Mutex<MetashrewRuntime<T>>>) -> Self {
-        Self { runtime }
+    pub fn from_arc(runtime: Arc<Mutex<MetashrewRuntime<T, I>>>) -> Self {
+        Self { runtime, _indexer: PhantomData }
     }
 
     pub fn get_context(
@@ -120,99 +126,52 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntimeAdapt
     }
 }
 
-impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> Clone for MetashrewRuntimeAdapter<T> {
+impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static, I: Indexer> Clone for MetashrewRuntimeAdapter<T, I> {
     fn clone(&self) -> Self {
         Self {
             runtime: self.runtime.clone(),
+            _indexer: PhantomData,
         }
     }
 }
 
 #[async_trait]
-impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> RuntimeAdapter
-    for MetashrewRuntimeAdapter<T>
+impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static, I: Indexer + Default + Send + Sync> RuntimeAdapter
+    for MetashrewRuntimeAdapter<T, I>
 {
     async fn process_block(&mut self, height: u32, block_data: &[u8]) -> SyncResult<()> {
         let mut runtime = self.runtime.lock().await;
-        {
-            let mut context = runtime
-                .context
-                .lock()
-                .map_err(|e| SyncError::Runtime(format!("Failed to lock context: {}", e)))?;
-            context.block = block_data.to_vec();
-            context.height = height;
-            context.db.set_height(height);
-        }
+        let block = Block::consensus_decode(&mut &block_data[..])
+            .map_err(|e| SyncError::Runtime(format!("Failed to decode block: {}", e)))?;
         runtime
-            .run()
+            .process_block(height, &block)
             .map_err(|e| SyncError::Runtime(format!("Runtime execution failed: {}", e)))?;
         Ok(())
     }
 
     async fn process_block_atomic(
         &mut self,
-        height: u32,
-        block_data: &[u8],
-        block_hash: &[u8],
+        _height: u32,
+        _block_data: &[u8],
+        _block_hash: &[u8],
     ) -> SyncResult<AtomicBlockResult> {
-        let mut runtime = self.runtime.lock().await;
-        match runtime
-            .process_block_atomic(height, block_data, block_hash)
-            .await
-        {
-            Ok(result) => Ok(AtomicBlockResult {
-                state_root: result.state_root,
-                batch_data: result.batch_data,
-                height: result.height,
-                block_hash: result.block_hash,
-            }),
-            Err(e) => Err(SyncError::Runtime(format!(
-                "Atomic block processing failed: {}",
-                e
-            ))),
-        }
+        unimplemented!("process_block_atomic is not supported in native runtime");
     }
 
-    async fn execute_view(&self, call: ViewCall) -> SyncResult<ViewResult> {
-        let runtime = self.runtime.lock().await;
-        let result = runtime
-            .view(call.function_name, &call.input_data, call.height)
-            .await
-            .map_err(|e| SyncError::ViewFunction(format!("View function failed: {}", e)))?;
-        Ok(ViewResult { data: result })
+    async fn execute_view(&self, _call: ViewCall) -> SyncResult<ViewResult> {
+        unimplemented!("execute_view is not supported in native runtime");
     }
 
-    async fn execute_preview(&self, call: PreviewCall) -> SyncResult<ViewResult> {
-        let runtime = self.runtime.lock().await;
-        let result = runtime
-            .preview_async(
-                &call.block_data,
-                call.function_name,
-                &call.input_data,
-                call.height,
-            )
-            .await
-            .map_err(|e| SyncError::ViewFunction(format!("Preview function failed: {}", e)))?;
-        Ok(ViewResult { data: result })
+    async fn execute_preview(&self, _call: PreviewCall) -> SyncResult<ViewResult> {
+        unimplemented!("execute_preview is not supported in native runtime");
     }
 
-    async fn get_state_root(&self, height: u32) -> SyncResult<Vec<u8>> {
-        let runtime = self.runtime.lock().await;
-        runtime.get_state_root(height).await.map_err(|e| {
-            SyncError::Runtime(format!(
-                "Failed to get state root for height {}: {}",
-                height, e
-            ))
-        })
+    async fn get_state_root(&self, _height: u32) -> SyncResult<Vec<u8>> {
+        unimplemented!("get_state_root is not supported in native runtime");
     }
 
     async fn refresh_memory(&mut self) -> SyncResult<()> {
-        log::info!("Memory refresh requested (typically during chain reorganization)");
-        let mut runtime = self.runtime.lock().await;
-        runtime
-            .refresh_memory()
-            .map_err(|e| SyncError::Runtime(format!("Failed to refresh runtime memory: {}", e)))?;
-        Ok(())
+        unimplemented!("refresh_memory is not supported in native runtime");
     }
 
     async fn is_ready(&self) -> bool {

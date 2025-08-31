@@ -1,0 +1,99 @@
+[package]
+name = "alkanes-indexer"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+num = { workspace = true }
+bitcoin = { workspace = true }
+metashrew-core = { workspace = true }
+metashrew-support = { workspace = true }
+metashrew-macros = { path = "../metashrew-macros" }
+ordinals = { workspace = true }
+protorune = { workspace = true }
+protorune-support = { workspace = true }
+alkanes-support = { workspace = true }
+ruint = { workspace = true }
+wasm-bindgen = { workspace = true }
+byteorder = { workspace = true }
+wasm-bindgen-test = { workspace = true }
+wasmi = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+protobuf = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true }
+js-sys = { workspace = true }
+hex_lit = { workspace = true }
+once_cell = { workspace = true }
+uuid = { workspace = true }
+getrandom = { workspace = true }
+borsh = { version = "1.5.7", features = ["derive"] }
+sha2 = "0.10.9"
+phf = { version = "0.11.2", features = ["macros"] }
+
+[dev-dependencies]
+alkanes-indexer = { path = ".", features = [
+    "genesis_alkane",
+    "genesis_protorune",
+    "amm",
+    "orbital",
+    "auth_token",
+    "minimal",
+] }
+protorune = { path = "../protorune", features = ["test-utils"] }
+metashrew-core = { workspace = true, features = ["test-utils"] }
+
+[build-dependencies]
+anyhow = { workspace = true }
+protobuf-codegen = "3.4.0"
+flate2 = "1.0.34"
+protoc-rust = { version = "2.28.0" }
+protoc-bin-vendored = "3.0.0"
+hex = { workspace = true }
+phf_codegen = "0.11.2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2.15", features = ["js"] }
+uuid = { version = "1.17.0", features = ["v4", "js"] }
+
+[features]
+test-utils = []
+testnet = []
+dogecoin = []
+luckycoin = []
+bellscoin = []
+fractal = []
+mainnet = []
+proxy = []
+owned_token = []
+auth_token = []
+genesis_alkane = []
+regtest = []
+genesis_protorune = []
+amm_pool = ["auth_token"]
+amm_factory = ["auth_token"]
+amm = ["amm_pool", "amm_factory"]
+orbital = []
+cache = ["protorune/cache"]
+all = []
+minimal = [
+    "refunder",
+    "merkle_distributor",
+    "free_mint",
+    "upgradeable",
+    "proxy",
+]
+refunder = []
+merkle_distributor = []
+free_mint = []
+upgradeable = []
+debug-log = []
+logs = ["protorune/logs"]
+lru-debug = []
+native-deps = []
