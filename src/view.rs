@@ -16,7 +16,7 @@ use alkanes_support::parcel::AlkaneTransfer;
 use alkanes_support::proto;
 use alkanes_support::proto::alkanes::{
     AlkaneIdToOutpointRequest, AlkaneIdToOutpointResponse, AlkaneInventoryRequest,
-    AlkaneInventoryResponse,
+    AlkaneInventoryResponse, AlkaneStorageRequest, AlkaneStorageResponse,
 };
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
@@ -382,6 +382,15 @@ pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryR
             .into()
         })
         .collect::<Vec<proto::alkanes::AlkaneTransfer>>();
+    Ok(result)
+}
+
+pub fn alkane_storage_at(req: &AlkaneStorageRequest) -> Result<AlkaneStorageResponse> {
+    let mut result: AlkaneStorageResponse = AlkaneStorageResponse::new();
+    let alkane_storage_pointer = IndexPointer::from_keyword("/alkanes/")
+        .select(&crate::utils::from_protobuf(req.id.clone().unwrap()).into())
+        .select(&req.path.as_bytes().to_vec());
+    result.value = alkane_storage_pointer.get().to_vec();
     Ok(result)
 }
 
