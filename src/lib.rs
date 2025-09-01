@@ -167,18 +167,6 @@ pub fn spendablesbyaddress() -> i32 {
     export_bytes(result.write_to_bytes().unwrap())
 }
 
-// #[cfg(not(test))]
-// #[no_mangle]
-// pub fn spendablesbyaddress2() -> i32 {
-//     configure_network();
-//     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-//     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-//     let result: protorune_support::proto::protorune::WalletResponse =
-//         view::protorunes_by_address2(&consume_to_end(&mut data).unwrap())
-//             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
-//     export_bytes(result.write_to_bytes().unwrap())
-// }
-
 #[cfg(not(test))]
 #[no_mangle]
 pub fn protorunesbyaddress() -> i32 {
@@ -222,63 +210,6 @@ pub fn getblock() -> i32 {
     let input_data = consume_to_end(&mut data).unwrap();
     export_bytes(view::getblock(&input_data).unwrap())
 }
-
-
-// #[cfg(not(test))]
-// #[no_mangle]
-// pub fn protorunesbyaddress2() -> i32 {
-//     configure_network();
-//     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-//     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-
-//     let input_data = consume_to_end(&mut data).unwrap();
-//     let request = protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(&input_data).unwrap();
-
-//     #[cfg(feature = "cache")]
-//     {
-//         // Check if we have a cached filtered response for this address
-//         let cached_response = protorune::tables::CACHED_FILTERED_WALLET_RESPONSE.select(&request.wallet).get();
-
-//         if !cached_response.is_empty() {
-//             // Use the cached filtered response if available
-//             match protorune_support::proto::protorune::WalletResponse::parse_from_bytes(&cached_response) {
-//                 Ok(response) => {
-//                     return export_bytes(response.write_to_bytes().unwrap());
-//                 },
-//                 Err(e) => {
-//                     println!("Error parsing cached filtered wallet response: {:?}", e);
-//                     // Fall back to computing the response if parsing fails
-//                 }
-//             }
-//         }
-//     }
-
-//     // If no cached response or parsing failed, compute it
-//     let mut result: protorune_support::proto::protorune::WalletResponse =
-//         view::protorunes_by_address2(&input_data)
-//             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
-
-//     // Filter the outpoints to only include those with runes
-//     result.outpoints = result
-//         .outpoints
-//         .into_iter()
-//         .filter_map(|v| {
-//             if v.clone()
-//                 .balances
-//                 .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new())
-//                 .entries
-//                 .len()
-//                 == 0
-//             {
-//                 None
-//             } else {
-//                 Some(v)
-//             }
-//         })
-//         .collect::<Vec<protorune_support::proto::protorune::OutpointResponse>>();
-
-//     export_bytes(result.write_to_bytes().unwrap())
-// }
 
 #[cfg(not(test))]
 #[no_mangle]
@@ -366,21 +297,36 @@ pub fn runesbyheight() -> i32 {
     export_bytes(result.write_to_bytes().unwrap())
 }
 
-// #[no_mangle]
-// pub fn alkane_balance_sheet() -> i32 {
-//     let data = input();
-//     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-//     let reader = &data[4..];
-//     let mut result: proto::alkanes::SimulateResponse = proto::alkanes::SimulateResponse::new();
-//     let (response, gas_used) = alkane_inventory(
-//         &proto::alkanes::MessageContextParcel::parse_from_bytes(reader).unwrap().into()
-//     ).unwrap();
-//     result.execution = MessageField::some(response.into());
-//     result.gas_used = gas_used;
-//     to_passback_ptr(&mut to_arraybuffer_layout::<&[u8]>(result.write_to_bytes().unwrap().as_ref()))
-// }
-//
-//
+// TODO: this function needs to improve the way it stores all alkane ids, it doesn't handle duplicates right now
+#[cfg(not(test))]
+#[no_mangle]
+pub fn getinventory() -> i32 {
+    let data = input();
+    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
+    let reader = &data[4..];
+    let result = view::getinventory(
+        &proto::alkanes::AlkaneInventoryRequest::parse_from_bytes(reader)
+            .unwrap()
+            .into(),
+    )
+    .unwrap();
+    export_bytes(result.write_to_bytes().unwrap())
+}
+
+#[cfg(not(test))]
+#[no_mangle]
+pub fn getstorageat() -> i32 {
+    let data = input();
+    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
+    let reader = &data[4..];
+    let result = view::getstorageat(
+        &proto::alkanes::AlkaneStorageRequest::parse_from_bytes(reader)
+            .unwrap()
+            .into(),
+    )
+    .unwrap();
+    export_bytes(result.write_to_bytes().unwrap())
+}
 
 #[cfg(all(target_arch = "wasm32", not(test)))]
 #[no_mangle]

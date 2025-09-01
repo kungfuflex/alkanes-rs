@@ -126,6 +126,15 @@ message AlkaneInventoryResponse {
   repeated AlkaneTransfer alkanes = 1;
 }
 
+message AlkaneStorageRequest {
+  AlkaneId id = 1;
+  string path = 2;
+}
+
+message AlkaneStorageResponse {
+  bytes value = 1;
+}
+
 message AlkaneIdToOutpointResponse {
   bytes txid = 1;
   uint32 vout = 2;
