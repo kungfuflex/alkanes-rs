@@ -300,11 +300,11 @@ pub fn runesbyheight() -> i32 {
 // TODO: this function needs to improve the way it stores all alkane ids, it doesn't handle duplicates right now
 #[cfg(not(test))]
 #[no_mangle]
-pub fn alkane_balance_sheet() -> i32 {
+pub fn getinventory() -> i32 {
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    let result = view::alkane_inventory(
+    let result = view::getinventory(
         &proto::alkanes::AlkaneInventoryRequest::parse_from_bytes(reader)
             .unwrap()
             .into(),
@@ -315,11 +315,11 @@ pub fn alkane_balance_sheet() -> i32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn alkane_storage_at() -> i32 {
+pub fn getstorageat() -> i32 {
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    let result = view::alkane_storage_at(
+    let result = view::getstorageat(
         &proto::alkanes::AlkaneStorageRequest::parse_from_bytes(reader)
             .unwrap()
             .into(),

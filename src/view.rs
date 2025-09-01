@@ -358,7 +358,7 @@ pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointRespo
     return Ok(response);
 }
 
-pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
+pub fn getinventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
     let mut result: AlkaneInventoryResponse = AlkaneInventoryResponse::new();
     let alkane_inventory = alkane_inventory_pointer(&req.id.clone().unwrap().into());
     result.alkanes = alkane_inventory
@@ -385,7 +385,7 @@ pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryR
     Ok(result)
 }
 
-pub fn alkane_storage_at(req: &AlkaneStorageRequest) -> Result<AlkaneStorageResponse> {
+pub fn getstorageat(req: &AlkaneStorageRequest) -> Result<AlkaneStorageResponse> {
     let mut result: AlkaneStorageResponse = AlkaneStorageResponse::new();
     let alkane_storage_pointer = IndexPointer::from_keyword("/alkanes/")
         .select(&crate::utils::from_protobuf(req.id.clone().unwrap()).into())
