@@ -297,6 +297,7 @@ pub fn runesbyheight() -> i32 {
     export_bytes(result.write_to_bytes().unwrap())
 }
 
+// TODO: this function needs to improve the way it stores all alkane ids, it doesn't handle duplicates right now
 #[cfg(not(test))]
 #[no_mangle]
 pub fn alkane_balance_sheet() -> i32 {
