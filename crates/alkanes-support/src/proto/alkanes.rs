@@ -3312,7 +3312,7 @@ pub struct AlkaneStorageRequest {
     // @@protoc_insertion_point(field:alkanes.AlkaneStorageRequest.id)
     pub id: ::protobuf::MessageField<AlkaneId>,
     // @@protoc_insertion_point(field:alkanes.AlkaneStorageRequest.path)
-    pub path: ::std::string::String,
+    pub path: ::std::vec::Vec<u8>,
     // special fields
     // @@protoc_insertion_point(special_field:alkanes.AlkaneStorageRequest.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -3364,7 +3364,7 @@ impl ::protobuf::Message for AlkaneStorageRequest {
                     ::protobuf::rt::read_singular_message_into_field(is, &mut self.id)?;
                 },
                 18 => {
-                    self.path = is.read_string()?;
+                    self.path = is.read_bytes()?;
                 },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
@@ -3383,7 +3383,7 @@ impl ::protobuf::Message for AlkaneStorageRequest {
             my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
         }
         if !self.path.is_empty() {
-            my_size += ::protobuf::rt::string_size(2, &self.path);
+            my_size += ::protobuf::rt::bytes_size(2, &self.path);
         }
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
@@ -3395,7 +3395,7 @@ impl ::protobuf::Message for AlkaneStorageRequest {
             ::protobuf::rt::write_message_field_with_cached_size(1, v, os)?;
         }
         if !self.path.is_empty() {
-            os.write_string(2, &self.path)?;
+            os.write_bytes(2, &self.path)?;
         }
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -3422,7 +3422,7 @@ impl ::protobuf::Message for AlkaneStorageRequest {
     fn default_instance() -> &'static AlkaneStorageRequest {
         static instance: AlkaneStorageRequest = AlkaneStorageRequest {
             id: ::protobuf::MessageField::none(),
-            path: ::std::string::String::new(),
+            path: ::std::vec::Vec::new(),
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -4811,19 +4811,19 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     \x01(\x0b2\x11.alkanes.AlkaneIdR\x02id\"L\n\x17AlkaneInventoryResponse\
     \x121\n\x07alkanes\x18\x01\x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x07\
     alkanes\"M\n\x14AlkaneStorageRequest\x12!\n\x02id\x18\x01\x20\x01(\x0b2\
-    \x11.alkanes.AlkaneIdR\x02id\x12\x12\n\x04path\x18\x02\x20\x01(\tR\x04pa\
-    th\"-\n\x15AlkaneStorageResponse\x12\x14\n\x05value\x18\x01\x20\x01(\x0c\
-    R\x05value\"D\n\x1aAlkaneIdToOutpointResponse\x12\x12\n\x04txid\x18\x01\
-    \x20\x01(\x0cR\x04txid\x12\x12\n\x04vout\x18\x02\x20\x01(\rR\x04vout\"2\
-    \n\x08Outpoint\x12\x12\n\x04txid\x18\x01\x20\x01(\x0cR\x04txid\x12\x12\n\
-    \x04vout\x18\x02\x20\x01(\rR\x04vout\"c\n\x05Trace\x12-\n\x08outpoint\
-    \x18\x01\x20\x01(\x0b2\x11.alkanes.OutpointR\x08outpoint\x12+\n\x05trace\
-    \x18\x02\x20\x01(\x0b2\x15.alkanes.AlkanesTraceR\x05trace\")\n\x11TraceB\
-    lockRequest\x12\x14\n\x05block\x18\x01\x20\x01(\x04R\x05block\"<\n\x12Tr\
-    aceBlockResponse\x12&\n\x06traces\x18\x01\x20\x03(\x0b2\x0e.alkanes.Trac\
-    eR\x06traces\"4\n\x0fBytecodeRequest\x12!\n\x02id\x18\x01\x20\x01(\x0b2\
-    \x11.alkanes.AlkaneIdR\x02id\"&\n\x0cBlockRequest\x12\x16\n\x06height\
-    \x18\x01\x20\x01(\rR\x06height\"=\n\rBlockResponse\x12\x14\n\x05block\
+    \x11.alkanes.AlkaneIdR\x02id\x12\x12\n\x04path\x18\x02\x20\x01(\x0cR\x04\
+    path\"-\n\x15AlkaneStorageResponse\x12\x14\n\x05value\x18\x01\x20\x01(\
+    \x0cR\x05value\"D\n\x1aAlkaneIdToOutpointResponse\x12\x12\n\x04txid\x18\
+    \x01\x20\x01(\x0cR\x04txid\x12\x12\n\x04vout\x18\x02\x20\x01(\rR\x04vout\
+    \"2\n\x08Outpoint\x12\x12\n\x04txid\x18\x01\x20\x01(\x0cR\x04txid\x12\
+    \x12\n\x04vout\x18\x02\x20\x01(\rR\x04vout\"c\n\x05Trace\x12-\n\x08outpo\
+    int\x18\x01\x20\x01(\x0b2\x11.alkanes.OutpointR\x08outpoint\x12+\n\x05tr\
+    ace\x18\x02\x20\x01(\x0b2\x15.alkanes.AlkanesTraceR\x05trace\")\n\x11Tra\
+    ceBlockRequest\x12\x14\n\x05block\x18\x01\x20\x01(\x04R\x05block\"<\n\
+    \x12TraceBlockResponse\x12&\n\x06traces\x18\x01\x20\x03(\x0b2\x0e.alkane\
+    s.TraceR\x06traces\"4\n\x0fBytecodeRequest\x12!\n\x02id\x18\x01\x20\x01(\
+    \x0b2\x11.alkanes.AlkaneIdR\x02id\"&\n\x0cBlockRequest\x12\x16\n\x06heig\
+    ht\x18\x01\x20\x01(\rR\x06height\"=\n\rBlockResponse\x12\x14\n\x05block\
     \x18\x01\x20\x01(\x0cR\x05block\x12\x16\n\x06height\x18\x02\x20\x01(\rR\
     \x06height*L\n\x14AlkanesTraceCallType\x12\x08\n\x04NONE\x10\0\x12\x08\n\
     \x04CALL\x10\x01\x12\x10\n\x0cDELEGATECALL\x10\x02\x12\x0e\n\nSTATICCALL\
