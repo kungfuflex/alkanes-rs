@@ -390,7 +390,7 @@ pub fn getstorageat(req: &AlkaneStorageRequest) -> Result<AlkaneStorageResponse>
     let alkane_storage_pointer = IndexPointer::from_keyword("/alkanes/")
         .select(&crate::utils::from_protobuf(req.id.clone().unwrap()).into())
         .keyword("/storage/")
-        .select(&req.path.as_bytes().to_vec());
+        .select(&req.path);
     result.value = alkane_storage_pointer.get().to_vec();
     Ok(result)
 }

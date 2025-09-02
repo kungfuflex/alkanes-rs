@@ -128,7 +128,7 @@ message AlkaneInventoryResponse {
 
 message AlkaneStorageRequest {
   AlkaneId id = 1;
-  string path = 2;
+  bytes path = 2;
 }
 
 message AlkaneStorageResponse {
