@@ -379,6 +379,21 @@ pub trait AlkaneResponder: 'static {
         Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
     }
 
+    fn number_contract_calls(&self, alkane_target: &AlkaneId, opcode: u128) -> Result<u128> {
+        let result = self.staticcall(
+            &Cellpack {
+                target: AlkaneId {
+                    block: 800000000,
+                    tx: 4,
+                },
+                inputs: vec![alkane_target.block, alkane_target.tx, opcode],
+            },
+            &AlkaneTransferParcel::default(),
+            self.fuel(),
+        )?;
+        Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
+    }
+
     fn total_miner_fee(&self) -> Result<u128> {
         let result = self.staticcall(
             &Cellpack {

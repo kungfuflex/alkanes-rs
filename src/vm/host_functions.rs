@@ -692,6 +692,18 @@ impl AlkanesHostFunctionsImpl {
         Ok(response)
     }
 
+    fn _extract_and_get_num_contract_calls(
+        caller: &mut Caller<'_, AlkanesState>,
+        cellpack: Cellpack,
+    ) -> Result<CallResponse> {
+        if cellpack.inputs.len() < 3 {
+            return Self::_get_number_diesel_mints(caller);
+        }
+        let id = AlkaneId::new(cellpack.inputs[0], cellpack.inputs[1]);
+        let opcode = cellpack.inputs[2];
+        Self::_get_number_contract_calls(caller, id, opcode)
+    }
+
     fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
         Self::_get_number_contract_calls(caller, AlkaneId::new(2, 0), 77)
     }
@@ -712,6 +724,7 @@ impl AlkanesHostFunctionsImpl {
             1 => Self::_get_coinbase_tx_response(caller),
             2 => Self::_get_number_diesel_mints(caller),
             3 => Self::_get_total_miner_fee(caller),
+            4 => Self::_extract_and_get_num_contract_calls(caller, cellpack),
             _ => {
                 return Err(anyhow!(
                     "Unknown precompiled contract: [{}, {}]",
