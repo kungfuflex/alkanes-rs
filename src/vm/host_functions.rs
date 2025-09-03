@@ -40,12 +40,12 @@ use std::io::Cursor;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use wasmi::*;
 
-static DIESEL_MINTS_CACHE: LazyLock<Arc<RwLock<Option<Vec<u8>>>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(None)));
+static CONTRACT_CALLS_CACHE: LazyLock<Arc<RwLock<BTreeMap<(AlkaneId, u128), Vec<u8>>>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(BTreeMap::new())));
 
-pub fn clear_diesel_mints_cache() {
-    if let Ok(mut cache) = DIESEL_MINTS_CACHE.try_write() {
-        *cache = None;
+pub fn clear_contract_calls_cache() {
+    if let Ok(mut cache) = CONTRACT_CALLS_CACHE.try_write() {
+        cache.clear();
     }
 }
 
@@ -620,19 +620,30 @@ impl AlkanesHostFunctionsImpl {
         Ok(response)
     }
 
-    fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
-        if let Some(cached_data) = DIESEL_MINTS_CACHE.read().unwrap().clone() {
+    fn _get_number_contract_calls(
+        caller: &mut Caller<'_, AlkanesState>,
+        contract: AlkaneId,
+        opcode: u128,
+    ) -> Result<CallResponse> {
+        let cache_key = (contract, opcode);
+        if let Some(cached_data) = CONTRACT_CALLS_CACHE.read().unwrap().get(&cache_key) {
             #[cfg(feature = "debug-log")]
             {
-                println!("Precompiled contract: returning cached total number of diesel mints");
+                println!(
+                    "Precompiled contract: returning cached total number of {:?} calls of {:?}",
+                    contract, opcode
+                );
             }
             let mut response = CallResponse::default();
-            response.data = cached_data;
+            response.data = cached_data.clone();
             return Ok(response);
         }
         #[cfg(feature = "debug-log")]
         {
-            println!("Precompiled contract: calculating total number of diesel mints in this block");
+            println!(
+                "Precompiled contract: calculating total number of {:?} calls of {:?}",
+                contract, opcode
+            );
         }
 
         // Get the block header from the current context
@@ -661,9 +672,9 @@ impl AlkanesHostFunctionsImpl {
                         continue;
                     }
                     if let Ok(cellpack) = TryInto::<Cellpack>::try_into(varint_list) {
-                        if cellpack.target == AlkaneId::new(2, 0)
+                        if cellpack.target == contract
                             && !cellpack.inputs.is_empty()
-                            && cellpack.inputs[0] == 77
+                            && cellpack.inputs[0] == opcode
                         {
                             counter += 1;
                             break;
@@ -674,8 +685,15 @@ impl AlkanesHostFunctionsImpl {
         }
         let mut response = CallResponse::default();
         response.data = counter.to_le_bytes().to_vec();
-        *DIESEL_MINTS_CACHE.write().unwrap() = Some(response.data.clone());
+        CONTRACT_CALLS_CACHE
+            .write()
+            .unwrap()
+            .insert(cache_key, response.data.clone());
         Ok(response)
+    }
+
+    fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+        Self::_get_number_contract_calls(caller, AlkaneId::new(2, 0), 77)
     }
     fn _handle_special_extcall(
         caller: &mut Caller<'_, AlkanesState>,
