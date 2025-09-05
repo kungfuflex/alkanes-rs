@@ -107,6 +107,10 @@ fn upgrade() -> Result<OutPoint> {
         txid: upgrade_tx.compute_txid(),
         vout: 0,
     };
+    let test = OutPoint {
+        txid: mint_tx_0.compute_txid(),
+        vout: 0,
+    };
     let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&new_outpoint)?);
@@ -134,7 +138,7 @@ fn upgrade() -> Result<OutPoint> {
         "upgraded mint in the same block as legacy mint",
     )?;
 
-    Ok(new_outpoint)
+    Ok(test)
 }
 
 fn mint(num_mints: usize) -> Result<Block> {
@@ -312,7 +316,7 @@ fn test_new_genesis_collect_fees() -> Result<()> {
     mint(5)?;
 
     let genesis_id = AlkaneId { block: 2, tx: 0 };
-    let block_height = 890_001;
+    let block_height = 913345;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
     let collect_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
         Witness::new(),
