@@ -990,7 +990,6 @@ impl Protorune {
 
     #[cfg(feature = "mainnet")]
     fn freeze_storage() {
-        println!("Freezing storage");
         IndexPointer::from_keyword("/alkanes/")
             .select(&ProtoruneRuneId::new(4, 65523).into())
             .keyword("/storage//auth")
