@@ -988,7 +988,9 @@ impl Protorune {
         Ok(())
     }
 
+    #[cfg(feature = "mainnet")]
     fn freeze_storage() {
+        println!("Freezing storage");
         IndexPointer::from_keyword("/alkanes/")
             .select(&ProtoruneRuneId::new(4, 65523).into())
             .keyword("/storage//auth")
@@ -998,6 +1000,9 @@ impl Protorune {
             .keyword("/storage//auth")
             .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
     }
+
+    #[cfg(not(feature = "mainnet"))]
+    pub fn freeze_storage() {}
 
     pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));

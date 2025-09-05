@@ -55,7 +55,7 @@ dogecoin = []
 luckycoin = []
 bellscoin = []
 fractal = []
-mainnet = []
+mainnet = ["dep:protorune"]
 proxy = []
 owned_token = []
 auth_token = []
@@ -89,7 +89,7 @@ bitcoin = { workspace = true }
 metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
 ordinals = { workspace = true }
-protorune = { workspace = true }
+protorune = { workspace = true, features = ["mainnet"], optional = true }
 protorune-support = { workspace = true }
 alkanes-support = { workspace = true }
 ruint = { workspace = true }
