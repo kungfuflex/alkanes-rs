@@ -989,19 +989,21 @@ impl Protorune {
     }
 
     #[cfg(feature = "mainnet")]
-    fn freeze_storage() {
-        IndexPointer::from_keyword("/alkanes/")
-            .select(&ProtoruneRuneId::new(4, 65523).into())
-            .keyword("/storage//auth")
-            .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
-        IndexPointer::from_keyword("/alkanes/")
-            .select(&ProtoruneRuneId::new(4, 65522).into())
-            .keyword("/storage//auth")
-            .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
+    fn freeze_storage(height: u64) {
+        if height > 913300 {
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&ProtoruneRuneId::new(4, 65523).into())
+                .keyword("/storage//auth")
+                .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&ProtoruneRuneId::new(4, 65522).into())
+                .keyword("/storage//auth")
+                .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
+        };
     }
 
     #[cfg(not(feature = "mainnet"))]
-    pub fn freeze_storage() {}
+    pub fn freeze_storage(height: u64) {}
 
     pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
@@ -1023,8 +1025,8 @@ impl Protorune {
         // Get the set of updated addresses
         let updated_addresses = Self::index_spendables(&block.txdata)?;
 
+        Self::freeze_storage(height);
         Self::index_unspendables::<T>(&block, height)?;
-        Self::freeze_storage();
 
         // Return the set of updated addresses
         Ok(updated_addresses)
