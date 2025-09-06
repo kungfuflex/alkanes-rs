@@ -3305,6 +3305,269 @@ impl ::protobuf::reflect::ProtobufValue for AlkaneInventoryResponse {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+// @@protoc_insertion_point(message:alkanes.AlkaneStorageRequest)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct AlkaneStorageRequest {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.AlkaneStorageRequest.id)
+    pub id: ::protobuf::MessageField<AlkaneId>,
+    // @@protoc_insertion_point(field:alkanes.AlkaneStorageRequest.path)
+    pub path: ::std::vec::Vec<u8>,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.AlkaneStorageRequest.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a AlkaneStorageRequest {
+    fn default() -> &'a AlkaneStorageRequest {
+        <AlkaneStorageRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl AlkaneStorageRequest {
+    pub fn new() -> AlkaneStorageRequest {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(2);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_message_field_accessor::<_, AlkaneId>(
+            "id",
+            |m: &AlkaneStorageRequest| { &m.id },
+            |m: &mut AlkaneStorageRequest| { &mut m.id },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "path",
+            |m: &AlkaneStorageRequest| { &m.path },
+            |m: &mut AlkaneStorageRequest| { &mut m.path },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<AlkaneStorageRequest>(
+            "AlkaneStorageRequest",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for AlkaneStorageRequest {
+    const NAME: &'static str = "AlkaneStorageRequest";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    ::protobuf::rt::read_singular_message_into_field(is, &mut self.id)?;
+                },
+                18 => {
+                    self.path = is.read_bytes()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if let Some(v) = self.id.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        }
+        if !self.path.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(2, &self.path);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if let Some(v) = self.id.as_ref() {
+            ::protobuf::rt::write_message_field_with_cached_size(1, v, os)?;
+        }
+        if !self.path.is_empty() {
+            os.write_bytes(2, &self.path)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> AlkaneStorageRequest {
+        AlkaneStorageRequest::new()
+    }
+
+    fn clear(&mut self) {
+        self.id.clear();
+        self.path.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static AlkaneStorageRequest {
+        static instance: AlkaneStorageRequest = AlkaneStorageRequest {
+            id: ::protobuf::MessageField::none(),
+            path: ::std::vec::Vec::new(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for AlkaneStorageRequest {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("AlkaneStorageRequest").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for AlkaneStorageRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for AlkaneStorageRequest {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+// @@protoc_insertion_point(message:alkanes.AlkaneStorageResponse)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct AlkaneStorageResponse {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.AlkaneStorageResponse.value)
+    pub value: ::std::vec::Vec<u8>,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.AlkaneStorageResponse.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a AlkaneStorageResponse {
+    fn default() -> &'a AlkaneStorageResponse {
+        <AlkaneStorageResponse as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl AlkaneStorageResponse {
+    pub fn new() -> AlkaneStorageResponse {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(1);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "value",
+            |m: &AlkaneStorageResponse| { &m.value },
+            |m: &mut AlkaneStorageResponse| { &mut m.value },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<AlkaneStorageResponse>(
+            "AlkaneStorageResponse",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for AlkaneStorageResponse {
+    const NAME: &'static str = "AlkaneStorageResponse";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.value = is.read_bytes()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if !self.value.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(1, &self.value);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if !self.value.is_empty() {
+            os.write_bytes(1, &self.value)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> AlkaneStorageResponse {
+        AlkaneStorageResponse::new()
+    }
+
+    fn clear(&mut self) {
+        self.value.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static AlkaneStorageResponse {
+        static instance: AlkaneStorageResponse = AlkaneStorageResponse {
+            value: ::std::vec::Vec::new(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for AlkaneStorageResponse {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("AlkaneStorageResponse").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for AlkaneStorageResponse {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for AlkaneStorageResponse {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
 // @@protoc_insertion_point(message:alkanes.AlkaneIdToOutpointResponse)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct AlkaneIdToOutpointResponse {
@@ -5073,17 +5336,20 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     kaneIdR\x02id\">\n\x19AlkaneIdToOutpointRequest\x12!\n\x02id\x18\x01\x20\
     \x01(\x0b2\x11.alkanes.AlkaneIdR\x02id\"L\n\x17AlkaneInventoryResponse\
     \x121\n\x07alkanes\x18\x01\x20\x03(\x0b2\x17.alkanes.AlkaneTransferR\x07\
-    alkanes\"D\n\x1aAlkaneIdToOutpointResponse\x12\x12\n\x04txid\x18\x01\x20\
-    \x01(\x0cR\x04txid\x12\x12\n\x04vout\x18\x02\x20\x01(\rR\x04vout\"2\n\
-    \x08Outpoint\x12\x12\n\x04txid\x18\x01\x20\x01(\x0cR\x04txid\x12\x12\n\
-    \x04vout\x18\x02\x20\x01(\rR\x04vout\"c\n\x05Trace\x12-\n\x08outpoint\
-    \x18\x01\x20\x01(\x0b2\x11.alkanes.OutpointR\x08outpoint\x12+\n\x05trace\
-    \x18\x02\x20\x01(\x0b2\x15.alkanes.AlkanesTraceR\x05trace\")\n\x11TraceB\
-    lockRequest\x12\x14\n\x05block\x18\x01\x20\x01(\x04R\x05block\"<\n\x12Tr\
-    aceBlockResponse\x12&\n\x06traces\x18\x01\x20\x03(\x0b2\x0e.alkanes.Trac\
-    eR\x06traces\"4\n\x0fBytecodeRequest\x12!\n\x02id\x18\x01\x20\x01(\x0b2\
-    \x11.alkanes.AlkaneIdR\x02id\"&\n\x0cBlockRequest\x12\x16\n\x06height\
-    \x18\x01\x20\x01(\rR\x06height\"=\n\rBlockResponse\x12\x14\n\x05block\
+    alkanes\"M\n\x14AlkaneStorageRequest\x12!\n\x02id\x18\x01\x20\x01(\x0b2\
+    \x11.alkanes.AlkaneIdR\x02id\x12\x12\n\x04path\x18\x02\x20\x01(\x0cR\x04\
+    path\"-\n\x15AlkaneStorageResponse\x12\x14\n\x05value\x18\x01\x20\x01(\
+    \x0cR\x05value\"D\n\x1aAlkaneIdToOutpointResponse\x12\x12\n\x04txid\x18\
+    \x01\x20\x01(\x0cR\x04txid\x12\x12\n\x04vout\x18\x02\x20\x01(\rR\x04vout\
+    \"2\n\x08Outpoint\x12\x12\n\x04txid\x18\x01\x20\x01(\x0cR\x04txid\x12\
+    \x12\n\x04vout\x18\x02\x20\x01(\rR\x04vout\"c\n\x05Trace\x12-\n\x08outpo\
+    int\x18\x01\x20\x01(\x0b2\x11.alkanes.OutpointR\x08outpoint\x12+\n\x05tr\
+    ace\x18\x02\x20\x01(\x0b2\x15.alkanes.AlkanesTraceR\x05trace\")\n\x11Tra\
+    ceBlockRequest\x12\x14\n\x05block\x18\x01\x20\x01(\x04R\x05block\"<\n\
+    \x12TraceBlockResponse\x12&\n\x06traces\x18\x01\x20\x03(\x0b2\x0e.alkane\
+    s.TraceR\x06traces\"4\n\x0fBytecodeRequest\x12!\n\x02id\x18\x01\x20\x01(\
+    \x0b2\x11.alkanes.AlkaneIdR\x02id\"&\n\x0cBlockRequest\x12\x16\n\x06heig\
+    ht\x18\x01\x20\x01(\rR\x06height\"=\n\rBlockResponse\x12\x14\n\x05block\
     \x18\x01\x20\x01(\x0cR\x05block\x12\x16\n\x06height\x18\x02\x20\x01(\rR\
     \x06height\"(\n\x12TransactionRequest\x12\x12\n\x04txid\x18\x01\x20\x01(\
     \x0cR\x04txid\"7\n\x13TransactionResponse\x12\x20\n\x0btransaction\x18\
@@ -5113,7 +5379,7 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
     file_descriptor.get(|| {
         let generated_file_descriptor = generated_file_descriptor_lazy.get(|| {
             let mut deps = ::std::vec::Vec::with_capacity(0);
-            let mut messages = ::std::vec::Vec::with_capacity(33);
+            let mut messages = ::std::vec::Vec::with_capacity(35);
             messages.push(Uint128::generated_message_descriptor_data());
             messages.push(AlkaneId::generated_message_descriptor_data());
             messages.push(AlkaneTransfer::generated_message_descriptor_data());
@@ -5135,6 +5401,8 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
             messages.push(AlkaneInventoryRequest::generated_message_descriptor_data());
             messages.push(AlkaneIdToOutpointRequest::generated_message_descriptor_data());
             messages.push(AlkaneInventoryResponse::generated_message_descriptor_data());
+            messages.push(AlkaneStorageRequest::generated_message_descriptor_data());
+            messages.push(AlkaneStorageResponse::generated_message_descriptor_data());
             messages.push(AlkaneIdToOutpointResponse::generated_message_descriptor_data());
             messages.push(Outpoint::generated_message_descriptor_data());
             messages.push(Trace::generated_message_descriptor_data());
