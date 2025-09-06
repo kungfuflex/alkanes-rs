@@ -12,4 +12,6 @@ pub mod alkanes_std_owned_token_build;
 pub mod alkanes_std_proxy_build;
 pub mod alkanes_std_upgradeable_beacon_build;
 pub mod alkanes_std_upgradeable_build;
+pub mod fr_btc_build;
+pub mod fr_sigil_build;
 pub mod free_mint_build;

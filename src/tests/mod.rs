@@ -26,6 +26,8 @@ pub mod factory;
 #[cfg(test)]
 pub mod forge;
 #[cfg(test)]
+pub mod fr_btc;
+#[cfg(test)]
 pub mod fuel;
 #[cfg(test)]
 pub mod genesis;

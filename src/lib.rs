@@ -1,4 +1,7 @@
 use crate::indexer::configure_network;
+use crate::unwrap::{
+    deserialize_payments, fr_btc_payments_at_block, fr_btc_storage_pointer, update_last_block,
+};
 use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate_safe};
 use alkanes_support::proto;
 use bitcoin::{Block, OutPoint};
@@ -26,6 +29,7 @@ pub mod tables;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod tests;
 pub mod trace;
+pub mod unwrap;
 pub mod utils;
 pub mod view;
 pub mod vm;
@@ -418,4 +422,14 @@ mod unit_tests {
 
         // assert!(false);
     }
+}
+
+#[cfg(not(test))]
+#[no_mangle]
+pub fn pending_unwraps() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let height = consume_sized_int::<u32>(&mut data).unwrap();
+    let result = view::unwrap(height as u128).unwrap_or_else(|_| vec![]);
+    export_bytes(result)
 }

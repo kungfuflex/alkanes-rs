@@ -4620,6 +4620,532 @@ impl ::protobuf::reflect::ProtobufValue for BlockResponse {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+// @@protoc_insertion_point(message:alkanes.TransactionRequest)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct TransactionRequest {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.TransactionRequest.txid)
+    pub txid: ::std::vec::Vec<u8>,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.TransactionRequest.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a TransactionRequest {
+    fn default() -> &'a TransactionRequest {
+        <TransactionRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl TransactionRequest {
+    pub fn new() -> TransactionRequest {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(1);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "txid",
+            |m: &TransactionRequest| { &m.txid },
+            |m: &mut TransactionRequest| { &mut m.txid },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<TransactionRequest>(
+            "TransactionRequest",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for TransactionRequest {
+    const NAME: &'static str = "TransactionRequest";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.txid = is.read_bytes()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if !self.txid.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(1, &self.txid);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if !self.txid.is_empty() {
+            os.write_bytes(1, &self.txid)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> TransactionRequest {
+        TransactionRequest::new()
+    }
+
+    fn clear(&mut self) {
+        self.txid.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static TransactionRequest {
+        static instance: TransactionRequest = TransactionRequest {
+            txid: ::std::vec::Vec::new(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for TransactionRequest {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("TransactionRequest").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for TransactionRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for TransactionRequest {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+// @@protoc_insertion_point(message:alkanes.TransactionResponse)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct TransactionResponse {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.TransactionResponse.transaction)
+    pub transaction: ::std::vec::Vec<u8>,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.TransactionResponse.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a TransactionResponse {
+    fn default() -> &'a TransactionResponse {
+        <TransactionResponse as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl TransactionResponse {
+    pub fn new() -> TransactionResponse {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(1);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "transaction",
+            |m: &TransactionResponse| { &m.transaction },
+            |m: &mut TransactionResponse| { &mut m.transaction },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<TransactionResponse>(
+            "TransactionResponse",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for TransactionResponse {
+    const NAME: &'static str = "TransactionResponse";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.transaction = is.read_bytes()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if !self.transaction.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(1, &self.transaction);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if !self.transaction.is_empty() {
+            os.write_bytes(1, &self.transaction)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> TransactionResponse {
+        TransactionResponse::new()
+    }
+
+    fn clear(&mut self) {
+        self.transaction.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static TransactionResponse {
+        static instance: TransactionResponse = TransactionResponse {
+            transaction: ::std::vec::Vec::new(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for TransactionResponse {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("TransactionResponse").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for TransactionResponse {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for TransactionResponse {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+// @@protoc_insertion_point(message:alkanes.Payment)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct Payment {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.Payment.spendable)
+    pub spendable: ::protobuf::MessageField<Outpoint>,
+    // @@protoc_insertion_point(field:alkanes.Payment.output)
+    pub output: ::std::vec::Vec<u8>,
+    // @@protoc_insertion_point(field:alkanes.Payment.fulfilled)
+    pub fulfilled: bool,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.Payment.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a Payment {
+    fn default() -> &'a Payment {
+        <Payment as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl Payment {
+    pub fn new() -> Payment {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(3);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_message_field_accessor::<_, Outpoint>(
+            "spendable",
+            |m: &Payment| { &m.spendable },
+            |m: &mut Payment| { &mut m.spendable },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "output",
+            |m: &Payment| { &m.output },
+            |m: &mut Payment| { &mut m.output },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "fulfilled",
+            |m: &Payment| { &m.fulfilled },
+            |m: &mut Payment| { &mut m.fulfilled },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<Payment>(
+            "Payment",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for Payment {
+    const NAME: &'static str = "Payment";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    ::protobuf::rt::read_singular_message_into_field(is, &mut self.spendable)?;
+                },
+                18 => {
+                    self.output = is.read_bytes()?;
+                },
+                24 => {
+                    self.fulfilled = is.read_bool()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if let Some(v) = self.spendable.as_ref() {
+            let len = v.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        }
+        if !self.output.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(2, &self.output);
+        }
+        if self.fulfilled != false {
+            my_size += 1 + 1;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if let Some(v) = self.spendable.as_ref() {
+            ::protobuf::rt::write_message_field_with_cached_size(1, v, os)?;
+        }
+        if !self.output.is_empty() {
+            os.write_bytes(2, &self.output)?;
+        }
+        if self.fulfilled != false {
+            os.write_bool(3, self.fulfilled)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> Payment {
+        Payment::new()
+    }
+
+    fn clear(&mut self) {
+        self.spendable.clear();
+        self.output.clear();
+        self.fulfilled = false;
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static Payment {
+        static instance: Payment = Payment {
+            spendable: ::protobuf::MessageField::none(),
+            output: ::std::vec::Vec::new(),
+            fulfilled: false,
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for Payment {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("Payment").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for Payment {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for Payment {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+// @@protoc_insertion_point(message:alkanes.PendingUnwrapsResponse)
+#[derive(PartialEq,Clone,Default,Debug)]
+pub struct PendingUnwrapsResponse {
+    // message fields
+    // @@protoc_insertion_point(field:alkanes.PendingUnwrapsResponse.payments)
+    pub payments: ::std::vec::Vec<Payment>,
+    // special fields
+    // @@protoc_insertion_point(special_field:alkanes.PendingUnwrapsResponse.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a PendingUnwrapsResponse {
+    fn default() -> &'a PendingUnwrapsResponse {
+        <PendingUnwrapsResponse as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl PendingUnwrapsResponse {
+    pub fn new() -> PendingUnwrapsResponse {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(1);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
+            "payments",
+            |m: &PendingUnwrapsResponse| { &m.payments },
+            |m: &mut PendingUnwrapsResponse| { &mut m.payments },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<PendingUnwrapsResponse>(
+            "PendingUnwrapsResponse",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for PendingUnwrapsResponse {
+    const NAME: &'static str = "PendingUnwrapsResponse";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.payments.push(is.read_message()?);
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        for value in &self.payments {
+            let len = value.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        };
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        for v in &self.payments {
+            ::protobuf::rt::write_message_field_with_cached_size(1, v, os)?;
+        };
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> PendingUnwrapsResponse {
+        PendingUnwrapsResponse::new()
+    }
+
+    fn clear(&mut self) {
+        self.payments.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static PendingUnwrapsResponse {
+        static instance: PendingUnwrapsResponse = PendingUnwrapsResponse {
+            payments: ::std::vec::Vec::new(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for PendingUnwrapsResponse {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("PendingUnwrapsResponse").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for PendingUnwrapsResponse {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for PendingUnwrapsResponse {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
 #[derive(Clone,Copy,PartialEq,Eq,Debug,Hash)]
 // @@protoc_insertion_point(enum:alkanes.AlkanesTraceCallType)
 pub enum AlkanesTraceCallType {
@@ -4825,10 +5351,17 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     \x0b2\x11.alkanes.AlkaneIdR\x02id\"&\n\x0cBlockRequest\x12\x16\n\x06heig\
     ht\x18\x01\x20\x01(\rR\x06height\"=\n\rBlockResponse\x12\x14\n\x05block\
     \x18\x01\x20\x01(\x0cR\x05block\x12\x16\n\x06height\x18\x02\x20\x01(\rR\
-    \x06height*L\n\x14AlkanesTraceCallType\x12\x08\n\x04NONE\x10\0\x12\x08\n\
-    \x04CALL\x10\x01\x12\x10\n\x0cDELEGATECALL\x10\x02\x12\x0e\n\nSTATICCALL\
-    \x10\x03*2\n\x16AlkanesTraceStatusFlag\x12\x0b\n\x07SUCCESS\x10\0\x12\
-    \x0b\n\x07FAILURE\x10\x01b\x06proto3\
+    \x06height\"(\n\x12TransactionRequest\x12\x12\n\x04txid\x18\x01\x20\x01(\
+    \x0cR\x04txid\"7\n\x13TransactionResponse\x12\x20\n\x0btransaction\x18\
+    \x01\x20\x01(\x0cR\x0btransaction\"p\n\x07Payment\x12/\n\tspendable\x18\
+    \x01\x20\x01(\x0b2\x11.alkanes.OutpointR\tspendable\x12\x16\n\x06output\
+    \x18\x02\x20\x01(\x0cR\x06output\x12\x1c\n\tfulfilled\x18\x03\x20\x01(\
+    \x08R\tfulfilled\"F\n\x16PendingUnwrapsResponse\x12,\n\x08payments\x18\
+    \x01\x20\x03(\x0b2\x10.alkanes.PaymentR\x08payments*L\n\x14AlkanesTraceC\
+    allType\x12\x08\n\x04NONE\x10\0\x12\x08\n\x04CALL\x10\x01\x12\x10\n\x0cD\
+    ELEGATECALL\x10\x02\x12\x0e\n\nSTATICCALL\x10\x03*2\n\x16AlkanesTraceSta\
+    tusFlag\x12\x0b\n\x07SUCCESS\x10\0\x12\x0b\n\x07FAILURE\x10\x01b\x06prot\
+    o3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file
@@ -4846,7 +5379,7 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
     file_descriptor.get(|| {
         let generated_file_descriptor = generated_file_descriptor_lazy.get(|| {
             let mut deps = ::std::vec::Vec::with_capacity(0);
-            let mut messages = ::std::vec::Vec::with_capacity(31);
+            let mut messages = ::std::vec::Vec::with_capacity(35);
             messages.push(Uint128::generated_message_descriptor_data());
             messages.push(AlkaneId::generated_message_descriptor_data());
             messages.push(AlkaneTransfer::generated_message_descriptor_data());
@@ -4878,6 +5411,10 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
             messages.push(BytecodeRequest::generated_message_descriptor_data());
             messages.push(BlockRequest::generated_message_descriptor_data());
             messages.push(BlockResponse::generated_message_descriptor_data());
+            messages.push(TransactionRequest::generated_message_descriptor_data());
+            messages.push(TransactionResponse::generated_message_descriptor_data());
+            messages.push(Payment::generated_message_descriptor_data());
+            messages.push(PendingUnwrapsResponse::generated_message_descriptor_data());
             let mut enums = ::std::vec::Vec::with_capacity(2);
             enums.push(AlkanesTraceCallType::generated_enum_descriptor_data());
             enums.push(AlkanesTraceStatusFlag::generated_enum_descriptor_data());
