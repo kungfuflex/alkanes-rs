@@ -40,12 +40,12 @@ use std::io::Cursor;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use wasmi::*;
 
-static CONTRACT_CALLS_CACHE: LazyLock<Arc<RwLock<BTreeMap<(AlkaneId, u128), Vec<u8>>>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(BTreeMap::new())));
+static DIESEL_MINTS_CACHE: LazyLock<Arc<RwLock<Option<Vec<u8>>>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(None)));
 
-pub fn clear_contract_calls_cache() {
-    if let Ok(mut cache) = CONTRACT_CALLS_CACHE.try_write() {
-        cache.clear();
+pub fn clear_diesel_mints_cache() {
+    if let Ok(mut cache) = DIESEL_MINTS_CACHE.try_write() {
+        *cache = None;
     }
 }
 
@@ -620,30 +620,19 @@ impl AlkanesHostFunctionsImpl {
         Ok(response)
     }
 
-    fn _get_number_contract_calls(
-        caller: &mut Caller<'_, AlkanesState>,
-        contract: AlkaneId,
-        opcode: u128,
-    ) -> Result<CallResponse> {
-        let cache_key = (contract, opcode);
-        if let Some(cached_data) = CONTRACT_CALLS_CACHE.read().unwrap().get(&cache_key) {
+    fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+        if let Some(cached_data) = DIESEL_MINTS_CACHE.read().unwrap().clone() {
             #[cfg(feature = "debug-log")]
             {
-                println!(
-                    "Precompiled contract: returning cached total number of {:?} calls of {:?}",
-                    contract, opcode
-                );
+                println!("Precompiled contract: returning cached total number of diesel mints");
             }
             let mut response = CallResponse::default();
-            response.data = cached_data.clone();
+            response.data = cached_data;
             return Ok(response);
         }
         #[cfg(feature = "debug-log")]
         {
-            println!(
-                "Precompiled contract: calculating total number of {:?} calls of {:?}",
-                contract, opcode
-            );
+            println!("Precompiled contract: calculating total number of diesel mints in this block");
         }
 
         // Get the block header from the current context
@@ -672,9 +661,9 @@ impl AlkanesHostFunctionsImpl {
                         continue;
                     }
                     if let Ok(cellpack) = TryInto::<Cellpack>::try_into(varint_list) {
-                        if cellpack.target == contract
+                        if cellpack.target == AlkaneId::new(2, 0)
                             && !cellpack.inputs.is_empty()
-                            && cellpack.inputs[0] == opcode
+                            && cellpack.inputs[0] == 77
                         {
                             counter += 1;
                             break;
@@ -685,27 +674,8 @@ impl AlkanesHostFunctionsImpl {
         }
         let mut response = CallResponse::default();
         response.data = counter.to_le_bytes().to_vec();
-        CONTRACT_CALLS_CACHE
-            .write()
-            .unwrap()
-            .insert(cache_key, response.data.clone());
+        *DIESEL_MINTS_CACHE.write().unwrap() = Some(response.data.clone());
         Ok(response)
-    }
-
-    fn _extract_and_get_num_contract_calls(
-        caller: &mut Caller<'_, AlkanesState>,
-        cellpack: Cellpack,
-    ) -> Result<CallResponse> {
-        if cellpack.inputs.len() < 3 {
-            return Self::_get_number_diesel_mints(caller);
-        }
-        let id = AlkaneId::new(cellpack.inputs[0], cellpack.inputs[1]);
-        let opcode = cellpack.inputs[2];
-        Self::_get_number_contract_calls(caller, id, opcode)
-    }
-
-    fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
-        Self::_get_number_contract_calls(caller, AlkaneId::new(2, 0), 77)
     }
     fn _handle_special_extcall(
         caller: &mut Caller<'_, AlkanesState>,
@@ -724,7 +694,6 @@ impl AlkanesHostFunctionsImpl {
             1 => Self::_get_coinbase_tx_response(caller),
             2 => Self::_get_number_diesel_mints(caller),
             3 => Self::_get_total_miner_fee(caller),
-            4 => Self::_extract_and_get_num_contract_calls(caller, cellpack),
             _ => {
                 return Err(anyhow!(
                     "Unknown precompiled contract: [{}, {}]",
