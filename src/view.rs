@@ -196,7 +196,7 @@ pub fn to_alkanes_balances(
             .clone()
             .unwrap()
             .into();
-        if block == 2 || block == 4 {
+        if block == 2 || block == 4 || block == 32 {
             (
                 entry.rune.as_mut().unwrap().name,
                 entry.rune.as_mut().unwrap().symbol,
@@ -214,7 +214,7 @@ pub fn to_alkanes_from_runes(
         .into_iter()
         .map(|mut v| {
             let block: u128 = v.clone().runeId.height.clone().unwrap().into();
-            if block == 2 || block == 4 {
+            if block == 2 || block == 4 || block == 32 {
                 (v.name, v.symbol) = get_statics(&from_protobuf(v.runeId.clone().unwrap()));
                 v.spacers = 0;
             }
