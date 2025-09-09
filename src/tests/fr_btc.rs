@@ -151,7 +151,7 @@ pub fn create_alkane_tx_frbtc_signer_script(
 }
 
 fn wrap_btc() -> Result<(OutPoint, u64)> {
-    let fr_btc_id = AlkaneId { block: 4, tx: 0 };
+    let fr_btc_id = AlkaneId { block: 32, tx: 0 };
     let mut block = create_block_with_coinbase_tx(880_001);
     let funding_outpoint = OutPoint {
         txid: block.txdata[0].compute_txid(),
@@ -190,7 +190,7 @@ fn unwrap_btc_tx(
     amount_frbtc: u64,
     desired_vout: u128,
 ) -> Transaction {
-    let fr_btc_id = AlkaneId { block: 4, tx: 0 };
+    let fr_btc_id = AlkaneId { block: 32, tx: 0 };
     let txins = vec![TxIn {
         previous_output: fr_btc_input_outpoint,
         script_sig: ScriptBuf::new(),
@@ -250,7 +250,7 @@ fn unwrap_btc(
     vout: u128,
     height: u32,
 ) -> Result<()> {
-    let fr_btc_id = AlkaneId { block: 4, tx: 0 };
+    let fr_btc_id = AlkaneId { block: 32, tx: 0 };
     let mut block = create_block_with_coinbase_tx(height);
     let unwrap_tx = unwrap_btc_tx(fr_btc_input_outpoint, amount_frbtc_to_burn, vout);
     let amt_actual_burn = std::cmp::min(amount_original_frbtc, amount_frbtc_to_burn);
