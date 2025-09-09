@@ -36,7 +36,6 @@ pub fn fr_btc_premium() -> u128 {
 pub struct Payment {
     pub spendable: OutPoint,
     pub output: TxOut,
-    pub fulfilled: bool,
 }
 
 impl Payment {
@@ -58,11 +57,7 @@ pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
             consensus_decode::<OutPoint>(&mut cursor)?,
             consensus_decode::<TxOut>(&mut cursor)?,
         );
-        payments.push(Payment {
-            spendable,
-            output,
-            fulfilled: false,
-        });
+        payments.push(Payment { spendable, output });
     }
     Ok(payments)
 }
