@@ -23,7 +23,7 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::format_key;
 use protorune::message::MessageContextParcel;
 use protorune::protostone::Protostones;
-use protorune::test_helpers::create_block_with_coinbase_tx;
+use protorune::test_helpers::{create_block_with_coinbase_tx, ADDRESS1};
 use protorune::{
     balance_sheet::load_sheet, message::MessageContext, tables::RuneTable,
     test_helpers::get_address,
@@ -253,7 +253,7 @@ fn unwrap_btc(
     let fr_btc_id = AlkaneId { block: 4, tx: 0 };
     let mut block = create_block_with_coinbase_tx(height);
     let unwrap_tx = unwrap_btc_tx(fr_btc_input_outpoint, amount_frbtc_to_burn, vout);
-    let amt_actual_burn = min(amount_original_frbtc, amount_frbtc_to_burn);
+    let amt_actual_burn = std::cmp::min(amount_original_frbtc, amount_frbtc_to_burn);
 
     // Create a block and index it
     block.txdata.push(unwrap_tx.clone());
@@ -324,7 +324,6 @@ fn test_fr_btc_wrap_correct_signer() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_fr_btc_unwrap() -> Result<()> {
     clear();
-    setup_fr_btc()?;
     let (wrap_out, amt) = wrap_btc()?;
     unwrap_btc(wrap_out, amt, amt, 1, 880_002)
 }
@@ -332,7 +331,6 @@ fn test_fr_btc_unwrap() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_fr_btc_unwrap_partial() -> Result<()> {
     clear();
-    setup_fr_btc()?;
     let (wrap_out, amt) = wrap_btc()?;
     unwrap_btc(wrap_out, amt, amt / 2, 1, 880_002)
 }
@@ -340,7 +338,6 @@ fn test_fr_btc_unwrap_partial() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_fr_btc_unwrap_more() -> Result<()> {
     clear();
-    setup_fr_btc()?;
     let (wrap_out, amt) = wrap_btc()?;
     unwrap_btc(wrap_out, amt, amt * 2, 1, 880_002)
 }
