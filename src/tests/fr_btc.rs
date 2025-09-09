@@ -267,7 +267,7 @@ fn unwrap_btc(
     let (response, _) = simulate_cellpack(
         height as u64,
         Cellpack {
-            target: AlkaneId { block: 4, tx: 0 },
+            target: AlkaneId { block: 32, tx: 0 },
             inputs: vec![101],
         },
     )?;
