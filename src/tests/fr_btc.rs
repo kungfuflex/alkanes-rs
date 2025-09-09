@@ -285,6 +285,7 @@ fn unwrap_btc(
                 txid: unwrap_tx.compute_txid(),
                 vout: vout.try_into()?,
             },
+            fulfilled: false,
         }
     );
     assert_eq!(sheet.get(&AlkaneId { block: 2, tx: 0 }.into()), 312500000);
