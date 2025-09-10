@@ -54,6 +54,20 @@ impl Payment {
     }
 }
 
+impl From<ProtoPayment> for Payment {
+    fn from(payment: ProtoPayment) -> Self {
+        let spendable = payment.spendable.unwrap();
+        let txid = bitcoin::Txid::from_slice(&spendable.txid).unwrap();
+        let vout = spendable.vout;
+        let output = consensus_decode::<TxOut>(&mut Cursor::new(payment.output)).unwrap();
+        Payment {
+            spendable: OutPoint { txid, vout },
+            output,
+            fulfilled: payment.fulfilled,
+        }
+    }
+}
+
 pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
     let mut payments: Vec<Payment> = vec![];
     let mut cursor: Cursor<Vec<u8>> = Cursor::new(v.clone());
@@ -74,7 +88,7 @@ pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
 pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
     fr_btc_storage_pointer()
         .keyword("/payments/byheight/")
-        .select_value(v)
+        .select_value::<u64>(v as u64)
         .get_list()
         .into_iter()
         .map(|v| v.as_ref().clone())
@@ -90,15 +104,9 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
     );
     let mut response = PendingUnwrapsResponse::default();
     for i in last_block..=height {
-        println!("attempting {}", i);
         for payment_list_bytes in fr_btc_payments_at_block(i) {
-            println!(
-                "payment_list_bytes {:?} at height {}",
-                payment_list_bytes, i
-            );
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for mut payment in deserialized_payments {
-                println!("found payment {:?} at height {}", payment, i);
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
                 if OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get().len() == 0 {
                     payment.fulfilled = true;

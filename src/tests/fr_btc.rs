@@ -274,25 +274,26 @@ fn unwrap_btc(
     )?;
 
     let payments = deserialize_payments(&response.data)?;
+    let expected_payment = Payment {
+        output: TxOut {
+            script_pubkey: unwrap_tx.output[0].script_pubkey.clone(),
+            value: Amount::from_sat(amt_actual_burn),
+        },
+        spendable: OutPoint {
+            txid: unwrap_tx.compute_txid(),
+            vout: vout.try_into()?,
+        },
+        fulfilled: false,
+    };
 
-    assert_eq!(
-        payments[0],
-        Payment {
-            output: TxOut {
-                script_pubkey: unwrap_tx.output[0].script_pubkey.clone(),
-                value: Amount::from_sat(amt_actual_burn),
-            },
-            spendable: OutPoint {
-                txid: unwrap_tx.compute_txid(),
-                vout: vout.try_into()?,
-            },
-            fulfilled: false,
-        }
-    );
+    assert_eq!(payments[0], expected_payment);
     assert_eq!(sheet.get(&AlkaneId { block: 2, tx: 0 }.into()), 5000000000);
 
     let response = unwrap_view::view(height as u128).unwrap();
-    println!("Response {:?}", response);
+    assert_eq!(
+        Payment::from(response.payments[0].clone()),
+        expected_payment
+    );
 
     Ok(())
 }
