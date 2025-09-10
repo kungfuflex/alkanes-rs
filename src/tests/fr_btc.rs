@@ -1,5 +1,6 @@
 use crate::message::AlkaneMessageContext;
 use crate::precompiled::{alkanes_std_auth_token_build, fr_btc_build};
+use crate::unwrap as unwrap_view;
 use crate::view::{self, simulate_parcel, unwrap};
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::gz::compress;
@@ -152,7 +153,7 @@ pub fn create_alkane_tx_frbtc_signer_script(
 
 fn wrap_btc() -> Result<(OutPoint, u64)> {
     let fr_btc_id = AlkaneId { block: 32, tx: 0 };
-    let mut block = create_block_with_coinbase_tx(880_001);
+    let mut block = create_block_with_coinbase_tx(1);
     let funding_outpoint = OutPoint {
         txid: block.txdata[0].compute_txid(),
         vout: 0,
@@ -167,7 +168,7 @@ fn wrap_btc() -> Result<(OutPoint, u64)> {
 
     // Create a block and index it
     block.txdata.push(wrap_tx.clone());
-    index_block(&block, 880_001)?;
+    index_block(&block, 1)?;
 
     let sheet = get_last_outpoint_sheet(&block)?;
     let balance = sheet.get(&fr_btc_id.clone().into());
@@ -175,7 +176,7 @@ fn wrap_btc() -> Result<(OutPoint, u64)> {
     let expected_frbtc_amt = 99500000;
 
     assert_eq!(balance, expected_frbtc_amt);
-    assert_eq!(sheet.get(&AlkaneId { block: 2, tx: 0 }.into()), 312500000);
+    assert_eq!(sheet.get(&AlkaneId { block: 2, tx: 0 }.into()), 5000000000);
 
     let wrap_outpoint = OutPoint {
         txid: wrap_tx.compute_txid(),
@@ -273,29 +274,33 @@ fn unwrap_btc(
     )?;
 
     let payments = deserialize_payments(&response.data)?;
+    let expected_payment = Payment {
+        output: TxOut {
+            script_pubkey: unwrap_tx.output[0].script_pubkey.clone(),
+            value: Amount::from_sat(amt_actual_burn),
+        },
+        spendable: OutPoint {
+            txid: unwrap_tx.compute_txid(),
+            vout: vout.try_into()?,
+        },
+        fulfilled: false,
+    };
 
+    assert_eq!(payments[0], expected_payment);
+    assert_eq!(sheet.get(&AlkaneId { block: 2, tx: 0 }.into()), 5000000000);
+
+    let response = unwrap_view::view(height as u128).unwrap();
     assert_eq!(
-        payments[0],
-        Payment {
-            output: TxOut {
-                script_pubkey: unwrap_tx.output[0].script_pubkey.clone(),
-                value: Amount::from_sat(amt_actual_burn),
-            },
-            spendable: OutPoint {
-                txid: unwrap_tx.compute_txid(),
-                vout: vout.try_into()?,
-            },
-            fulfilled: false,
-        }
+        Payment::from(response.payments[0].clone()),
+        expected_payment
     );
-    assert_eq!(sheet.get(&AlkaneId { block: 2, tx: 0 }.into()), 312500000);
 
     Ok(())
 }
 
 fn set_signer(input_outpoint: OutPoint, signer_vout: u128) -> Result<Transaction> {
     let fr_btc_id = AlkaneId { block: 32, tx: 0 };
-    let height = 880_000;
+    let height = 3;
     let mut block = create_block_with_coinbase_tx(height);
     let set_signer = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
         Witness::default(),
@@ -325,21 +330,21 @@ fn test_fr_btc_wrap_correct_signer() -> Result<()> {
 fn test_fr_btc_unwrap() -> Result<()> {
     clear();
     let (wrap_out, amt) = wrap_btc()?;
-    unwrap_btc(wrap_out, amt, amt, 1, 880_002)
+    unwrap_btc(wrap_out, amt, amt, 1, 2)
 }
 
 #[wasm_bindgen_test]
 fn test_fr_btc_unwrap_partial() -> Result<()> {
     clear();
     let (wrap_out, amt) = wrap_btc()?;
-    unwrap_btc(wrap_out, amt, amt / 2, 1, 880_002)
+    unwrap_btc(wrap_out, amt, amt / 2, 1, 2)
 }
 
 #[wasm_bindgen_test]
 fn test_fr_btc_unwrap_more() -> Result<()> {
     clear();
     let (wrap_out, amt) = wrap_btc()?;
-    unwrap_btc(wrap_out, amt, amt * 2, 1, 880_002)
+    unwrap_btc(wrap_out, amt, amt * 2, 1, 2)
 }
 
 #[wasm_bindgen_test]
