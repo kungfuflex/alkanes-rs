@@ -6,17 +6,21 @@ use anyhow::Result;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, TxOut};
 use metashrew_core::index_pointer::IndexPointer;
+use metashrew_core::{get_cache, println, stdio::stdout};
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consensus_encode, is_empty};
 use protobuf::{MessageField, SpecialFields};
 use protorune::tables::OUTPOINT_SPENDABLE_BY;
+use std::fmt::Write;
 use std::io::Cursor;
 use std::sync::Arc;
+
+use crate::network::genesis;
 
 pub fn fr_btc_storage_pointer() -> IndexPointer {
     IndexPointer::from_keyword("/alkanes/")
         .select(&AlkaneId { block: 32, tx: 0 }.into())
-        .keyword("/storage")
+        .keyword("/storage/")
 }
 
 pub fn fr_btc_fulfilled_pointer() -> IndexPointer {
@@ -50,6 +54,20 @@ impl Payment {
     }
 }
 
+impl From<ProtoPayment> for Payment {
+    fn from(payment: ProtoPayment) -> Self {
+        let spendable = payment.spendable.unwrap();
+        let txid = bitcoin::Txid::from_slice(&spendable.txid).unwrap();
+        let vout = spendable.vout;
+        let output = consensus_decode::<TxOut>(&mut Cursor::new(payment.output)).unwrap();
+        Payment {
+            spendable: OutPoint { txid, vout },
+            output,
+            fulfilled: payment.fulfilled,
+        }
+    }
+}
+
 pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
     let mut payments: Vec<Payment> = vec![];
     let mut cursor: Cursor<Vec<u8>> = Cursor::new(v.clone());
@@ -69,7 +87,8 @@ pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
 
 pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
     fr_btc_storage_pointer()
-        .select(&format!("/payments/byheight/{}", v).as_bytes().to_vec())
+        .keyword("/payments/byheight/")
+        .select_value::<u64>(v as u64)
         .get_list()
         .into_iter()
         .map(|v| v.as_ref().clone())
@@ -77,9 +96,12 @@ pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
 }
 
 pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
-    let last_block = fr_btc_storage_pointer()
-        .keyword("/last_block")
-        .get_value::<u128>();
+    let last_block = std::cmp::max(
+        fr_btc_storage_pointer()
+            .keyword("/last_block")
+            .get_value::<u128>(),
+        genesis::GENESIS_BLOCK as u128,
+    );
     let mut response = PendingUnwrapsResponse::default();
     for i in last_block..=height {
         for payment_list_bytes in fr_btc_payments_at_block(i) {
