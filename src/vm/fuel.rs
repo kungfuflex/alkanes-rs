@@ -316,7 +316,7 @@ impl FuelTank {
 }
 
 pub const MINIMUM_FUEL_START: u64 = 350_000;
-pub const MINIMUM_FUEL_CHANGE1: u64 = 3_500_000;
+pub const MINIMUM_FUEL_CHANGE1: u64 = 3_500_0000;
 pub const fn minimum_fuel(height: u32) -> u64 {
     if height >= FUEL_CHANGE1_HEIGHT {
         MINIMUM_FUEL_CHANGE1

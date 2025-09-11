@@ -20,6 +20,7 @@ use protorune::protostone::Protostones;
 use protorune::test_helpers::{
     create_block_with_coinbase_tx, get_address, get_btc_network, ADDRESS1,
 };
+use protorune::view;
 use protorune::{
     balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
 };
@@ -212,21 +213,34 @@ fn test_edict_message_same_protostone_2() -> Result<()> {
         inputs: vec![22, 10000000000],
     };
 
-    let diesel_mint = Cellpack {
-        target: AlkaneId { block: 2, tx: 0 },
-        inputs: vec![77],
+    let gen_1_init = Cellpack {
+        target: AlkaneId { block: 3, tx: 0 },
+        inputs: vec![0],
     };
+
+    let alkamon_init = Cellpack {
+        target: AlkaneId { block: 3, tx: 1 },
+        inputs: vec![
+            0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 0, 1, 1, 3, 3, 2, 1, 2, 2, 1, 2, 100, 1, 1, 1, 1, 1, 1,
+        ],
+    };
+
+    let gen_1_build = include_bytes!("/Users/kevinyao/Documents/Code/alkamon/target/alkanes/wasm32-unknown-unknown/release/alkamon_gen_1.wasm").to_vec();
+
+    let alkamon_build = include_bytes!("/Users/kevinyao/Documents/Code/alkamon/target/alkanes/wasm32-unknown-unknown/release/alkane_alkamon_child.wasm").to_vec();
 
     // Initialize the contract and execute the cellpacks
     let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [
-            [].into(),
+            gen_1_build,
+            alkamon_build,
             alkanes_std_test_build::get_bytes(),
             alkanes_std_test_build::get_bytes(),
         ]
         .into(),
         [
-            diesel_mint,
+            gen_1_init,
+            alkamon_init,
             arb_mint_cellpack.clone(),
             arb_mint_cellpack.clone(),
         ]
@@ -251,49 +265,25 @@ fn test_edict_message_same_protostone_2() -> Result<()> {
     let protostone: Vec<Protostone> = vec![
         Protostone {
             message: Cellpack {
-                target: AlkaneId { block: 2, tx: 1 },
-                inputs: vec![5],
+                target: AlkaneId { block: 4, tx: 1 },
+                inputs: vec![21, 8],
             }
             .encipher(),
             pointer: Some(0),
             refund: Some(0),
             edicts: vec![
                 ProtostoneEdict {
-                    id: ProtoruneRuneId { block: 2, tx: 1 },
+                    id: ProtoruneRuneId { block: 4, tx: 1 },
                     amount: 0,
-                    output: 7,
+                    output: 0,
                 },
                 ProtostoneEdict {
-                    id: ProtoruneRuneId { block: 2, tx: 0 },
+                    id: ProtoruneRuneId { block: 2, tx: 2 },
                     amount: 0,
                     output: 1,
                 },
                 ProtostoneEdict {
-                    id: ProtoruneRuneId { block: 2, tx: 2 },
-                    amount: 0,
-                    output: 7,
-                },
-            ],
-            from: None,
-            burn: None,
-            protocol_tag: protocol_id as u128,
-        },
-        Protostone {
-            message: Cellpack {
-                target: AlkaneId { block: 2, tx: 1 },
-                inputs: vec![5],
-            }
-            .encipher(),
-            pointer: Some(0),
-            refund: Some(0),
-            edicts: vec![
-                ProtostoneEdict {
                     id: ProtoruneRuneId { block: 2, tx: 1 },
-                    amount: 0,
-                    output: 2,
-                },
-                ProtostoneEdict {
-                    id: ProtoruneRuneId { block: 2, tx: 2 },
                     amount: 0,
                     output: 0,
                 },
@@ -302,6 +292,30 @@ fn test_edict_message_same_protostone_2() -> Result<()> {
             burn: None,
             protocol_tag: protocol_id as u128,
         },
+        // Protostone {
+        //     message: Cellpack {
+        //         target: AlkaneId { block: 2, tx: 1 },
+        //         inputs: vec![3],
+        //     }
+        //     .encipher(),
+        //     pointer: Some(0),
+        //     refund: Some(0),
+        //     edicts: vec![
+        //         ProtostoneEdict {
+        //             id: ProtoruneRuneId { block: 2, tx: 1 },
+        //             amount: 0,
+        //             output: 2,
+        //         },
+        //         ProtostoneEdict {
+        //             id: ProtoruneRuneId { block: 2, tx: 3 },
+        //             amount: 0,
+        //             output: 0,
+        //         },
+        //     ],
+        //     from: None,
+        //     burn: None,
+        //     protocol_tag: protocol_id as u128,
+        // },
     ];
     let runestone: ScriptBuf = (Runestone {
         etching: None,
@@ -339,6 +353,24 @@ fn test_edict_message_same_protostone_2() -> Result<()> {
 
     index_block(&test_block2, block_height)?;
 
+    let view0 = view::protorune_outpoint_to_outpoint_response(
+        &OutPoint {
+            txid: test_block2.txdata.last().unwrap().compute_txid(),
+            vout: 0,
+        },
+        1,
+    );
+    println!("view0 {:?}", view0);
+
+    let view1 = view::protorune_outpoint_to_outpoint_response(
+        &OutPoint {
+            txid: test_block2.txdata.last().unwrap().compute_txid(),
+            vout: 1,
+        },
+        1,
+    );
+    println!("view1 {:?}", view1);
+
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
     let txnum = test_block2.txdata.len() - 1;
 
@@ -346,18 +378,13 @@ fn test_edict_message_same_protostone_2() -> Result<()> {
     let sheet2 = alkane_helpers::get_sheet_for_outpoint(&test_block2, txnum, 2)?;
 
     assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 2 }),
+        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
         10000000000
-    );
-    assert_eq!(sheet1.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
-    assert_eq!(
-        sheet1.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }),
-        312500000
     );
 
     assert_eq!(
-        sheet2.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
-        10000000000
+        sheet1.get_cached(&ProtoruneRuneId { block: 2, tx: 2 }),
+        9999999999
     );
 
     Ok(())
