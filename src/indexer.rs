@@ -1,5 +1,6 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::{genesis, genesis_alkane_upgrade_bytes, is_genesis};
+use crate::unwrap;
 use crate::vm::fuel::FuelTank;
 use crate::vm::host_functions::clear_diesel_mints_cache;
 use alkanes_support::gz::compress;
@@ -102,6 +103,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         }
     }
     FuelTank::initialize(&block, height);
+    unwrap::update_last_block(height as u128);
 
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
