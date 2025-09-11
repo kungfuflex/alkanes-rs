@@ -137,7 +137,12 @@ pub fn update_last_block(height: u128) -> Result<()> {
     );
     for i in last_block..=height {
         let mut all_fulfilled = true;
-        for payment_list_bytes in fr_btc_payments_at_block(i) {
+        let all_payment_list_bytes = fr_btc_payments_at_block(i);
+        if all_payment_list_bytes.len() == 0 {
+            last_block = i;
+            continue;
+        }
+        for payment_list_bytes in all_payment_list_bytes {
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
