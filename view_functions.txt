@@ -13,3 +13,7 @@ traceblock
 trace
 getbytecode
 protorunesbyoutpoint
+getblock
+blocktracker
+benchmark_view
+benchmark_view_with_set

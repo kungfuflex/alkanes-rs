@@ -80,6 +80,10 @@ impl AlkaneResponder for Upgradeable {
     }
 }
 
+pub fn get_abi() -> Vec<u8> {
+    UpgradeableMessage::export_abi()
+}
+
 // Use the new macro format
 declare_alkane! {
     impl AlkaneResponder for Upgradeable {

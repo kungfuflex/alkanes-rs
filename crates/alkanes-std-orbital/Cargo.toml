@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 alkanes-runtime = { workspace = true, features = ["panic-hook"] }
 alkanes-support = { workspace = true }
 anyhow = { workspace = true }
+metashrew-support = { workspace = true }
 bitcoin = { workspace = true }
 hex = { workspace = true }
 hex_lit = { workspace = true }

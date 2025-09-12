@@ -155,6 +155,10 @@ impl OwnedToken {
 
 impl AlkaneResponder for OwnedToken {}
 
+pub fn get_abi() -> Vec<u8> {
+    OwnedTokenMessage::export_abi()
+}
+
 // Use the new macro format
 declare_alkane! {
     impl AlkaneResponder for OwnedToken {

@@ -20,5 +20,6 @@ alkanes-support = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
 hex = { workspace = true }
+metashrew-support = { workspace = true }
 protorune-support = { workspace = true }
 

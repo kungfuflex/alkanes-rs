@@ -1,4 +1,4 @@
-pub use metashrew_println::wasm::{to_arraybuffer_layout, to_passback_ptr};
+pub use metashrew_core::wasm::{to_arraybuffer_layout, to_passback_ptr};
 use crate::{println, stdio::stdout};
 use std::fmt::Write;
 use std::panic;

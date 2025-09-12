@@ -1,1 +1,1 @@
-pub fn get_bytes() -> Vec<u8> { include_bytes!("/data/alkanes-rs/target/alkanes/wasm32-unknown-unknown/release/alkanes_std_auth_token.wasm").to_vec() }
+pub fn get_bytes() -> Vec<u8> { include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/alkanes/wasm32-unknown-unknown/release/alkanes_std_auth_token.wasm")).to_vec() }

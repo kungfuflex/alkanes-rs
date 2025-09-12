@@ -14,29 +14,9 @@ struct Args {
     output: PathBuf,
 }
 
+use alkanes_build::build;
+
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
-
-    // Read WASM file bytes
-    let wasm_bytes = fs::read(&args.input)?;
-
-    // Convert to hex string
-    let hex_string = hex::encode(&wasm_bytes);
-
-    // Generate build.rs content
-    let build_content = format!(
-        "use hex_lit::hex;\n#[allow(long_running_const_eval)]\npub fn get_bytes() -> Vec<u8> {{ (&hex!(\"{}\")).to_vec() }}",
-        hex_string
-    );
-
-    // Write output file
-    fs::write(&args.output, build_content)?;
-
-    println!(
-        "Successfully converted {} to {}",
-        args.input.display(),
-        args.output.display()
-    );
-
-    Ok(())
+    build(args.input, args.output)
 }

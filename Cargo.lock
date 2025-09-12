@@ -285,6 +285,7 @@ dependencies = [
 name = "alkanes-indexer"
 version = "1.2.3"
 dependencies = [
+ "alkanes-build",
  "alkanes-indexer",
  "alkanes-support",
  "anyhow",
@@ -338,11 +339,14 @@ name = "alkanes-native"
 version = "1.2.3"
 dependencies = [
  "alkanes-indexer",
+ "alkanes-macros",
+ "alkanes-std-orbital",
  "alkanes-support",
  "anyhow",
  "async-trait",
  "bitcoin 0.32.7",
  "bitcoincore-rpc",
+ "borsh",
  "clap",
  "hex_lit",
  "jsonrpsee",
@@ -358,6 +362,7 @@ dependencies = [
  "rockshrew-mono",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "wasm-bindgen-test",
 ]
@@ -396,6 +401,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
+ "metashrew-support",
  "protorune-support",
 ]
 
@@ -407,6 +413,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
+ "metashrew-support",
  "ordinals 1.2.3",
 ]
 
@@ -419,6 +426,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "hex",
+ "metashrew-support",
  "protorune-support",
 ]
 
@@ -431,6 +439,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "hex",
+ "metashrew-support",
  "protorune-support",
 ]
 
@@ -443,6 +452,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "hex",
+ "metashrew-support",
  "protorune-support",
 ]
 
@@ -455,6 +465,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "borsh",
+ "metashrew-support",
  "num",
  "ordinals 1.2.3",
  "protorune-support",
@@ -472,6 +483,7 @@ dependencies = [
  "bitcoin 0.32.7",
  "hex",
  "hex_lit",
+ "metashrew-support",
  "protorune-support",
 ]
 
@@ -496,6 +508,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
+ "metashrew-support",
  "protorune-support",
 ]
 
@@ -507,6 +520,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "hex",
+ "metashrew-support",
  "sha2",
 ]
 
@@ -518,6 +532,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "hex",
+ "metashrew-support",
  "sha2",
 ]
 
@@ -529,6 +544,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
+ "metashrew-support",
  "protorune-support",
 ]
 
@@ -540,6 +556,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
+ "metashrew-support",
  "protorune-support",
 ]
 

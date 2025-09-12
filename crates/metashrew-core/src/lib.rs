@@ -85,6 +85,7 @@ use std::sync::Arc;
 pub mod allocator;
 pub mod byte_view;
 pub mod compat;
+#[cfg(target_arch = "wasm32")]
 pub mod imports;
 pub mod indexer;
 pub mod index_pointer;
@@ -505,7 +506,7 @@ pub fn input() -> Vec<u8> {
         buffer[4..].to_vec()
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(all(feature = "test-utils", target_arch = "wasm32"))]
     {
         use crate::imports::_INPUT;
         unsafe {

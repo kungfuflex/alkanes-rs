@@ -137,6 +137,10 @@ fn unwrap_auth(v: Option<AlkaneTransfer>) -> Result<AlkaneTransfer> {
 
 impl AlkaneResponder for Proxy {}
 
+pub fn get_abi() -> Vec<u8> {
+    ProxyMessage::export_abi()
+}
+
 // Use the new macro format
 declare_alkane! {
     impl AlkaneResponder for Proxy {

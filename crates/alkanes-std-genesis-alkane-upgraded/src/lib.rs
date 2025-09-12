@@ -13,7 +13,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::{Block, Txid};
 use hex;
 use metashrew_support::block::AuxpowBlock;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use alkanes_runtime::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::io::Cursor;
 pub mod chain;

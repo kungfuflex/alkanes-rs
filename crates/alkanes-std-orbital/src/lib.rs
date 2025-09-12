@@ -113,6 +113,10 @@ impl Orbital {
 
 impl AlkaneResponder for Orbital {}
 
+pub fn get_abi() -> Vec<u8> {
+    OrbitalMessage::export_abi()
+}
+
 // Use the new macro format
 declare_alkane! {
     impl AlkaneResponder for Orbital {

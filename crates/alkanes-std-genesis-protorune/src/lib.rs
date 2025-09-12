@@ -127,6 +127,10 @@ impl GenesisProtorune {
 
 impl AlkaneResponder for GenesisProtorune {}
 
+pub fn get_abi() -> Vec<u8> {
+    GenesisProtoruneMessage::export_abi()
+}
+
 // Use the new macro format
 declare_alkane! {
     impl AlkaneResponder for GenesisProtorune {

@@ -1,84 +1,62 @@
-#[cfg(feature = "test-utils")]
+#![cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-#[allow(unused_imports)]
-use crate::utils::ptr_to_vec;
-pub static mut _INPUT: Option<Vec<u8>> = None;
-
-#[allow(static_mut_refs)]
 #[cfg(feature = "test-utils")]
-pub fn __set_input(v: Vec<u8>) {
-    unsafe {
-        _INPUT = Some(v);
-    }
+use once_cell::sync::Lazy;
+#[cfg(feature = "test-utils")]
+use std::sync::Mutex;
+
+#[cfg(feature = "test-utils")]
+pub static _INPUT: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
+
+#[cfg(feature = "test-utils")]
+pub fn set_input(input: Vec<u8>) {
+    *_INPUT.lock().unwrap() = Some(input);
 }
 
-#[cfg(all(target_arch = "wasm32", not(feature = "test-utils")))]
-#[link(wasm_import_module = "env")]
+// These are the functions that are imported from the host environment
+// They are defined in the metashrew-host crate
+// The wasm-bindgen attribute is used to generate the JavaScript glue code
+// that allows the WebAssembly module to call these functions
+// The js_namespace attribute is used to specify the JavaScript namespace
+// where these functions are located
+// The js_name attribute is used to specify the JavaScript name of the function
+// The catch attribute is used to catch JavaScript exceptions and convert them
+// into a Result
+// The final attribute is used to specify that the function is final and cannot
+// be overridden
+// The module attribute is used to specify the JavaScript module where the
+// function is located
+// The import_name attribute is used to specify the name of the function in the
+// JavaScript module
+// The link_name attribute is used to specify the name of the function in the
+d // WebAssembly module
+// The wasm_import_module attribute is used to specify the name of the
+// WebAssembly module
+// The wasm_import_name attribute is used to specify the name of the function
+// in the WebAssembly module
+
+#[wasm_bindgen]
 extern "C" {
-    pub fn __host_len() -> i32;
+    pub fn __get(key_ptr: i32, value_ptr: i32);
+    pub fn __get_len(key_ptr: i32) -> i32;
+    pub fn __set(key_ptr: i32, value_ptr: i32);
     pub fn __flush(ptr: i32);
-    pub fn __get(ptr: i32, v: i32);
-    pub fn __get_len(ptr: i32) -> i32;
+    pub fn __host_len() -> i32;
     pub fn __load_input(ptr: i32);
-    pub fn __log(ptr: i32);
 }
 
-#[allow(static_mut_refs)]
-#[cfg(feature = "test-utils")]
-pub fn __host_len() -> i32 {
-    unsafe {
-        match _INPUT.as_ref() {
-            Some(v) => v.len() as i32,
-            None => 0,
-        }
-    }
-}
-
-#[allow(static_mut_refs)]
-#[cfg(feature = "test-utils")]
-pub fn __load_input(_ptr: i32) -> () {
-    // In test mode, we don't actually write to memory via raw pointers
-    // The input() function will use __host_len() to get the length
-    // and this function is just a no-op for safety
-}
-
-#[cfg(feature = "test-utils")]
-pub fn __get_len(_ptr: i32) -> i32 {
-    // Return 0 to indicate no data found in "database"
-    // This simulates a cache miss at the host level
-    0
-}
-
-#[cfg(feature = "test-utils")]
-pub fn __flush(_ptr: i32) -> () {
-    // No-op for tests - just simulate successful flush
-}
-
-#[cfg(feature = "test-utils")]
-pub fn __get(_ptr: i32, _result: i32) -> () {
-    // No-op for tests - since __get_len returns 0, this shouldn't be called
-    // But if it is called, we don't write anything to the result buffer
-}
-
-#[cfg(feature = "test-utils")]
 #[wasm_bindgen(js_namespace = Date)]
 extern "C" {
-    fn now() -> f64;
+    pub fn now() -> f64;
 }
 
-#[cfg(feature = "test-utils")]
-pub fn __now() -> u64 {
-    now() as u64
+#[wasm_bindgen(js_namespace = console)]
+extern "C" {
+    pub fn log(s: &str);
 }
 
-#[cfg(feature = "test-utils")]
 #[wasm_bindgen(js_namespace = ["process", "stdout"])]
 extern "C" {
-    fn write(s: &str);
-}
-
-#[cfg(feature = "test-utils")]
-pub fn __log(ptr: i32) -> () {
-    write(format!("{}", String::from_utf8(ptr_to_vec(ptr)).unwrap()).as_str());
+    pub fn write(s: &str);
 }

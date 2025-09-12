@@ -5,35 +5,16 @@ use crate::utils::{
 use alkanes_runtime::auth::AuthenticatedResponder;
 use alkanes_runtime::storage::StoragePointer;
 use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
-<<<<<<< HEAD
+use alkanes_runtime::compat::to_arraybuffer_layout;
 use alkanes_support::{
     id::AlkaneId,
-    parcel::AlkaneTransfer,
+    parcel::{AlkaneTransfer, AlkaneTransferParcel},
     response::CallResponse,
-    utils::shift_bytes32_or_err,
-    witness::find_witness_payload,
 };
-use anyhow::{anyhow, Result};
-use bitcoin::Transaction;
-use alkanes_runtime::compat::to_arraybuffer_layout;
-use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::{
-    utils::{consume_exact, consume_sized_int, consume_to_end},
-};
-=======
-#[allow(unused_imports)]
-use alkanes_runtime::{
-    println,
-    stdio::{stdout, Write},
-};
-use alkanes_support::parcel::AlkaneTransferParcel;
-use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, ensure, Context, Result};
 use bitcoin::{Address, Transaction};
 use borsh::BorshDeserialize;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
->>>>>>> main
 use ordinals::{Artifact, Runestone};
 use protorune_support::{protostone::Protostone, utils::consensus_decode};
 use std::io::Cursor;

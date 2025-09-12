@@ -11,6 +11,7 @@ alkanes-runtime = { workspace = true, features = ["panic-hook"] }
 alkanes-support = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
+metashrew-support = { workspace = true }
 hex = { workspace = true }
 protorune-support = { workspace = true }
 

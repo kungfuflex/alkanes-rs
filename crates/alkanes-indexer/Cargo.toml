@@ -57,6 +57,7 @@ protoc-rust = { version = "2.28.0" }
 protoc-bin-vendored = "3.0.0"
 hex = { workspace = true }
 phf_codegen = "0.11.2"
+alkanes-build = { path = "../alkanes-build" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2.15", features = ["js"] }
