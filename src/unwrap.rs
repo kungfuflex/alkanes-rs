@@ -146,7 +146,8 @@ pub fn update_last_block(height: u128) -> Result<()> {
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
-                if OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get().len() > 0 {
+                let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
+                if spendable_by.len() > 1 {
                     all_fulfilled = false;
                     break;
                 }
