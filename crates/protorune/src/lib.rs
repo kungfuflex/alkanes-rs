@@ -620,16 +620,9 @@ impl Protorune {
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
             for (_index, input) in transaction.input.iter().enumerate() {
-                println!("nullifying {:?}", input.previous_output);
                 tables::OUTPOINT_SPENDABLE_BY
                     .select(&consensus_encode(&input.previous_output)?)
                     .nullify();
-                println!(
-                    "after nullifying {:?}",
-                    tables::OUTPOINT_SPENDABLE_BY
-                        .select(&consensus_encode(&input.previous_output)?)
-                        .get()
-                );
             }
             for (index, output) in transaction.output.iter().enumerate() {
                 let outpoint = OutPoint {
