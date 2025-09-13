@@ -20,6 +20,8 @@ serde = "1.0.213"
 flate2 = "1.0.34"
 protobuf = { workspace = true }
 ordinals = { workspace = true }
+wasmi = { workspace = true }
+hex = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

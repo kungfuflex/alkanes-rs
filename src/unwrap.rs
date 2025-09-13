@@ -1,8 +1,10 @@
 use alkanes_support::{
     id::AlkaneId,
+    message::MessageContextParcel,
     proto::alkanes::{self as pb, Payment as ProtoPayment, PendingUnwrapsResponse},
 };
 use anyhow::Result;
+use crate::WasmHost;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, TxOut};
 use metashrew_core::index_pointer::IndexPointer;

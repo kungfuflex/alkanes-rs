@@ -1,4 +1,4 @@
-use crate::network::configure_network;
+use crate::network;
 use crate::unwrap::{
     deserialize_payments, fr_btc_payments_at_block, fr_btc_storage_pointer, update_last_block,
 };
@@ -21,6 +21,7 @@ use std::io::Cursor;
 use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
+pub mod message;
 pub mod network;
 pub mod precompiled;
 pub mod tables;
@@ -80,7 +81,7 @@ impl AlkanesHost for WasmHost {
         } else {
             Network::Regtest
         };
-        alkanes_support::index_block(self, block, height, network)
+        alkanes_support::index_block::<_, crate::message::AlkaneMessageContext>(self, block, height, network)
     }
     fn flush(&self) {
         flush();
@@ -419,7 +420,7 @@ pub fn _start() {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use crate::message::AlkaneMessageContext;
+    use alkanes_support::message::{AlkaneMessageContext, MessageContext as AlkaneMessage};
     use protobuf::{Message, SpecialFields};
     use protorune::view::{rune_outpoint_to_outpoint_response, runes_by_address, runes_by_height};
     use protorune::Protorune;
@@ -445,7 +446,8 @@ mod unit_tests {
         // calling index_block directly fails since genesis(&block).unwrap(); gets segfault
         // index_block(&block, height).unwrap();
         configure_network();
-        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into()).unwrap();
+        Protorune::index_block::<WasmHost, AlkaneMessageContext>(block.clone(), height.into())
+            .unwrap();
 
         let req_height: Vec<u8> = (RunesByHeightRequest {
             height: 849236,

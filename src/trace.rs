@@ -1,6 +1,5 @@
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
-use alkanes_support::proto;
-use alkanes_support::trace::Trace;
+use alkanes_support::{context::Context, proto, rune_result::RuneResult, trace::Trace};
 use anyhow::Result;
 use bitcoin::OutPoint;
 use metashrew_support::index_pointer::KeyValuePointer;

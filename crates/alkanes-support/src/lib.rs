@@ -37,6 +37,7 @@ use metashrew_core::index_pointer::AtomicPointer;
 
 pub fn index_block<
     H: AlkanesHost + protorune_support::host::Host<Pointer = AtomicPointer> + Default,
+    T: protorune_support::message::MessageContext<H>,
 >(
     host: &H,
     block: &Block,
@@ -49,65 +50,7 @@ where
     configure_network(network);
     // Get the set of updated addresses from the indexing process
     let updated_addresses =
-        Protorune::index_block::<H, AlkaneMessageContext>(block.clone(), height.into())?;
-
-    #[cfg(feature = "cache")]
-    {
-        // Cache the WalletResponse for each updated address
-        for address in updated_addresses.iter() {
-            // Skip empty addresses
-            if address.is_empty() {
-                continue;
-            }
-
-            // Create a request for this address
-            let mut request = ProtorunesWalletRequest::new();
-            request.wallet = address.clone();
-            request.protocol_tag = Some(<u128 as Into<
-                protorune_support::proto::protorune::Uint128,
-            >>::into(AlkaneMessageContext::protocol_tag()))
-            .into();
-
-            // Get the WalletResponse for this address (full set of spendable outputs)
-            match protorunes_by_address(&request.write_to_bytes()?) {
-                Ok(full_response) => {
-                    // Cache the serialized full WalletResponse
-                    CACHED_WALLET_RESPONSE
-                        .select(&address)
-                        .set(Arc::new(full_response.write_to_bytes()?));
-
-                    // Create a filtered version with only outpoints that have runes
-                    let mut filtered_response = full_response.clone();
-                    filtered_response.outpoints = filtered_response
-                        .outpoints
-                        .into_iter()
-                        .filter_map(|v| {
-                            if v.balances()
-                                .unwrap_or_else(|| {
-                                    protorune_support::proto::protorune::BalanceSheet::new()
-                                })
-                                .entries
-                                .len()
-                                == 0
-                            {
-                                None
-                            } else {
-                                Some(v)
-                            }
-                        })
-                        .collect::<Vec<protorune_support::proto::protorune::OutpointResponse>>();
-
-                    // Cache the serialized filtered WalletResponse
-                    CACHED_FILTERED_WALLET_RESPONSE
-                        .select(&address)
-                        .set(Arc::new(filtered_response.write_to_bytes()?));
-                }
-                Err(e) => {
-                    println!("Error caching wallet response for address: {:?}", e);
-                }
-            }
-        }
-    }
+        Protorune::index_block::<H, T>(block.clone(), height.into())?;
 
     Ok(updated_addresses)
 }
