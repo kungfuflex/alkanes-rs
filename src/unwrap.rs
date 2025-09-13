@@ -102,7 +102,6 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
             .get_value::<u128>(),
         genesis::GENESIS_BLOCK as u128,
     );
-    println!("view last height {}", last_block);
     let mut response = PendingUnwrapsResponse::default();
     for i in last_block..=height {
         for payment_list_bytes in fr_btc_payments_at_block(i) {
@@ -131,15 +130,10 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
 }
 
 pub fn update_last_block(height: u128) -> Result<()> {
-    println!("update_last_block");
     let mut last_block_key = fr_btc_storage_pointer().keyword("/last_block");
     let mut last_block = std::cmp::max(
         last_block_key.get_value::<u128>(),
         genesis::GENESIS_BLOCK as u128,
-    );
-    println!(
-        "update_last_block last block {} height {}",
-        last_block, height
     );
     for i in last_block..=height {
         let mut all_fulfilled = true;
@@ -151,10 +145,8 @@ pub fn update_last_block(height: u128) -> Result<()> {
         for payment_list_bytes in all_payment_list_bytes {
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for payment in deserialized_payments {
-                println!("update_last_block payment {:?}", payment);
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
                 let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-                println!("spendable_by {:?}", spendable_by);
                 if spendable_by.len() > 1 {
                     all_fulfilled = false;
                     break;
@@ -170,7 +162,6 @@ pub fn update_last_block(height: u128) -> Result<()> {
             break;
         }
     }
-    println!("setting last block {}", last_block);
     last_block_key.set_value::<u128>(last_block);
     Ok(())
 }
