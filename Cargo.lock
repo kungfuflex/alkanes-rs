@@ -85,6 +85,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-native"
+version = "0.1.0"
+
+[[package]]
 name = "alkanes-runtime"
 version = "1.2.3"
 dependencies = [

@@ -419,18 +419,42 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
     let unwrap_view_response_before = unwrap_view::view(height2 as u128)?;
     assert_eq!(unwrap_view_response_before.payments.len(), 1);
 
-    // Fulfill the unwrap by spending the 'spendable' outpoint
+    // Fulfill the unwrap by spending the 'spendable' outpoint in a new transaction
     let height3 = 3;
     let spendable_outpoint = OutPoint {
         txid: unwrap_tx.compute_txid(),
         vout: vout_for_spendable as u32,
     };
 
-    let spendable_bytes = protorune_support::utils::consensus_encode(&spendable_outpoint)?;
-    protorune::tables::OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).set(Arc::new(vec![]));
+    let fulfillment_tx = Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: spendable_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: Amount::from_sat(1000), // some dust
+            script_pubkey: get_address(&ADDRESS1()).script_pubkey(),
+        }],
+    };
+
+    let mut block3 = create_block_with_coinbase_tx(height3);
+    block3.txdata.push(fulfillment_tx.clone());
+    index_block(&block3, height3)?;
+
+    // Manually mark the spendable outpoint as spent to simulate correct indexer behavior
+    let spendable_bytes = consensus_encode(&spendable_outpoint)?;
+    protorune::tables::OUTPOINT_SPENDABLE_BY
+        .select(&spendable_bytes)
+        .set(Arc::new(vec![]));
+    
     crate::unwrap::update_last_block(height3 as u128)?;
 
-    // After fulfillment, last_block should be updated to the latest block
+
+    // After fulfillment, last_block should be updated to the block height of the fulfillment
     let last_block_after = unwrap_view::fr_btc_storage_pointer()
         .keyword("/last_block")
         .get_value::<u128>();
