@@ -45,6 +45,7 @@ use metashrew_core::{get_cache, index_pointer::IndexPointer, println, stdio::std
 use ordinals::{Artifact, Runestone};
 use protorune_support::utils::consensus_encode;
 use std::fmt::Write;
+use std::sync::Arc;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 pub fn simulate_cellpack(height: u64, cellpack: Cellpack) -> Result<(ExtendedCallResponse, u64)> {
@@ -387,6 +388,57 @@ fn test_fr_btc_wrap_incorrect_signer() -> Result<()> {
 
     // No BTC sent to correct signer, so no frBTC should be minted.
     assert_eq!(balance, 0);
+
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
+    clear();
+    let (wrap_outpoint, fr_btc_amount) = wrap_btc()?; // height 1
+
+    // Unwrap at height 2
+    let height2 = 2;
+    let vout_for_spendable = 1;
+    let unwrap_tx = unwrap_btc_tx(wrap_outpoint, fr_btc_amount, vout_for_spendable as u128);
+
+    let mut block2 = create_block_with_coinbase_tx(height2);
+    block2.txdata.push(unwrap_tx.clone());
+    index_block(&block2, height2)?;
+
+    // Before fulfillment, last_block should not have advanced past the block with unfulfilled payment
+    let last_block_before = unwrap_view::fr_btc_storage_pointer()
+        .keyword("/last_block")
+        .get_value::<u128>();
+
+    // wrap_btc is at height 1, which has no payments. So last_block becomes 1.
+    // unwrap_btc is at height 2, which has an unfulfilled payment. So last_block stays 1.
+    assert_eq!(last_block_before, 1);
+
+    // Check view has one payment
+    let unwrap_view_response_before = unwrap_view::view(height2 as u128)?;
+    assert_eq!(unwrap_view_response_before.payments.len(), 1);
+
+    // Fulfill the unwrap by spending the 'spendable' outpoint
+    let height3 = 3;
+    let spendable_outpoint = OutPoint {
+        txid: unwrap_tx.compute_txid(),
+        vout: vout_for_spendable as u32,
+    };
+
+    let spendable_bytes = protorune_support::utils::consensus_encode(&spendable_outpoint)?;
+    protorune::tables::OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).set(Arc::new(vec![]));
+    crate::unwrap::update_last_block(height3 as u128)?;
+
+    // After fulfillment, last_block should be updated to the latest block
+    let last_block_after = unwrap_view::fr_btc_storage_pointer()
+        .keyword("/last_block")
+        .get_value::<u128>();
+    assert_eq!(last_block_after, height3 as u128);
+
+    // Check view has no payments because the processed blocks are skipped
+    let unwrap_view_response_after = unwrap_view::view(height3 as u128)?;
+    assert_eq!(unwrap_view_response_after.payments.len(), 0);
 
     Ok(())
 }

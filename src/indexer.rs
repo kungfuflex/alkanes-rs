@@ -103,11 +103,11 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         }
     }
     FuelTank::initialize(&block, height);
-    unwrap::update_last_block(height as u128);
-
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
         Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
+
+    unwrap::update_last_block(height as u128);
 
     #[cfg(feature = "cache")]
     {
