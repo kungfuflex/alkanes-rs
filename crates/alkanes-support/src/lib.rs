@@ -1,172 +1,113 @@
-pub mod cellpack;
-pub mod constants;
-pub mod context;
-pub mod envelope;
-pub mod gz;
-pub mod id;
-pub mod parcel;
-pub mod proto;
-pub mod response;
-pub mod storage;
-pub mod trace;
-pub mod utils;
-pub mod witness;
+pub mod host;
+pub mod network;
+pub mod message;
+use anyhow::Result;
+use bitcoin::blockdata::block::Block;
+#[allow(unused_imports)]
+use metashrew_core::{
+    println,
+    stdio::{stdout, Write},
+};
+#[allow(unused_imports)]
+use metashrew_support::index_pointer::KeyValuePointer;
+use crate::message::AlkaneMessageContext;
+use crate::network::Network;
+use protorune_support::network::set_network;
+use protorune_support::Protorune;
+use std::collections::BTreeSet;
 
-use crate::id::AlkaneId;
-use crate::parcel::{AlkaneTransfer, AlkaneTransferParcel};
-use crate::response::ExtendedCallResponse;
-use crate::storage::StorageMap;
-use protobuf::{MessageField, SpecialFields};
-use protorune_support::balance_sheet::ProtoruneRuneId;
-use utils::field_or_default;
-
-impl From<proto::alkanes::Uint128> for u128 {
-    fn from(v: proto::alkanes::Uint128) -> u128 {
-        let mut result: Vec<u8> = Vec::<u8>::with_capacity(16);
-        result.extend(&v.lo.to_le_bytes());
-        result.extend(&v.hi.to_le_bytes());
-        let bytes_ref: &[u8] = &result;
-        u128::from_le_bytes(bytes_ref.try_into().unwrap())
-    }
+pub fn configure_network(network: Network) {
+    set_network(network.default_params());
 }
 
-impl From<u128> for proto::alkanes::Uint128 {
-    fn from(v: u128) -> proto::alkanes::Uint128 {
-        let bytes = v.to_le_bytes().to_vec();
-        let mut container: proto::alkanes::Uint128 = proto::alkanes::Uint128::new();
-        container.lo = u64::from_le_bytes((&bytes[0..8]).try_into().unwrap());
-        container.hi = u64::from_le_bytes((&bytes[8..16]).try_into().unwrap());
-        container
-    }
-}
+#[cfg(feature = "cache")]
+use crate::view::protorunes_by_address;
+#[cfg(feature = "cache")]
+use protobuf::{Message, MessageField};
+#[cfg(feature = "cache")]
+use protorune::tables::{CACHED_FILTERED_WALLET_RESPONSE, CACHED_WALLET_RESPONSE};
+#[cfg(feature = "cache")]
+use protorune_support::proto::protorune::ProtorunesWalletRequest;
+#[cfg(feature = "cache")]
+use std::sync::Arc;
 
-impl Into<proto::alkanes::AlkaneId> for AlkaneId {
-    fn into(self) -> proto::alkanes::AlkaneId {
-        proto::alkanes::AlkaneId {
-            special_fields: SpecialFields::new(),
-            block: MessageField::some(self.block.into()),
-            tx: MessageField::some(self.tx.into()),
+use crate::host::AlkanesHost;
+
+use metashrew_core::index_pointer::AtomicPointer;
+
+pub fn index_block<
+    H: AlkanesHost + protorune_support::host::Host<Pointer = AtomicPointer> + Default,
+>(
+    host: &H,
+    block: &Block,
+    height: u32,
+    network: Network,
+) -> Result<BTreeSet<Vec<u8>>>
+where
+    <H as protorune_support::host::Host>::Pointer: Default + Clone,
+{
+    configure_network(network);
+    // Get the set of updated addresses from the indexing process
+    let updated_addresses =
+        Protorune::index_block::<H, AlkaneMessageContext>(block.clone(), height.into())?;
+
+    #[cfg(feature = "cache")]
+    {
+        // Cache the WalletResponse for each updated address
+        for address in updated_addresses.iter() {
+            // Skip empty addresses
+            if address.is_empty() {
+                continue;
+            }
+
+            // Create a request for this address
+            let mut request = ProtorunesWalletRequest::new();
+            request.wallet = address.clone();
+            request.protocol_tag = Some(<u128 as Into<
+                protorune_support::proto::protorune::Uint128,
+            >>::into(AlkaneMessageContext::protocol_tag()))
+            .into();
+
+            // Get the WalletResponse for this address (full set of spendable outputs)
+            match protorunes_by_address(&request.write_to_bytes()?) {
+                Ok(full_response) => {
+                    // Cache the serialized full WalletResponse
+                    CACHED_WALLET_RESPONSE
+                        .select(&address)
+                        .set(Arc::new(full_response.write_to_bytes()?));
+
+                    // Create a filtered version with only outpoints that have runes
+                    let mut filtered_response = full_response.clone();
+                    filtered_response.outpoints = filtered_response
+                        .outpoints
+                        .into_iter()
+                        .filter_map(|v| {
+                            if v.balances()
+                                .unwrap_or_else(|| {
+                                    protorune_support::proto::protorune::BalanceSheet::new()
+                                })
+                                .entries
+                                .len()
+                                == 0
+                            {
+                                None
+                            } else {
+                                Some(v)
+                            }
+                        })
+                        .collect::<Vec<protorune_support::proto::protorune::OutpointResponse>>();
+
+                    // Cache the serialized filtered WalletResponse
+                    CACHED_FILTERED_WALLET_RESPONSE
+                        .select(&address)
+                        .set(Arc::new(filtered_response.write_to_bytes()?));
+                }
+                Err(e) => {
+                    println!("Error caching wallet response for address: {:?}", e);
+                }
+            }
         }
     }
-}
 
-impl Into<AlkaneId> for proto::alkanes::AlkaneId {
-    fn into(self) -> AlkaneId {
-        AlkaneId {
-            block: field_or_default(self.block),
-            tx: field_or_default(self.tx),
-        }
-    }
-}
-
-impl Into<proto::alkanes::AlkaneTransfer> for AlkaneTransfer {
-    fn into(self) -> proto::alkanes::AlkaneTransfer {
-        let mut result = proto::alkanes::AlkaneTransfer::new();
-        result.id = MessageField::some(self.id.into());
-        result.value = MessageField::some(self.value.into());
-        result
-    }
-}
-
-impl Into<AlkaneTransfer> for proto::alkanes::AlkaneTransfer {
-    fn into(self) -> AlkaneTransfer {
-        AlkaneTransfer {
-            id: self
-                .id
-                .into_option()
-                .ok_or("")
-                .and_then(|v| Ok(v.into()))
-                .unwrap_or_else(|_| AlkaneId::default()),
-            value: self
-                .value
-                .into_option()
-                .ok_or("")
-                .and_then(|v| Ok(v.into()))
-                .unwrap_or_else(|_| 0u128),
-        }
-    }
-}
-
-impl Into<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
-    fn into(self) -> proto::alkanes::ExtendedCallResponse {
-        let mut result: proto::alkanes::ExtendedCallResponse =
-            proto::alkanes::ExtendedCallResponse::new();
-        result.storage = self
-            .storage
-            .0
-            .into_iter()
-            .map(|(key, value)| proto::alkanes::KeyValuePair {
-                key,
-                value,
-                special_fields: SpecialFields::new(),
-            })
-            .collect::<Vec<proto::alkanes::KeyValuePair>>();
-        result.data = self.data;
-        result.alkanes = self
-            .alkanes
-            .0
-            .into_iter()
-            .map(|v| proto::alkanes::AlkaneTransfer {
-                id: MessageField::some(proto::alkanes::AlkaneId {
-                    block: MessageField::some(v.id.block.into()),
-                    tx: MessageField::some(v.id.tx.into()),
-                    special_fields: SpecialFields::new(),
-                }),
-                special_fields: SpecialFields::new(),
-                value: MessageField::some(v.value.into()),
-            })
-            .collect::<Vec<proto::alkanes::AlkaneTransfer>>();
-
-        result
-    }
-}
-
-impl From<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
-    fn from(v: proto::alkanes::ExtendedCallResponse) -> ExtendedCallResponse {
-        ExtendedCallResponse {
-            storage: StorageMap::from_iter(v.storage.into_iter().map(|kv| (kv.key, kv.value))),
-            data: v.data,
-            alkanes: AlkaneTransferParcel(
-                v.alkanes
-                    .into_iter()
-                    .map(|transfer| AlkaneTransfer {
-                        id: transfer
-                            .id
-                            .into_option()
-                            .ok_or("")
-                            .and_then(|v| Ok(v.into()))
-                            .unwrap_or_else(|_| AlkaneId::default()),
-                        value: transfer
-                            .value
-                            .into_option()
-                            .ok_or("")
-                            .and_then(|v| Ok(v.into()))
-                            .unwrap_or_else(|_| 0u128),
-                    })
-                    .collect::<Vec<AlkaneTransfer>>(),
-            ),
-        }
-    }
-}
-
-impl Into<ProtoruneRuneId> for proto::alkanes::AlkaneId {
-    fn into(self) -> ProtoruneRuneId {
-        ProtoruneRuneId {
-            block: self.block.as_ref().unwrap().clone().into(),
-            tx: self.tx.as_ref().unwrap().clone().into(),
-        }
-    }
-}
-
-impl Into<proto::alkanes::AlkaneInventoryRequest> for AlkaneId {
-    fn into(self) -> proto::alkanes::AlkaneInventoryRequest {
-        proto::alkanes::AlkaneInventoryRequest {
-            id: MessageField::some(proto::alkanes::AlkaneId {
-                block: MessageField::some(self.block.into()),
-                tx: MessageField::some(self.tx.into()),
-                special_fields: SpecialFields::new(),
-            }),
-            special_fields: SpecialFields::new(),
-        }
-    }
+    Ok(updated_addresses)
 }

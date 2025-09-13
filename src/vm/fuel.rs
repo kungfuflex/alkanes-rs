@@ -1,12 +1,12 @@
 use crate::{
     message::AlkaneMessageContext,
     vm::{AlkanesInstance, AlkanesState},
+    WasmHost,
 };
-use alkanes_support::utils::overflow_error;
+use alkanes_support::{message::MessageContext, utils::overflow_error};
 use anyhow::{anyhow, Result};
 use bitcoin::{Block, Transaction, Witness};
 use ordinals::{Artifact, Runestone};
-use protorune::message::MessageContext;
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::decode_varint_list;
 use ruint::aliases::U32;

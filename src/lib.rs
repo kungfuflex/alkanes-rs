@@ -1,9 +1,9 @@
-use crate::indexer::configure_network;
+use crate::network::configure_network;
 use crate::unwrap::{
     deserialize_payments, fr_btc_payments_at_block, fr_btc_storage_pointer, update_last_block,
 };
 use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate_safe};
-use alkanes_support::proto;
+use crate::proto;
 use bitcoin::{Block, OutPoint};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -21,8 +21,6 @@ use std::io::Cursor;
 use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
-pub mod indexer;
-pub mod message;
 pub mod network;
 pub mod precompiled;
 pub mod tables;
@@ -33,7 +31,64 @@ pub mod unwrap;
 pub mod utils;
 pub mod view;
 pub mod vm;
-use crate::indexer::index_block;
+use alkanes_support::host::AlkanesHost;
+use anyhow::Result;
+use std::collections::BTreeSet;
+
+#[derive(Default)]
+pub struct WasmHost;
+
+use alkanes_support::network::Network;
+use protorune_support::host::Host;
+use metashrew_core::index_pointer::IndexPointer;
+use protorune_support::ProtoruneRuneId;
+use crate::vm::fuel::FuelTank;
+
+use metashrew_core::index_pointer::AtomicPointer;
+
+impl Host for WasmHost {
+    type Pointer = AtomicPointer;
+    fn get(&self, key: &[u8]) -> Result<Vec<u8>> {
+        Ok(IndexPointer::new(key.to_vec()).get().as_ref().clone())
+    }
+    fn flush(&self) {
+        flush();
+    }
+    fn println(&self, msg: &str) {
+        println!("{}", msg);
+    }
+}
+
+impl AlkanesHost for WasmHost {
+    fn index_block(&self, block: &Block, height: u32) -> Result<BTreeSet<Vec<u8>>> {
+        let network = if cfg!(feature = "mainnet") {
+            Network::Bitcoin
+        } else if cfg!(feature = "testnet") {
+            Network::Testnet
+        } else if cfg!(feature = "regtest") {
+            Network::Regtest
+        } else if cfg!(feature = "signet") {
+            Network::Signet
+        } else if cfg!(feature = "luckycoin") {
+            Network::Luckycoin
+        } else if cfg!(feature = "dogecoin") {
+            Network::Dogecoin
+        } else if cfg!(feature = "bellscoin") {
+            Network::Bellscoin
+        } else if cfg!(feature = "fractal") {
+            Network::Fractal
+        } else {
+            Network::Regtest
+        };
+        alkanes_support::index_block(self, block, height, network)
+    }
+    fn flush(&self) {
+        flush();
+    }
+    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        self.get(key).ok_or(anyhow!("key not found")).ok()
+    }
+}
 
 /*
 All the #[no_mangle] configs will fail during github action cargo test step
@@ -355,9 +410,10 @@ pub fn _start() {
     let block: Block =
         consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
 
-    index_block(&block, height).unwrap();
+    let host = WasmHost {};
+    host.index_block(&block, height).unwrap();
     etl::index_extensions(height, &block);
-    flush();
+    AlkanesHost::flush(&host);
 }
 
 #[cfg(test)]

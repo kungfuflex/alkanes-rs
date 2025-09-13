@@ -17,7 +17,9 @@ use std::{
 
 use ordinals::Edict;
 
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
+use crate::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
+
+use crate::host::Host;
 
 #[derive(Clone, Debug)]
 pub struct Protoburn {
@@ -27,16 +29,19 @@ pub struct Protoburn {
 }
 
 impl Protoburn {
-    pub fn process(
+    pub fn process<H: Host>(
         &mut self,
         atomic: &mut AtomicPointer,
-        balance_sheet: BalanceSheet<AtomicPointer>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        mut balance_sheet: BalanceSheet<H::Pointer>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
         outpoint: OutPoint,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        H::Pointer: Default + Clone,
+    {
         let table = RuneTable::for_protocol(self.tag.ok_or(anyhow!("no tag found"))?);
         for (rune, _balance) in balance_sheet.balances().into_iter() {
-            let runeid: Arc<Vec<u8>> = (*rune).into();
+            let runeid: Arc<Vec<u8>> = Arc::new(rune.clone().into());
             let name = RUNES.RUNE_ID_TO_ETCHING.select(&runeid).get();
             atomic
                 .derive(&table.RUNE_ID_TO_ETCHING.select(&runeid))
@@ -68,7 +73,10 @@ impl Protoburn {
     }
 }
 
-pub trait Protoburns<T>: Deref<Target = [T]> {
+pub trait Protoburns<T, H: Host>: Deref<Target = [T]>
+where
+    H::Pointer: Default + Clone,
+{
     fn construct_burncycle(&self) -> Result<BurnCycle> {
         let length = u32::try_from(self.len())?;
         Ok(BurnCycle::new(length))
@@ -78,37 +86,40 @@ pub trait Protoburns<T>: Deref<Target = [T]> {
         atomic: &mut AtomicPointer,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
 }
 
-impl Protoburns<Protoburn> for Vec<Protoburn> {
+impl<H: Host> Protoburns<Protoburn, H> for Vec<Protoburn>
+where
+    H::Pointer: Default + Clone,
+{
     fn process(
         &mut self,
         atomic: &mut AtomicPointer,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {
-        let mut runestone_balance_sheet = BalanceSheet::new();
+        let mut runestone_balance_sheet = BalanceSheet::default();
         if balances_by_output.contains_key(&runestone_output_index) {
             let sheet = balances_by_output
-                .get(&runestone_output_index)
+                .get_mut(&runestone_output_index)
                 .ok_or(anyhow!("cannot find balance sheet"))?;
             sheet.pipe(&mut runestone_balance_sheet)?;
         }
-        let mut burn_cycles = self.construct_burncycle()?;
+        let mut burn_cycles = <Vec<Protoburn> as Protoburns<Protoburn, H>>::construct_burncycle(self)?;
         let mut pull_set = BTreeMap::<u32, bool>::new();
         let mut burn_sheets = self
             .into_iter()
-            .map(|_a| BalanceSheet::new())
-            .collect::<Vec<BalanceSheet<AtomicPointer>>>();
+            .map(|_a| BalanceSheet::default())
+            .collect::<Vec<BalanceSheet<H::Pointer>>>();
 
         // from field in Protoburn is provided, which means the burn doesn't cycle through the inputs, just pulls the inputs from the "from" field and burns those
         for (i, burn) in self.into_iter().enumerate() {
@@ -171,7 +182,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
 
         for (i, burn) in self.into_iter().enumerate() {
             let sheet = burn_sheets[i].clone();
-            burn.process(
+            burn.process::<H>(
                 atomic,
                 sheet,
                 proto_balances_by_output,
@@ -227,7 +238,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn test_protoburn_process_success() {
+    pub fn test_protoburn_process_success() {
         // Create a dummy Protoburn instance
         let mut protoburn = Protoburn {
             tag: Some(13),

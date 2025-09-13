@@ -1,4 +1,4 @@
-use crate::message::AlkaneMessageContext;
+use alkanes_support::message::AlkaneMessageContext;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -9,10 +9,10 @@ use crate::precompiled::{
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
 use crate::vm::utils::sequence_pointer;
-use alkanes_support::cellpack::Cellpack;
-use alkanes_support::gz::compress;
-use alkanes_support::id::AlkaneId;
-use alkanes_support::parcel::AlkaneTransferParcel;
+use crate::vm::cellpack::Cellpack;
+use crate::vm::gz::compress;
+use crate::vm::id::AlkaneId;
+use crate::vm::parcel::AlkaneTransferParcel;
 use anyhow::Result;
 use bitcoin::{Block, OutPoint, Transaction};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
@@ -200,6 +200,7 @@ pub fn genesis(block: &Block) -> Result<()> {
     let fr_btc = AlkaneId { block: 32, tx: 0 };
     let fr_sigil = AlkaneId { block: 32, tx: 1 };
     let parcel = MessageContextParcel {
+        host: &WasmHost::default(),
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
         transaction: Transaction {
@@ -223,6 +224,7 @@ pub fn genesis(block: &Block) -> Result<()> {
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
     };
     let parcel2 = MessageContextParcel {
+        host: &WasmHost::default(),
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
         transaction: Transaction {
@@ -246,6 +248,7 @@ pub fn genesis(block: &Block) -> Result<()> {
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
     };
     let parcel3 = MessageContextParcel {
+        host: &WasmHost::default(),
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
         transaction: Transaction {

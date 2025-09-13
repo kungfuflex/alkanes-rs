@@ -9,16 +9,17 @@ use {
     std::fmt::Write,
 };
 
-use protorune::message::MessageContextParcel;
+use crate::WasmHost;
+use alkanes_support::message::MessageContextParcel;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct AlkanesRuntimeContext {
     pub myself: AlkaneId,
     pub caller: AlkaneId,
     pub incoming_alkanes: AlkaneTransferParcel,
     pub returndata: Vec<u8>,
     pub inputs: Vec<u128>,
-    pub message: Box<MessageContextParcel>,
+    pub message: Box<MessageContextParcel<WasmHost>>,
     pub trace: Trace,
 }
 
@@ -33,9 +34,26 @@ impl fmt::Debug for AlkanesRuntimeContext {
     }
 }
 
+impl Default for AlkanesRuntimeContext {
+    fn default() -> Self {
+        Self {
+            myself: Default::default(),
+            caller: Default::default(),
+            incoming_alkanes: Default::default(),
+            returndata: Default::default(),
+            inputs: Default::default(),
+            message: Box::new(MessageContextParcel {
+                host: &WasmHost::default(),
+                ..Default::default()
+            }),
+            trace: Default::default(),
+        }
+    }
+}
+
 impl AlkanesRuntimeContext {
     pub fn from_parcel_and_cellpack(
-        message: &MessageContextParcel,
+        message: &MessageContextParcel<WasmHost>,
         cellpack: &Cellpack,
     ) -> AlkanesRuntimeContext {
         let cloned = cellpack.clone();

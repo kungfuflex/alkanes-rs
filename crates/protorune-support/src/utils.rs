@@ -1,3 +1,4 @@
+use crate::network::get_network;
 use anyhow::Result;
 use bitcoin::consensus::{
     deserialize_partial,
@@ -7,7 +8,32 @@ use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, Txid};
 use metashrew_support::utils::{is_empty, remaining_slice};
 use ordinals::varint;
-use std::{io::BufRead, string};
+use std::{io::BufRead};
+use bech32::Hrp;
+use bitcoin::Script;
+use metashrew_support::address::{AddressEncoding, Payload};
+
+pub fn to_address_str(script: &Script) -> Result<String> {
+    let config = get_network();
+    Ok(AddressEncoding {
+        p2pkh_prefix: config.p2pkh_prefix,
+        p2sh_prefix: config.p2sh_prefix,
+        hrp: Hrp::parse_unchecked(&config.bech32_prefix),
+        payload: &Payload::from_script(script)?,
+    }
+    .to_string())
+}
+
+pub fn split_bytes(bytes: &[u8]) -> Vec<u128> {
+    let mut result = Vec::new();
+    for chunk in bytes.chunks(16) {
+        let mut arr = [0u8; 16];
+        arr[..chunk.len()].copy_from_slice(chunk);
+        result.push(u128::from_le_bytes(arr));
+    }
+    result
+}
+
 pub fn consensus_encode<T: Encodable>(v: &T) -> Result<Vec<u8>> {
     let mut result = Vec::<u8>::new();
     <T as Encodable>::consensus_encode::<Vec<u8>>(v, &mut result)?;
@@ -86,20 +112,3 @@ pub fn field_to_name(data: &u128) -> String {
     result
 }
 
-pub fn get_network() -> bitcoin::Network {
-    let network = std::env::var("network").unwrap_or_else(|_| {
-        eprintln!("Environment variable 'network' is not set. Defaulting to 'bitcoin'.");
-        "bitcoin".to_string()
-    });
-
-    match network.as_str() {
-        "bitcoin" => bitcoin::Network::Bitcoin,
-        "testnet" => bitcoin::Network::Testnet,
-        "regtest" => bitcoin::Network::Regtest,
-        "signet" => bitcoin::Network::Signet,
-        _ => {
-            eprintln!("Invalid network '{}'. Defaulting to 'bitcoin'.", network);
-            bitcoin::Network::Bitcoin
-        }
-    }
-}

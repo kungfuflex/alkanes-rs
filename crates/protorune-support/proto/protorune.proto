@@ -25,10 +25,6 @@ message BalanceSheetItem {
   uint128 balance = 2;
 }
 
-message BalanceSheet {
-  repeated BalanceSheetItem entries = 1;
-}
-
 message Outpoint {
   bytes txid = 1;
   uint32 vout = 2;
@@ -45,7 +41,6 @@ message Output {
 }
 
 message OutpointResponse {
-  BalanceSheet balances = 1;
   Outpoint outpoint = 2;
   Output output = 3;
   uint32 height = 4;
@@ -63,7 +58,6 @@ message WalletRequest {
 
 message WalletResponse {
   repeated OutpointResponse outpoints = 1;
-  BalanceSheet balances = 2;
 }
 
 message ProtorunesWalletRequest {
@@ -114,5 +108,4 @@ message RuntimeInput {
 }
 
 message Runtime {
-  BalanceSheet balances = 1;
 }

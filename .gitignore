@@ -5,3 +5,5 @@ target
 src/tests/std/**/*.rs
 memory-bank/activeContext.md
 memory-bank/progress.md
+
+/reference/

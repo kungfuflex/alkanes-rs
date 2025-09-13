@@ -2,9 +2,9 @@ use crate::tables::RuneTable;
 use crate::{balance_sheet::load_sheet, tables};
 use anyhow::{anyhow, Result};
 use bitcoin;
-use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
-use protorune_support::proto;
-use protorune_support::proto::protorune::{
+use crate::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
+use crate::proto;
+use crate::proto::protorune::{
     Outpoint,
     OutpointResponse,
     Output,
@@ -13,7 +13,7 @@ use protorune_support::proto::protorune::{
     RunesResponse,
     WalletResponse,
 };
-use protorune_support::utils::{consensus_decode, outpoint_encode};
+use crate::utils::{consensus_decode, outpoint_encode};
 //use bitcoin::consensus::Decodable;
 use bitcoin::hashes::Hash;
 use bitcoin::OutPoint;
@@ -65,8 +65,8 @@ pub fn protorune_outpoint_to_outpoint_response(
         .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
 
     if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
-        height = rune_id.block.into();
-        txindex = rune_id.tx.into();
+        height = rune_id.height.as_ref().unwrap().lo.into();
+        txindex = rune_id.txindex.as_ref().unwrap().lo.into();
     }
     let decoded_output: Output = Output::parse_from_bytes(
         &tables::OUTPOINT_TO_OUTPUT
@@ -75,7 +75,7 @@ pub fn protorune_outpoint_to_outpoint_response(
             .as_ref(),
     )?;
     Ok(OutpointResponse {
-        balances: MessageField::some(balance_sheet.into()),
+        //balances: MessageField::some(balance_sheet.into()),
         outpoint: MessageField::some(core_outpoint_to_proto(&outpoint)),
         output: MessageField::some(decoded_output),
         height: height as u32,
@@ -103,8 +103,8 @@ pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<Outpoin
         .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
 
     if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
-        height = rune_id.block.into();
-        txindex = rune_id.tx.into();
+        height = rune_id.height.as_ref().unwrap().lo.into();
+        txindex = rune_id.txindex.as_ref().unwrap().lo.into();
     }
     let decoded_output: Output = Output::parse_from_bytes(
         &tables::OUTPOINT_TO_OUTPUT
@@ -113,7 +113,7 @@ pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<Outpoin
             .as_ref(),
     )?;
     Ok(OutpointResponse {
-        balances: MessageField::some(balance_sheet.into()),
+        //balances: MessageField::some(balance_sheet.into()),
         outpoint: MessageField::some(core_outpoint_to_proto(&outpoint)),
         output: MessageField::some(decoded_output),
         height: height as u32,
@@ -140,8 +140,8 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
         .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
 
     if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
-        height = rune_id.block;
-        txindex = rune_id.tx;
+        height = rune_id.height.as_ref().unwrap().lo.into();
+        txindex = rune_id.txindex.as_ref().unwrap().lo.into();
     }
     let decoded_output: Output = Output::parse_from_bytes(
         &tables::OUTPOINT_TO_OUTPUT
@@ -150,7 +150,7 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
             .as_ref(),
     )?;
     Ok(OutpointResponse {
-        balances: MessageField::some(balance_sheet.into()),
+        //balances: MessageField::some(balance_sheet.into()),
         outpoint: MessageField::some(core_outpoint_to_proto(&outpoint)),
         output: MessageField::some(decoded_output),
         height: height as u32,

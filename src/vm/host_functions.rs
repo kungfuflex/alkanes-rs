@@ -8,6 +8,7 @@ use crate::vm::{run_after_special, run_special_cellpacks};
 use alkanes_support::{
     cellpack::Cellpack,
     id::AlkaneId,
+    message::MessageContextParcel,
     parcel::AlkaneTransferParcel,
     response::CallResponse,
     storage::StorageMap,

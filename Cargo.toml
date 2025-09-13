@@ -7,8 +7,6 @@ license.workspace = true
 repository.workspace = true
 resolver = "2"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
 
 [workspace]
 members = [".", "crates/*"]
@@ -47,6 +45,10 @@ web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
 hex_lit = "0.1.1"
 once_cell = "1.20.1"
+prost-build = "0.13.1"
+protobuf-codegen = "3.4.0"
+protoc-rust = "2.28.0"
+protoc-bin-vendored = "3.0.0"
 
 [features]
 test-utils = []
@@ -108,6 +110,10 @@ hex_lit = { workspace = true }
 once_cell = { workspace = true }
 borsh = { version = "1.5.7", features = ["derive"] }
 sha2 = "0.10.9"
+
+[[bin]]
+name = "alkanes"
+path = "src/main.rs"
 
 [dev-dependencies]
 

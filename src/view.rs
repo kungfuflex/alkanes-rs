@@ -46,12 +46,19 @@ use std::fmt::Write;
 use std::io::Cursor;
 use std::sync::{Arc, LazyLock, Mutex};
 
-pub fn parcels_from_protobuf(v: proto::alkanes::MultiSimulateRequest) -> Vec<MessageContextParcel> {
+pub fn parcels_from_protobuf<T: Host>(
+    v: proto::alkanes::MultiSimulateRequest,
+) -> Vec<MessageContextParcel<T>> {
     v.parcels.into_iter().map(parcel_from_protobuf).collect()
 }
 
-pub fn parcel_from_protobuf(v: proto::alkanes::MessageContextParcel) -> MessageContextParcel {
-    let mut result = MessageContextParcel::default();
+pub fn parcel_from_protobuf<T: Host>(
+    v: proto::alkanes::MessageContextParcel,
+) -> MessageContextParcel<T> {
+    let mut result = MessageContextParcel {
+        host: &WasmHost::default(),
+        ..Default::default()
+    };
     result.height = v.height;
     result.block = if v.block.len() > 0 {
         consensus_decode::<Block>(&mut Cursor::new(v.block)).unwrap()
@@ -101,8 +108,11 @@ fn default_block() -> Block {
     }
 }
 
-pub fn plain_parcel_from_cellpack(cellpack: Cellpack) -> MessageContextParcel {
-    let mut result = MessageContextParcel::default();
+pub fn plain_parcel_from_cellpack<T: Host>(cellpack: Cellpack) -> MessageContextParcel<T> {
+    let mut result = MessageContextParcel {
+        host: &WasmHost::default(),
+        ..Default::default()
+    };
     result.block = default_block();
     result.transaction = default_transaction();
     result.calldata = cellpack.encipher();
@@ -242,9 +252,9 @@ pub fn protorunes_by_outpoint(
             <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
         })) == AlkaneMessageContext::protocol_tag()
         {
-            response.balances =
+            response.balance_sheet =
                 MessageField::some(
-                    to_alkanes_balances(response.balances.unwrap_or_else(|| {
+                    to_alkanes_balances(response.balance_sheet.unwrap_or_else(|| {
                         protorune_support::proto::protorune::BalanceSheet::new()
                     }))
                     .clone(),
@@ -259,9 +269,9 @@ pub fn to_alkanes_outpoints(
 ) -> Vec<protorune_support::proto::protorune::OutpointResponse> {
     let mut cloned = v.clone();
     for item in &mut cloned {
-        item.balances = MessageField::some(
+        item.balance_sheet = MessageField::some(
             to_alkanes_balances(
-                item.balances
+                item.balance_sheet
                     .clone()
                     .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new()),
             )
@@ -439,14 +449,14 @@ pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
 }
 
 pub fn simulate_safe(
-    parcel: &MessageContextParcel,
+    parcel: &MessageContextParcel<WasmHost>,
     fuel: u64,
 ) -> Result<(ExtendedCallResponse, u64)> {
     set_view_mode();
     simulate_parcel(parcel, fuel)
 }
 
-pub fn meta_safe(parcel: &MessageContextParcel) -> Result<Vec<u8>> {
+pub fn meta_safe(parcel: &MessageContextParcel<WasmHost>) -> Result<Vec<u8>> {
     set_view_mode();
     let list = decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?;
     let cellpack: Cellpack = list.clone().try_into()?;
@@ -460,7 +470,7 @@ pub fn meta_safe(parcel: &MessageContextParcel) -> Result<Vec<u8>> {
 }
 
 pub fn simulate_parcel(
-    parcel: &MessageContextParcel,
+    parcel: &MessageContextParcel<WasmHost>,
     fuel: u64,
 ) -> Result<(ExtendedCallResponse, u64)> {
     let list = decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?;
@@ -490,7 +500,7 @@ pub fn simulate_parcel(
 }
 
 pub fn multi_simulate(
-    parcels: &[MessageContextParcel],
+    parcels: &[MessageContextParcel<WasmHost>],
     fuel: u64,
 ) -> Vec<Result<(ExtendedCallResponse, u64)>> {
     let mut responses: Vec<Result<(ExtendedCallResponse, u64)>> = vec![];
@@ -501,7 +511,7 @@ pub fn multi_simulate(
 }
 
 pub fn multi_simulate_safe(
-    parcels: &[MessageContextParcel],
+    parcels: &[MessageContextParcel<WasmHost>],
     fuel: u64,
 ) -> Vec<Result<(ExtendedCallResponse, u64)>> {
     set_view_mode();

@@ -3,21 +3,24 @@ use std::collections::BTreeMap;
 use metashrew_support::index_pointer::KeyValuePointer;
 
 use crate::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
-use anyhow::{anyhow, Result};
+use anyhow::{Result};
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RuneTransfer {
     pub id: ProtoruneRuneId,
     pub value: u128,
 }
 
 impl RuneTransfer {
-    pub fn from_balance_sheet<P: KeyValuePointer + Clone>(s: BalanceSheet<P>) -> Vec<Self> {
+    pub fn from_balance_sheet<P: KeyValuePointer + Default + Clone>(s: BalanceSheet<P>) -> Vec<Self> {
         s.balances()
             .iter()
             .filter_map(|(id, v)| {
                 if *v > 0 {
-                    Some(RuneTransfer { id: *id, value: *v })
+                    Some(RuneTransfer {
+                        id: id.clone(),
+                        value: *v,
+                    })
                 } else {
                     None
                 }
@@ -31,9 +34,9 @@ impl RuneTransfer {
 ///                       the current transaction being handled.
 ///   sheet: The balance sheet to increase the balances by
 ///   vout: The target transaction vout to receive the runes
-pub fn increase_balances_using_sheet<P: KeyValuePointer + Clone>(
+pub fn increase_balances_using_sheet<P: KeyValuePointer + Default + Clone>(
     balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
-    sheet: &BalanceSheet<P>,
+    sheet: &mut BalanceSheet<P>,
     vout: u32,
 ) -> Result<()> {
     if !balances_by_output.contains_key(&vout) {
@@ -44,7 +47,7 @@ pub fn increase_balances_using_sheet<P: KeyValuePointer + Clone>(
 }
 
 /// Refunds all input runes to the refund pointer
-pub fn refund_to_refund_pointer<P: KeyValuePointer + Clone>(
+pub fn refund_to_refund_pointer<P: KeyValuePointer + Default + Clone>(
     balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
     protomessage_vout: u32,
     refund_pointer: u32,
@@ -56,5 +59,5 @@ pub fn refund_to_refund_pointer<P: KeyValuePointer + Clone>(
         .unwrap_or_else(|| BalanceSheet::default());
     // we want to remove any balance from the protomessage vout
     balances_by_output.remove(&protomessage_vout);
-    increase_balances_using_sheet(balances_by_output, &sheet, refund_pointer)
+    increase_balances_using_sheet(balances_by_output, &mut sheet.clone(), refund_pointer)
 }

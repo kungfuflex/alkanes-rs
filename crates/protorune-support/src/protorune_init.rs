@@ -7,10 +7,12 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune_support::balance_sheet::ProtoruneRuneId;
+use crate::balance_sheet::ProtoruneRuneId;
 use std::sync::Arc;
 
-pub fn index_unique_protorunes<T: MessageContext>(
+use crate::host::Host;
+
+pub fn index_unique_protorunes<H: Host, T: MessageContext<H>>(
     atomic: &mut AtomicPointer,
     height: u64,
     assets: Vec<ProtoruneRuneId>,
