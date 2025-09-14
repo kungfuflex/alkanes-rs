@@ -31,6 +31,7 @@ pub mod message;
 pub mod network;
 pub mod parcel;
 pub mod proto;
+pub use proto::alkanes;
 pub mod response;
 pub mod rune_result;
 pub mod rune_transfer;

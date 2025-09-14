@@ -1,0 +1,10 @@
+[package]
+name = "alkanes-proto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+protobuf = "3.4.0"
+
+[build-dependencies]
+protobuf-codegen = "3.4.0"

@@ -9,7 +9,7 @@ resolver = "2"
 
 
 [workspace]
-members = [".", "crates/alkanes-support", "crates/protorune-support", "crates/protorune"]
+members = [".", "crates/alkanes-support", "crates/protorune-support", "crates/protorune", "crates/alkanes-proto"]
 
 [workspace.package]
 version = "1.2.3"
@@ -94,6 +94,7 @@ ordinals = { workspace = true }
 protorune = { workspace = true }
 protorune-support = { workspace = true }
 alkanes-support = { workspace = true }
+alkanes-proto = { path = "crates/alkanes-proto" }
 ruint = { workspace = true }
 wasm-bindgen = { workspace = true }
 byteorder = { workspace = true }

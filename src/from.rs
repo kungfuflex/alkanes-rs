@@ -1,7 +1,6 @@
 use alkanes_support::view::{Balance, Outpoint, Wallet};
 use bitcoin::{hashes::Hash, OutPoint, TxOut};
 use protobuf::MessageField;
-use crate::proto::alkanes as alkanes_proto;
 use protorune_support::proto::protorune;
 
 pub trait IntoProto<T> {
@@ -38,7 +37,7 @@ impl IntoProto<protorune::OutpointResponse> for Outpoint {
             .into_iter()
             .map(|balance| balance.into_proto())
             .collect();
-        let mut balances_proto = alkanes_proto::Balances::new();
+        let mut balances_proto = alkanes_proto::alkanes::Balances::new();
         balances_proto.entries = balances;
         output.special_fields = MessageField::some(balances_proto);
         output
@@ -57,9 +56,9 @@ impl IntoProto<protorune::WalletResponse> for Wallet {
     }
 }
 
-impl IntoProto<alkanes_proto::Balance> for Balance {
-    fn into_proto(self) -> alkanes_proto::Balance {
-        let mut output = alkanes_proto::Balance::new();
+impl IntoProto<alkanes_proto::alkanes::Balance> for Balance {
+    fn into_proto(self) -> alkanes_proto::alkanes::Balance {
+        let mut output = alkanes_proto::alkanes::Balance::new();
         output.rune_id = MessageField::some(self.rune_id.into());
         output.amount = MessageField::some(self.amount.into());
         output

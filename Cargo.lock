@@ -34,6 +34,7 @@ name = "alkanes"
 version = "1.2.3"
 dependencies = [
  "alkanes",
+ "alkanes-proto",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",
@@ -66,9 +67,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-proto"
+version = "0.1.0"
+dependencies = [
+ "protobuf 3.7.2",
+ "protobuf-codegen 3.7.2",
+]
+
+[[package]]
 name = "alkanes-support"
 version = "1.2.3"
 dependencies = [
+ "alkanes-proto",
  "anyhow",
  "bitcoin 0.32.5",
  "flate2",
@@ -77,9 +87,6 @@ dependencies = [
  "metashrew-support",
  "ordinals 1.2.3",
  "protobuf 3.7.2",
- "protobuf-codegen 3.7.2",
- "protoc-bin-vendored",
- "protoc-rust",
  "protorune-support",
  "serde",
  "wasmi",
