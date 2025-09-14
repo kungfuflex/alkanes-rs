@@ -21,6 +21,7 @@ hex = { workspace = true }
 protobuf = { workspace = true }
 bech32 = "0.11.0"
 once_cell = { workspace = true }
+byteorder = { workspace = true }
 
 [build-dependencies]
 protobuf-codegen = { workspace = true }

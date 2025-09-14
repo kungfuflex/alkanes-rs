@@ -54,17 +54,17 @@ impl AlkanesInstance {
     }
     pub fn checkpoint(&mut self) {
         (&mut self.store.data_mut().context.lock().unwrap().message)
-            .atomic
+            .host
             .checkpoint();
     }
     pub fn commit(&mut self) {
         (&mut self.store.data_mut().context.lock().unwrap().message)
-            .atomic
+            .host
             .commit();
     }
     pub fn rollback(&mut self) {
         (&mut self.store.data_mut().context.lock().unwrap().message)
-            .atomic
+            .host
             .rollback();
     }
     pub fn from_alkane(

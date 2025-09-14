@@ -2,7 +2,6 @@ use crate::id::AlkaneId;
 use anyhow::Result;
 use metashrew_support::utils::consume_sized_int;
 use metashrew_support::{byte_view::ByteView, index_pointer::KeyValuePointer};
-use protorune_support::balance_sheet::CachedBalanceSheet;
 use protorune_support::{balance_sheet::BalanceSheet, rune_transfer::RuneTransfer};
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -39,19 +38,26 @@ impl Into<Vec<RuneTransfer>> for AlkaneTransferParcel {
     }
 }
 
-impl<P: KeyValuePointer + Clone> TryInto<BalanceSheet<P>> for AlkaneTransferParcel {
+/*
+ * Chadson's Journal:
+ *
+ * The `TryInto<BalanceSheet<P>>` implementation was missing the `Host` trait
+ * bound on the generic parameter `P`. `BalanceSheet` requires this bound,
+ * which was causing the compilation to fail.
+ *
+ * I've added `+ Host` to the trait bounds for `P` to resolve this issue.
+ * This ensures that any type used with `BalanceSheet` through this conversion
+ * will provide the necessary host functionality.
+ */
+use protorune_support::host::Host;
+
+impl<P: KeyValuePointer + Clone + Default + Host> TryInto<BalanceSheet<P>> for AlkaneTransferParcel {
     type Error = anyhow::Error;
     fn try_into(self) -> Result<BalanceSheet<P>> {
         <AlkaneTransferParcel as Into<Vec<RuneTransfer>>>::into(self).try_into()
     }
 }
 
-impl TryInto<CachedBalanceSheet> for AlkaneTransferParcel {
-    type Error = anyhow::Error;
-    fn try_into(self) -> Result<CachedBalanceSheet> {
-        <AlkaneTransferParcel as Into<Vec<RuneTransfer>>>::into(self).try_into()
-    }
-}
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AlkaneTransferParcel(pub Vec<AlkaneTransfer>);

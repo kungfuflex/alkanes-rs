@@ -4,6 +4,7 @@ use crate::{
     WasmHost,
 };
 use alkanes_support::{message::MessageContext, utils::overflow_error};
+use protorune_support::protorune_ext::ProtoruneExt;
 use anyhow::{anyhow, Result};
 use bitcoin::{Block, Transaction, Witness};
 use ordinals::{Artifact, Runestone};
@@ -27,12 +28,14 @@ pub trait VirtualFuelBytes {
 impl VirtualFuelBytes for Transaction {
     fn vfsize(&self) -> u64 {
         if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(&self) {
-            if let Ok(protostones) = Protostone::from_runestone(runestone) {
+            if let Ok(protostones) = Protostone::from_runestone(runestone, &self) {
                 let cellpacks = protostones
                     .iter()
                     .filter_map(|v| {
                         if v.protocol_tag == AlkaneMessageContext::protocol_tag() {
-                            decode_varint_list(&mut Cursor::new(v.message.clone()))
+                            decode_varint_list(&mut Cursor::new(
+                                v.message.iter().flat_map(|v| v.to_be_bytes()).collect(),
+                            ))
                                 .and_then(|list| {
                                     if list.len() >= 2 {
                                         Ok(Some(list))
@@ -357,7 +360,7 @@ pub trait Fuelable {
     fn consume_fuel(&mut self, n: u64) -> Result<()>;
 }
 
-impl<'a> Fuelable for Caller<'_, AlkanesState> {
+impl Fuelable for Caller<'_, AlkanesState> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())
@@ -371,8 +374,8 @@ impl Fuelable for AlkanesInstance {
     }
 }
 
-pub fn consume_fuel<'a>(caller: &mut Caller<'_, AlkanesState>, n: u64) -> Result<()> {
-    caller.consume_fuel(n)
+pub fn consume_fuel(caller: &mut Caller<'_, AlkanesState>, n: u64) -> Result<()> {
+    FuelTank::consume_fuel(n)
 }
 
 pub fn compute_extcall_fuel(savecount: u64, height: u32) -> Result<u64> {

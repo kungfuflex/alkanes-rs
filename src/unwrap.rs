@@ -1,21 +1,39 @@
+// Copyright 2024-present, Fractal Industries, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! # Unwrap Module
+//!
+//! This module handles the logic for "unwrapping" or fulfilling payments
+//! related to the `fr_btc` precompiled Alkane. It provides functions to
+//! track pending payments and determine if they have been fulfilled by being
+//! spent on-chain.
+
 use alkanes_support::{
     id::AlkaneId,
-    message::MessageContextParcel,
     proto::alkanes::{self as pb, Payment as ProtoPayment, PendingUnwrapsResponse},
 };
 use anyhow::Result;
-use crate::WasmHost;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, TxOut};
 use metashrew_core::index_pointer::IndexPointer;
-use metashrew_core::{get_cache, println, stdio::stdout};
+use metashrew_core::stdio::stdout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consensus_encode, is_empty};
 use protobuf::{MessageField, SpecialFields};
-use protorune::tables::OUTPOINT_SPENDABLE_BY;
+use protorune_support::tables::OUTPOINT_SPENDABLE_BY;
 use std::fmt::Write;
 use std::io::Cursor;
-use std::sync::Arc;
 
 use crate::network::genesis;
 

@@ -1,4 +1,25 @@
-use alkanes_support::message::AlkaneMessageContext;
+// Copyright 2024-present, Fractal Industries, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! # Network Configuration and Genesis
+//!
+//! This module handles network-specific configurations, including the definition
+//! of genesis block details for various Bitcoin-like chains (mainnet, testnet, etc.).
+//! It also provides the `genesis` function, which initializes the protocol's state
+//! at the designated genesis block.
+
+use crate::message::AlkaneMessageContext;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -6,23 +27,17 @@ use crate::precompiled::{
     alkanes_std_genesis_alkane_regtest_build, alkanes_std_genesis_alkane_upgraded_mainnet_build,
     alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_build, fr_sigil_build,
 };
-use crate::utils::pipe_storagemap_to;
-use crate::view::simulate_parcel;
 use crate::vm::utils::sequence_pointer;
-use crate::vm::cellpack::Cellpack;
-use crate::vm::gz::compress;
-use crate::vm::id::AlkaneId;
-use crate::vm::parcel::AlkaneTransferParcel;
+use alkanes_support::gz::compress;
+use crate::WasmHost;
+use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-use bitcoin::{Block, OutPoint, Transaction};
+use bitcoin::Block;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::balance_sheet::PersistentRecord;
-use protorune::message::{MessageContext, MessageContextParcel};
+use protorune_support::message::MessageContext;
 #[allow(unused_imports)]
-use protorune::tables::{RuneTable, RUNES};
-use protorune_support::balance_sheet::BalanceSheet;
-use protorune_support::utils::{outpoint_encode, tx_hex_to_txid};
+use protorune_support::tables::{RuneTable, RUNES};
 use std::sync::Arc;
 
 #[allow(unused_imports)]
@@ -184,7 +199,7 @@ pub fn is_genesis(height: u64) -> bool {
     is_genesis
 }
 
-pub fn genesis(block: &Block) -> Result<()> {
+pub fn genesis(_block: &Block) -> Result<()> {
     IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 2, tx: 0 }).into())
         .set(Arc::new(compress(genesis_alkane_bytes())?));
@@ -196,157 +211,34 @@ pub fn genesis(block: &Block) -> Result<()> {
         .set(Arc::new(compress(fr_btc_bytes())?));
     let mut atomic: AtomicPointer = AtomicPointer::default();
     sequence_pointer(&atomic).set_value::<u128>(1);
-    let myself = AlkaneId { block: 2, tx: 0 };
-    let fr_btc = AlkaneId { block: 32, tx: 0 };
-    let fr_sigil = AlkaneId { block: 32, tx: 1 };
-    let parcel = MessageContextParcel {
-        host: &WasmHost::default(),
-        atomic: atomic.derive(&IndexPointer::default()),
-        runes: vec![],
-        transaction: Transaction {
-            version: bitcoin::blockdata::transaction::Version::ONE,
-            input: vec![],
-            output: vec![],
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-        },
-        block: block.clone(),
-        height: genesis::GENESIS_BLOCK,
-        pointer: 0,
-        refund_pointer: 0,
-        calldata: (Cellpack {
-            target: myself.clone(),
-            inputs: vec![0],
-        })
-        .encipher(),
-        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-        txindex: 0,
-        vout: 0,
-        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-    };
-    let parcel2 = MessageContextParcel {
-        host: &WasmHost::default(),
-        atomic: atomic.derive(&IndexPointer::default()),
-        runes: vec![],
-        transaction: Transaction {
-            version: bitcoin::blockdata::transaction::Version::ONE,
-            input: vec![],
-            output: vec![],
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-        },
-        block: block.clone(),
-        height: genesis::GENESIS_BLOCK,
-        pointer: 0,
-        refund_pointer: 0,
-        calldata: (Cellpack {
-            target: fr_btc.clone(),
-            inputs: vec![0],
-        })
-        .encipher(),
-        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-        txindex: 0,
-        vout: 0,
-        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-    };
-    let parcel3 = MessageContextParcel {
-        host: &WasmHost::default(),
-        atomic: atomic.derive(&IndexPointer::default()),
-        runes: vec![],
-        transaction: Transaction {
-            version: bitcoin::blockdata::transaction::Version::ONE,
-            input: vec![],
-            output: vec![],
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-        },
-        block: block.clone(),
-        height: genesis::GENESIS_BLOCK,
-        pointer: 0,
-        refund_pointer: 0,
-        calldata: (Cellpack {
-            target: fr_sigil.clone(),
-            inputs: vec![0, 1],
-        })
-        .encipher(),
-        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-        txindex: 0,
-        vout: 0,
-        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-    };
-    let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
-        Ok((a, b)) => Ok((a, b)),
-        Err(e) => {
-            println!("{:?}", e);
-            Err(e)
-        }
-    })?;
-    let (response3, _gas_used3) = (match simulate_parcel(&parcel2, u64::MAX) {
-        Ok((a, b)) => Ok((a, b)),
-        Err(e) => {
-            println!("{:?}", e);
-            Err(e)
-        }
-    })?;
-    let (response2, _gas_used2) = (match simulate_parcel(&parcel3, u64::MAX) {
-        Ok((a, b)) => Ok((a, b)),
-        Err(e) => {
-            println!("{:?}", e);
-            Err(e)
-        }
-    })?;
-    let outpoint_bytes = outpoint_encode(&OutPoint {
-        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
-        vout: 0,
-    })?;
-    <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
-        response.alkanes.into(),
-    )?
-    .save(
-        &mut atomic.derive(
-            &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
-                .OUTPOINT_TO_RUNES
-                .select(&outpoint_bytes),
-        ),
-        false,
+
+    let host = WasmHost::default();
+
+    // Manually trigger the genesis for the Alkanes protocol itself.
+    // This is a simplified, special-case indexing since it's the first one.
+    let _ = protorune_support::Protorune::<WasmHost>::index_transaction_ids(
+        _block,
+        genesis::GENESIS_BLOCK,
     );
-    <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
-        response2.alkanes.into(),
-    )?
-    .save(
-        &mut atomic.derive(
-            &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
-                .OUTPOINT_TO_RUNES
-                .select(&outpoint_bytes),
-        ),
-        false,
-    );
-    pipe_storagemap_to(
-        &response.storage,
-        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
-    );
-    pipe_storagemap_to(
-        &response3.storage,
-        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
-    );
-    pipe_storagemap_to(
-        &response2.storage,
-        &mut atomic
-            .derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_sigil.clone().into())),
-    );
-    atomic
-        .derive(&RUNES.OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
-        .set_value(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT);
-    atomic
-        .derive(
-            &RUNES
-                .HEIGHT_TO_TRANSACTION_IDS
-                .select_value::<u64>(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT),
-        )
-        .append(Arc::new(
-            hex::decode(genesis::GENESIS_OUTPOINT)?
-                .iter()
-                .cloned()
-                .rev()
-                .collect::<Vec<u8>>(),
-        ));
+
     atomic.commit();
     Ok(())
+}
+
+pub fn get_network() -> alkanes_support::network::Network {
+    if cfg!(feature = "mainnet") {
+        alkanes_support::network::Network::Bitcoin
+    } else if cfg!(feature = "testnet") {
+        alkanes_support::network::Network::Testnet
+    } else if cfg!(feature = "dogecoin") {
+        alkanes_support::network::Network::Dogecoin
+    } else if cfg!(feature = "bellscoin") {
+        alkanes_support::network::Network::Bellscoin
+    } else if cfg!(feature = "fractal") {
+        alkanes_support::network::Network::Fractal
+    } else if cfg!(feature = "luckycoin") {
+        alkanes_support::network::Network::Luckycoin
+    } else {
+        alkanes_support::network::Network::Regtest
+    }
 }

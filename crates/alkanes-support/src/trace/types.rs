@@ -1,7 +1,11 @@
 use crate::context::Context;
+use crate::id;
 use crate::id::AlkaneId;
+use crate::parcel;
 use crate::parcel::{AlkaneTransfer, AlkaneTransferParcel};
+use crate::proto::alkanes::KeyValuePair;
 use crate::proto;
+use crate::response;
 use crate::response::ExtendedCallResponse;
 use crate::utils::field_or_default;
 use protobuf::{Message, MessageField};
@@ -135,6 +139,58 @@ impl Into<proto::alkanes::AlkanesTraceEvent> for TraceEvent {
     }
 }
 
+impl From<id::AlkaneId> for proto::alkanes::AlkaneId {
+    fn from(v: id::AlkaneId) -> Self {
+        let mut result = proto::alkanes::AlkaneId::new();
+        result.block = MessageField::some(v.block.into());
+        result.tx = MessageField::some(v.tx.into());
+        result
+    }
+}
+
+impl From<parcel::AlkaneTransfer> for proto::alkanes::AlkaneTransfer {
+    fn from(v: parcel::AlkaneTransfer) -> Self {
+        let mut result = proto::alkanes::AlkaneTransfer::new();
+        result.id = MessageField::some(v.id.into());
+        result.value = MessageField::some(v.value.into());
+        result
+    }
+}
+
+impl From<u128> for proto::alkanes::Uint128 {
+    fn from(v: u128) -> Self {
+        let mut result = proto::alkanes::Uint128::new();
+        result.lo = (v & u64::MAX as u128) as u64;
+        result.hi = (v >> 64) as u64;
+        result
+    }
+}
+
+impl From<response::ExtendedCallResponse> for proto::alkanes::ExtendedCallResponse {
+    fn from(v: response::ExtendedCallResponse) -> Self {
+        let mut result = proto::alkanes::ExtendedCallResponse::new();
+        result.alkanes = v.alkanes.0.into_iter().map(|v| v.into()).collect();
+        result.storage = v.storage.0.into_iter().map(|(k, v)| {
+            let mut kvp = KeyValuePair::new();
+            kvp.key = k;
+            kvp.value = v;
+            kvp
+        }).collect();
+        result.data = v.data;
+        result
+    }
+}
+
+impl From<proto::alkanes::ExtendedCallResponse> for response::ExtendedCallResponse {
+    fn from(v: proto::alkanes::ExtendedCallResponse) -> Self {
+        let mut result = response::ExtendedCallResponse::default();
+        result.alkanes = AlkaneTransferParcel(v.alkanes.into_iter().map(|v| v.into()).collect());
+        result.storage = v.storage.into_iter().map(|v| (v.key, v.value)).collect();
+        result.data = v.data;
+        result
+    }
+}
+
 impl Into<TraceResponse> for proto::alkanes::ExtendedCallResponse {
     fn into(self) -> TraceResponse {
         <proto::alkanes::ExtendedCallResponse as Into<ExtendedCallResponse>>::into(self).into()
@@ -159,15 +215,13 @@ impl From<proto::alkanes::Context> for Context {
             myself: v
                 .myself
                 .into_option()
-                .ok_or("")
-                .and_then(|v| Ok(v.into()))
-                .unwrap_or_else(|_| AlkaneId::default()),
+                .map(|v| v.into())
+                .unwrap_or_else(AlkaneId::default),
             caller: v
                 .caller
                 .into_option()
-                .ok_or("")
-                .and_then(|v| Ok(v.into()))
-                .unwrap_or_else(|_| AlkaneId::default()),
+                .map(|v| v.into())
+                .unwrap_or_else(AlkaneId::default),
             vout: v.vout,
             incoming_alkanes: AlkaneTransferParcel(
                 v.incoming_alkanes
@@ -189,9 +243,8 @@ impl From<proto::alkanes::AlkanesExitContext> for TraceResponse {
         let response = v
             .response
             .into_option()
-            .ok_or("")
-            .and_then(|v| Ok(v.into()))
-            .unwrap_or_else(|_| ExtendedCallResponse::default());
+            .map(|v| v.into())
+            .unwrap_or_else(ExtendedCallResponse::default);
         TraceResponse {
             inner: response,
             fuel_used: 0,
@@ -205,9 +258,8 @@ impl From<proto::alkanes::TraceContext> for TraceContext {
             inner: v
                 .inner
                 .into_option()
-                .ok_or("")
-                .and_then(|v| Ok(v.into()))
-                .unwrap_or_else(|_| Context::default()),
+                .map(|v| v.into())
+                .unwrap_or_else(Context::default),
             fuel: v.fuel.into(),
             target: AlkaneId::default(),
         }
@@ -241,13 +293,13 @@ impl From<proto::alkanes::AlkanesTraceEvent> for TraceEvent {
                 }
                 proto::alkanes::alkanes_trace_event::Event::ExitContext(v) => {
                     match v.status.value() {
-                        0 => TraceEvent::ReturnContext(field_or_default(v.response)),
-                        1 => TraceEvent::RevertContext(field_or_default(v.response)),
-                        _ => TraceEvent::RevertContext(field_or_default(v.response)),
+                        0 => TraceEvent::ReturnContext(v.response.into_option().map(|v| v.into()).unwrap_or_default()),
+                        1 => TraceEvent::RevertContext(v.response.into_option().map(|v| v.into()).unwrap_or_default()),
+                        _ => TraceEvent::RevertContext(v.response.into_option().map(|v| v.into()).unwrap_or_default()),
                     }
                 }
                 proto::alkanes::alkanes_trace_event::Event::CreateAlkane(v) => {
-                    TraceEvent::CreateAlkane(field_or_default(v.new_alkane))
+                    TraceEvent::CreateAlkane(v.new_alkane.into_option().map(|v| v.into()).unwrap_or_default())
                 }
             }
         } else {
@@ -310,3 +362,28 @@ impl TryFrom<Vec<u8>> for Trace {
         Ok(proto::alkanes::AlkanesTrace::parse_from_bytes(reference)?.into())
     }
 }
+
+impl From<proto::alkanes::Uint128> for u128 {
+    fn from(v: proto::alkanes::Uint128) -> u128 {
+        (v.hi as u128) << 64 | v.lo as u128
+    }
+}
+
+impl From<proto::alkanes::AlkaneId> for id::AlkaneId {
+    fn from(v: proto::alkanes::AlkaneId) -> Self {
+        Self {
+            block: field_or_default(v.block),
+            tx: field_or_default(v.tx),
+        }
+    }
+}
+
+impl From<proto::alkanes::AlkaneTransfer> for parcel::AlkaneTransfer {
+    fn from(v: proto::alkanes::AlkaneTransfer) -> Self {
+        Self {
+            id: field_or_default(v.id),
+            value: field_or_default(v.value),
+        }
+    }
+}
+

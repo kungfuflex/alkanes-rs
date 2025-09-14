@@ -1,9 +1,47 @@
+use crate::balance_sheet::{BalanceSheet, ProtoruneRuneId};
+use crate::tables::RuneTable;
 use anyhow::Result;
+use bitcoin::{Block, BlockHash, OutPoint, Transaction};
 use metashrew_support::index_pointer::KeyValuePointer;
+use std::collections::BTreeSet;
 
 pub trait Host {
     type Pointer: KeyValuePointer;
     fn get(&self, key: &[u8]) -> Result<Vec<u8>>;
     fn flush(&self);
     fn println(&self, message: &str);
+    fn save_balance_sheet(&self, outpoint: &OutPoint, sheet: &BalanceSheet<Self>) -> Result<()> where Self: Sized;
+    fn initialized_protocol_index(&self) -> Result<()>;
+    fn add_to_indexable_protocols(&self, protocol_tag: u128) -> Result<()>;
+    fn index_height_to_block_hash(&self, height: u64, block_hash: &BlockHash) -> Result<()>;
+    fn index_transaction_ids(&self, block: &Block, height: u64) -> Result<()>;
+    fn index_outpoints(&self, block: &Block, height: u64) -> Result<()>;
+    fn index_spendables(&self, txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>>;
+    fn clear_balances(&self, key: &[u8]) -> Result<()>;
+    fn clear_balances_for_protocol(&self, key: &[u8], protocol_tag: u128) -> Result<()>;
+    fn set_rune_id_to_etching(&self, rune_id: &[u8], etching: &[u8]) -> Result<()>;
+    fn set_etching_to_rune_id(&self, etching: &[u8], rune_id: &[u8]) -> Result<()>;
+    fn set_rune_id_to_height(&self, rune_id: &[u8], height: u64) -> Result<()>;
+    fn set_divisibility(&self, etching: &[u8], divisibility: u128) -> Result<()>;
+    fn set_premine(&self, etching: &[u8], premine: u128) -> Result<()>;
+    fn set_amount(&self, etching: &[u8], amount: u128) -> Result<()>;
+    fn set_cap(&self, etching: &[u8], cap: u128) -> Result<()>;
+    fn set_mints_remaining(&self, etching: &[u8], mints_remaining: u128) -> Result<()>;
+    fn set_height_start(&self, etching: &[u8], height_start: u64) -> Result<()>;
+    fn set_height_end(&self, etching: &[u8], height_end: u64) -> Result<()>;
+    fn set_offset_start(&self, etching: &[u8], offset_start: u64) -> Result<()>;
+    fn set_offset_end(&self, etching: &[u8], offset_end: u64) -> Result<()>;
+    fn set_symbol(&self, etching: &[u8], symbol: u128) -> Result<()>;
+    fn set_spacers(&self, etching: &[u8], spacers: u128) -> Result<()>;
+    fn add_etching(&self, etching: &[u8]) -> Result<()>;
+    fn add_rune_to_height(&self, height: u64, etching: &[u8]) -> Result<()>;
+    fn set_storage_auth(&self, a: &[u8], b: &[u8]) -> Result<()>;
+    fn get_etching_from_rune_id(&self, rune_id: &[u8]) -> Result<Vec<u8>>;
+    fn get_spacers(&self, name: &[u8]) -> Result<u128>;
+    fn get_divisibility(&self, name: &[u8]) -> Result<u128>;
+    fn get_symbol(&self, name: &[u8]) -> Result<u128>;
+    fn append_etching(&self, name: &[u8]) -> Result<()>;
+    fn index_protorune(&self, protorune: &[u8], height: u64, rune_table: &RuneTable) -> Result<()>;
+    fn is_rune_mintable(&self, rune: &ProtoruneRuneId) -> Result<bool>;
+    fn get_balance_sheet(&self, outpoint_bytes: &[u8]) -> Result<BalanceSheet<Self>> where Self: Sized;
 }

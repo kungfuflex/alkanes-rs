@@ -1,5 +1,6 @@
 use anyhow::Result;
 use metashrew_support::utils::consume_sized_int;
+use protobuf::MessageField;
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use std::hash::{Hash, Hasher};
 
@@ -28,8 +29,8 @@ impl TryFrom<Vec<u8>> for AlkaneId {
 impl From<ProtoruneRuneId> for AlkaneId {
     fn from(id: ProtoruneRuneId) -> AlkaneId {
         AlkaneId {
-            block: id.block,
-            tx: id.tx,
+            block: id.height.into_option().unwrap_or_default().into(),
+            tx: id.txindex.into_option().unwrap_or_default().into(),
         }
     }
 }
@@ -37,8 +38,9 @@ impl From<ProtoruneRuneId> for AlkaneId {
 impl Into<ProtoruneRuneId> for AlkaneId {
     fn into(self) -> ProtoruneRuneId {
         ProtoruneRuneId {
-            block: self.block,
-            tx: self.tx,
+            height: MessageField::some(self.block.into()),
+            txindex: MessageField::some(self.tx.into()),
+            special_fields: Default::default(),
         }
     }
 }

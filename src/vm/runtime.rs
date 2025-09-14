@@ -43,7 +43,7 @@ impl Default for AlkanesRuntimeContext {
             returndata: Default::default(),
             inputs: Default::default(),
             message: Box::new(MessageContextParcel {
-                host: &WasmHost::default(),
+                host: WasmHost::default(),
                 ..Default::default()
             }),
             trace: Default::default(),

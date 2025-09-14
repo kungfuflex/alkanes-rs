@@ -1,8 +1,9 @@
+use crate::host::Host;
 use crate::tables::RuneTable;
 use crate::{balance_sheet::load_sheet, tables};
 use anyhow::{anyhow, Result};
 use bitcoin;
-use crate::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
+use crate::balance_sheet::{ProtoruneRuneId};
 use crate::proto;
 use crate::proto::protorune::{
     Outpoint,
@@ -38,17 +39,17 @@ pub fn core_outpoint_to_proto(outpoint: &OutPoint) -> Outpoint {
     }
 }
 
-pub fn protorune_outpoint_to_outpoint_response(
+pub fn protorune_outpoint_to_outpoint_response<H: Host + Default>(
+    host: &H,
     outpoint: &OutPoint,
-    protocol_id: u128,
+    _protocol_id: u128,
 ) -> Result<OutpointResponse> {
     //    println!("protocol_id: {}", protocol_id);
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
     let balance_sheet = load_sheet(
-        &tables::RuneTable::for_protocol(protocol_id)
-            .OUTPOINT_TO_RUNES
-            .select(&outpoint_bytes),
-    );
+        host,
+        &outpoint_bytes,
+    )?;
 
     let mut height: u128 = tables::RUNES
         .OUTPOINT_TO_HEIGHT
@@ -64,7 +65,7 @@ pub fn protorune_outpoint_to_outpoint_response(
         .ok_or("")
         .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
 
-    if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
+    if let Some((rune_id, _)) = balance_sheet.balances.iter().next() {
         height = rune_id.height.as_ref().unwrap().lo.into();
         txindex = rune_id.txindex.as_ref().unwrap().lo.into();
     }
@@ -84,9 +85,9 @@ pub fn protorune_outpoint_to_outpoint_response(
     })
 }
 
-pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
+pub fn rune_outpoint_to_outpoint_response<H: Host + Default>(host: &H, outpoint: &OutPoint) -> Result<OutpointResponse> {
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
+    let balance_sheet = load_sheet(host, &outpoint_bytes)?;
 
     let mut height: u128 = tables::RUNES
         .OUTPOINT_TO_HEIGHT
@@ -102,7 +103,7 @@ pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<Outpoin
         .ok_or("")
         .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
 
-    if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
+    if let Some((rune_id, _)) = balance_sheet.balances.iter().next() {
         height = rune_id.height.as_ref().unwrap().lo.into();
         txindex = rune_id.txindex.as_ref().unwrap().lo.into();
     }
@@ -122,9 +123,9 @@ pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<Outpoin
     })
 }
 
-pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
+pub fn outpoint_to_outpoint_response<H: Host + Default>(host: &H, outpoint: &OutPoint) -> Result<OutpointResponse> {
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
+    let balance_sheet = load_sheet(host, &outpoint_bytes)?;
     let mut height: u128 = tables::RUNES
         .OUTPOINT_TO_HEIGHT
         .select(&outpoint_bytes)
@@ -139,7 +140,7 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
         .ok_or("")
         .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
 
-    if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
+    if let Some((rune_id, _)) = balance_sheet.balances.iter().next() {
         height = rune_id.height.as_ref().unwrap().lo.into();
         txindex = rune_id.txindex.as_ref().unwrap().lo.into();
     }
@@ -159,7 +160,7 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
     })
 }
 
-pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
+pub fn runes_by_address<H: Host + Default>(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::WalletRequest::parse_from_bytes(input).ok() {
         result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
@@ -181,7 +182,8 @@ pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
                 };
                 let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
                 if req.wallet.len() == _address.len() {
-                    Some(outpoint_to_outpoint_response(&v))
+                    let host: H = Default::default();
+                    Some(outpoint_to_outpoint_response(&host, &v))
                 } else {
                     None
                 }
@@ -191,7 +193,7 @@ pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     Ok(result)
 }
 
-pub fn protorunes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
+pub fn protorunes_by_outpoint<H: Host + Default>(input: &Vec<u8>) -> Result<OutpointResponse> {
     match proto::protorune::OutpointWithProtocol::parse_from_bytes(input).ok() {
         Some(req) => {
             let protocol_tag: u128 = req.protocol.into_option().unwrap().into();
@@ -202,13 +204,14 @@ pub fn protorunes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
                 ),
                 vout: req.vout,
             };
-            protorune_outpoint_to_outpoint_response(&outpoint, protocol_tag)
+            let host: H = Default::default();
+            protorune_outpoint_to_outpoint_response(&host, &outpoint, protocol_tag)
         }
         None => Err(anyhow!("malformed request")),
     }
 }
 
-pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
+pub fn runes_by_outpoint<H: Host + Default>(input: &Vec<u8>) -> Result<OutpointResponse> {
     match proto::protorune::Outpoint::parse_from_bytes(input).ok() {
         Some(req) => {
             let outpoint = OutPoint {
@@ -217,13 +220,14 @@ pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
                 ),
                 vout: req.vout,
             };
-            rune_outpoint_to_outpoint_response(&outpoint)
+            let host: H = Default::default();
+            rune_outpoint_to_outpoint_response(&host, &outpoint)
         }
         None => Err(anyhow!("malformed request")),
     }
 }
 
-pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
+pub fn protorunes_by_address<H: Host + Default>(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input).ok() {
         result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
@@ -245,7 +249,9 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
                 };
                 let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
                 if req.wallet.len() == _address.len() {
+                    let host: H = Default::default();
                     Some(protorune_outpoint_to_outpoint_response(
+                        &host,
                         &v,
                         req.clone().protocol_tag.into_option().unwrap().into(),
                     ))
@@ -258,7 +264,7 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     Ok(result)
 }
 
-pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
+pub fn protorunes_by_address2<H: Host + Default>(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input).ok() {
         result.outpoints = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
@@ -267,7 +273,9 @@ pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
                 let mut cursor = Cursor::new(ptr.get().as_ref().clone());
                 let outpoint =
                     consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?;
+                let host: H = Default::default();
                 protorune_outpoint_to_outpoint_response(
+                    &host,
                     &outpoint,
                     req.clone().protocol_tag.into_option().unwrap().into(),
                 )

@@ -1,3 +1,14 @@
+/*
+ * Chadson's Journal:
+ *
+ * I've updated this file to align with the changes in `network.rs`.
+ * The `get_network()` function now returns a `bitcoin::Network` enum directly,
+ * which satisfies the `AsRef<bitcoin::network::Params>` trait bound required
+ * by `bitcoin::Address::from_script`.
+ *
+ * I have also removed the now-unused `Network` from the `bitcoin` import statement,
+ * cleaning up a compiler warning.
+ */
 use crate::network::get_network;
 use anyhow::Result;
 use bitcoin::consensus::{
@@ -6,22 +17,15 @@ use bitcoin::consensus::{
 };
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, Txid};
-use metashrew_support::utils::{is_empty, remaining_slice};
 use ordinals::varint;
 use std::{io::BufRead};
-use bech32::Hrp;
 use bitcoin::Script;
-use metashrew_support::address::{AddressEncoding, Payload};
+use metashrew_support::utils::{is_empty, remaining_slice};
 
 pub fn to_address_str(script: &Script) -> Result<String> {
-    let config = get_network();
-    Ok(AddressEncoding {
-        p2pkh_prefix: config.p2pkh_prefix,
-        p2sh_prefix: config.p2sh_prefix,
-        hrp: Hrp::parse_unchecked(&config.bech32_prefix),
-        payload: &Payload::from_script(script)?,
-    }
-    .to_string())
+    let network = get_network();
+    let address = bitcoin::Address::from_script(script, network)?;
+    Ok(address.to_string())
 }
 
 pub fn split_bytes(bytes: &[u8]) -> Vec<u128> {

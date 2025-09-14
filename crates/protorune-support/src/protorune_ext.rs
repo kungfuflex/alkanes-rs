@@ -1,8 +1,10 @@
 use crate::proto::protorune::{ProtoruneRuneId, Uint128};
+use crate::protostone::Protostone;
+use anyhow::Result;
+use bitcoin::Transaction;
+use ordinals::Runestone;
 use protobuf::Message;
 use std::cmp::Ordering;
-
-impl Eq for ProtoruneRuneId {}
 
 impl Ord for ProtoruneRuneId {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -17,6 +19,12 @@ impl PartialOrd for ProtoruneRuneId {
         Some(self.cmp(other))
     }
 }
+
+pub trait ProtoruneExt {
+    fn from_runestone(runestone: &Runestone, transaction: &Transaction) -> Result<Vec<Protostone>>;
+}
+
+
 
 impl From<ordinals::RuneId> for ProtoruneRuneId {
     fn from(rune_id: ordinals::RuneId) -> Self {

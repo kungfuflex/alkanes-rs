@@ -1,10 +1,35 @@
-use crate::network;
-use crate::unwrap::{
-    deserialize_payments, fr_btc_payments_at_block, fr_btc_storage_pointer, update_last_block,
+// Copyright 2024-present, Fractal Industries, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! # Alkanes
+//!
+//! This crate is the host-specific implementation for the Alkanes protocol,
+//! designed to run in a WASM environment provided by `metashrew-core`.
+//! It implements the `AlkanesHost` and `protorune_support::host::Host` traits.
+//!
+//! The core application logic is abstracted into the `alkanes-support` and
+//! `protorune-support` crates, making it environment-agnostic. This crate
+//!, `alkanes`, provides the concrete implementations that bridge the generic
+//! logic to the specific capabilities of the WASM host.
+
+use crate::view::{
+    meta_safe, multi_simulate_safe, parcels_from_protobuf, simulate_safe,
 };
-use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate_safe};
-use crate::proto;
-use bitcoin::{Block, OutPoint};
+use alkanes_support::configure_network;
+use alkanes_support::proto;
+use anyhow::{anyhow, Result};
+use bitcoin::{Block, OutPoint, hashes::Hash};
 #[allow(unused_imports)]
 use metashrew_core::{
     flush, input, println,
@@ -17,10 +42,13 @@ use metashrew_support::compat::export_bytes;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
 use protobuf::{Message, MessageField};
+use std::collections::BTreeSet;
 use std::io::Cursor;
-use view::parcels_from_protobuf;
+use std::ops::{Deref, DerefMut};
+
 pub mod block;
 pub mod etl;
+pub mod from;
 pub mod message;
 pub mod network;
 pub mod precompiled;
@@ -32,64 +60,238 @@ pub mod unwrap;
 pub mod utils;
 pub mod view;
 pub mod vm;
+
 use alkanes_support::host::AlkanesHost;
-use anyhow::Result;
-use std::collections::BTreeSet;
-
-#[derive(Default)]
-pub struct WasmHost;
-
 use alkanes_support::network::Network;
+use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use protorune_support::host::Host;
-use metashrew_core::index_pointer::IndexPointer;
+use alkanes_support::view::{Balance, Rune, ViewHost};
+use bitcoin::TxOut;
 use protorune_support::ProtoruneRuneId;
-use crate::vm::fuel::FuelTank;
 
-use metashrew_core::index_pointer::AtomicPointer;
+#[derive(Clone)]
+pub struct WasmHost(AtomicPointer);
+
+impl Default for WasmHost {
+    fn default() -> Self {
+        Self(AtomicPointer::default())
+    }
+}
+
+impl Deref for WasmHost {
+    type Target = AtomicPointer;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for WasmHost {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl ViewHost for WasmHost {
+    fn get_outpoints_by_address(&self, address: &str) -> Result<Vec<OutPoint>> {
+        todo!()
+    }
+    fn get_balances_by_outpoint(
+        &self,
+        outpoint: &OutPoint,
+        protocol_tag: u128,
+    ) -> Result<Vec<Balance>> {
+        todo!()
+    }
+    fn get_output(&self, outpoint: &OutPoint) -> Result<TxOut> {
+        todo!()
+    }
+    fn get_height(&self, outpoint: &OutPoint) -> Result<u32> {
+        todo!()
+    }
+    fn get_txindex(&self, outpoint: &OutPoint) -> Result<u32> {
+        todo!()
+    }
+    fn get_runes_by_height(&self, height: u32, protocol_tag: u128) -> Result<Vec<Rune>> {
+        todo!()
+    }
+    fn sequence_pointer(&self) -> Self::Pointer {
+        todo!()
+    }
+    fn get_alkane_inventory(&self, owner_id: &alkanes_support::id::AlkaneId) -> Result<Vec<alkanes_support::id::AlkaneId>> {
+        todo!()
+    }
+    fn get_balance(&self, owner_id: &alkanes_support::id::AlkaneId, alkane_id: &alkanes_support::id::AlkaneId) -> Result<u128> {
+        todo!()
+    }
+    fn get_alkane_storage_at(&self, alkane_id: &alkanes_support::id::AlkaneId, path: &[u8]) -> Result<Vec<u8>> {
+        todo!()
+    }
+    fn get_bytecode_by_alkane_id(&self, alkane_id: &alkanes_support::id::AlkaneId) -> Result<Vec<u8>> {
+        todo!()
+    }
+}
 
 impl Host for WasmHost {
-    type Pointer = AtomicPointer;
+    type Pointer = metashrew_core::index_pointer::AtomicPointer;
     fn get(&self, key: &[u8]) -> Result<Vec<u8>> {
-        Ok(IndexPointer::new(key.to_vec()).get().as_ref().clone())
+        Ok(IndexPointer::wrap(&key.to_vec())
+            .get()
+            .as_ref()
+            .clone())
     }
     fn flush(&self) {
-        flush();
+        metashrew_core::flush();
     }
     fn println(&self, msg: &str) {
-        println!("{}", msg);
+        metashrew_core::println!("{}", msg);
+    }
+    fn save_balance_sheet(
+        &self,
+        _outpoint: &OutPoint,
+        _balance_sheet: &protorune_support::balance_sheet::BalanceSheet<WasmHost>,
+    ) -> Result<()> {
+        todo!()
+    }
+    fn initialized_protocol_index(&self) -> Result<()> {
+        todo!()
+    }
+    fn add_to_indexable_protocols(&self, _protocol_id: u128) -> Result<()> {
+        todo!()
+    }
+    fn index_height_to_block_hash(&self, _height: u64, _block_hash: &bitcoin::BlockHash) -> Result<()> {
+        todo!()
+    }
+    fn index_transaction_ids(&self, _block: &Block, _height: u64) -> Result<()> {
+        todo!()
+    }
+    fn index_outpoints(&self, _block: &Block, _height: u64) -> Result<()> {
+        todo!()
+    }
+    fn index_spendables(
+        &self,
+        _transactions: &Vec<bitcoin::Transaction>,
+    ) -> Result<BTreeSet<Vec<u8>>> {
+        todo!()
+    }
+    fn clear_balances(&self, _script_pubkey: &[u8]) -> Result<()> {
+        todo!()
+    }
+    fn clear_balances_for_protocol(&self, _script_pubkey: &[u8], _protocol_id: u128) -> Result<()> {
+        todo!()
+    }
+    fn set_rune_id_to_etching(&self, _rune_id: &[u8], _etching: &[u8]) -> Result<()> {
+        todo!()
+    }
+    fn set_etching_to_rune_id(&self, _etching: &[u8], _rune_id: &[u8]) -> Result<()> {
+        todo!()
+    }
+    fn set_rune_id_to_height(&self, _rune_id: &[u8], _height: u64) -> Result<()> {
+        todo!()
+    }
+    fn set_divisibility(&self, _rune_id: &[u8], _divisibility: u128) -> Result<()> {
+        todo!()
+    }
+    fn set_premine(&self, _rune_id: &[u8], _premine: u128) -> Result<()> {
+        todo!()
+    }
+    fn set_amount(&self, _rune_id: &[u8], _amount: u128) -> Result<()> {
+        todo!()
+    }
+    fn set_cap(&self, _rune_id: &[u8], _cap: u128) -> Result<()> {
+        todo!()
+    }
+    fn set_mints_remaining(&self, _rune_id: &[u8], _mints_remaining: u128) -> Result<()> {
+        todo!()
+    }
+    fn set_height_start(&self, _rune_id: &[u8], _height_start: u64) -> Result<()> {
+        todo!()
+    }
+    fn set_height_end(&self, _rune_id: &[u8], _height_end: u64) -> Result<()> {
+        todo!()
+    }
+    fn set_offset_start(&self, _rune_id: &[u8], _offset_start: u64) -> Result<()> {
+        todo!()
+    }
+    fn set_offset_end(&self, _rune_id: &[u8], _offset_end: u64) -> Result<()> {
+        todo!()
+    }
+    fn set_symbol(&self, _rune_id: &[u8], _symbol: u128) -> Result<()> {
+        todo!()
+    }
+    fn set_spacers(&self, _rune_id: &[u8], _spacers: u128) -> Result<()> {
+        todo!()
+    }
+    fn add_etching(&self, _etching: &[u8]) -> Result<()> {
+        todo!()
+    }
+    fn add_rune_to_height(&self, _height: u64, _rune_id: &[u8]) -> Result<()> {
+        todo!()
+    }
+    fn set_storage_auth(&self, _alkane_id: &[u8], _auth: &[u8]) -> Result<()> {
+        todo!()
+    }
+    fn get_etching_from_rune_id(&self, _rune_id: &[u8]) -> Result<Vec<u8>> {
+        todo!()
+    }
+    fn get_spacers(&self, _rune_id: &[u8]) -> Result<u128> {
+        todo!()
+    }
+    fn get_divisibility(&self, _rune_id: &[u8]) -> Result<u128> {
+        todo!()
+    }
+    fn get_symbol(&self, _rune_id: &[u8]) -> Result<u128> {
+        todo!()
+    }
+    fn append_etching(&self, _etching: &[u8]) -> Result<()> {
+        todo!()
+    }
+    fn index_protorune(
+        &self,
+        _outpoint: &[u8],
+        _height: u64,
+        _runes: &protorune_support::tables::RuneTable,
+    ) -> Result<()> {
+        todo!()
+    }
+    fn is_rune_mintable(
+        &self,
+        _rune_id: &protorune_support::ProtoruneRuneId,
+    ) -> Result<bool> {
+        todo!()
+    }
+    fn get_balance_sheet(
+        &self,
+        _script_pubkey: &[u8],
+    ) -> Result<protorune_support::balance_sheet::BalanceSheet<WasmHost>> {
+        todo!()
     }
 }
 
 impl AlkanesHost for WasmHost {
     fn index_block(&self, block: &Block, height: u32) -> Result<BTreeSet<Vec<u8>>> {
         let network = if cfg!(feature = "mainnet") {
-            Network::Bitcoin
+            alkanes_support::network::Network::Bitcoin
         } else if cfg!(feature = "testnet") {
-            Network::Testnet
+            alkanes_support::network::Network::Testnet
         } else if cfg!(feature = "regtest") {
-            Network::Regtest
+            alkanes_support::network::Network::Regtest
         } else if cfg!(feature = "signet") {
-            Network::Signet
+            alkanes_support::network::Network::Signet
         } else if cfg!(feature = "luckycoin") {
-            Network::Luckycoin
+            alkanes_support::network::Network::Luckycoin
         } else if cfg!(feature = "dogecoin") {
-            Network::Dogecoin
+            alkanes_support::network::Network::Dogecoin
         } else if cfg!(feature = "bellscoin") {
-            Network::Bellscoin
+            alkanes_support::network::Network::Bellscoin
         } else if cfg!(feature = "fractal") {
-            Network::Fractal
+            alkanes_support::network::Network::Fractal
         } else {
-            Network::Regtest
+            alkanes_support::network::Network::Regtest
         };
         alkanes_support::index_block::<_, crate::message::AlkaneMessageContext>(self, block, height, network)
     }
-    fn flush(&self) {
-        flush();
-    }
-    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.get(key).ok_or(anyhow!("key not found")).ok()
-    }
 }
+
 
 /*
 All the #[no_mangle] configs will fail during github action cargo test step
@@ -115,7 +317,7 @@ Thus, going to add not(test) to all these functions
 #[cfg(not(test))]
 #[no_mangle]
 pub fn multisimluate() -> i32 {
-    configure_network();
+    configure_network(crate::network::get_network());
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
@@ -124,6 +326,7 @@ pub fn multisimluate() -> i32 {
     let responses = multi_simulate_safe(
         &parcels_from_protobuf(
             proto::alkanes::MultiSimulateRequest::parse_from_bytes(reader).unwrap(),
+            WasmHost::default(),
         ),
         u64::MAX,
     );
@@ -148,14 +351,15 @@ pub fn multisimluate() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn simulate() -> i32 {
-    configure_network();
+    configure_network(crate::network::get_network());
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
     let mut result: proto::alkanes::SimulateResponse = proto::alkanes::SimulateResponse::new();
     match simulate_safe(
-        &parcel_from_protobuf(
+        &crate::view::parcel_from_protobuf(
             proto::alkanes::MessageContextParcel::parse_from_bytes(reader).unwrap(),
+            WasmHost::default(),
         ),
         u64::MAX,
     ) {
@@ -173,18 +377,19 @@ pub fn simulate() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn sequence() -> i32 {
-    export_bytes(view::sequence().unwrap())
+    let host = WasmHost::default();
+    export_bytes(crate::view::sequence(&host).unwrap())
 }
 
 #[cfg(not(test))]
 #[no_mangle]
 pub fn meta() -> i32 {
-    configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    match meta_safe(&parcel_from_protobuf(
+    match meta_safe(&crate::view::parcel_from_protobuf(
         proto::alkanes::MessageContextParcel::parse_from_bytes(reader).unwrap(),
+        WasmHost::default(),
     )) {
         Ok(response) => export_bytes(response),
         Err(_) => export_bytes(vec![]),
@@ -194,11 +399,10 @@ pub fn meta() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn runesbyaddress() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::WalletResponse =
-        protorune::view::runes_by_address(&consume_to_end(&mut data).unwrap())
+        protorune_support::view::runes_by_address::<WasmHost>(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
     export_bytes(result.write_to_bytes().unwrap())
 }
@@ -206,20 +410,18 @@ pub fn runesbyaddress() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn unwrap() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let height = consume_sized_int::<u32>(&mut data).unwrap();
-    export_bytes(view::unwrap(height.into()).unwrap())
+    export_bytes(crate::view::unwrap(height.into()).unwrap())
 }
 
 #[cfg(not(test))]
 #[no_mangle]
 pub fn runesbyoutpoint() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::OutpointResponse =
-        protorune::view::runes_by_outpoint(&consume_to_end(&mut data).unwrap())
+        protorune_support::view::runes_by_outpoint::<WasmHost>(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::new());
     export_bytes(result.write_to_bytes().unwrap())
 }
@@ -227,11 +429,10 @@ pub fn runesbyoutpoint() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn spendablesbyaddress() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::WalletResponse =
-        view::protorunes_by_address(&consume_to_end(&mut data).unwrap())
+        crate::view::protorunes_by_address(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
     export_bytes(result.write_to_bytes().unwrap())
 }
@@ -239,14 +440,13 @@ pub fn spendablesbyaddress() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn protorunesbyaddress() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let input_data = consume_to_end(&mut data).unwrap();
     //  let _request = protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(&input_data).unwrap();
 
     let mut result: protorune_support::proto::protorune::WalletResponse =
-        view::protorunes_by_address(&input_data)
+        crate::view::protorunes_by_address(&input_data)
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
 
     result.outpoints = result
@@ -254,8 +454,8 @@ pub fn protorunesbyaddress() -> i32 {
         .into_iter()
         .filter_map(|v| {
             if v.clone()
-                .balances
-                .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new())
+                .special_fields.as_ref()
+                .unwrap()
                 .entries
                 .len()
                 == 0
@@ -273,21 +473,19 @@ pub fn protorunesbyaddress() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn getblock() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let input_data = consume_to_end(&mut data).unwrap();
-    export_bytes(view::getblock(&input_data).unwrap())
+    export_bytes(crate::view::getblock(&input_data).unwrap())
 }
 
 #[cfg(not(test))]
 #[no_mangle]
 pub fn protorunesbyheight() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::RunesResponse =
-        view::protorunes_by_height(&consume_to_end(&mut data).unwrap())
+        crate::view::protorunes_by_height(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::new());
     export_bytes(result.write_to_bytes().unwrap())
 }
@@ -295,13 +493,12 @@ pub fn protorunesbyheight() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn alkanes_id_to_outpoint() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     // first 4 bytes come in as height, not used
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let data_vec = consume_to_end(&mut data).unwrap();
     let result: alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse =
-        view::alkanes_id_to_outpoint(&data_vec).unwrap_or_else(|err| {
+        crate::view::alkanes_id_to_outpoint(&data_vec).unwrap_or_else(|err| {
             eprintln!("Error in alkanes_id_to_outpoint: {:?}", err);
             alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::new()
         });
@@ -311,44 +508,43 @@ pub fn alkanes_id_to_outpoint() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn traceblock() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let height = consume_sized_int::<u32>(&mut data).unwrap();
-    export_bytes(view::traceblock(height).unwrap())
+    export_bytes(crate::view::traceblock(height).unwrap())
 }
 
 #[cfg(not(test))]
 #[no_mangle]
 pub fn trace() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let outpoint: OutPoint = protorune_support::proto::protorune::Outpoint::parse_from_bytes(
+    let outpoint_proto = protorune_support::proto::protorune::Outpoint::parse_from_bytes(
         &consume_to_end(&mut data).unwrap(),
     )
-    .unwrap()
-    .try_into()
     .unwrap();
-    export_bytes(view::trace(&outpoint).unwrap())
+    let outpoint: OutPoint = OutPoint {
+        txid: bitcoin::Txid::from_slice(&outpoint_proto.txid).unwrap(),
+        vout: outpoint_proto.vout,
+    };
+    export_bytes(crate::view::trace(&outpoint).unwrap())
 }
 
 #[cfg(not(test))]
 #[no_mangle]
 pub fn getbytecode() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    export_bytes(view::getbytecode(&consume_to_end(&mut data).unwrap()).unwrap_or_default())
+    let host = WasmHost::default();
+    export_bytes(crate::view::getbytecode(&host, &consume_to_end(&mut data).unwrap()).unwrap_or_default())
 }
 
 #[cfg(not(test))]
 #[no_mangle]
 pub fn protorunesbyoutpoint() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::OutpointResponse =
-        view::protorunes_by_outpoint(&consume_to_end(&mut data).unwrap())
+        crate::view::protorunes_by_outpoint(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::new());
 
     export_bytes(result.write_to_bytes().unwrap())
@@ -357,11 +553,10 @@ pub fn protorunesbyoutpoint() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn runesbyheight() -> i32 {
-    configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::RunesResponse =
-        protorune::view::runes_by_height(&consume_to_end(&mut data).unwrap())
+        protorune_support::view::runes_by_height(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::new());
     export_bytes(result.write_to_bytes().unwrap())
 }
@@ -373,7 +568,9 @@ pub fn getinventory() -> i32 {
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    let result = view::getinventory(
+    let host = WasmHost::default();
+    let result = crate::view::getinventory(
+        &host,
         &proto::alkanes::AlkaneInventoryRequest::parse_from_bytes(reader)
             .unwrap()
             .into(),
@@ -388,7 +585,9 @@ pub fn getstorageat() -> i32 {
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    let result = view::getstorageat(
+    let host = WasmHost::default();
+    let result = crate::view::getstorageat(
+        &host,
         &proto::alkanes::AlkaneStorageRequest::parse_from_bytes(reader)
             .unwrap()
             .into(),
@@ -411,20 +610,21 @@ pub fn _start() {
     let block: Block =
         consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
 
-    let host = WasmHost {};
+    let host = WasmHost::default();
     host.index_block(&block, height).unwrap();
     etl::index_extensions(height, &block);
-    AlkanesHost::flush(&host);
+    <WasmHost as Host>::flush(&host);
 }
 
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use alkanes_support::message::{AlkaneMessageContext, MessageContext as AlkaneMessage};
+    use crate::message::AlkaneMessageContext;
     use protobuf::{Message, SpecialFields};
-    use protorune::view::{rune_outpoint_to_outpoint_response, runes_by_address, runes_by_height};
-    use protorune::Protorune;
     use protorune_support::proto::protorune::{RunesByHeightRequest, Uint128, WalletRequest};
+    use protorune_support::view::{
+        rune_outpoint_to_outpoint_response, runes_by_address, runes_by_height,
+    };
     use std::fs;
     use std::path::PathBuf;
 
@@ -443,11 +643,8 @@ mod unit_tests {
             consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
         assert!(height == 849236);
 
-        // calling index_block directly fails since genesis(&block).unwrap(); gets segfault
-        // index_block(&block, height).unwrap();
-        configure_network();
-        Protorune::index_block::<WasmHost, AlkaneMessageContext>(block.clone(), height.into())
-            .unwrap();
+        let host = WasmHost::default();
+        host.index_block(&block, height).unwrap();
 
         let req_height: Vec<u8> = (RunesByHeightRequest {
             height: 849236,
@@ -490,4 +687,3 @@ mod unit_tests {
         // assert!(false);
     }
 }
-

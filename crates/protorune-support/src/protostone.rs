@@ -9,7 +9,6 @@ use anyhow::{anyhow, Result};
 use bitcoin::{Block, Transaction, Txid};
 use crate::host::Host;
 use serde::{Deserialize, Serialize};
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use ordinals::Runestone;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -41,6 +40,33 @@ impl Protostone {
     // Placeholder implementation
     pub fn decipher(_runes: &[u128]) -> Result<Vec<Protostone>> {
         Ok(vec![])
+    }
+}
+
+impl crate::protorune_ext::ProtoruneExt for Protostone {
+    fn from_runestone(runestone: &Runestone, _transaction: &Transaction) -> Result<Vec<Protostone>> {
+        let mut protostones = vec![];
+        if let Some(protocol) = &runestone.protocol {
+            let mut field = protocol.clone();
+            while field.len() > 0 {
+                let protocol_tag = field.remove(0);
+                let len = field.remove(0);
+                let mut message = vec![];
+                for _ in 0..len {
+                    message.push(field.remove(0));
+                }
+                protostones.push(Protostone {
+                    protocol_tag,
+                    pointer: runestone.pointer,
+                    refund: None,
+                    message,
+                    edicts: runestone.edicts.clone(),
+                    burn: None,
+                    from: None,
+                });
+            }
+        }
+        Ok(protostones)
     }
 }
 
@@ -82,34 +108,30 @@ pub trait MessageProcessor<H: Host> {
     /// Return: true if success, false if failure and refunded to refund pointer
     fn process_message<T: MessageContext<H>>(
         &self,
-        atomic: &mut AtomicPointer,
+        host: &H,
         transaction: &Transaction,
         txindex: u32,
         block: &Block,
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
         num_protostones: usize,
-    ) -> Result<bool>
-    where
-        H::Pointer: Default + Clone;
+    ) -> Result<bool>;
 }
-impl<H: Host + Default> MessageProcessor<H> for Protostone {
+impl<H: Host + Default + Clone> MessageProcessor<H> for Protostone {
     fn process_message<T: MessageContext<H>>(
         &self,
-        atomic: &mut AtomicPointer,
+        host: &H,
         transaction: &Transaction,
         txindex: u32,
         block: &Block,
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
         num_protostones: usize,
     ) -> Result<bool>
-    where
-        H::Pointer: Default + Clone,
     {
         // Validate output indexes and protomessage_vout
         let num_outputs = transaction.output.len();
@@ -158,14 +180,10 @@ impl<H: Host + Default> MessageProcessor<H> for Protostone {
         let initial_sheet = balances_by_output
             .get(&protomessage_vout)
             .map(|v| v.clone())
-            .unwrap_or_else(|| BalanceSheet::<H::Pointer>::default());
-
-        // Create a nested atomic transaction for the entire message processing
-        atomic.checkpoint();
+            .unwrap_or_else(|| BalanceSheet::<H>::default());
 
         let parcel = MessageContextParcel {
-            atomic: atomic.derive(&IndexPointer::default()),
-            host: &H::default(),
+            host: H::default(),
             runes: RuneTransfer::from_balance_sheet(initial_sheet.clone()),
             transaction: transaction.clone(),
             block: block.clone(),
@@ -179,7 +197,7 @@ impl<H: Host + Default> MessageProcessor<H> for Protostone {
                 balances_by_output
                     .get(&u32::MAX)
                     .map(|v| v.clone())
-                    .unwrap_or_else(|| BalanceSheet::<H::Pointer>::default()),
+                    .unwrap_or_else(|| BalanceSheet::<H>::default()),
             ),
             sheets: Box::new(Default::default()),
         };
@@ -187,26 +205,22 @@ impl<H: Host + Default> MessageProcessor<H> for Protostone {
         match T::handle(&parcel) {
             Ok(values) => {
                 match values.reconcile(
-                    atomic,
+                    host,
                     balances_by_output,
                     protomessage_vout,
                     pointer,
                     refund_pointer,
                 ) {
-                    Ok(_) => {
-                        atomic.commit();
-                        Ok(true)
-                    }
+                    Ok(_) => Ok(true),
                     Err(e) => {
-                        println!("Got error inside reconcile! {:?} \n\n", e);
-                        println!("Refunding to refund_pointer: {}", refund_pointer);
+                        host.println(&format!("Got error inside reconcile! {:?} \n\n", e));
+                        host.println(&format!("Refunding to refund_pointer: {}", refund_pointer));
 
-                        // Log the Bitcoin address again to make it clear this is the refund address being used
                         if refund_pointer < num_outputs as u32 {
                             if let Ok(address) = crate::utils::to_address_str(
                                 &transaction.output[refund_pointer as usize].script_pubkey,
                             ) {
-                                println!("RECONCILE ERROR REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}", refund_pointer, address);
+                                host.println(&format!("RECONCILE ERROR REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}", refund_pointer, address));
                             }
                         }
 
@@ -215,29 +229,26 @@ impl<H: Host + Default> MessageProcessor<H> for Protostone {
                             protomessage_vout,
                             refund_pointer,
                         )?;
-                        atomic.rollback();
                         Ok(false)
                     }
                 }
             }
             Err(e) => {
-                println!("Alkanes message reverted with error: {:?}", e);
-                println!("Refunding to refund_pointer: {}", refund_pointer);
+                host.println(&format!("Alkanes message reverted with error: {:?}", e));
+                host.println(&format!("Refunding to refund_pointer: {}", refund_pointer));
 
-                // Log the Bitcoin address again to make it clear this is the refund address being used
                 if refund_pointer < num_outputs as u32 {
                     if let Ok(address) = crate::utils::to_address_str(
                         &transaction.output[refund_pointer as usize].script_pubkey,
                     ) {
-                        println!(
+                        host.println(&format!(
                             "REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}",
                             refund_pointer, address
-                        );
+                        ));
                     }
                 }
 
                 refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
-                atomic.rollback();
 
                 Ok(false)
             }
@@ -246,28 +257,22 @@ impl<H: Host + Default> MessageProcessor<H> for Protostone {
 }
 
 use std::ops::Deref;
-pub trait Protostones<H: Host>: Deref<Target = [Protostone]>
-where
-    H::Pointer: Default + Clone,
-{
-    fn burns(&self) -> Result<Vec<Protoburn>>;
-    fn process_burns(
+pub trait Protostones: Deref<Target = [Protostone]> {
+    fn burns<H: Host>(&self) -> Result<Vec<Protoburn>>;
+    fn process_burns<H: Host + Clone + Default>(
         &self,
-        atomic: &mut AtomicPointer,
+        host: &H,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
     fn encipher(&self) -> Result<Vec<u128>>;
 }
 
-impl<H: Host> Protostones<H> for Vec<Protostone>
-where
-    H::Pointer: Default + Clone,
-{
+impl Protostones for Vec<Protostone> {
     fn encipher(&self) -> Result<Vec<u128>> {
         let mut values = Vec::<u128>::new();
         for stone in self {
@@ -278,7 +283,7 @@ where
         }
         Ok(split_bytes(&encode_varint_list(&values)))
     }
-    fn burns(&self) -> Result<Vec<Protoburn>> {
+    fn burns<H: Host>(&self) -> Result<Vec<Protoburn>> {
         Ok(self
             .iter()
             .filter(|stone| stone.burn.is_some())
@@ -297,19 +302,20 @@ where
             })
             .collect())
     }
-    fn process_burns(
+    fn process_burns<H: Host + Clone + Default>(
         &self,
-        atomic: &mut AtomicPointer,
+        host: &H,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {
-        let mut burns = <Vec<Protostone> as Protostones<H>>::burns(self)?;
-        <Vec<Protoburn> as Protoburns<Protoburn, H>>::process(&mut burns,
-            atomic,
+        let mut burns = self.burns::<H>()?;
+        <Vec<Protoburn> as Protoburns<Protoburn, H>>::process(
+            &mut burns,
+            host,
             runestone.edicts.clone(),
             runestone_output_index,
             balances_by_output,

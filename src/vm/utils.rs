@@ -5,8 +5,8 @@ use alkanes_support::trace::TraceEvent;
 use alkanes_support::{
     cellpack::Cellpack, gz::decompress, id::AlkaneId, parcel::AlkaneTransferParcel,
     response::ExtendedCallResponse, storage::StorageMap, utils::overflow_error,
-    witness::find_witness_payload,
 };
+use alkanes_support::witness::find_witness_payload;
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
@@ -64,7 +64,7 @@ fn set_alkane_id_to_tx_id(
 
     context_guard
         .message
-        .atomic
+        .host
         .keyword("/alkanes_id_to_outpoint/")
         .select(&alkane_id.clone().into())
         .set(Arc::new(outpoint_bytes));
@@ -80,7 +80,7 @@ pub fn get_alkane_binary(
         .lock()
         .unwrap()
         .message
-        .atomic
+        .host
         .keyword("/alkanes/")
         .select(&alkane_id.clone().into())
         .get();
@@ -98,7 +98,7 @@ pub fn run_special_cellpacks(
 ) -> Result<(AlkaneId, AlkaneId, Arc<Vec<u8>>)> {
     let mut payload = cellpack.clone();
     let mut binary = Arc::<Vec<u8>>::new(vec![]);
-    let mut next_sequence_pointer = sequence_pointer(&mut context.lock().unwrap().message.atomic);
+    let mut next_sequence_pointer = sequence_pointer(&mut context.lock().unwrap().message.host);
     let next_sequence = next_sequence_pointer.get_value::<u128>();
     let original_target = cellpack.target.clone();
     if cellpack.target.is_created(next_sequence) {
@@ -119,7 +119,7 @@ pub fn run_special_cellpacks(
             .lock()
             .unwrap()
             .message
-            .atomic
+            .host
             .keyword("/alkanes/")
             .select(&payload.target.clone().into());
         pointer.set(wasm_payload.clone());
@@ -145,7 +145,7 @@ pub fn run_special_cellpacks(
             .lock()
             .unwrap()
             .message
-            .atomic
+            .host
             .keyword("/alkanes/")
             .select(&payload.target.clone().into());
         if ptr.get().as_ref().len() == 0 {
@@ -167,7 +167,7 @@ pub fn run_special_cellpacks(
             .lock()
             .unwrap()
             .message
-            .atomic
+            .host
             .keyword("/alkanes/")
             .select(&payload.target.clone().into())
             .set(Arc::new(factory_payload));

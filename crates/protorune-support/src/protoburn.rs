@@ -1,13 +1,11 @@
-use crate::tables::{RuneTable, RUNES};
+use crate::tables::{RuneTable};
 use anyhow::{anyhow, Result};
 use bitcoin::{OutPoint, Txid};
-use metashrew_core::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
-use metashrew_support::index_pointer::KeyValuePointer;
 use std::{
     cmp::min,
     collections::{BTreeMap, BTreeSet},
@@ -29,36 +27,24 @@ pub struct Protoburn {
 }
 
 impl Protoburn {
-    pub fn process<H: Host>(
+    pub fn process<H: Host + Clone + Default>(
         &mut self,
-        atomic: &mut AtomicPointer,
-        mut balance_sheet: BalanceSheet<H::Pointer>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
+        host: &H,
+        mut balance_sheet: BalanceSheet<H>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
         outpoint: OutPoint,
     ) -> Result<()>
-    where
-        H::Pointer: Default + Clone,
     {
-        let table = RuneTable::for_protocol(self.tag.ok_or(anyhow!("no tag found"))?);
+        RuneTable::for_protocol(self.tag.ok_or(anyhow!("no tag found"))?);
         for (rune, _balance) in balance_sheet.balances().into_iter() {
             let runeid: Arc<Vec<u8>> = Arc::new(rune.clone().into());
-            let name = RUNES.RUNE_ID_TO_ETCHING.select(&runeid).get();
-            atomic
-                .derive(&table.RUNE_ID_TO_ETCHING.select(&runeid))
-                .set(name.clone());
-            atomic
-                .derive(&table.ETCHING_TO_RUNE_ID.select(&name))
-                .set(runeid);
-            atomic
-                .derive(&table.SPACERS.select(&name))
-                .set(RUNES.SPACERS.select(&name).get());
-            atomic
-                .derive(&table.DIVISIBILITY.select(&name))
-                .set(RUNES.DIVISIBILITY.select(&name).get());
-            atomic
-                .derive(&table.SYMBOL.select(&name))
-                .set(RUNES.SYMBOL.select(&name).get());
-            atomic.derive(&table.ETCHINGS).append(name);
+            let name = host.get_etching_from_rune_id(&runeid)?;
+            host.set_rune_id_to_etching(&runeid, &name)?;
+            host.set_etching_to_rune_id(&name, &runeid)?;
+            host.set_spacers(&name, host.get_spacers(&name)?)?;
+            host.set_divisibility(&name, host.get_divisibility(&name)?)?;
+            host.set_symbol(&name, host.get_symbol(&name)?)?;
+            host.append_etching(&name)?;
         }
         if !proto_balances_by_output.contains_key(&outpoint.vout) {
             proto_balances_by_output.insert(outpoint.vout, BalanceSheet::default());
@@ -74,8 +60,6 @@ impl Protoburn {
 }
 
 pub trait Protoburns<T, H: Host>: Deref<Target = [T]>
-where
-    H::Pointer: Default + Clone,
 {
     fn construct_burncycle(&self) -> Result<BurnCycle> {
         let length = u32::try_from(self.len())?;
@@ -83,27 +67,25 @@ where
     }
     fn process(
         &mut self,
-        atomic: &mut AtomicPointer,
+        host: &H,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
 }
 
-impl<H: Host> Protoburns<Protoburn, H> for Vec<Protoburn>
-where
-    H::Pointer: Default + Clone,
+impl<H: Host + Clone + Default> Protoburns<Protoburn, H> for Vec<Protoburn>
 {
     fn process(
         &mut self,
-        atomic: &mut AtomicPointer,
+        host: &H,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H::Pointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {
@@ -119,7 +101,7 @@ where
         let mut burn_sheets = self
             .into_iter()
             .map(|_a| BalanceSheet::default())
-            .collect::<Vec<BalanceSheet<H::Pointer>>>();
+            .collect::<Vec<BalanceSheet<H>>>();
 
         // from field in Protoburn is provided, which means the burn doesn't cycle through the inputs, just pulls the inputs from the "from" field and burns those
         for (i, burn) in self.into_iter().enumerate() {
@@ -183,7 +165,7 @@ where
         for (i, burn) in self.into_iter().enumerate() {
             let sheet = burn_sheets[i].clone();
             burn.process::<H>(
-                atomic,
+                host,
                 sheet,
                 proto_balances_by_output,
                 OutPoint::new(txid, burn.pointer.ok_or(anyhow!("no vout on protoburn"))?),

@@ -24,6 +24,7 @@
 /// of protobuf runtime.
 const _PROTOBUF_VERSION_CHECK: () = ::protobuf::VERSION_3_7_2;
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.RuneId)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct RuneId {
@@ -164,6 +165,7 @@ impl ::protobuf::reflect::ProtobufValue for RuneId {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.ProtoruneRuneId)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct ProtoruneRuneId {
@@ -306,6 +308,7 @@ impl ::protobuf::reflect::ProtobufValue for ProtoruneRuneId {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.Rune)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct Rune {
@@ -501,6 +504,7 @@ impl ::protobuf::reflect::ProtobufValue for Rune {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.BalanceSheetItem)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct BalanceSheetItem {
@@ -643,6 +647,7 @@ impl ::protobuf::reflect::ProtobufValue for BalanceSheetItem {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.Outpoint)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct Outpoint {
@@ -783,6 +788,7 @@ impl ::protobuf::reflect::ProtobufValue for Outpoint {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.OutpointWithProtocol)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct OutpointWithProtocol {
@@ -942,6 +948,7 @@ impl ::protobuf::reflect::ProtobufValue for OutpointWithProtocol {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.Output)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct Output {
@@ -1082,6 +1089,7 @@ impl ::protobuf::reflect::ProtobufValue for Output {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.OutpointResponse)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct OutpointResponse {
@@ -1260,6 +1268,7 @@ impl ::protobuf::reflect::ProtobufValue for OutpointResponse {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.PaginationInput)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct PaginationInput {
@@ -1400,6 +1409,7 @@ impl ::protobuf::reflect::ProtobufValue for PaginationInput {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.WalletRequest)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct WalletRequest {
@@ -1522,6 +1532,7 @@ impl ::protobuf::reflect::ProtobufValue for WalletRequest {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.WalletResponse)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct WalletResponse {
@@ -1645,6 +1656,7 @@ impl ::protobuf::reflect::ProtobufValue for WalletResponse {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.ProtorunesWalletRequest)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct ProtorunesWalletRequest {
@@ -1786,6 +1798,7 @@ impl ::protobuf::reflect::ProtobufValue for ProtorunesWalletRequest {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.RunesByHeightRequest)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct RunesByHeightRequest {
@@ -1908,6 +1921,7 @@ impl ::protobuf::reflect::ProtobufValue for RunesByHeightRequest {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.ProtorunesByHeightRequest)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct ProtorunesByHeightRequest {
@@ -2049,6 +2063,7 @@ impl ::protobuf::reflect::ProtobufValue for ProtorunesByHeightRequest {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.RunesResponse)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct RunesResponse {
@@ -2172,6 +2187,7 @@ impl ::protobuf::reflect::ProtobufValue for RunesResponse {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.ProtoBurn)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct ProtoBurn {
@@ -2313,6 +2329,7 @@ impl ::protobuf::reflect::ProtobufValue for ProtoBurn {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.uint128)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct Uint128 {
@@ -2453,6 +2470,7 @@ impl ::protobuf::reflect::ProtobufValue for Uint128 {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.Clause)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct Clause {
@@ -2595,6 +2613,7 @@ impl ::protobuf::reflect::ProtobufValue for Clause {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.Predicate)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct Predicate {
@@ -2718,6 +2737,7 @@ impl ::protobuf::reflect::ProtobufValue for Predicate {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.ProtoMessage)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct ProtoMessage {
@@ -2895,6 +2915,7 @@ impl ::protobuf::reflect::ProtobufValue for ProtoMessage {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.RuntimeInput)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct RuntimeInput {
@@ -3018,6 +3039,7 @@ impl ::protobuf::reflect::ProtobufValue for RuntimeInput {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(Eq, Hash)]
 // @@protoc_insertion_point(message:protorune.Runtime)
 #[derive(PartialEq,Clone,Default,Debug)]
 pub struct Runtime {

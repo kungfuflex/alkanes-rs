@@ -1,3 +1,4 @@
+use crate::WasmHost;
 use super::fuel::compute_extcall_fuel;
 use super::{
     get_memory, read_arraybuffer, send_to_arraybuffer, sequence_pointer, AlkanesState, Extcall,
@@ -29,6 +30,8 @@ use num::traits::ToBytes;
 use ordinals::Artifact;
 use ordinals::Runestone;
 use protorune_support::protostone::Protostone;
+
+use protorune_support::protorune_ext::ProtoruneExt;
 
 use crate::vm::fuel::{
     consume_fuel, fuel_extcall_deploy, fuel_per_store_byte, Fuelable, FUEL_BALANCE, FUEL_EXTCALL,
@@ -63,7 +66,7 @@ impl AlkanesHostFunctionsImpl {
             .lock()
             .unwrap()
             .message
-            .atomic
+            .host
             .checkpoint();
     }
 
@@ -74,7 +77,7 @@ impl AlkanesHostFunctionsImpl {
             .lock()
             .unwrap()
             .message
-            .atomic
+            .host
             .commit();
     }
 
@@ -86,7 +89,7 @@ impl AlkanesHostFunctionsImpl {
             .lock()
             .unwrap()
             .message
-            .atomic
+            .host
             .checkpoint_depth()
     }
     pub(super) fn _abort<'a>(caller: Caller<'_, AlkanesState>) {
@@ -112,7 +115,7 @@ impl AlkanesHostFunctionsImpl {
                 .lock()
                 .unwrap()
                 .message
-                .atomic
+                .host
                 .keyword("/alkanes/")
                 .select(&myself.into())
                 .keyword("/storage/")
@@ -152,7 +155,7 @@ impl AlkanesHostFunctionsImpl {
             let value = {
                 let myself = caller.data_mut().context.lock().unwrap().myself.clone();
                 (&caller.data_mut().context.lock().unwrap().message)
-                    .atomic
+                    .host
                     .keyword("/alkanes/")
                     .select(&myself.into())
                     .keyword("/storage/")
@@ -358,7 +361,7 @@ impl AlkanesHostFunctionsImpl {
     }
     pub(super) fn sequence(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
         let buffer: Vec<u8> =
-            (&sequence_pointer(&caller.data_mut().context.lock().unwrap().message.atomic)
+            (&sequence_pointer(&caller.data_mut().context.lock().unwrap().message.host)
                 .get_value::<u128>()
                 .to_le_bytes())
                 .to_vec();
@@ -422,7 +425,7 @@ impl AlkanesHostFunctionsImpl {
             )
         };
         let balance = balance_pointer(
-            &mut caller.data_mut().context.lock().unwrap().message.atomic,
+            &mut caller.data_mut().context.lock().unwrap().message.host,
             &who.into(),
             &what.into(),
         )
@@ -474,7 +477,7 @@ impl AlkanesHostFunctionsImpl {
                 .trace
                 .clock(TraceEvent::RevertContext(revert_context));
             if should_rollback {
-                context_guard.message.atomic.rollback();
+                context_guard.message.host.rollback();
             }
             context_guard.returndata = serialized;
             // context_guard is dropped here when the scope ends
@@ -644,7 +647,7 @@ impl AlkanesHostFunctionsImpl {
         let mut counter: u128 = 0;
         for tx in &block.txdata {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
-                let protostones = Protostone::from_runestone(runestone)?;
+                let protostones = Protostone::from_runestone(runestone, tx)?;
                 for protostone in protostones {
                     if protostone.protocol_tag != 1 {
                         continue;
@@ -738,12 +741,12 @@ impl AlkanesHostFunctionsImpl {
         // Prepare subcontext data
         let (subcontext, binary_rc) = {
             let mut context_guard = caller.data_mut().context.lock().unwrap();
-            context_guard.message.atomic.checkpoint();
+            context_guard.message.host.checkpoint();
             let myself = context_guard.myself.clone();
             let caller_id = context_guard.caller.clone();
             pipe_storagemap_to(
                 &storage_map,
-                &mut context_guard.message.atomic.derive(
+                &mut context_guard.message.host.derive(
                     &IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into()),
                 ),
             );
@@ -760,7 +763,7 @@ impl AlkanesHostFunctionsImpl {
                     &incoming_alkanes,
                     &mut context_guard
                         .message
-                        .atomic
+                        .host
                         .derive(&IndexPointer::default()),
                     &myself,
                     &submyself,
@@ -768,10 +771,10 @@ impl AlkanesHostFunctionsImpl {
             }
             // Create subcontext
             let mut subbed = context_guard.clone();
-            subbed.message.atomic = context_guard
+            subbed.message.host = WasmHost(context_guard
                 .message
-                .atomic
-                .derive(&IndexPointer::default());
+                .host
+                .derive(&IndexPointer::default()));
             (subbed.caller, subbed.myself) =
                 T::change_context(submyself.clone(), caller_id, myself.clone());
             subbed.returndata = vec![];
@@ -820,9 +823,9 @@ impl AlkanesHostFunctionsImpl {
                 .clock(TraceEvent::ReturnContext(return_context));
             let mut saveable: SaveableExtendedCallResponse = response.clone().into();
             saveable.associate(&subcontext);
-            saveable.save(&mut context_guard.message.atomic, T::isdelegate())?;
+            saveable.save(&mut context_guard.message.host.0, T::isdelegate())?;
             context_guard.returndata = serialized.clone();
-            T::handle_atomic(&mut context_guard.message.atomic);
+            T::handle_atomic(&mut context_guard.message.host.0);
         }
         Ok(serialized.len() as i32)
     }

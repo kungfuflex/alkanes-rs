@@ -34,6 +34,7 @@ hex = { workspace = true }
 [features]
 test-utils = []
 testnet = []
+signet = []
 dogecoin = []
 luckycoin = []
 bellscoin = []
