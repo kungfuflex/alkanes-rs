@@ -88,12 +88,12 @@ pub trait OutgoingRunes<P: KeyValuePointer + Clone> {
     ) -> Result<()>;
 }
 
-pub trait MintableDebit<P: KeyValuePointer + Clone> {
+pub trait MintableDebit<P: KeyValuePointer + Clone + std::fmt::Debug> {
     fn debit_mintable(&mut self, sheet: &BalanceSheet<P>, atomic: &mut AtomicPointer)
         -> Result<()>;
 }
 
-impl<P: KeyValuePointer + Clone> MintableDebit<P> for BalanceSheet<P> {
+impl<P: KeyValuePointer + Clone + std::fmt::Debug> MintableDebit<P> for BalanceSheet<P> {
     // logically, this will debit the input sheet from the self sheet, and if it would produce a negative value
     // it will check if the rune id is mintable (if it was etched and protoburned or if it is an alkane).
     // if it is mintable, we assume the extra amount was minted and do not decrease the amount.
@@ -119,7 +119,9 @@ impl<P: KeyValuePointer + Clone> MintableDebit<P> for BalanceSheet<P> {
         Ok(())
     }
 }
-impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, BalanceSheet<P>) {
+impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
+    for (Vec<RuneTransfer>, BalanceSheet<P>)
+{
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
@@ -132,13 +134,16 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
             .get(&u32::MAX)
             .map(|v| v.clone())
             .unwrap_or_else(|| BalanceSheet::default());
+        println!("reconcile runtime_initial {:?}", runtime_initial);
         let incoming_initial = balances_by_output
             .get(&vout)
             .ok_or("")
             .map_err(|_| anyhow!("balance sheet not found"))?
             .clone();
+        println!("reconcile incoming_initial {:?}", incoming_initial);
         let mut initial = BalanceSheet::merge(&incoming_initial, &runtime_initial)?;
 
+        println!("reconcile initial {:?}", initial);
         // self.0 is the amount to forward to the pointer
         // self.1 is the amount to put into the runtime balance
         let outgoing: BalanceSheet<P> = self.0.clone().try_into()?;
@@ -148,6 +153,7 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
         // amount from the initial amount
         initial.debit_mintable(&outgoing, atomic)?;
         initial.debit_mintable(&outgoing_runtime, atomic)?;
+        println!("reconcile initial after debit mintable {:?}", initial);
 
         // now lets update balances_by_output to correct values
 
@@ -163,6 +169,10 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
 
         // refund the remaining amount to the refund pointer
         increase_balances_using_sheet(balances_by_output, &initial, refund_pointer)?;
+        println!(
+            "reconcile balances_by_output at end {:?}",
+            balances_by_output
+        );
         Ok(())
     }
 }
@@ -194,4 +204,4 @@ pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {
     }
 }
 
-impl<P: KeyValuePointer + Clone> PersistentRecord for BalanceSheet<P> {}
+impl<P: KeyValuePointer + Clone + std::fmt::Debug> PersistentRecord for BalanceSheet<P> {}

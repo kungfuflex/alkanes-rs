@@ -953,6 +953,10 @@ impl Protorune {
                     // edicts should only transfer protostones that did not fail the protomessage (if there is one)
                     if !did_message_fail_and_refund {
                         // Process edicts using the current balance state
+                        println!(
+                            "proto_balances_by_output before edicts {:?}",
+                            proto_balances_by_output
+                        );
                         Self::process_edicts(
                             tx,
                             &stone.edicts,
@@ -960,6 +964,10 @@ impl Protorune {
                             &mut prior_balance_sheet,
                             &tx.output,
                         )?;
+                        println!(
+                            "proto_balances_by_output after edicts {:?}",
+                            proto_balances_by_output
+                        );
 
                         // Handle any remaining balance
                         Self::handle_leftover_runes(
@@ -967,6 +975,10 @@ impl Protorune {
                             &mut proto_balances_by_output,
                             protostone_unallocated_to,
                         )?;
+                        println!(
+                            "proto_balances_by_output after leftover {:?}",
+                            proto_balances_by_output
+                        );
                     }
 
                     Ok(())
