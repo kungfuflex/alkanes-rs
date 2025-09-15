@@ -84,7 +84,6 @@ pub trait OutgoingRunes<P: KeyValuePointer + Clone> {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
-        refund_pointer: u32,
     ) -> Result<()>;
 }
 
@@ -128,7 +127,6 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
-        refund_pointer: u32,
     ) -> Result<()> {
         let runtime_initial = balances_by_output
             .get(&u32::MAX)
