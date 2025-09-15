@@ -40,6 +40,10 @@ pub struct AlkaneMessageContext(());
 pub fn handle_message(
     parcel: &MessageContextParcel,
 ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
+    println!(
+        "handle_message beginning {:?}",
+        parcel.runtime_balances.as_ref().clone()
+    );
     let cellpack: Cellpack =
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
 
@@ -108,8 +112,13 @@ pub fn handle_message(
         target,
         fuel,
     }));
+    println!(
+        "handle_message before run_after_special {:?}",
+        parcel.runtime_balances.as_ref().clone()
+    );
     run_after_special(context.clone(), binary, fuel)
         .and_then(|(response, gas_used)| {
+            println!("run_after_special response {:?}", response);
             FuelTank::consume_fuel(gas_used)?;
             pipe_storagemap_to(
                 &response.storage,
@@ -118,14 +127,23 @@ pub fn handle_message(
                 ),
             );
             let mut combined = parcel.runtime_balances.as_ref().clone();
+            println!("run_after_special combined {:?}", combined);
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 parcel.runes.clone(),
             )?
             .pipe(&mut combined)?;
+            println!(
+                "run_after_special combined after piping runes {:?}",
+                combined
+            );
             let sheet = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 response.alkanes.clone().into(),
             )?;
             combined.debit_mintable(&sheet, &mut atomic)?;
+            println!(
+                "run_after_special combined after debiting response {:?}",
+                combined
+            );
             debit_balances(&mut atomic, &myself, &response.alkanes)?;
             let cloned = context.clone().lock().unwrap().trace.clone();
             let response_alkanes = response.alkanes.clone();

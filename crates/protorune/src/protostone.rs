@@ -151,6 +151,10 @@ impl MessageProcessor for Protostone {
             ),
             sheets: Box::new(BalanceSheet::default()),
         };
+        println!(
+            "process_message beginning {:?}",
+            parcel.runtime_balances.as_ref().clone()
+        );
 
         match T::handle(&parcel) {
             Ok(values) => {
