@@ -469,12 +469,12 @@ impl<P: KeyValuePointer + Clone> BalanceSheetOperations for BalanceSheet<P> {
     fn merge(a: &BalanceSheet<P>, b: &BalanceSheet<P>) -> Result<BalanceSheet<P>> {
         let mut merged = BalanceSheet::new();
 
+        // Merge balances
+        merged.merge_sheets(a, b)?;
+
         // Merge load_ptrs
         merged.load_ptrs.extend(a.load_ptrs.iter().cloned());
         merged.load_ptrs.extend(b.load_ptrs.iter().cloned());
-
-        // Merge balances
-        merged.merge_sheets(a, b)?;
 
         Ok(merged)
     }

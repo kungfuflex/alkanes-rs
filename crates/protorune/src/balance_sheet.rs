@@ -153,7 +153,10 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
         // amount from the initial amount
         initial.debit_mintable(&outgoing, atomic)?;
         initial.debit_mintable(&outgoing_runtime, atomic)?;
-        println!("reconcile initial after debit mintable {:?}", initial);
+        println!(
+            "reconcile initial after debit mintable, should be zero {:?}",
+            initial
+        );
 
         // now lets update balances_by_output to correct values
 
@@ -168,7 +171,7 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
         balances_by_output.insert(u32::MAX, outgoing_runtime);
 
         // refund the remaining amount to the refund pointer
-        increase_balances_using_sheet(balances_by_output, &initial, refund_pointer)?;
+        // increase_balances_using_sheet(balances_by_output, &initial, refund_pointer)?;
         println!(
             "reconcile balances_by_output at end {:?}",
             balances_by_output
