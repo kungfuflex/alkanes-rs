@@ -176,7 +176,7 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
         balances_by_output.insert(u32::MAX, outgoing_runtime);
 
         // refund the remaining amount to the refund pointer
-        // increase_balances_using_sheet(balances_by_output, &initial, refund_pointer)?;
+        increase_balances_using_sheet(balances_by_output, &initial, refund_pointer)?;
         println!(
             "reconcile balances_by_output at end {:?}",
             balances_by_output
