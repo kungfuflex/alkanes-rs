@@ -157,6 +157,11 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
             "reconcile initial after debit mintable, should be zero {:?}",
             initial
         );
+        for (id, balance) in initial.balances() {
+            if *balance != 0 {
+                println!("BIG ERROR: NONZERO {:?} {}", id, balance);
+            }
+        }
 
         // now lets update balances_by_output to correct values
 
