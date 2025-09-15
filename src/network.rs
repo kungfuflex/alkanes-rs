@@ -19,7 +19,6 @@
 //! It also provides the `genesis` function, which initializes the protocol's state
 //! at the designated genesis block.
 
-use crate::message::AlkaneMessageContext;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -35,7 +34,6 @@ use anyhow::Result;
 use bitcoin::Block;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune_support::message::MessageContext;
 #[allow(unused_imports)]
 use protorune_support::tables::{RuneTable, RUNES};
 use std::sync::Arc;
@@ -209,8 +207,8 @@ pub fn genesis(_block: &Block) -> Result<()> {
     IndexPointer::from_keyword("/alkanes/")
         .select(&(AlkaneId { block: 32, tx: 0 }).into())
         .set(Arc::new(compress(fr_btc_bytes())?));
-    let mut atomic: AtomicPointer = AtomicPointer::default();
-    sequence_pointer(&atomic).set_value::<u128>(1);
+    let mut atomic = AtomicPointer::default();
+    sequence_pointer(&mut atomic).set_value::<u128>(1);
 
     let host = WasmHost::default();
 
@@ -221,7 +219,6 @@ pub fn genesis(_block: &Block) -> Result<()> {
         genesis::GENESIS_BLOCK,
     );
 
-    atomic.commit();
     Ok(())
 }
 

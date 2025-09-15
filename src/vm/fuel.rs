@@ -1,7 +1,6 @@
 use crate::{
     message::AlkaneMessageContext,
     vm::{AlkanesInstance, AlkanesState},
-    WasmHost,
 };
 use alkanes_support::{message::MessageContext, utils::overflow_error};
 use protorune_support::protorune_ext::ProtoruneExt;
@@ -10,7 +9,6 @@ use bitcoin::{Block, Transaction, Witness};
 use ordinals::{Artifact, Runestone};
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::decode_varint_list;
-use ruint::aliases::U32;
 use std::io::Cursor;
 use std::sync::RwLock;
 use wasmi::*;

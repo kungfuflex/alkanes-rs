@@ -1,21 +1,19 @@
 use crate::tests::std::alkanes_std_test_build;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
-use protorune_support::protostone::ProtostoneEdict;
 
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};
 use alkane_helpers::clear;
-use alkanes::view;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
-use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId, Uint128};
+use protobuf::MessageField;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -85,10 +83,22 @@ fn test_transfer_overflow() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
 
-    println!("Last sheet: {:?}", sheet);
-
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(0)),
+            ..Default::default()
+        })
+        .is_none());
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
 
     Ok(())
 }
@@ -138,12 +148,17 @@ fn test_mint_overflow() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
 
-    println!("Last sheet: {:?}", sheet);
-
     assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
-        340282366920938463463374607431768211455
-    ); // it refunded
+        *sheet
+            .balances()
+            .get(&ProtoruneRuneId {
+                height: MessageField::some(Uint128::from(2)),
+                txindex: MessageField::some(Uint128::from(1)),
+                ..Default::default()
+            })
+            .unwrap(),
+        340282366920938463463374607431768211455u128
+    );
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -176,10 +191,22 @@ fn test_mint_underflow() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
 
-    println!("Last sheet: {:?}", sheet);
-
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(0)),
+            ..Default::default()
+        })
+        .is_none());
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -238,15 +265,35 @@ fn test_transfer_runtime() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
 
-    println!("Last sheet: {:?}", sheet);
     let runtime_sheet = get_sheet_for_runtime();
 
     assert_eq!(
-        runtime_sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
+        *runtime_sheet
+            .balances()
+            .get(&ProtoruneRuneId {
+                height: MessageField::some(Uint128::from(2)),
+                txindex: MessageField::some(Uint128::from(1)),
+                ..Default::default()
+            })
+            .unwrap(),
         1000000
     );
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 2 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(2)),
+            ..Default::default()
+        })
+        .is_none());
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -292,10 +339,22 @@ fn test_extcall_mint() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
 
-    println!("Last sheet: {:?}", sheet);
-
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(0)),
+            ..Default::default()
+        })
+        .is_none());
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -345,10 +404,22 @@ fn test_delegatecall_mint() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
 
-    println!("Last sheet: {:?}", sheet);
-
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(0)),
+            ..Default::default()
+        })
+        .is_none());
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -402,10 +473,22 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
 
-    println!("Last sheet: {:?}", sheet);
-
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(0)),
+            ..Default::default()
+        })
+        .is_none());
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -466,8 +549,22 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
 
     println!("Last sheet: {:?}", sheet);
 
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(0)),
+            ..Default::default()
+        })
+        .is_none());
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),

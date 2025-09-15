@@ -45,6 +45,7 @@ message OutpointResponse {
   Output output = 3;
   uint32 height = 4;
   uint32 txindex = 5;
+  bytes balances = 6;
 }
 
 message PaginationInput {

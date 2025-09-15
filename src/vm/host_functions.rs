@@ -1,15 +1,20 @@
+#[cfg(not(test))]
 use crate::WasmHost;
+#[cfg(test)]
+use alkanes::WasmHost;
 use super::fuel::compute_extcall_fuel;
 use super::{
     get_memory, read_arraybuffer, send_to_arraybuffer, sequence_pointer, AlkanesState, Extcall,
     Saveable, SaveableExtendedCallResponse,
 };
+#[cfg(not(test))]
 use crate::utils::{balance_pointer, pipe_storagemap_to, transfer_from};
+#[cfg(test)]
+use alkanes::utils::{balance_pointer, pipe_storagemap_to, transfer_from};
 use crate::vm::{run_after_special, run_special_cellpacks};
 use alkanes_support::{
     cellpack::Cellpack,
     id::AlkaneId,
-    message::MessageContextParcel,
     parcel::AlkaneTransferParcel,
     response::CallResponse,
     storage::StorageMap,
@@ -18,7 +23,7 @@ use alkanes_support::{
 };
 #[allow(unused_imports)]
 use anyhow::{anyhow, Result};
-use bitcoin::{BlockHash, Transaction};
+use bitcoin::Transaction;
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -34,12 +39,11 @@ use protorune_support::protostone::Protostone;
 use protorune_support::protorune_ext::ProtoruneExt;
 
 use crate::vm::fuel::{
-    consume_fuel, fuel_extcall_deploy, fuel_per_store_byte, Fuelable, FUEL_BALANCE, FUEL_EXTCALL,
+    consume_fuel, fuel_extcall_deploy, Fuelable, FUEL_BALANCE,
     FUEL_FUEL, FUEL_HEIGHT, FUEL_LOAD_BLOCK, FUEL_LOAD_TRANSACTION, FUEL_PER_LOAD_BYTE,
     FUEL_PER_REQUEST_BYTE, FUEL_SEQUENCE,
 };
 use protorune_support::utils::{consensus_encode, decode_varint_list};
-use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use wasmi::*;
@@ -361,7 +365,7 @@ impl AlkanesHostFunctionsImpl {
     }
     pub(super) fn sequence(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
         let buffer: Vec<u8> =
-            (&sequence_pointer(&caller.data_mut().context.lock().unwrap().message.host)
+            (&sequence_pointer(&mut caller.data_mut().context.lock().unwrap().message.host)
                 .get_value::<u128>()
                 .to_le_bytes())
                 .to_vec();
@@ -755,26 +759,20 @@ impl AlkanesHostFunctionsImpl {
             let (_subcaller, submyself, binary) =
                 run_special_cellpacks(caller.data_mut().context.clone(), &cellpack)?;
 
-            let context_guard = caller.data_mut().context.lock().unwrap();
+            let mut context_guard = caller.data_mut().context.lock().unwrap();
 
             if !T::isdelegate() {
                 // delegate call retains caller and myself, so no alkanes are transferred to the subcontext
                 transfer_from(
                     &incoming_alkanes,
-                    &mut context_guard
-                        .message
-                        .host
-                        .derive(&IndexPointer::default()),
+                                          &mut context_guard.message.host,
                     &myself,
                     &submyself,
                 )?;
             }
             // Create subcontext
             let mut subbed = context_guard.clone();
-            subbed.message.host = WasmHost(context_guard
-                .message
-                .host
-                .derive(&IndexPointer::default()));
+            subbed.message.host = WasmHost(context_guard.message.host.derive(&IndexPointer::default()));
             (subbed.caller, subbed.myself) =
                 T::change_context(submyself.clone(), caller_id, myself.clone());
             subbed.returndata = vec![];
@@ -823,7 +821,7 @@ impl AlkanesHostFunctionsImpl {
                 .clock(TraceEvent::ReturnContext(return_context));
             let mut saveable: SaveableExtendedCallResponse = response.clone().into();
             saveable.associate(&subcontext);
-            saveable.save(&mut context_guard.message.host.0, T::isdelegate())?;
+            saveable.save(&mut context_guard.message.host, T::isdelegate())?;
             context_guard.returndata = serialized.clone();
             T::handle_atomic(&mut context_guard.message.host.0);
         }

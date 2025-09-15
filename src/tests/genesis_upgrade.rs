@@ -27,8 +27,11 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
 use protorune::view::protorune_outpoint_to_outpoint_response;
 use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
+use protorune_support::balance_sheet::{
+    BalanceSheet, BalanceSheetOperations, ProtoruneRuneId, Uint128,
+};
 use protorune_support::protostone::Protostone;
+use protobuf::MessageField;
 use protorune_support::utils::consensus_encode;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -36,7 +39,7 @@ fn setup_pre_upgrade() -> Result<()> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
         inputs: vec![100],
     };
@@ -110,21 +113,33 @@ fn upgrade() -> Result<OutPoint> {
     let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&new_outpoint)?);
-    let new_sheet = load_sheet(&new_ptr);
+    let new_sheet = load_sheet(&WasmHost::default(), &new_ptr.unwrap()).unwrap();
 
-    let auth_token = ProtoruneRuneId { block: 2, tx: 1 };
-    assert_eq!(new_sheet.get(&auth_token), 5);
-
-    let first_mint = load_sheet(
-        &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
-            .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&OutPoint {
+    let auth_token = ProtoruneRuneId {
+        height: MessageField::some(Uint128::from(2)),
+        txindex: MessageField::some(Uint128::from(1)),
+        ..Default::default()
+    };
+    assert_eq!(new_sheet.balances().get(&auth_token).unwrap(), &5);
+let first_mint = load_sheet(
+    &WasmHost::default(),
+    &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        .OUTPOINT_TO_RUNES
+        .select(
+            &consensus_encode(&OutPoint {
                 txid: mint_tx_0.compute_txid(),
                 vout: 0,
-            })?),
+            })?,
+        )
+        .get()
+        .as_ref()
+        .clone(),
+)
+.unwrap();
+    assert_eq!(
+        first_mint.balances().get(&diesel.clone().into()).unwrap(),
+        &312500000
     );
-
-    assert_eq!(first_mint.get(&diesel.clone().into()), 312500000);
 
     assert_revert_context(
         &OutPoint {
@@ -210,7 +225,7 @@ fn test_new_genesis_contract() -> Result<()> {
     for i in 1..=num_mints {
         let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
         assert_eq!(
-            sheet.get(&diesel.clone().into()),
+            *sheet.balances().get(&diesel.clone().into()).unwrap(),
             ((312500000 - (350000000 - 312500000)) / num_mints)
                 .try_into()
                 .unwrap(),
@@ -250,7 +265,7 @@ fn test_new_genesis_contract_empty_calldata() -> Result<()> {
     for i in 1..=num_mints {
         let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
         assert_eq!(
-            sheet.get(&diesel.clone().into()),
+            *sheet.balances().get(&diesel.clone().into()).unwrap(),
             ((312500000 - (350000000 - 312500000)) / num_mints)
                 .try_into()
                 .unwrap(),
@@ -279,9 +294,12 @@ fn test_new_genesis_contract_wrong_id() -> Result<()> {
             burn: None,
             message: Cellpack {
                 target: diesel.clone(),
-                inputs: vec![77],
+                inputs: vec![77u128],
             }
-            .encipher(),
+            .encipher()
+            .into_iter()
+            .map(|v| v as u128)
+            .collect(),
             edicts: vec![],
             pointer: Some(0),
             refund: Some(0),
@@ -294,7 +312,7 @@ fn test_new_genesis_contract_wrong_id() -> Result<()> {
     for i in 1..=num_mints {
         let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
         assert_eq!(
-            sheet.get(&diesel.clone().into()),
+            *sheet.balances().get(&diesel.clone().into()).unwrap(),
             ((312500000 - (350000000 - 312500000)) / num_mints)
                 .try_into()
                 .unwrap(),
@@ -332,11 +350,15 @@ fn test_new_genesis_collect_fees() -> Result<()> {
     let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&new_outpoint)?);
-    let new_sheet = load_sheet(&new_ptr);
+    let new_sheet = load_sheet(&WasmHost::default(), &new_ptr.get().as_ref().clone()).unwrap();
 
-    let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
+    let genesis_id = ProtoruneRuneId {
+        height: MessageField::some(Uint128::from(2)),
+        txindex: MessageField::some(Uint128::from(0)),
+        ..Default::default()
+    };
     assert_eq!(
-        new_sheet.get(&genesis_id),
+        *new_sheet.balances().get(&genesis_id).unwrap(),
         50_000_000u128 + 350000000 - 312500000
     );
     Ok(())

@@ -81,15 +81,26 @@ fn test_owned_token_mint_crash() -> Result<()> {
 
     println!("STEP 4: Loading initial balance sheet...");
     let sheet = load_sheet(
+        &IndexPointer::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint)?),
+            .select(&consensus_encode(&outpoint)?).unwrap(),
     );
     println!("STEP 4: Balance sheet loaded successfully");
 
     // Verify initial balances
-    let owned_balance = sheet.get_cached(&owned_token_id.into());
-    let auth_balance = sheet.get_cached(&auth_token_id.into());
+    let owned_balance = *sheet
+        .as_ref()
+        .unwrap()
+        .balances()
+        .get(&owned_token_id.into())
+        .unwrap();
+    let auth_balance = *sheet
+        .as_ref()
+        .unwrap()
+        .balances()
+        .get(&auth_token_id.into())
+        .unwrap();
     println!(
         "STEP 5: Initial balances - owned: {}, auth: {}",
         owned_balance, auth_balance
@@ -117,14 +128,15 @@ fn test_owned_token_mint_crash() -> Result<()> {
         vout: 0,
     };
     let mint_sheet = load_sheet(
+        &IndexPointer::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&mint_outpoint)?),
+            .select(&consensus_encode(&mint_outpoint)?).unwrap(),
     );
     println!(
         "STEP 10: Mint state - txid: {}, balances: {:?}",
         mint_tx.compute_txid(),
-        mint_sheet.balances()
+        mint_sheet.unwrap().balances()
     );
 
     println!("Test completed successfully - no crash occurred");

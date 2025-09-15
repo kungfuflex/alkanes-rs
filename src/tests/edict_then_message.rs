@@ -2,7 +2,7 @@ use crate::message::AlkaneMessageContext;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_test_build;
 use alkane_helpers::clear;
-use alkanes::indexer::index_block;
+use crate::index_block;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
@@ -21,10 +21,11 @@ use protorune::test_helpers::{create_block_with_coinbase_tx, get_btc_network, AD
 use protorune::{
     balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
 };
-use protorune_support::balance_sheet::ProtoruneRuneId;
-use protorune_support::protostone::{Protostone, ProtostoneEdict};
+use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId, Uint128};
+use protorune_support::protostone::{Protostone};
 use std::str::FromStr;
 use wasm_bindgen_test::wasm_bindgen_test;
+use protobuf::MessageField;
 
 #[wasm_bindgen_test]
 fn test_edict_to_protomessage() -> Result<()> {
@@ -91,7 +92,11 @@ fn test_edict_to_protomessage() -> Result<()> {
                                 refund: Some(7),
                                 pointer: Some(7),
                                 edicts: vec![ProtostoneEdict {
-                                    id: ProtoruneRuneId { block: 2, tx: 1 },
+                                    id: ProtoruneRuneId {
+                                        height: MessageField::some(Uint128::from(2)),
+                                        txindex: MessageField::some(Uint128::from(1)),
+                                        ..Default::default()
+                                    },
                                     amount: 100,
                                     output: 0,
                                 }],
@@ -125,15 +130,17 @@ fn test_edict_to_protomessage() -> Result<()> {
         vout: 1,
     };
     let edict_sheet = load_sheet(
+        &IndexPointer::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&edict_outpoint)?),
-    );
+            .select(&consensus_encode(&edict_outpoint)?).unwrap(),
+    ).unwrap();
     let sheet = load_sheet(
+        &IndexPointer::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&result_outpoint)?),
-    );
+            .select(&consensus_encode(&result_outpoint)?).unwrap(),
+    ).unwrap();
     println!("edict sheet: {:?}", edict_sheet);
     println!("output sheet: {:?}", sheet);
     Ok(())
@@ -181,7 +188,11 @@ fn test_edict_message_same_protostone() -> Result<()> {
             vec![txin1],
             false,
             vec![ProtostoneEdict {
-                id: ProtoruneRuneId { block: 2, tx: 1 },
+                id: ProtoruneRuneId {
+                    height: MessageField::some(Uint128::from(2)),
+                    txindex: MessageField::some(Uint128::from(1)),
+                    ..Default::default()
+                },
                 amount: 1,
                 output: 0,
             }],
@@ -194,7 +205,17 @@ fn test_edict_message_same_protostone() -> Result<()> {
 
     println!("Last sheet: {:?}", sheet);
 
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 1);
+    assert_eq!(
+        *sheet
+            .balances()
+            .get(&ProtoruneRuneId {
+                height: MessageField::some(Uint128::from(2)),
+                txindex: MessageField::some(Uint128::from(1)),
+                ..Default::default()
+            })
+            .unwrap(),
+        1u128
+    );
 
     Ok(())
 }
@@ -241,7 +262,11 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
             vec![txin1],
             false,
             vec![ProtostoneEdict {
-                id: ProtoruneRuneId { block: 2, tx: 1 },
+                id: ProtoruneRuneId {
+                    height: MessageField::some(Uint128::from(2)),
+                    txindex: MessageField::some(Uint128::from(1)),
+                    ..Default::default()
+                },
                 amount: 1,
                 output: 0,
             }],
@@ -254,7 +279,17 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
 
     println!("Last sheet: {:?}", sheet);
 
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 1);
+    assert_eq!(
+        *sheet
+            .balances()
+            .get(&ProtoruneRuneId {
+                height: MessageField::some(Uint128::from(2)),
+                txindex: MessageField::some(Uint128::from(1)),
+                ..Default::default()
+            })
+            .unwrap(),
+        1u128
+    );
 
     Ok(())
 }

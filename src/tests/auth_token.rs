@@ -39,7 +39,7 @@ fn test_owned_token() -> Result<()> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
         inputs: vec![100],
     };
@@ -61,9 +61,13 @@ fn test_owned_token() -> Result<()> {
         vout: 1,
     };
     let _sheet = load_sheet(
+        &WasmHost::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint)?),
+            .select(&consensus_encode(&outpoint)?)
+            .get()
+            .as_ref()
+            .clone(),
     );
     /*
         let _ = assert_binary_deployed_to_id(
@@ -81,7 +85,7 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
         inputs: vec![100],
     };
@@ -103,7 +107,7 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
 
     let _auth_token_id_factory = AlkaneId {
         block: 4,
-        tx: AUTH_TOKEN_FACTORY_ID,
+        tx: AUTH_TOKEN_FACTORY_ID.tx,
     };
 
     let owned_token_id = AlkaneId { block: 2, tx: 1 };
@@ -114,9 +118,13 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
         vout: 0,
     };
     let _sheet = load_sheet(
+        &WasmHost::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint)?),
+            .select(&consensus_encode(&outpoint)?)
+            .get()
+            .as_ref()
+            .clone(),
     );
     // assert_eq!(sheet.get_cached(&original_rune_id.into()), 1000);
 
@@ -126,11 +134,15 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
         vout: 0,
     };
     let sheet_first = load_sheet(
+        &WasmHost::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint_first)?),
+            .select(&consensus_encode(&outpoint_first)?)
+            .get()
+            .as_ref()
+            .clone(),
     );
-    assert_eq!(sheet_first.balances().len(), 0);
+    assert_eq!(sheet_first.unwrap().balances().len(), 0);
     let _ = assert_binary_deployed_to_id(
         owned_token_id.clone(),
         alkanes_std_owned_token_build::get_bytes(),
@@ -151,7 +163,7 @@ fn test_auth_and_owned_token() -> Result<()> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
         inputs: vec![100],
     };
@@ -177,7 +189,7 @@ fn test_auth_and_owned_token() -> Result<()> {
 
     let _auth_token_id_factory = AlkaneId {
         block: 4,
-        tx: AUTH_TOKEN_FACTORY_ID,
+        tx: AUTH_TOKEN_FACTORY_ID.tx,
     };
 
     let auth_token_id_deployment = AlkaneId { block: 2, tx: 2 };
@@ -189,12 +201,30 @@ fn test_auth_and_owned_token() -> Result<()> {
         vout: 0,
     };
     let sheet = load_sheet(
+        &WasmHost::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint)?),
+            .select(&consensus_encode(&outpoint)?)
+            .get()
+            .as_ref()
+            .clone(),
     );
-    assert_eq!(sheet.get_cached(&owned_token_id.into()), 1000);
-    assert_eq!(sheet.get_cached(&auth_token_id_deployment.into()), 1);
+    assert_eq!(
+        sheet
+            .unwrap()
+            .balances()
+            .get(&owned_token_id.into())
+            .unwrap(),
+        1000
+    );
+    assert_eq!(
+        sheet
+            .unwrap()
+            .balances()
+            .get(&auth_token_id_deployment.into())
+            .unwrap(),
+        1
+    );
 
     let tx_first = test_block.txdata.first().ok_or(anyhow!("no first el"))?;
     let outpoint_first = OutPoint {
@@ -202,11 +232,15 @@ fn test_auth_and_owned_token() -> Result<()> {
         vout: 0,
     };
     let sheet_first = load_sheet(
+        &WasmHost::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint_first)?),
+            .select(&consensus_encode(&outpoint_first)?)
+            .get()
+            .as_ref()
+            .clone(),
     );
-    assert_eq!(sheet_first.balances().len(), 0);
+    assert_eq!(sheet_first.unwrap().balances().len(), 0);
     let _ = assert_binary_deployed_to_id(
         owned_token_id.clone(),
         alkanes_std_owned_token_build::get_bytes(),
@@ -219,7 +253,7 @@ fn test_auth_and_owned_token() -> Result<()> {
         auth_token_id_deployment.clone(),
         AlkaneId {
             block: 4,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
     )?;
 
@@ -235,7 +269,7 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
         inputs: vec![100],
     };
@@ -351,7 +385,7 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
         inputs: vec![100],
     };
@@ -407,7 +441,7 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
 
     let _auth_token_id_factory = AlkaneId {
         block: 4,
-        tx: AUTH_TOKEN_FACTORY_ID,
+        tx: AUTH_TOKEN_FACTORY_ID.tx,
     };
 
     let auth_token_id_deployment = AlkaneId { block: 2, tx: 2 };
@@ -419,12 +453,30 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         vout: 0,
     };
     let sheet = load_sheet(
+        &WasmHost::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint)?),
+            .select(&consensus_encode(&outpoint)?)
+            .get()
+            .as_ref()
+            .clone(),
     );
-    assert_eq!(sheet.get_cached(&owned_token_id.into()), 1000);
-    assert_eq!(sheet.get_cached(&auth_token_id_deployment.into()), 1);
+    assert_eq!(
+        sheet
+            .unwrap()
+            .balances()
+            .get(&owned_token_id.into())
+            .unwrap(),
+        1000
+    );
+    assert_eq!(
+        sheet
+            .unwrap()
+            .balances()
+            .get(&auth_token_id_deployment.into())
+            .unwrap(),
+        1
+    );
 
     let tx_first = test_block.txdata.first().ok_or(anyhow!("no first el"))?;
     let outpoint_first = OutPoint {
@@ -432,11 +484,15 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         vout: 0,
     };
     let sheet_first = load_sheet(
+        &WasmHost::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint_first)?),
+            .select(&consensus_encode(&outpoint_first)?)
+            .get()
+            .as_ref()
+            .clone(),
     );
-    assert_eq!(sheet_first.balances().len(), 0);
+    assert_eq!(sheet_first.unwrap().balances().len(), 0);
     let _ = assert_binary_deployed_to_id(
         owned_token_id.clone(),
         alkanes_std_owned_token_build::get_bytes(),
@@ -449,7 +505,7 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         auth_token_id_deployment.clone(),
         AlkaneId {
             block: 4,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
     )?;
     Ok(())

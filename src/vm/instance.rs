@@ -2,10 +2,7 @@ use super::{
     extcall::*, read_arraybuffer, AlkanesExportsImpl, AlkanesRuntimeContext, AlkanesState,
     SafeAlkanesHostFunctionsImpl, MEMORY_LIMIT,
 };
-use alkanes_support::{
-    response::{CallResponse, ExtendedCallResponse},
-    trace::{TraceEvent, TraceResponse},
-};
+use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
 use hex;
 use std::sync::{Arc, Mutex};

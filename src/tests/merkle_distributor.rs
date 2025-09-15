@@ -23,8 +23,9 @@ use protorune::balance_sheet::load_sheet;
 use protorune::message::MessageContext;
 use protorune::tables::RuneTable;
 use protorune::test_helpers::{create_block_with_coinbase_tx, ADDRESS1, ADDRESS2};
-use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
+use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId, Uint128};
 use sha2::{Digest, Sha256};
+use protobuf::MessageField;
 use wasm_bindgen_test::wasm_bindgen_test;
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
 pub struct SchemaMerkleLeaf {
@@ -212,7 +213,17 @@ fn helper_test_merkle_distributor(
     index_block(&claim_block, block_height + 1)?;
 
     let sheet = get_last_outpoint_sheet(&claim_block)?;
-    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }), 1_000_000);
+    assert_eq!(
+        *sheet
+            .balances()
+            .get(&ProtoruneRuneId {
+                height: MessageField::some(Uint128::from(2)),
+                txindex: MessageField::some(Uint128::from(0)),
+                ..Default::default()
+            })
+            .unwrap(),
+        1_000_000u128
+    );
 
     Ok(claim_block)
 }
@@ -234,7 +245,13 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
     };
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
     let auth_sheet = get_sheet_for_outpoint(&init_block, init_block.txdata.len() - 1, 0)?;
-    assert_eq!(auth_sheet.get(&merkle_distributor_id.clone().into()), 5);
+    assert_eq!(
+        *auth_sheet
+            .balances()
+            .get(&merkle_distributor_id.clone().into())
+            .unwrap(),
+        5
+    );
     let block_height = 840_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
     let collect_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in_with_edicts(
@@ -256,8 +273,24 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
     spend_block.txdata.push(collect_tx.clone());
     index_block(&spend_block, block_height)?;
     let sheet = get_last_outpoint_sheet(&spend_block)?;
-    assert_eq!(sheet.get(&merkle_distributor_id.clone().into()), 5);
-    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }), 312500000);
+    assert_eq!(
+        *sheet
+            .balances()
+            .get(&merkle_distributor_id.clone().into())
+            .unwrap(),
+        5
+    );
+    assert_eq!(
+        *sheet
+            .balances()
+            .get(&ProtoruneRuneId {
+                height: MessageField::some(Uint128::from(2)),
+                txindex: MessageField::some(Uint128::from(0)),
+                ..Default::default()
+            })
+            .unwrap(),
+        312500000
+    );
 
     Ok(())
 }

@@ -15,8 +15,10 @@ use protorune::test_helpers::get_address;
 use protorune::{
     balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
 };
-use protorune_support::balance_sheet::ProtoruneRuneId;
-use protorune_support::protostone::ProtostoneEdict;
+use protorune_support::{
+    balance_sheet::{ProtoruneRuneId, Uint128},
+};
+use protobuf::MessageField;
 
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
@@ -96,7 +98,11 @@ fn test_cant_forge_edicts() -> Result<()> {
                 protocol_tag: 1,
                 from: None,
                 edicts: vec![ProtostoneEdict {
-                    id: ProtoruneRuneId { block: 2, tx: 100 },
+                    id: ProtoruneRuneId {
+                        height: MessageField::some(Uint128::from(2)),
+                        txindex: MessageField::some(Uint128::from(100)),
+                        ..Default::default()
+                    },
                     amount: 100000,
                     output: 0,
                 }],
@@ -112,10 +118,12 @@ fn test_cant_forge_edicts() -> Result<()> {
         vout: 0,
     };
     let sheet = load_sheet(
+        &IndexPointer::default(),
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&edict_outpoint)?),
-    );
+            .select(&consensus_encode(&edict_outpoint)?)
+            .unwrap(),
+    )?;
     println!("{:?}", sheet);
     Ok(())
 }

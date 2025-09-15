@@ -27,15 +27,16 @@ use anyhow::Result;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, TxOut};
 use metashrew_core::index_pointer::IndexPointer;
-use metashrew_core::stdio::stdout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consensus_encode, is_empty};
 use protobuf::{MessageField, SpecialFields};
 use protorune_support::tables::OUTPOINT_SPENDABLE_BY;
-use std::fmt::Write;
 use std::io::Cursor;
 
+#[cfg(not(test))]
 use crate::network::genesis;
+#[cfg(test)]
+use alkanes::network::genesis;
 
 pub fn fr_btc_storage_pointer() -> IndexPointer {
     IndexPointer::from_keyword("/alkanes/")

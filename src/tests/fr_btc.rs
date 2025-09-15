@@ -1,8 +1,9 @@
 use crate::message::AlkaneMessageContext;
 use crate::precompiled::{alkanes_std_auth_token_build, fr_btc_build};
 use crate::unwrap as unwrap_view;
-use crate::view::{self, simulate_parcel, unwrap};
+use crate::view;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
+use crate::view::simulate_parcel;
 use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::response::ExtendedCallResponse;
@@ -29,7 +30,10 @@ use protorune::{
     balance_sheet::load_sheet, message::MessageContext, tables::RuneTable,
     test_helpers::get_address,
 };
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
+use protorune_support::balance_sheet::{
+    BalanceSheet, BalanceSheetOperations, ProtoruneRuneId, Uint128,
+};
+use protobuf::MessageField;
 use protorune_support::protostone::Protostone;
 
 use crate::indexer::index_block;
@@ -50,7 +54,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 pub fn simulate_cellpack(height: u64, cellpack: Cellpack) -> Result<(ExtendedCallResponse, u64)> {
     let parcel = MessageContextParcel {
-        atomic: AtomicPointer::default(),
+        host: IndexPointer::default(),
         runes: vec![],
         transaction: Transaction {
             version: bitcoin::blockdata::transaction::Version::ONE,
@@ -63,10 +67,10 @@ pub fn simulate_cellpack(height: u64, cellpack: Cellpack) -> Result<(ExtendedCal
         pointer: 0,
         refund_pointer: 0,
         calldata: cellpack.encipher(),
-        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        sheets: Box::<BalanceSheet<IndexPointer>>::new(BalanceSheet::default()),
         txindex: 0,
         vout: 0,
-        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        runtime_balances: Box::<BalanceSheet<IndexPointer>>::new(BalanceSheet::default()),
     };
     simulate_parcel(&parcel, u64::MAX)
 }
@@ -104,7 +108,7 @@ pub fn create_alkane_tx_frbtc_signer_script(
     let mut protostones: Vec<Protostone> = [cellpacks
         .into_iter()
         .map(|cellpack| Protostone {
-            message: cellpack.encipher(),
+            message: cellpack.encipher().into_iter().map(|v| v as u128).collect(),
             pointer: Some(0),
             refund: Some(0),
             edicts: vec![],
@@ -117,10 +121,10 @@ pub fn create_alkane_tx_frbtc_signer_script(
     protostones.push(Protostone {
         // mint diesel test
         message: Cellpack {
-            target: AlkaneId { block: 2, tx: 0 },
-            inputs: vec![77],
-        }
-        .encipher(),
+          target: AlkaneId { block: 2, tx: 0 },
+          inputs: vec![77],
+      }
+      .encipher().into_iter().map(|v| v as u128).collect(),
         pointer: Some(0),
         refund: Some(0),
         edicts: vec![],
@@ -172,12 +176,18 @@ fn wrap_btc() -> Result<(OutPoint, u64)> {
     index_block(&block, 1)?;
 
     let sheet = get_last_outpoint_sheet(&block)?;
-    let balance = sheet.get(&fr_btc_id.clone().into());
+    let balance = sheet.balances().get(&fr_btc_id.clone().into()).unwrap();
 
     let expected_frbtc_amt = 99500000;
 
-    assert_eq!(balance, expected_frbtc_amt);
-    assert_eq!(sheet.get(&AlkaneId { block: 2, tx: 0 }.into()), 5000000000);
+    assert_eq!(*balance, expected_frbtc_amt);
+    assert_eq!(
+        sheet
+            .balances()
+            .get(&AlkaneId { block: 2, tx: 0 }.into())
+            .unwrap(),
+        &5000000000
+    );
 
     let wrap_outpoint = OutPoint {
         txid: wrap_tx.compute_txid(),
@@ -202,10 +212,10 @@ fn unwrap_btc_tx(
     let protocol_id = 1;
     let protostone: Vec<Protostone> = vec![Protostone {
         message: Cellpack {
-            target: fr_btc_id.clone(),
-            inputs: vec![78, desired_vout, amount_frbtc as u128],
-        }
-        .encipher(),
+          target: fr_btc_id.clone(),
+          inputs: vec![78, desired_vout, amount_frbtc as u128],
+      }
+      .encipher().into_iter().map(|v| v as u128).collect(),
         pointer: Some(0),
         refund: Some(0),
         edicts: vec![],
@@ -262,9 +272,9 @@ fn unwrap_btc(
     index_block(&block, height)?;
 
     let sheet = get_last_outpoint_sheet(&block)?;
-    let balance = sheet.get(&fr_btc_id.clone().into());
+    let balance = sheet.balances().get(&fr_btc_id.clone().into()).unwrap();
 
-    assert_eq!(balance as u64, amount_original_frbtc - amt_actual_burn);
+    assert_eq!(*balance as u64, amount_original_frbtc - amt_actual_burn);
 
     let (response, _) = simulate_cellpack(
         height as u64,
@@ -288,7 +298,13 @@ fn unwrap_btc(
     };
 
     assert_eq!(payments[0], expected_payment);
-    assert_eq!(sheet.get(&AlkaneId { block: 2, tx: 0 }.into()), 5000000000);
+    assert_eq!(
+        sheet
+            .balances()
+            .get(&AlkaneId { block: 2, tx: 0 }.into())
+            .unwrap(),
+        &5000000000
+    );
 
     let response = unwrap_view::view(height as u128).unwrap();
     assert_eq!(
@@ -384,10 +400,10 @@ fn test_fr_btc_wrap_incorrect_signer() -> Result<()> {
     index_block(&block, 880_001)?;
 
     let sheet = get_last_outpoint_sheet(&block)?;
-    let balance = sheet.get(&fr_btc_id.clone().into());
+    let balance = sheet.balances().get(&fr_btc_id.clone().into()).unwrap();
 
     // No BTC sent to correct signer, so no frBTC should be minted.
-    assert_eq!(balance, 0);
+    assert_eq!(*balance, 0);
 
     Ok(())
 }

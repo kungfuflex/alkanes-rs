@@ -10,7 +10,6 @@ use crate::tests::std::alkanes_std_owned_token_build;
 use crate::tests::std::alkanes_std_proxy_build;
 use crate::tests::std::alkanes_std_test_build;
 use crate::tests::std::alkanes_std_upgradeable_build;
-use crate::view::meta_safe;
 use crate::vm::fuel::FuelTank;
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
@@ -160,7 +159,7 @@ fn test_meta_call() -> Result<()> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
         inputs: vec![100],
     };
@@ -186,7 +185,7 @@ fn test_meta_call() -> Result<()> {
     };
 
     // Call meta_safe with the properly formatted parcel
-    let abi_bytes = meta_safe(&parcel)?;
+    let abi_bytes = crate::view::meta_safe(&parcel)?;
     // Verify the response
     let abi_string = String::from_utf8(abi_bytes.clone())?;
     let abi_json: Value = serde_json::from_slice(&abi_bytes)?;

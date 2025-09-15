@@ -1,19 +1,16 @@
-use crate::vm::instance::AlkanesInstance as AlkanesVm;
+#[cfg(not(test))]
 use crate::WasmHost;
+#[cfg(test)]
+use alkanes::WasmHost;
 use anyhow::Result;
-use bitcoin::Transaction;
-use ordinals::{Etching, Rune, RuneId};
 use protorune_support::{
     balance_sheet::BalanceSheet,
     message::MessageContext,
 };
-use ordinals::runestone::message::Message;
-use std::collections::{BTreeMap, HashMap};
 
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::message::MessageContextParcel;
-use metashrew_support::index_pointer::KeyValuePointer;
 
 pub struct AlkaneMessageContext {}
 

@@ -4,7 +4,6 @@ use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
-use protorune_support::protostone::ProtostoneEdict;
 
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};

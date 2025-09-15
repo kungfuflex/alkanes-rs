@@ -22,6 +22,7 @@ protobuf = { workspace = true }
 ordinals = { workspace = true }
 wasmi = { workspace = true }
 hex = { workspace = true }
+
 alkanes-proto = { path = "../alkanes-proto" }
 
 [build-dependencies]

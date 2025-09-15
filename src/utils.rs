@@ -3,7 +3,7 @@ use alkanes_support::storage::StorageMap;
 use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_core::index_pointer::{IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
@@ -22,15 +22,16 @@ pub fn from_protobuf(v: alkanes_support::proto::alkanes::AlkaneId) -> AlkaneId {
     }
 }
 
+use crate::WasmHost;
+
 pub fn balance_pointer(
-    atomic: &mut AtomicPointer,
+    atomic: &mut WasmHost,
     who: &AlkaneId,
     what: &AlkaneId,
-) -> AtomicPointer {
+) -> IndexPointer {
     let who_bytes: Vec<u8> = who.clone().into();
     let what_bytes: Vec<u8> = what.clone().into();
     let ptr = atomic
-        .derive(&IndexPointer::default())
         .keyword("/alkanes/")
         .select(&what_bytes)
         .keyword("/balances/")
@@ -38,7 +39,7 @@ pub fn balance_pointer(
     if ptr.get().len() != 0 {
         alkane_inventory_pointer(who).append(Arc::new(what_bytes));
     }
-    ptr
+    ptr.get_pointer()
 }
 
 pub fn alkane_inventory_pointer(who: &AlkaneId) -> IndexPointer {
@@ -64,7 +65,7 @@ pub fn alkane_id_to_outpoint(alkane_id: &AlkaneId) -> Result<OutPoint> {
 }
 
 pub fn credit_balances(
-    atomic: &mut AtomicPointer,
+    atomic: &mut WasmHost,
     to: &AlkaneId,
     runes: &Vec<RuneTransfer>,
 ) -> Result<()> {
@@ -103,7 +104,7 @@ pub fn checked_debit_with_minting(
 }
 
 pub fn debit_balances(
-    atomic: &mut AtomicPointer,
+    atomic: &mut WasmHost,
     to: &AlkaneId,
     runes: &AlkaneTransferParcel,
 ) -> Result<()> {
@@ -117,7 +118,7 @@ pub fn debit_balances(
 
 pub fn transfer_from(
     parcel: &AlkaneTransferParcel,
-    atomic: &mut AtomicPointer,
+    atomic: &mut WasmHost,
     from: &AlkaneId,
     to: &AlkaneId,
 ) -> Result<()> {

@@ -1102,6 +1102,8 @@ pub struct OutpointResponse {
     pub height: u32,
     // @@protoc_insertion_point(field:protorune.OutpointResponse.txindex)
     pub txindex: u32,
+    // @@protoc_insertion_point(field:protorune.OutpointResponse.balances)
+    pub balances: ::std::vec::Vec<u8>,
     // special fields
     // @@protoc_insertion_point(special_field:protorune.OutpointResponse.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -1119,7 +1121,7 @@ impl OutpointResponse {
     }
 
     fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
-        let mut fields = ::std::vec::Vec::with_capacity(4);
+        let mut fields = ::std::vec::Vec::with_capacity(5);
         let mut oneofs = ::std::vec::Vec::with_capacity(0);
         fields.push(::protobuf::reflect::rt::v2::make_message_field_accessor::<_, Outpoint>(
             "outpoint",
@@ -1140,6 +1142,11 @@ impl OutpointResponse {
             "txindex",
             |m: &OutpointResponse| { &m.txindex },
             |m: &mut OutpointResponse| { &mut m.txindex },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "balances",
+            |m: &OutpointResponse| { &m.balances },
+            |m: &mut OutpointResponse| { &mut m.balances },
         ));
         ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<OutpointResponse>(
             "OutpointResponse",
@@ -1171,6 +1178,9 @@ impl ::protobuf::Message for OutpointResponse {
                 40 => {
                     self.txindex = is.read_uint32()?;
                 },
+                50 => {
+                    self.balances = is.read_bytes()?;
+                },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
                 },
@@ -1197,6 +1207,9 @@ impl ::protobuf::Message for OutpointResponse {
         if self.txindex != 0 {
             my_size += ::protobuf::rt::uint32_size(5, self.txindex);
         }
+        if !self.balances.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(6, &self.balances);
+        }
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
         my_size
@@ -1214,6 +1227,9 @@ impl ::protobuf::Message for OutpointResponse {
         }
         if self.txindex != 0 {
             os.write_uint32(5, self.txindex)?;
+        }
+        if !self.balances.is_empty() {
+            os.write_bytes(6, &self.balances)?;
         }
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -1236,6 +1252,7 @@ impl ::protobuf::Message for OutpointResponse {
         self.output.clear();
         self.height = 0;
         self.txindex = 0;
+        self.balances.clear();
         self.special_fields.clear();
     }
 
@@ -1245,6 +1262,7 @@ impl ::protobuf::Message for OutpointResponse {
             output: ::protobuf::MessageField::none(),
             height: 0,
             txindex: 0,
+            balances: ::std::vec::Vec::new(),
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -3161,35 +3179,35 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     t\x18\x02\x20\x01(\rR\x04vout\x12.\n\x08protocol\x18\x03\x20\x01(\x0b2\
     \x12.protorune.uint128R\x08protocol\"6\n\x06Output\x12\x16\n\x06script\
     \x18\x01\x20\x01(\x0cR\x06script\x12\x14\n\x05value\x18\x02\x20\x01(\x04\
-    R\x05value\"\xa0\x01\n\x10OutpointResponse\x12/\n\x08outpoint\x18\x02\
+    R\x05value\"\xbc\x01\n\x10OutpointResponse\x12/\n\x08outpoint\x18\x02\
     \x20\x01(\x0b2\x13.protorune.OutpointR\x08outpoint\x12)\n\x06output\x18\
     \x03\x20\x01(\x0b2\x11.protorune.OutputR\x06output\x12\x16\n\x06height\
     \x18\x04\x20\x01(\rR\x06height\x12\x18\n\x07txindex\x18\x05\x20\x01(\rR\
-    \x07txindex\"9\n\x0fPaginationInput\x12\x14\n\x05start\x18\x01\x20\x01(\
-    \rR\x05start\x12\x10\n\x03end\x18\x02\x20\x01(\rR\x03end\"'\n\rWalletReq\
-    uest\x12\x16\n\x06wallet\x18\x01\x20\x01(\x0cR\x06wallet\"K\n\x0eWalletR\
-    esponse\x129\n\toutpoints\x18\x01\x20\x03(\x0b2\x1b.protorune.OutpointRe\
-    sponseR\toutpoints\"h\n\x17ProtorunesWalletRequest\x12\x16\n\x06wallet\
-    \x18\x01\x20\x01(\x0cR\x06wallet\x125\n\x0cprotocol_tag\x18\x02\x20\x01(\
-    \x0b2\x12.protorune.uint128R\x0bprotocolTag\".\n\x14RunesByHeightRequest\
-    \x12\x16\n\x06height\x18\x01\x20\x01(\x04R\x06height\"j\n\x19ProtorunesB\
-    yHeightRequest\x12\x16\n\x06height\x18\x01\x20\x01(\x04R\x06height\x125\
-    \n\x0cprotocol_tag\x18\x02\x20\x01(\x0b2\x12.protorune.uint128R\x0bproto\
-    colTag\"6\n\rRunesResponse\x12%\n\x05runes\x18\x01\x20\x03(\x0b2\x0f.pro\
-    torune.RuneR\x05runes\"\\\n\tProtoBurn\x125\n\x0cprotocol_tag\x18\x01\
-    \x20\x01(\x0b2\x12.protorune.uint128R\x0bprotocolTag\x12\x18\n\x07pointe\
-    r\x18\x02\x20\x01(\rR\x07pointer\")\n\x07uint128\x12\x0e\n\x02lo\x18\x01\
-    \x20\x01(\x04R\x02lo\x12\x0e\n\x02hi\x18\x02\x20\x01(\x04R\x02hi\"d\n\
-    \x06Clause\x12.\n\x04rune\x18\x01\x20\x01(\x0b2\x1a.protorune.ProtoruneR\
-    uneIdR\x04rune\x12*\n\x06amount\x18\x02\x20\x01(\x0b2\x12.protorune.uint\
-    128R\x06amount\"8\n\tPredicate\x12+\n\x07clauses\x18\x01\x20\x03(\x0b2\
-    \x11.protorune.ClauseR\x07clauses\"\x9f\x01\n\x0cProtoMessage\x12\x1a\n\
-    \x08calldata\x18\x01\x20\x01(\x0cR\x08calldata\x122\n\tpredicate\x18\x02\
-    \x20\x01(\x0b2\x14.protorune.PredicateR\tpredicate\x12\x18\n\x07pointer\
-    \x18\x03\x20\x01(\rR\x07pointer\x12%\n\x0erefund_pointer\x18\x04\x20\x01\
-    (\rR\rrefundPointer\"E\n\x0cRuntimeInput\x125\n\x0cprotocol_tag\x18\x01\
-    \x20\x01(\x0b2\x12.protorune.uint128R\x0bprotocolTag\"\t\n\x07Runtimeb\
-    \x06proto3\
+    \x07txindex\x12\x1a\n\x08balances\x18\x06\x20\x01(\x0cR\x08balances\"9\n\
+    \x0fPaginationInput\x12\x14\n\x05start\x18\x01\x20\x01(\rR\x05start\x12\
+    \x10\n\x03end\x18\x02\x20\x01(\rR\x03end\"'\n\rWalletRequest\x12\x16\n\
+    \x06wallet\x18\x01\x20\x01(\x0cR\x06wallet\"K\n\x0eWalletResponse\x129\n\
+    \toutpoints\x18\x01\x20\x03(\x0b2\x1b.protorune.OutpointResponseR\toutpo\
+    ints\"h\n\x17ProtorunesWalletRequest\x12\x16\n\x06wallet\x18\x01\x20\x01\
+    (\x0cR\x06wallet\x125\n\x0cprotocol_tag\x18\x02\x20\x01(\x0b2\x12.protor\
+    une.uint128R\x0bprotocolTag\".\n\x14RunesByHeightRequest\x12\x16\n\x06he\
+    ight\x18\x01\x20\x01(\x04R\x06height\"j\n\x19ProtorunesByHeightRequest\
+    \x12\x16\n\x06height\x18\x01\x20\x01(\x04R\x06height\x125\n\x0cprotocol_\
+    tag\x18\x02\x20\x01(\x0b2\x12.protorune.uint128R\x0bprotocolTag\"6\n\rRu\
+    nesResponse\x12%\n\x05runes\x18\x01\x20\x03(\x0b2\x0f.protorune.RuneR\
+    \x05runes\"\\\n\tProtoBurn\x125\n\x0cprotocol_tag\x18\x01\x20\x01(\x0b2\
+    \x12.protorune.uint128R\x0bprotocolTag\x12\x18\n\x07pointer\x18\x02\x20\
+    \x01(\rR\x07pointer\")\n\x07uint128\x12\x0e\n\x02lo\x18\x01\x20\x01(\x04\
+    R\x02lo\x12\x0e\n\x02hi\x18\x02\x20\x01(\x04R\x02hi\"d\n\x06Clause\x12.\
+    \n\x04rune\x18\x01\x20\x01(\x0b2\x1a.protorune.ProtoruneRuneIdR\x04rune\
+    \x12*\n\x06amount\x18\x02\x20\x01(\x0b2\x12.protorune.uint128R\x06amount\
+    \"8\n\tPredicate\x12+\n\x07clauses\x18\x01\x20\x03(\x0b2\x11.protorune.C\
+    lauseR\x07clauses\"\x9f\x01\n\x0cProtoMessage\x12\x1a\n\x08calldata\x18\
+    \x01\x20\x01(\x0cR\x08calldata\x122\n\tpredicate\x18\x02\x20\x01(\x0b2\
+    \x14.protorune.PredicateR\tpredicate\x12\x18\n\x07pointer\x18\x03\x20\
+    \x01(\rR\x07pointer\x12%\n\x0erefund_pointer\x18\x04\x20\x01(\rR\rrefund\
+    Pointer\"E\n\x0cRuntimeInput\x125\n\x0cprotocol_tag\x18\x01\x20\x01(\x0b\
+    2\x12.protorune.uint128R\x0bprotocolTag\"\t\n\x07Runtimeb\x06proto3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file

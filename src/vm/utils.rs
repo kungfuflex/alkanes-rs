@@ -1,5 +1,12 @@
+#[cfg(not(test))]
+use crate::WasmHost;
+#[cfg(test)]
+use alkanes::WasmHost;
 use super::{AlkanesInstance, AlkanesRuntimeContext, AlkanesState};
+#[cfg(not(test))]
 use crate::utils::{pipe_storagemap_to, transfer_from};
+#[cfg(test)]
+use alkanes::utils::{pipe_storagemap_to, transfer_from};
 use crate::vm::fuel::fuel_per_store_byte;
 use alkanes_support::trace::TraceEvent;
 use alkanes_support::{
@@ -45,8 +52,8 @@ pub fn get_memory<'a>(caller: &mut Caller<'_, AlkanesState>) -> Result<Memory> {
         .ok_or(anyhow!("export was not memory region"))
 }
 
-pub fn sequence_pointer(ptr: &AtomicPointer) -> AtomicPointer {
-    ptr.derive(&IndexPointer::from_keyword("/alkanes/sequence"))
+pub fn sequence_pointer(ptr: &mut AtomicPointer) -> IndexPointer {
+    ptr.derive(&IndexPointer::from_keyword("/alkanes/sequence")).get_pointer()
 }
 
 fn set_alkane_id_to_tx_id(
@@ -234,13 +241,14 @@ pub trait Saveable {
         pipe_storagemap_to(
             &self.storage_map(),
             &mut atomic
-                .derive(&IndexPointer::from_keyword("/alkanes/").select(&self.from().into())),
+                .derive(&IndexPointer::from_keyword("/alkanes/").select(&self.from().into()))
+                .get_pointer(),
         );
         if !is_delegate {
             // delegate call retains caller and myself, so no alkanes are transferred from the subcontext to myself
             transfer_from(
                 &self.alkanes(),
-                &mut atomic.derive(&IndexPointer::default()),
+                &mut WasmHost(atomic.derive(&IndexPointer::default())),
                 &self.from().into(),
                 &self.to().into(),
             )?;

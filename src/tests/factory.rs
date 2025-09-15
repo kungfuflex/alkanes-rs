@@ -18,8 +18,7 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune_support::balance_sheet::ProtoruneRuneId;
-use protorune_support::protostone::ProtostoneEdict;
+use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -76,11 +75,11 @@ fn test_factory_wasm_load() -> Result<()> {
     let copy_alkane = AlkaneId { block: 2, tx: 2 };
 
     assert_eq!(
-        runtime_sheet.get_cached(&orig_alkane.clone().into()),
+        runtime_sheet.get(&orig_alkane.clone().into()),
         1000000
     );
-    assert_eq!(sheet.get_cached(&orig_alkane.clone().into()), 0);
-    assert_eq!(sheet.get_cached(&copy_alkane.clone().into()), 1000000);
+    assert_eq!(sheet.get(&orig_alkane.clone().into()), 0);
+    assert_eq!(sheet.get(&copy_alkane.clone().into()), 1000000);
 
     let _ = assert_binary_deployed_to_id(orig_alkane.clone(), alkanes_std_test_build::get_bytes());
 

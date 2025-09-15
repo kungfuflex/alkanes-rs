@@ -39,7 +39,9 @@ pub fn core_outpoint_to_proto(outpoint: &OutPoint) -> Outpoint {
     }
 }
 
-pub fn protorune_outpoint_to_outpoint_response<H: Host + Default>(
+pub fn protorune_outpoint_to_outpoint_response<
+    H: Host + Default + Clone + PartialEq + Send + Sync + 'static,
+>(
     host: &H,
     outpoint: &OutPoint,
     _protocol_id: u128,
@@ -76,7 +78,7 @@ pub fn protorune_outpoint_to_outpoint_response<H: Host + Default>(
             .as_ref(),
     )?;
     Ok(OutpointResponse {
-        //balances: MessageField::some(balance_sheet.into()),
+        balances: balance_sheet.write_to_bytes()?,
         outpoint: MessageField::some(core_outpoint_to_proto(&outpoint)),
         output: MessageField::some(decoded_output),
         height: height as u32,
@@ -85,7 +87,12 @@ pub fn protorune_outpoint_to_outpoint_response<H: Host + Default>(
     })
 }
 
-pub fn rune_outpoint_to_outpoint_response<H: Host + Default>(host: &H, outpoint: &OutPoint) -> Result<OutpointResponse> {
+pub fn rune_outpoint_to_outpoint_response<
+    H: Host + Default + Clone + PartialEq + Send + Sync + 'static,
+>(
+    host: &H,
+    outpoint: &OutPoint,
+) -> Result<OutpointResponse> {
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
     let balance_sheet = load_sheet(host, &outpoint_bytes)?;
 
@@ -114,7 +121,7 @@ pub fn rune_outpoint_to_outpoint_response<H: Host + Default>(host: &H, outpoint:
             .as_ref(),
     )?;
     Ok(OutpointResponse {
-        //balances: MessageField::some(balance_sheet.into()),
+        balances: balance_sheet.write_to_bytes()?,
         outpoint: MessageField::some(core_outpoint_to_proto(&outpoint)),
         output: MessageField::some(decoded_output),
         height: height as u32,
@@ -123,7 +130,12 @@ pub fn rune_outpoint_to_outpoint_response<H: Host + Default>(host: &H, outpoint:
     })
 }
 
-pub fn outpoint_to_outpoint_response<H: Host + Default>(host: &H, outpoint: &OutPoint) -> Result<OutpointResponse> {
+pub fn outpoint_to_outpoint_response<
+    H: Host + Default + Clone + PartialEq + Send + Sync + 'static,
+>(
+    host: &H,
+    outpoint: &OutPoint,
+) -> Result<OutpointResponse> {
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
     let balance_sheet = load_sheet(host, &outpoint_bytes)?;
     let mut height: u128 = tables::RUNES
@@ -151,7 +163,7 @@ pub fn outpoint_to_outpoint_response<H: Host + Default>(host: &H, outpoint: &Out
             .as_ref(),
     )?;
     Ok(OutpointResponse {
-        //balances: MessageField::some(balance_sheet.into()),
+        balances: balance_sheet.write_to_bytes()?,
         outpoint: MessageField::some(core_outpoint_to_proto(&outpoint)),
         output: MessageField::some(decoded_output),
         height: height as u32,
@@ -160,7 +172,9 @@ pub fn outpoint_to_outpoint_response<H: Host + Default>(host: &H, outpoint: &Out
     })
 }
 
-pub fn runes_by_address<H: Host + Default>(input: &Vec<u8>) -> Result<WalletResponse> {
+pub fn runes_by_address<H: Host + Default + Clone + PartialEq + Send + Sync + 'static>(
+    input: &Vec<u8>,
+) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::WalletRequest::parse_from_bytes(input).ok() {
         result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
@@ -193,7 +207,9 @@ pub fn runes_by_address<H: Host + Default>(input: &Vec<u8>) -> Result<WalletResp
     Ok(result)
 }
 
-pub fn protorunes_by_outpoint<H: Host + Default>(input: &Vec<u8>) -> Result<OutpointResponse> {
+pub fn protorunes_by_outpoint<H: Host + Default + Clone + PartialEq + Send + Sync + 'static>(
+    input: &Vec<u8>,
+) -> Result<OutpointResponse> {
     match proto::protorune::OutpointWithProtocol::parse_from_bytes(input).ok() {
         Some(req) => {
             let protocol_tag: u128 = req.protocol.into_option().unwrap().into();
@@ -211,7 +227,9 @@ pub fn protorunes_by_outpoint<H: Host + Default>(input: &Vec<u8>) -> Result<Outp
     }
 }
 
-pub fn runes_by_outpoint<H: Host + Default>(input: &Vec<u8>) -> Result<OutpointResponse> {
+pub fn runes_by_outpoint<H: Host + Default + Clone + PartialEq + Send + Sync + 'static>(
+    input: &Vec<u8>,
+) -> Result<OutpointResponse> {
     match proto::protorune::Outpoint::parse_from_bytes(input).ok() {
         Some(req) => {
             let outpoint = OutPoint {
@@ -227,7 +245,9 @@ pub fn runes_by_outpoint<H: Host + Default>(input: &Vec<u8>) -> Result<OutpointR
     }
 }
 
-pub fn protorunes_by_address<H: Host + Default>(input: &Vec<u8>) -> Result<WalletResponse> {
+pub fn protorunes_by_address<H: Host + Default + Clone + PartialEq + Send + Sync + 'static>(
+    input: &Vec<u8>,
+) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input).ok() {
         result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
@@ -264,7 +284,9 @@ pub fn protorunes_by_address<H: Host + Default>(input: &Vec<u8>) -> Result<Walle
     Ok(result)
 }
 
-pub fn protorunes_by_address2<H: Host + Default>(input: &Vec<u8>) -> Result<WalletResponse> {
+pub fn protorunes_by_address2<H: Host + Default + Clone + PartialEq + Send + Sync + 'static>(
+    input: &Vec<u8>,
+) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input).ok() {
         result.outpoints = tables::OUTPOINT_SPENDABLE_BY_ADDRESS

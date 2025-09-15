@@ -14,10 +14,101 @@ use std::marker::PhantomData;
  */
 use std::hash::Hash;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+use protobuf::{Message, CodedInputStream, CodedOutputStream, SpecialFields};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BalanceSheet<H: Host> {
     pub balances: BTreeMap<ProtoruneRuneId, u128>,
+    pub special_fields: SpecialFields,
     _phantom: PhantomData<H>,
+}
+
+impl<H: Host> Default for BalanceSheet<H> {
+    fn default() -> Self {
+        Self {
+            balances: BTreeMap::new(),
+            special_fields: SpecialFields::default(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+use protobuf::rt;
+
+impl<H: Host + Clone + Default + Send + Sync + PartialEq + 'static> Message for BalanceSheet<H> {
+    const NAME: &'static str = "BalanceSheet";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut CodedInputStream) -> protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    let item = is.read_message::<BalanceSheetItem>()?;
+                    if let Some(rune_id) = item.rune.as_ref().and_then(|r| r.runeId.as_ref()) {
+                        if let Some(balance) = item.balance.as_ref() {
+                            self.balances.insert(rune_id.clone(), balance.clone().into());
+                        }
+                    }
+                }
+                _ => {
+                    rt::read_unknown_or_skip_group(tag, is, self.mut_unknown_fields())?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut CodedOutputStream) -> protobuf::Result<()> {
+        for (rune_id, balance) in &self.balances {
+            let mut item = BalanceSheetItem::new();
+            let mut rune = crate::proto::protorune::Rune::new();
+            rune.runeId = protobuf::MessageField::some(rune_id.clone());
+            item.rune = protobuf::MessageField::some(rune);
+            item.balance = protobuf::MessageField::some((*balance).into());
+            os.write_message(1, &item)?;
+        }
+        os.write_unknown_fields(self.special_fields().unknown_fields())?;
+        Ok(())
+    }
+
+    fn special_fields(&self) -> &SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn clear(&mut self) {
+        self.balances.clear();
+        self.special_fields.clear();
+    }
+
+    fn compute_size(&self) -> u64 {
+        let mut size = 0;
+        for (rune_id, balance) in &self.balances {
+            let mut item = BalanceSheetItem::new();
+            let mut rune = crate::proto::protorune::Rune::new();
+            rune.runeId = protobuf::MessageField::some(rune_id.clone());
+            item.rune = protobuf::MessageField::some(rune);
+            item.balance = protobuf::MessageField::some((*balance).into());
+            let len = item.compute_size();
+            size += 1 + protobuf::rt::compute_raw_varint64_size(len) + len;
+        }
+        size += rt::unknown_fields_size(self.special_fields.unknown_fields());
+        size
+    }
+
+    fn default_instance() -> &'static Self {
+        panic!("default_instance() is not implemented for generic BalanceSheet");
+    }
 }
 pub use crate::rune_transfer::RuneTransfer;
 use crate::rune_transfer::{increase_balances_using_sheet};

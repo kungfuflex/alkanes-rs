@@ -9,7 +9,10 @@ use {
     std::fmt::Write,
 };
 
+#[cfg(not(test))]
 use crate::WasmHost;
+#[cfg(test)]
+use alkanes::WasmHost;
 use alkanes_support::message::MessageContextParcel;
 
 #[derive(Clone)]

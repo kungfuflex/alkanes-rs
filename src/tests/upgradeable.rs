@@ -5,10 +5,7 @@ use crate::tests::std::{
     alkanes_std_test_build, alkanes_std_upgradeable_beacon_build, alkanes_std_upgradeable_build,
 };
 use alkane_helpers::clear;
-use alkanes::view;
-use alkanes::vm::utils::sequence_pointer;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::trace::{Trace, TraceEvent};
 use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
 use anyhow::Result;
 use bitcoin::block::Header;
@@ -22,8 +19,11 @@ use metashrew_core::{
 };
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
-use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::balance_sheet::{
+    BalanceSheetOperations, ProtoruneRuneId, Uint128,
+};
 use protorune_support::utils::consensus_decode;
+use protobuf::MessageField;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 pub const BEACON_ID: u128 = 0xbeac0;
@@ -34,7 +34,7 @@ fn setup_env() -> Result<Block> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
-            tx: AUTH_TOKEN_FACTORY_ID,
+            tx: AUTH_TOKEN_FACTORY_ID.tx,
         },
         inputs: vec![100],
     };
@@ -85,7 +85,7 @@ fn deploy_upgradeable_proxy(
     block_height: u32,
     delegate_target: AlkaneId,
 ) -> Result<(Block, u128)> {
-    let mut next_sequence_pointer = sequence_pointer(&mut AtomicPointer::default());
+    let mut next_sequence_pointer = AtomicPointer::default();
     let proxy_sequence = next_sequence_pointer.get_value::<u128>();
     let proxy = alkane_helpers::BinaryAndCellpack {
         binary: proxy_build,
@@ -146,13 +146,24 @@ fn upgradeability_harness(
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
     assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId {
-            block: 2,
-            tx: proxy_sequence
-        }),
+        *sheet
+            .balances()
+            .get(&ProtoruneRuneId {
+                height: MessageField::some(Uint128::from(2)),
+                txindex: MessageField::some(Uint128::from(proxy_sequence)),
+                ..Default::default()
+            })
+            .unwrap(),
         1_000_000
     );
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
     assert_revert_context(
         &OutPoint {
             txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
@@ -176,13 +187,24 @@ fn upgradeability_harness(
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
     assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId {
-            block: 2,
-            tx: proxy_sequence
-        }),
+        *sheet
+            .balances()
+            .get(&ProtoruneRuneId {
+                height: MessageField::some(Uint128::from(2)),
+                txindex: MessageField::some(Uint128::from(proxy_sequence)),
+                ..Default::default()
+            })
+            .unwrap(),
         1_000_000
     );
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
     Ok(())
 }
 
@@ -255,13 +277,24 @@ fn check_after_upgrade(block_height: u32, proxy_sequence: u128) -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
     assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId {
-            block: 2,
-            tx: proxy_sequence
-        }),
+        *sheet
+            .balances()
+            .get(&ProtoruneRuneId {
+                height: MessageField::some(Uint128::from(2)),
+                txindex: MessageField::some(Uint128::from(proxy_sequence)),
+                ..Default::default()
+            })
+            .unwrap(),
         1_000_000
     );
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert!(sheet
+        .balances()
+        .get(&ProtoruneRuneId {
+            height: MessageField::some(Uint128::from(2)),
+            txindex: MessageField::some(Uint128::from(1)),
+            ..Default::default()
+        })
+        .is_none());
 
     let outpoint = OutPoint {
         txid: test_block.txdata[1].compute_txid(),

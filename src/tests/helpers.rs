@@ -26,8 +26,8 @@ use protorune::protostone::Protostones;
 use protorune::tables::RuneTable;
 use protorune::test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1};
 use protorune_support::balance_sheet::BalanceSheet;
-use protorune_support::network::{set_network, NetworkParams};
-use protorune_support::protostone::{Protostone, ProtostoneEdict};
+use protorune_support::network::{set_network};
+use protorune_support::protostone::{Protostone};
 use std::str::FromStr;
 
 #[cfg(test)]
@@ -420,7 +420,7 @@ pub fn get_sheet_for_outpoint(
     test_block: &Block,
     tx_num: usize,
     vout: u32,
-) -> Result<BalanceSheet<IndexPointer>> {
+) -> Result<BalanceSheet<WasmHost>> {
     let outpoint = OutPoint {
         txid: test_block.txdata[tx_num].compute_txid(),
         vout,
@@ -428,7 +428,7 @@ pub fn get_sheet_for_outpoint(
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?);
-    let sheet = load_sheet(&ptr);
+    let sheet = load_sheet(&WasmHost::default(), &ptr.get().as_ref().clone());
     println!(
         "balances at outpoint tx {} vout {}: {:?}",
         tx_num, vout, sheet
@@ -436,20 +436,20 @@ pub fn get_sheet_for_outpoint(
     Ok(sheet)
 }
 
-pub fn get_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
+pub fn get_sheet_for_runtime() -> BalanceSheet<WasmHost> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
-    let sheet = load_sheet(&ptr);
+    let sheet = load_sheet(&WasmHost::default(), &ptr.get().as_ref().clone());
     println!("runtime balances: {:?}", sheet);
     sheet
 }
 
-pub fn get_lazy_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
+pub fn get_lazy_sheet_for_runtime() -> BalanceSheet<WasmHost> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
-    let sheet = BalanceSheet::new_ptr_backed(ptr);
+    let sheet = BalanceSheet::new_ptr_backed(WasmHost::default());
     sheet
 }
 
-pub fn get_last_outpoint_sheet(test_block: &Block) -> Result<BalanceSheet<IndexPointer>> {
+pub fn get_last_outpoint_sheet(test_block: &Block) -> Result<BalanceSheet<WasmHost>> {
     let len = test_block.txdata.len();
     get_sheet_for_outpoint(test_block, len - 1, 0)
 }
@@ -691,3 +691,8 @@ pub fn create_multiple_cellpack_with_witness_and_in_with_edicts(
         false,
     )
 }
+
+use alkanes_support::host::AlkanesHost;
+use protorune_support::host::Host;
+use std::collections::BTreeSet;
+

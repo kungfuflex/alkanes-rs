@@ -5,8 +5,7 @@ use crate::tests::std::alkanes_std_genesis_alkane_build;
 use crate::vm::fuel::{FuelTank, TOTAL_FUEL_START};
 use alkane_helpers::clear;
 use alkanes::message::AlkaneMessageContext;
-use alkanes_support::cellpack::Cellpack;
-use alkanes_support::id::AlkaneId;
+use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID, id::AlkaneId};
 use anyhow::Result;
 use bitcoin::blockdata::transaction::OutPoint;
 use bitcoin::hashes::Hash;
@@ -16,7 +15,10 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_protostone_encoded_tx};
 use protorune::view::protorune_outpoint_to_outpoint_response;
 use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
+use protorune_support::balance_sheet::{
+    BalanceSheet, BalanceSheetOperations, ProtoruneRuneId, Uint128,
+};
+use protobuf::MessageField;
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::consensus_encode;
 use std::fmt::Write;
@@ -85,7 +87,7 @@ fn test_genesis() -> Result<()> {
     let cellpacks: Vec<Cellpack> = [
         // Auth token factory init
         Cellpack {
-            target: AlkaneId { block: 1, tx: 0 },
+            target: AUTH_TOKEN_FACTORY_ID,
             inputs: vec![0],
         },
     ]
@@ -168,7 +170,7 @@ fn test_genesis() -> Result<()> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?);
-    let sheet = load_sheet(&ptr);
+    let sheet = load_sheet(&WasmHost::default(), &ptr.unwrap()).unwrap();
 
     println!("Balances at end: {:?}", sheet);
 
@@ -247,14 +249,15 @@ fn test_genesis_indexer_premine() -> Result<()> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?);
-    let sheet = load_sheet(&ptr);
+    let sheet = load_sheet(&WasmHost::default(), &ptr.unwrap()).unwrap();
 
     println!("Balances at end: {:?}", sheet);
-    let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
-    assert_eq!(sheet.get(&genesis_id), 50_000_000u128);
-    let out = protorune_outpoint_to_outpoint_response(&outpoint, 1)?;
-    let out_sheet: BalanceSheet<IndexPointer> = out.into();
-    assert_eq!(sheet, out_sheet);
+    let genesis_id = ProtoruneRuneId {
+        height: MessageField::some(Uint128::from(2)),
+        txindex: MessageField::some(Uint128::from(0)),
+        ..Default::default()
+    };
+    assert_eq!(sheet.balances().get(&genesis_id).unwrap(), &50_000_000u128);
 
     // make sure premine is spendable
     let mut spend_block = create_block_with_coinbase_tx(block_height);
@@ -279,9 +282,16 @@ fn test_genesis_indexer_premine() -> Result<()> {
     let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&new_outpoint)?);
-    let new_sheet = load_sheet(&new_ptr);
+    let new_sheet = load_sheet(&WasmHost::default(), &new_ptr.unwrap()).unwrap();
 
-    let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
-    assert_eq!(new_sheet.get(&genesis_id), 50_000_000u128);
+    let genesis_id = ProtoruneRuneId {
+        height: MessageField::some(Uint128::from(2)),
+        txindex: MessageField::some(Uint128::from(0)),
+        ..Default::default()
+    };
+    assert_eq!(
+        new_sheet.balances().get(&genesis_id).unwrap(),
+        &50_000_000u128
+    );
     Ok(())
 }

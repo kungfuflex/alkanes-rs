@@ -1,45 +1,35 @@
 use crate::chain::Chain;
 use crate::index::BlockData;
 use crate::options::Options;
-use crate::view::views;
 use anyhow::Result;
 use bitcoin::consensus::Decodable;
 use bitcoin::Block;
-use clap::Subcommand;
-use metashrew_core::iterator::FileIterator;
-use metashrew_core::Consensus;
-use metashrew_core::{Find, Indexer};
+use clap::{Parser, Subcommand as ClapSubcommand};
 use std::path::PathBuf;
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(ClapSubcommand, Debug, Clone)]
 pub enum Subcommand {
     Index(Index),
     Find(Find),
     Views(Views),
 }
 
-#[derive(Subcommand, Debug, Clone)]
-pub enum Index {
-    #[command(name = "index")]
-    Index,
+#[derive(Parser, Debug, Clone)]
+pub struct Index {
+    #[clap(long, help = "The height to index up to")]
+    pub height: Option<u32>,
 }
 
-#[derive(Subcommand, Debug, Clone)]
-pub enum Find {
-    #[command(name = "find")]
-    Find {
-        #[arg(long, help = "Find by transaction id")]
-        txid: String,
-    },
+#[derive(Parser, Debug, Clone)]
+pub struct Find {
+    #[clap(long, help = "Find by transaction id")]
+    pub txid: String,
 }
 
-#[derive(Subcommand, Debug, Clone)]
-pub enum Views {
-    #[command(name = "views")]
-    Views {
-        #[arg(long, help = "View by transaction id")]
-        txid: String,
-    },
+#[derive(Parser, Debug, Clone)]
+pub struct Views {
+    #[clap(long, help = "View by transaction id")]
+    pub txid: String,
 }
 
 impl Subcommand {
@@ -51,9 +41,9 @@ impl Subcommand {
         match self {
             Subcommand::Index(index) => {
                 let blocks_dir = options.blocks_dir.unwrap();
-                let file_iterator = FileIterator::new(blocks_dir.clone())?;
-                for (i, path) in file_iterator.enumerate() {
+                for (i, entry) in std::fs::read_dir(blocks_dir)?.enumerate() {
                     let height = (i + chain.first_block()) as u32;
+                    let path = entry?.path();
                     let block_data = BlockData::new(height, path.to_str().unwrap())?;
                     indexer.index_block(&block_data)?;
                 }

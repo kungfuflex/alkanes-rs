@@ -21,6 +21,7 @@
 
 pub mod alkanes_log;
 pub mod cellpack;
+pub mod constants;
 pub mod context;
 pub mod continuation;
 pub mod gz;

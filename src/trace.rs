@@ -18,7 +18,7 @@
 //! Traces provide detailed information about the execution flow, including function
 //! calls, inputs, and outputs, which is invaluable for debugging and analysis.
 
-use crate::proto;
+use crate::into_proto::IntoProto;
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
 use alkanes_support::trace::Trace;
 use anyhow::Result;
@@ -36,7 +36,8 @@ use {
 pub fn save_trace(outpoint: &OutPoint, height: u64, trace: Trace) -> Result<()> {
     let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;
     TRACES.select(&buffer).set(Arc::<Vec<u8>>::new(
-        <Trace as Into<proto::alkanes::AlkanesTrace>>::into(trace).write_to_bytes()?,
+        trace.into_proto()
+            .write_to_bytes()?,
     ));
     TRACES_BY_HEIGHT
         .select_value(height)

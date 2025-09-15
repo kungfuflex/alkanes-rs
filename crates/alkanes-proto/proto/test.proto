@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package test;
+
+message TestBalanceSheetItem {
+    bytes rune = 1;
+    bytes balance = 2;
+}
+
+message TestBalanceSheetMessage {
+    repeated TestBalanceSheetItem items = 1;
+}
