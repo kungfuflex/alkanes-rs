@@ -110,7 +110,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     let _updated_addresses =
         Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 
-    unwrap::update_last_block(height as u128);
+    let _ = unwrap::update_last_block(height as u128);
 
     #[cfg(feature = "cache")]
     {

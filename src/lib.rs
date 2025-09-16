@@ -1,12 +1,14 @@
 use crate::indexer::configure_network;
-use crate::unwrap::{
-    deserialize_payments, fr_btc_payments_at_block, fr_btc_storage_pointer, update_last_block,
-};
+
 use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate_safe};
-use alkanes_support::proto;
+
 use metashrew_support::compat::export_bytes;
 use metashrew_support::utils::consensus_decode;
-use protobuf::MessageField;
+use protobuf::{Message, MessageField};
+use alkanes_support::proto::alkanes::{AlkaneInventoryRequest, AlkaneStorageRequest, SimulateResponse, MultiSimulateResponse};
+use alkanes_support::proto;
+use metashrew_support::utils::{consume_to_end, consume_sized_int};
+
 use view::parcels_from_protobuf;
 use bitcoin::{Block, OutPoint};
 #[allow(unused_imports)]
@@ -18,8 +20,7 @@ use metashrew_core::{
 use metashrew_support::block::AuxpowBlock;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::utils::{consume_sized_int, consume_to_end};
-use protobuf::Message;
+
 use std::io::Cursor;
 pub mod block;
 pub mod etl;

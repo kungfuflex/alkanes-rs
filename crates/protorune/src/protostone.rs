@@ -15,9 +15,6 @@ use protorune_support::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-use metashrew_core::{println, stdio::stdout};
-use std::fmt::Write;
-
 static mut PROTOCOLS: Option<BTreeSet<u128>> = None;
 
 #[allow(static_mut_refs)]
@@ -96,7 +93,7 @@ impl MessageProcessor for Protostone {
 
         // Log the Bitcoin address that can spend the output pointed to by the "pointer" field
         if pointer < num_outputs as u32 {
-            if let Ok(address) = protorune_support::network::to_address_str(
+            if let Ok(_address) = protorune_support::network::to_address_str(
                 &transaction.output[pointer as usize].script_pubkey,
             ) {
             }
@@ -104,7 +101,7 @@ impl MessageProcessor for Protostone {
 
         // Log the Bitcoin address that can spend the output pointed to by the "refund_pointer" field
         if refund_pointer < num_outputs as u32 {
-            if let Ok(address) = protorune_support::network::to_address_str(
+            if let Ok(_address) = protorune_support::network::to_address_str(
                 &transaction.output[refund_pointer as usize].script_pubkey,
             ) {
             }
@@ -151,11 +148,11 @@ impl MessageProcessor for Protostone {
                         atomic.commit();
                         Ok(true)
                     }
-                    Err(e) => {
+                    Err(_e) => {
 
                         // Log the Bitcoin address again to make it clear this is the refund address being used
                         if refund_pointer < num_outputs as u32 {
-                            if let Ok(address) = protorune_support::network::to_address_str(
+                            if let Ok(_address) = protorune_support::network::to_address_str(
                                 &transaction.output[refund_pointer as usize].script_pubkey,
                             ) {
                             }
@@ -171,11 +168,11 @@ impl MessageProcessor for Protostone {
                     }
                 }
             }
-            Err(e) => {
+            Err(_e) => {
 
                 // Log the Bitcoin address again to make it clear this is the refund address being used
                 if refund_pointer < num_outputs as u32 {
-                    if let Ok(address) = protorune_support::network::to_address_str(
+                    if let Ok(_address) = protorune_support::network::to_address_str(
                         &transaction.output[refund_pointer as usize].script_pubkey,
                     ) {
                     }

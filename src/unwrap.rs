@@ -6,14 +6,14 @@ use anyhow::Result;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, TxOut};
 use metashrew_core::index_pointer::IndexPointer;
-use metashrew_core::{get_cache, println, stdio::stdout};
+
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consensus_encode, is_empty};
 use protobuf::{MessageField, SpecialFields};
 use protorune::tables::OUTPOINT_SPENDABLE_BY;
-use std::fmt::Write;
+
 use std::io::Cursor;
-use std::sync::Arc;
+
 
 use crate::network::genesis;
 

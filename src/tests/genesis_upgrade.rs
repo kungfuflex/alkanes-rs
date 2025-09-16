@@ -1,4 +1,5 @@
 use crate::index_block;
+use protorune_support::protostone::Protostone;
 use crate::tests::helpers::{
     self as alkane_helpers, assert_revert_context, get_sheet_for_outpoint,
 };
