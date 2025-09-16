@@ -10,8 +10,21 @@ use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::blockdata::transaction::OutPoint;
 use bitcoin::hashes::Hash;
+use protorune_support::utils::consensus_encode;
+use protorune::balance_sheet::load_sheet;
+use metashrew_core::index_pointer::IndexPointer;
+use protorune::test_helpers::create_block_with_coinbase_tx;
+use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune::test_helpers::create_protostone_encoded_tx;
+use protorune_support::protostone::Protostone;
+use metashrew_support::index_pointer::KeyValuePointer;
+use protorune::message::MessageContext;
+use protorune_support::balance_sheet::BalanceSheetOperations;
+use protorune::view::protorune_outpoint_to_outpoint_response;
+use protorune_support::balance_sheet::BalanceSheet;
 
 use wasm_bindgen_test::wasm_bindgen_test;
+use protorune::tables::RuneTable;
 // Struct to track fuel benchmarks
 struct FuelBenchmark {
     operation: String,

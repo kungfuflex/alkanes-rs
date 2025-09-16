@@ -8,7 +8,8 @@ mod tests {
     use alkanes_support::gz::{compress, decompress};
     use alkanes_support::id::AlkaneId;
     use anyhow::Result;
-    use metashrew_core::println;
+    use metashrew_core::{println, stdout};
+use std::fmt::Write;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen_test]

@@ -5,7 +5,7 @@ use crate::tests::helpers::{
     create_multiple_cellpack_with_witness_and_in, get_last_outpoint_sheet, get_sheet_for_outpoint,
     init_with_multiple_cellpacks_with_tx,
 };
-use protorune_support::balance_sheet::{ProtoruneBalanceSheet};
+
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
@@ -15,6 +15,10 @@ use borsh::{BorshDeserialize, BorshSerialize};
 
 use sha2::{Digest, Sha256};
 use wasm_bindgen_test::wasm_bindgen_test;
+use protorune_support::protostone::ProtostoneEdict;
+use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::balance_sheet::BalanceSheetOperations;
+use protorune::test_helpers::{ADDRESS1, ADDRESS2, create_block_with_coinbase_tx};
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
 pub struct SchemaMerkleLeaf {
     pub address: String,

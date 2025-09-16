@@ -16,7 +16,9 @@ use bitcoin::{OutPoint, Witness};
 use metashrew_support::utils::consensus_encode;
 use protorune::{balance_sheet::load_sheet, tables::RuneTable};
 use protorune_support::balance_sheet::BalanceSheetOperations;
+use protorune::message::MessageContext;
 use wasm_bindgen_test::wasm_bindgen_test;
+use metashrew_support::index_pointer::KeyValuePointer;
 
 #[wasm_bindgen_test]
 fn test_owned_token() -> Result<()> {

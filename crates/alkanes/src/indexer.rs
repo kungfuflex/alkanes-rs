@@ -17,7 +17,7 @@ use metashrew_core::{
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;
-use protorune::message::MessageContext;
+
 use protorune_support::network::{set_network, NetworkParams};
 use std::sync::Arc;
 

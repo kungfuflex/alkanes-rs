@@ -8,6 +8,7 @@ use anyhow::Result;
 use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use wasm_bindgen_test::wasm_bindgen_test;
+use protorune::test_helpers::create_block_with_coinbase_tx;
 
 #[wasm_bindgen_test]
 fn test_transfer_overflow() -> Result<()> {

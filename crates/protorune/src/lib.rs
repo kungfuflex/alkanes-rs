@@ -1,3 +1,23 @@
+// The `protorune` crate provides the core functionality for the Protorune protocol,
+// which is a metaprotocol built on top of Bitcoin. It defines the data structures
+// and logic for indexing and processing Protorune-specific data from Bitcoin
+// transactions.
+//
+// This crate includes modules for handling balance sheets, messages, protoburns,
+// protostones, and other key components of the Protorune ecosystem. It also
+// provides functionality for indexing blocks, transactions, and outpoints, as
+// well as for managing the state of the Protorune protocol.
+//
+// The `Protorune` struct is the main entry point for indexing Protorune data.
+// It provides methods for indexing runestones, etchings, mints, and other
+// Protorune-related artifacts. The `index_block` method is the top-level
+// function for indexing a Bitcoin block and updating the Protorune state
+// accordingly.
+//
+// This crate is designed to be used as a library by other crates that need to
+// interact with the Protorune protocol. It provides a clear and well-documented
+// API for working with Protorune data and for building applications on top of
+// the Protorune ecosystem.
 use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
@@ -32,10 +52,10 @@ use protorune_support::{
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
     utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
 };
-use crate::protostone::{Protostones};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Sub;
 use std::sync::Arc;
+use crate::protostone::Protostones;
 
 /// Blacklisted transaction IDs that should be ignored during processing
 const BLACKLISTED_TX_HASHES: [&str; 1] =
