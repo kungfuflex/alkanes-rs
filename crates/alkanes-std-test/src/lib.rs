@@ -47,6 +47,9 @@ enum LoggerAlkaneMessage {
     #[returns(Vec<u8>)]
     TestOrderedIncoming,
 
+    #[opcode(7)]
+    Donate,
+
     #[opcode(11)]
     ProcessNumbers { numbers: Vec<u128> },
 
@@ -184,6 +187,10 @@ impl LoggerAlkane {
         } else {
             return Ok(CallResponse::default());
         }
+    }
+
+    fn donate(&self) -> Result<CallResponse> {
+        Ok(CallResponse::default())
     }
 
     fn mint_tokens(&self) -> Result<CallResponse> {
