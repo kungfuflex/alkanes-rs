@@ -134,16 +134,16 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
             .get(&u32::MAX)
             .map(|v| v.clone())
             .unwrap_or_else(|| BalanceSheet::default());
-        println!("reconcile runtime_initial {:?}", runtime_initial);
+        println!("reconcile runtime_initial {:?}", runtime_initial.cached);
         let incoming_initial = balances_by_output
             .get(&vout)
             .ok_or("")
             .map_err(|_| anyhow!("balance sheet not found"))?
             .clone();
-        println!("reconcile incoming_initial {:?}", incoming_initial);
+        println!("reconcile incoming_initial {:?}", incoming_initial.cached);
         let mut initial = BalanceSheet::merge(&incoming_initial, &runtime_initial)?;
 
-        println!("reconcile initial {:?}", initial);
+        println!("reconcile initial {:?}", initial.cached);
         // self.0 is the amount to forward to the pointer
         // self.1 is the amount to put into the runtime balance
         let outgoing: BalanceSheet<P> = self.0.clone().try_into()?;
@@ -155,7 +155,7 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
         initial.debit_mintable(&outgoing_runtime, atomic)?;
         println!(
             "reconcile initial after debit mintable, should be zero {:?}",
-            initial
+            initial.cached
         );
         for (id, balance) in initial.balances() {
             if *balance != 0 {
