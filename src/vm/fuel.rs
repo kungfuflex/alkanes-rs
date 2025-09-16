@@ -2,14 +2,13 @@ use crate::{
     message::AlkaneMessageContext,
     vm::{AlkanesInstance, AlkanesState},
 };
-use alkanes_support::utils::overflow_error;
+use alkanes_support::{logging, utils::overflow_error, virtual_fuel::VirtualFuelBytes};
 use anyhow::{anyhow, Result};
 use bitcoin::{Block, Transaction, Witness};
 use ordinals::{Artifact, Runestone};
 use protorune::message::MessageContext;
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::decode_varint_list;
-use ruint::aliases::U32;
 use std::io::Cursor;
 use std::sync::RwLock;
 use wasmi::*;
@@ -20,13 +19,12 @@ use {
     std::fmt::Write,
 };
 
-pub trait VirtualFuelBytes {
-    fn vfsize(&self) -> u64;
-}
+pub struct AlkanesTransaction<'a>(pub &'a Transaction);
+pub struct AlkanesBlock<'a>(pub &'a Block);
 
-impl VirtualFuelBytes for Transaction {
+impl<'a> VirtualFuelBytes for AlkanesTransaction<'a> {
     fn vfsize(&self) -> u64 {
-        if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(&self) {
+        if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(&self.0) {
             if let Ok(protostones) = Protostone::from_runestone(runestone) {
                 let cellpacks = protostones
                     .iter()
@@ -57,13 +55,13 @@ impl VirtualFuelBytes for Transaction {
                     })
                     .is_some()
                 {
-                    let mut cloned = self.clone();
+                    let mut cloned = self.0.clone();
                     if cloned.input.len() > 0 {
                         cloned.input[0].witness = Witness::new();
                     }
                     cloned.vsize() as u64
                 } else {
-                    self.vsize() as u64
+                    self.0.vsize() as u64
                 }
             } else {
                 0
@@ -74,11 +72,15 @@ impl VirtualFuelBytes for Transaction {
     }
 }
 
-impl VirtualFuelBytes for Block {
+impl<'a> VirtualFuelBytes for AlkanesBlock<'a> {
     fn vfsize(&self) -> u64 {
-        self.txdata.iter().fold(0u64, |r, v| r + v.vfsize())
+        self.0
+            .txdata
+            .iter()
+            .fold(0u64, |r, v| r + AlkanesTransaction(v).vfsize())
     }
 }
+
 
 //use if regtest
 #[cfg(not(any(
@@ -178,7 +180,7 @@ impl FuelTank {
         *tank = Some(FuelTank {
             current_txindex: u32::MAX,
             txsize: 0,
-            size: block.vfsize(),
+            size: AlkanesBlock(block).vfsize(),
             block_fuel: total_fuel(height),
             transaction_fuel: 0,
             block_metered_fuel: 0,
@@ -192,7 +194,7 @@ impl FuelTank {
         feature = "fractal",
         feature = "luckycoin"
     )))]
-    pub fn _calculate_transaction_fuel(tank: &FuelTank, height: u32) -> u64 {
+    pub fn _calculate_transaction_fuel(_tank: &FuelTank, height: u32) -> u64 {
         // for testing it is useful to assume we always get minimum fuel
         minimum_fuel(height)
     }
@@ -254,6 +256,7 @@ impl FuelTank {
         // Only refund the remaining fuel (block_metered_fuel) that wasn't consumed
         // This value is updated by consume_fuel() to reflect the remaining amount
         // after transaction execution
+        logging::record_excess_fuel_unused(tank.block_metered_fuel);
         tank.block_fuel = tank.block_fuel + tank.block_metered_fuel;
         tank.size = tank.size - tank.txsize;
 
@@ -266,6 +269,7 @@ impl FuelTank {
     }
 
     pub fn consume_fuel(n: u64) -> Result<()> {
+        logging::record_fuel_consumed(n);
         let mut tank = _FUEL_TANK.write().unwrap();
         let tank = tank.as_mut().unwrap();
 

@@ -1,3 +1,4 @@
+use alkanes_support::logging;
 use crate::message::AlkaneMessageContext;
 use crate::network::{genesis, genesis_alkane_upgrade_bytes, is_genesis};
 use crate::unwrap;
@@ -87,6 +88,8 @@ use protorune_support::proto::protorune::ProtorunesWalletRequest;
 use std::sync::Arc;
 
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
+    logging::init_block_stats();
+    logging::record_transactions(block.txdata.len() as u32);
     configure_network();
     clear_diesel_mints_cache();
     let really_is_genesis = is_genesis(height.into());
@@ -167,5 +170,6 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         }
     }
 
+    logging::log_block_summary(block, height, block.total_size());
     Ok(())
 }

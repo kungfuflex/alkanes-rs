@@ -13,7 +13,7 @@ use bitcoin::{Block, OutPoint, Witness};
 use borsh::{BorshDeserialize, BorshSerialize};
 use metashrew_core::{
     println,
-    stdio::{stdout, Write},
+    stdio::{stdout},
 };
 use protorune_support::protostone::ProtostoneEdict;
 

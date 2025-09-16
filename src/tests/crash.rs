@@ -8,7 +8,7 @@ use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::Rune
 use protorune_support::balance_sheet::BalanceSheetOperations;
 
 use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
+use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_owned_token_build;
 use alkane_helpers::clear;
 #[allow(unused_imports)]
