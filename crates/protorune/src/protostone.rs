@@ -154,7 +154,7 @@ impl MessageProcessor for Protostone {
 
         match T::handle(&parcel) {
             Ok(values) => {
-                match values.reconcile(atomic, balances_by_output, protomessage_vout, pointer) {
+                match values.reconcile(balances_by_output, protomessage_vout, pointer) {
                     Ok(_) => {
                         atomic.commit();
                         Ok(true)
