@@ -570,6 +570,30 @@ fn test_runtime_duplication() -> Result<()> {
         ),
     );
 
+    let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness(
+        Witness::new(),
+        vec![Cellpack {
+            target: AlkaneId { block: 1, tx: 0 },
+            inputs: vec![22, 10000000000],
+        }],
+        false,
+    );
+    test_block2.txdata.push(mint_tx.clone());
+    test_block2.txdata.push(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![Cellpack {
+                target: AlkaneId { block: 2, tx: 3 },
+                inputs: vec![7],
+            }],
+            OutPoint {
+                txid: mint_tx.compute_txid(),
+                vout: 0,
+            },
+            false,
+        ),
+    );
+
     test_block2.txdata.push(
         alkane_helpers::create_multiple_cellpack_with_witness_and_in(
             Witness::new(),
@@ -595,6 +619,7 @@ fn test_runtime_duplication() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
 
+    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 3 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 2 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
