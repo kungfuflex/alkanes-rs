@@ -132,16 +132,13 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
             .get(&u32::MAX)
             .map(|v| v.clone())
             .unwrap_or_else(|| BalanceSheet::default());
-        println!("reconcile runtime_initial {:?}", runtime_initial.cached);
         let incoming_initial = balances_by_output
             .get(&vout)
             .ok_or("")
             .map_err(|_| anyhow!("balance sheet not found"))?
             .clone();
-        println!("reconcile incoming_initial {:?}", incoming_initial.cached);
         let mut initial = BalanceSheet::merge(&incoming_initial, &runtime_initial)?;
 
-        println!("reconcile initial {:?}", initial.cached);
         // self.0 is the amount to forward to the pointer
         // self.1 is the amount to put into the runtime balance
         let outgoing: BalanceSheet<P> = self.0.clone().try_into()?;
@@ -151,10 +148,6 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
         // amount from the initial amount
         initial.debit_mintable(&outgoing, atomic)?;
         initial.debit_mintable(&outgoing_runtime, atomic)?;
-        println!(
-            "reconcile initial after debit mintable, should be zero {:?}",
-            initial.cached
-        );
         for (id, balance) in initial.balances() {
             if *balance != 0 {
                 println!("BIG ERROR: NONZERO {:?} {}", id, balance);
@@ -172,13 +165,6 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
         // set the runtime to the ending runtime balance sheet
         // note that u32::MAX is the runtime vout
         balances_by_output.insert(u32::MAX, outgoing_runtime);
-
-        // refund the remaining amount to the refund pointer
-        // increase_balances_using_sheet(balances_by_output, &initial, refund_pointer)?;
-        println!(
-            "reconcile balances_by_output at end {:?}",
-            balances_by_output
-        );
         Ok(())
     }
 }
