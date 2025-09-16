@@ -1,9 +1,6 @@
 use bitcoin::Script;
 use hex_lit::hex;
-use metashrew_core::{println, stdio::stdout};
-use metashrew_support::address::Payload;
 use protorune_support::network::{get_network_option, set_network, to_address_str, NetworkParams};
-use std::fmt::Write;
 use wasm_bindgen_test::*;
 
 #[wasm_bindgen_test]

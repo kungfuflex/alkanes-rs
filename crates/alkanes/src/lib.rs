@@ -1,24 +1,14 @@
 use crate::indexer::configure_network;
 
-use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate_safe};
 
-use metashrew_support::compat::export_bytes;
-use metashrew_support::utils::consensus_decode;
-use protobuf::{Message, MessageField};
-use alkanes_support::proto;
-use metashrew_support::utils::{consume_to_end, consume_sized_int};
-
-use view::parcels_from_protobuf;
 use bitcoin::{Block, OutPoint};
-#[allow(unused_imports)]
-use metashrew_core::{
-    flush, input, println,
-    stdio::{stdout, Write},
-};
-#[allow(unused_imports)]
-use metashrew_support::block::AuxpowBlock;
-#[allow(unused_imports)]
-use metashrew_support::index_pointer::KeyValuePointer;
+use protobuf::{Message, MessageField};
+use metashrew_core::{input, flush};
+use alkanes_support::proto;
+use metashrew_support::compat::{export_bytes};
+use metashrew_support::utils::{consume_to_end, consume_sized_int, consensus_decode};
+use crate::view::{multi_simulate_safe, simulate_safe, meta_safe, parcels_from_protobuf, parcel_from_protobuf};
+
 
 use std::io::Cursor;
 pub mod block;
@@ -370,8 +360,7 @@ mod unit_tests {
     use protorune::view::{rune_outpoint_to_outpoint_response, runes_by_address, runes_by_height};
     use protorune::Protorune;
     use protorune_support::proto::protorune::{RunesByHeightRequest, Uint128, WalletRequest};
-    use std::fs;
-    use std::path::PathBuf;
+    
     use wasm_bindgen_test::*;
 
     #[wasm_bindgen_test]

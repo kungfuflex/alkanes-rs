@@ -8,12 +8,7 @@ use alkane_helpers::clear;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-#[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
-};
-use protorune_support::balance_sheet::ProtoruneRuneId;
+
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]

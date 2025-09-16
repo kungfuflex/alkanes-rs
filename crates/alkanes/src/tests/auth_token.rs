@@ -1,24 +1,20 @@
 use crate::index_block;
+use crate::message::AlkaneMessageContext;
 use crate::tests::helpers::{
     self as alkane_helpers, assert_binary_deployed_to_id, assert_id_points_to_alkane_id,
 };
-use crate::tests::std::alkanes_std_owned_token_build;
-use crate::{message::AlkaneMessageContext, tests::std::alkanes_std_auth_token_build};
-use alkane_helpers::clear;
-use crate::view;
-use alkanes_support::id::AlkaneId;
-use alkanes_support::utils::string_to_u128_list;
-use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
-use anyhow::{anyhow, Result};
-use bitcoin::OutPoint;
-use bitcoin::Witness;
-#[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
+use crate::tests::std::{
+    alkanes_std_auth_token_build, alkanes_std_owned_token_build,
 };
-use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
-use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
+use crate::view;
+use alkane_helpers::clear;
+use alkanes_support::{
+    cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID, id::AlkaneId, utils::string_to_u128_list,
+};
+use anyhow::{anyhow, Result};
+use bitcoin::{OutPoint, Witness};
+use metashrew_support::utils::consensus_encode;
+use protorune::{balance_sheet::load_sheet, tables::RuneTable};
 use protorune_support::balance_sheet::BalanceSheetOperations;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -53,7 +49,7 @@ fn test_owned_token() -> Result<()> {
     );
 
     index_block(&test_block, block_height)?;
-    let owned_token_id = AlkaneId { block: 2, tx: 1 };
+    let _owned_token_id = AlkaneId { block: 2, tx: 1 };
     let tx = test_block.txdata.last().ok_or(anyhow!("no last el"))?;
     let outpoint = OutPoint {
         txid: tx.compute_txid(),

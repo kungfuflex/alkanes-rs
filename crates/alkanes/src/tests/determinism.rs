@@ -7,11 +7,7 @@ use bitcoin::{OutPoint, Witness};
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers};
 use alkane_helpers::clear;
-#[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
-};
+
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]

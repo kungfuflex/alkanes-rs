@@ -32,6 +32,7 @@ use protorune_support::{
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
     utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
 };
+use crate::protostone::{Protostones};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Sub;
 use std::sync::Arc;
@@ -839,8 +840,8 @@ impl Protorune {
         height: u64,
         runestone: &Runestone,
         runestone_output_index: u32,
-        _balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        _unallocated_to: u32,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        unallocated_to: u32,
     ) -> Result<()> {
         // Check if this transaction is in the blacklist
         let tx_id = tx.compute_txid();

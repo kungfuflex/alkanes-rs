@@ -1,21 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::tests::std::alkanes_std_test_build;
-    use alkanes_support::cellpack::Cellpack;
-    use alkanes_support::id::AlkaneId;
-    use anyhow::Result;
-    use metashrew_support::index_pointer::KeyValuePointer;
-
     use crate::index_block;
     use crate::tests::helpers as alkane_helpers;
+    use crate::tests::std::alkanes_std_test_build;
     use alkane_helpers::clear;
+    use alkanes_support::cellpack::Cellpack;
     use alkanes_support::gz::{compress, decompress};
-    #[allow(unused_imports)]
-    use metashrew_core::{
-        index_pointer::IndexPointer,
-        println,
-        stdio::{stdout, Write},
-    };
+    use alkanes_support::id::AlkaneId;
+    use anyhow::Result;
+    use metashrew_core::println;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen_test]
