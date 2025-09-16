@@ -167,7 +167,7 @@ fn helper_test_merkle_distributor(
     };
 
     let merkle_testnet_build = include_bytes!(
-        "../../target/alkanes/wasm32-unknown-unknown/release/alkanes_std_merkle_distributor_regtest.wasm"
+        "../../../../target/alkanes/wasm32-unknown-unknown/release/alkanes_std_merkle_distributor_regtest.wasm"
     )
     .to_vec();
 

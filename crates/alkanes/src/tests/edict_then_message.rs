@@ -2,7 +2,7 @@ use crate::message::AlkaneMessageContext;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_test_build;
 use alkane_helpers::clear;
-use alkanes::indexer::index_block;
+use crate::indexer::index_block;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;

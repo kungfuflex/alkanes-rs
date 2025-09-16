@@ -33,25 +33,19 @@ dependencies = [
 name = "alkanes"
 version = "1.2.3"
 dependencies = [
- "alkanes",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",
  "borsh",
  "byteorder",
- "flate2",
  "hex",
  "hex_lit",
- "js-sys",
  "metashrew-core",
  "metashrew-support",
  "num",
  "once_cell",
  "ordinals 1.2.3",
  "protobuf 3.7.2",
- "protobuf-codegen 3.7.2",
- "protoc-bin-vendored",
- "protoc-rust",
  "protorune",
  "protorune-support",
  "ruint",
@@ -59,10 +53,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "wasm-bindgen",
- "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "wasmi",
- "web-sys",
 ]
 
 [[package]]

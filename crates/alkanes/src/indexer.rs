@@ -17,6 +17,7 @@ use metashrew_core::{
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;
+use protorune::message::MessageContext;
 use protorune_support::network::{set_network, NetworkParams};
 use std::sync::Arc;
 
@@ -71,8 +72,8 @@ pub fn configure_network() {
 pub fn configure_network() {
     set_network(NetworkParams {
         bech32_prefix: String::from("bel"),
-        p2pkh_hash: 0x19,
-        p2sh_hash: 0x1e,
+        p2pkh_prefix: 0x19,
+        p2sh_prefix: 0x1e,
     });
 }
 
@@ -84,8 +85,7 @@ use protobuf::{Message, MessageField};
 use protorune::tables::{CACHED_FILTERED_WALLET_RESPONSE, CACHED_WALLET_RESPONSE};
 #[cfg(feature = "cache")]
 use protorune_support::proto::protorune::ProtorunesWalletRequest;
-#[cfg(feature = "cache")]
-use std::sync::Arc;
+
 
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
     logging::init_block_stats();
@@ -143,10 +143,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                         .outpoints
                         .into_iter()
                         .filter_map(|v| {
-                            if v.balances()
-                                .unwrap_or_else(|| {
-                                    protorune_support::proto::protorune::BalanceSheet::new()
-                                })
+                            if v.balances.get_or_default()
                                 .entries
                                 .len()
                                 == 0

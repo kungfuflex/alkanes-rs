@@ -12,7 +12,7 @@ use anyhow::Result;
 use bitcoin::{OutPoint, Witness};
 
 use crate::network::genesis;
-use alkanes::message::AlkaneMessageContext;
+use crate::message::AlkaneMessageContext;
 use bitcoin::hashes::Hash;
 use bitcoin::Block;
 use bitcoin::Txid;

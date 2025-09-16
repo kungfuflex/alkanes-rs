@@ -5,7 +5,7 @@ use crate::tests::helpers::{
 use crate::tests::std::alkanes_std_owned_token_build;
 use crate::{message::AlkaneMessageContext, tests::std::alkanes_std_auth_token_build};
 use alkane_helpers::clear;
-use alkanes::view;
+use crate::view;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::utils::string_to_u128_list;
 use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};

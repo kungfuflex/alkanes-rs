@@ -8,7 +8,7 @@ use bitcoin::OutPoint;
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers};
 use alkane_helpers::clear;
-use alkanes::view;
+use crate::view;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,

@@ -8,7 +8,7 @@ use metashrew_support::utils::consensus_encode;
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
 use alkane_helpers::clear;
-use alkanes::view;
+use crate::view;
 use bitcoin::Witness;
 #[allow(unused_imports)]
 use metashrew_core::{

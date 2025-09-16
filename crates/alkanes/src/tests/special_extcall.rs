@@ -2,7 +2,7 @@ use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, assert_return_context};
 use crate::tests::std::alkanes_std_test_build;
 use alkane_helpers::clear;
-use alkanes::view;
+use crate::view;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};

@@ -4,7 +4,7 @@ use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_genesis_alkane_build;
 use crate::vm::fuel::{FuelTank, TOTAL_FUEL_START};
 use alkane_helpers::clear;
-use alkanes::message::AlkaneMessageContext;
+use crate::message::AlkaneMessageContext;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;

@@ -5,8 +5,8 @@ use crate::tests::std::{
     alkanes_std_test_build, alkanes_std_upgradeable_beacon_build, alkanes_std_upgradeable_build,
 };
 use alkane_helpers::clear;
-use alkanes::view;
-use alkanes::vm::utils::sequence_pointer;
+use crate::view;
+use crate::vm::utils::sequence_pointer;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
