@@ -329,8 +329,6 @@ impl Protostones for Vec<Protostone> {
 
 #[cfg(test)]
 mod tests {
-    use crate::balance_sheet::ProtoruneRuneId;
-    
     /// Lets say we have a protostone defined as follows: vec<u128>![1 4 83 0 91 3]. This is a protostone with a protocol tag of 1, a length of 4, tag 83 (burn) is 0, tag 91 (pointer) is 3.
     /// Encoding:
     /// 1. Protocol step: Each u128 is LEB encoded. Each u128 becomes a vector of up to 16 bytes and is then concatenated together. LEB saves space by allowing smaller numbers to be one byte.

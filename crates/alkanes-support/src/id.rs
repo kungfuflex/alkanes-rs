@@ -45,6 +45,15 @@ impl Into<ProtoruneRuneId> for AlkaneId {
     }
 }
 
+impl From<AlkaneId> for ordinals::RuneId {
+    fn from(val: AlkaneId) -> Self {
+        ordinals::RuneId {
+            block: val.block as u64,
+            tx: val.tx as u32,
+        }
+    }
+}
+
 impl AlkaneId {
     pub fn parse(cursor: &mut std::io::Cursor<Vec<u8>>) -> Result<AlkaneId> {
         let (block, tx) = (

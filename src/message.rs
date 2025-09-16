@@ -1,7 +1,7 @@
 #[cfg(not(test))]
 use crate::WasmHost;
 #[cfg(test)]
-use alkanes::WasmHost;
+use crate::WasmHost;
 use anyhow::Result;
 use protorune_support::{
     balance_sheet::BalanceSheet,

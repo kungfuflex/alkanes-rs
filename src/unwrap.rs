@@ -19,10 +19,8 @@
 //! track pending payments and determine if they have been fulfilled by being
 //! spent on-chain.
 
-use alkanes_support::{
-    id::AlkaneId,
-    proto::alkanes::{self as pb, Payment as ProtoPayment, PendingUnwrapsResponse},
-};
+use alkanes_support::id::AlkaneId;
+use alkanes_proto::alkanes::{self as pb, Payment as ProtoPayment, PendingUnwrapsResponse};
 use anyhow::Result;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, TxOut};
@@ -36,7 +34,7 @@ use std::io::Cursor;
 #[cfg(not(test))]
 use crate::network::genesis;
 #[cfg(test)]
-use alkanes::network::genesis;
+use crate::network::genesis;
 
 pub fn fr_btc_storage_pointer() -> IndexPointer {
     IndexPointer::from_keyword("/alkanes/")

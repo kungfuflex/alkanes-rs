@@ -2,6 +2,11 @@ use crate::{
     message::AlkaneMessageContext,
     vm::{AlkanesInstance, AlkanesState},
 };
+#[cfg(not(test))]
+use crate::WasmHost;
+#[cfg(test)]
+use crate::WasmHost;
+
 use alkanes_support::{message::MessageContext, utils::overflow_error};
 use protorune_support::protorune_ext::ProtoruneExt;
 use anyhow::{anyhow, Result};
@@ -30,7 +35,7 @@ impl VirtualFuelBytes for Transaction {
                 let cellpacks = protostones
                     .iter()
                     .filter_map(|v| {
-                        if v.protocol_tag == AlkaneMessageContext::protocol_tag() {
+                        if v.protocol_tag == <AlkaneMessageContext as MessageContext<WasmHost>>::protocol_tag() {
                             decode_varint_list(&mut Cursor::new(
                                 v.message.iter().flat_map(|v| v.to_be_bytes()).collect(),
                             ))

@@ -15,14 +15,17 @@ use protorune_support::utils::consensus_decode;
 use std::io::Cursor;
 use std::sync::Arc;
 
-pub fn from_protobuf(v: alkanes_support::proto::alkanes::AlkaneId) -> AlkaneId {
+pub fn from_protobuf(v: alkanes_proto::alkanes::AlkaneId) -> AlkaneId {
+    let block = v.block.unwrap();
+    let tx = v.tx.unwrap();
     AlkaneId {
-        block: v.block.unwrap().into(),
-        tx: v.tx.unwrap().into(),
+        block: (block.hi as u128) << 64 | block.lo as u128,
+        tx: (tx.hi as u128) << 64 | tx.lo as u128,
     }
 }
 
 use crate::WasmHost;
+
 
 pub fn balance_pointer(
     atomic: &mut WasmHost,

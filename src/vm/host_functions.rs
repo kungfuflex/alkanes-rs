@@ -1,16 +1,10 @@
-#[cfg(not(test))]
 use crate::WasmHost;
-#[cfg(test)]
-use alkanes::WasmHost;
 use super::fuel::compute_extcall_fuel;
 use super::{
     get_memory, read_arraybuffer, send_to_arraybuffer, sequence_pointer, AlkanesState, Extcall,
     Saveable, SaveableExtendedCallResponse,
 };
-#[cfg(not(test))]
 use crate::utils::{balance_pointer, pipe_storagemap_to, transfer_from};
-#[cfg(test)]
-use alkanes::utils::{balance_pointer, pipe_storagemap_to, transfer_from};
 use crate::vm::{run_after_special, run_special_cellpacks};
 use alkanes_support::{
     cellpack::Cellpack,

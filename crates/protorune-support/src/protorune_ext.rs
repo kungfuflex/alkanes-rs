@@ -35,7 +35,14 @@ impl From<ordinals::RuneId> for ProtoruneRuneId {
         }
     }
 }
-
+impl From<ProtoruneRuneId> for ordinals::RuneId {
+    fn from(val: ProtoruneRuneId) -> Self {
+        ordinals::RuneId {
+            block: u128::from(val.height.unwrap()) as u64,
+            tx: u128::from(val.txindex.unwrap()) as u32,
+        }
+    }
+}
 impl From<ProtoruneRuneId> for Vec<u8> {
     fn from(val: ProtoruneRuneId) -> Self {
         val.write_to_bytes().unwrap()

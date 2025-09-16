@@ -1,6 +1,6 @@
 use anyhow::Result;
 use bitcoin::consensus::Decodable;
-use std::io::Read;
+use bitcoin::io::Read;
 
 #[derive(Debug, Clone)]
 pub struct BlockData {

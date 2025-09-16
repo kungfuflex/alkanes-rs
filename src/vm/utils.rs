@@ -1,12 +1,5 @@
-#[cfg(not(test))]
 use crate::WasmHost;
-#[cfg(test)]
-use alkanes::WasmHost;
 use super::{AlkanesInstance, AlkanesRuntimeContext, AlkanesState};
-#[cfg(not(test))]
-use crate::utils::{pipe_storagemap_to, transfer_from};
-#[cfg(test)]
-use alkanes::utils::{pipe_storagemap_to, transfer_from};
 use crate::vm::fuel::fuel_per_store_byte;
 use alkanes_support::trace::TraceEvent;
 use alkanes_support::{
@@ -25,6 +18,7 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::utils::consensus_encode;
 use std::sync::{Arc, Mutex};
+use crate::utils::{pipe_storagemap_to, transfer_from};
 use wasmi::*;
 
 pub fn read_arraybuffer(data: &[u8], data_start: i32) -> Result<Vec<u8>> {

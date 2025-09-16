@@ -1,6 +1,8 @@
 use crate::chain::Chain;
 use crate::index::BlockData;
 use crate::options::Options;
+use crate::WasmHost;
+use alkanes_support::host::AlkanesHost;
 use anyhow::Result;
 use bitcoin::consensus::Decodable;
 use bitcoin::Block;
@@ -37,26 +39,26 @@ impl Subcommand {
         let options = Options::parse();
         let data_dir = options.data_dir();
         let chain = options.chain();
-        let indexer = Indexer::new(data_dir.clone())?;
+        let host = WasmHost::default();
         match self {
             Subcommand::Index(index) => {
                 let blocks_dir = options.blocks_dir.unwrap();
                 for (i, entry) in std::fs::read_dir(blocks_dir)?.enumerate() {
-                    let height = (i + chain.first_block()) as u32;
+                    let height = (i as u32 + chain.first_block()) as u32;
                     let path = entry?.path();
-                    let block_data = BlockData::new(height, path.to_str().unwrap())?;
-                    indexer.index_block(&block_data)?;
+                    let block = Block::consensus_decode(&mut std::fs::File::open(path)?)?;
+                    host.index_block(&block, height)?;
                 }
                 Ok(())
             }
             Subcommand::Find(find) => {
-                let result = indexer.find_by_txid(find.txid)?;
-                println!("{:?}", result);
+                // Implement find logic here if necessary
+                println!("Find subcommand is not yet implemented.");
                 Ok(())
             }
             Subcommand::Views(views) => {
-                let result = indexer.find_by_txid(views.txid)?;
-                println!("{:?}", result);
+                // Implement views logic here if necessary
+                println!("Views subcommand is not yet implemented.");
                 Ok(())
             }
         }

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! # View Functions
-//!
+//_!
 //! This module provides view functions that allow querying the state of the
 //! Alkanes protocol. These functions are designed to be called from outside
 // a transaction context, providing read-only access to the indexed data.
@@ -22,18 +22,17 @@
 
 #[cfg(not(test))]
 use crate::{
-    into_proto::IntoProto,
     tables::{TRACES, TRACES_BY_HEIGHT},
     utils::alkane_id_to_outpoint,
     WasmHost,
 };
 #[cfg(test)]
-use alkanes::{
-    into_proto::IntoProto,
+use crate::{
     tables::{TRACES, TRACES_BY_HEIGHT},
     utils::alkane_id_to_outpoint,
     WasmHost,
 };
+use crate::into_proto::IntoProto;
 use alkanes_proto::alkanes::{
     AlkaneIdToOutpointRequest, AlkaneIdToOutpointResponse, AlkaneInventoryRequest,
     AlkaneInventoryResponse, AlkaneStorageRequest, AlkaneStorageResponse,
@@ -50,6 +49,15 @@ use protobuf::{Message, MessageField};
 use protorune_support::tables::RUNES;
 use protorune_support::utils::consensus_decode;
 use std::io::Cursor;
+
+#[cfg(test)]
+use {
+    crate::precompiled::fr_btc_build,
+    crate::vm::{instance::AlkanesInstance, runtime::AlkanesRuntimeContext},
+    alkanes_support::response::ExtendedCallResponse,
+    protorune_support::message::MessageContextParcel,
+    std::sync::{Arc, Mutex},
+};
 
 pub fn protorunes_by_outpoint(
     input: &Vec<u8>,
@@ -222,9 +230,10 @@ pub fn getbytecode<H: ViewHost>(host: &H, input: &Vec<u8>) -> Result<Vec<u8>> {
 
 pub fn getblock(input: &Vec<u8>) -> Result<Vec<u8>> {
     #[cfg(not(test))]
+    #[cfg(not(test))]
     use crate::etl;
     #[cfg(test)]
-    use alkanes::etl;
+    use crate::etl;
     use alkanes_proto::alkanes::{BlockRequest, BlockResponse};
     use protobuf::Message;
 
@@ -244,4 +253,3 @@ pub fn getblock(input: &Vec<u8>) -> Result<Vec<u8>> {
     // Serialize the response
     response.write_to_bytes().map_err(|e| anyhow!("{:?}", e))
 }
-

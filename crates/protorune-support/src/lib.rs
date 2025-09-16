@@ -2,7 +2,7 @@ pub use crate::balance_sheet::ProtoruneRuneId;
 use crate::balance_sheet::{load_sheet, BalanceSheet, BalanceSheetOperations, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
-use crate::protostone::{MessageProcessor, Protostone};
+use crate::protostone::{MessageProcessor, Protostone, Protostones};
 use metashrew_support::index_pointer::KeyValuePointer;
 use crate::tables::RuneTable;
 use crate::utils::{consensus_encode, field_to_name, tx_hex_to_txid};
@@ -180,7 +180,7 @@ pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) ->
     Ok(false)
 }
 #[cfg(test)]
-pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
+pub fn validate_rune_etch(_tx: &Transaction, _commitment: Vec<u8>, _height: u64) -> Result<bool> {
     Ok(true)
 }
 
@@ -799,10 +799,10 @@ impl<H: Host + Clone + Default> Protorune<H> {
  	txindex: u32,
  	block: &Block,
  	height: u64,
- 	_runestone: &Runestone,
- 	runestone_output_index: u32,
- 	_balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
- 	_unallocated_to: u32,
+ 	   runestone: &Runestone,
+ 	   runestone_output_index: u32,
+ 	   balances_by_output: &mut BTreeMap<u32, BalanceSheet<H>>,
+ 	   unallocated_to: u32,
  ) -> Result<()>
  where
  	H: Default + Clone,

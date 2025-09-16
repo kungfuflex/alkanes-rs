@@ -1,0 +1,131 @@
+#[cfg(test)]
+mod tests {
+    mod common;
+    use common::{self as alkane_helpers, clear};
+    use alkanes::{message::AlkaneMessageContext};
+    use alkanes_support::id::AlkaneId;
+    use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
+    use anyhow::{anyhow, Result};
+    use bitcoin::address::NetworkChecked;
+    use bitcoin::transaction::Version;
+    use bitcoin::{
+        Address, Amount, Block, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    };
+    use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
+    use ordinals::{Artifact, Edict, Runestone};
+    use protorune::protostone::Protostones;
+    use protorune::test_helpers::get_address;
+    use protorune::{
+        balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
+    };
+    use protorune_support::{
+        balance_sheet::{ProtoruneRuneId, Uint128},
+    };
+    use protobuf::MessageField;
+
+    use alkanes::WasmHost;
+    use alkanes_support::host::AlkanesHost;
+    use metashrew_core::{
+        println,
+        stdio::{stdout, Write},
+    };
+    use protorune_support::protostone::Protostone;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    pub fn create_protostone_encoded_transaction(
+        previous_output: OutPoint,
+        protostones: Vec<Protostone>,
+    ) -> Transaction {
+        let input_script = ScriptBuf::new();
+
+        // Create a transaction input
+        let txin = TxIn {
+            previous_output,
+            script_sig: input_script,
+            sequence: Sequence::MAX,
+            witness: Witness::new(),
+        };
+
+        let address: Address<NetworkChecked> = get_address(&helpers::ADDRESS1().as_str());
+
+        let script_pubkey = address.script_pubkey();
+
+        let txout = TxOut {
+            value: Amount::from_sat(100_000_000),
+            script_pubkey,
+        };
+
+        let runestone: ScriptBuf = (Runestone {
+            etching: None,
+            pointer: None, // points to the OP_RETURN, so therefore targets the protoburn
+            edicts: vec![],
+            mint: None,
+            protocol: match protostones.encipher() {
+                Ok(v) => Some(v),
+                Err(_) => None,
+            },
+        })
+        .encipher();
+
+        // op return is at output 1
+        let op_return = TxOut {
+            value: Amount::from_sat(0),
+            script_pubkey: runestone,
+        };
+
+        Transaction {
+            version: Version::ONE,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![txin],
+            output: vec![txout, op_return],
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn test_cant_forge_edicts() -> Result<()> {
+        clear();
+        let block_height = 0;
+        let mut test_block: Block = helpers::create_block_with_coinbase_tx(block_height);
+        let outpoint = OutPoint {
+            txid: test_block.txdata[0].compute_txid(),
+            vout: 0,
+        };
+        test_block
+            .txdata
+            .push(create_protostone_encoded_transaction(
+                outpoint,
+                vec![Protostone {
+                    protocol_tag: 1,
+                    from: None,
+                    edicts: vec![Edict {
+                        id: ProtoruneRuneId {
+                            height: MessageField::some(Uint128::from(2)),
+                            txindex: MessageField::some(Uint128::from(100)),
+                            ..Default::default()
+                        }
+                        .into(),
+                        amount: 100000,
+                        output: 0,
+                    }],
+                    pointer: Some(0),
+                    refund: Some(0),
+                    message: vec![],
+                    burn: None,
+                }],
+            ));
+        WasmHost::default().index_block(&test_block, block_height)?;
+        let edict_outpoint = OutPoint {
+            txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
+            vout: 0,
+        };
+        let sheet = load_sheet(
+            &WasmHost::default(),
+            &RuneTable::for_protocol(<AlkaneMessageContext as MessageContext<WasmHost>>::protocol_tag())
+                .OUTPOINT_TO_RUNES
+                .select(&consensus_encode(&edict_outpoint)?)
+                .unwrap(),
+        )?;
+        println!("{:?}", sheet);
+        Ok(())
+    }
+}

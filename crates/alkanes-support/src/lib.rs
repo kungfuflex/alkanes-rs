@@ -89,3 +89,4 @@ pub fn index_block<
         Protorune::<H>::index_block::<T>(host, block.clone(), height.into())?;
     Ok(updated_addresses)
 }
+

@@ -112,6 +112,7 @@ once_cell = { workspace = true }
 borsh = { version = "1.5.7", features = ["derive"] }
 sha2 = "0.10.9"
 clap = { version = "4.5.11", features = ["derive"] }
+dirs = "6.0.0"
 
 [[bin]]
 name = "alkanes"
