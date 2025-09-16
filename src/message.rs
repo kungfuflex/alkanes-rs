@@ -42,18 +42,17 @@ pub fn handle_message(
 ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
     let cellpack: Cellpack =
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
-
+    // Log cellpack information at the beginning of transaction processing
+    println!("=== TRANSACTION CELLPACK INFO ===");
+    println!(
+        "Transaction index: {}, Transaction height: {}, vout: {}, txid: {}",
+        parcel.txindex,
+        parcel.height,
+        parcel.vout,
+        parcel.transaction.compute_txid()
+    );
     #[cfg(feature = "debug-log")]
     {
-        // Log cellpack information at the beginning of transaction processing
-        println!("=== TRANSACTION CELLPACK INFO ===");
-        println!(
-            "Transaction index: {}, Transaction height: {}, vout: {}, txid: {}",
-            parcel.txindex,
-            parcel.height,
-            parcel.vout,
-            parcel.transaction.compute_txid()
-        );
         println!(
             "Target contract: [block={}, tx={}]",
             cellpack.target.block, cellpack.target.tx
