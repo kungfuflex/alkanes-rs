@@ -29,7 +29,7 @@ wasmi = { workspace = true }
 num = { workspace = true }
 
 [dev-dependencies]
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
+metashrew-core = { workspace = true, features = ["test-utils"] }
 protorune = { workspace = true, features = ["test-utils"] }
 borsh = { workspace = true }
 sha2 = { workspace = true }
