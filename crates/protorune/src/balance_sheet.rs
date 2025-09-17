@@ -80,6 +80,7 @@ impl Mintable for ProtoruneRuneId {
 pub trait OutgoingRunes<P: KeyValuePointer + Clone> {
     fn reconcile(
         &self,
+        atomic: &mut AtomicPointer,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
@@ -122,14 +123,36 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
 {
     fn reconcile(
         &self,
+        atomic: &mut AtomicPointer,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
     ) -> Result<()> {
+        let runtime_initial = balances_by_output
+            .get(&u32::MAX)
+            .map(|v| v.clone())
+            .unwrap_or_else(|| BalanceSheet::default());
+        let incoming_initial = balances_by_output
+            .get(&vout)
+            .ok_or("")
+            .map_err(|_| anyhow!("balance sheet not found"))?
+            .clone();
+        let mut initial = BalanceSheet::merge(&incoming_initial, &runtime_initial)?;
+
         // self.0 is the amount to forward to the pointer
         // self.1 is the amount to put into the runtime balance
         let outgoing: BalanceSheet<P> = self.0.clone().try_into()?;
         let outgoing_runtime = self.1.clone();
+
+        // we want to subtract outgoing and the outgoing runtime balance
+        // amount from the initial amount
+        initial.debit_mintable(&outgoing, atomic)?;
+        initial.debit_mintable(&outgoing_runtime, atomic)?;
+        for (id, balance) in initial.balances() {
+            if *balance != 0 {
+                println!("BIG ERROR: NONZERO {:?} {}", id, balance);
+            }
+        }
 
         // now lets update balances_by_output to correct values
 
