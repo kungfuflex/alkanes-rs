@@ -1,10 +1,10 @@
 [package]
 name = "metashrew-support"
-version = "9.0.1"
-edition = "2021"
-description = "Support library for Metashrew indexers"
-license = "MIT"
-repository = "https://github.com/sandshrewmetaprotocols/metashrew"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
