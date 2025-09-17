@@ -55,7 +55,6 @@ use protorune_support::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Sub;
 use std::sync::Arc;
-use crate::protostone::Protostones;
 
 /// Blacklisted transaction IDs that should be ignored during processing
 const BLACKLISTED_TX_HASHES: [&str; 1] =
@@ -860,8 +859,8 @@ impl Protorune {
         height: u64,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        unallocated_to: u32,
+        _balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        _unallocated_to: u32,
     ) -> Result<()> {
         // Check if this transaction is in the blacklist
         let tx_id = tx.compute_txid();
@@ -912,9 +911,9 @@ impl Protorune {
                     &mut atomic.derive(&IndexPointer::default()),
                     runestone,
                     runestone_output_index,
-                    balances_by_output,
+                    _balances_by_output,
                     &mut proto_balances_by_output,
-                    unallocated_to,
+                    _unallocated_to,
                     tx.compute_txid(),
                 )?;
             }
