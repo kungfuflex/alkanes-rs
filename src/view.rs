@@ -521,7 +521,7 @@ pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
 
     // Return the uncompressed bytecode. Note that gzip bomb is not possible since these bytecodes are upper bound by the size of the Witness
     if bytecode.len() > 0 {
-        Ok(alkanes_support::gz::decompress(bytecode.to_vec())?)
+        Ok(bytecode)
     } else {
         Err(anyhow!("No bytecode found for the given AlkaneId"))
     }
