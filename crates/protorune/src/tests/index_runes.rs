@@ -29,7 +29,7 @@ mod tests {
     use metashrew_support::index_pointer::KeyValuePointer;
     use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
 
-    use metashrew_core::index_pointer::AtomicPointer;
+    use metashrew_support::index_pointer::AtomicPointer;
     use protobuf::{Message, SpecialFields};
 
     use std::str::FromStr;

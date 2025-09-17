@@ -8,7 +8,7 @@ mod tests {
     use alkanes_support::gz::{compress, decompress};
     use alkanes_support::id::AlkaneId;
     use anyhow::Result;
-    use metashrew_core::{println, stdout};
+    use metashrew_support::{println, stdout};
 use std::fmt::Write;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -103,14 +103,14 @@ use std::fmt::Write;
             */
         ];
 
-        let start = metashrew_core::imports::__now();
+        let start = metashrew_support::imports::__now();
         let test_block = alkane_helpers::init_with_multiple_cellpacks(
             alkanes_std_test_build::get_bytes(),
             test_cellpacks.to_vec(),
         );
 
         index_block(&test_block, block_height as u32)?;
-        println!("time: {}ms", metashrew_core::imports::__now() - start);
+        println!("time: {}ms", metashrew_support::imports::__now() - start);
         Ok(())
     }
 

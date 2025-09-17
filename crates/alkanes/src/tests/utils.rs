@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     #[allow(unused_imports)]
-    use metashrew_core::{
+    use metashrew_support::{
         index_pointer::IndexPointer,
         println,
         stdio::{stdout, Write},

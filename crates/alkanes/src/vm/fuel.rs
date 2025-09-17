@@ -1,9 +1,10 @@
-use crate::{
+use crate::{ 
     message::AlkaneMessageContext,
-    vm::{AlkanesInstance, AlkanesState},
+    vm::{instance::AlkanesInstance, state::AlkanesState},
 };
 use alkanes_support::{logging, utils::overflow_error, virtual_fuel::VirtualFuelBytes};
 use anyhow::{anyhow, Result};
+use metashrew_support::environment::RuntimeEnvironment;
 use bitcoin::{Block, Transaction, Witness};
 use ordinals::{Artifact, Runestone};
 use protorune::message::MessageContext;
@@ -14,22 +15,20 @@ use std::sync::RwLock;
 use wasmi::*;
 
 #[allow(unused_imports)]
-use {
-    metashrew_core::{println, stdio::stdout},
-    std::fmt::Write,
-};
 
-pub struct AlkanesTransaction<'a>(pub &'a Transaction);
-pub struct AlkanesBlock<'a>(pub &'a Block);
 
-impl<'a> VirtualFuelBytes for AlkanesTransaction<'a> {
+use std::marker::PhantomData;
+pub struct AlkanesTransaction<'a, E: RuntimeEnvironment + Clone + Default>(pub &'a Transaction, pub PhantomData<E>);
+pub struct AlkanesBlock<'a, E: RuntimeEnvironment + Clone + Default>(pub &'a Block, pub PhantomData<E>);
+
+impl<'a, E: RuntimeEnvironment + Clone + Default + 'static> VirtualFuelBytes for AlkanesTransaction<'a, E> {
     fn vfsize(&self) -> u64 {
         if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(&self.0) {
             if let Ok(protostones) = Protostone::from_runestone(runestone) {
                 let cellpacks = protostones
                     .iter()
                     .filter_map(|v| {
-                        if v.protocol_tag == AlkaneMessageContext::protocol_tag() {
+                        if v.protocol_tag == AlkaneMessageContext::<E>::protocol_tag() {
                             decode_varint_list(&mut Cursor::new(v.message.clone()))
                                 .and_then(|list| {
                                     if list.len() >= 2 {
@@ -72,12 +71,12 @@ impl<'a> VirtualFuelBytes for AlkanesTransaction<'a> {
     }
 }
 
-impl<'a> VirtualFuelBytes for AlkanesBlock<'a> {
+impl<'a, E: RuntimeEnvironment + Clone + Default + 'a + 'static> VirtualFuelBytes for AlkanesBlock<'a, E> {
     fn vfsize(&self) -> u64 {
         self.0
             .txdata
             .iter()
-            .fold(0u64, |r, v| r + AlkanesTransaction(v).vfsize())
+            .fold(0u64, |r, v| r + AlkanesTransaction::<E>(v, PhantomData).vfsize())
     }
 }
 
@@ -175,12 +174,12 @@ impl FuelTank {
         _FUEL_TANK.read().unwrap().as_ref().unwrap().current_txindex == u32::MAX
     }
 
-    pub fn initialize(block: &Block, height: u32) {
+    pub fn initialize<E: RuntimeEnvironment + Clone + Default + 'static>(block: &Block, height: u32) {
         let mut tank = _FUEL_TANK.write().unwrap();
         *tank = Some(FuelTank {
             current_txindex: u32::MAX,
             txsize: 0,
-            size: AlkanesBlock(block).vfsize(),
+            size: AlkanesBlock::<E>(block, PhantomData).vfsize(),
             block_fuel: total_fuel(height),
             transaction_fuel: 0,
             block_metered_fuel: 0,
@@ -210,7 +209,7 @@ impl FuelTank {
         std::cmp::max(minimum_fuel(height), tank.block_metered_fuel)
     }
 
-    pub fn fuel_transaction(txsize: u64, txindex: u32, height: u32) {
+        pub fn fuel_transaction(txsize: u64, txindex: u32, height: u32) {
         let mut tank = _FUEL_TANK.write().unwrap();
         let tank = tank.as_mut().unwrap();
         tank.current_txindex = txindex;
@@ -226,13 +225,13 @@ impl FuelTank {
 
         #[cfg(feature = "debug-log")]
         {
-            println!("Fuel allocation for transaction {}:", txindex);
-            println!("  - Transaction size: {} bytes", txsize);
-            println!("  - Block size: {} bytes", tank.size);
-            println!("  - Block fuel before: {}", _block_fuel_before);
-            println!("  - Block fuel after: {}", tank.block_fuel);
-            println!("  - Allocated fuel: {}", tank.transaction_fuel);
-            println!("  - Minimum fuel: {}", minimum_fuel(height));
+            MetashrewEnvironment::log(&format!("Fuel allocation for transaction {}:", txindex));
+            MetashrewEnvironment::log(&format!("  - Transaction size: {} bytes", txsize));
+            MetashrewEnvironment::log(&format!("  - Block size: {} bytes", tank.size));
+            MetashrewEnvironment::log(&format!("  - Block fuel before: {}", _block_fuel_before));
+            MetashrewEnvironment::log(&format!("  - Block fuel after: {}", tank.block_fuel));
+            MetashrewEnvironment::log(&format!("  - Allocated fuel: {}", tank.transaction_fuel));
+            MetashrewEnvironment::log(&format!("  - Minimum fuel: {}", minimum_fuel(height)));
         }
     }
 
@@ -242,15 +241,14 @@ impl FuelTank {
 
         #[cfg(feature = "debug-log")]
         {
-            // Log refunding details before refunding
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "Refunding fuel to block after transaction {}:",
                 tank.current_txindex
-            );
-            println!("  - Block fuel before refund: {}", tank.block_fuel);
-            println!("  - Remaining metered fuel: {}", tank.block_metered_fuel);
-            println!("  - Transaction size: {} bytes", tank.txsize);
-            println!("  - Block size before update: {} bytes", tank.size);
+            ));
+            MetashrewEnvironment::log(&format!("  - Block fuel before refund: {}", tank.block_fuel));
+            MetashrewEnvironment::log(&format!("  - Remaining metered fuel: {}", tank.block_metered_fuel));
+            MetashrewEnvironment::log(&format!("  - Transaction size: {} bytes", tank.txsize));
+            MetashrewEnvironment::log(&format!("  - Block size before update: {} bytes", tank.size));
         }
 
         // Only refund the remaining fuel (block_metered_fuel) that wasn't consumed
@@ -263,8 +261,8 @@ impl FuelTank {
         #[cfg(feature = "debug-log")]
         {
             // Log refunding details after refunding
-            println!("  - Block fuel after refund: {}", tank.block_fuel);
-            println!("  - Block size after update: {} bytes", tank.size);
+            MetashrewEnvironment::log(&format!("  - Block fuel after refund: {}", tank.block_fuel));
+            MetashrewEnvironment::log(&format!("  - Block size after update: {} bytes", tank.size));
         }
     }
 
@@ -361,21 +359,21 @@ pub trait Fuelable {
     fn consume_fuel(&mut self, n: u64) -> Result<()>;
 }
 
-impl<'a> Fuelable for Caller<'_, AlkanesState> {
+impl<'a, E: RuntimeEnvironment + Clone + Default> Fuelable for Caller<'_, AlkanesState<E>> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())
     }
 }
 
-impl Fuelable for AlkanesInstance {
+impl<E: RuntimeEnvironment + Clone + Default> Fuelable for AlkanesInstance<E> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.store.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())
     }
 }
 
-pub fn consume_fuel<'a>(caller: &mut Caller<'_, AlkanesState>, n: u64) -> Result<()> {
+pub fn consume_fuel<'a, E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, n: u64) -> Result<()> {
     caller.consume_fuel(n)
 }
 

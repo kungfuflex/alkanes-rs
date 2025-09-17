@@ -11,7 +11,7 @@ use bitcoin::block::Header;
 use bitcoin::OutPoint;
 use bitcoin::Transaction;
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_support::{
     println,
     stdio::{stdout, Write},
 };

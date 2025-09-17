@@ -2,7 +2,7 @@
 mod tests {
     use crate::balance_sheet::load_sheet;
     use crate::message::MessageContext;
-    use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+    use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
     use metashrew_support::proto;
     use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
     use protorune_support::protostone::Protostone;

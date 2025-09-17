@@ -14,7 +14,7 @@ use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_support::{
     println,
     stdio::{stdout, Write},
 };

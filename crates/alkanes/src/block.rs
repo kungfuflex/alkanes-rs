@@ -10,11 +10,6 @@ use metashrew_support::utils::{
 };
 use std::io::Cursor;
 
-#[allow(unused_imports)]
-use {
-    metashrew_core::{println, stdio::stdout},
-    std::fmt::Write,
-};
 
 pub const VERSION_AUXPOW: u32 = 0x100;
 pub const VERSION_POS_START: u32 = 0x200;

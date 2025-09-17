@@ -12,7 +12,7 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Transaction;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use metashrew_support::compat::to_arraybuffer_layout;
 use protorune_support::utils::consensus_decode;
 
 #[derive(Default)]

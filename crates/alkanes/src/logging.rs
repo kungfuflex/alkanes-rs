@@ -14,7 +14,7 @@
 use crate::vm::fuel::VirtualFuelBytes;
 use alkanes_support::id::AlkaneId;
 use bitcoin::Block;
-use metashrew_core::println;
+use metashrew_support::println;
 
 // Conditional compilation for different targets
 #[cfg(not(target_arch = "wasm32"))]

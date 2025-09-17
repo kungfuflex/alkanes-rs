@@ -9,7 +9,7 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use metashrew_support::{
-    compat::{to_arraybuffer_layout, to_passback_ptr},
+    compat::to_arraybuffer_layout,
     index_pointer::KeyValuePointer,
     utils::consensus_encode,
 };
@@ -197,7 +197,7 @@ impl LoggerAlkane {
 
     fn test_ordered_incoming(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
         let transfers = context.incoming_alkanes.0;
         println!("{:?}", transfers);
         for i in 1..transfers.len() {
@@ -211,7 +211,7 @@ impl LoggerAlkane {
 
     fn get_transaction(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         self.transaction();
 
@@ -220,7 +220,7 @@ impl LoggerAlkane {
 
     fn hash_loop(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         let mut data = vec![0x01, 0x02];
         loop {
@@ -238,7 +238,7 @@ impl LoggerAlkane {
 
     fn test_infinite_loop(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         loop {}
 

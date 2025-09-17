@@ -1,7 +1,8 @@
 use crate::tables::RuneTable;
-use crate::{balance_sheet::load_sheet, tables};
+use crate::{balance_sheet::load_sheet};
 use anyhow::{anyhow, Result};
 use bitcoin;
+use metashrew_support::environment::RuntimeEnvironment;
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::proto;
 use protorune_support::proto::protorune::{
@@ -19,7 +20,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::OutPoint;
 //use metashrew_core::utils::{ consume_exact, consume_sized_int };
 #[allow(unused_imports)]
-use metashrew_core::{println, stdio::stdout};
+
 use metashrew_support::index_pointer::KeyValuePointer;
 use protobuf::{Message, MessageField, SpecialFields};
 #[allow(unused_imports)]
@@ -38,24 +39,24 @@ pub fn core_outpoint_to_proto(outpoint: &OutPoint) -> Outpoint {
     }
 }
 
-pub fn protorune_outpoint_to_outpoint_response(
+pub fn protorune_outpoint_to_outpoint_response<E: RuntimeEnvironment + Clone + Default>(
     outpoint: &OutPoint,
     protocol_id: u128,
 ) -> Result<OutpointResponse> {
     //    println!("protocol_id: {}", protocol_id);
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
     let balance_sheet = load_sheet(
-        &tables::RuneTable::for_protocol(protocol_id)
+        &RuneTable::<E>::for_protocol(protocol_id)
             .OUTPOINT_TO_RUNES
             .select(&outpoint_bytes),
     );
 
-    let mut height: u128 = tables::RUNES
+    let mut height: u128 = RuneTable::<E>::new()
         .OUTPOINT_TO_HEIGHT
         .select(&outpoint_bytes)
         .get_value::<u64>()
         .into();
-    let mut txindex: u128 = tables::RUNES
+    let mut txindex: u128 = RuneTable::<E>::new()
         .HEIGHT_TO_TRANSACTION_IDS
         .select_value::<u64>(height as u64)
         .get_list()
@@ -69,7 +70,7 @@ pub fn protorune_outpoint_to_outpoint_response(
         txindex = rune_id.tx.into();
     }
     let decoded_output: Output = Output::parse_from_bytes(
-        &tables::OUTPOINT_TO_OUTPUT
+        &RuneTable::<E>::new().OUTPOINT_TO_OUTPUT
             .select(&outpoint_bytes)
             .get()
             .as_ref(),
@@ -84,16 +85,16 @@ pub fn protorune_outpoint_to_outpoint_response(
     })
 }
 
-pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
+pub fn rune_outpoint_to_outpoint_response<E: RuntimeEnvironment + Clone + Default>(outpoint: &OutPoint) -> Result<OutpointResponse> {
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
+    let balance_sheet = load_sheet(&RuneTable::<E>::new().OUTPOINT_TO_RUNES.select(&outpoint_bytes));
 
-    let mut height: u128 = tables::RUNES
+    let mut height: u128 = RuneTable::<E>::new()
         .OUTPOINT_TO_HEIGHT
         .select(&outpoint_bytes)
         .get_value::<u64>()
         .into();
-    let mut txindex: u128 = tables::RUNES
+    let mut txindex: u128 = RuneTable::<E>::new()
         .HEIGHT_TO_TRANSACTION_IDS
         .select_value::<u64>(height as u64)
         .get_list()
@@ -107,7 +108,7 @@ pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<Outpoin
         txindex = rune_id.tx.into();
     }
     let decoded_output: Output = Output::parse_from_bytes(
-        &tables::OUTPOINT_TO_OUTPUT
+        &RuneTable::<E>::new().OUTPOINT_TO_OUTPUT
             .select(&outpoint_bytes)
             .get()
             .as_ref(),
@@ -122,15 +123,15 @@ pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<Outpoin
     })
 }
 
-pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
+pub fn outpoint_to_outpoint_response<E: RuntimeEnvironment + Clone + Default>(outpoint: &OutPoint) -> Result<OutpointResponse> {
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
-    let mut height: u128 = tables::RUNES
+    let balance_sheet = load_sheet(&RuneTable::<E>::new().OUTPOINT_TO_RUNES.select(&outpoint_bytes));
+    let mut height: u128 = RuneTable::<E>::new()
         .OUTPOINT_TO_HEIGHT
         .select(&outpoint_bytes)
         .get_value::<u64>()
         .into();
-    let mut txindex: u128 = tables::RUNES
+    let mut txindex: u128 = RuneTable::<E>::new()
         .HEIGHT_TO_TRANSACTION_IDS
         .select_value::<u64>(height as u64)
         .get_list()
@@ -144,7 +145,7 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
         txindex = rune_id.tx;
     }
     let decoded_output: Output = Output::parse_from_bytes(
-        &tables::OUTPOINT_TO_OUTPUT
+        &RuneTable::<E>::new().OUTPOINT_TO_OUTPUT
             .select(&outpoint_bytes)
             .get()
             .as_ref(),
@@ -159,10 +160,10 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
     })
 }
 
-pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
+pub fn runes_by_address<E: RuntimeEnvironment + Clone + Default>(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::WalletRequest::parse_from_bytes(input).ok() {
-        result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
+        result.outpoints = RuneTable::<E>::new().OUTPOINTS_FOR_ADDRESS
             .select(&req.wallet)
             .get_list()
             .into_iter()
@@ -179,9 +180,9 @@ pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
                         return Some(Err(e));
                     }
                 };
-                let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+                let _address = RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
                 if req.wallet.len() == _address.len() {
-                    Some(outpoint_to_outpoint_response(&v))
+                    Some(outpoint_to_outpoint_response::<E>(&v))
                 } else {
                     None
                 }
@@ -191,7 +192,7 @@ pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     Ok(result)
 }
 
-pub fn protorunes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
+pub fn protorunes_by_outpoint<E: RuntimeEnvironment + Clone + Default>(input: &Vec<u8>) -> Result<OutpointResponse> {
     match proto::protorune::OutpointWithProtocol::parse_from_bytes(input).ok() {
         Some(req) => {
             let protocol_tag: u128 = req.protocol.into_option().unwrap().into();
@@ -202,13 +203,13 @@ pub fn protorunes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
                 ),
                 vout: req.vout,
             };
-            protorune_outpoint_to_outpoint_response(&outpoint, protocol_tag)
+            protorune_outpoint_to_outpoint_response::<E>(&outpoint, protocol_tag)
         }
         None => Err(anyhow!("malformed request")),
     }
 }
 
-pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
+pub fn runes_by_outpoint<E: RuntimeEnvironment + Clone + Default>(input: &Vec<u8>) -> Result<OutpointResponse> {
     match proto::protorune::Outpoint::parse_from_bytes(input).ok() {
         Some(req) => {
             let outpoint = OutPoint {
@@ -217,16 +218,16 @@ pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
                 ),
                 vout: req.vout,
             };
-            rune_outpoint_to_outpoint_response(&outpoint)
+            rune_outpoint_to_outpoint_response::<E>(&outpoint)
         }
         None => Err(anyhow!("malformed request")),
     }
 }
 
-pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
+pub fn protorunes_by_address<E: RuntimeEnvironment + Clone + Default>(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input).ok() {
-        result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
+        result.outpoints = RuneTable::<E>::new().OUTPOINTS_FOR_ADDRESS
             .select(&req.wallet)
             .get_list()
             .into_iter()
@@ -243,9 +244,9 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
                         return Some(Err(e));
                     }
                 };
-                let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+                let _address = RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
                 if req.wallet.len() == _address.len() {
-                    Some(protorune_outpoint_to_outpoint_response(
+                    Some(protorune_outpoint_to_outpoint_response::<E>(
                         &v,
                         req.clone().protocol_tag.into_option().unwrap().into(),
                     ))
@@ -258,16 +259,16 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     Ok(result)
 }
 
-pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
+pub fn protorunes_by_address2<E: RuntimeEnvironment + Clone + Default>(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input).ok() {
-        result.outpoints = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+        result.outpoints = RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY_ADDRESS
             .select(&req.wallet)
             .map_ll(|ptr, _| -> Result<OutpointResponse> {
                 let mut cursor = Cursor::new(ptr.get().as_ref().clone());
                 let outpoint =
                     consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?;
-                protorune_outpoint_to_outpoint_response(
+                protorune_outpoint_to_outpoint_response::<E>(
                     &outpoint,
                     req.clone().protocol_tag.into_option().unwrap().into(),
                 )
@@ -278,10 +279,10 @@ pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
     Ok(result)
 }
 
-pub fn runes_by_height(input: &Vec<u8>) -> Result<RunesResponse> {
+pub fn runes_by_height<E: RuntimeEnvironment + Clone + Default>(input: &Vec<u8>) -> Result<RunesResponse> {
     let mut result: RunesResponse = RunesResponse::new();
     if let Some(req) = proto::protorune::RunesByHeightRequest::parse_from_bytes(input).ok() {
-        for rune in tables::HEIGHT_TO_RUNES
+        for rune in RuneTable::<E>::new().HEIGHT_TO_RUNE_ID
             .select_value(req.height)
             .get_list()
             .into_iter()
@@ -290,13 +291,13 @@ pub fn runes_by_height(input: &Vec<u8>) -> Result<RunesResponse> {
             _rune.name = String::from_utf8(rune.as_ref().clone())?;
             _rune.runeId = MessageField::from_option(
                 proto::protorune::ProtoruneRuneId::parse_from_bytes(
-                    &tables::RUNES.ETCHING_TO_RUNE_ID.select(&rune).get(),
+                    &RuneTable::<E>::new().ETCHING_TO_RUNE_ID.select(&rune).get(),
                 )
                 .ok(),
             );
-            _rune.spacers = tables::RUNES.SPACERS.select(&rune).get_value::<u32>();
+            _rune.spacers = RuneTable::<E>::new().SPACERS.select(&rune).get_value::<u32>();
 
-            let symbol_bytes = tables::RUNES.SYMBOL.select(&rune).get().as_ref().clone();
+            let symbol_bytes = RuneTable::<E>::new().SYMBOL.select(&rune).get().as_ref().clone();
             if symbol_bytes.len() != 4 {
                 return Err(anyhow!("INDEXER HAS STORED THE SYMBOL INCORRECTLY!"));
             }
@@ -309,18 +310,17 @@ pub fn runes_by_height(input: &Vec<u8>) -> Result<RunesResponse> {
             ]);
 
             _rune.symbol = char::from_u32(symbol_unicode).unwrap().to_string();
-            _rune.divisibility = tables::RUNES.DIVISIBILITY.select(&rune).get_value::<u8>() as u32;
+            _rune.divisibility = RuneTable::<E>::new().DIVISIBILITY.select(&rune).get_value::<u8>() as u32;
             result.runes.push(_rune);
         }
     }
     Ok(result)
 }
 
-pub fn protorunes_by_height(input: &Vec<u8>) -> Result<RunesResponse> {
+pub fn protorunes_by_height<E: RuntimeEnvironment + Clone + Default>(input: &Vec<u8>) -> Result<RunesResponse> {
     let mut result: RunesResponse = RunesResponse::new();
     if let Some(req) = proto::protorune::ProtorunesByHeightRequest::parse_from_bytes(input).ok() {
-        let table =
-            RuneTable::for_protocol(req.protocol_tag.unwrap_or_else(|| (0u128).into()).into());
+        let table = RuneTable::<E>::for_protocol(req.protocol_tag.unwrap_or_else(|| (0u128).into()).into());
         for rune in table
             .HEIGHT_TO_RUNE_ID
             .select_value(req.height)

@@ -32,12 +32,10 @@ use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
 use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
-#[allow(unused_imports)]
-use metashrew_core::{
-    flush, input, println,
-    stdio::{stdout, Write},
-};
+use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_support::environment::RuntimeEnvironment;
+use std::marker::PhantomData;
+
 use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
@@ -72,7 +70,7 @@ pub mod test_helpers;
 pub mod tests;
 pub mod view;
 
-pub struct Protorune(());
+pub struct Protorune<E: RuntimeEnvironment + Clone + Default>(PhantomData<E>);
 
 pub fn default_output(tx: &Transaction) -> u32 {
     for i in 0..tx.output.len() {
@@ -160,7 +158,7 @@ pub fn handle_transfer_runes_to_vout(
 }
 
 #[cfg(not(test))]
-pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
+pub fn validate_rune_etch<E: RuntimeEnvironment + Clone + Default>(tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
     for input in &tx.input {
         // extracting a tapscript does not indicate that the input being spent
         // was actually a taproot output. this is checked below, when we load the
@@ -183,7 +181,7 @@ pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) ->
                 continue;
             }
 
-            let h: u64 = tables::RUNES
+            let h: u64 = RuneTable::<E>::new()
                 .OUTPOINT_TO_HEIGHT
                 .select(&consensus_encode(&input.previous_output)?)
                 .get_value();
@@ -202,9 +200,9 @@ pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) ->
     Ok(true)
 }
 
-impl Protorune {
-    pub fn index_runestone<T: MessageContext>(
-        atomic: &mut AtomicPointer,
+impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
+    pub fn index_runestone<T: MessageContext<E>>(
+        atomic: &mut AtomicPointer<E>,
         tx: &Transaction,
         runestone: &Runestone,
         height: u64,
@@ -212,18 +210,18 @@ impl Protorune {
         block: &Block,
         runestone_output_index: u32,
     ) -> Result<()> {
-        let sheets: Vec<BalanceSheet<AtomicPointer>> = tx
+        let sheets: Vec<BalanceSheet<AtomicPointer<E>>> = tx
             .input
             .iter()
             .map(|input| {
                 let outpoint_bytes = consensus_encode(&input.previous_output)?;
                 Ok(load_sheet(&mut atomic.derive(
-                    &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
+                    &RuneTable::<E>::new().OUTPOINT_TO_RUNES.select(&outpoint_bytes),
                 )))
             })
-            .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
+            .collect::<Result<Vec<BalanceSheet<AtomicPointer<E>>>>>()?;
         let mut balance_sheet = BalanceSheet::concat(sheets)?;
-        let mut balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
+        let mut balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer<E>>>::new();
         let unallocated_to = match runestone.pointer {
             Some(v) => v,
             None => default_output(tx),
@@ -260,7 +258,7 @@ impl Protorune {
             // );
             sheet.save(
                 &mut atomic.derive(
-                    &tables::RUNES
+                    &RuneTable::<E>::new()
                         .OUTPOINT_TO_RUNES
                         .select(&consensus_encode(&outpoint)?),
                 ),
@@ -281,8 +279,8 @@ impl Protorune {
         Ok(())
     }
     pub fn update_balances_for_edict(
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        balance_sheet: &mut BalanceSheet<AtomicPointer>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        balance_sheet: &mut BalanceSheet<AtomicPointer<E>>,
         edict_amount: u128,
         edict_output: u32,
         rune_id: &ProtoruneRuneId,
@@ -290,7 +288,7 @@ impl Protorune {
         if !balances_by_output.contains_key(&edict_output) {
             balances_by_output.insert(edict_output, BalanceSheet::default());
         }
-        let sheet: &mut BalanceSheet<AtomicPointer> = balances_by_output
+        let sheet: &mut BalanceSheet<AtomicPointer<E>> = balances_by_output
             .get_mut(&edict_output)
             .ok_or("")
             .map_err(|_| anyhow!("balance sheet not present"))?;
@@ -308,8 +306,8 @@ impl Protorune {
     pub fn process_edict(
         tx: &Transaction,
         edict: &ProtostoneEdict,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        balances: &mut BalanceSheet<AtomicPointer>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        balances: &mut BalanceSheet<AtomicPointer<E>>,
         _outs: &Vec<TxOut>,
     ) -> Result<()> {
         if edict.id.block == 0 && edict.id.tx != 0 {
@@ -336,8 +334,8 @@ impl Protorune {
     pub fn process_edicts(
         tx: &Transaction,
         edicts: &Vec<ProtostoneEdict>,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        balances: &mut BalanceSheet<AtomicPointer>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        balances: &mut BalanceSheet<AtomicPointer<E>>,
         outs: &Vec<TxOut>,
     ) -> Result<()> {
         for edict in edicts {
@@ -346,8 +344,8 @@ impl Protorune {
         Ok(())
     }
     pub fn handle_leftover_runes(
-        remaining_balances: &mut BalanceSheet<AtomicPointer>,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        remaining_balances: &mut BalanceSheet<AtomicPointer<E>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         unallocated_to: u32,
     ) -> Result<()> {
         // grab the balances of the vout to send unallocated to
@@ -383,14 +381,14 @@ impl Protorune {
     pub fn index_mint(
         mint: &ProtoruneRuneId,
         height: u64,
-        balance_sheet: &mut BalanceSheet<AtomicPointer>,
+        balance_sheet: &mut BalanceSheet<AtomicPointer<E>>,
     ) -> Result<()> {
-        let name = tables::RUNES
+        let name = RuneTable::<E>::new()
             .RUNE_ID_TO_ETCHING
             .select(&mint.clone().into())
             .get();
-        let remaining: u128 = tables::RUNES.MINTS_REMAINING.select(&name).get_value();
-        let amount: u128 = tables::RUNES.AMOUNT.select(&name).get_value();
+        let remaining: u128 = RuneTable::<E>::new().MINTS_REMAINING.select(&name).get_value();
+        let amount: u128 = RuneTable::<E>::new().AMOUNT.select(&name).get_value();
 
         if remaining == 0 {
             // 2 ways we can reach this statement:
@@ -399,13 +397,13 @@ impl Protorune {
             return Ok(());
         }
         if remaining > 0 {
-            let height_start: u64 = tables::RUNES.HEIGHTSTART.select(&name).get_value();
-            let height_end: u64 = tables::RUNES.HEIGHTEND.select(&name).get_value();
-            let offset_start: u64 = tables::RUNES.OFFSETSTART.select(&name).get_value();
-            let offset_end: u64 = tables::RUNES.OFFSETEND.select(&name).get_value();
+            let height_start: u64 = RuneTable::<E>::new().HEIGHTSTART.select(&name).get_value();
+            let height_end: u64 = RuneTable::<E>::new().HEIGHTEND.select(&name).get_value();
+            let offset_start: u64 = RuneTable::<E>::new().OFFSETSTART.select(&name).get_value();
+            let offset_end: u64 = RuneTable::<E>::new().OFFSETEND.select(&name).get_value();
             // the other mint terms are stored from the rune name, the etching height is
             // stored by the rune id
-            let etching_height: u64 = tables::RUNES
+            let etching_height: u64 = RuneTable::<E>::new()
                 .RUNE_ID_TO_HEIGHT
                 .select(&mint.to_owned().into())
                 .get_value();
@@ -414,7 +412,7 @@ impl Protorune {
                 && (offset_start == 0 || height >= offset_start + etching_height)
                 && (offset_end == 0 || height < etching_height + offset_end)
             {
-                tables::RUNES
+                RuneTable::<E>::new()
                     .MINTS_REMAINING
                     .select(&name)
                     .set_value(remaining.sub(1));
@@ -433,18 +431,18 @@ impl Protorune {
     }
 
     pub fn index_etching(
-        atomic: &mut AtomicPointer,
+        atomic: &mut AtomicPointer<E>,
         etching: &Etching,
         index: u32,
         height: u64,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         unallocated_to: u32,
         tx: &Transaction,
     ) -> Result<()> {
         let etching_rune = match etching.rune {
             Some(rune) => {
                 if Self::verify_non_reserved_name(height.try_into()?, &rune).is_ok()
-                    && validate_rune_etch(tx, rune.commitment(), height)?
+                    && validate_rune_etch::<E>(tx, rune.commitment(), height)?
                 {
                     rune
                 } else {
@@ -460,37 +458,37 @@ impl Protorune {
 
         // check if rune name alredy exists
         if let std::result::Result::Ok(rune_id) = ProtoruneRuneId::try_from(
-            (*tables::RUNES
+            (*RuneTable::<E>::new()
                 .ETCHING_TO_RUNE_ID
                 .select(&indexer_rune_name)
                 .get())
             .clone(),
         ) {
-            println!(
+            E::log(&format!(
                 "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
                 name, rune_id
-            );
+            ));
             return Ok(());
         }
         let rune_id = ProtoruneRuneId::new(height.into(), index.into());
         atomic
-            .derive(&tables::RUNES.RUNE_ID_TO_ETCHING.select(&rune_id.into()))
+            .derive(&RuneTable::<E>::new().RUNE_ID_TO_ETCHING.select(&rune_id.into()))
             .set(Arc::new(indexer_rune_name.clone()));
         atomic
-            .derive(&tables::RUNES.ETCHING_TO_RUNE_ID.select(&indexer_rune_name))
+            .derive(&RuneTable::<E>::new().ETCHING_TO_RUNE_ID.select(&indexer_rune_name))
             .set(rune_id.into());
         atomic
-            .derive(&tables::RUNES.RUNE_ID_TO_HEIGHT.select(&rune_id.into()))
+            .derive(&RuneTable::<E>::new().RUNE_ID_TO_HEIGHT.select(&rune_id.into()))
             .set_value(height);
 
         if let Some(divisibility) = etching.divisibility {
             atomic
-                .derive(&tables::RUNES.DIVISIBILITY.select(&indexer_rune_name))
+                .derive(&RuneTable::<E>::new().DIVISIBILITY.select(&indexer_rune_name))
                 .set_value(divisibility);
         }
         if let Some(premine) = etching.premine {
             atomic
-                .derive(&tables::RUNES.PREMINE.select(&indexer_rune_name))
+                .derive(&RuneTable::<E>::new().PREMINE.select(&indexer_rune_name))
                 .set_value(premine);
             let rune = ProtoruneRuneId {
                 block: u128::from(height),
@@ -503,32 +501,32 @@ impl Protorune {
         if let Some(terms) = etching.terms {
             if let Some(amount) = terms.amount {
                 atomic
-                    .derive(&tables::RUNES.AMOUNT.select(&indexer_rune_name))
+                    .derive(&RuneTable::<E>::new().AMOUNT.select(&indexer_rune_name))
                     .set_value(amount);
             }
             if let Some(cap) = terms.cap {
                 atomic
-                    .derive(&tables::RUNES.CAP.select(&indexer_rune_name))
+                    .derive(&RuneTable::<E>::new().CAP.select(&indexer_rune_name))
                     .set_value(cap);
                 atomic
-                    .derive(&tables::RUNES.MINTS_REMAINING.select(&indexer_rune_name))
+                    .derive(&RuneTable::<E>::new().MINTS_REMAINING.select(&indexer_rune_name))
                     .set_value(cap);
             }
             if let (Some(height_start), Some(height_end)) = (terms.height.0, terms.height.1) {
                 atomic
-                    .derive(&tables::RUNES.HEIGHTSTART.select(&indexer_rune_name))
+                    .derive(&RuneTable::<E>::new().HEIGHTSTART.select(&indexer_rune_name))
                     .set_value(height_start);
 
                 atomic
-                    .derive(&tables::RUNES.HEIGHTEND.select(&indexer_rune_name))
+                    .derive(&RuneTable::<E>::new().HEIGHTEND.select(&indexer_rune_name))
                     .set_value(height_end);
             }
             if let (Some(offset_start), Some(offset_end)) = (terms.offset.0, terms.offset.1) {
                 atomic
-                    .derive(&tables::RUNES.OFFSETSTART.select(&indexer_rune_name))
+                    .derive(&RuneTable::<E>::new().OFFSETSTART.select(&indexer_rune_name))
                     .set_value(offset_start);
                 atomic
-                    .derive(&tables::RUNES.OFFSETEND.select(&indexer_rune_name))
+                    .derive(&RuneTable::<E>::new().OFFSETEND.select(&indexer_rune_name))
                     .set_value(offset_end);
             }
         }
@@ -536,21 +534,21 @@ impl Protorune {
         // runes spec states this is the default symbol if symbol is omitted
         let symbol = etching.symbol.unwrap_or('¤');
         atomic
-            .derive(&tables::RUNES.SYMBOL.select(&indexer_rune_name))
+            .derive(&RuneTable::<E>::new().SYMBOL.select(&indexer_rune_name))
             .set_value(symbol as u32);
 
         if let Some(spacers) = etching.spacers {
             atomic
-                .derive(&tables::RUNES.SPACERS.select(&indexer_rune_name))
+                .derive(&RuneTable::<E>::new().SPACERS.select(&indexer_rune_name))
                 .set_value(spacers);
         }
 
         atomic
-            .derive(&tables::RUNES.ETCHINGS.select(&indexer_rune_name))
+            .derive(&RuneTable::<E>::new().ETCHINGS.select(&indexer_rune_name))
             .append(Arc::new(indexer_rune_name.clone()));
 
         atomic
-            .derive(&tables::HEIGHT_TO_RUNES.select_value(height))
+            .derive(&RuneTable::<E>::new().HEIGHT_TO_RUNE_ID.select_value(height))
             .append(Arc::new(indexer_rune_name.clone()));
 
         Ok(())
@@ -560,7 +558,7 @@ impl Protorune {
         // TODO: chain name
         let minimum_name = Rune::minimum_at_height(Network::Bitcoin, ordinals::Height(block));
         if rune.n() < minimum_name.n() {
-            println!("error not unlocked");
+            E::log("error not unlocked");
             return Err(anyhow!("Given name is not unlocked yet"));
         }
         if rune.n() >= constants::RESERVED_NAME {
@@ -595,10 +593,10 @@ impl Protorune {
         Err(anyhow!("did not find a output index"))
     }
 
-    pub fn index_unspendables<T: MessageContext>(block: &Block, height: u64) -> Result<()> {
+    pub fn index_unspendables<T: MessageContext<E>>(block: &Block, height: u64) -> Result<()> {
         for (index, tx) in block.txdata.iter().enumerate() {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
-                let mut atomic = AtomicPointer::default();
+                let mut atomic = AtomicPointer::<E>::default();
                 let runestone_output_index: u32 = Self::get_runestone_output_index(tx)?;
                 match Self::index_runestone::<T>(
                     &mut atomic,
@@ -610,7 +608,7 @@ impl Protorune {
                     runestone_output_index,
                 ) {
                     Err(e) => {
-                        println!("err: {:?}", e);
+                        E::log(&format!("err: {:?}", e));
                         atomic.rollback();
                     }
                     _ => {
@@ -621,7 +619,7 @@ impl Protorune {
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
                 let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key));
+                clear_balances(&mut RuneTable::<E>::new().OUTPOINT_TO_RUNES.select(&key));
             }
         }
         Ok(())
@@ -636,12 +634,12 @@ impl Protorune {
 
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
-            tables::RUNES
+            RuneTable::<E>::new()
                 .TXID_TO_TXINDEX
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
             for (_index, input) in transaction.input.iter().enumerate() {
-                tables::OUTPOINT_SPENDABLE_BY
+                RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY
                     .select(&consensus_encode(&input.previous_output)?)
                     .nullify();
             }
@@ -660,10 +658,10 @@ impl Protorune {
                     #[cfg(feature = "cache")]
                     updated_addresses.insert(address.to_vec());
 
-                    tables::OUTPOINTS_FOR_ADDRESS
+                    RuneTable::<E>::new().OUTPOINTS_FOR_ADDRESS
                         .select(&address.clone())
                         .append(Arc::new(outpoint_bytes.clone()));
-                    tables::OUTPOINT_SPENDABLE_BY
+                    RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY
                         .select(&outpoint_bytes.clone())
                         .set(Arc::new(address.clone()))
                 }
@@ -683,7 +681,7 @@ impl Protorune {
 
         for (txindex, transaction) in txdata.iter().enumerate() {
             let tx_id = transaction.compute_txid();
-            tables::RUNES
+            RuneTable::<E>::new()
                 .TXID_TO_TXINDEX
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
@@ -704,42 +702,42 @@ impl Protorune {
                         updated_addresses.insert(address.to_vec());
                     }
 
-                    tables::OUTPOINTS_FOR_ADDRESS
+                    RuneTable::<E>::new().OUTPOINTS_FOR_ADDRESS
                         .select(&address.clone())
                         .append(Arc::new(outpoint_bytes.clone()));
                     if address.len() > 0 {
-                        tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY_ADDRESS
                             .select(&address.clone())
                             .append_ll(Arc::new(outpoint_bytes.clone()));
-                        let pos = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        let pos = RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY_ADDRESS
                             .select(&address.clone())
                             .length()
                             - 1;
-                        tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY_ADDRESS
                             .select(&outpoint_bytes.clone())
                             .set_value(pos);
                     }
-                    tables::OUTPOINT_SPENDABLE_BY
+                    RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY
                         .select(&outpoint_bytes.clone())
                         .set(Arc::new(address.clone()))
                 }
             }
             for input in transaction.input.iter() {
                 let outpoint_bytes = consensus_encode(&input.previous_output)?;
-                let pos: u32 = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                let pos: u32 = RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY_ADDRESS
                     .select(&outpoint_bytes)
                     .get_value();
-                let address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+                let address = RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
                 if address.len() > 0 {
                     // Add address to the set of updated addresses (for spent inputs)
                     #[cfg(feature = "cache")]
                     updated_addresses.insert(address.as_ref().to_vec());
 
-                    tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                    RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY_ADDRESS
                         .select(&address)
                         .delete_value(pos);
                     if pos > 0 {
-                        tables::OUTPOINT_SPENDABLE_BY_ADDRESS
+                        RuneTable::<E>::new().OUTPOINT_SPENDABLE_BY_ADDRESS
                             .select(&outpoint_bytes)
                             .nullify();
                     }
@@ -752,7 +750,7 @@ impl Protorune {
     }
 
     pub fn index_transaction_ids(block: &Block, height: u64) -> Result<()> {
-        let ptr = tables::RUNES
+        let ptr = RuneTable::<E>::new()
             .HEIGHT_TO_TRANSACTION_IDS
             .select_value::<u64>(height);
         for tx in &block.txdata {
@@ -761,7 +759,7 @@ impl Protorune {
         Ok(())
     }
     pub fn index_outpoints(block: &Block, height: u64) -> Result<()> {
-        let mut atomic = AtomicPointer::default();
+        let mut atomic = AtomicPointer::<E>::default();
         let mut outpoint_count = 0;
         for tx in &block.txdata {
             for i in 0..tx.output.len() {
@@ -773,10 +771,10 @@ impl Protorune {
                     }),
                 )?;
                 atomic
-                    .derive(&tables::RUNES.OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
+                    .derive(&RuneTable::<E>::new().OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
                     .set_value(height);
                 atomic
-                    .derive(&tables::OUTPOINT_TO_OUTPUT.select(&outpoint_bytes))
+                    .derive(&RuneTable::<E>::new().OUTPOINT_TO_OUTPUT.select(&outpoint_bytes))
                     .set(Arc::new(
                         (proto::protorune::Output {
                             script: tx.output[i].clone().script_pubkey.into_bytes(),
@@ -791,12 +789,12 @@ impl Protorune {
         atomic.commit();
         Ok(())
     }
-    pub fn save_balances<T: MessageContext>(
+    pub fn save_balances<T: MessageContext<E>>(
         height: u64,
-        atomic: &mut AtomicPointer,
-        table: &RuneTable,
+        atomic: &mut AtomicPointer<E>,
+        table: &RuneTable<E>,
         tx: &Transaction,
-        map: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        map: &BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
     ) -> Result<()> {
         // Process all outputs, including the last one
         // The OP_RETURN doesn't have to be at the end
@@ -833,7 +831,7 @@ impl Protorune {
                 .unwrap_or_else(|| BalanceSheet::default())
                 .save(&mut atomic.derive(&table.RUNTIME_BALANCE), false);
         }
-        index_unique_protorunes::<T>(
+        index_unique_protorunes::<E, T>(
             atomic,
             height,
             map.iter()
@@ -851,15 +849,15 @@ impl Protorune {
         Ok(())
     }
 
-    pub fn index_protostones<T: MessageContext>(
-        atomic: &mut AtomicPointer,
+    pub fn index_protostones<T: MessageContext<E>>(
+        atomic: &mut AtomicPointer<E>,
         tx: &Transaction,
         txindex: u32,
         block: &Block,
         height: u64,
         runestone: &Runestone,
         runestone_output_index: u32,
-        _balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        _balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         _unallocated_to: u32,
     ) -> Result<()> {
         // Check if this transaction is in the blacklist
@@ -868,7 +866,7 @@ impl Protorune {
             match tx_hex_to_txid(blacklisted_hash) {
                 std::result::Result::Ok(blacklisted_txid) => {
                     if tx_id == blacklisted_txid {
-                        println!("Ignoring blacklisted transaction: {}", blacklisted_hash);
+                        E::log(&format!("Ignoring blacklisted transaction: {}", blacklisted_hash));
                         return Ok(());
                     }
                 }
@@ -880,7 +878,7 @@ impl Protorune {
         logging::record_protostone_run();
 
         if protostones.len() != 0 {
-            let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
+            let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer<E>>>::new();
             let table = tables::RuneTable::for_protocol(T::protocol_tag());
 
             // set the starting runtime balance
@@ -890,7 +888,7 @@ impl Protorune {
             );
 
             // load the balance sheets
-            let sheets: Vec<BalanceSheet<AtomicPointer>> = tx
+            let sheets: Vec<BalanceSheet<AtomicPointer<E>>> = tx
                 .input
                 .iter()
                 .map(|input| {
@@ -902,7 +900,7 @@ impl Protorune {
                         ),
                     ))
                 })
-                .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
+                .collect::<Result<Vec<BalanceSheet<AtomicPointer<E>>>>>()?;
             let mut balance_sheet = BalanceSheet::concat(sheets)?;
             // TODO: Enable this at a future block when protoburns have been fully tested. For now only enabled in tests
             #[cfg(test)]
@@ -1017,11 +1015,11 @@ impl Protorune {
     #[cfg(feature = "mainnet")]
     fn freeze_storage(height: u64) {
         if height > 913300 {
-            IndexPointer::from_keyword("/alkanes/")
+            IndexPointer::<E>::keyword("/alkanes/")
                 .select(&ProtoruneRuneId::new(4, 65523).into())
                 .keyword("/storage//auth")
                 .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
-            IndexPointer::from_keyword("/alkanes/")
+            IndexPointer::<E>::keyword("/alkanes/")
                 .select(&ProtoruneRuneId::new(4, 65522).into())
                 .keyword("/storage//auth")
                 .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
@@ -1031,17 +1029,17 @@ impl Protorune {
     #[cfg(not(feature = "mainnet"))]
     pub fn freeze_storage(_height: u64) {}
 
-    pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_block<T: MessageContext<E>>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));
         init_result?;
         add_result?;
-        tables::RUNES
+        RuneTable::<E>::new()
             .HEIGHT_TO_BLOCKHASH
             .select_value::<u64>(height)
             .set(Arc::new(consensus_encode(&block.block_hash())?));
-        tables::RUNES
+        RuneTable::<E>::new()
             .BLOCKHASH_TO_HEIGHT
             .select(&consensus_encode(&block.block_hash())?)
             .set_value::<u64>(height);

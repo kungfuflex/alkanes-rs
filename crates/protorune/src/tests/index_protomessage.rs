@@ -11,7 +11,7 @@ mod tests {
         address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut,
         Witness,
     };
-    use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+    use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
     use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
     use protorune_support::protostone::Protostone;
     use protorune_support::rune_transfer::RuneTransfer;

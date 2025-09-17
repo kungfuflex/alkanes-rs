@@ -76,3 +76,6 @@ pub mod compat;
 pub mod index_pointer;
 pub mod proto;
 pub mod utils;
+pub mod environment;
+pub mod cache;
+

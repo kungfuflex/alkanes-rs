@@ -1,14 +1,12 @@
+use crate::message::AlkaneMessageContext;
 use alkanes_support::parcel::AlkaneTransferParcel;
 use alkanes_support::storage::StorageMap;
 use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
-#[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
-};
+use metashrew_support::environment::RuntimeEnvironment;
+use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
+
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_decode;
@@ -22,36 +20,36 @@ pub fn from_protobuf(v: alkanes_support::proto::alkanes::AlkaneId) -> AlkaneId {
     }
 }
 
-pub fn balance_pointer(
-    atomic: &mut AtomicPointer,
+pub fn balance_pointer<E: RuntimeEnvironment + Clone + Default>(
+    atomic: &mut AtomicPointer<AlkaneMessageContext<E>>,
     who: &AlkaneId,
     what: &AlkaneId,
-) -> AtomicPointer {
+) -> AtomicPointer<AlkaneMessageContext<E>> {
     let who_bytes: Vec<u8> = who.clone().into();
     let what_bytes: Vec<u8> = what.clone().into();
     let ptr = atomic
-        .derive(&IndexPointer::default())
+        .derive(&IndexPointer::<AlkaneMessageContext<E>>::default())
         .keyword("/alkanes/")
         .select(&what_bytes)
         .keyword("/balances/")
         .select(&who_bytes);
     if ptr.get().len() != 0 {
-        alkane_inventory_pointer(who).append(Arc::new(what_bytes));
+        alkane_inventory_pointer::<E>(who).append(Arc::new(what_bytes));
     }
     ptr
 }
 
-pub fn alkane_inventory_pointer(who: &AlkaneId) -> IndexPointer {
+pub fn alkane_inventory_pointer<E: RuntimeEnvironment + Clone + Default>(who: &AlkaneId) -> IndexPointer<AlkaneMessageContext<E>> {
     let who_bytes: Vec<u8> = who.clone().into();
-    let ptr = IndexPointer::from_keyword("/alkanes/")
+    let ptr = IndexPointer::<AlkaneMessageContext<E>>::from_keyword("/alkanes/")
         .select(&who_bytes)
         .keyword("/inventory/");
     ptr
 }
 
-pub fn alkane_id_to_outpoint(alkane_id: &AlkaneId) -> Result<OutPoint> {
+pub fn alkane_id_to_outpoint<E: RuntimeEnvironment + Clone + Default>(alkane_id: &AlkaneId) -> Result<OutPoint> {
     let alkane_id_bytes: Vec<u8> = alkane_id.clone().into();
-    let outpoint_bytes = IndexPointer::from_keyword("/alkanes_id_to_outpoint/")
+    let outpoint_bytes = IndexPointer::<AlkaneMessageContext<E>>::from_keyword("/alkanes_id_to_outpoint/")
         .select(&alkane_id_bytes)
         .get()
         .as_ref()
@@ -63,8 +61,8 @@ pub fn alkane_id_to_outpoint(alkane_id: &AlkaneId) -> Result<OutPoint> {
     Ok(outpoint)
 }
 
-pub fn credit_balances(
-    atomic: &mut AtomicPointer,
+pub fn credit_balances<E: RuntimeEnvironment + Clone + Default>(
+    atomic: &mut AtomicPointer<AlkaneMessageContext<E>>,
     to: &AlkaneId,
     runes: &Vec<RuneTransfer>,
 ) -> Result<()> {
@@ -102,8 +100,8 @@ pub fn checked_debit_with_minting(
     Ok(this_balance - transfer.value)
 }
 
-pub fn debit_balances(
-    atomic: &mut AtomicPointer,
+pub fn debit_balances<E: RuntimeEnvironment + Clone + Default>(
+    atomic: &mut AtomicPointer<AlkaneMessageContext<E>>,
     to: &AlkaneId,
     runes: &AlkaneTransferParcel,
 ) -> Result<()> {
@@ -115,15 +113,15 @@ pub fn debit_balances(
     Ok(())
 }
 
-pub fn transfer_from(
+pub fn transfer_from<E: RuntimeEnvironment + Clone + Default>(
     parcel: &AlkaneTransferParcel,
-    atomic: &mut AtomicPointer,
+    atomic: &mut AtomicPointer<AlkaneMessageContext<E>>,
     from: &AlkaneId,
     to: &AlkaneId,
 ) -> Result<()> {
     let non_contract_id = AlkaneId { block: 0, tx: 0 };
     if *to == non_contract_id {
-        println!("skipping transfer_from since caller is not a contract");
+        E::log("skipping transfer_from since caller is not a contract");
         return Ok(());
     }
     for transfer in &parcel.0 {

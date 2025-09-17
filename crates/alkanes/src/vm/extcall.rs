@@ -1,12 +1,15 @@
+use crate::message::AlkaneMessageContext;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{TraceContext, TraceEvent};
-use metashrew_core::index_pointer::AtomicPointer;
+use metashrew_support::index_pointer::AtomicPointer;
 
-pub trait Extcall {
+use metashrew_support::environment::RuntimeEnvironment;
+
+pub trait Extcall<E: RuntimeEnvironment + Clone + Default> {
     fn isdelegate() -> bool;
     fn isstatic() -> bool;
     fn event(context: TraceContext) -> TraceEvent;
-    fn handle_atomic(atomic: &mut AtomicPointer) {
+    fn handle_atomic(atomic: &mut AtomicPointer<AlkaneMessageContext<E>>) {
         if Self::isstatic() {
             atomic.rollback();
         } else {
@@ -28,7 +31,7 @@ pub trait Extcall {
 
 pub struct Call(());
 
-impl Extcall for Call {
+impl<E: RuntimeEnvironment + Clone + Default> Extcall<E> for Call {
     fn isdelegate() -> bool {
         false
     }
@@ -42,7 +45,7 @@ impl Extcall for Call {
 
 pub struct Delegatecall(());
 
-impl Extcall for Delegatecall {
+impl<E: RuntimeEnvironment + Clone + Default> Extcall<E> for Delegatecall {
     fn isdelegate() -> bool {
         true
     }
@@ -56,7 +59,7 @@ impl Extcall for Delegatecall {
 
 pub struct Staticcall(());
 
-impl Extcall for Staticcall {
+impl<E: RuntimeEnvironment + Clone + Default> Extcall<E> for Staticcall {
     fn isdelegate() -> bool {
         false
     }

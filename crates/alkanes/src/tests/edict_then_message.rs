@@ -9,7 +9,7 @@ use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::{transaction::Version, ScriptBuf, Sequence};
 use bitcoin::{Address, Amount, Block, OutPoint, Transaction, TxIn, TxOut, Witness};
-use metashrew_core::{
+use metashrew_support::{
     println,
     stdio::{stdout, Write},
 };

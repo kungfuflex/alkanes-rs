@@ -18,7 +18,7 @@ use bitcoin::{
 };
 #[allow(unused_imports)]
 use hex;
-use metashrew_core::index_pointer::AtomicPointer;
+use metashrew_support::index_pointer::AtomicPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 #[allow(unused_imports)]
 use metashrew_support::utils::format_key;
@@ -41,7 +41,7 @@ use crate::tests::helpers::{
 use crate::unwrap::{deserialize_payments, Payment};
 use alkanes_support::cellpack::Cellpack;
 #[allow(unused_imports)]
-use metashrew_core::{get_cache, index_pointer::IndexPointer, println, stdio::stdout};
+use metashrew_support::{get_cache, index_pointer::IndexPointer, println, stdio::stdout};
 use ordinals::{Artifact, Runestone};
 use protorune_support::utils::consensus_encode;
 use std::fmt::Write;

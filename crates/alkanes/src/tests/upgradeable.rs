@@ -14,9 +14,9 @@ use anyhow::Result;
 use bitcoin::block::Header;
 use bitcoin::{Block, Transaction};
 use bitcoin::{OutPoint, Witness};
-use metashrew_core::index_pointer::AtomicPointer;
+use metashrew_support::index_pointer::AtomicPointer;
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_support::{
     println,
     stdio::{stdout, Write},
 };

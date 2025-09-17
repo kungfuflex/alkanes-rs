@@ -13,14 +13,16 @@
 
 use crate::id::AlkaneId;
 use bitcoin::Block;
-use metashrew_core::{println, stdio::{stdout, Write}};
+use metashrew_support::environment::RuntimeEnvironment;
+use std::cell::RefCell;
+
 
 // Conditional compilation for different targets
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Mutex;
 
 #[cfg(target_arch = "wasm32")]
-use std::cell::RefCell;
+
 
 
 
@@ -282,7 +284,7 @@ pub fn update_cache_stats(cache_stats: CacheStats) {
 
 /// Log block summary at the end of block processing
 #[cfg(not(target_arch = "wasm32"))]
-pub fn log_block_summary(block: &Block, height: u32, block_size_bytes: usize) {
+pub fn log_block_summary<E: RuntimeEnvironment>(block: &Block, height: u32, block_size_bytes: usize) {
     // Update cache stats before logging
     update_cache_stats(CacheStats::default());
 
@@ -293,35 +295,35 @@ pub fn log_block_summary(block: &Block, height: u32, block_size_bytes: usize) {
 
     if let Some(stats) = stats {
         // Use println! to ensure block summaries are always visible regardless of logs feature
-        println!();
-        println!("🏗️  ═══════════════════════════════════════════════════════════════");
-        println!("📦 BLOCK {} PROCESSING SUMMARY", height);
-        println!("🏗️  ═══════════════════════════════════════════════════════════════");
-        println!("🔗 Block Hash: {}", block.block_hash());
-        println!(
+        E::log("");
+        E::log("🏗️  ═══════════════════════════════════════════════════════════════");
+        E::log(&format!("📦 BLOCK {} PROCESSING SUMMARY", height));
+        E::log("🏗️  ═══════════════════════════════════════════════════════════════");
+        E::log(&format!("🔗 Block Hash: {}", block.block_hash()));
+        E::log(&format!(
             "📏 Block Size: {} bytes",
             format_number_with_commas(block_size_bytes)
-        );
-        println!();
+        ));
+        E::log("");
 
         // Transaction & Outpoint Processing
-        println!("💳 TRANSACTION PROCESSING");
-        println!("├── 📊 Transactions: {}", stats.transactions_processed);
-        println!("└── 🎯 Outpoints: {}", stats.outpoints_indexed);
-        println!();
+        E::log("💳 TRANSACTION PROCESSING");
+        E::log(&format!("├── 📊 Transactions: {}", stats.transactions_processed));
+        E::log(&format!("└── 🎯 Outpoints: {}", stats.outpoints_indexed));
+        E::log("");
 
         // Protostone Execution
-        println!("⚡ PROTOSTONE EXECUTION");
-        println!("├── 🚀 Total Executed: {}", stats.protostones_run);
-        println!(
+        E::log("⚡ PROTOSTONE EXECUTION");
+        E::log(&format!("├── 🚀 Total Executed: {}", stats.protostones_run));
+        E::log(&format!(
             "└── 📦 With Cellpacks: {}",
             stats.protostones_with_cellpacks
-        );
-        println!();
+        ));
+        E::log("");
 
         // New Alkanes Created
         if !stats.new_alkanes.is_empty() {
-            println!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len());
+            E::log(&format!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len()));
 
             let mut direct_init_count = 0;
             let mut predictable_count = 0;
@@ -336,65 +338,65 @@ pub fn log_block_summary(block: &Block, height: u32, block_size_bytes: usize) {
                 match alkane.creation_method {
                     CreationMethod::DirectInit => {
                         direct_init_count += 1;
-                        println!(
+                        E::log(&format!(
                             "{} 🆕 [2, {}]: {:.2} KB WASM (direct init [1, 0])",
                             prefix, alkane.alkane_id.tx, alkane.wasm_size_kb
-                        );
+                        ));
                     }
                     CreationMethod::PredictableAddress(n) => {
                         predictable_count += 1;
-                        println!(
+                        E::log(&format!(
                             "{} 🎯 [4, {}]: {:.2} KB WASM (predictable [3, {}])",
                             prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, n
-                        );
+                        ));
                     }
                     CreationMethod::FactoryClone(source) => {
                         factory_clone_count += 1;
-                        println!(
+                        E::log(&format!(
                             "{} 🏭 [2, {}]: {:.2} KB WASM (factory clone [5, {}])",
                             prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx
-                        );
+                        ));
                     }
                     CreationMethod::FactoryClonePredictable(source) => {
                         factory_clone_predictable_count += 1;
-                        println!(
+                        E::log(&format!(
                             "{} 🎯🏭 [2, {}]: {:.2} KB WASM (factory clone [6, {}])",
                             prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx
-                        );
+                        ));
                     }
                 }
                 total_wasm_size_kb += alkane.wasm_size_kb;
             }
 
-            println!();
-            println!("📈 DEPLOYMENT BREAKDOWN:");
-            println!("├── 🆕 Direct Init: {}", direct_init_count);
-            println!("├── 🎯 Predictable: {}", predictable_count);
-            println!("├── 🏭 Factory Clones: {}", factory_clone_count);
-            println!(
+            E::log("");
+            E::log("📈 DEPLOYMENT BREAKDOWN:");
+            E::log(&format!("├── 🆕 Direct Init: {}", direct_init_count));
+            E::log(&format!("├── 🎯 Predictable: {}", predictable_count));
+            E::log(&format!("├── 🏭 Factory Clones: {}", factory_clone_count));
+            E::log(&format!(
                 "├── 🎯🏭 Factory Predictable: {}",
                 factory_clone_predictable_count
-            );
-            println!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb);
+            ));
+            E::log(&format!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb));
         } else {
-            println!("🧪 NEW ALKANES DEPLOYED");
-            println!("└── ❌ None deployed this block");
+            E::log("🧪 NEW ALKANES DEPLOYED");
+            E::log("└── ❌ None deployed this block");
         }
-        println!();
+        E::log("");
 
         // Fuel Usage
-        println!("⛽ FUEL CONSUMPTION");
-        println!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed);
-        println!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused);
-        println!();
+        E::log("⛽ FUEL CONSUMPTION");
+        E::log(&format!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed));
+        E::log(&format!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused));
+        E::log("");
 
         // Cache Performance
-        println!("🗄️  CACHE PERFORMANCE");
-        println!("└── 😴 No cache activity");
+        E::log("🗄️  CACHE PERFORMANCE");
+        E::log("└── 😴 No cache activity");
 
-        println!();
-        println!("🏗️  ═══════════════════════════════════════════════════════════════");
-        println!();
+        E::log("");
+        E::log("🏗️  ═══════════════════════════════════════════════════════════════");
+        E::log("");
     }
 }
 
@@ -415,42 +417,42 @@ fn format_number_with_commas(n: usize) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn log_block_summary(block: &Block, height: u32, block_size_bytes: usize) {
+pub fn log_block_summary<E: RuntimeEnvironment>(block: &Block, height: u32, block_size_bytes: usize) {
     // Update cache stats before logging
     update_cache_stats(CacheStats::default());
 
     BLOCK_STATS.with(|stats| {
         if let Some(ref stats) = &*stats.borrow() {
-            // Use println! to ensure block summaries are always visible regardless of logs feature
-            println!();
-            println!("🏗️  ═══════════════════════════════════════════════════════════════");
-            println!("📦 BLOCK {} PROCESSING SUMMARY", height);
-            println!("🏗️  ═══════════════════════════════════════════════════════════════");
-            println!("🔗 Block Hash: {}", block.block_hash());
-            println!(
+            // Use E::log to ensure block summaries are always visible regardless of logs feature
+            E::log("");
+            E::log("🏗️  ═══════════════════════════════════════════════════════════════");
+            E::log(&format!("📦 BLOCK {} PROCESSING SUMMARY", height));
+            E::log("🏗️  ═══════════════════════════════════════════════════════════════");
+            E::log(&format!("🔗 Block Hash: {}", block.block_hash()));
+            E::log(&format!(
                 "📏 Block Size: {} bytes",
                 format_number_with_commas(block_size_bytes)
-            );
-            println!();
+            ));
+            E::log("");
 
             // Transaction & Outpoint Processing
-            println!("💳 TRANSACTION PROCESSING");
-            println!("├── 📊 Transactions: {}", stats.transactions_processed);
-            println!("└── 🎯 Outpoints: {}", stats.outpoints_indexed);
-            println!();
+            E::log("💳 TRANSACTION PROCESSING");
+            E::log(&format!("├── 📊 Transactions: {}", stats.transactions_processed));
+            E::log(&format!("└── 🎯 Outpoints: {}", stats.outpoints_indexed));
+            E::log("");
 
             // Protostone Execution
-            println!("⚡ PROTOSTONE EXECUTION");
-            println!("├── 🚀 Total Executed: {}", stats.protostones_run);
-            println!(
+            E::log("⚡ PROTOSTONE EXECUTION");
+            E::log(&format!("├── 🚀 Total Executed: {}", stats.protostones_run));
+            E::log(&format!(
                 "└── 📦 With Cellpacks: {}",
                 stats.protostones_with_cellpacks
-            );
-            println!();
+            ));
+            E::log("");
 
             // New Alkanes Created
             if !stats.new_alkanes.is_empty() {
-                println!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len());
+                E::log(&format!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len()));
 
                 let mut direct_init_count = 0;
                 let mut predictable_count = 0;
@@ -465,67 +467,83 @@ pub fn log_block_summary(block: &Block, height: u32, block_size_bytes: usize) {
                     match alkane.creation_method {
                         CreationMethod::DirectInit => {
                             direct_init_count += 1;
-                            println!(
+                            E::log(&format!(
                                 "{} 🆕 [2, {}]: {:.2} KB WASM (direct init [1, 0])",
                                 prefix, alkane.alkane_id.tx, alkane.wasm_size_kb
-                            );
+                            ));
                         }
                         CreationMethod::PredictableAddress(n) => {
                             predictable_count += 1;
-                            println!(
+                            E::log(&format!(
                                 "{} 🎯 [4, {}]: {:.2} KB WASM (predictable [3, {}])",
                                 prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, n
-                            );
+                            ));
                         }
                         CreationMethod::FactoryClone(source) => {
                             factory_clone_count += 1;
-                            println!(
+                            E::log(&format!(
                                 "{} 🏭 [2, {}]: {:.2} KB WASM (factory clone [5, {}])",
                                 prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx
-                            );
+                            ));
                         }
                         CreationMethod::FactoryClonePredictable(source) => {
                             factory_clone_predictable_count += 1;
-                            println!(
+                            E::log(&format!(
                                 "{} 🎯🏭 [2, {}]: {:.2} KB WASM (factory clone [6, {}])",
                                 prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx
-                            );
+                            ));
                         }
                     }
                     total_wasm_size_kb += alkane.wasm_size_kb;
                 }
 
-                println!();
-                println!("📈 DEPLOYMENT BREAKDOWN:");
-                println!("├── 🆕 Direct Init: {}", direct_init_count);
-                println!("├── 🎯 Predictable: {}", predictable_count);
-                println!("├── 🏭 Factory Clones: {}", factory_clone_count);
-                println!(
+                E::log("");
+                E::log("📈 DEPLOYMENT BREAKDOWN:");
+                E::log(&format!("├── 🆕 Direct Init: {}", direct_init_count));
+                E::log(&format!("├── 🎯 Predictable: {}", predictable_count));
+                E::log(&format!("├── 🏭 Factory Clones: {}", factory_clone_count));
+                E::log(&format!(
                     "├── 🎯🏭 Factory Predictable: {}",
                     factory_clone_predictable_count
-                );
-                println!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb);
+                ));
+                E::log(&format!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb));
             } else {
-                println!("🧪 NEW ALKANES DEPLOYED");
-                println!("└── ❌ None deployed this block");
+                E::log("🧪 NEW ALKANES DEPLOYED");
+                E::log("└── ❌ None deployed this block");
             }
-            println!();
+            E::log("");
 
             // Fuel Usage
-            println!("⛽ FUEL CONSUMPTION");
-            println!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed);
-            println!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused);
-            println!();
+            E::log("⛽ FUEL CONSUMPTION");
+            E::log(&format!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed));
+            E::log(&format!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused));
+            E::log("");
 
             // Cache Performance
-            println!("🗄️  CACHE PERFORMANCE");
-            println!("└── 😴 No cache activity");
+            E::log("🗄️  CACHE PERFORMANCE");
+            E::log("└── 😴 No cache activity");
 
-            println!();
-            println!("🏗️  ═══════════════════════════════════════════════════════════════");
-            println!();
+            E::log("");
+            E::log("🏗️  ═══════════════════════════════════════════════════════════════");
+            E::log("");
         }
     });
+}
+
+
+
+thread_local! {
+    static LOGGER: RefCell<Option<Box<dyn Fn(&str)>>> = RefCell::new(None);
+}
+
+pub fn with_logger<F, R>(logger: Box<dyn Fn(&str)>, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    LOGGER.with(|l| *l.borrow_mut() = Some(logger));
+    let result = f();
+    LOGGER.with(|l| *l.borrow_mut() = None);
+    result
 }
 
 /// Log function for individual alkanes (only active with --features logs)
@@ -534,7 +552,11 @@ macro_rules! alkane_log {
     ($($arg:tt)*) => {
         #[cfg(feature = "logs")]
         {
-            println!("🧪 [ALKANE] {}", format!($($arg)*));
+            LOGGER.with(|l| {
+                if let Some(logger) = &*l.borrow() {
+                    logger(&format!("[ALKANE] {}", format!($($arg)*)));
+                }
+            });
         }
     };
 }

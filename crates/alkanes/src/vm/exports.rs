@@ -1,16 +1,17 @@
-use super::{AlkanesInstance, AlkanesState};
+use crate::vm::{instance::AlkanesInstance, state::AlkanesState};
 use alkanes_support::{
     parcel::AlkaneTransferParcel, response::ExtendedCallResponse, storage::StorageMap,
 };
 use anyhow::{anyhow, Result};
+use metashrew_core::environment::RuntimeEnvironment;
 use metashrew_support::utils::{consume_exact, consume_sized_int, consume_to_end};
 use wasmi::*;
 
 pub struct AlkanesExportsImpl(());
 impl AlkanesExportsImpl {
-    pub fn _get_export(vm: &mut AlkanesInstance, name: &str) -> Result<Func> {
+    pub fn _get_export<E: RuntimeEnvironment + Clone + Default>(vm: &mut AlkanesInstance<E>, name: &str) -> Result<Func> {
         let instance: &mut Instance = &mut vm.instance;
-        let store: &mut Store<AlkanesState> = &mut vm.store;
+        let store: &mut Store<AlkanesState<E>> = &mut vm.store;
         Ok(instance.get_func(store, name).ok_or("").map_err(|_| {
             anyhow!(format!(
                 "{} not found -- is this WASM built with the ALKANES SDK?",
@@ -18,7 +19,7 @@ impl AlkanesExportsImpl {
             ))
         })?)
     }
-    pub fn _get_result(vm: &mut AlkanesInstance, result: &[Val; 1]) -> Result<Vec<u8>> {
+    pub fn _get_result<E: RuntimeEnvironment + Clone + Default + 'static>(vm: &mut AlkanesInstance<E>, result: &[Val; 1]) -> Result<Vec<u8>> {
         vm.read_arraybuffer(
             result[0]
                 .i32()
@@ -50,7 +51,7 @@ impl AlkanesExportsImpl {
             data,
         })
     }
-    pub fn execute(vm: &mut AlkanesInstance) -> Result<ExtendedCallResponse> {
+    pub fn execute<E: RuntimeEnvironment + Clone + Default + 'static>(vm: &mut AlkanesInstance<E>) -> Result<ExtendedCallResponse> {
         let mut result = [Val::I32(0)];
         let func = Self::_get_export(vm, "__execute")?;
         func.call(&mut vm.store, &[], &mut result)?;
@@ -61,7 +62,7 @@ impl AlkanesExportsImpl {
         Ok(response)
     }
 
-    pub fn call_meta(vm: &mut AlkanesInstance) -> Result<Vec<u8>> {
+    pub fn call_meta<E: RuntimeEnvironment + Clone + Default + 'static>(vm: &mut AlkanesInstance<E>) -> Result<Vec<u8>> {
         let mut result = [Val::I32(0)];
         let func = Self::_get_export(vm, "__meta")?;
         func.call(&mut vm.store, &[], &mut result)?;

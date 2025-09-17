@@ -15,11 +15,10 @@ use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer, response::CallRespon
 use anyhow::{anyhow, ensure, Context, Result};
 use bitcoin::{Address, Transaction};
 use borsh::BorshDeserialize;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
-use protorune_support::{protostone::Protostone, utils::consensus_decode};
-use std::io::Cursor;
+use protorune_support::protostone::Protostone;
 use std::sync::Arc;
 
 #[derive(Default)]

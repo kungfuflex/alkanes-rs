@@ -1,5 +1,5 @@
 use alkanes_runtime::runtime::AlkaneResponder;
-use alkanes_support::{response::CallResponse, utils::overflow_error};
+use alkanes_support::utils::overflow_error;
 use anyhow::Result;
 
 #[allow(unused_imports)]

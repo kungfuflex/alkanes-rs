@@ -1,12 +1,10 @@
-use crate::tables::{RuneTable, RUNES};
+use crate::tables::RuneTable;
+use metashrew_support::environment::RuntimeEnvironment;
 use anyhow::{anyhow, Result};
 use bitcoin::{OutPoint, Txid};
-use metashrew_core::index_pointer::AtomicPointer;
-#[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
-};
+use metashrew_support::index_pointer::AtomicPointer;
+
+
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::{
     cmp::min,
@@ -20,24 +18,25 @@ use ordinals::Edict;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 
 #[derive(Clone, Debug)]
-pub struct Protoburn {
+pub struct Protoburn<E: RuntimeEnvironment> {
     pub tag: Option<u128>,
     pub pointer: Option<u32>,
     pub from: Option<Vec<u32>>,
+	pub _phantom: std::marker::PhantomData<E>
 }
 
-impl Protoburn {
+impl<E: RuntimeEnvironment + Clone + Default> Protoburn<E> {
     pub fn process(
         &mut self,
-        atomic: &mut AtomicPointer,
-        balance_sheet: BalanceSheet<AtomicPointer>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        atomic: &mut AtomicPointer<E>,
+        balance_sheet: BalanceSheet<AtomicPointer<E>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         outpoint: OutPoint,
     ) -> Result<()> {
-        let table = RuneTable::for_protocol(self.tag.ok_or(anyhow!("no tag found"))?);
+        let table = RuneTable::<E>::for_protocol(self.tag.ok_or(anyhow!("no tag found"))?);
         for (rune, _balance) in balance_sheet.balances().into_iter() {
             let runeid: Arc<Vec<u8>> = (*rune).into();
-            let name = RUNES.RUNE_ID_TO_ETCHING.select(&runeid).get();
+            let name = RuneTable::<E>::new().RUNE_ID_TO_ETCHING.select(&runeid).get();
             atomic
                 .derive(&table.RUNE_ID_TO_ETCHING.select(&runeid))
                 .set(name.clone());
@@ -46,13 +45,13 @@ impl Protoburn {
                 .set(runeid);
             atomic
                 .derive(&table.SPACERS.select(&name))
-                .set(RUNES.SPACERS.select(&name).get());
+                .set(RuneTable::<E>::new().SPACERS.select(&name).get());
             atomic
                 .derive(&table.DIVISIBILITY.select(&name))
-                .set(RUNES.DIVISIBILITY.select(&name).get());
+                .set(RuneTable::<E>::new().DIVISIBILITY.select(&name).get());
             atomic
                 .derive(&table.SYMBOL.select(&name))
-                .set(RUNES.SYMBOL.select(&name).get());
+                .set(RuneTable::<E>::new().SYMBOL.select(&name).get());
             atomic.derive(&table.ETCHINGS).append(name);
         }
         if !proto_balances_by_output.contains_key(&outpoint.vout) {
@@ -68,35 +67,35 @@ impl Protoburn {
     }
 }
 
-pub trait Protoburns<T>: Deref<Target = [T]> {
+pub trait Protoburns<E: RuntimeEnvironment + Clone, T>: Deref<Target = [T]> {
     fn construct_burncycle(&self) -> Result<BurnCycle> {
         let length = u32::try_from(self.len())?;
         Ok(BurnCycle::new(length))
     }
     fn process(
         &mut self,
-        atomic: &mut AtomicPointer,
+        atomic: &mut AtomicPointer<E>,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
 }
 
-impl Protoburns<Protoburn> for Vec<Protoburn> {
+impl<E: RuntimeEnvironment + Clone + Default> Protoburns<E, Protoburn<E>> for Vec<Protoburn<E>> {
     fn process(
         &mut self,
-        atomic: &mut AtomicPointer,
+        atomic: &mut AtomicPointer<E>,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {
-        let mut runestone_balance_sheet = BalanceSheet::new();
+        let mut runestone_balance_sheet: BalanceSheet<AtomicPointer<E>> = BalanceSheet::new();
         if balances_by_output.contains_key(&runestone_output_index) {
             let sheet = balances_by_output
                 .get(&runestone_output_index)
@@ -106,12 +105,12 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
         let mut burn_cycles = self.construct_burncycle()?;
         let mut pull_set = BTreeMap::<u32, bool>::new();
         let mut burn_sheets = self
-            .into_iter()
+            .iter_mut()
             .map(|_a| BalanceSheet::new())
-            .collect::<Vec<BalanceSheet<AtomicPointer>>>();
+            .collect::<Vec<BalanceSheet<AtomicPointer<E>>>>();
 
         // from field in Protoburn is provided, which means the burn doesn't cycle through the inputs, just pulls the inputs from the "from" field and burns those
-        for (i, burn) in self.into_iter().enumerate() {
+        for (i, burn) in self.iter_mut().enumerate() {
             if let Some(_from) = burn.clone().from {
                 let from = _from.into_iter().collect::<BTreeSet<u32>>();
                 for j in from {
@@ -169,7 +168,7 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
             }
         }
 
-        for (i, burn) in self.into_iter().enumerate() {
+        for (i, burn) in self.iter_mut().enumerate() {
             let sheet = burn_sheets[i].clone();
             burn.process(
                 atomic,
@@ -221,10 +220,13 @@ mod tests {
     use super::*;
     use bitcoin::hashes::Hash;
     use bitcoin::OutPoint;
-    use metashrew_core::index_pointer::AtomicPointer;
+    use metashrew_support::index_pointer::AtomicPointer;
     use ordinals::RuneId;
     use protorune_support::balance_sheet::ProtoruneRuneId;
     use std::collections::BTreeMap;
+	use metashrew_test::TestRuntime;
+
+	type TestPointer = AtomicPointer<TestRuntime>;
 
     #[test]
 #[ignore]
@@ -234,18 +236,19 @@ mod tests {
             tag: Some(13),
             pointer: Some(0),
             from: None,
+			_phantom: std::marker::PhantomData::<TestRuntime>,
         };
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balance_sheet = BalanceSheet::from_pairs(
+        let mut atomic = TestPointer::default();
+        let balance_sheet: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
                 ProtoruneRuneId { block: 2, tx: 2 },
             ],
             vec![100 as u128, 200 as u128],
         );
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let outpoint = OutPoint {
             txid: Hash::from_byte_array([
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -279,12 +282,13 @@ mod tests {
             tag: None,
             pointer: Some(0),
             from: None,
+			_phantom: std::marker::PhantomData::<TestRuntime>,
         };
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balance_sheet = BalanceSheet::new();
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut atomic = TestPointer::default();
+        let balance_sheet: BalanceSheet<TestPointer> = BalanceSheet::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let outpoint = OutPoint {
             txid: Hash::from_byte_array([
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -309,23 +313,25 @@ mod tests {
 #[ignore]
     fn test_protoburns_no_op() {
         // Create a Vec of Protoburns
-        let mut protoburns: Vec<Protoburn> = vec![
+        let mut protoburns: Vec<Protoburn<TestRuntime>> = vec![
             Protoburn {
                 tag: Some(1),
                 pointer: Some(0),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
             Protoburn {
                 tag: Some(2),
                 pointer: Some(1),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
         ];
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balances_by_output = BTreeMap::new();
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut atomic = TestPointer::default();
+        let balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -353,22 +359,24 @@ mod tests {
 #[ignore]
     fn test_protoburns_default_goes_to_first_protoburn() {
         // Create a Vec of Protoburns
-        let mut protoburns: Vec<Protoburn> = vec![
+        let mut protoburns: Vec<Protoburn<TestRuntime>> = vec![
             Protoburn {
                 tag: Some(1),
                 pointer: Some(0),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
             Protoburn {
                 tag: Some(2),
                 pointer: Some(1),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
         ];
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balance_sheet_0 = BalanceSheet::from_pairs(
+        let mut atomic = TestPointer::default();
+        let balance_sheet_0: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             // runestone output index is set as 1, so this should be ignored by protoburns since this is just a transfer of runes directly to an output instead of to the OP_RETURN
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
@@ -376,16 +384,16 @@ mod tests {
             ],
             vec![100 as u128, 200 as u128],
         );
-        let balance_sheet_1 = BalanceSheet::from_pairs(
+        let balance_sheet_1: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
                 ProtoruneRuneId { block: 2, tx: 2 },
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output =
+        let balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> =
             BTreeMap::from([(0, balance_sheet_0.clone()), (1, balance_sheet_1.clone())]);
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -413,24 +421,26 @@ mod tests {
 #[ignore]
     fn test_protoburns_edicts_cycle() {
         // Create a Vec of Protoburns
-        let mut protoburns: Vec<Protoburn> = vec![
+        let mut protoburns: Vec<Protoburn<TestRuntime>> = vec![
             Protoburn {
                 tag: Some(13),
                 pointer: Some(0),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
             Protoburn {
                 tag: Some(13),
                 pointer: Some(1),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
         ];
 
         let runestone_output_index = 1;
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balance_sheet_0 = BalanceSheet::from_pairs(
+        let mut atomic = TestPointer::default();
+        let balance_sheet_0: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             // runestone output index is set as 1, so this should be ignored by protoburns since this is just a transfer of runes directly to an output instead of to the OP_RETURN
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
@@ -438,18 +448,18 @@ mod tests {
             ],
             vec![100 as u128, 200 as u128],
         );
-        let balance_sheet_1 = BalanceSheet::from_pairs(
+        let balance_sheet_1: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
                 ProtoruneRuneId { block: 2, tx: 2 },
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = BTreeMap::from([
+        let balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -491,24 +501,26 @@ mod tests {
 #[ignore]
     fn test_protoburns_edicts_cycle_two_runes() {
         // Create a Vec of Protoburns
-        let mut protoburns: Vec<Protoburn> = vec![
+        let mut protoburns: Vec<Protoburn<TestRuntime>> = vec![
             Protoburn {
                 tag: Some(13),
                 pointer: Some(0),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
             Protoburn {
                 tag: Some(13),
                 pointer: Some(1),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
         ];
 
         let runestone_output_index = 1;
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balance_sheet_0 = BalanceSheet::from_pairs(
+        let mut atomic = TestPointer::default();
+        let balance_sheet_0: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             // runestone output index is set as 1, so this should be ignored by protoburns since this is just a transfer of runes directly to an output instead of to the OP_RETURN
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
@@ -516,18 +528,18 @@ mod tests {
             ],
             vec![100 as u128, 200 as u128],
         );
-        let balance_sheet_1 = BalanceSheet::from_pairs(
+        let balance_sheet_1: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
                 ProtoruneRuneId { block: 2, tx: 2 },
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = BTreeMap::from([
+        let balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -580,24 +592,26 @@ mod tests {
 #[ignore]
     fn test_protoburns_edicts_cycle_loopback() {
         // Create a Vec of Protoburns
-        let mut protoburns: Vec<Protoburn> = vec![
+        let mut protoburns: Vec<Protoburn<TestRuntime>> = vec![
             Protoburn {
                 tag: Some(13),
                 pointer: Some(0),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
             Protoburn {
                 tag: Some(13),
                 pointer: Some(1),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
         ];
 
         let runestone_output_index = 1;
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balance_sheet_0 = BalanceSheet::from_pairs(
+        let mut atomic = TestPointer::default();
+        let balance_sheet_0: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             // runestone output index is set as 1, so this should be ignored by protoburns since this is just a transfer of runes directly to an output instead of to the OP_RETURN
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
@@ -605,18 +619,18 @@ mod tests {
             ],
             vec![100 as u128, 200 as u128],
         );
-        let balance_sheet_1 = BalanceSheet::from_pairs(
+        let balance_sheet_1: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
                 ProtoruneRuneId { block: 2, tx: 2 },
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = BTreeMap::from([
+        let balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -674,24 +688,26 @@ mod tests {
 #[ignore]
     fn test_protoburns_edicts_from_invalid() {
         // Create a Vec of Protoburns
-        let mut protoburns: Vec<Protoburn> = vec![
+        let mut protoburns: Vec<Protoburn<TestRuntime>> = vec![
             Protoburn {
                 tag: Some(13),
                 pointer: Some(0),
                 from: Some(vec![5]),
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
             Protoburn {
                 tag: Some(13),
                 pointer: Some(1),
                 from: None,
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
         ];
 
         let runestone_output_index = 1;
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balance_sheet_0 = BalanceSheet::from_pairs(
+        let mut atomic = TestPointer::default();
+        let balance_sheet_0: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             // runestone output index is set as 1, so this should be ignored by protoburns since this is just a transfer of runes directly to an output instead of to the OP_RETURN
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
@@ -699,18 +715,18 @@ mod tests {
             ],
             vec![100 as u128, 200 as u128],
         );
-        let balance_sheet_1 = BalanceSheet::from_pairs(
+        let balance_sheet_1: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
                 ProtoruneRuneId { block: 2, tx: 2 },
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = BTreeMap::from([
+        let balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -751,24 +767,26 @@ mod tests {
 #[ignore]
     fn test_protoburns_edicts_from() {
         // Create a Vec of Protoburns
-        let mut protoburns: Vec<Protoburn> = vec![
+        let mut protoburns: Vec<Protoburn<TestRuntime>> = vec![
             Protoburn {
                 tag: Some(13),
                 pointer: Some(0),
                 from: Some(vec![0, 1]),
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
             Protoburn {
                 tag: Some(13),
                 pointer: Some(1),
                 from: Some(vec![2]),
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
         ];
 
         let runestone_output_index = 1;
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balance_sheet_0 = BalanceSheet::from_pairs(
+        let mut atomic = TestPointer::default();
+        let balance_sheet_0: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             // runestone output index is set as 1, so this should be ignored by protoburns since this is just a transfer of runes directly to an output instead of to the OP_RETURN
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
@@ -776,18 +794,18 @@ mod tests {
             ],
             vec![100 as u128, 200 as u128],
         );
-        let balance_sheet_1 = BalanceSheet::from_pairs(
+        let balance_sheet_1: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
                 ProtoruneRuneId { block: 2, tx: 2 },
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = BTreeMap::from([
+        let balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,
@@ -839,24 +857,26 @@ mod tests {
 #[ignore]
     fn test_protoburns_edicts_from_cycle() {
         // Create a Vec of Protoburns
-        let mut protoburns: Vec<Protoburn> = vec![
+        let mut protoburns: Vec<Protoburn<TestRuntime>> = vec![
             Protoburn {
                 tag: Some(13),
                 pointer: Some(0),
                 from: Some(vec![0]),
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
             Protoburn {
                 tag: Some(13),
                 pointer: Some(1),
                 from: Some(vec![2]),
+				_phantom: std::marker::PhantomData::<TestRuntime>,
             },
         ];
 
         let runestone_output_index = 1;
 
         // Create mock objects for dependencies
-        let mut atomic = AtomicPointer::default();
-        let balance_sheet_0 = BalanceSheet::from_pairs(
+        let mut atomic = TestPointer::default();
+        let balance_sheet_0: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             // runestone output index is set as 1, so this should be ignored by protoburns since this is just a transfer of runes directly to an output instead of to the OP_RETURN
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
@@ -864,18 +884,18 @@ mod tests {
             ],
             vec![100 as u128, 200 as u128],
         );
-        let balance_sheet_1 = BalanceSheet::from_pairs(
+        let balance_sheet_1: BalanceSheet<TestPointer> = BalanceSheet::from_pairs(
             vec![
                 ProtoruneRuneId { block: 1, tx: 1 },
                 ProtoruneRuneId { block: 2, tx: 2 },
             ],
             vec![300 as u128, 400 as u128],
         );
-        let balances_by_output = BTreeMap::from([
+        let balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::from([
             (0, balance_sheet_0.clone()),
             (runestone_output_index, balance_sheet_1.clone()),
         ]);
-        let mut proto_balances_by_output = BTreeMap::new();
+        let mut proto_balances_by_output: BTreeMap<u32, BalanceSheet<TestPointer>> = BTreeMap::new();
         let txid = Hash::from_byte_array([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
             1, 1, 1, 1, 1, 1, 1, 1,

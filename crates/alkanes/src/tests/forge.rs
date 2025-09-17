@@ -19,7 +19,7 @@ use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers};
 use alkane_helpers::clear;
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_support::{
     println,
     stdio::{stdout, Write},
 };

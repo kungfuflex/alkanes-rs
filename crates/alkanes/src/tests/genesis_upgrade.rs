@@ -17,9 +17,9 @@ use bitcoin::hashes::Hash;
 use bitcoin::Block;
 use bitcoin::Txid;
 #[allow(unused_imports)]
-use metashrew_core::{get_cache, index_pointer::IndexPointer};
+use metashrew_support::{get_cache, index_pointer::IndexPointer};
 #[allow(unused_imports)]
-use metashrew_core::{
+use metashrew_support::{
     println,
     stdio::{stdout, Write},
 };

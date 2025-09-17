@@ -1,10 +1,9 @@
 use super::fuel::compute_extcall_fuel;
-use super::{
-    get_memory, read_arraybuffer, send_to_arraybuffer, sequence_pointer, AlkanesState, Extcall,
-    Saveable, SaveableExtendedCallResponse,
-};
+use super::utils::{get_memory, read_arraybuffer, send_to_arraybuffer, sequence_pointer, Saveable, SaveableExtendedCallResponse};
+use super::state::AlkanesState;
+use super::extcall::Extcall;
 use crate::utils::{balance_pointer, pipe_storagemap_to, transfer_from};
-use crate::vm::{run_after_special, run_special_cellpacks};
+use crate::vm::utils::{run_after_special, run_special_cellpacks};
 use alkanes_support::logging::{
     self, calculate_wasm_size_kb, determine_creation_method, AlkaneCreation,
 };
@@ -17,15 +16,11 @@ use alkanes_support::{
     trace::{TraceContext, TraceEvent, TraceResponse},
     utils::overflow_error,
 };
-#[allow(unused_imports)]
+use metashrew_core::environment::{MetashrewEnvironment, RuntimeEnvironment};
 use anyhow::{anyhow, Result};
 use bitcoin::Transaction;
-use metashrew_core::index_pointer::IndexPointer;
-#[allow(unused_imports)]
-use metashrew_core::{
-    print, println,
-    stdio::{stdout, Write},
-};
+use metashrew_support::index_pointer::IndexPointer;
+
 use metashrew_support::index_pointer::KeyValuePointer;
 use num::traits::ToBytes;
 use ordinals::Artifact;
@@ -57,7 +52,7 @@ pub struct AlkanesHostFunctionsImpl(());
 pub struct SafeAlkanesHostFunctionsImpl(());
 
 impl AlkanesHostFunctionsImpl {
-    fn preserve_context(caller: &mut Caller<'_, AlkanesState>) {
+    fn preserve_context<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) {
         caller
             .data_mut()
             .context
@@ -68,7 +63,7 @@ impl AlkanesHostFunctionsImpl {
             .checkpoint();
     }
 
-    fn restore_context(caller: &mut Caller<'_, AlkanesState>) {
+    fn restore_context<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) {
         caller
             .data_mut()
             .context
@@ -80,7 +75,7 @@ impl AlkanesHostFunctionsImpl {
     }
 
     // Get the current depth of the checkpoint stack
-    fn get_checkpoint_depth(caller: &mut Caller<'_, AlkanesState>) -> usize {
+    fn get_checkpoint_depth<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> usize {
         caller
             .data_mut()
             .context
@@ -90,14 +85,14 @@ impl AlkanesHostFunctionsImpl {
             .atomic
             .checkpoint_depth()
     }
-    pub(super) fn _abort<'a>(caller: Caller<'_, AlkanesState>) {
+    pub(super) fn _abort<'a, E: RuntimeEnvironment + Clone + Default>(caller: Caller<'_, AlkanesState<E>>) {
         AlkanesHostFunctionsImpl::abort(caller, 0, 0, 0, 0);
     }
-    pub(super) fn abort<'a>(mut caller: Caller<'_, AlkanesState>, _: i32, _: i32, _: i32, _: i32) {
+    pub(super) fn abort<'a, E: RuntimeEnvironment + Clone + Default>(mut caller: Caller<'_, AlkanesState<E>>, _: i32, _: i32, _: i32, _: i32) {
         caller.data_mut().had_failure = true;
     }
-    pub(super) fn request_storage<'a>(
-        caller: &mut Caller<'_, AlkanesState>,
+    pub(super) fn request_storage<'a, E: RuntimeEnvironment + Clone + Default>(
+        caller: &mut Caller<'_, AlkanesState<E>>,
         k: i32,
     ) -> Result<i32> {
         let (bytes_processed, result) = {
@@ -128,19 +123,19 @@ impl AlkanesHostFunctionsImpl {
             overflow_error((bytes_processed as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?;
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "request_storage: key_size={} bytes, result_size={} bytes, fuel_cost={}",
                 bytes_processed - (result as u64),
                 result,
                 fuel_cost
-            );
+            ));
         }
 
         consume_fuel(caller, fuel_cost)?;
         Ok(result)
     }
-    pub(super) fn load_storage<'a>(
-        caller: &mut Caller<'_, AlkanesState>,
+    pub(super) fn load_storage<'a, E: RuntimeEnvironment + Clone + Default>(
+        caller: &mut Caller<'_, AlkanesState<E>>,
         k: i32,
         v: i32,
     ) -> Result<i32> {
@@ -166,16 +161,16 @@ impl AlkanesHostFunctionsImpl {
         let fuel_cost = overflow_error((bytes_processed as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "load_storage: key_size={} bytes, value_size={} bytes, total_size={} bytes, fuel_cost={}",
                 bytes_processed - value.len(), value.len(), bytes_processed, fuel_cost
-            );
+            ));
         }
 
         consume_fuel(caller, fuel_cost)?;
         send_to_arraybuffer(caller, v.try_into()?, value.as_ref())
     }
-    pub(super) fn request_context(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
+    pub(super) fn request_context<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<i32> {
         let result: i32 = caller
             .data_mut()
             .context
@@ -188,33 +183,33 @@ impl AlkanesHostFunctionsImpl {
         let fuel_cost = overflow_error((result as u64).checked_mul(FUEL_PER_REQUEST_BYTE))?;
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "request_context: context_size={} bytes, fuel_cost={}",
                 result, fuel_cost
-            );
+            ));
         }
 
         consume_fuel(caller, fuel_cost)?;
         Ok(result)
     }
-    pub(super) fn load_context(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<i32> {
+    pub(super) fn load_context<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, v: i32) -> Result<i32> {
         let result: Vec<u8> = caller.data_mut().context.lock().unwrap().serialize();
 
         let fuel_cost = overflow_error((result.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "load_context: context_size={} bytes, fuel_cost={}",
                 result.len(),
                 fuel_cost
-            );
+            ));
         }
 
         consume_fuel(caller, fuel_cost)?;
 
         send_to_arraybuffer(caller, v.try_into()?, &result)
     }
-    pub(super) fn request_transaction(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
+    pub(super) fn request_transaction<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<i32> {
         let tx_data = consensus_encode(
             &caller
                 .data_mut()
@@ -233,10 +228,10 @@ impl AlkanesHostFunctionsImpl {
 
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "Requesting transaction size: {} bytes, fuel cost={} (fixed)",
                 result, request_fuel
-            );
+            ));
         }
 
         Ok(result)
@@ -275,17 +270,17 @@ impl AlkanesHostFunctionsImpl {
         Ok(send_to_arraybuffer(caller, output.try_into()?, &value)?)
     }
     */
-    pub(super) fn returndatacopy(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+    pub(super) fn returndatacopy<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, output: i32) -> Result<()> {
         let returndata: Vec<u8> = caller.data_mut().context.lock().unwrap().returndata.clone();
 
         let fuel_cost = overflow_error((returndata.len() as u64).checked_mul(FUEL_PER_LOAD_BYTE))?;
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "returndatacopy: data_size={} bytes, fuel_cost={}",
                 returndata.len(),
                 fuel_cost
-            );
+            ));
         }
 
         consume_fuel(caller, fuel_cost)?;
@@ -293,7 +288,7 @@ impl AlkanesHostFunctionsImpl {
         send_to_arraybuffer(caller, output.try_into()?, &returndata)?;
         Ok(())
     }
-    pub(super) fn load_transaction(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
+    pub(super) fn load_transaction<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, v: i32) -> Result<()> {
         let transaction: Vec<u8> = consensus_encode(
             &caller
                 .data_mut()
@@ -309,17 +304,17 @@ impl AlkanesHostFunctionsImpl {
 
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "Loading transaction: size={} bytes, fuel cost={} (fixed)",
                 transaction.len(),
                 FUEL_LOAD_TRANSACTION
-            );
+            ));
         }
 
         send_to_arraybuffer(caller, v.try_into()?, &transaction)?;
         Ok(())
     }
-    pub(super) fn request_block(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
+    pub(super) fn request_block<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<i32> {
         let block_data =
             consensus_encode(&caller.data_mut().context.lock().unwrap().message.block)?;
         let len: i32 = block_data.len().try_into()?;
@@ -331,15 +326,15 @@ impl AlkanesHostFunctionsImpl {
 
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "Requesting block size: {} bytes, fuel cost={} (fixed)",
                 len, request_fuel
-            );
+            ));
         }
 
         Ok(len)
     }
-    pub(super) fn load_block(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
+    pub(super) fn load_block<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, v: i32) -> Result<()> {
         let block: Vec<u8> =
             consensus_encode(&caller.data_mut().context.lock().unwrap().message.block)?;
 
@@ -348,16 +343,16 @@ impl AlkanesHostFunctionsImpl {
 
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "Loading block: size={} bytes, fuel cost={} (fixed)",
                 block.len(),
                 FUEL_LOAD_BLOCK
-            );
+            ));
         }
         send_to_arraybuffer(caller, v.try_into()?, &block)?;
         Ok(())
     }
-    pub(super) fn sequence(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+    pub(super) fn sequence<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, output: i32) -> Result<()> {
         let buffer: Vec<u8> =
             (&sequence_pointer(&caller.data_mut().context.lock().unwrap().message.atomic)
                 .get_value::<u128>()
@@ -366,7 +361,7 @@ impl AlkanesHostFunctionsImpl {
 
         #[cfg(feature = "debug-log")]
         {
-            println!("sequence: fuel_cost={}", FUEL_SEQUENCE);
+            MetashrewEnvironment::log(&format!("sequence: fuel_cost={}", FUEL_SEQUENCE));
         }
 
         consume_fuel(caller, FUEL_SEQUENCE)?;
@@ -374,16 +369,16 @@ impl AlkanesHostFunctionsImpl {
         send_to_arraybuffer(caller, output.try_into()?, &buffer)?;
         Ok(())
     }
-    pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+    pub(super) fn fuel<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, output: i32) -> Result<()> {
         let remaining_fuel = caller.get_fuel()?;
         let buffer: Vec<u8> = (&remaining_fuel.to_le_bytes()).to_vec();
 
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "fuel: remaining_fuel={}, fuel_cost={}",
                 remaining_fuel, FUEL_FUEL
-            );
+            ));
         }
 
         consume_fuel(caller, FUEL_FUEL)?;
@@ -391,16 +386,16 @@ impl AlkanesHostFunctionsImpl {
         send_to_arraybuffer(caller, output.try_into()?, &buffer)?;
         Ok(())
     }
-    pub(super) fn height(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+    pub(super) fn height<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, output: i32) -> Result<()> {
         let height_value = caller.data_mut().context.lock().unwrap().message.height;
         let height = (&height_value.to_le_bytes()).to_vec();
 
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "height: block_height={}, fuel_cost={}",
                 height_value, FUEL_HEIGHT
-            );
+            ));
         }
 
         consume_fuel(caller, FUEL_HEIGHT)?;
@@ -408,8 +403,8 @@ impl AlkanesHostFunctionsImpl {
         send_to_arraybuffer(caller, output.try_into()?, &height)?;
         Ok(())
     }
-    pub(super) fn balance<'a>(
-        caller: &mut Caller<'a, AlkanesState>,
+    pub(super) fn balance<'a, E: RuntimeEnvironment + Clone + Default>(
+        caller: &mut Caller<'a, AlkanesState<E>>,
         who_ptr: i32,
         what_ptr: i32,
         output: i32,
@@ -433,7 +428,7 @@ impl AlkanesHostFunctionsImpl {
 
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "balance: who=[{},{}], what=[{},{}], balance_size={} bytes, fuel_cost={}",
                 who.block,
                 who.tx,
@@ -441,7 +436,7 @@ impl AlkanesHostFunctionsImpl {
                 what.tx,
                 balance.len(),
                 FUEL_BALANCE
-            );
+            ));
         }
 
         consume_fuel(caller, FUEL_BALANCE)?;
@@ -449,12 +444,12 @@ impl AlkanesHostFunctionsImpl {
         send_to_arraybuffer(caller, output.try_into()?, &balance)?;
         Ok(())
     }
-    fn _handle_extcall_abort<'a, T: Extcall>(
-        caller: &mut Caller<'_, AlkanesState>,
+    fn _handle_extcall_abort<'a, E: RuntimeEnvironment + Clone + Default, T: Extcall<E>>(
+        caller: &mut Caller<'_, AlkanesState<E>>,
         e: anyhow::Error,
         should_rollback: bool,
     ) -> i32 {
-        println!("[[handle_extcall]] Error during extcall: {:?}", e);
+        MetashrewEnvironment::log(&format!("[[handle_extcall]] Error during extcall: {:?}", e));
         let mut data: Vec<u8> = vec![0x08, 0xc3, 0x79, 0xa0];
         data.extend(e.to_string().as_bytes());
 
@@ -485,8 +480,8 @@ impl AlkanesHostFunctionsImpl {
         Self::_abort(caller.into());
         result
     }
-    fn _prepare_extcall_before_checkpoint<'a, T: Extcall>(
-        caller: &mut Caller<'_, AlkanesState>,
+    fn _prepare_extcall_before_checkpoint<'a, E: RuntimeEnvironment + Clone + Default, T: Extcall<E>>(
+        caller: &mut Caller<'_, AlkanesState<E>>,
         cellpack_ptr: i32,
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
@@ -515,10 +510,10 @@ impl AlkanesHostFunctionsImpl {
 
             #[cfg(feature = "debug-log")]
             {
-                println!(
+                MetashrewEnvironment::log(&format!(
                     "extcall: deployment detected, additional fuel_cost={}",
                     fuel_extcall_deploy(height)
-                );
+                ));
             }
             caller.consume_fuel(fuel_extcall_deploy(height))?;
         }
@@ -529,21 +524,21 @@ impl AlkanesHostFunctionsImpl {
             storage_map_len as u64,
         ))
     }
-    pub(super) fn handle_extcall<'a, T: Extcall>(
-        caller: &mut Caller<'_, AlkanesState>,
+    pub(super) fn handle_extcall<'a, E: RuntimeEnvironment + Clone + Default + 'static, T: Extcall<E>>(
+        caller: &mut Caller<'_, AlkanesState<E>>,
         cellpack_ptr: i32,
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
         _start_fuel: u64, // this arg is not used, but cannot be removed due to backwards compat
     ) -> i32 {
-        match Self::_prepare_extcall_before_checkpoint::<T>(
+        match Self::_prepare_extcall_before_checkpoint::<E, T>(
             caller,
             cellpack_ptr,
             incoming_alkanes_ptr,
             checkpoint_ptr,
         ) {
             Ok((cellpack, incoming_alkanes, storage_map, storage_map_len)) => {
-                match Self::extcall::<T>(
+                match Self::extcall::<E, T>(
                     caller,
                     cellpack,
                     incoming_alkanes,
@@ -551,17 +546,17 @@ impl AlkanesHostFunctionsImpl {
                     storage_map_len,
                 ) {
                     Ok(v) => v,
-                    Err(e) => Self::_handle_extcall_abort::<T>(caller, e, true),
+                    Err(e) => Self::_handle_extcall_abort::<E, T>(caller, e, true),
                 }
             }
-            Err(e) => Self::_handle_extcall_abort::<T>(caller, e, false),
+            Err(e) => Self::_handle_extcall_abort::<E, T>(caller, e, false),
         }
     }
-    fn _get_block_header(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+    fn _get_block_header<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
         // Return the current block header
         #[cfg(feature = "debug-log")]
         {
-            println!("Precompiled contract: returning current block header");
+            MetashrewEnvironment::log(&format!("Precompiled contract: returning current block header"));
         }
 
         // Get the block header from the current context
@@ -577,7 +572,7 @@ impl AlkanesHostFunctionsImpl {
         Ok(response)
     }
 
-    fn _get_coinbase_tx(caller: &mut Caller<'_, AlkanesState>) -> Result<Transaction> {
+    fn _get_coinbase_tx<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<Transaction> {
         let context_guard = caller.data_mut().context.lock().unwrap();
         if context_guard.message.block.txdata.is_empty() {
             return Err(anyhow!("Block has no transactions"));
@@ -585,11 +580,11 @@ impl AlkanesHostFunctionsImpl {
         Ok(context_guard.message.block.txdata[0].clone())
     }
 
-    fn _get_coinbase_tx_response(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+    fn _get_coinbase_tx_response<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
         // Return the coinbase transaction bytes
         #[cfg(feature = "debug-log")]
         {
-            println!("Precompiled contract: returning coinbase transaction");
+            MetashrewEnvironment::log(&format!("Precompiled contract: returning coinbase transaction"));
         }
 
         // Get the coinbase transaction from the current block
@@ -602,11 +597,11 @@ impl AlkanesHostFunctionsImpl {
         Ok(response)
     }
 
-    fn _get_total_miner_fee(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+    fn _get_total_miner_fee<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
         // Return the coinbase transaction bytes
         #[cfg(feature = "debug-log")]
         {
-            println!("Precompiled contract: returning total miner fee");
+            MetashrewEnvironment::log(&format!("Precompiled contract: returning total miner fee"));
         }
 
         // Get the coinbase transaction from the current block
@@ -622,11 +617,11 @@ impl AlkanesHostFunctionsImpl {
         Ok(response)
     }
 
-    fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+    fn _get_number_diesel_mints<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
         if let Some(cached_data) = DIESEL_MINTS_CACHE.read().unwrap().clone() {
             #[cfg(feature = "debug-log")]
             {
-                println!("Precompiled contract: returning cached total number of diesel mints");
+                MetashrewEnvironment::log(&format!("Precompiled contract: returning cached total number of diesel mints"));
             }
             let mut response = CallResponse::default();
             response.data = cached_data;
@@ -634,7 +629,7 @@ impl AlkanesHostFunctionsImpl {
         }
         #[cfg(feature = "debug-log")]
         {
-            println!("Precompiled contract: calculating total number of diesel mints in this block");
+            MetashrewEnvironment::log(&format!("Precompiled contract: calculating total number of diesel mints in this block"));
         }
 
         // Get the block header from the current context
@@ -679,16 +674,16 @@ impl AlkanesHostFunctionsImpl {
         *DIESEL_MINTS_CACHE.write().unwrap() = Some(response.data.clone());
         Ok(response)
     }
-    fn _handle_special_extcall(
-        caller: &mut Caller<'_, AlkanesState>,
+    fn _handle_special_extcall<E: RuntimeEnvironment + Clone + Default>(
+        caller: &mut Caller<'_, AlkanesState<E>>,
         cellpack: Cellpack,
     ) -> Result<i32> {
         #[cfg(feature = "debug-log")]
         {
-            println!(
+            MetashrewEnvironment::log(&format!(
                 "extcall: precompiled contract detected at [{},{}]",
                 cellpack.target.block, cellpack.target.tx
-            );
+            ));
         }
 
         let response = match cellpack.target.tx {
@@ -722,8 +717,8 @@ impl AlkanesHostFunctionsImpl {
 
         Ok(serialized.len() as i32)
     }
-    pub(super) fn extcall<'a, T: Extcall>(
-        caller: &mut Caller<'_, AlkanesState>,
+    pub(super) fn extcall<'a, E: RuntimeEnvironment + Clone + Default + 'static, T: Extcall<E>>(
+        caller: &mut Caller<'_, AlkanesState<E>>,
         cellpack: Cellpack,
         incoming_alkanes: AlkaneTransferParcel,
         storage_map: StorageMap,
@@ -793,11 +788,11 @@ impl AlkanesHostFunctionsImpl {
 
         #[cfg(feature = "debug-log")]
         {
-            println!("extcall: target=[{},{}], inputs={:?}, storage_size={} bytes, total_fuel={}, deployment={}",
+            MetashrewEnvironment::log(&format!("extcall: target=[{},{}], inputs={:?}, storage_size={} bytes, total_fuel={}, deployment={}",
                 cellpack.target.block, cellpack.target.tx,
                 cellpack.inputs, storage_map_len,
                 total_fuel,
-                cellpack.target.is_deployment());
+                cellpack.target.is_deployment()));
         }
 
         consume_fuel(caller, total_fuel)?;
@@ -825,7 +820,7 @@ impl AlkanesHostFunctionsImpl {
             context_guard
                 .trace
                 .clock(TraceEvent::ReturnContext(return_context));
-            let mut saveable: SaveableExtendedCallResponse = response.clone().into();
+            let mut saveable: SaveableExtendedCallResponse<E> = response.clone().into();
             saveable.associate(&subcontext);
             saveable.save(&mut context_guard.message.atomic, T::isdelegate())?;
             context_guard.returndata = serialized.clone();
@@ -833,13 +828,13 @@ impl AlkanesHostFunctionsImpl {
         }
         Ok(serialized.len() as i32)
     }
-    pub(super) fn log<'a>(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
+    pub(super) fn log<'a, E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, v: i32) -> Result<()> {
         let mem = get_memory(caller)?;
         let message = {
             let data = mem.data(&caller);
             read_arraybuffer(data, v)?
         };
-        print!("{}", String::from_utf8(message)?);
+        MetashrewEnvironment::log(&format!("{}", String::from_utf8(message)?));
         Ok(())
     }
 }
@@ -847,9 +842,9 @@ impl AlkanesHostFunctionsImpl {
 // Implementation of the safe wrapper
 impl SafeAlkanesHostFunctionsImpl {
     // Helper method to execute a function with proper context management and depth checking
-    fn with_context_safety<F, R>(caller: &mut Caller<'_, AlkanesState>, f: F) -> R
+    fn with_context_safety<E: RuntimeEnvironment + Clone + Default, F, R>(caller: &mut Caller<'_, AlkanesState<E>>, f: F) -> R
     where
-        F: FnOnce(&mut Caller<'_, AlkanesState>) -> R,
+        F: FnOnce(&mut Caller<'_, AlkanesState<E>>) -> R,
     {
         // Get initial checkpoint depth
         let initial_depth = AlkanesHostFunctionsImpl::get_checkpoint_depth(caller);
@@ -873,34 +868,34 @@ impl SafeAlkanesHostFunctionsImpl {
 
         result
     }
-    pub(super) fn _abort<'a>(caller: Caller<'_, AlkanesState>) {
+    pub(super) fn _abort<'a, E: RuntimeEnvironment + Clone + Default>(caller: Caller<'_, AlkanesState<E>>) {
         SafeAlkanesHostFunctionsImpl::abort(caller, 0, 0, 0, 0);
     }
-    pub(super) fn abort<'a>(mut caller: Caller<'_, AlkanesState>, _: i32, _: i32, _: i32, _: i32) {
+    pub(super) fn abort<'a, E: RuntimeEnvironment + Clone + Default>(mut caller: Caller<'_, AlkanesState<E>>, _: i32, _: i32, _: i32, _: i32) {
         caller.data_mut().had_failure = true;
     }
 
-    pub(super) fn request_storage<'a>(
-        caller: &mut Caller<'_, AlkanesState>,
+    pub(super) fn request_storage<'a, E: RuntimeEnvironment + Clone + Default>(
+        caller: &mut Caller<'_, AlkanesState<E>>,
         k: i32,
     ) -> Result<i32> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::request_storage(c, k))
     }
 
-    pub(super) fn load_storage<'a>(
-        caller: &mut Caller<'_, AlkanesState>,
+    pub(super) fn load_storage<'a, E: RuntimeEnvironment + Clone + Default>(
+        caller: &mut Caller<'_, AlkanesState<E>>,
         k: i32,
         v: i32,
     ) -> Result<i32> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::load_storage(c, k, v))
     }
 
-    pub(super) fn log<'a>(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
+    pub(super) fn log<'a, E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, v: i32) -> Result<()> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::log(c, v))
     }
 
-    pub(super) fn balance<'a>(
-        caller: &mut Caller<'a, AlkanesState>,
+    pub(super) fn balance<'a, E: RuntimeEnvironment + Clone + Default>(
+        caller: &mut Caller<'a, AlkanesState<E>>,
         who: i32,
         what: i32,
         output: i32,
@@ -910,57 +905,57 @@ impl SafeAlkanesHostFunctionsImpl {
         })
     }
 
-    pub(super) fn request_context(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
+    pub(super) fn request_context<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<i32> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::request_context(c))
     }
 
-    pub(super) fn load_context(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<i32> {
+    pub(super) fn load_context<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, v: i32) -> Result<i32> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::load_context(c, v))
     }
 
-    pub(super) fn request_transaction(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
+    pub(super) fn request_transaction<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<i32> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::request_transaction(c))
     }
 
-    pub(super) fn returndatacopy(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+    pub(super) fn returndatacopy<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, output: i32) -> Result<()> {
         Self::with_context_safety(caller, |c| {
             AlkanesHostFunctionsImpl::returndatacopy(c, output)
         })
     }
 
-    pub(super) fn load_transaction(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
+    pub(super) fn load_transaction<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, v: i32) -> Result<()> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::load_transaction(c, v))
     }
 
-    pub(super) fn request_block(caller: &mut Caller<'_, AlkanesState>) -> Result<i32> {
+    pub(super) fn request_block<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<i32> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::request_block(c))
     }
 
-    pub(super) fn load_block(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
+    pub(super) fn load_block<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, v: i32) -> Result<()> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::load_block(c, v))
     }
 
-    pub(super) fn sequence(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+    pub(super) fn sequence<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, output: i32) -> Result<()> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::sequence(c, output))
     }
 
-    pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+    pub(super) fn fuel<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, output: i32) -> Result<()> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::fuel(c, output))
     }
 
-    pub(super) fn height(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result<()> {
+    pub(super) fn height<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, output: i32) -> Result<()> {
         Self::with_context_safety(caller, |c| AlkanesHostFunctionsImpl::height(c, output))
     }
 
-    pub(super) fn handle_extcall<'a, T: Extcall>(
-        caller: &mut Caller<'a, AlkanesState>,
+    pub(super) fn handle_extcall<'a, E: RuntimeEnvironment + Clone + Default + 'static, T: Extcall<E>>(
+        caller: &mut Caller<'a, AlkanesState<E>>,
         cellpack_ptr: i32,
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
         start_fuel: u64,
     ) -> i32 {
         Self::with_context_safety(caller, |c| {
-            AlkanesHostFunctionsImpl::handle_extcall::<T>(
+            AlkanesHostFunctionsImpl::handle_extcall::<E, T>(
                 c,
                 cellpack_ptr,
                 incoming_alkanes_ptr,

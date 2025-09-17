@@ -1,4 +1,5 @@
 use alkanes_support::logging;
+use metashrew_core::environment::{MetashrewEnvironment};
 use crate::message::AlkaneMessageContext;
 use crate::network::{genesis, genesis_alkane_upgrade_bytes, is_genesis};
 use crate::unwrap;
@@ -8,12 +9,8 @@ use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
-use metashrew_core::index_pointer::IndexPointer;
-#[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
-};
+use metashrew_support::index_pointer::IndexPointer;
+use metashrew_support::environment::RuntimeEnvironment;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;
@@ -92,25 +89,25 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     logging::record_transactions(block.txdata.len() as u32);
     configure_network();
     clear_diesel_mints_cache();
-    let really_is_genesis = is_genesis(height.into());
+    let really_is_genesis = is_genesis::<MetashrewEnvironment>(height.into());
     if really_is_genesis {
-        genesis(&block).unwrap();
+        genesis::<MetashrewEnvironment>(&block).unwrap();
     }
     if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
-        let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
+        let mut upgrade_ptr = IndexPointer::<AlkaneMessageContext<MetashrewEnvironment>>::from_keyword("/genesis-upgraded");
         if upgrade_ptr.get().len() == 0 {
             upgrade_ptr.set_value::<u8>(0x01);
-            IndexPointer::from_keyword("/alkanes/")
+            IndexPointer::<AlkaneMessageContext<MetashrewEnvironment>>::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
         }
     }
-    FuelTank::initialize(&block, height);
+    FuelTank::initialize::<AlkaneMessageContext<MetashrewEnvironment>>(&block, height);
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
-        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
+        Protorune::index_block::<AlkaneMessageContext<MetashrewEnvironment>>(block.clone(), height.into())?;
 
-    let _ = unwrap::update_last_block(height as u128);
+    let _ = unwrap::update_last_block::<MetashrewEnvironment>(height as u128);
 
     #[cfg(feature = "cache")]
     {
@@ -126,7 +123,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
             request.wallet = address.clone();
             request.protocol_tag = Some(<u128 as Into<
                 protorune_support::proto::protorune::Uint128,
-            >>::into(AlkaneMessageContext::protocol_tag()))
+            >>::into(AlkaneMessageContext::<MetashrewEnvironment>::protocol_tag()))
             .into();
 
             // Get the WalletResponse for this address (full set of spendable outputs)
@@ -161,12 +158,12 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                         .set(Arc::new(filtered_response.write_to_bytes()?));
                 }
                 Err(e) => {
-                    println!("Error caching wallet response for address: {:?}", e);
+                    MetashrewEnvironment::log(&format!("Error caching wallet response for address: {:?}", e));
                 }
             }
         }
     }
 
-    logging::log_block_summary(block, height, block.total_size());
+    logging::log_block_summary::<MetashrewEnvironment>(block, height, block.total_size());
     Ok(())
 }

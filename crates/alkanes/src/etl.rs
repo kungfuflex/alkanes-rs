@@ -1,14 +1,16 @@
+use crate::message::AlkaneMessageContext;
 use anyhow::{anyhow, Result};
 use bitcoin;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::consensus::encode::Decodable;
-use metashrew_core::index_pointer::IndexPointer;
+use metashrew_support::index_pointer::IndexPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 use once_cell::sync::Lazy;
 use std::io::Cursor;
 use std::sync::Arc;
 
-pub static BLOCKS: Lazy<IndexPointer> = Lazy::new(|| IndexPointer::from_keyword("/blockdata/"));
+use metashrew_core::environment::MetashrewEnvironment;
+pub static BLOCKS: Lazy<IndexPointer<AlkaneMessageContext<MetashrewEnvironment>>> = Lazy::new(|| IndexPointer::from_keyword("/blockdata/"));
 
 pub fn index_extensions(height: u32, v: &bitcoin::Block) {
     BLOCKS.select_value(height).set(Arc::new(serialize(v)))

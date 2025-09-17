@@ -9,8 +9,8 @@ use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::
 use alkanes_support::{
     context::Context, id::AlkaneId, parcel::AlkaneTransfer, response::CallResponse,
 };
-use anyhow::{anyhow, Result};
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use anyhow::Result;
+use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 
 #[derive(Default)]
@@ -82,7 +82,7 @@ impl GenesisProtorune {
     fn initialize(&self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         // No initialization logic
 

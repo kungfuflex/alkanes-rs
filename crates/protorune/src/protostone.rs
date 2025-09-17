@@ -5,7 +5,8 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use bitcoin::{Block, Transaction, Txid};
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_support::environment::RuntimeEnvironment;
+use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
 use ordinals::Runestone;
 use protorune_support::{
     balance_sheet::BalanceSheet,
@@ -33,7 +34,7 @@ pub fn add_to_indexable_protocols(protocol_tag: u128) -> Result<()> {
     Ok(())
 }
 
-pub trait MessageProcessor {
+pub trait MessageProcessor<E: RuntimeEnvironment + Clone + Default> {
     ///
     /// Parameters:
     ///   atomic: Atomic pointer to hold changes to the index,
@@ -51,30 +52,30 @@ pub trait MessageProcessor {
     ///   balances_by_output: The running store of balances by each transaction output for
     ///                       the current transaction being handled.
     /// Return: true if success, false if failure and refunded to refund pointer
-    fn process_message<T: MessageContext>(
+    fn process_message<T: MessageContext<E>>(
         &self,
-        atomic: &mut AtomicPointer,
+        atomic: &mut AtomicPointer<E>,
         transaction: &Transaction,
         txindex: u32,
         block: &Block,
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         num_protostones: usize,
     ) -> Result<bool>;
 }
-impl MessageProcessor for Protostone {
-    fn process_message<T: MessageContext>(
+impl<E: RuntimeEnvironment + Clone + Default> MessageProcessor<E> for Protostone {
+    fn process_message<T: MessageContext<E>>(
         &self,
-        atomic: &mut AtomicPointer,
+        atomic: &mut AtomicPointer<E>,
         transaction: &Transaction,
         txindex: u32,
         block: &Block,
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         num_protostones: usize,
     ) -> Result<bool> {
         // Validate output indexes and protomessage_vout
@@ -121,7 +122,7 @@ impl MessageProcessor for Protostone {
         // Create a nested atomic transaction for the entire message processing
         atomic.checkpoint();
 
-        let parcel = MessageContextParcel {
+        let parcel = MessageContextParcel::<E> {
             atomic: atomic.derive(&IndexPointer::default()),
             runes: RuneTransfer::from_balance_sheet(initial_sheet.clone()),
             transaction: transaction.clone(),
@@ -139,6 +140,7 @@ impl MessageProcessor for Protostone {
                     .unwrap_or_else(|| BalanceSheet::default()),
             ),
             sheets: Box::new(BalanceSheet::default()),
+			_phantom: std::marker::PhantomData::<E>,
         };
 
         match T::handle(&parcel) {
@@ -187,22 +189,22 @@ impl MessageProcessor for Protostone {
     }
 }
 
-pub trait Protostones {
-    fn burns(&self) -> Result<Vec<Protoburn>>;
+pub trait Protostones<E: RuntimeEnvironment + Clone> {
+    fn burns(&self) -> Result<Vec<Protoburn<E>>>;
     fn process_burns(
         &self,
-        atomic: &mut AtomicPointer,
+        atomic: &mut AtomicPointer<E>,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
     fn encipher(&self) -> Result<Vec<u128>>;
 }
 
-impl Protostones for Vec<Protostone> {
+impl<E: RuntimeEnvironment + Clone + Default> Protostones<E> for Vec<Protostone> {
     fn encipher(&self) -> Result<Vec<u128>> {
         let mut values = Vec::<u128>::new();
         for stone in self {
@@ -213,7 +215,7 @@ impl Protostones for Vec<Protostone> {
         }
         Ok(split_bytes(&encode_varint_list(&values)))
     }
-    fn burns(&self) -> Result<Vec<Protoburn>> {
+    fn burns(&self) -> Result<Vec<Protoburn<E>>> {
         Ok(self
             .into_iter()
             .filter(|stone| stone.burn.is_some())
@@ -221,16 +223,17 @@ impl Protostones for Vec<Protostone> {
                 tag: stone.burn.map(|v| v as u128),
                 pointer: stone.pointer,
                 from: stone.from.map(|v| vec![v]),
+				_phantom: std::marker::PhantomData::<E>,
             })
             .collect())
     }
     fn process_burns(
         &self,
-        atomic: &mut AtomicPointer,
+        atomic: &mut AtomicPointer<E>,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {

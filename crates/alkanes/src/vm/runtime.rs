@@ -1,28 +1,44 @@
+use crate::message::AlkaneMessageContext;
 use std::fmt;
+use metashrew_support::environment::RuntimeEnvironment;
 
 use alkanes_support::{
     cellpack::Cellpack, context::Context, id::AlkaneId, parcel::AlkaneTransferParcel, trace::Trace,
 };
-#[allow(unused_imports)]
-use {
-    metashrew_core::{println, stdio::stdout},
-    std::fmt::Write,
-};
+
 
 use protorune::message::MessageContextParcel;
 
-#[derive(Default, Clone)]
-pub struct AlkanesRuntimeContext {
+use std::marker::PhantomData;
+
+#[derive(Clone)]
+pub struct AlkanesRuntimeContext<E: RuntimeEnvironment + Clone + Default> {
     pub myself: AlkaneId,
     pub caller: AlkaneId,
     pub incoming_alkanes: AlkaneTransferParcel,
     pub returndata: Vec<u8>,
     pub inputs: Vec<u128>,
-    pub message: Box<MessageContextParcel>,
+    pub message: Box<MessageContextParcel<AlkaneMessageContext<E>>>,
     pub trace: Trace,
+    _phantom: PhantomData<E>,
 }
 
-impl fmt::Debug for AlkanesRuntimeContext {
+impl<E: RuntimeEnvironment + Clone + Default> Default for AlkanesRuntimeContext<E> {
+    fn default() -> Self {
+        Self {
+            myself: AlkaneId::default(),
+            caller: AlkaneId::default(),
+            incoming_alkanes: AlkaneTransferParcel::default(),
+            returndata: vec![],
+            inputs: vec![],
+            message: Box::new(MessageContextParcel::default()),
+            trace: Trace::default(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<E: RuntimeEnvironment + Clone + Default> fmt::Debug for AlkanesRuntimeContext<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AlkanesRuntimeContext")
             .field("myself", &self.myself)
@@ -33,11 +49,11 @@ impl fmt::Debug for AlkanesRuntimeContext {
     }
 }
 
-impl AlkanesRuntimeContext {
+impl<E: RuntimeEnvironment + Clone + Default> AlkanesRuntimeContext<E> {
     pub fn from_parcel_and_cellpack(
-        message: &MessageContextParcel,
+        message: &MessageContextParcel<AlkaneMessageContext<E>>,
         cellpack: &Cellpack,
-    ) -> AlkanesRuntimeContext {
+    ) -> AlkanesRuntimeContext<E> {
         let cloned = cellpack.clone();
         let message_copy = message.clone();
         let incoming_alkanes = message_copy.runes.clone().into();
@@ -49,6 +65,7 @@ impl AlkanesRuntimeContext {
             caller: AlkaneId::default(),
             trace: Trace::default(),
             inputs: cloned.inputs,
+            _phantom: PhantomData,
         }
     }
     pub fn flatten(&self) -> Vec<u128> {

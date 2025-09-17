@@ -7,11 +7,7 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_encode;
 use protobuf::Message;
 use std::sync::Arc;
-#[allow(unused_imports)]
-use {
-    metashrew_core::{println, stdio::stdout},
-    std::fmt::Write,
-};
+
 
 pub fn save_trace(outpoint: &OutPoint, height: u64, trace: Trace) -> Result<()> {
     let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;

@@ -1,15 +1,13 @@
 use anyhow::{anyhow, Result};
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::rune_transfer::{increase_balances_using_sheet, RuneTransfer};
 use std::collections::BTreeMap;
+use metashrew_support::environment::RuntimeEnvironment;
 
 #[allow(unused_imports)]
-use {
-    metashrew_core::{println, stdio::stdout},
-    std::fmt::Write,
-};
+
 
 // use metashrew_core::{println, stdio::stdout};
 // use std::fmt::Write;
@@ -60,16 +58,16 @@ pub trait PersistentRecord: BalanceSheetOperations {
     }
 }
 
-pub trait Mintable {
-    fn mintable_in_protocol(&self, atomic: &mut AtomicPointer) -> bool;
+pub trait Mintable<E: RuntimeEnvironment> {
+    fn mintable_in_protocol(&self, atomic: &mut AtomicPointer<E>) -> bool;
 }
 
-impl Mintable for ProtoruneRuneId {
-    fn mintable_in_protocol(&self, atomic: &mut AtomicPointer) -> bool {
+impl<E: RuntimeEnvironment + Default> Mintable<E> for ProtoruneRuneId {
+    fn mintable_in_protocol(&self, atomic: &mut AtomicPointer<E>) -> bool {
         // if it was not etched via runes-like etch in the Runestone and protoburned, then it is considered mintable
         atomic
             .derive(
-                &IndexPointer::from_keyword("/etching/byruneid/").select(&(self.clone().into())),
+                &IndexPointer::<E>::default().keyword("/etching/byruneid/").select(&(self.clone().into())),
             )
             .get()
             .len()
@@ -87,7 +85,7 @@ pub trait OutgoingRunes<P: KeyValuePointer + Clone> {
 }
 
 pub trait MintableDebit<P: KeyValuePointer + Clone + std::fmt::Debug> {
-    fn debit_mintable(&mut self, sheet: &BalanceSheet<P>, atomic: &mut AtomicPointer)
+    fn debit_mintable<E: RuntimeEnvironment + Default>(&mut self, sheet: &BalanceSheet<P>, atomic: &mut AtomicPointer<E>)
         -> Result<()>;
 }
 
@@ -97,10 +95,10 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> MintableDebit<P> for BalanceS
     // if it is mintable, we assume the extra amount was minted and do not decrease the amount.
     // NOTE: if it was a malicious case where an alkane was minted by another alkane, this will not check for that.
     // such a case should be checked in debit_balances in src/utils.rs
-    fn debit_mintable(
+    fn debit_mintable<E: RuntimeEnvironment + Default>(
         &mut self,
         sheet: &BalanceSheet<P>,
-        atomic: &mut AtomicPointer,
+        atomic: &mut AtomicPointer<E>,
     ) -> Result<()> {
         for (rune, balance) in sheet.balances() {
             let mut amount = *balance;
