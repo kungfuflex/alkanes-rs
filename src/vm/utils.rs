@@ -72,24 +72,22 @@ fn set_alkane_id_to_tx_id(
     Ok(())
 }
 
-pub fn get_alkane_binary(
-    context: Arc<Mutex<AlkanesRuntimeContext>>,
-    alkane_id: &AlkaneId,
-) -> Result<Arc<Vec<u8>>> {
-    let wasm_payload_arc = context
-        .lock()
-        .unwrap()
-        .message
-        .atomic
-        .keyword("/alkanes/")
-        .select(&alkane_id.clone().into())
-        .get();
+pub fn get_alkane_binary<T: KeyValuePointer>(ptr: T, alkane_id: &AlkaneId) -> Result<Arc<Vec<u8>>> {
+    let wasm_payload_arc = ptr.select(&alkane_id.clone().into()).get();
     let wasm_payload = wasm_payload_arc.as_ref();
     if wasm_payload.len() == 32 {
         let factory_id = wasm_payload.to_vec().try_into()?;
-        return get_alkane_binary(context, &factory_id);
+        return get_alkane_binary(ptr, &factory_id);
     }
     Ok(Arc::new(decompress(wasm_payload.clone())?))
+}
+
+pub fn get_alkane_binary_from_context(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
+    alkane_id: &AlkaneId,
+) -> Result<Arc<Vec<u8>>> {
+    let ptr = context.lock().unwrap().message.atomic.keyword("/alkanes/");
+    get_alkane_binary(ptr, alkane_id)
 }
 
 pub fn run_special_cellpacks(
@@ -102,7 +100,7 @@ pub fn run_special_cellpacks(
     let next_sequence = next_sequence_pointer.get_value::<u128>();
     let original_target = cellpack.target.clone();
     if cellpack.target.is_created(next_sequence) {
-        binary = get_alkane_binary(context.clone(), &payload.target)?;
+        binary = get_alkane_binary_from_context(context.clone(), &payload.target)?;
     } else if cellpack.target.is_create() {
         // contract not created, create it by first loading the wasm from the witness
         // then storing it in the index.
@@ -172,7 +170,7 @@ pub fn run_special_cellpacks(
             .select(&payload.target.clone().into())
             .set(Arc::new(factory_payload));
         set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
-        binary = get_alkane_binary(context.clone(), &factory)?;
+        binary = get_alkane_binary_from_context(context.clone(), &factory)?;
     }
     if &original_target != &payload.target {
         context
