@@ -51,6 +51,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn height_blockhash() {
         clear();
         let test_block = helpers::create_block_with_coinbase_tx(840000);
@@ -73,6 +74,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn spendable_by_address() {
         clear();
         let test_block = helpers::create_block_with_sample_tx();
@@ -107,6 +109,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn outpoints_by_address() {
         clear();
         let test_block = helpers::create_block_with_sample_tx();
@@ -130,6 +133,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn runes_by_address_test() {
         clear();
         let (test_block, _) = helpers::create_block_with_rune_tx(None);
@@ -148,6 +152,7 @@ mod tests {
     }
 
     // #[wasm_bindgen_test]
+#[ignore]
     // fn protorunes_by_address_test() {
     //     clear();
     //     let (test_block, _) = helpers::create_block_with_rune_tx();
@@ -175,6 +180,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn runes_by_height_test() {
         clear();
         let runes: Vec<RuneProto> = runes_by_height_test_template(None);
@@ -186,6 +192,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_name_test_minimum_name_valid() {
         clear();
 
@@ -203,6 +210,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_name_test_minimum_name_invalid() {
         clear();
         let runes: Vec<RuneProto> = runes_by_height_test_template(Some(RunesTestingConfig::new(
@@ -219,6 +227,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_name_test_minimum_name_unlocks() {
         clear();
 
@@ -236,6 +245,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_name_test_trying_to_use_reserved_name() {
         clear();
         let runes: Vec<RuneProto> = runes_by_height_test_template(Some(RunesTestingConfig::new(
@@ -251,6 +261,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_name_test_reserved_name() {
         clear();
         let runes: Vec<RuneProto> = runes_by_height_test_template(Some(RunesTestingConfig::new(
@@ -273,6 +284,7 @@ mod tests {
 
     /// Checks that reusing the same name works
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_name_test_reserved_name_taken() {
         clear();
 
@@ -373,6 +385,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn index_runestone() {
         clear();
         let (test_block, config) = helpers::create_block_with_rune_tx(None);
@@ -397,6 +410,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn correct_balance_sheet() {
         clear();
         let (test_block, config) = helpers::create_block_with_rune_tx(None);

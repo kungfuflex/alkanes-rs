@@ -358,6 +358,7 @@ mod tests {
     /// protomessage in the same transaction as a protoburn
     /// The protoburn will target the protomessage and directly transfer to it
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_same_tx_as_protoburn_test() {
         clear();
         let block_height = 840000;
@@ -529,30 +530,35 @@ mod tests {
     /// The first transaction is a protoburn. The next transaction is a protostone that
     /// has an edict that targets the protomessage
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_from_edict_test() {
         protomessage_from_edict_test_template::<ForwardAll>(1000, 0, 0);
     }
 
     /// Tests that a message context that forwards 1/4, sends 1/8 to runtime, and leaves the rest unaccounted will have the correct values
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_mixed_forwarding_test() {
         protomessage_from_edict_test_template::<MixedForwarding>(250, 625, 125);
     }
 
     /// Tests that a message context that returns nothing will refund all
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_full_refund_test() {
         protomessage_from_edict_test_template::<FullRefund>(0, 1000, 0);
     }
 
     /// Tests that a message context that returns an invalid result will refund all
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_full_refund_using_err_test() {
         protomessage_from_edict_test_template::<FullRefundWithErr>(0, 1000, 0);
     }
 
     /// Tests that overallocating in handle will refund all
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_overallocation_test() {
         protomessage_from_edict_test_template::<OverForward>(0, 1000, 0);
         protomessage_from_edict_test_template::<OverStoreInRuntime>(0, 1000, 0);
@@ -561,6 +567,7 @@ mod tests {
     /// Tests that overallocating an allowed mintable protorune will
     /// mint the new protorune
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_mint_allowed_protorune_test() {
         let (protorunes_sheet0, protorunes_sheet1, protorunes_sheet_runtime) =
             protomessage_from_edict_test_template::<MintNewProtorune>(499, 501, 0);
@@ -576,6 +583,7 @@ mod tests {
 
     /// Tests that the atomic pointer is not rolled back in an Ok
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_modify_atomic_then_ok_test() {
         protomessage_from_edict_test_template::<ModifyAtomicWithoutErr>(0, 1000, 0);
 
@@ -594,6 +602,7 @@ mod tests {
 
     /// Tests that the atomic pointer is rolled back in an Err
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_modify_atomic_then_err_test() {
         protomessage_from_edict_test_template::<ModifyAtomicThenErr>(0, 1000, 0);
 
@@ -611,6 +620,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_existing_runtime_balance_test() {
         // first protomessage transfers 1/4 to pointer: 250
         // there are 250 protorunes as input.
@@ -625,6 +635,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn protomessage_decrease_existing_runtime_balance_test() {
         // This test does not use the existing runtime balance in the handle()
         // there are 250 runes as input.

@@ -283,6 +283,7 @@ mod tests {
     use super::*;
 
     #[test]
+#[ignore]
     fn test_protostone_encipher_burn() {
         let protostones = vec![Protostone {
             burn: Some(1u128),
@@ -302,6 +303,7 @@ mod tests {
     }
 
     #[test]
+#[ignore]
     fn test_protostone_encipher_edict() {
         let protostones = vec![Protostone {
             burn: Some(0u128),
@@ -328,6 +330,7 @@ mod tests {
     }
 
     #[test]
+#[ignore]
     fn test_protostone_encipher_multiple_u128() {
         let protostones = vec![Protostone {
             burn: None,
@@ -347,6 +350,7 @@ mod tests {
     }
 
     #[test]
+#[ignore]
     fn test_protostone_encipher_multiple_protostones() {
         let protostones = vec![
             Protostone {

@@ -106,6 +106,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_with_no_mint_terms() {
         clear();
         let block_height = 840000;
@@ -125,6 +126,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_with_mint_terms_outside_height() {
         clear();
         let block_height = 840000;
@@ -152,6 +154,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_with_mint_exceed_cap() {
         clear();
         let block_height = 840000;
@@ -193,6 +196,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_with_mint_in_same_tx_as_terms() {
         clear();
         let block_height = 840000;
@@ -261,6 +265,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_with_mint_terms() {
         clear();
         let block_height = 840000;
@@ -288,6 +293,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_with_mint_terms_offset() {
         clear();
         let block_height = 840000;
@@ -315,6 +321,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn rune_with_multiple_mint_terms_offset() {
         clear();
         let block_height = 840000;

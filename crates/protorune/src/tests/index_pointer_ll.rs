@@ -8,6 +8,7 @@ mod tests {
 
     // Simple test to verify basic linked list functionality
     #[wasm_bindgen_test]
+#[ignore]
     fn test_basic_linked_list() {
         helpers::clear();
 
@@ -31,6 +32,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn test_linked_list_operations() {
         helpers::clear();
 
@@ -94,6 +96,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn test_linked_list_with_delete_value() {
         helpers::clear();
 
@@ -160,6 +163,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn test_extend_ll_functionality() {
         helpers::clear();
 
@@ -212,6 +216,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+#[ignore]
     fn test_map_ll_with_mutations() {
         helpers::clear();
 

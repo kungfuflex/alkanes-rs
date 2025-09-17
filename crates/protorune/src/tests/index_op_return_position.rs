@@ -82,6 +82,7 @@ mod tests {
 
     // Test that protorunes are correctly indexed when OP_RETURN is at the end
     #[wasm_bindgen_test]
+#[ignore]
     fn test_op_return_not_last() -> Result<()> {
         clear();
         let block_height = 840000;

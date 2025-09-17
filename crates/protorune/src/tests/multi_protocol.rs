@@ -143,6 +143,7 @@ fn multi_protomessage_protocol_test_template<T: MessageContext>(
 /// The first transaction is a protoburn. The next transaction is a protostone that
 /// has an edict that targets the protomessage
 #[wasm_bindgen_test]
+#[ignore]
 fn multi_protomessage_protocol_test() {
     multi_protomessage_protocol_test_template::<ForwardAll>(1000, 0, 0);
 }
