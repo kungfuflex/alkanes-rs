@@ -3,7 +3,12 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
-use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
+use bitcoin::{
+    address::NetworkChecked, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
+    Transaction, TxIn, TxOut, Witness,
+};
+use protorune::protostone::Protostones;
+use protorune::test_helpers::create_block_with_coinbase_tx;
 use protorune_support::protostone::ProtostoneEdict;
 
 use crate::index_block;
@@ -15,7 +20,11 @@ use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
+use ordinals::Runestone;
+use protorune::test_helpers::get_address;
+use protorune::test_helpers::ADDRESS1;
 use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::protostone::Protostone;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -475,6 +484,135 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
     };
 
     alkane_helpers::assert_revert_context(&outpoint, "ALKANES: revert")?;
+
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_runtime_duplication() -> Result<()> {
+    clear();
+    let block_height = 1;
+
+    // Create a cellpack to call the process_numbers method (opcode 11)
+    let arb_mint_cellpack = Cellpack {
+        target: AlkaneId { block: 1, tx: 0 },
+        inputs: vec![22, 10000000000],
+    };
+    let arb_mint_cellpack_from_factory = Cellpack {
+        target: AlkaneId { block: 5, tx: 1 },
+        inputs: vec![22, 10000000000],
+    };
+
+    // Initialize the contract and execute the cellpacks
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        [alkanes_std_test_build::get_bytes(), [].into()].into(),
+        [
+            arb_mint_cellpack.clone(),
+            arb_mint_cellpack_from_factory.clone(),
+        ]
+        .into(),
+    );
+
+    index_block(&test_block, block_height)?;
+
+    let mut test_block2 = create_block_with_coinbase_tx(block_height);
+    let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness(
+        Witness::new(),
+        vec![Cellpack {
+            target: AlkaneId { block: 2, tx: 1 },
+            inputs: vec![22, 10000000000],
+        }],
+        false,
+    );
+    test_block2.txdata.push(mint_tx.clone());
+    test_block2.txdata.push(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![Cellpack {
+                target: AlkaneId { block: 2, tx: 1 },
+                inputs: vec![7],
+            }],
+            OutPoint {
+                txid: mint_tx.compute_txid(),
+                vout: 0,
+            },
+            false,
+        ),
+    );
+    let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness(
+        Witness::new(),
+        vec![Cellpack {
+            target: AlkaneId { block: 2, tx: 2 },
+            inputs: vec![22, 10000000000],
+        }],
+        false,
+    );
+    test_block2.txdata.push(mint_tx.clone());
+    test_block2.txdata.push(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![Cellpack {
+                target: AlkaneId { block: 2, tx: 1 },
+                inputs: vec![7],
+            }],
+            OutPoint {
+                txid: mint_tx.compute_txid(),
+                vout: 0,
+            },
+            false,
+        ),
+    );
+
+    let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness(
+        Witness::new(),
+        vec![arb_mint_cellpack_from_factory.clone()],
+        false,
+    );
+    test_block2.txdata.push(mint_tx.clone());
+    test_block2.txdata.push(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![Cellpack {
+                target: AlkaneId { block: 2, tx: 3 },
+                inputs: vec![7],
+            }],
+            OutPoint {
+                txid: mint_tx.compute_txid(),
+                vout: 0,
+            },
+            false,
+        ),
+    );
+
+    test_block2.txdata.push(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![
+                Cellpack {
+                    target: AlkaneId { block: 2, tx: 1 },
+                    inputs: vec![7],
+                },
+                Cellpack {
+                    target: AlkaneId { block: 2, tx: 2 },
+                    inputs: vec![7],
+                },
+            ],
+            OutPoint {
+                txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
+                vout: 0,
+            },
+            false,
+        ),
+    );
+
+    index_block(&test_block2, block_height)?;
+
+    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
+
+    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 3 }), 0);
+    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 2 }), 0);
+    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
 
     Ok(())
 }

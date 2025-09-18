@@ -84,16 +84,15 @@ pub trait OutgoingRunes<P: KeyValuePointer + Clone> {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
-        refund_pointer: u32,
     ) -> Result<()>;
 }
 
-pub trait MintableDebit<P: KeyValuePointer + Clone> {
+pub trait MintableDebit<P: KeyValuePointer + Clone + std::fmt::Debug> {
     fn debit_mintable(&mut self, sheet: &BalanceSheet<P>, atomic: &mut AtomicPointer)
         -> Result<()>;
 }
 
-impl<P: KeyValuePointer + Clone> MintableDebit<P> for BalanceSheet<P> {
+impl<P: KeyValuePointer + Clone + std::fmt::Debug> MintableDebit<P> for BalanceSheet<P> {
     // logically, this will debit the input sheet from the self sheet, and if it would produce a negative value
     // it will check if the rune id is mintable (if it was etched and protoburned or if it is an alkane).
     // if it is mintable, we assume the extra amount was minted and do not decrease the amount.
@@ -119,14 +118,15 @@ impl<P: KeyValuePointer + Clone> MintableDebit<P> for BalanceSheet<P> {
         Ok(())
     }
 }
-impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, BalanceSheet<P>) {
+impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
+    for (Vec<RuneTransfer>, BalanceSheet<P>)
+{
     fn reconcile(
         &self,
         atomic: &mut AtomicPointer,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<P>>,
         vout: u32,
         pointer: u32,
-        refund_pointer: u32,
     ) -> Result<()> {
         let runtime_initial = balances_by_output
             .get(&u32::MAX)
@@ -148,6 +148,11 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
         // amount from the initial amount
         initial.debit_mintable(&outgoing, atomic)?;
         initial.debit_mintable(&outgoing_runtime, atomic)?;
+        for (id, balance) in initial.balances() {
+            if *balance != 0 {
+                println!("BIG ERROR: NONZERO {:?} {}", id, balance);
+            }
+        }
 
         // now lets update balances_by_output to correct values
 
@@ -160,9 +165,6 @@ impl<P: KeyValuePointer + Clone> OutgoingRunes<P> for (Vec<RuneTransfer>, Balanc
         // set the runtime to the ending runtime balance sheet
         // note that u32::MAX is the runtime vout
         balances_by_output.insert(u32::MAX, outgoing_runtime);
-
-        // refund the remaining amount to the refund pointer
-        increase_balances_using_sheet(balances_by_output, &initial, refund_pointer)?;
         Ok(())
     }
 }
@@ -194,4 +196,4 @@ pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {
     }
 }
 
-impl<P: KeyValuePointer + Clone> PersistentRecord for BalanceSheet<P> {}
+impl<P: KeyValuePointer + Clone + std::fmt::Debug> PersistentRecord for BalanceSheet<P> {}

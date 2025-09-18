@@ -1,7 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::set_view_mode;
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
-use crate::{unwrap as unwrap_view};
+use crate::unwrap as unwrap_view;
 use crate::utils::{
     alkane_id_to_outpoint, alkane_inventory_pointer, balance_pointer, credit_balances,
     debit_balances, pipe_storagemap_to,
@@ -9,7 +9,7 @@ use crate::utils::{
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
 use crate::vm::utils::{
-    prepare_context, run_after_special, run_special_cellpacks, sequence_pointer,
+    get_alkane_binary, prepare_context, run_after_special, run_special_cellpacks, sequence_pointer,
 };
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
@@ -514,13 +514,14 @@ pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
     let alkane_id = crate::utils::from_protobuf(alkane_id);
 
     // Get the bytecode from the storage
-    let bytecode = metashrew_core::index_pointer::IndexPointer::from_keyword("/alkanes/")
-        .select(&alkane_id.into())
-        .get();
+    let bytecode = get_alkane_binary(
+        metashrew_core::index_pointer::IndexPointer::from_keyword("/alkanes/"),
+        &alkane_id,
+    )?;
 
     // Return the uncompressed bytecode. Note that gzip bomb is not possible since these bytecodes are upper bound by the size of the Witness
     if bytecode.len() > 0 {
-        Ok(alkanes_support::gz::decompress(bytecode.to_vec())?)
+        Ok(bytecode.to_vec())
     } else {
         Err(anyhow!("No bytecode found for the given AlkaneId"))
     }
