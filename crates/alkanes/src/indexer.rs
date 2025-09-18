@@ -10,7 +10,7 @@ use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
 use metashrew_support::index_pointer::IndexPointer;
-use metashrew_support::environment::RuntimeEnvironment;
+
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;

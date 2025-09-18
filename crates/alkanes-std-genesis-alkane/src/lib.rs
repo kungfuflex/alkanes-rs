@@ -159,6 +159,7 @@ impl ChainConfiguration for GenesisAlkane {
 }
 
 impl GenesisAlkane {
+    #[allow(dead_code)]
     fn block(&self) -> Result<Block> {
         Ok(AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(CONTEXT_HANDLE.block()))?.to_consensus())
     }

@@ -236,13 +236,14 @@ impl LoggerAlkane {
         Ok(response)
     }
 
+    #[allow(unreachable_code)]
     fn test_infinite_loop(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let response = CallResponse::forward(&context.incoming_alkanes);
+        let _response = CallResponse::forward(&context.incoming_alkanes);
 
         loop {}
 
-        Ok(response)
+        Ok(_response)
     }
 
     fn test_infinite_extcall(&self) -> Result<CallResponse> {
