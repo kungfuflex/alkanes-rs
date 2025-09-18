@@ -69,6 +69,19 @@ impl From<ProtoPayment> for Payment {
     }
 }
 
+impl From<Payment> for ProtoPayment {
+    fn from(payment: Payment) -> Self {
+        ProtoPayment {
+            spendable: Some(pb::Outpoint {
+                txid: payment.spendable.txid.as_byte_array().to_vec(),
+                vout: payment.spendable.vout,
+            }),
+            output: consensus_encode::<TxOut>(&payment.output).unwrap(),
+            fulfilled: payment.fulfilled,
+        }
+    }
+}
+
 pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
     let mut payments: Vec<Payment> = vec![];
     let mut cursor: Cursor<Vec<u8>> = Cursor::new(v.clone());

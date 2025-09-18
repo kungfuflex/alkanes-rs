@@ -10,13 +10,12 @@ use protorune_support::balance_sheet::BalanceSheetOperations;
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_owned_token_build;
-use alkane_helpers::clear;
+use crate::tests::test_runtime::TestRuntime;
+use metashrew_support::environment::RuntimeEnvironment;
 
-use wasm_bindgen_test::wasm_bindgen_test;
-
-#[wasm_bindgen_test]
+#[test]
 fn test_owned_token_mint_crash() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<TestRuntime>();
     let block_height = 0;
 
     // First deploy auth token factory
@@ -57,7 +56,7 @@ fn test_owned_token_mint_crash() -> Result<()> {
     );
 
     println!("STEP 1: Indexing initial deployment block...");
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
     println!("STEP 1: Initial deployment block indexed successfully");
 
     let owned_token_id = AlkaneId { block: 2, tx: 1 };
@@ -77,7 +76,7 @@ fn test_owned_token_mint_crash() -> Result<()> {
 
     println!("STEP 4: Loading initial balance sheet...");
     let sheet = load_sheet(
-        &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
     );
@@ -102,7 +101,7 @@ fn test_owned_token_mint_crash() -> Result<()> {
 
     println!("STEP 7: About to index mint block...");
 
-    index_block(&mint_block, block_height)?;
+    index_block::<TestRuntime>(&mint_block, block_height)?;
     println!("STEP 8: Mint block indexed successfully");
 
     // Get the mint transaction info
@@ -113,7 +112,7 @@ fn test_owned_token_mint_crash() -> Result<()> {
         vout: 0,
     };
     let mint_sheet = load_sheet(
-        &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&mint_outpoint)?),
     );

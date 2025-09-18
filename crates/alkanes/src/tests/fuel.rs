@@ -1,24 +1,19 @@
+use crate::index_block;
+use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_test_build;
+use crate::tests::test_runtime::TestRuntime;
+use crate::view;
+use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::OutPoint;
+use metashrew_support::environment::RuntimeEnvironment;
+use std::fmt::Write;
 
-use crate::index_block;
-use crate::tests::helpers::{self as alkane_helpers};
-use alkane_helpers::clear;
-use crate::view;
-#[allow(unused_imports)]
-use metashrew_support::{
-    println,
-    stdio::{stdout, Write},
-};
-use wasm_bindgen_test::wasm_bindgen_test;
-
-#[wasm_bindgen_test]
+#[test]
 fn test_infinite_loop() -> Result<()> {
-    clear();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -33,7 +28,7 @@ fn test_infinite_loop() -> Result<()> {
         [infinite_exec_cellpack].into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -55,9 +50,8 @@ fn test_infinite_loop() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_infinite_extcall_loop() -> Result<()> {
-    clear();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -72,7 +66,7 @@ fn test_infinite_extcall_loop() -> Result<()> {
         [infinite_exec_cellpack].into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),

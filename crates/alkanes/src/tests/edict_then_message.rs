@@ -1,33 +1,32 @@
+use crate::indexer::index_block;
 use crate::message::AlkaneMessageContext;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_test_build;
-use alkane_helpers::clear;
-use crate::indexer::index_block;
+use crate::tests::test_runtime::TestRuntime;
+use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-use bitcoin::{transaction::Version, ScriptBuf, Sequence};
-use bitcoin::{Address, Amount, Block, OutPoint, Transaction, TxIn, TxOut, Witness};
-use metashrew_support::{
-    println,
-    stdio::{stdout, Write},
+use bitcoin::{
+    transaction::Version, Address, Amount, Block, OutPoint, ScriptBuf, Sequence, Transaction, TxIn,
+    TxOut, Witness,
 };
+use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
 use ordinals::Runestone;
-use protorune::protostone::Protostones;
 use protorune::test_helpers::{create_block_with_coinbase_tx, get_btc_network, ADDRESS1};
 use protorune::{
     balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
 };
-use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
+use protorune::protostone::Protostones;
+use std::fmt::Write;
 use std::str::FromStr;
-use wasm_bindgen_test::wasm_bindgen_test;
 
-#[wasm_bindgen_test]
+#[test]
 fn test_edict_to_protomessage() -> Result<()> {
-    clear();
     let block_height = 0;
     let mut test_block: Block = helpers::create_block_with_coinbase_tx(block_height);
     let tx = Transaction {
@@ -63,49 +62,50 @@ fn test_edict_to_protomessage() -> Result<()> {
                     mint: None,
                     pointer: None,
                     protocol: Some(
-                        vec![
-                            Protostone {
-                                message: vec![1, 0, 4],
-                                protocol_tag: 1,
-                                from: None,
-                                burn: None,
-                                pointer: Some(6),
-                                refund: Some(6),
-                                edicts: vec![],
-                            },
-                            Protostone {
-                                message: vec![1, 0, 4],
-                                protocol_tag: 1,
-                                from: None,
-                                burn: None,
-                                refund: Some(6),
-                                pointer: Some(6),
-                                edicts: vec![],
-                            },
-                            Protostone {
-                                message: vec![],
-                                protocol_tag: 1,
-                                burn: None,
-                                from: None,
-                                refund: Some(7),
-                                pointer: Some(7),
-                                edicts: vec![ProtostoneEdict {
-                                    id: ProtoruneRuneId { block: 2, tx: 1 },
-                                    amount: 100,
-                                    output: 0,
-                                }],
-                            },
-                            Protostone {
-                                message: vec![2, 1, 3],
-                                protocol_tag: 1,
-                                from: None,
-                                pointer: Some(1),
-                                burn: None,
-                                refund: Some(1),
-                                edicts: vec![],
-                            },
-                        ]
-                        .encipher()?,
+                        <Vec<Protostone> as Protostones<TestRuntime>>::encipher(
+                            &vec![
+                                Protostone {
+                                    message: vec![1, 0, 4],
+                                    protocol_tag: 1,
+                                    from: None,
+                                    burn: None,
+                                    pointer: Some(6),
+                                    refund: Some(6),
+                                    edicts: vec![],
+                                },
+                                Protostone {
+                                    message: vec![1, 0, 4],
+                                    protocol_tag: 1,
+                                    from: None,
+                                    burn: None,
+                                    refund: Some(6),
+                                    pointer: Some(6),
+                                    edicts: vec![],
+                                },
+                                Protostone {
+                                    message: vec![],
+                                    protocol_tag: 1,
+                                    burn: None,
+                                    from: None,
+                                    refund: Some(7),
+                                    pointer: Some(7),
+                                    edicts: vec![ProtostoneEdict {
+                                        id: ProtoruneRuneId { block: 2, tx: 1 },
+                                        amount: 100,
+                                        output: 0,
+                                    }],
+                                },
+                                Protostone {
+                                    message: vec![2, 1, 3],
+                                    protocol_tag: 1,
+                                    from: None,
+                                    pointer: Some(1),
+                                    burn: None,
+                                    refund: Some(1),
+                                    edicts: vec![],
+                                },
+                            ],
+                        )?,
                     ),
                 })
                 .encipher(),
@@ -114,7 +114,7 @@ fn test_edict_to_protomessage() -> Result<()> {
         ],
     };
     test_block.txdata.push(tx);
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
     let edict_outpoint = OutPoint {
         txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
         vout: 0,
@@ -124,21 +124,20 @@ fn test_edict_to_protomessage() -> Result<()> {
         vout: 1,
     };
     let edict_sheet = load_sheet(
-        &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&edict_outpoint)?),
     );
     let sheet = load_sheet(
-        &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&result_outpoint)?),
     );
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_edict_message_same_protostone() -> Result<()> {
-    clear();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -153,7 +152,7 @@ fn test_edict_message_same_protostone() -> Result<()> {
         [arb_mint_cellpack].into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
 
     let mut test_block2 = create_block_with_coinbase_tx(block_height);
 
@@ -169,7 +168,7 @@ fn test_edict_message_same_protostone() -> Result<()> {
     };
 
     test_block2.txdata.push(
-        alkane_helpers::create_multiple_cellpack_with_witness_and_txins_edicts(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_txins_edicts::<TestRuntime>(
             [Cellpack {
                 target: AlkaneId { block: 2, tx: 1 },
                 inputs: vec![5],
@@ -185,19 +184,17 @@ fn test_edict_message_same_protostone() -> Result<()> {
         ),
     );
 
-    index_block(&test_block2, block_height)?;
+    index_block::<TestRuntime>(&test_block2, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&test_block2)?;
 
-
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 1);
+    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }.into()), 1);
 
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_edict_message_same_protostone_revert() -> Result<()> {
-    clear();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -207,12 +204,13 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-        [alkanes_std_test_build::get_bytes()].into(),
-        [arb_mint_cellpack].into(),
-    );
+    let mut test_block =
+        alkane_helpers::init_with_multiple_cellpacks_with_tx(
+            [alkanes_std_test_build::get_bytes()].into(),
+            [arb_mint_cellpack].into(),
+        );
 
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
 
     let mut test_block2 = create_block_with_coinbase_tx(0);
 
@@ -228,7 +226,7 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
     };
 
     test_block2.txdata.push(
-        alkane_helpers::create_multiple_cellpack_with_witness_and_txins_edicts(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_txins_edicts::<TestRuntime>(
             [Cellpack {
                 target: AlkaneId { block: 2, tx: 1 },
                 inputs: vec![100], //revert
@@ -244,12 +242,11 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
         ),
     );
 
-    index_block(&test_block2, block_height)?;
+    index_block::<TestRuntime>(&test_block2, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&test_block2)?;
 
-
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 1);
+    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }.into()), 1);
 
     Ok(())
 }

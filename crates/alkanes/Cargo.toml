@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+alkanes-runtime = { path = "../alkanes-runtime" }
 metashrew-core = { path = "../metashrew-core", features = ["test-utils"] }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
@@ -29,6 +30,7 @@ wasmi = { workspace = true }
 num = { workspace = true }
 
 [dev-dependencies]
+alkanes-runtime = { path = "../alkanes-runtime" }
 
 
 protorune = { workspace = true, features = ["test-utils"] }

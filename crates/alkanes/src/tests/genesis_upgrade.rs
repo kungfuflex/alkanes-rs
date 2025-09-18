@@ -1,36 +1,32 @@
 use crate::index_block;
-use protorune_support::protostone::Protostone;
+use crate::message::AlkaneMessageContext;
+use crate::network::genesis;
 use crate::tests::helpers::{
-    self as alkane_helpers, assert_revert_context, get_sheet_for_outpoint,
+    self as alkane_helpers,
+    assert_revert_context,
+    get_sheet_for_outpoint,
 };
 use crate::tests::std::alkanes_std_auth_token_build;
-use alkane_helpers::clear;
+use crate::tests::test_runtime::TestRuntime;
+use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-use bitcoin::{OutPoint, Witness};
-
-use crate::network::genesis;
-use crate::message::AlkaneMessageContext;
 use bitcoin::hashes::Hash;
-use bitcoin::Block;
-use bitcoin::Txid;
-#[allow(unused_imports)]
-use metashrew_support::{get_cache, index_pointer::IndexPointer};
-#[allow(unused_imports)]
-use metashrew_support::{
-    println,
-    stdio::{stdout, Write},
+use bitcoin::{
+    Block, OutPoint, Txid, Witness,
 };
+use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
 use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
+use protorune_support::protostone::Protostone;
 use protorune_support::utils::consensus_encode;
-use wasm_bindgen_test::wasm_bindgen_test;
+use std::fmt::Write;
 
-fn setup_pre_upgrade() -> Result<()> {
+fn setup_pre_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<()> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
@@ -44,11 +40,11 @@ fn setup_pre_upgrade() -> Result<()> {
         [alkanes_std_auth_token_build::get_bytes()].into(),
         [auth_cellpack].into(),
     );
-    index_block(&test_block, 880_000)?; // just to init the diesel
+    index_block::<E>(&test_block, 880_000)?; // just to init the diesel
     Ok(())
 }
 
-fn upgrade() -> Result<OutPoint> {
+fn upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<OutPoint> {
     let block_height = 890_000;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
@@ -100,21 +96,21 @@ fn upgrade() -> Result<OutPoint> {
     test_block.txdata.push(upgrade_tx.clone());
     test_block.txdata.push(mint_tx_1.clone());
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
     let new_outpoint = OutPoint {
         txid: upgrade_tx.compute_txid(),
         vout: 0,
     };
-    let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+    let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&new_outpoint)?);
     let new_sheet = load_sheet(&new_ptr);
 
     let auth_token = ProtoruneRuneId { block: 2, tx: 1 };
-    assert_eq!(new_sheet.get(&auth_token), 5);
+    assert_eq!(new_sheet.get_cached(&auth_token.into()), 5);
 
     let first_mint = load_sheet(
-        &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        &RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&OutPoint {
                 txid: mint_tx_0.compute_txid(),
@@ -122,7 +118,7 @@ fn upgrade() -> Result<OutPoint> {
             })?),
     );
 
-    assert_eq!(first_mint.get(&diesel.clone().into()), 312500000);
+    assert_eq!(first_mint.get_cached(&diesel.clone().into()), 312500000);
 
     assert_revert_context(
         &OutPoint {
@@ -135,7 +131,7 @@ fn upgrade() -> Result<OutPoint> {
     Ok(new_outpoint)
 }
 
-fn mint(num_mints: usize) -> Result<Block> {
+fn mint<E: RuntimeEnvironment + Clone + Default + 'static>(num_mints: usize) -> Result<Block> {
     let block_height = 890_001;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
@@ -157,11 +153,11 @@ fn mint(num_mints: usize) -> Result<Block> {
         test_block.txdata.push(mint_tx);
     }
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
     Ok(test_block)
 }
 
-fn get_total_supply() -> Result<u128> {
+fn get_total_supply<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<u128> {
     let block_height = 890_000;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
@@ -180,7 +176,7 @@ fn get_total_supply() -> Result<u128> {
     );
     test_block.txdata.push(mint_tx.clone());
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
 
     alkane_helpers::assert_return_context(
         &OutPoint {
@@ -195,9 +191,8 @@ fn get_total_supply() -> Result<u128> {
     )
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_new_genesis_contract() -> Result<()> {
-    clear();
     setup_pre_upgrade()?;
     upgrade()?;
     let prev_total_supply = get_total_supply()?;
@@ -208,19 +203,21 @@ fn test_new_genesis_contract() -> Result<()> {
     for i in 1..=num_mints {
         let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
         assert_eq!(
-            sheet.get(&diesel.clone().into()),
+            sheet.get_cached(&diesel.clone().into()),
             ((312500000 - (350000000 - 312500000)) / num_mints)
                 .try_into()
                 .unwrap(),
         )
     }
-    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    assert_eq!(
+        get_total_supply()?,
+        prev_total_supply + 312500000
+    );
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_new_genesis_contract_empty_calldata() -> Result<()> {
-    clear();
     setup_pre_upgrade()?;
     upgrade()?;
     let prev_total_supply = get_total_supply()?;
@@ -240,27 +237,29 @@ fn test_new_genesis_contract_empty_calldata() -> Result<()> {
             from: None,
             protocol_tag: 1,
         },
-    );
+    )?;
     test_block.txdata.push(empty_calldata);
 
     let diesel = AlkaneId { block: 2, tx: 0 };
 
     for i in 1..=num_mints {
-        let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
+        let sheet = get_sheet_for_outpoint::<TestRuntime>(&test_block, i, 0)?;
         assert_eq!(
-            sheet.get(&diesel.clone().into()),
+            sheet.get_cached(&diesel.clone().into()),
             ((312500000 - (350000000 - 312500000)) / num_mints)
                 .try_into()
                 .unwrap(),
         )
     }
-    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    assert_eq!(
+        get_total_supply()?,
+        prev_total_supply + 312500000
+    );
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_new_genesis_contract_wrong_id() -> Result<()> {
-    clear();
     setup_pre_upgrade()?;
     upgrade()?;
     let prev_total_supply = get_total_supply()?;
@@ -279,32 +278,34 @@ fn test_new_genesis_contract_wrong_id() -> Result<()> {
                 target: diesel.clone(),
                 inputs: vec![77],
             }
-            .encipher(),
+            .encipher()?,
             edicts: vec![],
             pointer: Some(0),
             refund: Some(0),
             from: None,
             protocol_tag: 2,
         },
-    );
+    )?;
     test_block.txdata.push(protocol_tag_2);
 
     for i in 1..=num_mints {
         let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
         assert_eq!(
-            sheet.get(&diesel.clone().into()),
+            sheet.get_cached(&diesel.clone().into()),
             ((312500000 - (350000000 - 312500000)) / num_mints)
                 .try_into()
                 .unwrap(),
         )
     }
-    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    assert_eq!(
+        get_total_supply()?,
+        prev_total_supply + 312500000
+    );
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_new_genesis_collect_fees() -> Result<()> {
-    clear();
     setup_pre_upgrade()?;
     let auth_token_outpoint = upgrade()?;
     mint(5)?;
@@ -322,19 +323,19 @@ fn test_new_genesis_collect_fees() -> Result<()> {
         false,
     );
     spend_block.txdata.push(collect_tx.clone());
-    index_block(&spend_block, block_height)?;
+    index_block::<TestRuntime>(&spend_block, block_height)?;
     let new_outpoint = OutPoint {
         txid: collect_tx.compute_txid(),
         vout: 0,
     };
-    let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+    let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&new_outpoint)?);
     let new_sheet = load_sheet(&new_ptr);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
     assert_eq!(
-        new_sheet.get(&genesis_id),
+        new_sheet.get_cached(&genesis_id.into()),
         50_000_000u128 + 350000000 - 312500000
     );
     Ok(())

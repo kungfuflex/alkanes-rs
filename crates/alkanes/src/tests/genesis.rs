@@ -3,7 +3,6 @@ use crate::network::genesis;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_genesis_alkane_build;
 use crate::vm::fuel::{FuelTank, TOTAL_FUEL_START};
-use alkane_helpers::clear;
 use crate::message::AlkaneMessageContext;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
@@ -22,8 +21,9 @@ use protorune::message::MessageContext;
 use protorune_support::balance_sheet::BalanceSheetOperations;
 use protorune::view::protorune_outpoint_to_outpoint_response;
 use protorune_support::balance_sheet::BalanceSheet;
+use metashrew_support::environment::RuntimeEnvironment;
+use alkanes_runtime::{println, stdout}; use std::fmt::Write;
 
-use wasm_bindgen_test::wasm_bindgen_test;
 use protorune::tables::RuneTable;
 // Struct to track fuel benchmarks
 struct FuelBenchmark {
@@ -69,9 +69,8 @@ fn display_benchmark_header() {
 fn display_benchmark_footer() {
     println!("└────────────────────────────────┴──────────────┴──────────────┴──────────────┴──────────┘");
 }
-#[wasm_bindgen_test]
-fn test_genesis() -> Result<()> {
-    clear();
+#[test] fn test_genesis() -> Result<()> {
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     // Initialize fuel benchmarks collection
@@ -112,11 +111,11 @@ fn test_genesis() -> Result<()> {
     );
 
     // Initialize FuelTank for the first block
-    FuelTank::initialize(&test_block, block_height);
+    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height);
     let pre_genesis_fuel = TOTAL_FUEL_START;
 
     // Process the genesis block
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
     // Get fuel state after genesis block
     let post_genesis_fuel = unsafe {
@@ -142,7 +141,7 @@ fn test_genesis() -> Result<()> {
     let test_block2 = alkane_helpers::init_with_multiple_cellpacks_with_tx([].into(), cellpacks2);
 
     // Initialize FuelTank for the second block
-    FuelTank::initialize(&test_block2, block_height);
+    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&test_block2, block_height);
     let pre_mint_fuel = unsafe {
         match &FuelTank::get_fuel_tank_copy() {
             Some(tank) => tank.block_fuel,
@@ -151,7 +150,7 @@ fn test_genesis() -> Result<()> {
     };
 
     // Process the mint block
-    index_block(&test_block2, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block2, block_height)?;
 
     // Get fuel state after mint block
     let post_mint_fuel = unsafe {
@@ -169,9 +168,9 @@ fn test_genesis() -> Result<()> {
     ));
 
     // Check final balances
-    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::<crate::tests::test_runtime::TestRuntime>::protocol_tag())
         .OUTPOINT_TO_RUNES
-        .select(&consensus_encode(&outpoint)?);
+        .select(&consensus_encode(&outpoint)?).unwrap();
     let sheet = load_sheet(&ptr);
 
 
@@ -199,11 +198,10 @@ fn test_genesis() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
-fn test_genesis_alkane_key() -> Result<()> {
+#[test] fn test_genesis_alkane_key() -> Result<()> {
     println!(
         "{}",
-        (IndexPointer::from_keyword("/alkanes/")
+        (IndexPointer::<crate::tests::test_runtime::TestRuntime>::from_keyword("/alkanes/")
             .select(&(AlkaneId { tx: 2, block: 0 }).into())
             .get()
             .as_ref()
@@ -212,7 +210,7 @@ fn test_genesis_alkane_key() -> Result<()> {
     println!(
         "key: {}",
         hex::encode(
-            IndexPointer::from_keyword("/alkanes/")
+            IndexPointer::<crate::tests::test_runtime::TestRuntime>::from_keyword("/alkanes/")
                 .select(&(AlkaneId { tx: 2, block: 0 }).into())
                 .unwrap()
                 .as_ref()
@@ -222,17 +220,16 @@ fn test_genesis_alkane_key() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
-fn test_genesis_indexer_premine() -> Result<()> {
+#[test] fn test_genesis_indexer_premine() -> Result<()> {
     use bitcoin::Txid;
 
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     let test_block = create_block_with_coinbase_tx(block_height);
 
     // Process the genesis block
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
     let outpoint = OutPoint {
         txid: Txid::from_byte_array(
             <Vec<u8> as AsRef<[u8]>>::as_ref(
@@ -240,22 +237,22 @@ fn test_genesis_indexer_premine() -> Result<()> {
                     .iter()
                     .cloned()
                     .rev()
-                    .collect::<Vec<u8>>(),
+                    .collect::<Vec<u8>>()
             )
             .try_into()?,
         ),
         vout: 0,
     };
     // Check final balances
-    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::<crate::tests::test_runtime::TestRuntime>::protocol_tag())
         .OUTPOINT_TO_RUNES
-        .select(&consensus_encode(&outpoint)?);
+        .select(&consensus_encode(&outpoint)?).unwrap();
     let sheet = load_sheet(&ptr);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
     assert_eq!(sheet.get(&genesis_id), 50_000_000u128);
-    let out = protorune_outpoint_to_outpoint_response(&outpoint, 1)?;
-    let out_sheet: BalanceSheet<IndexPointer> = out.into();
+    let out = protorune_outpoint_to_outpoint_response::<crate::tests::test_runtime::TestRuntime>(&outpoint, 1)?;
+    let out_sheet: BalanceSheet<IndexPointer<crate::tests::test_runtime::TestRuntime>> = out.into();
     assert_eq!(sheet, out_sheet);
 
     // make sure premine is spendable
@@ -273,14 +270,14 @@ fn test_genesis_indexer_premine() -> Result<()> {
         }],
     );
     spend_block.txdata.push(spend_tx.clone());
-    index_block(&spend_block, 0)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&spend_block, 0)?;
     let new_outpoint = OutPoint {
         txid: spend_tx.compute_txid(),
         vout: 0,
     };
-    let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+    let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::<crate::tests::test_runtime::TestRuntime>::protocol_tag())
         .OUTPOINT_TO_RUNES
-        .select(&consensus_encode(&new_outpoint)?);
+        .select(&consensus_encode(&new_outpoint)?)?;
     let new_sheet = load_sheet(&new_ptr);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };

@@ -33,6 +33,7 @@ dependencies = [
 name = "alkanes"
 version = "1.2.3"
 dependencies = [
+ "alkanes-runtime",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",

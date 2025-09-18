@@ -4,32 +4,30 @@ use crate::tests::std::{
     alkanes_std_auth_token_build, alkanes_std_beacon_proxy_build, alkanes_std_test_2_build,
     alkanes_std_test_build, alkanes_std_upgradeable_beacon_build, alkanes_std_upgradeable_build,
 };
-use alkane_helpers::clear;
+use crate::tests::test_runtime::TestRuntime;
 use crate::view;
 use crate::vm::utils::sequence_pointer;
+use alkanes_runtime::{println, stdout};
+use alkanes_support::cellpack::Cellpack;
+use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
-use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
 use anyhow::Result;
 use bitcoin::block::Header;
-use bitcoin::{Block, Transaction};
-use bitcoin::{OutPoint, Witness};
-use metashrew_support::index_pointer::AtomicPointer;
-#[allow(unused_imports)]
-use metashrew_support::{
-    println,
-    stdio::{stdout, Write},
+use bitcoin::{
+    Block, OutPoint, Transaction, Witness,
 };
+use metashrew_support::environment::RuntimeEnvironment;
+use metashrew_support::index_pointer::AtomicPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
-use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::utils::consensus_decode;
-use wasm_bindgen_test::wasm_bindgen_test;
+use std::fmt::Write;
 
 pub const BEACON_ID: u128 = 0xbeac0;
 
-fn setup_env() -> Result<Block> {
-    clear();
+fn setup_env<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<Block> {
     let block_height = 0;
     let auth_cellpack = Cellpack {
         target: AlkaneId {
@@ -54,12 +52,12 @@ fn setup_env() -> Result<Block> {
         [auth_cellpack, test.clone(), test.clone()].into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
 
     Ok(test_block)
 }
 
-fn deploy_upgradeable_beacon() -> Result<Block> {
+fn deploy_upgradeable_beacon<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<Block> {
     let block_height = 0;
     let beacon = Cellpack {
         target: AlkaneId {
@@ -75,18 +73,18 @@ fn deploy_upgradeable_beacon() -> Result<Block> {
         [beacon].into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
 
     Ok(test_block)
 }
 
-fn deploy_upgradeable_proxy(
+fn deploy_upgradeable_proxy<E: RuntimeEnvironment + Clone + Default + 'static>(
     proxy_build: Vec<u8>,
     block_height: u32,
     delegate_target: AlkaneId,
 ) -> Result<(Block, u128)> {
-    let mut next_sequence_pointer = sequence_pointer(&mut AtomicPointer::default());
-    let proxy_sequence = next_sequence_pointer.get_value::<u128>();
+    let mut next_sequence_pointer = sequence_pointer(&mut AtomicPointer::<E>::default());
+    let proxy_sequence = next_sequence_pointer.get().unwrap_or_default();
     let proxy = alkane_helpers::BinaryAndCellpack {
         binary: proxy_build,
         cellpack: Cellpack {
@@ -98,12 +96,12 @@ fn deploy_upgradeable_proxy(
     // Initialize the contract and execute the cellpacks
     let mut test_block = alkane_helpers::init_with_cellpack_pairs([proxy].into());
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
 
     Ok((test_block, proxy_sequence))
 }
 
-fn upgradeability_harness(
+fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
     proxy_sequence: u128,
     block_height: u32,
     delegate_target: AlkaneId,
@@ -138,21 +136,20 @@ fn upgradeability_harness(
     });
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_cellpack_pairs(
-        [initialize, set_claimable, mint, double_init].into(),
-    );
+    let mut test_block =
+        alkane_helpers::init_with_cellpack_pairs([initialize, set_claimable, mint, double_init].into());
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
     assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId {
-            block: 2,
-            tx: proxy_sequence
-        }),
+        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into()),
         1_000_000
     );
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert_eq!(
+        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }.into()),
+        0
+    );
     assert_revert_context(
         &OutPoint {
             txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
@@ -172,21 +169,21 @@ fn upgradeability_harness(
     // Initialize the contract and execute the cellpacks
     let mut test_block2 = alkane_helpers::init_with_cellpack_pairs([proxy_through_extcall].into());
 
-    index_block(&test_block2, block_height)?;
+    index_block::<E>(&test_block2, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
     assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId {
-            block: 2,
-            tx: proxy_sequence
-        }),
+        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into()),
         1_000_000
     );
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert_eq!(
+        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }.into()),
+        0
+    );
     Ok(())
 }
 
-fn upgrade_implementation(
+fn upgrade_implementation<E: RuntimeEnvironment + Clone + Default + 'static>(
     block_height: u32,
     input_outpoint: OutPoint,
     contract_to_upgrade: AlkaneId,
@@ -207,11 +204,14 @@ fn upgrade_implementation(
         ),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
     Ok(())
 }
 
-fn check_after_upgrade(block_height: u32, proxy_sequence: u128) -> Result<()> {
+fn check_after_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>(
+    block_height: u32,
+    proxy_sequence: u128,
+) -> Result<()> {
     let incr = Cellpack {
         target: AlkaneId {
             block: 2,
@@ -243,25 +243,25 @@ fn check_after_upgrade(block_height: u32, proxy_sequence: u128) -> Result<()> {
 
     let mut test_block = create_block_with_coinbase_tx(block_height);
 
-    test_block
-        .txdata
-        .push(alkane_helpers::create_multiple_cellpack_with_witness(
+    test_block.txdata.push(
+        alkane_helpers::create_multiple_cellpack_with_witness(
             Witness::new(),
             vec![incr, get_claimable, mint, initialize],
             false,
-        ));
+        ),
+    );
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
     assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId {
-            block: 2,
-            tx: proxy_sequence
-        }),
+        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into()),
         1_000_000
     );
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    assert_eq!(
+        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }.into()),
+        0
+    );
 
     let outpoint = OutPoint {
         txid: test_block.txdata[1].compute_txid(),
@@ -286,7 +286,7 @@ fn check_after_upgrade(block_height: u32, proxy_sequence: u128) -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_proxy() -> Result<()> {
     setup_env()?;
     let (_, proxy_sequence) = deploy_upgradeable_proxy(
@@ -298,7 +298,7 @@ fn test_proxy() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_upgradeability() -> Result<()> {
     setup_env()?;
     let (init_block, proxy_sequence) = deploy_upgradeable_proxy(
@@ -321,7 +321,7 @@ fn test_upgradeability() -> Result<()> {
     check_after_upgrade(0, proxy_sequence)
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_beacon_proxy() -> Result<()> {
     setup_env()?;
     let init_block = deploy_upgradeable_beacon()?;

@@ -1,5 +1,6 @@
 use byteorder::{ByteOrder, LittleEndian};
 
+#[derive(Debug, Clone)]
 pub struct EnvironmentInput {
     pub height: u32,
     pub data: Vec<u8>,

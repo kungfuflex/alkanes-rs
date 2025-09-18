@@ -1,27 +1,24 @@
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, assert_return_context};
 use crate::tests::std::alkanes_std_test_build;
-use alkane_helpers::clear;
+use crate::tests::test_runtime::TestRuntime;
 use crate::view;
+use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::block::Header;
-use bitcoin::OutPoint;
-use bitcoin::Transaction;
-#[allow(unused_imports)]
-use metashrew_support::{
-    println,
-    stdio::{stdout, Write},
+use bitcoin::{
+    OutPoint, Transaction,
 };
+use metashrew_support::environment::RuntimeEnvironment;
 use protorune::test_helpers::create_coinbase_transaction;
 use protorune_support::utils::consensus_decode;
-use wasm_bindgen_test::wasm_bindgen_test;
+use std::fmt::Write;
 
-#[wasm_bindgen_test]
+#[test]
 fn test_special_extcall() -> Result<()> {
-    clear();
     let block_height = 0;
 
     let get_header = Cellpack {
@@ -34,7 +31,7 @@ fn test_special_extcall() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx::<TestRuntime>(
         [alkanes_std_test_build::get_bytes(), [].into()].into(),
         [get_header, coinbase_tx].into(),
     );
@@ -44,15 +41,14 @@ fn test_special_extcall() -> Result<()> {
             .txdata
             .push(create_coinbase_transaction(block_height));
     }
-
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
 
     let outpoint_1 = OutPoint {
         txid: test_block.txdata[1].compute_txid(),
         vout: 3,
     };
 
-    assert_return_context(&outpoint_1, |trace_response| {
+    assert_return_context::<TestRuntime, _>(&outpoint_1, |trace_response| {
         let data =
             consensus_decode::<Header>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
@@ -66,7 +62,7 @@ fn test_special_extcall() -> Result<()> {
         vout: 3,
     };
 
-    assert_return_context(&outpoint_2, |trace_response| {
+    assert_return_context::<TestRuntime, _>(&outpoint_2, |trace_response| {
         let data =
             consensus_decode::<Transaction>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
@@ -78,9 +74,8 @@ fn test_special_extcall() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_special_extcall_number_diesel_mints() -> Result<()> {
-    clear();
     let block_height = 0;
 
     let diesel_mint = Cellpack {
@@ -94,7 +89,7 @@ fn test_special_extcall_number_diesel_mints() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx::<TestRuntime>(
         [
             [].into(),
             [].into(),
@@ -115,14 +110,14 @@ fn test_special_extcall_number_diesel_mints() -> Result<()> {
         .into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
 
     let outpoint_1 = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
 
-    assert_return_context(&outpoint_1, |trace_response| {
+    assert_return_context::<TestRuntime, _>(&outpoint_1, |trace_response| {
         let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
 
         println!("{:?}", data);
@@ -133,9 +128,8 @@ fn test_special_extcall_number_diesel_mints() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_special_extcall_total_miner_fees() -> Result<()> {
-    clear();
     let block_height = 0;
 
     let get_miner_fee = Cellpack {
@@ -144,19 +138,19 @@ fn test_special_extcall_total_miner_fees() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx::<TestRuntime>(
         [alkanes_std_test_build::get_bytes()].into(),
         [get_miner_fee].into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
 
     let outpoint_1 = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
 
-    assert_return_context(&outpoint_1, |trace_response| {
+    assert_return_context::<TestRuntime, _>(&outpoint_1, |trace_response| {
         let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
 
         println!("{:?}", data);

@@ -3,25 +3,24 @@ mod tests {
     use crate::index_block;
     use crate::tests::helpers as alkane_helpers;
     use crate::tests::std::alkanes_std_test_build;
-    use alkane_helpers::clear;
+    use crate::tests::test_runtime::TestRuntime;
+    use alkanes_runtime::{println, stdout};
     use alkanes_support::cellpack::Cellpack;
     use alkanes_support::gz::{compress, decompress};
     use alkanes_support::id::AlkaneId;
     use anyhow::Result;
-    use metashrew_support::{println, stdout};
-use std::fmt::Write;
-    use wasm_bindgen_test::wasm_bindgen_test;
+    use metashrew_support::environment::RuntimeEnvironment;
+    use std::fmt::Write;
 
-    #[wasm_bindgen_test]
+    #[test]
     pub fn test_compression() -> Result<()> {
         let buffer = alkanes_std_test_build::get_bytes();
         let compressed = compress(buffer.clone())?;
         assert_eq!(decompress(compressed)?, buffer.clone());
         Ok(())
     }
-    #[wasm_bindgen_test]
+    #[test]
     fn test_extcall() -> Result<()> {
-        clear();
         let block_height = 0;
 
         let test_cellpacks = [
@@ -34,23 +33,17 @@ use std::fmt::Write;
                 target: AlkaneId { block: 1, tx: 0 },
                 inputs: vec![0],
             },
-            Cellpack {
-                target: AlkaneId { block: 2, tx: 0 },
-                inputs: vec![50, 1],
-            },
         ];
-
-        let test_block = alkane_helpers::init_with_multiple_cellpacks(
-            alkanes_std_test_build::get_bytes(),
-            test_cellpacks.to_vec(),
+        let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+            [alkanes_std_test_build::get_bytes()].into(),
+            test_cellpacks.into(),
         );
 
-        index_block(&test_block, block_height as u32)?;
+        index_block::<TestRuntime>(&test_block, block_height as u32)?;
         Ok(())
     }
-    #[wasm_bindgen_test]
+    #[test]
     fn test_transaction() -> Result<()> {
-        clear();
         let block_height = 0;
 
         let test_cellpacks = [
@@ -73,14 +66,13 @@ use std::fmt::Write;
 
         let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
             [alkanes_std_test_build::get_bytes(), vec![]].into(),
-            test_cellpacks.to_vec(),
+            test_cellpacks.into(),
         );
-        index_block(&test_block, block_height as u32)?;
+        index_block::<TestRuntime>(&test_block, block_height as u32)?;
         Ok(())
     }
-    #[wasm_bindgen_test]
+    #[test]
     fn test_benchmark() -> Result<()> {
-        clear();
         let block_height = 0;
 
         let test_cellpacks = [
@@ -103,20 +95,17 @@ use std::fmt::Write;
             */
         ];
 
-        let start = metashrew_support::imports::__now();
         let test_block = alkane_helpers::init_with_multiple_cellpacks(
             alkanes_std_test_build::get_bytes(),
             test_cellpacks.to_vec(),
         );
 
-        index_block(&test_block, block_height as u32)?;
-        println!("time: {}ms", metashrew_support::imports::__now() - start);
+        index_block::<TestRuntime>(&test_block, block_height as u32)?;
         Ok(())
     }
 
-    // #[wasm_bindgen_test]
+    // #[test]
     // async fn test_base_std_functionality() -> Result<()> {
-    //     clear();
     //     let test_target = AlkaneId { block: 3, tx: 15 };
     //     let test_stored_target = AlkaneId { block: 4, tx: 15 };
     //     let input_cellpack = Cellpack {

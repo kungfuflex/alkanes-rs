@@ -1,5 +1,5 @@
+use metashrew_support::environment::RuntimeEnvironment;
 use crate::index_block;
-use crate::tests::helpers::clear;
 use crate::tests::helpers::init_with_multiple_cellpacks_with_tx;
 use crate::tests::std::alkanes_std_auth_token_build;
 use crate::tests::std::alkanes_std_genesis_protorune_build;
@@ -13,25 +13,22 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-#[allow(unused_imports)]
-use metashrew_support::{
-    println,
-    stdio::{stdout, Write},
-};
+use std::fmt::Write;
+use alkanes_runtime::{println, stdout};
 use protorune::message::MessageContextParcel;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use wasm_bindgen_test::wasm_bindgen_test;
 
-fn test_contract_abi(
+fn test_contract_abi<E: RuntimeEnvironment + Clone + Default + 'static>(
     contract_name: &str,
     contract_bytes: Vec<u8>,
     expected_methods: Vec<(&str, u128, Vec<(&str, &str)>, &str)>,
 ) -> Result<()> {
-    let context = Arc::new(Mutex::new(AlkanesRuntimeContext::default()));
+    let context = Arc::new(Mutex::new(AlkanesRuntimeContext::<E>::default()));
 
     // Create a new instance of the contract
-    let mut instance = AlkanesInstance::from_alkane(context, Arc::new(contract_bytes), 100000000)?;
+    let mut instance =
+        AlkanesInstance::<E>::from_alkane(context, Arc::new(contract_bytes), 100000000)?;
 
     // Call the __meta function to get the ABI
     let abi_bytes = instance.call_meta()?;
@@ -132,9 +129,9 @@ fn test_contract_abi(
 
     Ok(())
 }
-#[wasm_bindgen_test]
+
+#[test]
 fn test_meta_call() -> Result<()> {
-    clear();
     let block_height = 0;
 
     // Create test blocks with cellpacks
@@ -164,7 +161,7 @@ fn test_meta_call() -> Result<()> {
         vec![auth_cellpack, test_cellpack, mint_test_cellpack],
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
     // Create a properly formatted message context parcel
     let parcel = MessageContextParcel {
@@ -175,7 +172,7 @@ fn test_meta_call() -> Result<()> {
     };
 
     // Call meta_safe with the properly formatted parcel
-    let abi_bytes = meta_safe(&parcel)?;
+    let abi_bytes = meta_safe::<crate::tests::test_runtime::TestRuntime>(&parcel)?;
     // Verify the response
     let abi_string = String::from_utf8(abi_bytes.clone())?;
     let abi_json: Value = serde_json::from_slice(&abi_bytes)?;
@@ -191,10 +188,8 @@ fn test_meta_call() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_owned_token_abi() -> Result<()> {
-    clear();
-
     // Expected methods with their opcodes, parameter names and types, and return types
     let expected_methods = vec![
         (
@@ -222,17 +217,15 @@ fn test_owned_token_abi() -> Result<()> {
         ("get_data", 1000, vec![], "Vec<u8>"),
     ];
 
-    test_contract_abi(
+    test_contract_abi::<crate::tests::test_runtime::TestRuntime>(
         "OwnedToken",
         alkanes_std_owned_token_build::get_bytes(),
         expected_methods,
     )
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_proxy_abi() -> Result<()> {
-    clear();
-
     // Expected methods with their opcodes, parameter names and types, and return types
     let expected_methods = vec![
         ("initialize", 0, vec![], "void"),
@@ -247,17 +240,15 @@ fn test_proxy_abi() -> Result<()> {
         ("delegatecall_inputs", 4, vec![], "void"),
     ];
 
-    test_contract_abi(
+    test_contract_abi::<crate::tests::test_runtime::TestRuntime>(
         "Proxy",
         alkanes_std_proxy_build::get_bytes(),
         expected_methods,
     )
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_orbital_abi() -> Result<()> {
-    clear();
-
     // Expected methods with their opcodes, parameter names and types, and return types
     let expected_methods = vec![
         ("initialize", 0, vec![], "void"),
@@ -267,17 +258,15 @@ fn test_orbital_abi() -> Result<()> {
         ("get_data", 1000, vec![], "Vec<u8>"),
     ];
 
-    test_contract_abi(
+    test_contract_abi::<crate::tests::test_runtime::TestRuntime>(
         "Orbital",
         alkanes_std_orbital_build::get_bytes(),
         expected_methods,
     )
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_genesis_protorune_abi() -> Result<()> {
-    clear();
-
     // Expected methods with their opcodes, parameter names and types, and return types
     let expected_methods = vec![
         ("initialize", 0, vec![], "void"),
@@ -287,7 +276,7 @@ fn test_genesis_protorune_abi() -> Result<()> {
         ("get_total_supply", 101, vec![], "u128"),
     ];
 
-    test_contract_abi(
+    test_contract_abi::<crate::tests::test_runtime::TestRuntime>(
         "GenesisProtorune",
         alkanes_std_genesis_protorune_build::get_bytes(),
         expected_methods,

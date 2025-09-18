@@ -3,23 +3,18 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
+use alkanes_runtime::{println, stdout}; use std::fmt::Write;
 use metashrew_support::utils::consensus_encode;
 
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
-use alkane_helpers::clear;
 use crate::view;
 use bitcoin::Witness;
-#[allow(unused_imports)]
-use metashrew_support::{
-    println,
-    stdio::{stdout, Write},
-};
-use wasm_bindgen_test::wasm_bindgen_test;
+use crate::tests::test_runtime::TestRuntime;
+use metashrew_support::environment::RuntimeEnvironment;
 
-#[wasm_bindgen_test]
+#[test]
 fn test_vec_inputs() -> Result<()> {
-    clear();
     let block_height = 0;
     // Get the LoggerAlkane ID
     let logger_alkane_id = AlkaneId { block: 2, tx: 1 };
@@ -66,14 +61,14 @@ fn test_vec_inputs() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx::<TestRuntime>(
         [alkanes_std_test_build::get_bytes()].into(),
         [process_numbers_cellpack].into(),
     );
 
     // Add a transaction with the remaining cellpacks
     test_block.txdata.push(
-        alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_in::<TestRuntime>(
             Witness::new(),
             vec![process_strings_cellpack, process_nested_vec_cellpack],
             OutPoint {
@@ -88,10 +83,10 @@ fn test_vec_inputs() -> Result<()> {
         ),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
 
     // Verify the binary was deployed correctly
-    let _ = assert_binary_deployed_to_id(
+    let _ = assert_binary_deployed_to_id::<TestRuntime>(
         logger_alkane_id.clone(),
         alkanes_std_test_build::get_bytes(),
     );
@@ -102,7 +97,7 @@ fn test_vec_inputs() -> Result<()> {
         vout: 3,
     };
 
-    let trace_data_process_numbers = view::trace(&outpoint_process_numbers)?;
+    let trace_data_process_numbers = view::trace::<TestRuntime>(&outpoint_process_numbers)?;
     println!("process_numbers trace: {:?}", trace_data_process_numbers);
 
     // Verify the process_numbers result contains the expected values
@@ -121,7 +116,7 @@ fn test_vec_inputs() -> Result<()> {
         vout: 3,
     };
 
-    let trace_data_get_strings = view::trace(&outpoint_get_strings)?;
+    let trace_data_get_strings = view::trace::<TestRuntime>(&outpoint_get_strings)?;
     let trace_str = String::from_utf8_lossy(&trace_data_get_strings);
     println!("get_strings trace: {:?}", trace_str);
     let expected_name = "hello,world";
@@ -144,7 +139,7 @@ fn test_vec_inputs() -> Result<()> {
         vout: 4,
     };
 
-    let trace_data_process_nested_vec = view::trace(&outpoint_process_nested_vec)?;
+    let trace_data_process_nested_vec = view::trace::<TestRuntime>(&outpoint_process_nested_vec)?;
     println!(
         "process_nested_vec trace: {:?}",
         trace_data_process_nested_vec

@@ -347,7 +347,7 @@ pub fn _start() {
     let block: Block =
         consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
 
-    index_block(&block, height).unwrap();
+index_block::<MetashrewEnvironment>(&block, height).unwrap();
     etl::index_extensions(height, &block);
     MetashrewEnvironment::flush(&[]).unwrap();
 }
@@ -379,7 +379,7 @@ mod unit_tests {
         // calling index_block directly fails since genesis(&block).unwrap(); gets segfault
         // index_block(&block, height).unwrap();
         configure_network();
-        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into()).unwrap();
+        Protorune::index_block::<AlkaneMessageContext<MetashrewEnvironment>>(block.clone(), height.into()).unwrap();
 
         let req_height: Vec<u8> = (RunesByHeightRequest {
             height: 849236,
@@ -409,12 +409,12 @@ mod unit_tests {
         )
         .unwrap();
         let quorum_rune = outpoint_res.balances.unwrap().entries[0].clone();
-        let balance = quorum_rune.balance.0.unwrap();
+        let balance = quorum_rune.balance.unwrap();
         let mut expected_balance = Uint128::default();
         expected_balance.lo = 21000000;
-        assert!(*balance == expected_balance);
+        assert!(balance == expected_balance);
         // TODO: Assert rune
-        std::println!(" with rune {:?}", quorum_rune.rune.0);
+        std::println!(" with rune {:?}", quorum_rune.rune.unwrap());
 
         // assert!(false);
     }

@@ -11,12 +11,9 @@ use bitcoin::{
     address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness,
 };
 use bitcoin::{Block, Transaction};
+use metashrew_support::environment::RuntimeEnvironment;
+use alkanes_runtime::{println, stdout}; use std::fmt::Write;
 use metashrew_support::index_pointer::IndexPointer;
-#[allow(unused_imports)]
-use metashrew_support::{
-    clear as clear_base, println,
-    stdio::{stdout, Write},
-};
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_encode;
 use ordinals::{Etching, Rune, Runestone};
@@ -89,8 +86,8 @@ pub fn configure_network() {
     });
 }
 
-pub fn clear() {
-    clear_base();
+pub fn clear<E: RuntimeEnvironment>() {
+    E::clear();
     configure_network();
 }
 
@@ -222,7 +219,7 @@ pub fn init_with_multiple_cellpacks(binary: Vec<u8>, cellpacks: Vec<Cellpack>) -
     test_block
 }
 
-pub fn create_protostone_tx_with_inputs_and_default_pointer(
+pub fn create_protostone_tx_with_inputs_and_default_pointer<E: RuntimeEnvironment + Clone + Default>(
     inputs: Vec<TxIn>,
     outputs: Vec<TxOut>,
     protostone: Protostone,
@@ -233,7 +230,7 @@ pub fn create_protostone_tx_with_inputs_and_default_pointer(
         pointer: Some(default_pointer), // points to the OP_RETURN, so therefore targets the protoburn
         edicts: Vec::new(),
         mint: None,
-        protocol: vec![protostone].encipher().ok(),
+        protocol: <Vec<Protostone> as Protostones<E>>::encipher(&vec![protostone]).ok(),
     })
     .encipher();
     let op_return = TxOut {
@@ -260,12 +257,12 @@ pub fn create_protostone_tx_with_inputs_and_default_pointer(
     }
 }
 
-pub fn create_protostone_tx_with_inputs(
+pub fn create_protostone_tx_with_inputs<E: RuntimeEnvironment + Clone + Default>(
     inputs: Vec<TxIn>,
     outputs: Vec<TxOut>,
     protostone: Protostone,
 ) -> Transaction {
-    create_protostone_tx_with_inputs_and_default_pointer(inputs, outputs, protostone, 1)
+    create_protostone_tx_with_inputs_and_default_pointer::<E>(inputs, outputs, protostone, 1)
 }
 
 pub fn create_multiple_cellpack_with_witness_and_in(
@@ -281,10 +278,9 @@ pub fn create_multiple_cellpack_with_witness_and_in(
         sequence: Sequence::MAX,
         witness,
     };
-    create_multiple_cellpack_with_witness_and_txins_edicts(cellpacks, vec![txin], etch, vec![])
+    create_multiple_cellpack_with_witness_and_txins_edicts::<crate::tests::test_runtime::TestRuntime>(cellpacks, vec![txin], etch, vec![])
 }
-
-pub fn create_multiple_cellpack_with_witness_and_txins_edicts(
+pub fn create_multiple_cellpack_with_witness_and_txins_edicts<E: RuntimeEnvironment + Clone + Default>(
     cellpacks: Vec<Cellpack>,
     txins: Vec<TxIn>,
     etch: bool,
@@ -339,7 +335,7 @@ pub fn create_multiple_cellpack_with_witness_and_txins_edicts(
         }, // points to the OP_RETURN, so therefore targets the protoburn
         edicts: Vec::new(),
         mint: None,
-        protocol: protostones.encipher().ok(),
+        protocol: <Vec<Protostone> as Protostones<E>>::encipher(&protostones).ok(),
     })
     .encipher();
 
@@ -383,8 +379,11 @@ pub fn create_multiple_cellpack_with_witness(
     create_multiple_cellpack_with_witness_and_in(witness, cellpacks, previous_output, etch)
 }
 
-pub fn assert_binary_deployed_to_id(token_id: AlkaneId, binary: Vec<u8>) -> Result<()> {
-    let binary_1 = IndexPointer::from_keyword("/alkanes/")
+pub fn assert_binary_deployed_to_id<E: RuntimeEnvironment>(
+    token_id: AlkaneId,
+    binary: Vec<u8>,
+) -> Result<()> {
+    let binary_1 = IndexPointer::<E>::from_keyword("/alkanes/")
         .select(&token_id.into())
         .get()
         .as_ref()
@@ -395,8 +394,11 @@ pub fn assert_binary_deployed_to_id(token_id: AlkaneId, binary: Vec<u8>) -> Resu
     return Ok(());
 }
 
-pub fn assert_id_points_to_alkane_id(from_id: AlkaneId, to_id: AlkaneId) -> Result<()> {
-    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
+pub fn assert_id_points_to_alkane_id<E: RuntimeEnvironment>(
+    from_id: AlkaneId,
+    to_id: AlkaneId,
+) -> Result<()> {
+    let wasm_payload = IndexPointer::<E>::from_keyword("/alkanes/")
         .select(&from_id.into())
         .get()
         .as_ref()
@@ -406,8 +408,8 @@ pub fn assert_id_points_to_alkane_id(from_id: AlkaneId, to_id: AlkaneId) -> Resu
     return Ok(());
 }
 
-pub fn assert_token_id_has_no_deployment(token_id: AlkaneId) -> Result<()> {
-    let binary = IndexPointer::from_keyword("/alkanes/")
+pub fn assert_token_id_has_no_deployment<E: RuntimeEnvironment>(token_id: AlkaneId) -> Result<()> {
+    let binary = IndexPointer::<E>::from_keyword("/alkanes/")
         .select(&token_id.into())
         .get()
         .as_ref()
@@ -416,35 +418,37 @@ pub fn assert_token_id_has_no_deployment(token_id: AlkaneId) -> Result<()> {
     return Ok(());
 }
 
-pub fn get_sheet_for_outpoint(
+pub fn get_sheet_for_outpoint<E: RuntimeEnvironment + Clone + Default + 'static>(
     test_block: &Block,
     tx_num: usize,
     vout: u32,
-) -> Result<BalanceSheet<IndexPointer>> {
+) -> Result<BalanceSheet<IndexPointer<E>>> {
     let outpoint = OutPoint {
         txid: test_block.txdata[tx_num].compute_txid(),
         vout,
     };
-    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?);
     let sheet = load_sheet(&ptr);
     Ok(sheet)
 }
 
-pub fn get_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
-    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
+pub fn get_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'static>() -> BalanceSheet<IndexPointer<E>> {
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag()).RUNTIME_BALANCE;
     let sheet = load_sheet(&ptr);
     sheet
 }
 
-pub fn get_lazy_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
-    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
+pub fn get_lazy_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'static>() -> BalanceSheet<IndexPointer<E>> {
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag()).RUNTIME_BALANCE;
     let sheet = BalanceSheet::new_ptr_backed(ptr);
     sheet
 }
 
-pub fn get_last_outpoint_sheet(test_block: &Block) -> Result<BalanceSheet<IndexPointer>> {
+pub fn get_last_outpoint_sheet<E: RuntimeEnvironment + Clone + Default + 'static>(
+    test_block: &Block,
+) -> Result<BalanceSheet<IndexPointer<E>>> {
     let len = test_block.txdata.len();
     get_sheet_for_outpoint(test_block, len - 1, 0)
 }
@@ -542,7 +546,7 @@ pub enum CellpackOrEdict {
     Edict(Vec<ProtostoneEdict>),
 }
 
-pub fn create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers(
+pub fn create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers<E: RuntimeEnvironment + Clone + Default> (
     witness: Witness,
     cellpacks_or_edicts: Vec<CellpackOrEdict>,
     previous_output: OutPoint,
@@ -636,7 +640,7 @@ pub fn create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers(
         }, // points to the OP_RETURN, so therefore targets the protoburn
         edicts: Vec::new(),
         mint: None,
-        protocol: protostones.encipher().ok(),
+        protocol: <Vec<Protostone> as Protostones<E>>::encipher(&protostones).ok(),
     })
     .encipher();
 
@@ -672,13 +676,13 @@ pub fn create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers(
     }
 }
 
-pub fn create_multiple_cellpack_with_witness_and_in_with_edicts(
+pub fn create_multiple_cellpack_with_witness_and_in_with_edicts<E: RuntimeEnvironment + Clone + Default>(
     witness: Witness,
     cellpacks_or_edicts: Vec<CellpackOrEdict>,
     previous_output: OutPoint,
     etch: bool,
 ) -> Transaction {
-    create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers(
+    create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers::<E>(
         witness,
         cellpacks_or_edicts,
         previous_output,

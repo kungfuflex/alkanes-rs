@@ -1,11 +1,16 @@
 use crate::index_block;
 use crate::message::AlkaneMessageContext;
 use crate::tests::helpers::{
-    self as alkane_helpers, assert_binary_deployed_to_id, assert_revert_context, clear,
-    create_multiple_cellpack_with_witness_and_in, get_last_outpoint_sheet, get_sheet_for_outpoint,
+    self as alkane_helpers,
+    assert_binary_deployed_to_id,
+    assert_revert_context,
+    create_multiple_cellpack_with_witness_and_in,
+    get_last_outpoint_sheet,
+    get_sheet_for_outpoint,
     init_with_multiple_cellpacks_with_tx,
 };
 
+use crate::tests::test_runtime::TestRuntime;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
@@ -13,12 +18,13 @@ use anyhow::Result;
 use bitcoin::{Block, OutPoint, Witness};
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use sha2::{Digest, Sha256};
-use wasm_bindgen_test::wasm_bindgen_test;
-use protorune_support::protostone::ProtostoneEdict;
-use protorune_support::balance_sheet::ProtoruneRuneId;
+use metashrew_support::environment::RuntimeEnvironment;
+use protorune::test_helpers::{create_block_with_coinbase_tx, ADDRESS1, ADDRESS2};
 use protorune_support::balance_sheet::BalanceSheetOperations;
-use protorune::test_helpers::{ADDRESS1, ADDRESS2, create_block_with_coinbase_tx};
+use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::protostone::ProtostoneEdict;
+use sha2::{Digest, Sha256};
+
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
 pub struct SchemaMerkleLeaf {
     pub address: String,
@@ -107,7 +113,7 @@ fn generate_proof(leaf_hashes: &[[u8; 32]], leaf_index: usize) -> Vec<[u8; 32]> 
     proof
 }
 
-fn helper_test_merkle_distributor(
+fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'static>(
     block_height: u32,
     deadline: u128,
     leaf_address: String,
@@ -169,7 +175,7 @@ fn helper_test_merkle_distributor(
         vec![mint_diesel, init_cellpack],
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<E>(&test_block, block_height)?;
 
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
     assert_binary_deployed_to_id(merkle_distributor_id.clone(), merkle_testnet_build.clone())?;
@@ -190,75 +196,88 @@ fn helper_test_merkle_distributor(
     };
 
     let mut claim_block = create_block_with_coinbase_tx(block_height + 1);
-    claim_block
-        .txdata
-        .push(create_multiple_cellpack_with_witness_and_in(
-            witness,
-            vec![claim_cellpack],
-            OutPoint {
-                txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
-                vout: output_address_index,
-            },
-            false,
-        ));
+    claim_block.txdata.push(create_multiple_cellpack_with_witness_and_in(
+        witness,
+        vec![claim_cellpack],
+        OutPoint {
+            txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
+            vout: output_address_index,
+        },
+        false,
+    ));
 
-    index_block(&claim_block, block_height + 1)?;
+    index_block::<E>(&claim_block, block_height + 1)?;
 
     let sheet = get_last_outpoint_sheet(&claim_block)?;
-    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }), 1_000_000);
+    assert_eq!(
+        sheet.get_cached(&(ProtoruneRuneId { block: 2, tx: 0 }).into()),
+        1_000_000
+    );
 
     Ok(claim_block)
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_merkle_distributor() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<TestRuntime>();
     helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_merkle_distributor_admin_collect() -> Result<()> {
-    clear();
-    let init_block = helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
+    alkane_helpers::clear::<TestRuntime>();
+    let init_block =
+        helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
     let auth_outpoint = OutPoint {
         txid: init_block.txdata.last().unwrap().compute_txid(),
         vout: 0,
     };
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
-    let auth_sheet = get_sheet_for_outpoint(&init_block, init_block.txdata.len() - 1, 0)?;
-    assert_eq!(auth_sheet.get(&merkle_distributor_id.clone().into()), 5);
+    let auth_sheet =
+        get_sheet_for_outpoint(&init_block, init_block.txdata.len() - 1, 0)?;
+    assert_eq!(
+        auth_sheet.get_cached(&merkle_distributor_id.clone().into()),
+        5
+    );
     let block_height = 840_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
-    let collect_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in_with_edicts(
-        Witness::new(),
-        vec![
-            alkane_helpers::CellpackOrEdict::Edict(vec![ProtostoneEdict {
-                id: merkle_distributor_id.into(),
-                amount: 1,
-                output: 0,
-            }]),
-            alkane_helpers::CellpackOrEdict::Cellpack(Cellpack {
-                target: merkle_distributor_id.clone().into(),
-                inputs: vec![2, 2, 0],
-            }),
-        ],
-        auth_outpoint.clone(),
-        false,
-    );
+    let collect_tx =
+        alkane_helpers::create_multiple_cellpack_with_witness_and_in_with_edicts(
+            Witness::new(),
+            vec![
+                alkane_helpers::CellpackOrEdict::Edict(vec![ProtostoneEdict {
+                    id: merkle_distributor_id.into(),
+                    amount: 1,
+                    output: 0,
+                }]),
+                alkane_helpers::CellpackOrEdict::Cellpack(Cellpack {
+                    target: merkle_distributor_id.clone().into(),
+                    inputs: vec![2, 2, 0],
+                }),
+            ],
+            auth_outpoint.clone(),
+            false,
+        );
     spend_block.txdata.push(collect_tx.clone());
-    index_block(&spend_block, block_height)?;
+    index_block::<TestRuntime>(&spend_block, block_height)?;
     let sheet = get_last_outpoint_sheet(&spend_block)?;
-    assert_eq!(sheet.get(&merkle_distributor_id.clone().into()), 5);
-    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }), 312500000);
+    assert_eq!(
+        sheet.get_cached(&merkle_distributor_id.clone().into()),
+        5
+    );
+    assert_eq!(
+        sheet.get_cached(&(ProtoruneRuneId { block: 2, tx: 0 }).into()),
+        312500000
+    );
 
     Ok(())
 }
-
-#[wasm_bindgen_test]
+#[test]
 fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
-    clear();
-    let init_block = helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
+    alkane_helpers::clear::<TestRuntime>();
+    let init_block =
+        helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
     let block_height = 840_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
@@ -272,7 +291,7 @@ fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
         false,
     );
     spend_block.txdata.push(collect_tx.clone());
-    index_block(&spend_block, block_height)?;
+    index_block::<TestRuntime>(&spend_block, block_height)?;
     let new_outpoint = OutPoint {
         txid: collect_tx.compute_txid(),
         vout: 3,

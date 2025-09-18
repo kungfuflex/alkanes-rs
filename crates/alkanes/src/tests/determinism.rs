@@ -6,13 +6,12 @@ use bitcoin::{OutPoint, Witness};
 
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers};
-use alkane_helpers::clear;
+use crate::tests::test_runtime::TestRuntime;
+use metashrew_support::environment::RuntimeEnvironment;
 
-use wasm_bindgen_test::wasm_bindgen_test;
-
-#[wasm_bindgen_test]
+#[test]
 fn test_incoming_alkanes_ordered() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<TestRuntime>();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -61,7 +60,7 @@ fn test_incoming_alkanes_ordered() -> Result<()> {
         ),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<TestRuntime>(&test_block, block_height)?;
 
     let outpoint = OutPoint {
         txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),

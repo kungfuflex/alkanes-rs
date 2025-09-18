@@ -1,18 +1,17 @@
 use crate::index_block;
 use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};
 use crate::tests::std::alkanes_std_test_build;
-use alkane_helpers::clear;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
 use protorune_support::balance_sheet::ProtoruneRuneId;
-use wasm_bindgen_test::wasm_bindgen_test;
 use protorune::test_helpers::create_block_with_coinbase_tx;
+use metashrew_support::environment::RuntimeEnvironment;
 
-#[wasm_bindgen_test]
+#[test]
 fn test_transfer_overflow() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -31,7 +30,7 @@ fn test_transfer_overflow() -> Result<()> {
         [arb_mint_cellpack, arb_mint_cellpack2.clone()].into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
     let mut test_block2 = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [[].into()].into(),
@@ -59,7 +58,7 @@ fn test_transfer_overflow() -> Result<()> {
     };
 
     test_block2.txdata.push(
-        alkane_helpers::create_multiple_cellpack_with_witness_and_txins_edicts(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_txins_edicts::<crate::tests::test_runtime::TestRuntime>(
             vec![Cellpack {
                 target: AlkaneId { block: 2, tx: 1 },
                 inputs: vec![50],
@@ -70,18 +69,18 @@ fn test_transfer_overflow() -> Result<()> {
         ),
     );
 
-    index_block(&test_block2, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block2, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block2)?;
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_mint_overflow() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -112,7 +111,7 @@ fn test_mint_overflow() -> Result<()> {
     };
 
     test_block.txdata.push(
-        alkane_helpers::create_multiple_cellpack_with_witness_and_txins_edicts(
+        alkane_helpers::create_multiple_cellpack_with_witness_and_txins_edicts::<crate::tests::test_runtime::TestRuntime>(
             vec![arb_mint_cellpack2.clone()],
             vec![txin1],
             false,
@@ -120,9 +119,9 @@ fn test_mint_overflow() -> Result<()> {
         ),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
     assert_eq!(
         sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
         340282366920938463463374607431768211455
@@ -138,9 +137,9 @@ fn test_mint_overflow() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_mint_underflow() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -155,9 +154,9 @@ fn test_mint_underflow() -> Result<()> {
         [arb_mint_cellpack].into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -170,9 +169,9 @@ fn test_mint_underflow() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_transfer_runtime() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -214,10 +213,10 @@ fn test_transfer_runtime() -> Result<()> {
         .into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
-    let runtime_sheet = get_sheet_for_runtime();
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
+    let runtime_sheet = get_sheet_for_runtime::<crate::tests::test_runtime::TestRuntime>();
 
     assert_eq!(
         runtime_sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
@@ -235,9 +234,9 @@ fn test_transfer_runtime() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_extcall_mint() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -266,9 +265,9 @@ fn test_extcall_mint() -> Result<()> {
             false,
         ));
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -285,9 +284,9 @@ fn test_extcall_mint() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_delegatecall_mint() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -316,9 +315,9 @@ fn test_delegatecall_mint() -> Result<()> {
             false,
         ));
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -335,9 +334,9 @@ fn test_delegatecall_mint() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -370,9 +369,9 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
             false,
         ));
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -397,9 +396,9 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_multiple_extcall_err_and_good() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -429,9 +428,9 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
             false,
         ));
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
 
@@ -445,9 +444,9 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
+#[test]
 fn test_runtime_duplication() -> Result<()> {
-    clear();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
     let block_height = 1;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -477,7 +476,7 @@ fn test_runtime_duplication() -> Result<()> {
         .into(),
     );
 
-    index_block(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
 
     let mut test_block2 = create_block_with_coinbase_tx(block_height);
     let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness(
@@ -572,9 +571,9 @@ fn test_runtime_duplication() -> Result<()> {
         ),
     );
 
-    index_block(&test_block2, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block2, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block2)?;
 
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 3 }), 0);
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 2 }), 0);
