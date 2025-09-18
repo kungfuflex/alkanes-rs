@@ -40,11 +40,11 @@ use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
 use ordinals::{Etching, Rune};
-use protobuf::{Message, SpecialFields};
+use prost::Message;
 use protorune_support::balance_sheet::BalanceSheetOperations;
 use protorune_support::constants;
 use protorune_support::network::to_address_str;
-use protorune_support::proto;
+use protorune_support::proto::protorune as proto;
 use protorune_support::{
     balance_sheet::{BalanceSheet, ProtoruneRuneId},
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
@@ -776,12 +776,11 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
                 atomic
                     .derive(&RuneTable::<E>::new().OUTPOINT_TO_OUTPUT.select(&outpoint_bytes))
                     .set(Arc::new(
-                        (proto::protorune::Output {
+                        (proto::Output {
                             script: tx.output[i].clone().script_pubkey.into_bytes(),
                             value: tx.output[i].clone().value.to_sat(),
-                            special_fields: SpecialFields::new(),
                         })
-                        .write_to_bytes()?,
+                        .encode_to_vec(),
                     ));
             }
         }

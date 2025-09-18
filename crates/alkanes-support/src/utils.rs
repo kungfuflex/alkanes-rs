@@ -1,13 +1,5 @@
 use crate::id::AlkaneId;
 use anyhow::{anyhow, Result};
-use protobuf::MessageField;
-
-pub fn field_or_default<T: Into<RT>, RT: Default>(v: MessageField<T>) -> RT {
-    v.into_option()
-        .ok_or("")
-        .and_then(|v| Ok(<T as Into<RT>>::into(v)))
-        .unwrap_or_else(|_| <RT as Default>::default())
-}
 
 pub fn shift<T>(v: &mut Vec<T>) -> Option<T> {
     if v.is_empty() {

@@ -11,7 +11,6 @@ use metashrew_support::index_pointer::IndexPointer;
 
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consensus_encode, is_empty};
-use protobuf::{MessageField, SpecialFields};
 use protorune::tables::RuneTable;
 
 use std::io::Cursor;
@@ -115,14 +114,12 @@ pub fn view<E: RuntimeEnvironment + Clone + Default>(height: u128) -> Result<Pen
                 }
                 if !payment.fulfilled {
                     response.payments.push(ProtoPayment {
-                        spendable: MessageField::some(pb::Outpoint {
+                        spendable: Some(pb::Outpoint {
                             txid: payment.spendable.txid.as_byte_array().to_vec(),
                             vout: payment.spendable.vout,
-                            special_fields: SpecialFields::default(),
                         }),
                         output: consensus_encode::<TxOut>(&payment.output)?,
                         fulfilled: payment.fulfilled,
-                        special_fields: SpecialFields::default(),
                     });
                 }
             }

@@ -6,7 +6,7 @@ use hex;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consume_sized_int;
 use ordinals::RuneId;
-use protobuf::{MessageField, SpecialFields};
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
@@ -48,9 +48,9 @@ impl From<crate::proto::protorune::ProtoruneRuneId> for ProtoruneRuneId {
 
 impl From<ProtoruneRuneId> for crate::proto::protorune::ProtoruneRuneId {
     fn from(v: ProtoruneRuneId) -> crate::proto::protorune::ProtoruneRuneId {
-        let mut result = crate::proto::protorune::ProtoruneRuneId::new();
-        result.height = MessageField::some(v.block.into());
-        result.txindex = MessageField::some(v.tx.into());
+        let mut result = crate::proto::protorune::ProtoruneRuneId::default();
+        result.height = Some(v.block.into());
+        result.txindex = Some(v.tx.into());
         result
     }
 }
@@ -62,10 +62,10 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::BalanceSheet> for
                 balances: BTreeMap::<ProtoruneRuneId, u128>::from_iter(
                     balance_sheet.entries.into_iter().map(|v| {
                         let id = ProtoruneRuneId::new(
-                            v.rune.runeId.height.clone().into_option().unwrap().into(),
-                            v.rune.runeId.txindex.clone().into_option().unwrap().into(),
+                            v.rune.as_ref().unwrap().rune_id.as_ref().unwrap().height.unwrap().into(),
+                            v.rune.as_ref().unwrap().rune_id.as_ref().unwrap().txindex.unwrap().into(),
                         );
-                        (id, v.balance.into_option().unwrap().into())
+                        (id, v.balance.unwrap().into())
                     }),
                 ),
             },
@@ -82,23 +82,19 @@ impl<P: KeyValuePointer + Clone> From<BalanceSheet<P>> for crate::proto::protoru
                 .clone()
                 .iter()
                 .map(|(k, v)| BalanceSheetItem {
-                    special_fields: SpecialFields::new(),
-                    rune: MessageField::some(Rune {
-                        special_fields: SpecialFields::new(),
-                        runeId: MessageField::some(proto::protorune::ProtoruneRuneId {
-                            special_fields: SpecialFields::new(),
-                            height: MessageField::some(k.block.into()),
-                            txindex: MessageField::some(k.tx.into()),
+                    rune: Some(Rune {
+                        rune_id: Some(proto::protorune::ProtoruneRuneId {
+                            height: Some(k.block.into()),
+                            txindex: Some(k.tx.into()),
                         }),
                         name: "UNKNOWN".to_owned(),
                         divisibility: 1,
                         spacers: 1,
                         symbol: "0".to_owned(),
                     }),
-                    balance: MessageField::some((*v).into()),
+                    balance: Some((*v).into()),
                 })
                 .collect::<Vec<BalanceSheetItem>>(),
-            special_fields: SpecialFields::new(),
         }
     }
 }
@@ -361,7 +357,7 @@ impl From<u128> for crate::proto::protorune::Uint128 {
     fn from(v: u128) -> crate::proto::protorune::Uint128 {
         let bytes = v.to_le_bytes().to_vec();
         let mut container: crate::proto::protorune::Uint128 =
-            crate::proto::protorune::Uint128::new();
+            crate::proto::protorune::Uint128::default();
         container.lo = u64::from_le_bytes((&bytes[0..8]).try_into().unwrap());
         container.hi = u64::from_le_bytes((&bytes[8..16]).try_into().unwrap());
         container
@@ -374,6 +370,7 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::OutpointResponse>
     fn from(v: crate::proto::protorune::OutpointResponse) -> BalanceSheet<P> {
         let pairs = v
             .balances
+            .unwrap()
             .entries
             .clone()
             .into_iter()
@@ -383,14 +380,14 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::OutpointResponse>
                         v.rune
                             .clone()
                             .unwrap()
-                            .runeId
+                            .rune_id
                             .unwrap()
                             .height
                             .unwrap()
                             .into(),
-                        v.rune.unwrap().runeId.unwrap().txindex.unwrap().into(),
+                        v.rune.unwrap().rune_id.unwrap().txindex.unwrap().into(),
                     ),
-                    v.balance.into_option().unwrap().into(),
+                    v.balance.unwrap().into(),
                 )
             })
             .collect::<Vec<(ProtoruneRuneId, u128)>>();

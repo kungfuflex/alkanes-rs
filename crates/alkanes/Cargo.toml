@@ -21,9 +21,9 @@ wasm-bindgen-test = { workspace = true }
 once_cell = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-hex = { workspace = true }
-protobuf = { workspace = true }
 protorune = { workspace = true, features = ["cache", "test-utils"] }
+hex = { workspace = true }
+prost = { workspace = true }
 hex_lit = { workspace = true }
 wasmi = { workspace = true }
 num = { workspace = true }

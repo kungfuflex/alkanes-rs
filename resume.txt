@@ -1,0 +1,13 @@
+The task is to finish refactoring out alkanes-rs to generics (the view functions) and part of that apparently is a migration to prost.
+
+So far, I have:
+- Migrated the `alkanes-support` and `protorune-support` crates to use `prost`.
+- Updated the `alkanes` crate to use the new `prost`-generated types in `view.rs`, `unwrap.rs`, `trace.rs`, `lib.rs`, `indexer.rs`, `views/types.rs`, `views/trace_types.rs`, and `tests/serialization.rs`.
+- Fixed the `Cargo.toml` files to use `prost` instead of `protobuf`.
+- Fixed the `protorune` crate to use `prost`.
+- Fixed the `alkanes-support` crate to use `prost`.
+- Fixed the `protorune` crate's `view.rs` to use `prost`.
+
+The next steps are to:
+- Fix the remaining build errors in `protorune/src/view.rs`.
+- Build the entire workspace to ensure that everything compiles correctly.

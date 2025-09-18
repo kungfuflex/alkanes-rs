@@ -77,7 +77,7 @@ pub fn configure_network() {
 #[cfg(feature = "cache")]
 use crate::view::protorunes_by_address;
 #[cfg(feature = "cache")]
-use protobuf::{Message, MessageField};
+use prost::Message;
 #[cfg(feature = "cache")]
 use protorune::tables::{CACHED_FILTERED_WALLET_RESPONSE, CACHED_WALLET_RESPONSE};
 #[cfg(feature = "cache")]
@@ -119,7 +119,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
             }
 
             // Create a request for this address
-            let mut request = ProtorunesWalletRequest::new();
+            let mut request = ProtorunesWalletRequest::default();
             request.wallet = address.clone();
             request.protocol_tag = Some(<u128 as Into<
                 protorune_support::proto::protorune::Uint128,
@@ -127,12 +127,12 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
             .into();
 
             // Get the WalletResponse for this address (full set of spendable outputs)
-            match protorunes_by_address(&request.write_to_bytes()?) {
+            match protorunes_by_address(&request.encode_to_vec()) {
                 Ok(full_response) => {
                     // Cache the serialized full WalletResponse
                     CACHED_WALLET_RESPONSE
                         .select(&address)
-                        .set(Arc::new(full_response.write_to_bytes()?));
+                        .set(Arc::new(full_response.encode_to_vec()));
 
                     // Create a filtered version with only outpoints that have runes
                     let mut filtered_response = full_response.clone();
@@ -140,7 +140,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                         .outpoints
                         .into_iter()
                         .filter_map(|v| {
-                            if v.balances.get_or_default()
+                            if v.balances.unwrap_or_default()
                                 .entries
                                 .len()
                                 == 0
@@ -155,7 +155,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                     // Cache the serialized filtered WalletResponse
                     CACHED_FILTERED_WALLET_RESPONSE
                         .select(&address)
-                        .set(Arc::new(filtered_response.write_to_bytes()?));
+                        .set(Arc::new(filtered_response.encode_to_vec()));
                 }
                 Err(e) => {
                     MetashrewEnvironment::log(&format!("Error caching wallet response for address: {:?}", e));

@@ -31,10 +31,8 @@ once_cell = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 hex = { workspace = true }
-protobuf = { workspace = true }
+prost = { workspace = true }
+bytes = { workspace = true }
 
-[dev-dependencies]
-
-wasm-bindgen-cli = "0.2.99"
-getrandom = { version = "0.2.15", features = ["js"] }
-protorune = { path = ".", features = ["test-utils"] }
+[build-dependencies]
+prost-build = { workspace = true }
