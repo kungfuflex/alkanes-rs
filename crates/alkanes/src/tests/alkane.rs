@@ -4,13 +4,11 @@ mod tests {
     use crate::tests::helpers as alkane_helpers;
     use crate::tests::std::alkanes_std_test_build;
     use crate::tests::test_runtime::TestRuntime;
-    use alkanes_runtime::{println, stdout};
     use alkanes_support::cellpack::Cellpack;
     use alkanes_support::gz::{compress, decompress};
     use alkanes_support::id::AlkaneId;
     use anyhow::Result;
     use metashrew_support::environment::RuntimeEnvironment;
-    use std::fmt::Write;
 
     #[test]
     pub fn test_compression() -> Result<()> {

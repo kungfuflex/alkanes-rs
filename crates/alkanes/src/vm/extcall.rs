@@ -9,7 +9,7 @@ pub trait Extcall<E: RuntimeEnvironment + Clone + Default> {
     fn isdelegate() -> bool;
     fn isstatic() -> bool;
     fn event(context: TraceContext) -> TraceEvent;
-    fn handle_atomic(atomic: &mut AtomicPointer<AlkaneMessageContext<E>>) {
+    fn handle_atomic(atomic: &mut AtomicPointer<E>) {
         if Self::isstatic() {
             atomic.rollback();
         } else {

@@ -32,7 +32,8 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         }
     }
     pub fn read_arraybuffer(&mut self, data_start: i32) -> anyhow::Result<Vec<u8>> {
-        read_arraybuffer(self.get_memory()?.data(&self.store), data_start)
+        let env = &mut self.store.data_mut().env;
+        read_arraybuffer(self.get_memory()?.data(&self.store), data_start, env)
     }
     pub fn get_memory(&mut self) -> anyhow::Result<Memory> {
         self.instance
@@ -42,6 +43,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
     }
     pub fn send_to_arraybuffer(&mut self, ptr: usize, v: &Vec<u8>) -> anyhow::Result<i32> {
         let mem = self.get_memory()?;
+        let env = &mut self.store.data_mut().env;
         mem.write(&mut self.store, ptr, &v.len().to_le_bytes())
             .map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
         mem.write(&mut self.store, ptr + 4, v.as_slice())
@@ -67,6 +69,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
         binary: Arc<Vec<u8>>,
         start_fuel: u64,
+        env: E,
     ) -> Result<Self> {
         /*
         let binary = context
@@ -85,6 +88,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
                 had_failure: false,
                 limiter: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
                 context: context.clone(),
+                env,
             },
         );
         store.limiter(|state| &mut state.limiter);
@@ -351,7 +355,8 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         self.checkpoint();
         let mut err: Option<anyhow::Error> = None;
         let (call_response, had_failure): (ExtendedCallResponse, bool) = {
-            match AlkanesExportsImpl::execute(self) {
+            let env = &mut self.store.data_mut().env;
+            match AlkanesExportsImpl::execute(self, env) {
                 Ok(v) => {
                     if self.store.data().had_failure {
                         (v, true)

@@ -28,31 +28,35 @@ pub struct Protoburn<E: RuntimeEnvironment> {
 impl<E: RuntimeEnvironment + Clone + Default> Protoburn<E> {
     pub fn process(
         &mut self,
+        env: &mut E,
         atomic: &mut AtomicPointer<E>,
-        balance_sheet: BalanceSheet<AtomicPointer<E>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        balance_sheet: BalanceSheet<E, AtomicPointer<E>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
         outpoint: OutPoint,
     ) -> Result<()> {
         let table = RuneTable::<E>::for_protocol(self.tag.ok_or(anyhow!("no tag found"))?);
         for (rune, _balance) in balance_sheet.balances().into_iter() {
             let runeid: Arc<Vec<u8>> = (*rune).into();
-            let name = RuneTable::<E>::new().RUNE_ID_TO_ETCHING.select(&runeid).get();
+            let name = RuneTable::<E>::new().RUNE_ID_TO_ETCHING.select(&runeid).get(env);
             atomic
                 .derive(&table.RUNE_ID_TO_ETCHING.select(&runeid))
-                .set(name.clone());
+                .set(env, name.clone());
             atomic
                 .derive(&table.ETCHING_TO_RUNE_ID.select(&name))
-                .set(runeid);
+                .set(env, runeid);
+            let spacers = RuneTable::<E>::new().SPACERS.select(&name).get(env);
             atomic
                 .derive(&table.SPACERS.select(&name))
-                .set(RuneTable::<E>::new().SPACERS.select(&name).get());
+                .set(env, spacers);
+            let divisibility = RuneTable::<E>::new().DIVISIBILITY.select(&name).get(env);
             atomic
                 .derive(&table.DIVISIBILITY.select(&name))
-                .set(RuneTable::<E>::new().DIVISIBILITY.select(&name).get());
+                .set(env, divisibility);
+            let symbol = RuneTable::<E>::new().SYMBOL.select(&name).get(env);
             atomic
                 .derive(&table.SYMBOL.select(&name))
-                .set(RuneTable::<E>::new().SYMBOL.select(&name).get());
-            atomic.derive(&table.ETCHINGS).append(name);
+                .set(env, symbol);
+            atomic.derive(&table.ETCHINGS).append(env, name);
         }
         if !proto_balances_by_output.contains_key(&outpoint.vout) {
             proto_balances_by_output.insert(outpoint.vout, BalanceSheet::default());
@@ -62,6 +66,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Protoburn<E> {
                 .get_mut(&outpoint.vout)
                 .ok_or("")
                 .map_err(|_| anyhow!("outpoint vout not in proto_balances_by_output"))?,
+			env,
         )?;
         Ok(())
     }
@@ -74,11 +79,12 @@ pub trait Protoburns<E: RuntimeEnvironment + Clone, T>: Deref<Target = [T]> {
     }
     fn process(
         &mut self,
+        env: &mut E,
         atomic: &mut AtomicPointer<E>,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()>;
@@ -87,27 +93,28 @@ pub trait Protoburns<E: RuntimeEnvironment + Clone, T>: Deref<Target = [T]> {
 impl<E: RuntimeEnvironment + Clone + Default> Protoburns<E, Protoburn<E>> for Vec<Protoburn<E>> {
     fn process(
         &mut self,
+        env: &mut E,
         atomic: &mut AtomicPointer<E>,
         runestone_edicts: Vec<Edict>,
         runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
         default_output: u32,
-        txid: Txid,
+        txid: Txid
     ) -> Result<()> {
-        let mut runestone_balance_sheet: BalanceSheet<AtomicPointer<E>> = BalanceSheet::new();
+        let mut runestone_balance_sheet: BalanceSheet<E, AtomicPointer<E>> = BalanceSheet::default();
         if balances_by_output.contains_key(&runestone_output_index) {
             let sheet = balances_by_output
                 .get(&runestone_output_index)
                 .ok_or(anyhow!("cannot find balance sheet"))?;
-            sheet.pipe(&mut runestone_balance_sheet)?;
+            sheet.pipe(&mut runestone_balance_sheet, env)?;
         }
         let mut burn_cycles = self.construct_burncycle()?;
         let mut pull_set = BTreeMap::<u32, bool>::new();
         let mut burn_sheets = self
             .iter_mut()
-            .map(|_a| BalanceSheet::new())
-            .collect::<Vec<BalanceSheet<AtomicPointer<E>>>>();
+            .map(|_a| BalanceSheet::default())
+            .collect::<Vec<BalanceSheet<E, AtomicPointer<E>>>>();
 
         // from field in Protoburn is provided, which means the burn doesn't cycle through the inputs, just pulls the inputs from the "from" field and burns those
         for (i, burn) in self.iter_mut().enumerate() {
@@ -122,13 +129,13 @@ impl<E: RuntimeEnvironment + Clone + Default> Protoburns<E, Protoburn<E>> for Ve
                         == runestone_output_index
                     {
                         let rune = runestone_edicts[j as usize].id;
-                        let remaining = runestone_balance_sheet.get(&rune.into());
+                        let remaining = runestone_balance_sheet.get(&rune.into(), env);
                         let to_apply = min(remaining, runestone_edicts[j as usize].amount);
                         if to_apply == 0 {
                             continue;
                         }
-                        runestone_balance_sheet.decrease(&rune.clone().into(), to_apply);
-                        burn_sheets[i].increase(&rune.into(), to_apply)?;
+                        runestone_balance_sheet.decrease(&rune.clone().into(), to_apply, env);
+                burn_sheets[i].increase(&rune.into(), to_apply, env)?;
                     }
                 }
             }
@@ -142,14 +149,14 @@ impl<E: RuntimeEnvironment + Clone + Default> Protoburns<E, Protoburn<E>> for Ve
             if edict.output == runestone_output_index {
                 let rune = edict.id;
                 let cycle = burn_cycles.peek(&(rune.into()))?;
-                let remaining = runestone_balance_sheet.get(&(rune.into()));
+                let remaining = runestone_balance_sheet.get(&(rune.into()), env);
                 let to_apply = min(remaining, edict.amount);
                 if to_apply == 0 {
                     continue;
                 };
                 burn_cycles.next(&(rune.into()))?;
-                runestone_balance_sheet.decrease(&rune.clone().into(), to_apply);
-                burn_sheets[cycle as usize].increase(&rune.into(), to_apply)?;
+                runestone_balance_sheet.decrease(&rune.clone().into(), to_apply, env);
+                burn_sheets[cycle as usize].increase(&rune.into(), to_apply, env)?;
             }
         }
 
@@ -158,19 +165,20 @@ impl<E: RuntimeEnvironment + Clone + Default> Protoburns<E, Protoburn<E>> for Ve
         if runestone_output_index == default_output {
             for rune in runestone_balance_sheet.clone().balances().keys() {
                 let cycle = burn_cycles.peek(rune)?;
-                let to_apply = runestone_balance_sheet.get(rune);
+                let to_apply = runestone_balance_sheet.get(rune, env);
                 if to_apply == 0 {
                     continue;
                 };
                 burn_cycles.next(rune)?;
-                runestone_balance_sheet.decrease(rune, to_apply);
-                burn_sheets[cycle as usize].increase(rune, to_apply)?;
+                runestone_balance_sheet.decrease(rune, to_apply, env);
+                burn_sheets[cycle as usize].increase(rune, to_apply, env)?;
             }
         }
 
         for (i, burn) in self.iter_mut().enumerate() {
             let sheet = burn_sheets[i].clone();
             burn.process(
+                env,
                 atomic,
                 sheet,
                 proto_balances_by_output,

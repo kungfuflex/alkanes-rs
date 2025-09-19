@@ -284,7 +284,12 @@ pub fn update_cache_stats(cache_stats: CacheStats) {
 
 /// Log block summary at the end of block processing
 #[cfg(not(target_arch = "wasm32"))]
-pub fn log_block_summary<E: RuntimeEnvironment>(block: &Block, height: u32, block_size_bytes: usize) {
+pub fn log_block_summary<E: RuntimeEnvironment>(
+    env: &mut E,
+    block: &Block,
+    height: u32,
+    block_size_bytes: usize,
+) {
     // Update cache stats before logging
     update_cache_stats(CacheStats::default());
 
@@ -295,35 +300,35 @@ pub fn log_block_summary<E: RuntimeEnvironment>(block: &Block, height: u32, bloc
 
     if let Some(stats) = stats {
         // Use println! to ensure block summaries are always visible regardless of logs feature
-        E::log("");
-        E::log("🏗️  ═══════════════════════════════════════════════════════════════");
-        E::log(&format!("📦 BLOCK {} PROCESSING SUMMARY", height));
-        E::log("🏗️  ═══════════════════════════════════════════════════════════════");
-        E::log(&format!("🔗 Block Hash: {}", block.block_hash()));
-        E::log(&format!(
+        env.log("");
+        env.log("🏗️  ═══════════════════════════════════════════════════════════════");
+        env.log(&format!("📦 BLOCK {} PROCESSING SUMMARY", height));
+        env.log("🏗️  ═══════════════════════════════════════════════════════════════");
+        env.log(&format!("🔗 Block Hash: {}", block.block_hash()));
+        env.log(&format!(
             "📏 Block Size: {} bytes",
             format_number_with_commas(block_size_bytes)
         ));
-        E::log("");
+        env.log("");
 
         // Transaction & Outpoint Processing
-        E::log("💳 TRANSACTION PROCESSING");
-        E::log(&format!("├── 📊 Transactions: {}", stats.transactions_processed));
-        E::log(&format!("└── 🎯 Outpoints: {}", stats.outpoints_indexed));
-        E::log("");
+        env.log("💳 TRANSACTION PROCESSING");
+        env.log(&format!("├── 📊 Transactions: {}", stats.transactions_processed));
+        env.log(&format!("└── 🎯 Outpoints: {}", stats.outpoints_indexed));
+        env.log("");
 
         // Protostone Execution
-        E::log("⚡ PROTOSTONE EXECUTION");
-        E::log(&format!("├── 🚀 Total Executed: {}", stats.protostones_run));
-        E::log(&format!(
+        env.log("⚡ PROTOSTONE EXECUTION");
+        env.log(&format!("├── 🚀 Total Executed: {}", stats.protostones_run));
+        env.log(&format!(
             "└── 📦 With Cellpacks: {}",
             stats.protostones_with_cellpacks
         ));
-        E::log("");
+        env.log("");
 
         // New Alkanes Created
         if !stats.new_alkanes.is_empty() {
-            E::log(&format!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len()));
+            env.log(&format!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len()));
 
             let mut direct_init_count = 0;
             let mut predictable_count = 0;
@@ -338,28 +343,28 @@ pub fn log_block_summary<E: RuntimeEnvironment>(block: &Block, height: u32, bloc
                 match alkane.creation_method {
                     CreationMethod::DirectInit => {
                         direct_init_count += 1;
-                        E::log(&format!(
+                        env.log(&format!(
                             "{} 🆕 [2, {}]: {:.2} KB WASM (direct init [1, 0])",
                             prefix, alkane.alkane_id.tx, alkane.wasm_size_kb
                         ));
                     }
                     CreationMethod::PredictableAddress(n) => {
                         predictable_count += 1;
-                        E::log(&format!(
+                        env.log(&format!(
                             "{} 🎯 [4, {}]: {:.2} KB WASM (predictable [3, {}])",
                             prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, n
                         ));
                     }
                     CreationMethod::FactoryClone(source) => {
                         factory_clone_count += 1;
-                        E::log(&format!(
+                        env.log(&format!(
                             "{} 🏭 [2, {}]: {:.2} KB WASM (factory clone [5, {}])",
                             prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx
                         ));
                     }
                     CreationMethod::FactoryClonePredictable(source) => {
                         factory_clone_predictable_count += 1;
-                        E::log(&format!(
+                        env.log(&format!(
                             "{} 🎯🏭 [2, {}]: {:.2} KB WASM (factory clone [6, {}])",
                             prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx
                         ));
@@ -368,35 +373,35 @@ pub fn log_block_summary<E: RuntimeEnvironment>(block: &Block, height: u32, bloc
                 total_wasm_size_kb += alkane.wasm_size_kb;
             }
 
-            E::log("");
-            E::log("📈 DEPLOYMENT BREAKDOWN:");
-            E::log(&format!("├── 🆕 Direct Init: {}", direct_init_count));
-            E::log(&format!("├── 🎯 Predictable: {}", predictable_count));
-            E::log(&format!("├── 🏭 Factory Clones: {}", factory_clone_count));
-            E::log(&format!(
+            env.log("");
+            env.log("📈 DEPLOYMENT BREAKDOWN:");
+            env.log(&format!("├── 🆕 Direct Init: {}", direct_init_count));
+            env.log(&format!("├── 🎯 Predictable: {}", predictable_count));
+            env.log(&format!("├── 🏭 Factory Clones: {}", factory_clone_count));
+            env.log(&format!(
                 "├── 🎯🏭 Factory Predictable: {}",
                 factory_clone_predictable_count
             ));
-            E::log(&format!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb));
+            env.log(&format!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb));
         } else {
-            E::log("🧪 NEW ALKANES DEPLOYED");
-            E::log("└── ❌ None deployed this block");
+            env.log("🧪 NEW ALKANES DEPLOYED");
+            env.log("└── ❌ None deployed this block");
         }
-        E::log("");
+        env.log("");
 
         // Fuel Usage
-        E::log("⛽ FUEL CONSUMPTION");
-        E::log(&format!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed));
-        E::log(&format!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused));
-        E::log("");
+        env.log("⛽ FUEL CONSUMPTION");
+        env.log(&format!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed));
+        env.log(&format!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused));
+        env.log("");
 
         // Cache Performance
-        E::log("🗄️  CACHE PERFORMANCE");
-        E::log("└── 😴 No cache activity");
+        env.log("🗄️  CACHE PERFORMANCE");
+        env.log("└── 😴 No cache activity");
 
-        E::log("");
-        E::log("🏗️  ═══════════════════════════════════════════════════════════════");
-        E::log("");
+        env.log("");
+        env.log("🏗️  ═══════════════════════════════════════════════════════════════");
+        env.log("");
     }
 }
 
@@ -417,42 +422,47 @@ fn format_number_with_commas(n: usize) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn log_block_summary<E: RuntimeEnvironment>(block: &Block, height: u32, block_size_bytes: usize) {
+pub fn log_block_summary<E: RuntimeEnvironment>(
+    env: &mut E,
+    block: &Block,
+    height: u32,
+    block_size_bytes: usize,
+) {
     // Update cache stats before logging
     update_cache_stats(CacheStats::default());
 
     BLOCK_STATS.with(|stats| {
         if let Some(ref stats) = &*stats.borrow() {
             // Use E::log to ensure block summaries are always visible regardless of logs feature
-            E::log("");
-            E::log("🏗️  ═══════════════════════════════════════════════════════════════");
-            E::log(&format!("📦 BLOCK {} PROCESSING SUMMARY", height));
-            E::log("🏗️  ═══════════════════════════════════════════════════════════════");
-            E::log(&format!("🔗 Block Hash: {}", block.block_hash()));
-            E::log(&format!(
+            env.log("");
+            env.log("🏗️  ═══════════════════════════════════════════════════════════════");
+            env.log(&format!("📦 BLOCK {} PROCESSING SUMMARY", height));
+            env.log("🏗️  ═══════════════════════════════════════════════════════════════");
+            env.log(&format!("🔗 Block Hash: {}", block.block_hash()));
+            env.log(&format!(
                 "📏 Block Size: {} bytes",
                 format_number_with_commas(block_size_bytes)
             ));
-            E::log("");
+            env.log("");
 
             // Transaction & Outpoint Processing
-            E::log("💳 TRANSACTION PROCESSING");
-            E::log(&format!("├── 📊 Transactions: {}", stats.transactions_processed));
-            E::log(&format!("└── 🎯 Outpoints: {}", stats.outpoints_indexed));
-            E::log("");
+            env.log("💳 TRANSACTION PROCESSING");
+            env.log(&format!("├── 📊 Transactions: {}", stats.transactions_processed));
+            env.log(&format!("└── 🎯 Outpoints: {}", stats.outpoints_indexed));
+            env.log("");
 
             // Protostone Execution
-            E::log("⚡ PROTOSTONE EXECUTION");
-            E::log(&format!("├── 🚀 Total Executed: {}", stats.protostones_run));
-            E::log(&format!(
+            env.log("⚡ PROTOSTONE EXECUTION");
+            env.log(&format!("├── 🚀 Total Executed: {}", stats.protostones_run));
+            env.log(&format!(
                 "└── 📦 With Cellpacks: {}",
                 stats.protostones_with_cellpacks
             ));
-            E::log("");
+            env.log("");
 
             // New Alkanes Created
             if !stats.new_alkanes.is_empty() {
-                E::log(&format!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len()));
+                env.log(&format!("🧪 NEW ALKANES DEPLOYED ({})", stats.new_alkanes.len()));
 
                 let mut direct_init_count = 0;
                 let mut predictable_count = 0;
@@ -467,28 +477,28 @@ pub fn log_block_summary<E: RuntimeEnvironment>(block: &Block, height: u32, bloc
                     match alkane.creation_method {
                         CreationMethod::DirectInit => {
                             direct_init_count += 1;
-                            E::log(&format!(
+                            env.log(&format!(
                                 "{} 🆕 [2, {}]: {:.2} KB WASM (direct init [1, 0])",
                                 prefix, alkane.alkane_id.tx, alkane.wasm_size_kb
                             ));
                         }
                         CreationMethod::PredictableAddress(n) => {
                             predictable_count += 1;
-                            E::log(&format!(
+                            env.log(&format!(
                                 "{} 🎯 [4, {}]: {:.2} KB WASM (predictable [3, {}])",
                                 prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, n
                             ));
                         }
                         CreationMethod::FactoryClone(source) => {
                             factory_clone_count += 1;
-                            E::log(&format!(
+                            env.log(&format!(
                                 "{} 🏭 [2, {}]: {:.2} KB WASM (factory clone [5, {}])",
                                 prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx
                             ));
                         }
                         CreationMethod::FactoryClonePredictable(source) => {
                             factory_clone_predictable_count += 1;
-                            E::log(&format!(
+                            env.log(&format!(
                                 "{} 🎯🏭 [2, {}]: {:.2} KB WASM (factory clone [6, {}])",
                                 prefix, alkane.alkane_id.tx, alkane.wasm_size_kb, source.tx
                             ));
@@ -497,35 +507,35 @@ pub fn log_block_summary<E: RuntimeEnvironment>(block: &Block, height: u32, bloc
                     total_wasm_size_kb += alkane.wasm_size_kb;
                 }
 
-                E::log("");
-                E::log("📈 DEPLOYMENT BREAKDOWN:");
-                E::log(&format!("├── 🆕 Direct Init: {}", direct_init_count));
-                E::log(&format!("├── 🎯 Predictable: {}", predictable_count));
-                E::log(&format!("├── 🏭 Factory Clones: {}", factory_clone_count));
-                E::log(&format!(
+                env.log("");
+                env.log("📈 DEPLOYMENT BREAKDOWN:");
+                env.log(&format!("├── 🆕 Direct Init: {}", direct_init_count));
+                env.log(&format!("├── 🎯 Predictable: {}", predictable_count));
+                env.log(&format!("├── 🏭 Factory Clones: {}", factory_clone_count));
+                env.log(&format!(
                     "├── 🎯🏭 Factory Predictable: {}",
                     factory_clone_predictable_count
                 ));
-                E::log(&format!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb));
+                env.log(&format!("└── 💾 Total WASM: {:.2} KB", total_wasm_size_kb));
             } else {
-                E::log("🧪 NEW ALKANES DEPLOYED");
-                E::log("└── ❌ None deployed this block");
+                env.log("🧪 NEW ALKANES DEPLOYED");
+                env.log("└── ❌ None deployed this block");
             }
-            E::log("");
+            env.log("");
 
             // Fuel Usage
-            E::log("⛽ FUEL CONSUMPTION");
-            E::log(&format!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed));
-            E::log(&format!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused));
-            E::log("");
+            env.log("⛽ FUEL CONSUMPTION");
+            env.log(&format!("├── 🔥 Total Consumed: {}", stats.total_fuel_consumed));
+            env.log(&format!("└── 💨 Excess Unused: {}", stats.excess_fuel_unused));
+            env.log("");
 
             // Cache Performance
-            E::log("🗄️  CACHE PERFORMANCE");
-            E::log("└── 😴 No cache activity");
+            env.log("🗄️  CACHE PERFORMANCE");
+            env.log("└── 😴 No cache activity");
 
-            E::log("");
-            E::log("🏗️  ═══════════════════════════════════════════════════════════════");
-            E::log("");
+            env.log("");
+            env.log("🏗️  ═══════════════════════════════════════════════════════════════");
+            env.log("");
         }
     });
 }

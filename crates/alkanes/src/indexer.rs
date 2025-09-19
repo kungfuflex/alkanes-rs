@@ -12,7 +12,6 @@ use anyhow::Result;
 use bitcoin::blockdata::block::Block;
 use metashrew_support::index_pointer::IndexPointer;
 
-#[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;
 
@@ -78,6 +77,8 @@ pub fn configure_network() {
 #[cfg(feature = "cache")]
 use crate::view::protorunes_by_address;
 #[cfg(feature = "cache")]
+use metashrew_core::app::Initialise;
+#[cfg(feature = "cache")]
 use prost::Message;
 #[cfg(feature = "cache")]
 use protorune::tables::{CACHED_FILTERED_WALLET_RESPONSE, CACHED_WALLET_RESPONSE};
@@ -85,30 +86,33 @@ use protorune::tables::{CACHED_FILTERED_WALLET_RESPONSE, CACHED_WALLET_RESPONSE}
 use protorune_support::proto::protorune::ProtorunesWalletRequest;
 
 
-pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(block: &Block, height: u32) -> Result<()> {
+pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(
+    env: &mut E,
+    block: &Block,
+    height: u32,
+) -> Result<()> {
     logging::init_block_stats();
     logging::record_transactions(block.txdata.len() as u32);
     configure_network();
     clear_diesel_mints_cache();
-    let really_is_genesis = is_genesis::<E>(height.into());
+    let really_is_genesis = is_genesis(env, height.into());
     if really_is_genesis {
-        genesis::<E>(&block).unwrap();
+        genesis(env, &block).unwrap();
     }
     if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
-        let mut upgrade_ptr = IndexPointer::<AlkaneMessageContext<E>>::from_keyword("/genesis-upgraded");
-        if upgrade_ptr.get().len() == 0 {
-            upgrade_ptr.set_value::<u8>(0x01);
-            IndexPointer::<AlkaneMessageContext<E>>::from_keyword("/alkanes/")
+        let mut upgrade_ptr = IndexPointer::<E>::from_keyword("/genesis-upgraded");
+        if upgrade_ptr.get(env).len() == 0 {
+            upgrade_ptr.set_value(env, 0x01_u8);
+            IndexPointer::<E>::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
-                .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
+                .set(env, Arc::new(compress(genesis_alkane_upgrade_bytes())?));
         }
     }
-    FuelTank::initialize::<AlkaneMessageContext<E>>(&block, height);
+    FuelTank::initialize::<E>(&block, height);
     // Get the set of updated addresses from the indexing process
-    let _updated_addresses =
-        Protorune::index_block::<AlkaneMessageContext<E>>(block.clone(), height.into())?;
+    let _updated_addresses = Protorune::index_block::<AlkaneMessageContext<E>>(env, block.clone(), height.into())?;
 
-    let _ = unwrap::update_last_block::<E>(height as u128);
+    let _ = unwrap::update_last_block(env, height as u128)?;
 
     #[cfg(feature = "cache")]
     {
@@ -124,16 +128,16 @@ pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(block: &Bl
             request.wallet = address.clone();
             request.protocol_tag = Some(<u128 as Into<
                 protorune_support::proto::protorune::Uint128,
-            >>::into(AlkaneMessageContext::<E>::protocol_tag()))
+            >>::into(Protorune::protocol_tag()))
             .into();
 
             // Get the WalletResponse for this address (full set of spendable outputs)
-            match protorunes_by_address(&request.encode_to_vec()) {
+            match protorunes_by_address(env, &request.encode_to_vec()) {
                 Ok(full_response) => {
                     // Cache the serialized full WalletResponse
                     CACHED_WALLET_RESPONSE
                         .select(&address)
-                        .set(Arc::new(full_response.encode_to_vec()));
+                        .set(env, Arc::new(full_response.encode_to_vec()));
 
                     // Create a filtered version with only outpoints that have runes
                     let mut filtered_response = full_response.clone();
@@ -141,11 +145,7 @@ pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(block: &Bl
                         .outpoints
                         .into_iter()
                         .filter_map(|v| {
-                            if v.balances.unwrap_or_default()
-                                .entries
-                                .len()
-                                == 0
-                            {
+                            if v.balances.unwrap_or_default().entries.len() == 0 {
                                 None
                             } else {
                                 Some(v)
@@ -156,15 +156,15 @@ pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(block: &Bl
                     // Cache the serialized filtered WalletResponse
                     CACHED_FILTERED_WALLET_RESPONSE
                         .select(&address)
-                        .set(Arc::new(filtered_response.encode_to_vec()));
+                        .set(env, Arc::new(filtered_response.encode_to_vec()));
                 }
                 Err(e) => {
-                    E::log(&format!("Error caching wallet response for address: {:?}", e));
+                    env.log(&format!("Error caching wallet response for address: {:?}", e));
                 }
             }
         }
     }
 
-    logging::log_block_summary::<E>(block, height, block.total_size());
+    logging::log_block_summary(env, block, height, block.total_size());
     Ok(())
 }

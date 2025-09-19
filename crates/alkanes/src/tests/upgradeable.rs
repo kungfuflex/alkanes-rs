@@ -7,7 +7,6 @@ use crate::tests::std::{
 use crate::tests::test_runtime::TestRuntime;
 use crate::view;
 use crate::vm::utils::sequence_pointer;
-use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
@@ -23,7 +22,6 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::utils::consensus_decode;
-use std::fmt::Write;
 
 pub const BEACON_ID: u128 = 0xbeac0;
 
@@ -325,7 +323,7 @@ fn test_upgradeability() -> Result<()> {
 fn test_beacon_proxy() -> Result<()> {
     setup_env()?;
     let init_block = deploy_upgradeable_beacon()?;
-    println!("deployed upgradeable beacon");
+    TestRuntime::log(format!("deployed upgradeable beacon"));
     let (_, proxy_sequence_1) = deploy_upgradeable_proxy(
         alkanes_std_beacon_proxy_build::get_bytes(),
         0,
@@ -334,7 +332,7 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    println!("deployed first beacon proxy");
+    TestRuntime::log(format!("deployed first beacon proxy"));
     upgradeability_harness(
         proxy_sequence_1,
         0,
@@ -343,7 +341,7 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    println!("tested first beacon proxy");
+    TestRuntime::log(format!("tested first beacon proxy"));
 
     let (_, proxy_sequence_2) = deploy_upgradeable_proxy(
         alkanes_std_beacon_proxy_build::get_bytes(),
@@ -353,7 +351,7 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    println!("deployed second beacon proxy");
+    TestRuntime::log(format!("deployed second beacon proxy"));
     upgradeability_harness(
         proxy_sequence_2,
         0,
@@ -362,7 +360,7 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    println!("tested second beacon proxy");
+    TestRuntime::log(format!("tested second beacon proxy"));
     upgrade_implementation(
         0,
         OutPoint {

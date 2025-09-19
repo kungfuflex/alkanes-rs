@@ -1,5 +1,6 @@
 use alkanes_runtime::auth::AuthenticatedResponder;
 use alkanes_runtime::declare_alkane;
+use alkanes_runtime::environment::AlkaneEnvironment;
 use alkanes_runtime::message::MessageDispatch;
 #[allow(unused_imports)]
 use alkanes_runtime::{
@@ -16,7 +17,7 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use std::sync::Arc;
 
 #[derive(Default)]
-pub struct BeaconProxy(());
+pub struct BeaconProxy(AlkaneEnvironment);
 
 #[derive(MessageDispatch)]
 enum BeaconProxyMessage {
@@ -27,25 +28,29 @@ enum BeaconProxyMessage {
 }
 
 impl BeaconProxy {
-    fn forward(&self) -> Result<CallResponse> {
+    fn forward(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let response = CallResponse::forward(&context.incoming_alkanes);
         Ok(response)
     }
     pub fn beacon_pointer() -> StoragePointer {
-        StoragePointer::from_keyword("/beacon")
+        StoragePointer::from_keyword("/beacon ")
     }
 
-    pub fn beacon() -> Result<AlkaneId> {
-        Ok(Self::beacon_pointer().get().as_ref().clone().try_into()?)
+    pub fn beacon(&mut self) -> Result<AlkaneId> {
+        Ok(Self::beacon_pointer()
+            .get(&mut self.0)
+            .as_ref()
+            .clone()
+            .try_into()?)
     }
 
-    pub fn set_beacon(v: AlkaneId) {
-        Self::beacon_pointer().set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
+    pub fn set_beacon(&mut self, v: AlkaneId) {
+        Self::beacon_pointer().set(&mut self.0, Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
     }
 
-    pub fn get_logic_impl(&self) -> Result<AlkaneId> {
-        let beacon = Self::beacon_pointer().get().as_ref().clone().try_into()?;
+    pub fn get_logic_impl(&mut self) -> Result<AlkaneId> {
+        let beacon = Self::beacon_pointer().get(&mut self.0).as_ref().clone().try_into()?;
         let response = self.staticcall(
             &Cellpack {
                 target: beacon,
@@ -57,11 +62,11 @@ impl BeaconProxy {
         Ok(response.data.try_into()?)
     }
 
-    fn initialize(&self, implementation: AlkaneId) -> Result<CallResponse> {
+    fn initialize(&mut self, implementation: AlkaneId) -> Result<CallResponse> {
         self.observe_proxy_initialization()?;
         let context = self.context()?;
 
-        Self::set_beacon(implementation);
+        self.set_beacon(implementation);
         let response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
         Ok(response)
     }
@@ -70,7 +75,10 @@ impl BeaconProxy {
 impl AuthenticatedResponder for BeaconProxy {}
 
 impl AlkaneResponder for BeaconProxy {
-    fn fallback(&self) -> Result<CallResponse> {
+    fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.0
+    }
+    fn fallback(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let inputs: Vec<u128> = context.inputs.clone();
         let cellpack = Cellpack {

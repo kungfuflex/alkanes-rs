@@ -3,7 +3,6 @@ use crate::message::AlkaneMessageContext;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_test_build;
 use crate::tests::test_runtime::TestRuntime;
-use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
@@ -22,7 +21,6 @@ use protorune::{
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
 use protorune::protostone::Protostones;
-use std::fmt::Write;
 use std::str::FromStr;
 
 #[test]

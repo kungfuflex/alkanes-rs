@@ -1,4 +1,6 @@
 use byteorder::{ByteOrder, LittleEndian};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct EnvironmentInput {
@@ -14,10 +16,16 @@ impl EnvironmentInput {
     }
 }
 
-pub trait RuntimeEnvironment: std::fmt::Debug {
-    fn get(key: &[u8]) -> Option<Vec<u8>>;
-    fn flush(data: &[u8]) -> Result<(), ()>;
-    fn load_input() -> Result<EnvironmentInput, ()>;
-    fn log(message: &str);
-    fn clear();
+pub trait RuntimeEnvironment: std::fmt::Debug + Clone + Default {
+    fn get(&mut self, key: &[u8]) -> Option<Vec<u8>>;
+    fn flush(&mut self, data: &[u8]) -> Result<(), ()>;
+    fn load_input(&self) -> Result<EnvironmentInput, ()>;
+    fn log(&self, message: &str);
+    fn clear(&mut self);
+    fn cache(&mut self) -> &mut HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>> {
+        unimplemented!("cache not implemented for this environment")
+    }
+    fn to_flush(&mut self) -> &mut Vec<Arc<Vec<u8>>> {
+        unimplemented!("to_flush not implemented for this environment")
+    }
 }

@@ -1,23 +1,22 @@
-use crate::message::AlkaneMessageContext;
 use anyhow::{anyhow, Result};
 use bitcoin;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::consensus::encode::Decodable;
-use metashrew_support::index_pointer::IndexPointer;
-use metashrew_support::index_pointer::KeyValuePointer;
-use once_cell::sync::Lazy;
+use metashrew_core::environment::RuntimeEnvironment;
+use metashrew_support::index_pointer::{IndexPointer, KeyValuePointer};
 use std::io::Cursor;
 use std::sync::Arc;
 
-use metashrew_core::environment::MetashrewEnvironment;
-pub static BLOCKS: Lazy<IndexPointer<AlkaneMessageContext<MetashrewEnvironment>>> = Lazy::new(|| IndexPointer::from_keyword("/blockdata/"));
-
-pub fn index_extensions(height: u32, v: &bitcoin::Block) {
-    BLOCKS.select_value(height).set(Arc::new(serialize(v)))
+pub fn blocks<E: RuntimeEnvironment>() -> IndexPointer<E> {
+    IndexPointer::from_keyword("/blockdata/")
 }
 
-pub fn get_block(height: u32) -> Result<bitcoin::Block> {
-    let block_data = BLOCKS.select_value(height).get();
+pub fn index_extensions<E: RuntimeEnvironment>(env: &mut E, height: u32, v: &bitcoin::Block) {
+    blocks().select_value(height).set(env, Arc::new(serialize(v)))
+}
+
+pub fn get_block<E: RuntimeEnvironment>(env: &mut E, height: u32) -> Result<bitcoin::Block> {
+    let block_data = blocks().select_value(height).get(env);
     if block_data.len() == 0 {
         return Err(anyhow!("Block not found for height: {}", height));
     }

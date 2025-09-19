@@ -1,3 +1,4 @@
+use crate::tests::test_runtime::TestRuntime;
 use metashrew_support::environment::RuntimeEnvironment;
 use crate::index_block;
 use crate::tests::helpers::init_with_multiple_cellpacks_with_tx;
@@ -13,8 +14,6 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-use std::fmt::Write;
-use alkanes_runtime::{println, stdout};
 use protorune::message::MessageContextParcel;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -38,7 +37,7 @@ fn test_contract_abi<E: RuntimeEnvironment + Clone + Default + 'static>(
     let abi_json: Value = serde_json::from_slice(&abi_bytes)?;
 
     // Print the ABI for debugging
-    println!("{} ABI: {}", contract_name, abi_string);
+    TestRuntime::log(format!("{} ABI: {}", contract_name, abi_string));
 
     // Verify the contract name
     assert_eq!(abi_json["contract"], contract_name);
@@ -184,7 +183,7 @@ fn test_meta_call() -> Result<()> {
         "ABI should contain methods"
     );
 
-    println!("ABI: {}", abi_string);
+    TestRuntime::log(format!("ABI: {}", abi_string));
     Ok(())
 }
 

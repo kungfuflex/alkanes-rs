@@ -6,7 +6,6 @@ mod tests {
     use anyhow::Result;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use alkanes_runtime::{println, stdout}; use std::fmt::Write;
 
     // Create a static counter to track the number of calls to call_view
     static CALL_VIEW_COUNTER: AtomicUsize = AtomicUsize::new(0);

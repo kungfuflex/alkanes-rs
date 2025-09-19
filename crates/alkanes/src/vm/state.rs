@@ -7,4 +7,5 @@ pub struct AlkanesState<E: RuntimeEnvironment + Clone + Default> {
     pub(super) had_failure: bool,
     pub(super) context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     pub(super) limiter: StoreLimits,
+    pub(super) env: E,
 }

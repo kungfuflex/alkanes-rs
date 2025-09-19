@@ -6,15 +6,24 @@ use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
-use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer};
+use alkanes_runtime::{environment::AlkaneEnvironment, runtime::AlkaneResponder, storage::StoragePointer};
 use alkanes_support::{id::AlkaneId, response::CallResponse};
 use anyhow::Result;
 use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::sync::Arc;
 
-#[derive(Default)]
-pub struct UpgradeableBeacon(());
+pub struct UpgradeableBeacon {
+    env: AlkaneEnvironment,
+}
+
+impl Default for UpgradeableBeacon {
+    fn default() -> Self {
+        Self {
+            env: AlkaneEnvironment::new(),
+        }
+    }
+}
 
 #[derive(MessageDispatch)]
 enum UpgradeableBeaconMessage {
@@ -34,7 +43,7 @@ enum UpgradeableBeaconMessage {
 }
 
 impl UpgradeableBeacon {
-    fn forward(&self) -> Result<CallResponse> {
+    fn forward(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let response = CallResponse::forward(&context.incoming_alkanes);
         Ok(response)
@@ -43,23 +52,23 @@ impl UpgradeableBeacon {
         StoragePointer::from_keyword("/implementation")
     }
 
-    pub fn _implementation() -> Result<AlkaneId> {
+    pub fn _implementation(&mut self) -> Result<AlkaneId> {
         Ok(Self::implementation_pointer()
-            .get()
+            .get(self.env())
             .as_ref()
             .clone()
             .try_into()?)
     }
 
-    pub fn set_implementation(v: AlkaneId) {
-        Self::implementation_pointer().set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
+    pub fn set_implementation(&mut self, v: AlkaneId) {
+        Self::implementation_pointer().set(self.env(), Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
     }
 
-    fn initialize(&self, implementation: AlkaneId, auth_token_units: u128) -> Result<CallResponse> {
+    fn initialize(&mut self, implementation: AlkaneId, auth_token_units: u128) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
 
-        Self::set_implementation(implementation);
+        self.set_implementation(implementation);
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
 
         response
@@ -69,26 +78,30 @@ impl UpgradeableBeacon {
         Ok(response)
     }
 
-    fn implementation(&self) -> Result<CallResponse> {
+    fn implementation(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        response.data = Self::_implementation()?.into();
+        response.data = self._implementation()?.into();
         Ok(response)
     }
 
-    fn upgrade_to(&self, implementation: AlkaneId) -> Result<CallResponse> {
+    fn upgrade_to(&mut self, implementation: AlkaneId) -> Result<CallResponse> {
         let context = self.context()?;
 
         self.only_owner()?;
 
-        Self::set_implementation(implementation);
+        self.set_implementation(implementation);
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 }
 
 impl AuthenticatedResponder for UpgradeableBeacon {}
 
-impl AlkaneResponder for UpgradeableBeacon {}
+impl AlkaneResponder for UpgradeableBeacon {
+    fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.env
+    }
+}
 
 // Use the new macro format
 declare_alkane! {

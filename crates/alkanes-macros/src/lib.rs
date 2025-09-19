@@ -488,7 +488,7 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
                 }
             }
 
-            fn dispatch(&self, responder: &#concrete_type_name) -> Result<alkanes_support::response::CallResponse, anyhow::Error> {
+            fn dispatch(&mut self, responder: &mut #concrete_type_name) -> Result<alkanes_support::response::CallResponse, anyhow::Error> {
                 match self {
                     #(#dispatch_arms),*
                 }

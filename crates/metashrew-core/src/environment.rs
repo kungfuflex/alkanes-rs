@@ -14,7 +14,7 @@ extern "C" {
 pub struct MetashrewEnvironment;
 
 impl RuntimeEnvironment for MetashrewEnvironment {
-    fn get(key: &[u8]) -> Option<Vec<u8>> {
+    fn get(&mut self, key: &[u8]) -> Option<Vec<u8>> {
         unsafe {
             let len = __get_len(key.as_ptr(), key.len());
             if len == -1 {
@@ -27,14 +27,14 @@ impl RuntimeEnvironment for MetashrewEnvironment {
         }
     }
 
-    fn flush(data: &[u8]) -> Result<(), ()> {
+    fn flush(&mut self, data: &[u8]) -> Result<(), ()> {
         unsafe {
             __flush(data.as_ptr(), data.len());
         }
         Ok(())
     }
 
-    fn load_input() -> Result<EnvironmentInput, ()> {
+    fn load_input(&self) -> Result<EnvironmentInput, ()> {
         unsafe {
             let len = __host_len();
             let mut buffer = Vec::with_capacity(len);
@@ -44,13 +44,13 @@ impl RuntimeEnvironment for MetashrewEnvironment {
         }
     }
 
-    fn log(message: &str) {
+    fn log(&self, message: &str) {
         unsafe {
             __log(message.as_ptr(), message.len());
         }
     }
 
-    fn clear() {
+    fn clear(&mut self) {
         unsafe {
             __clear();
         }

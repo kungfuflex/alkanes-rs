@@ -19,6 +19,7 @@ alkanes-support = { workspace = true }
 alkanes-macros = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
+metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-test = { workspace = true }

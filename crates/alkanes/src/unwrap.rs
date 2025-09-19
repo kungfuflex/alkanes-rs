@@ -18,18 +18,16 @@ use std::io::Cursor;
 
 use crate::network::genesis;
 
-pub fn fr_btc_storage_pointer<E: RuntimeEnvironment + Clone + Default>() -> IndexPointer<AlkaneMessageContext<E>> {
-    IndexPointer::from_keyword("/alkanes/")
-        .select(&AlkaneId { block: 32, tx: 0 }.into())
-        .keyword("/storage/")
+pub fn fr_btc_storage_pointer<E: RuntimeEnvironment + Clone + Default>() -> IndexPointer<E> {
+    IndexPointer::from_keyword("/fr_btc/storage/")
 }
 
-pub fn fr_btc_fulfilled_pointer<E: RuntimeEnvironment + Clone + Default>() -> IndexPointer<AlkaneMessageContext<E>> {
-    fr_btc_storage_pointer::<E>().keyword("/fulfilled")
+pub fn fr_btc_fulfilled_pointer<E: RuntimeEnvironment + Clone + Default>() -> IndexPointer<E> {
+    IndexPointer::from_keyword("/fr_btc/fulfilled/")
 }
 
-pub fn fr_btc_premium<E: RuntimeEnvironment + Clone + Default>() -> u128 {
-    let bytes = fr_btc_storage_pointer::<E>().keyword("/premium").get();
+pub fn fr_btc_premium<E: RuntimeEnvironment + Clone + Default>(env: &mut E) -> u128 {
+    let bytes = fr_btc_storage_pointer::<E>().keyword("/premium").get(env);
     if bytes.is_empty() {
         0
     } else {
@@ -99,30 +97,42 @@ pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
     Ok(payments)
 }
 
-pub fn fr_btc_payments_at_block<E: RuntimeEnvironment + Clone + Default>(v: u128) -> Vec<Vec<u8>> {
+pub fn fr_btc_payments_at_block<E: RuntimeEnvironment + Clone + Default>(
+    env: &mut E,
+    v: u128,
+) -> Vec<Vec<u8>> {
     fr_btc_storage_pointer::<E>()
         .keyword("/payments/byheight/")
         .select_value::<u64>(v as u64)
-        .get_list()
+        .get_list(env)
         .into_iter()
         .map(|v| v.as_ref().clone())
         .collect::<Vec<Vec<u8>>>()
 }
 
-pub fn view<E: RuntimeEnvironment + Clone + Default>(height: u128) -> Result<PendingUnwrapsResponse> {
+pub fn view<E: RuntimeEnvironment + Clone + Default>(
+    env: &mut E,
+    height: u128,
+) -> Result<PendingUnwrapsResponse> {
     let last_block = std::cmp::max(
         fr_btc_storage_pointer::<E>()
             .keyword("/last_block")
-            .get_value::<u128>(),
+            .get_value(env),
         genesis::GENESIS_BLOCK as u128,
     );
     let mut response = PendingUnwrapsResponse::default();
     for i in last_block..=height {
-        for payment_list_bytes in fr_btc_payments_at_block::<E>(i) {
+        for payment_list_bytes in fr_btc_payments_at_block::<E>(env, i) {
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for mut payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
-                if RuneTable::<AlkaneMessageContext<E>>::new().OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get().len() == 0 {
+                if RuneTable::<E>::new()
+                    .OUTPOINT_SPENDABLE_BY
+                    .select(&spendable_bytes)
+                    .get(env)
+                    .len()
+                    == 0
+                {
                     payment.fulfilled = true;
                 }
                 if !payment.fulfilled {
@@ -141,15 +151,15 @@ pub fn view<E: RuntimeEnvironment + Clone + Default>(height: u128) -> Result<Pen
     Ok(response)
 }
 
-pub fn update_last_block<E: RuntimeEnvironment + Clone + Default>(height: u128) -> Result<()> {
+pub fn update_last_block<E: RuntimeEnvironment + Clone + Default>(
+    env: &mut E,
+    height: u128,
+) -> Result<()> {
     let mut last_block_key = fr_btc_storage_pointer::<E>().keyword("/last_block");
-    let mut last_block = std::cmp::max(
-        last_block_key.get_value::<u128>(),
-        genesis::GENESIS_BLOCK as u128,
-    );
+    let mut last_block = std::cmp::max(last_block_key.get_value(env), genesis::GENESIS_BLOCK as u128);
     for i in last_block..=height {
         let mut all_fulfilled = true;
-        let all_payment_list_bytes = fr_btc_payments_at_block::<E>(i);
+        let all_payment_list_bytes = fr_btc_payments_at_block::<E>(env, i);
         if all_payment_list_bytes.len() == 0 {
             last_block = i;
             continue;
@@ -158,7 +168,10 @@ pub fn update_last_block<E: RuntimeEnvironment + Clone + Default>(height: u128) 
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
-                let spendable_by = RuneTable::<AlkaneMessageContext<E>>::new().OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
+                let spendable_by = RuneTable::<E>::new()
+                    .OUTPOINT_SPENDABLE_BY
+                    .select(&spendable_bytes)
+                    .get(env);
                 if spendable_by.len() > 1 {
                     all_fulfilled = false;
                     break;
@@ -174,6 +187,6 @@ pub fn update_last_block<E: RuntimeEnvironment + Clone + Default>(height: u128) 
             break;
         }
     }
-    last_block_key.set_value::<u128>(last_block);
+    last_block_key.set_value(env, last_block);
     Ok(())
 }

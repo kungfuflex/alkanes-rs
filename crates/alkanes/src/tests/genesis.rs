@@ -22,7 +22,6 @@ use protorune_support::balance_sheet::BalanceSheetOperations;
 use protorune::view::protorune_outpoint_to_outpoint_response;
 use protorune_support::balance_sheet::BalanceSheet;
 use metashrew_support::environment::RuntimeEnvironment;
-use alkanes_runtime::{println, stdout}; use std::fmt::Write;
 
 use protorune::tables::RuneTable;
 // Struct to track fuel benchmarks
@@ -49,25 +48,25 @@ impl FuelBenchmark {
     }
 
     fn display(&self) {
-        println!(
+        TestRuntime::log(format!(
             "│ {:<30} │ {:>12} │ {:>12} │ {:>12} │ {:>8.2}% │",
             self.operation,
             self.initial_fuel,
             self.final_fuel,
             self.fuel_consumed,
             self.fuel_percentage
-        );
+        ));
     }
 }
 
 fn display_benchmark_header() {
-    println!("┌────────────────────────────────┬──────────────┬──────────────┬──────────────┬──────────┐");
-    println!("│ Operation                      │ Initial Fuel │  Final Fuel  │ Fuel Consumed│ % of Max │");
-    println!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤");
+    TestRuntime::log(format!("┌────────────────────────────────┬──────────────┬──────────────┬──────────────┬──────────┐"));
+    TestRuntime::log(format!("│ Operation                      │ Initial Fuel │  Final Fuel  │ Fuel Consumed│ % of Max │"));
+    TestRuntime::log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
 }
 
 fn display_benchmark_footer() {
-    println!("└────────────────────────────────┴──────────────┴──────────────┴──────────────┴──────────┘");
+    TestRuntime::log(format!("└────────────────────────────────┴──────────────┴──────────────┴──────────────┴──────────┘"));
 }
 #[test] fn test_genesis() -> Result<()> {
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
@@ -79,10 +78,10 @@ fn display_benchmark_footer() {
     // Track initial fuel state
     let initial_total_fuel = TOTAL_FUEL_START;
 
-    println!(
+    TestRuntime::log(format!(
         "Starting Genesis Test with total fuel: {}",
         initial_total_fuel
-    );
+    ));
 
     // Genesis block with initialization cellpack
     let cellpacks: Vec<Cellpack> = [
@@ -105,10 +104,10 @@ fn display_benchmark_footer() {
         vout: 0,
     };
 
-    println!(
+    TestRuntime::log(format!(
         "Runestone: {}",
         hex::encode(&test_block.txdata[1].output[1].script_pubkey)
-    );
+    ));
 
     // Initialize FuelTank for the first block
     FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height);
@@ -175,7 +174,7 @@ fn display_benchmark_footer() {
 
 
     // Display fuel benchmarks
-    println!("\n=== FUEL BENCHMARKS ===");
+    TestRuntime::log(format!("\n=== FUEL BENCHMARKS ==="));
     display_benchmark_header();
     for benchmark in &benchmarks {
         benchmark.display();
@@ -185,29 +184,29 @@ fn display_benchmark_footer() {
     let total_consumed = benchmarks.iter().fold(0, |acc, b| acc + b.fuel_consumed);
     let total_percentage = (total_consumed as f64 / initial_total_fuel as f64) * 100.0;
 
-    println!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤");
-    println!(
+    TestRuntime::log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
+    TestRuntime::log(format!(
         "│ TOTAL                          │ {:>12} │ {:>12} │ {:>12} │ {:>8.2}% │",
         initial_total_fuel,
         initial_total_fuel - total_consumed,
         total_consumed,
         total_percentage
-    );
+    ));
     display_benchmark_footer();
 
     Ok(())
 }
 
 #[test] fn test_genesis_alkane_key() -> Result<()> {
-    println!(
+    TestRuntime::log(format!(
         "{}",
         (IndexPointer::<crate::tests::test_runtime::TestRuntime>::from_keyword("/alkanes/")
             .select(&(AlkaneId { tx: 2, block: 0 }).into())
             .get()
             .as_ref()
             .len())
-    );
-    println!(
+    ));
+    TestRuntime::log(format!(
         "key: {}",
         hex::encode(
             IndexPointer::<crate::tests::test_runtime::TestRuntime>::from_keyword("/alkanes/")
@@ -216,7 +215,7 @@ fn display_benchmark_footer() {
                 .as_ref()
                 .clone()
         )
-    );
+    ));
     Ok(())
 }
 

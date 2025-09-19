@@ -85,6 +85,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",
+ "metashrew-core",
  "metashrew-support",
  "wasm-bindgen",
  "wasm-bindgen-test",

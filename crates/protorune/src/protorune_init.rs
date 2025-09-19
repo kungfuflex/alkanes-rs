@@ -12,6 +12,7 @@ pub fn index_unique_protorunes<E: RuntimeEnvironment + Clone + Default, T: Messa
     atomic: &mut AtomicPointer<E>,
     height: u64,
     assets: Vec<ProtoruneRuneId>,
+    env: &mut E,
 ) {
     let rune_table = RuneTable::<E>::for_protocol(T::protocol_tag());
     let table = atomic.derive(&rune_table.HEIGHT_TO_RUNE_ID);
@@ -20,9 +21,9 @@ pub fn index_unique_protorunes<E: RuntimeEnvironment + Clone + Default, T: Messa
         .into_iter()
         .map(|v| -> Vec<u8> { v.into() })
         .for_each(|v| {
-            if seen_table.select(&v).get().as_ref().len() == 0 {
-                seen_table.select(&v).set(Arc::new(vec![0x01]));
-                table.select_value::<u64>(height).append(Arc::new(v));
+            if seen_table.select(&v).get(env).as_ref().len() == 0 {
+                seen_table.select(&v).set(env, Arc::new(vec![0x01]));
+                table.select_value::<u64>(height).append(env, Arc::new(v));
             }
         });
 }

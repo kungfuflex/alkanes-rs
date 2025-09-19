@@ -1,4 +1,4 @@
-use crate::message::AlkaneMessageContext;
+
 use crate::vm::{instance::AlkanesInstance, runtime::AlkanesRuntimeContext, state::AlkanesState};
 use crate::utils::{pipe_storagemap_to, transfer_from};
 use crate::vm::fuel::fuel_per_store_byte;
@@ -44,13 +44,14 @@ pub fn get_memory<'a, E: RuntimeEnvironment + Clone + Default>(caller: &mut Call
         .ok_or(anyhow!("export was not memory region"))
 }
 
-pub fn sequence_pointer<E: RuntimeEnvironment + Clone + Default>(ptr: &AtomicPointer<AlkaneMessageContext<E>>) -> AtomicPointer<AlkaneMessageContext<E>> {
-    ptr.derive(&IndexPointer::<AlkaneMessageContext<E>>::from_keyword("/alkanes/sequence"))
+pub fn sequence_pointer<E: RuntimeEnvironment + Clone + Default>(ptr: &AtomicPointer<E>) -> AtomicPointer<E> {
+    ptr.derive(&IndexPointer::<E>::from_keyword("/alkanes/sequence"))
 }
 
 fn set_alkane_id_to_tx_id<E: RuntimeEnvironment + Clone + Default>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     alkane_id: &AlkaneId,
+    env: &mut E,
 ) -> Result<()> {
     // Acquire the mutex once and keep the guard for the duration of the function
     let context_guard = context.lock().unwrap();
@@ -66,7 +67,7 @@ fn set_alkane_id_to_tx_id<E: RuntimeEnvironment + Clone + Default>(
         .atomic
         .keyword("/alkanes_id_to_outpoint/")
         .select(&alkane_id.clone().into())
-        .set(Arc::new(outpoint_bytes));
+        .set(env, Arc::new(outpoint_bytes));
 
     Ok(())
 }
@@ -74,6 +75,7 @@ fn set_alkane_id_to_tx_id<E: RuntimeEnvironment + Clone + Default>(
 pub fn get_alkane_binary<E: RuntimeEnvironment + Clone + Default>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     alkane_id: &AlkaneId,
+    env: &mut E,
 ) -> Result<Arc<Vec<u8>>> {
     let wasm_payload_arc = context
         .lock()
@@ -82,11 +84,11 @@ pub fn get_alkane_binary<E: RuntimeEnvironment + Clone + Default>(
         .atomic
         .keyword("/alkanes/")
         .select(&alkane_id.clone().into())
-        .get();
+        .get(env);
     let wasm_payload = wasm_payload_arc.as_ref();
     if wasm_payload.len() == 32 {
         let factory_id = wasm_payload.to_vec().try_into()?;
-        return get_alkane_binary(context, &factory_id);
+        return get_alkane_binary(context, &factory_id, env);
     }
     Ok(Arc::new(decompress(wasm_payload.clone())?))
 }
@@ -94,14 +96,15 @@ pub fn get_alkane_binary<E: RuntimeEnvironment + Clone + Default>(
 pub fn run_special_cellpacks<E: RuntimeEnvironment + Clone + Default>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     cellpack: &Cellpack,
+    env: &mut E,
 ) -> Result<(AlkaneId, AlkaneId, Arc<Vec<u8>>)> {
     let mut payload = cellpack.clone();
     let mut binary = Arc::<Vec<u8>>::new(vec![]);
     let mut next_sequence_pointer = sequence_pointer(&mut context.lock().unwrap().message.atomic);
-    let next_sequence = next_sequence_pointer.get_value::<u128>();
+    let next_sequence = next_sequence_pointer.get_value::<u128>(env);
     let original_target = cellpack.target.clone();
     if cellpack.target.is_created(next_sequence) {
-        binary = get_alkane_binary(context.clone(), &payload.target)?;
+        binary = get_alkane_binary(context.clone(), &payload.target, env)?;
     } else if cellpack.target.is_create() {
         // contract not created, create it by first loading the wasm from the witness
         // then storing it in the index.
@@ -121,11 +124,11 @@ pub fn run_special_cellpacks<E: RuntimeEnvironment + Clone + Default>(
             .atomic
             .keyword("/alkanes/")
             .select(&payload.target.clone().into());
-        pointer.set(wasm_payload.clone());
+        pointer.set(env, wasm_payload.clone());
         binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
-        next_sequence_pointer.set_value(next_sequence + 1);
+        next_sequence_pointer.set_value(env, next_sequence + 1);
 
-        set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
+        set_alkane_id_to_tx_id(context.clone(), &payload.target, env)?;
     } else if let Some(number) = cellpack.target.reserved() {
         // we have already reserved an alkane id, find the binary and
         // set it in the index
@@ -147,9 +150,9 @@ pub fn run_special_cellpacks<E: RuntimeEnvironment + Clone + Default>(
             .atomic
             .keyword("/alkanes/")
             .select(&payload.target.clone().into());
-        if ptr.get().as_ref().len() == 0 {
-            ptr.set(wasm_payload.clone());
-            set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
+        if ptr.get(env).as_ref().len() == 0 {
+            ptr.set(env, wasm_payload.clone());
+            set_alkane_id_to_tx_id(context.clone(), &payload.target, env)?;
         } else {
             return Err(anyhow!(format!(
                 "used CREATERESERVED cellpack but {} already holds a binary",
@@ -160,7 +163,7 @@ pub fn run_special_cellpacks<E: RuntimeEnvironment + Clone + Default>(
     } else if let Some(factory) = cellpack.target.factory() {
         // we find the factory alkane wasm and set the current alkane to the factory wasm
         payload.target = AlkaneId::new(2, next_sequence);
-        next_sequence_pointer.set_value(next_sequence + 1);
+        next_sequence_pointer.set_value(env, next_sequence + 1);
         let factory_payload: Vec<u8> = factory.into();
         context
             .lock()
@@ -169,9 +172,9 @@ pub fn run_special_cellpacks<E: RuntimeEnvironment + Clone + Default>(
             .atomic
             .keyword("/alkanes/")
             .select(&payload.target.clone().into())
-            .set(Arc::new(factory_payload));
-        set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
-        binary = get_alkane_binary(context.clone(), &factory)?;
+            .set(env, Arc::new(factory_payload));
+        set_alkane_id_to_tx_id(context.clone(), &payload.target, env)?;
+        binary = get_alkane_binary(context.clone(), &factory, env)?;
     }
     if &original_target != &payload.target {
         context
@@ -241,19 +244,26 @@ pub trait Saveable<E: RuntimeEnvironment + Clone + Default> {
     fn to(&self) -> AlkaneId;
     fn storage_map(&self) -> StorageMap;
     fn alkanes(&self) -> AlkaneTransferParcel;
-    fn save(&self, atomic: &mut AtomicPointer<AlkaneMessageContext<E>>, is_delegate: bool) -> Result<()> {
+    fn save(
+        &self,
+        atomic: &mut AtomicPointer<E>,
+        is_delegate: bool,
+        env: &mut E,
+    ) -> Result<()> {
         pipe_storagemap_to(
             &self.storage_map(),
             &mut atomic
-                .derive(&IndexPointer::<AlkaneMessageContext<E>>::from_keyword("/alkanes/").select(&self.from().into())),
+                .derive(&IndexPointer::<E>::from_keyword("/alkanes/").select(&self.from().into())),
+            env,
         );
         if !is_delegate {
             // delegate call retains caller and myself, so no alkanes are transferred from the subcontext to myself
             transfer_from(
                 &self.alkanes(),
-                &mut atomic.derive(&IndexPointer::<AlkaneMessageContext<E>>::default()),
+                &mut atomic.derive(&IndexPointer::<E>::default()),
                 &self.from().into(),
                 &self.to().into(),
+                env,
             )?;
         }
         Ok(())
@@ -264,6 +274,7 @@ pub fn run_after_special<E: RuntimeEnvironment + Clone + Default + 'static>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     binary: Arc<Vec<u8>>,
     start_fuel: u64,
+    env: &mut E,
 ) -> Result<(ExtendedCallResponse, u64)> {
     #[cfg(feature = "debug-log")]
     {
@@ -274,8 +285,8 @@ pub fn run_after_special<E: RuntimeEnvironment + Clone + Default + 'static>(
         );
     }
 
-    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
-    let response = instance.execute()?;
+    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel, env)?;
+    let response = instance.execute(env)?;
 
     let remaining_fuel = instance.store.get_fuel()?;
     let storage_len = response.storage.serialize().len() as u64;

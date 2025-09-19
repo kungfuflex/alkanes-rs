@@ -1,9 +1,8 @@
 use bitcoin::Script;
 use hex_lit::hex;
 use protorune_support::network::{get_network_option, set_network, to_address_str, NetworkParams};
-use wasm_bindgen_test::*;
 
-#[wasm_bindgen_test]
+#[test]
 pub fn test_address_generation() {
     let saved = get_network_option();
     set_network(NetworkParams {

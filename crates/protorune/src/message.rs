@@ -13,11 +13,18 @@ use std::marker::PhantomData;
 pub trait MessageContext<E: RuntimeEnvironment + Clone + Default> {
     fn handle(
         parcel: &MessageContextParcel<E>,
-    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer<E>>)>;
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)>;
     fn protocol_tag() -> u128;
-    fn asset_protoburned_in_protocol(id: ProtoruneRuneId) -> bool {
+    fn asset_protoburned_in_protocol(id: ProtoruneRuneId, env: &mut E) -> bool {
         let table = RuneTable::<E>::for_protocol(Self::protocol_tag());
-        if table.RUNE_ID_TO_ETCHING.select(&id.into()).get().len() > 0 {
+        if table
+            .RUNE_ID_TO_ETCHING
+            .select(&id.into())
+            .get(env)
+            .len()
+            > 0
+        {
             return true;
         }
         false
@@ -34,10 +41,10 @@ pub struct MessageContextParcel<E: RuntimeEnvironment + Clone> {
     pub pointer: u32,
     pub refund_pointer: u32,
     pub calldata: Vec<u8>,
-    pub sheets: Box<BalanceSheet<AtomicPointer<E>>>,
+    pub sheets: Box<BalanceSheet<E, AtomicPointer<E>>>,
     pub txindex: u32,
     pub vout: u32,
-    pub runtime_balances: Box<BalanceSheet<AtomicPointer<E>>>,
+    pub runtime_balances: Box<BalanceSheet<E, AtomicPointer<E>>>,
     pub _phantom: PhantomData<E>,
 }
 
@@ -65,8 +72,8 @@ impl<E: RuntimeEnvironment + Clone + Default> Default for MessageContextParcel<E
             refund_pointer: 0,
             calldata: Vec::<u8>::default(),
             txindex: 0,
-            runtime_balances: Box::new(BalanceSheet::default()),
-            sheets: Box::new(BalanceSheet::default()),
+            runtime_balances: Box::new(BalanceSheet::new_ptr_backed(AtomicPointer::default())),
+            sheets: Box::new(BalanceSheet::new_ptr_backed(AtomicPointer::default())),
             _phantom: PhantomData,
         }
     }

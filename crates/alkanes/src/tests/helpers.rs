@@ -12,7 +12,6 @@ use bitcoin::{
 };
 use bitcoin::{Block, Transaction};
 use metashrew_support::environment::RuntimeEnvironment;
-use alkanes_runtime::{println, stdout}; use std::fmt::Write;
 use metashrew_support::index_pointer::IndexPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_encode;

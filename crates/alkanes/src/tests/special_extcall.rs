@@ -3,7 +3,6 @@ use crate::tests::helpers::{self as alkane_helpers, assert_return_context};
 use crate::tests::std::alkanes_std_test_build;
 use crate::tests::test_runtime::TestRuntime;
 use crate::view;
-use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
@@ -15,7 +14,6 @@ use bitcoin::{
 use metashrew_support::environment::RuntimeEnvironment;
 use protorune::test_helpers::create_coinbase_transaction;
 use protorune_support::utils::consensus_decode;
-use std::fmt::Write;
 
 #[test]
 fn test_special_extcall() -> Result<()> {
@@ -52,7 +50,7 @@ fn test_special_extcall() -> Result<()> {
         let data =
             consensus_decode::<Header>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
-        println!("{:?}", data);
+        TestRuntime::log(format!("{:?}", data));
         assert_eq!(data.time, 1231006505);
         Ok(())
     })?;
@@ -66,7 +64,7 @@ fn test_special_extcall() -> Result<()> {
         let data =
             consensus_decode::<Transaction>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
-        println!("{:?}", data);
+        TestRuntime::log(format!("{:?}", data));
         assert_eq!(data.version, bitcoin::transaction::Version(2));
         Ok(())
     })?;
@@ -120,7 +118,7 @@ fn test_special_extcall_number_diesel_mints() -> Result<()> {
     assert_return_context::<TestRuntime, _>(&outpoint_1, |trace_response| {
         let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
 
-        println!("{:?}", data);
+        TestRuntime::log(format!("{:?}", data));
         assert_eq!(data, 5);
         Ok(())
     })?;
@@ -153,7 +151,7 @@ fn test_special_extcall_total_miner_fees() -> Result<()> {
     assert_return_context::<TestRuntime, _>(&outpoint_1, |trace_response| {
         let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
 
-        println!("{:?}", data);
+        TestRuntime::log(format!("{:?}", data));
         assert_eq!(data, 50_000_000 * 7);
         Ok(())
     })?;

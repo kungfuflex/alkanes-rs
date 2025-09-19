@@ -95,11 +95,12 @@ impl AlkanesHostFunctionsImpl {
         caller: &mut Caller<'_, AlkanesState<E>>,
         k: i32,
     ) -> Result<i32> {
+        let env = &mut caller.data_mut().env;
         let (bytes_processed, result) = {
             let mem = get_memory(caller)?;
             let key = {
                 let data = mem.data(&caller);
-                read_arraybuffer(data, k)?
+                read_arraybuffer(data, k, env)?
             };
             let myself = caller.data_mut().context.lock().unwrap().myself.clone();
             let result: i32 = caller
@@ -113,7 +114,7 @@ impl AlkanesHostFunctionsImpl {
                 .select(&myself.into())
                 .keyword("/storage/")
                 .select(&key)
-                .get()
+                .get(env)
                 .len()
                 .try_into()?;
             ((result as u64) + (key.len() as u64), result)
@@ -139,11 +140,12 @@ impl AlkanesHostFunctionsImpl {
         k: i32,
         v: i32,
     ) -> Result<i32> {
+        let env = &mut caller.data_mut().env;
         let (bytes_processed, value) = {
             let mem = get_memory(caller)?;
             let key = {
                 let data = mem.data(&caller);
-                read_arraybuffer(data, k)?
+                read_arraybuffer(data, k, env)?
             };
             let value = {
                 let myself = caller.data_mut().context.lock().unwrap().myself.clone();
@@ -153,7 +155,7 @@ impl AlkanesHostFunctionsImpl {
                     .select(&myself.into())
                     .keyword("/storage/")
                     .select(&key)
-                    .get()
+                    .get(env)
             };
             (key.len() + value.len(), value)
         };
@@ -353,11 +355,11 @@ impl AlkanesHostFunctionsImpl {
         Ok(())
     }
     pub(super) fn sequence<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, output: i32) -> Result<()> {
-        let buffer: Vec<u8> =
-            (&sequence_pointer(&caller.data_mut().context.lock().unwrap().message.atomic)
-                .get_value::<u128>()
-                .to_le_bytes())
-                .to_vec();
+        let env = &mut caller.data_mut().env;
+        let buffer: Vec<u8> = (&sequence_pointer(env)
+            .get_value::<u128>(env)
+            .to_le_bytes())
+            .to_vec();
 
         #[cfg(feature = "debug-log")]
         {
@@ -409,22 +411,19 @@ impl AlkanesHostFunctionsImpl {
         what_ptr: i32,
         output: i32,
     ) -> Result<()> {
+        let env = &mut caller.data_mut().env;
         let (who, what) = {
             let mem = get_memory(caller)?;
             let data = mem.data(&caller);
             (
-                AlkaneId::parse(&mut Cursor::new(read_arraybuffer(data, who_ptr)?))?,
-                AlkaneId::parse(&mut Cursor::new(read_arraybuffer(data, what_ptr)?))?,
+                AlkaneId::parse(&mut Cursor::new(read_arraybuffer(data, who_ptr, env)?))?,
+                AlkaneId::parse(&mut Cursor::new(read_arraybuffer(data, what_ptr, env)?))?,
             )
         };
-        let balance = balance_pointer(
-            &mut caller.data_mut().context.lock().unwrap().message.atomic,
-            &who.into(),
-            &what.into(),
-        )
-        .get()
-        .as_ref()
-        .clone();
+        let balance = balance_pointer(env, &who.into(), &what.into())
+            .get(env)
+            .as_ref()
+            .clone();
 
         #[cfg(feature = "debug-log")]
         {
@@ -449,7 +448,8 @@ impl AlkanesHostFunctionsImpl {
         e: anyhow::Error,
         should_rollback: bool,
     ) -> i32 {
-        MetashrewEnvironment::log(&format!("[[handle_extcall]] Error during extcall: {:?}", e));
+        let env = &mut caller.data_mut().env;
+        env.log(&format!("[[handle_extcall]] Error during extcall: {:?}", e));
         let mut data: Vec<u8> = vec![0x08, 0xc3, 0x79, 0xa0];
         data.extend(e.to_string().as_bytes());
 
@@ -493,14 +493,15 @@ impl AlkanesHostFunctionsImpl {
                 current_depth
             )));
         }
+        let env = &mut caller.data_mut().env;
         // Read all input data first
         let mem = get_memory(caller)?;
         let data = mem.data(&caller);
-        let buffer = read_arraybuffer(data, cellpack_ptr)?;
+        let buffer = read_arraybuffer(data, cellpack_ptr, env)?;
         let cellpack = Cellpack::parse(&mut Cursor::new(buffer))?;
-        let buf = read_arraybuffer(data, incoming_alkanes_ptr)?;
+        let buf = read_arraybuffer(data, incoming_alkanes_ptr, env)?;
         let incoming_alkanes = AlkaneTransferParcel::parse(&mut Cursor::new(buf))?;
-        let storage_map_buffer = read_arraybuffer(data, checkpoint_ptr)?;
+        let storage_map_buffer = read_arraybuffer(data, checkpoint_ptr, env)?;
         let storage_map_len = storage_map_buffer.len();
         let storage_map = StorageMap::parse(&mut Cursor::new(storage_map_buffer))?;
         // Handle deployment fuel first
@@ -510,7 +511,7 @@ impl AlkanesHostFunctionsImpl {
 
             #[cfg(feature = "debug-log")]
             {
-                MetashrewEnvironment::log(&format!(
+                env.log(&format!(
                     "extcall: deployment detected, additional fuel_cost={}",
                     fuel_extcall_deploy(height)
                 ));
@@ -553,10 +554,11 @@ impl AlkanesHostFunctionsImpl {
         }
     }
     fn _get_block_header<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
+        let env = &mut caller.data_mut().env;
         // Return the current block header
         #[cfg(feature = "debug-log")]
         {
-            MetashrewEnvironment::log(&format!("Precompiled contract: returning current block header"));
+            env.log(&format!("Precompiled contract: returning current block header"));
         }
 
         // Get the block header from the current context
@@ -581,10 +583,11 @@ impl AlkanesHostFunctionsImpl {
     }
 
     fn _get_coinbase_tx_response<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
+        let env = &mut caller.data_mut().env;
         // Return the coinbase transaction bytes
         #[cfg(feature = "debug-log")]
         {
-            MetashrewEnvironment::log(&format!("Precompiled contract: returning coinbase transaction"));
+            env.log(&format!("Precompiled contract: returning coinbase transaction"));
         }
 
         // Get the coinbase transaction from the current block
@@ -598,10 +601,11 @@ impl AlkanesHostFunctionsImpl {
     }
 
     fn _get_total_miner_fee<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
+        let env = &mut caller.data_mut().env;
         // Return the coinbase transaction bytes
         #[cfg(feature = "debug-log")]
         {
-            MetashrewEnvironment::log(&format!("Precompiled contract: returning total miner fee"));
+            env.log(&format!("Precompiled contract: returning total miner fee"));
         }
 
         // Get the coinbase transaction from the current block
@@ -618,10 +622,11 @@ impl AlkanesHostFunctionsImpl {
     }
 
     fn _get_number_diesel_mints<E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
+        let env = &mut caller.data_mut().env;
         if let Some(cached_data) = DIESEL_MINTS_CACHE.read().unwrap().clone() {
             #[cfg(feature = "debug-log")]
             {
-                MetashrewEnvironment::log(&format!("Precompiled contract: returning cached total number of diesel mints"));
+                env.log(&format!("Precompiled contract: returning cached total number of diesel mints"));
             }
             let mut response = CallResponse::default();
             response.data = cached_data;
@@ -629,7 +634,7 @@ impl AlkanesHostFunctionsImpl {
         }
         #[cfg(feature = "debug-log")]
         {
-            MetashrewEnvironment::log(&format!("Precompiled contract: calculating total number of diesel mints in this block"));
+            env.log(&format!("Precompiled contract: calculating total number of diesel mints in this block"));
         }
 
         // Get the block header from the current context
@@ -678,9 +683,10 @@ impl AlkanesHostFunctionsImpl {
         caller: &mut Caller<'_, AlkanesState<E>>,
         cellpack: Cellpack,
     ) -> Result<i32> {
+        let env = &mut caller.data_mut().env;
         #[cfg(feature = "debug-log")]
         {
-            MetashrewEnvironment::log(&format!(
+            env.log(&format!(
                 "extcall: precompiled contract detected at [{},{}]",
                 cellpack.target.block, cellpack.target.tx
             ));
@@ -724,6 +730,7 @@ impl AlkanesHostFunctionsImpl {
         storage_map: StorageMap,
         storage_map_len: u64,
     ) -> Result<i32> {
+        let env = &mut caller.data_mut().env;
         // Check for precompiled contract addresses
         if cellpack.target.block == 800000000 {
             // 8e8
@@ -742,17 +749,21 @@ impl AlkanesHostFunctionsImpl {
                 &mut context_guard.message.atomic.derive(
                     &IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into()),
                 ),
+                env,
             );
             std::mem::drop(context_guard); // Release lock before calling run_special_cellpacks
 
             let (_subcaller, submyself, binary) =
-                run_special_cellpacks(caller.data_mut().context.clone(), &cellpack)?;
+                run_special_cellpacks(caller.data_mut().context.clone(), &cellpack, env)?;
 
-            logging::record_alkane_creation(AlkaneCreation {
-                alkane_id: submyself.clone(),
-                wasm_size_kb: calculate_wasm_size_kb(&binary),
-                creation_method: determine_creation_method(&cellpack.target, &submyself),
-            });
+            logging::record_alkane_creation(
+                AlkaneCreation {
+                    alkane_id: submyself.clone(),
+                    wasm_size_kb: calculate_wasm_size_kb(&binary),
+                    creation_method: determine_creation_method(&cellpack.target, &submyself),
+                },
+                env,
+            );
 
             let context_guard = caller.data_mut().context.lock().unwrap();
 
@@ -766,6 +777,7 @@ impl AlkanesHostFunctionsImpl {
                         .derive(&IndexPointer::default()),
                     &myself,
                     &submyself,
+                    env,
                 )?;
             }
             // Create subcontext
@@ -788,7 +800,7 @@ impl AlkanesHostFunctionsImpl {
 
         #[cfg(feature = "debug-log")]
         {
-            MetashrewEnvironment::log(&format!("extcall: target=[{},{}], inputs={:?}, storage_size={} bytes, total_fuel={}, deployment={}",
+            env.log(&format!("extcall: target=[{},{}], inputs={:?}, storage_size={} bytes, total_fuel={}, deployment={}",
                 cellpack.target.block, cellpack.target.tx,
                 cellpack.inputs, storage_map_len,
                 total_fuel,
@@ -801,13 +813,14 @@ impl AlkanesHostFunctionsImpl {
         let start_fuel: u64 = caller.get_fuel()?;
         trace_context.fuel = start_fuel;
         let event: TraceEvent = T::event(trace_context);
-        subcontext.trace.clock(event);
+        subcontext.trace.clock(event, env);
 
         // Run the call in a new context
         let (response, gas_used) = run_after_special(
             Arc::new(Mutex::new(subcontext.clone())),
             binary_rc,
             start_fuel,
+            env.clone(),
         )?;
         let serialized = CallResponse::from(response.clone().into()).serialize();
         {
@@ -819,22 +832,27 @@ impl AlkanesHostFunctionsImpl {
             let mut context_guard = caller.data_mut().context.lock().unwrap();
             context_guard
                 .trace
-                .clock(TraceEvent::ReturnContext(return_context));
+                .clock(TraceEvent::ReturnContext(return_context), env);
             let mut saveable: SaveableExtendedCallResponse<E> = response.clone().into();
             saveable.associate(&subcontext);
-            saveable.save(&mut context_guard.message.atomic, T::isdelegate())?;
+            saveable.save(
+                &mut context_guard.message.atomic,
+                T::isdelegate(),
+                env,
+            )?;
             context_guard.returndata = serialized.clone();
             T::handle_atomic(&mut context_guard.message.atomic);
         }
         Ok(serialized.len() as i32)
     }
     pub(super) fn log<'a, E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, v: i32) -> Result<()> {
+        let env = &mut caller.data_mut().env;
         let mem = get_memory(caller)?;
         let message = {
             let data = mem.data(&caller);
-            read_arraybuffer(data, v)?
+            read_arraybuffer(data, v, env)?
         };
-        MetashrewEnvironment::log(&format!("{}", String::from_utf8(message)?));
+        env.log(&format!("{}", String::from_utf8(message)?));
         Ok(())
     }
 }

@@ -10,7 +10,6 @@ use crate::tests::test_runtime::TestRuntime;
 use crate::unwrap as unwrap_view;
 use crate::unwrap::{deserialize_payments, Payment};
 use crate::view::{self, simulate_parcel, unwrap};
-use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::gz::compress;
@@ -42,7 +41,6 @@ use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, Pro
 use protorune_support::protostone::Protostone;
 use protorune::protostone::Protostones;
 use protorune_support::utils::consensus_encode;
-use std::fmt::Write;
 use std::sync::Arc;
 
 pub fn simulate_cellpack<E: RuntimeEnvironment + Clone + Default + 'static>(

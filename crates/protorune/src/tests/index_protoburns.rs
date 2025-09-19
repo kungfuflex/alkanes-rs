@@ -48,7 +48,6 @@ mod tests {
 
     /// In one runestone, etches a rune, then protoburns it
     #[wasm_bindgen_test]
-#[ignore]
     fn protoburn_test() {
         clear();
         let mut test_block = helpers::create_block_with_coinbase_tx(BLOCK_HEIGHT);
@@ -164,7 +163,6 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-#[ignore]
     fn protoburn_pointer_test() {
         // transfer to the valid utxo at pointer 0
         let test_block = protostone_transfer_test_template(0, vec![]);
@@ -191,7 +189,6 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-#[ignore]
     fn protoburn_pointer_cenotaph_test() {
         // transfer to the special vout 2 == num outputs, which should be a cenotaph
         let test_block = protostone_transfer_test_template(2, vec![]);
@@ -218,7 +215,6 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-#[ignore]
     #[allow(non_snake_case)]
     fn protoburn_pointer_to_OP_RETURN() {
         // transfer to the OP_RETURN (the runestone) at vout 1
@@ -246,7 +242,6 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-#[ignore]
     fn protostone_edict_test() {
         // the only valid protorune id
         let protorune_id = ProtoruneRuneId {
@@ -283,7 +278,7 @@ mod tests {
     /// This is supported, but the op return exceeds the 80 byte limit which makes it
     /// hard for miners to pick up.
     // #[wasm_bindgen_test]
-#[ignore]
+    // #[ignore]
     // fn protostone_many_edict_test() {
     //     // the only valid protorune id
     //     let protorune_id = ProtoruneRuneId {
@@ -332,7 +327,6 @@ mod tests {
     // }
 
     #[wasm_bindgen_test]
-#[ignore]
     fn protostone_edict_burn_test() {
         // the only valid protorune id
         let protorune_id = ProtoruneRuneId {
@@ -367,7 +361,6 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-#[ignore]
     fn protostone_edict_even_distribution_test() {
         // the only valid protorune id
         let protorune_id = ProtoruneRuneId {

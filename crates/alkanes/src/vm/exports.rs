@@ -51,7 +51,9 @@ impl AlkanesExportsImpl {
             data,
         })
     }
-    pub fn execute<E: RuntimeEnvironment + Clone + Default + 'static>(vm: &mut AlkanesInstance<E>) -> Result<ExtendedCallResponse> {
+    pub fn execute<E: RuntimeEnvironment + Clone + Default + 'static>(
+        vm: &mut AlkanesInstance<E>,
+    ) -> Result<ExtendedCallResponse> {
         let mut result = [Val::I32(0)];
         let func = Self::_get_export(vm, "__execute")?;
         func.call(&mut vm.store, &[], &mut result)?;

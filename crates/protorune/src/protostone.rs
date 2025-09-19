@@ -34,26 +34,10 @@ pub fn add_to_indexable_protocols(protocol_tag: u128) -> Result<()> {
     Ok(())
 }
 
-pub trait MessageProcessor<E: RuntimeEnvironment + Clone + Default> {
-    ///
-    /// Parameters:
-    ///   atomic: Atomic pointer to hold changes to the index,
-    ///           will only be committed upon success
-    ///   transaction: The current transaction
-    ///   txindex: The current transaction's index in the block
-    ///   block: The current block
-    ///   height: The current block height
-    ///   _runestone_output_index: TODO: not used??
-    ///   protomessage_vout: The vout of the current protomessage. These are "virtual"
-    ///                 vouts, meaning they are greater than the number of real vouts
-    ///                 and increase by 1 for each new protostone in the op_return.
-    ///                 Protoburns and protostone edicts can target these vouts, so they
-    ///                 will hold balances before the process message
-    ///   balances_by_output: The running store of balances by each transaction output for
-    ///                       the current transaction being handled.
-    /// Return: true if success, false if failure and refunded to refund pointer
+pub trait MessageHandler<E: RuntimeEnvironment + Clone + Default> {
     fn process_message<T: MessageContext<E>>(
         &self,
+        env: &mut E,
         atomic: &mut AtomicPointer<E>,
         transaction: &Transaction,
         txindex: u32,
@@ -61,13 +45,22 @@ pub trait MessageProcessor<E: RuntimeEnvironment + Clone + Default> {
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
         num_protostones: usize,
     ) -> Result<bool>;
 }
-impl<E: RuntimeEnvironment + Clone + Default> MessageProcessor<E> for Protostone {
+
+pub trait MessageProcessor<E: RuntimeEnvironment + Clone + Default>: ToString {
+    fn handle(
+        &self,
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)>;
+}
+impl<E: RuntimeEnvironment + Clone + Default> MessageHandler<E> for Protostone {
     fn process_message<T: MessageContext<E>>(
         &self,
+        env: &mut E,
         atomic: &mut AtomicPointer<E>,
         transaction: &Transaction,
         txindex: u32,
@@ -75,7 +68,7 @@ impl<E: RuntimeEnvironment + Clone + Default> MessageProcessor<E> for Protostone
         height: u64,
         _runestone_output_index: u32,
         protomessage_vout: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
         num_protostones: usize,
     ) -> Result<bool> {
         // Validate output indexes and protomessage_vout
@@ -143,11 +136,11 @@ impl<E: RuntimeEnvironment + Clone + Default> MessageProcessor<E> for Protostone
 			_phantom: std::marker::PhantomData::<E>,
         };
 
-        match T::handle(&parcel) {
+        match T::handle(&parcel, env) {
             Ok(values) => {
-                match values.reconcile(balances_by_output, protomessage_vout, pointer) {
+                match values.reconcile(balances_by_output, protomessage_vout, pointer, env) {
                     Ok(_) => {
-                        atomic.commit();
+                        atomic.commit(env);
                         Ok(true)
                     }
                     Err(_e) => {
@@ -164,6 +157,7 @@ impl<E: RuntimeEnvironment + Clone + Default> MessageProcessor<E> for Protostone
                             balances_by_output,
                             protomessage_vout,
                             refund_pointer,
+                            env,
                         )?;
                         atomic.rollback();
                         Ok(false)
@@ -180,7 +174,7 @@ impl<E: RuntimeEnvironment + Clone + Default> MessageProcessor<E> for Protostone
                     }
                 }
 
-                refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
+                refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer, env)?;
                 atomic.rollback();
 
                 Ok(false)
@@ -189,22 +183,26 @@ impl<E: RuntimeEnvironment + Clone + Default> MessageProcessor<E> for Protostone
     }
 }
 
-pub trait Protostones<E: RuntimeEnvironment + Clone> {
+pub trait ProtostoneEncoder<E: RuntimeEnvironment + Clone> {
     fn burns(&self) -> Result<Vec<Protoburn<E>>>;
-    fn process_burns(
-        &self,
-        atomic: &mut AtomicPointer<E>,
-        runestone: &Runestone,
-        runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
-        default_output: u32,
-        txid: Txid,
-    ) -> Result<()>;
     fn encipher(&self) -> Result<Vec<u128>>;
 }
 
-impl<E: RuntimeEnvironment + Clone + Default> Protostones<E> for Vec<Protostone> {
+pub trait Protostones<E: RuntimeEnvironment + Clone> {
+    fn process_burns(
+        &self,
+        env: &mut E,
+        atomic: &mut AtomicPointer<E>,
+        runestone: &Runestone,
+        runestone_output_index: u32,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
+        default_output: u32,
+        txid: Txid,
+    ) -> Result<()>;
+}
+
+impl<E: RuntimeEnvironment + Clone + Default> ProtostoneEncoder<E> for Vec<Protostone> {
     fn encipher(&self) -> Result<Vec<u128>> {
         let mut values = Vec::<u128>::new();
         for stone in self {
@@ -227,18 +225,23 @@ impl<E: RuntimeEnvironment + Clone + Default> Protostones<E> for Vec<Protostone>
             })
             .collect())
     }
+}
+
+impl<E: RuntimeEnvironment + Clone + Default> Protostones<E> for Vec<Protostone> {
     fn process_burns(
         &self,
+        env: &mut E,
         atomic: &mut AtomicPointer<E>,
         runestone: &Runestone,
         runestone_output_index: u32,
-        balances_by_output: &BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
-        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer<E>>>,
+        balances_by_output: &BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
+        proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {
         let mut burns = self.burns()?;
         burns.process(
+            env,
             atomic,
             runestone.edicts.clone(),
             runestone_output_index,

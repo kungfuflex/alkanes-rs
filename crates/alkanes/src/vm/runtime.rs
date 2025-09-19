@@ -1,4 +1,4 @@
-use crate::message::AlkaneMessageContext;
+
 use std::fmt;
 use metashrew_support::environment::RuntimeEnvironment;
 
@@ -18,7 +18,7 @@ pub struct AlkanesRuntimeContext<E: RuntimeEnvironment + Clone + Default> {
     pub incoming_alkanes: AlkaneTransferParcel,
     pub returndata: Vec<u8>,
     pub inputs: Vec<u128>,
-    pub message: Box<MessageContextParcel<AlkaneMessageContext<E>>>,
+    pub message: Box<MessageContextParcel<E>>,
     pub trace: Trace,
     _phantom: PhantomData<E>,
 }
@@ -51,7 +51,7 @@ impl<E: RuntimeEnvironment + Clone + Default> fmt::Debug for AlkanesRuntimeConte
 
 impl<E: RuntimeEnvironment + Clone + Default> AlkanesRuntimeContext<E> {
     pub fn from_parcel_and_cellpack(
-        message: &MessageContextParcel<AlkaneMessageContext<E>>,
+        message: &MessageContextParcel<E>,
         cellpack: &Cellpack,
     ) -> AlkanesRuntimeContext<E> {
         let cloned = cellpack.clone();

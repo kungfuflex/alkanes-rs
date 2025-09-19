@@ -3,14 +3,12 @@ use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_test_build;
 use crate::tests::test_runtime::TestRuntime;
 use crate::view;
-use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::OutPoint;
 use metashrew_support::environment::RuntimeEnvironment;
-use std::fmt::Write;
 
 #[test]
 fn test_infinite_loop() -> Result<()> {

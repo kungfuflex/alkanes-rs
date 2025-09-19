@@ -2,7 +2,6 @@ use crate::index_block;
 use crate::message::AlkaneMessageContext;
 use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::test_runtime::TestRuntime;
-use alkanes_runtime::{println, stdout};
 use anyhow::Result;
 use bitcoin::address::NetworkChecked;
 use bitcoin::transaction::Version;
@@ -19,7 +18,6 @@ use protorune::{
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
 use protorune::protostone::Protostones;
-use std::fmt::Write;
 
 pub fn create_protostone_encoded_transaction<E: RuntimeEnvironment>(
     previous_output: OutPoint,
@@ -101,6 +99,6 @@ fn test_cant_forge_edicts() -> Result<()> {
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&edict_outpoint)?),
     );
-    println!("{:?}", sheet);
+    TestRuntime::log(format!("{:?}", sheet));
     Ok(())
 }

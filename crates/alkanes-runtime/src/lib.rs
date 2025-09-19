@@ -1,3 +1,4 @@
+pub mod environment;
 pub mod auth;
 #[cfg(feature = "panic-hook")]
 pub mod compat;
@@ -31,18 +32,18 @@ macro_rules! declare_alkane {
             let opcode = inputs[0];
             inputs.remove(0);
 
+            let mut instance = $struct_name::default();
             let result = match $message_type::from_opcode(opcode, inputs.clone()) {
-                Ok(message) => message.dispatch(&$struct_name::default()),
+                Ok(mut message) => message.dispatch(&mut instance),
                 Err(err) => {
                     // Call the fallback method on the AlkaneResponder
                     // This will use the default implementation if not overridden by the contract
-                    let instance = $struct_name::default();
                     instance.fallback()
                 }
             };
 
             let extended = match result {
-                Ok(res) => handle_success(res),
+                Ok(res) => handle_success(res, instance.env()),
                 Err(err) => {
                     let error_msg = format!("Error: {}", err);
                     let extended = handle_error(&error_msg);

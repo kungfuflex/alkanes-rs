@@ -5,15 +5,24 @@ use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
-use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
+use alkanes_runtime::{runtime::{AlkaneResponder, AlkaneEnvironment}, storage::StoragePointer, token::Token};
 use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::Result;
 use hex_lit::hex;
 use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 
-#[derive(Default)]
-pub struct Orbital(());
+pub struct Orbital {
+	env: AlkaneEnvironment,
+}
+
+impl Default for Orbital {
+    fn default() -> Self {
+        Self {
+            env: AlkaneEnvironment::new(),
+        }
+    }
+}
 
 #[derive(MessageDispatch)]
 enum OrbitalMessage {
@@ -47,16 +56,16 @@ impl Token for Orbital {
 }
 
 impl Orbital {
-    pub fn total_supply_pointer(&self) -> StoragePointer {
+    pub fn total_supply_pointer() -> StoragePointer {
         StoragePointer::from_keyword("/totalsupply")
     }
 
-    pub fn total_supply(&self) -> u128 {
-        self.total_supply_pointer().get_value::<u128>()
+    pub fn total_supply(&mut self) -> u128 {
+        Self::total_supply_pointer().get_value::<u128>(self.env())
     }
 
-    pub fn set_total_supply(&self, v: u128) {
-        self.total_supply_pointer().set_value::<u128>(v);
+    pub fn set_total_supply(&mut self, v: u128) {
+        Self::total_supply_pointer().set_value::<u128>(self.env(), v);
     }
 
     pub fn data(&self) -> Vec<u8> {
@@ -65,7 +74,7 @@ impl Orbital {
         (&hex!("89504e470d0a1a0a0000000d494844520000000100000001010300000025db56ca00000003504c5445000000a77a3dda0000000174524e530040e6d8660000000a4944415408d76360000000020001e221bc330000000049454e44ae426082")).to_vec()
     }
 
-    fn initialize(&self) -> Result<CallResponse> {
+    fn initialize(&mut self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -79,7 +88,7 @@ impl Orbital {
         Ok(response)
     }
 
-    fn get_name(&self) -> Result<CallResponse> {
+    fn get_name(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -88,7 +97,7 @@ impl Orbital {
         Ok(response)
     }
 
-    fn get_symbol(&self) -> Result<CallResponse> {
+    fn get_symbol(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -97,16 +106,16 @@ impl Orbital {
         Ok(response)
     }
 
-    fn get_total_supply(&self) -> Result<CallResponse> {
+    fn get_total_supply(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-
-        response.data = (&self.total_supply().to_le_bytes()).to_vec();
+        let total_supply = self.total_supply();
+        response.data = (&total_supply.to_le_bytes()).to_vec();
 
         Ok(response)
     }
 
-    fn get_data(&self) -> Result<CallResponse> {
+    fn get_data(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -116,7 +125,11 @@ impl Orbital {
     }
 }
 
-impl AlkaneResponder for Orbital {}
+impl AlkaneResponder for Orbital {
+    fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.env
+    }
+}
 
 // Use the new macro format
 declare_alkane! {

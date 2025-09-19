@@ -307,7 +307,7 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
     // Convert trace data to string for easier searching
     let trace_str = String::from_utf8_lossy(&trace_data);
 
-    println!("trace {:?}", trace_str);
+    TestRuntime::log(format!("trace {:?}", trace_str));
 
     let expected_name = "SuperLongCustomToken";
     let expected_symbol = "SLCT";
@@ -330,7 +330,7 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
     // Convert trace data to string for easier searching
     let trace_str_symbol = String::from_utf8_lossy(&trace_data_symbol);
 
-    println!("trace_str_symbol {:?}", trace_str_symbol);
+    TestRuntime::log(format!("trace_str_symbol {:?}", trace_str_symbol));
     assert!(
         trace_str_symbol.contains(expected_symbol),
         "Trace data should contain the symbol '{}', but it doesn't",

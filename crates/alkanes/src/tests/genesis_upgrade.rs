@@ -8,7 +8,6 @@ use crate::tests::helpers::{
 };
 use crate::tests::std::alkanes_std_auth_token_build;
 use crate::tests::test_runtime::TestRuntime;
-use alkanes_runtime::{println, stdout};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
@@ -24,7 +23,6 @@ use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::Rune
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::consensus_encode;
-use std::fmt::Write;
 
 fn setup_pre_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<()> {
     let auth_cellpack = Cellpack {

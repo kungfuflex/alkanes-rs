@@ -3,7 +3,6 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use alkanes_runtime::{println, stdout}; use std::fmt::Write;
 use metashrew_support::utils::consensus_encode;
 
 use crate::index_block;
@@ -98,7 +97,7 @@ fn test_vec_inputs() -> Result<()> {
     };
 
     let trace_data_process_numbers = view::trace::<TestRuntime>(&outpoint_process_numbers)?;
-    println!("process_numbers trace: {:?}", trace_data_process_numbers);
+    TestRuntime::log(format!("process_numbers trace: {:?}", trace_data_process_numbers));
 
     // Verify the process_numbers result contains the expected values
     assert_eq!(
@@ -118,7 +117,7 @@ fn test_vec_inputs() -> Result<()> {
 
     let trace_data_get_strings = view::trace::<TestRuntime>(&outpoint_get_strings)?;
     let trace_str = String::from_utf8_lossy(&trace_data_get_strings);
-    println!("get_strings trace: {:?}", trace_str);
+    TestRuntime::log(format!("get_strings trace: {:?}", trace_str));
     let expected_name = "hello,world";
 
     // Verify the get_strings result contains the expected values
@@ -140,10 +139,10 @@ fn test_vec_inputs() -> Result<()> {
     };
 
     let trace_data_process_nested_vec = view::trace::<TestRuntime>(&outpoint_process_nested_vec)?;
-    println!(
+    TestRuntime::log(format!(
         "process_nested_vec trace: {:?}",
         trace_data_process_nested_vec
-    );
+    ));
 
     // The result should be the total number of elements: 3 + 2 = 5
     assert_eq!(
