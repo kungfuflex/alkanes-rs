@@ -399,7 +399,8 @@ mod unit_tests {
     use super::*;
     use crate::message::AlkaneMessageContext;
     use prost::Message;
-    use crate::view::{protorune_outpoint_to_outpoint_response, protorunes_by_address, protorunes_by_height};
+    use crate::view::{protorunes_by_address, protorunes_by_height};
+    use protorune::view::protorune_outpoint_to_outpoint_response;
     use protorune::Protorune;
     use protorune_support::proto::protorune::{RunesByHeightRequest, Uint128, WalletRequest};
     
@@ -408,7 +409,7 @@ mod unit_tests {
     #[wasm_bindgen_test]
     pub fn test_decode_block() {
         let mut env = MetashrewEnvironment::default();
-        let block_data = include_bytes!("tests/static/849236.txt ").to_vec();
+        let block_data = include_bytes!("tests/static/849236.txt").to_vec();
 
         assert!(block_data.len() > 0);
 

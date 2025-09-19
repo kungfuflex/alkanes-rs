@@ -359,14 +359,14 @@ pub trait Fuelable {
     fn consume_fuel(&mut self, n: u64) -> Result<()>;
 }
 
-impl<'a, E: RuntimeEnvironment> Fuelable for Caller<'_, AlkanesState<'a, E>> {
+impl<'a, E: RuntimeEnvironment + Clone> Fuelable for Caller<'_, AlkanesState<'a, E>> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())
     }
 }
 
-impl<'a, E: RuntimeEnvironment> Fuelable for AlkanesInstance<'a, E> {
+impl<'a, E: RuntimeEnvironment + Clone> Fuelable for AlkanesInstance<'a, E> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.store.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())

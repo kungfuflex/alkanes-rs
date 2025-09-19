@@ -13,7 +13,7 @@ use wasmi::*;
 
 
 
-pub struct AlkanesInstance<'a, E: RuntimeEnvironment> {
+pub struct AlkanesInstance<'a, E: RuntimeEnvironment + Clone> {
     pub(crate) instance: Instance,
     pub(crate) store: Store<AlkanesState<'a, E>>,
 }

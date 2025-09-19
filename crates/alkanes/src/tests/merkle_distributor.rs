@@ -119,6 +119,7 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
     leaf_address: String,
     output_address_index: u32,
 ) -> Result<Block> {
+    let mut env = E::default();
     let leaf1 = borsh::to_vec(&SchemaMerkleLeaf {
         address: leaf_address,
         amount: 1_000_000,
@@ -166,7 +167,7 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
     };
 
     let merkle_testnet_build = include_bytes!(
-        "../../../../target/alkanes/wasm32-unknown-unknown/release/alkanes_std_merkle_distributor_regtest.wasm"
+        "../../../../target/alkanes-wasm/alkanes_std_merkle_distributor_regtest.wasm"
     )
     .to_vec();
 
@@ -175,7 +176,7 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
         vec![mint_diesel, init_cellpack],
     );
 
-    index_block::<E>(&mut E::default(), &test_block, block_height)?;
+    index_block::<E>(&mut env, &test_block, block_height)?;
 
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
     assert_binary_deployed_to_id(merkle_distributor_id.clone(), merkle_testnet_build.clone())?;
@@ -206,11 +207,11 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
         false,
     ));
 
-    index_block::<E>(&mut E::default(), &claim_block, block_height + 1)?;
+    index_block::<E>(&mut env, &claim_block, block_height + 1)?;
 
     let sheet = get_last_outpoint_sheet(&claim_block)?;
     assert_eq!(
-        sheet.get(&(ProtoruneRuneId { block: 2, tx: 0 }).into(), &mut E::default()),
+        sheet.get(&(ProtoruneRuneId { block: 2, tx: 0 }).into(), &mut env),
         1_000_000
     );
 
@@ -227,6 +228,7 @@ fn test_merkle_distributor() -> Result<()> {
 #[test]
 fn test_merkle_distributor_admin_collect() -> Result<()> {
     alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
     let init_block =
         helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
     let auth_outpoint = OutPoint {
@@ -237,7 +239,7 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
     let auth_sheet =
         get_sheet_for_outpoint(&init_block, init_block.txdata.len() - 1, 0)?;
     assert_eq!(
-        auth_sheet.get(&merkle_distributor_id.clone().into(), &mut TestRuntime::default()),
+        auth_sheet.get(&merkle_distributor_id.clone().into(), &mut env),
         5
     );
     let block_height = 840_001;
@@ -260,14 +262,14 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
             false,
         );
     spend_block.txdata.push(collect_tx.clone());
-    index_block::<TestRuntime>(&mut TestRuntime::default(), &spend_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &spend_block, block_height)?;
     let sheet = get_last_outpoint_sheet(&spend_block)?;
     assert_eq!(
-        sheet.get(&merkle_distributor_id.clone().into(), &mut TestRuntime::default()),
+        sheet.get(&merkle_distributor_id.clone().into(), &mut env),
         5
     );
     assert_eq!(
-        sheet.get(&(ProtoruneRuneId { block: 2, tx: 0 }).into(), &mut TestRuntime::default()),
+        sheet.get(&(ProtoruneRuneId { block: 2, tx: 0 }).into(), &mut env),
         312500000
     );
 
@@ -276,6 +278,7 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
 #[test]
 fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
     alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
     let init_block =
         helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
@@ -291,7 +294,7 @@ fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
         false,
     );
     spend_block.txdata.push(collect_tx.clone());
-    index_block::<TestRuntime>(&mut TestRuntime::default(), &spend_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &spend_block, block_height)?;
     let new_outpoint = OutPoint {
         txid: collect_tx.compute_txid(),
         vout: 3,
