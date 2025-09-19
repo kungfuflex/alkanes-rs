@@ -34,7 +34,7 @@ pub fn add_to_indexable_protocols(protocol_tag: u128) -> Result<()> {
     Ok(())
 }
 
-pub trait MessageHandler<E: RuntimeEnvironment + Clone + Default> {
+pub trait MessageHandler<E: RuntimeEnvironment + Clone> {
     fn process_message<T: MessageContext<E>>(
         &self,
         env: &mut E,
@@ -50,14 +50,14 @@ pub trait MessageHandler<E: RuntimeEnvironment + Clone + Default> {
     ) -> Result<bool>;
 }
 
-pub trait MessageProcessor<E: RuntimeEnvironment + Clone + Default>: ToString {
+pub trait MessageProcessor<E: RuntimeEnvironment + Default + Clone>: ToString {
     fn handle(
         &self,
         parcel: &MessageContextParcel<E>,
         env: &mut E,
     ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)>;
 }
-impl<E: RuntimeEnvironment + Clone + Default> MessageHandler<E> for Protostone {
+impl<E: RuntimeEnvironment + Clone> MessageHandler<E> for Protostone {
     fn process_message<T: MessageContext<E>>(
         &self,
         env: &mut E,
@@ -107,17 +107,18 @@ impl<E: RuntimeEnvironment + Clone + Default> MessageHandler<E> for Protostone {
         if protomessage_vout >= max_virtual_vout as u32 {
             return Err(anyhow::anyhow!("Protomessage vout exceeds maximum allowed"));
         }
+        let default_sheet = BalanceSheet::default();
         let initial_sheet = balances_by_output
             .get(&protomessage_vout)
-            .map(|v| v.clone())
-            .unwrap_or_else(|| BalanceSheet::default());
+            .map(|v| v)
+            .unwrap_or(&default_sheet);
 
         // Create a nested atomic transaction for the entire message processing
         atomic.checkpoint();
 
         let parcel = MessageContextParcel::<E> {
             atomic: atomic.derive(&IndexPointer::default()),
-            runes: RuneTransfer::from_balance_sheet(initial_sheet.clone()),
+            runes: RuneTransfer::from_balance_sheet(initial_sheet),
             transaction: transaction.clone(),
             block: block.clone(),
             height,
@@ -126,12 +127,7 @@ impl<E: RuntimeEnvironment + Clone + Default> MessageHandler<E> for Protostone {
             refund_pointer,
             calldata: self.message.iter().flat_map(|v| v.to_be_bytes()).collect(),
             txindex,
-            runtime_balances: Box::new(
-                balances_by_output
-                    .get(&u32::MAX)
-                    .map(|v| v.clone())
-                    .unwrap_or_else(|| BalanceSheet::default()),
-            ),
+            runtime_balances: Box::new(balances_by_output.remove(&u32::MAX).unwrap_or_default()),
             sheets: Box::new(BalanceSheet::default()),
 			_phantom: std::marker::PhantomData::<E>,
         };
@@ -202,7 +198,7 @@ pub trait Protostones<E: RuntimeEnvironment + Clone> {
     ) -> Result<()>;
 }
 
-impl<E: RuntimeEnvironment + Clone + Default> ProtostoneEncoder<E> for Vec<Protostone> {
+impl<E: RuntimeEnvironment + Clone> ProtostoneEncoder<E> for Vec<Protostone> {
     fn encipher(&self) -> Result<Vec<u128>> {
         let mut values = Vec::<u128>::new();
         for stone in self {
@@ -227,7 +223,7 @@ impl<E: RuntimeEnvironment + Clone + Default> ProtostoneEncoder<E> for Vec<Proto
     }
 }
 
-impl<E: RuntimeEnvironment + Clone + Default> Protostones<E> for Vec<Protostone> {
+impl<E: RuntimeEnvironment + Clone> Protostones<E> for Vec<Protostone> {
     fn process_burns(
         &self,
         env: &mut E,

@@ -7,11 +7,11 @@ pub struct TestRuntime {
     store: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     input: Arc<Mutex<Option<EnvironmentInput>>>,
     cache: HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>>,
-    to_flush: HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>>,
+    to_flush: Vec<Arc<Vec<u8>>>,
 }
 
 impl RuntimeEnvironment for TestRuntime {
-    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+    fn get(&mut self, key: &[u8]) -> Option<Vec<u8>> {
         let store = self.store.lock().unwrap();
         store.get(key).cloned()
     }
@@ -31,6 +31,8 @@ impl RuntimeEnvironment for TestRuntime {
     }
 
     fn log(&self, message: &str) {
+        // In a real environment, this would log to the host.
+        // For tests, we can print to stdout.
         println!("{}", message);
     }
 
@@ -42,7 +44,7 @@ impl RuntimeEnvironment for TestRuntime {
         &mut self.cache
     }
 
-    fn to_flush(&mut self) -> &mut HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>> {
+    fn to_flush(&mut self) -> &mut Vec<Arc<Vec<u8>>> {
         &mut self.to_flush
     }
 }

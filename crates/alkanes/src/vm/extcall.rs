@@ -5,15 +5,15 @@ use metashrew_support::index_pointer::AtomicPointer;
 
 use metashrew_support::environment::RuntimeEnvironment;
 
-pub trait Extcall<E: RuntimeEnvironment + Clone + Default> {
+pub trait Extcall<E: RuntimeEnvironment + Clone> {
     fn isdelegate() -> bool;
     fn isstatic() -> bool;
     fn event(context: TraceContext) -> TraceEvent;
-    fn handle_atomic(atomic: &mut AtomicPointer<E>) {
+    fn handle_atomic(atomic: &mut AtomicPointer<E>, env: &mut E) {
         if Self::isstatic() {
             atomic.rollback();
         } else {
-            atomic.commit();
+            atomic.commit(env);
         }
     }
     fn change_context(
@@ -31,7 +31,7 @@ pub trait Extcall<E: RuntimeEnvironment + Clone + Default> {
 
 pub struct Call(());
 
-impl<E: RuntimeEnvironment + Clone + Default> Extcall<E> for Call {
+impl<E: RuntimeEnvironment + Clone> Extcall<E> for Call {
     fn isdelegate() -> bool {
         false
     }
@@ -45,7 +45,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Extcall<E> for Call {
 
 pub struct Delegatecall(());
 
-impl<E: RuntimeEnvironment + Clone + Default> Extcall<E> for Delegatecall {
+impl<E: RuntimeEnvironment + Clone> Extcall<E> for Delegatecall {
     fn isdelegate() -> bool {
         true
     }
@@ -59,7 +59,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Extcall<E> for Delegatecall {
 
 pub struct Staticcall(());
 
-impl<E: RuntimeEnvironment + Clone + Default> Extcall<E> for Staticcall {
+impl<E: RuntimeEnvironment + Clone> Extcall<E> for Staticcall {
     fn isdelegate() -> bool {
         false
     }

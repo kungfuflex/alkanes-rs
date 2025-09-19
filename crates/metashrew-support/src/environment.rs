@@ -16,7 +16,9 @@ impl EnvironmentInput {
     }
 }
 
-pub trait RuntimeEnvironment: std::fmt::Debug + Clone + Default {
+use downcast_rs::{impl_downcast, Downcast};
+
+pub trait RuntimeEnvironment: std::fmt::Debug + Downcast {
     fn get(&mut self, key: &[u8]) -> Option<Vec<u8>>;
     fn flush(&mut self, data: &[u8]) -> Result<(), ()>;
     fn load_input(&self) -> Result<EnvironmentInput, ()>;
@@ -29,3 +31,5 @@ pub trait RuntimeEnvironment: std::fmt::Debug + Clone + Default {
         unimplemented!("to_flush not implemented for this environment")
     }
 }
+
+impl_downcast!(RuntimeEnvironment);

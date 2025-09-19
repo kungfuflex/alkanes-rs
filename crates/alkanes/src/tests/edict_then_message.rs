@@ -20,7 +20,7 @@ use protorune::{
 };
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
-use protorune::protostone::Protostones;
+use protorune::protostone::{ProtostoneEncoder, Protostones};
 use std::str::FromStr;
 
 #[test]
@@ -60,7 +60,7 @@ fn test_edict_to_protomessage() -> Result<()> {
                     mint: None,
                     pointer: None,
                     protocol: Some(
-                        <Vec<Protostone> as Protostones<TestRuntime>>::encipher(
+                        <Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(
                             &vec![
                                 Protostone {
                                     message: vec![1, 0, 4],

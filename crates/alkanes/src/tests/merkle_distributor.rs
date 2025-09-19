@@ -175,7 +175,7 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
         vec![mint_diesel, init_cellpack],
     );
 
-    index_block::<E>(&test_block, block_height)?;
+    index_block::<E>(&mut E::default(), &test_block, block_height)?;
 
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
     assert_binary_deployed_to_id(merkle_distributor_id.clone(), merkle_testnet_build.clone())?;
@@ -206,11 +206,11 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
         false,
     ));
 
-    index_block::<E>(&claim_block, block_height + 1)?;
+    index_block::<E>(&mut E::default(), &claim_block, block_height + 1)?;
 
     let sheet = get_last_outpoint_sheet(&claim_block)?;
     assert_eq!(
-        sheet.get_cached(&(ProtoruneRuneId { block: 2, tx: 0 }).into()),
+        sheet.get(&(ProtoruneRuneId { block: 2, tx: 0 }).into(), &mut E::default()),
         1_000_000
     );
 
@@ -237,7 +237,7 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
     let auth_sheet =
         get_sheet_for_outpoint(&init_block, init_block.txdata.len() - 1, 0)?;
     assert_eq!(
-        auth_sheet.get_cached(&merkle_distributor_id.clone().into()),
+        auth_sheet.get(&merkle_distributor_id.clone().into(), &mut TestRuntime::default()),
         5
     );
     let block_height = 840_001;
@@ -260,14 +260,14 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
             false,
         );
     spend_block.txdata.push(collect_tx.clone());
-    index_block::<TestRuntime>(&spend_block, block_height)?;
+    index_block::<TestRuntime>(&mut TestRuntime::default(), &spend_block, block_height)?;
     let sheet = get_last_outpoint_sheet(&spend_block)?;
     assert_eq!(
-        sheet.get_cached(&merkle_distributor_id.clone().into()),
+        sheet.get(&merkle_distributor_id.clone().into(), &mut TestRuntime::default()),
         5
     );
     assert_eq!(
-        sheet.get_cached(&(ProtoruneRuneId { block: 2, tx: 0 }).into()),
+        sheet.get(&(ProtoruneRuneId { block: 2, tx: 0 }).into(), &mut TestRuntime::default()),
         312500000
     );
 
@@ -291,7 +291,7 @@ fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
         false,
     );
     spend_block.txdata.push(collect_tx.clone());
-    index_block::<TestRuntime>(&spend_block, block_height)?;
+    index_block::<TestRuntime>(&mut TestRuntime::default(), &spend_block, block_height)?;
     let new_outpoint = OutPoint {
         txid: collect_tx.compute_txid(),
         vout: 3,

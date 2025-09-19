@@ -15,6 +15,7 @@ use metashrew_support::environment::RuntimeEnvironment;
 #[test]
 fn test_vec_inputs() -> Result<()> {
     let block_height = 0;
+    let mut env = TestRuntime::default();
     // Get the LoggerAlkane ID
     let logger_alkane_id = AlkaneId { block: 2, tx: 1 };
 
@@ -60,35 +61,26 @@ fn test_vec_inputs() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx::<TestRuntime>(
+    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [process_numbers_cellpack].into(),
     );
 
     // Add a transaction with the remaining cellpacks
-    test_block.txdata.push(
-        alkane_helpers::create_multiple_cellpack_with_witness_and_in::<TestRuntime>(
-            Witness::new(),
-            vec![process_strings_cellpack, process_nested_vec_cellpack],
-            OutPoint {
-                txid: test_block
-                    .txdata
-                    .last()
-                    .ok_or(anyhow!("no last el"))?
-                    .compute_txid(),
-                vout: 0,
-            },
-            false,
-        ),
-    );
+    test_block.txdata.push(alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+        Witness::new(),
+        vec![process_strings_cellpack, process_nested_vec_cellpack],
+        OutPoint {
+            txid: test_block.txdata.last().ok_or(anyhow!("no last el"))?.compute_txid(),
+            vout: 0,
+        },
+        false,
+    ));
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block(&mut env, &test_block, block_height)?;
 
     // Verify the binary was deployed correctly
-    let _ = assert_binary_deployed_to_id::<TestRuntime>(
-        logger_alkane_id.clone(),
-        alkanes_std_test_build::get_bytes(),
-    );
+    let _ = assert_binary_deployed_to_id(&mut env, logger_alkane_id.clone(), alkanes_std_test_build::get_bytes());
 
     // Get the trace data from the transaction for process_numbers
     let outpoint_process_numbers = OutPoint {
@@ -96,8 +88,8 @@ fn test_vec_inputs() -> Result<()> {
         vout: 3,
     };
 
-    let trace_data_process_numbers = view::trace::<TestRuntime>(&outpoint_process_numbers)?;
-    TestRuntime::log(format!("process_numbers trace: {:?}", trace_data_process_numbers));
+    let trace_data_process_numbers = view::trace(&mut env, &outpoint_process_numbers)?;
+    env.log(format!("process_numbers trace: {:?}", trace_data_process_numbers));
 
     // Verify the process_numbers result contains the expected values
     assert_eq!(
@@ -115,9 +107,9 @@ fn test_vec_inputs() -> Result<()> {
         vout: 3,
     };
 
-    let trace_data_get_strings = view::trace::<TestRuntime>(&outpoint_get_strings)?;
+    let trace_data_get_strings = view::trace(&mut env, &outpoint_get_strings)?;
     let trace_str = String::from_utf8_lossy(&trace_data_get_strings);
-    TestRuntime::log(format!("get_strings trace: {:?}", trace_str));
+    env.log(format!("get_strings trace: {:?}", trace_str));
     let expected_name = "hello,world";
 
     // Verify the get_strings result contains the expected values
@@ -138,11 +130,8 @@ fn test_vec_inputs() -> Result<()> {
         vout: 4,
     };
 
-    let trace_data_process_nested_vec = view::trace::<TestRuntime>(&outpoint_process_nested_vec)?;
-    TestRuntime::log(format!(
-        "process_nested_vec trace: {:?}",
-        trace_data_process_nested_vec
-    ));
+    let trace_data_process_nested_vec = view::trace(&mut env, &outpoint_process_nested_vec)?;
+    env.log(format!("process_nested_vec trace: {:?}", trace_data_process_nested_vec));
 
     // The result should be the total number of elements: 3 + 2 = 5
     assert_eq!(

@@ -13,12 +13,12 @@ use wasmi::*;
 
 
 
-pub struct AlkanesInstance<E: RuntimeEnvironment + Clone + Default> {
+pub struct AlkanesInstance<'a, E: RuntimeEnvironment> {
     pub(crate) instance: Instance,
-    pub(crate) store: Store<AlkanesState<E>>,
+    pub(crate) store: Store<AlkanesState<'a, E>>,
 }
 
-impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
+impl<'a, E: RuntimeEnvironment + 'static + Clone> AlkanesInstance<'a, E> {
     pub fn consume_fuel(&mut self, fuel: u64) -> Result<()> {
         let fuel_remaining = self.store.get_fuel()?;
         if fuel_remaining < fuel {
@@ -56,9 +56,10 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
             .checkpoint();
     }
     pub fn commit(&mut self) {
+        let env = &mut self.store.data_mut().env;
         (&mut self.store.data_mut().context.lock().unwrap().message)
             .atomic
-            .commit();
+            .commit(env);
     }
     pub fn rollback(&mut self) {
         (&mut self.store.data_mut().context.lock().unwrap().message)
@@ -69,7 +70,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
         binary: Arc<Vec<u8>>,
         start_fuel: u64,
-        env: E,
+        env: &'a mut E,
     ) -> Result<Self> {
         /*
         let binary = context
@@ -82,7 +83,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         let mut config = Config::default();
         config.consume_fuel(true);
         let engine = Engine::new(&config);
-        let mut store = Store::<AlkanesState<E>>::new(
+        let mut store = Store::<AlkanesState<'a, E>>::new(
             &engine,
             AlkanesState {
                 had_failure: false,
@@ -92,14 +93,14 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
             },
         );
         store.limiter(|state| &mut state.limiter);
-        Store::<AlkanesState<E>>::set_fuel(&mut store, start_fuel)?; // TODO: implement gas limits
+        Store::<AlkanesState<'a, E>>::set_fuel(&mut store, start_fuel)?; // TODO: implement gas limits
         let module = Module::new(&engine, &mut &binary[..])?;
-        let mut linker: Linker<AlkanesState<E>> = Linker::<AlkanesState<E>>::new(&engine);
+        let mut linker: Linker<AlkanesState<'a, E>> = Linker::<AlkanesState<'a, E>>::new(&engine);
         linker.func_wrap("env", "abort", SafeAlkanesHostFunctionsImpl::abort)?;
         linker.func_wrap(
             "env",
             "__load_storage",
-            |mut caller: Caller<'_, AlkanesState<E>>, k: i32, v: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, k: i32, v: i32| {
                 match SafeAlkanesHostFunctionsImpl::load_storage(&mut caller, k, v) {
                     Ok(v) => v,
                     Err(_e) => {
@@ -112,7 +113,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__request_storage",
-            |mut caller: Caller<'_, AlkanesState<E>>, k: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, k: i32| {
                 match SafeAlkanesHostFunctionsImpl::request_storage(&mut caller, k) {
                     Ok(v) => v,
                     Err(_e) => {
@@ -125,7 +126,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__log",
-            |mut caller: Caller<'_, AlkanesState<E>>, v: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, v: i32| {
                 if let Err(_e) = SafeAlkanesHostFunctionsImpl::log(&mut caller, v) {
                     SafeAlkanesHostFunctionsImpl::_abort(caller);
                 }
@@ -134,7 +135,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__balance",
-            |mut caller: Caller<'_, AlkanesState<E>>, who: i32, what: i32, output: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, who: i32, what: i32, output: i32| {
                 if let Err(_e) =
                     SafeAlkanesHostFunctionsImpl::balance(&mut caller, who, what, output)
                 {
@@ -145,7 +146,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__request_context",
-            |mut caller: Caller<'_, AlkanesState<E>>| -> i32 {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>| -> i32 {
                 match SafeAlkanesHostFunctionsImpl::request_context(&mut caller) {
                     Ok(v) => v,
                     Err(_e) => {
@@ -158,7 +159,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__load_context",
-            |mut caller: Caller<'_, AlkanesState<E>>, output: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, output: i32| {
                 match SafeAlkanesHostFunctionsImpl::load_context(&mut caller, output) {
                     Ok(v) => v,
                     Err(_e) => {
@@ -171,7 +172,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__sequence",
-            |mut caller: Caller<'_, AlkanesState<E>>, output: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, output: i32| {
                 if let Err(_e) = SafeAlkanesHostFunctionsImpl::sequence(&mut caller, output) {
                     SafeAlkanesHostFunctionsImpl::_abort(caller);
                 }
@@ -180,7 +181,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__fuel",
-            |mut caller: Caller<'_, AlkanesState<E>>, output: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, output: i32| {
                 if let Err(_e) = SafeAlkanesHostFunctionsImpl::fuel(&mut caller, output) {
                     SafeAlkanesHostFunctionsImpl::_abort(caller);
                 }
@@ -189,7 +190,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__height",
-            |mut caller: Caller<'_, AlkanesState<E>>, output: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, output: i32| {
                 if let Err(_e) = SafeAlkanesHostFunctionsImpl::height(&mut caller, output) {
                     SafeAlkanesHostFunctionsImpl::_abort(caller);
                 }
@@ -199,7 +200,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__returndatacopy",
-            |mut caller: Caller<'_, AlkanesState<E>>, output: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, output: i32| {
                 if let Err(_e) = SafeAlkanesHostFunctionsImpl::returndatacopy(&mut caller, output) {
                     SafeAlkanesHostFunctionsImpl::_abort(caller);
                 }
@@ -208,7 +209,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__request_transaction",
-            |mut caller: Caller<'_, AlkanesState<E>>| -> i32 {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>| -> i32 {
                 match SafeAlkanesHostFunctionsImpl::request_transaction(&mut caller) {
                     Ok(v) => v,
                     Err(_e) => {
@@ -221,7 +222,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__load_transaction",
-            |mut caller: Caller<'_, AlkanesState<E>>, output: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, output: i32| {
                 if let Err(_e) = SafeAlkanesHostFunctionsImpl::load_transaction(&mut caller, output)
                 {
                     SafeAlkanesHostFunctionsImpl::_abort(caller);
@@ -256,7 +257,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__request_block",
-            |mut caller: Caller<'_, AlkanesState<E>>| match SafeAlkanesHostFunctionsImpl::request_block(
+            |mut caller: Caller<'_, AlkanesState<'a, E>>| match SafeAlkanesHostFunctionsImpl::request_block(
                 &mut caller,
             ) {
                 Ok(v) => v,
@@ -269,7 +270,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__load_block",
-            |mut caller: Caller<'_, AlkanesState<E>>, output: i32| {
+            |mut caller: Caller<'_, AlkanesState<'a, E>>, output: i32| {
                 if let Err(_e) = SafeAlkanesHostFunctionsImpl::load_block(&mut caller, output) {
                     SafeAlkanesHostFunctionsImpl::_abort(caller);
                 }
@@ -278,7 +279,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__call",
-            |mut caller: Caller<'_, AlkanesState<E>>,
+            |mut caller: Caller<'_, AlkanesState<'a, E>>,
              cellpack_ptr: i32,
              incoming_alkanes_ptr: i32,
              checkpoint_ptr: i32,
@@ -296,7 +297,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__delegatecall",
-            |mut caller: Caller<'_, AlkanesState<E>>,
+            |mut caller: Caller<'_, AlkanesState<'a, E>>,
              cellpack_ptr: i32,
              incoming_alkanes_ptr: i32,
              checkpoint_ptr: i32,
@@ -314,7 +315,7 @@ impl<E: RuntimeEnvironment + Clone + Default + 'static> AlkanesInstance<E> {
         linker.func_wrap(
             "env",
             "__staticcall",
-            |mut caller: Caller<'_, AlkanesState<E>>,
+            |mut caller: Caller<'_, AlkanesState<'a, E>>,
              cellpack_ptr: i32,
              incoming_alkanes_ptr: i32,
              checkpoint_ptr: i32,

@@ -3,7 +3,7 @@ use alkanes_support::proto;
 use alkanes_support::trace::Trace;
 use anyhow::Result;
 use bitcoin::OutPoint;
-use metashrew_support::environment::RuntimeEnvironment;
+
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_encode;
 use prost::Message;
@@ -11,17 +11,21 @@ use prost::Message;
 use std::sync::Arc;
 
 
-pub fn save_trace<E: RuntimeEnvironment>(
+use metashrew_core::environment::MetashrewEnvironment;
+
+pub fn save_trace(
     outpoint: &OutPoint,
     height: u64,
     trace: Trace,
-    env: &mut E,
+    env: &mut MetashrewEnvironment,
 ) -> Result<()> {
     let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;
     TRACES.select(&buffer).set(
-        &<Trace as Into<proto::alkanes::AlkanesTrace>>::into(trace).encode_to_vec(),
         env,
+        Arc::new(<Trace as Into<proto::alkanes::AlkanesTrace>>::into(trace).encode_to_vec()),
     );
-    TRACES_BY_HEIGHT.select_value(height).append(&buffer, env);
+    TRACES_BY_HEIGHT
+        .select_value(height)
+        .append(env, Arc::new(buffer.clone()));
     Ok(())
 }

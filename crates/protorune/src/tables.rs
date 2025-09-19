@@ -43,7 +43,7 @@ impl<E: RuntimeEnvironment + Default> Default for RuneTable<E> {
     }
 }
 
-impl<E: RuntimeEnvironment + Default> RuneTable<E> {
+impl<E: RuntimeEnvironment> RuneTable<E> {
     pub fn new() -> Self {
         RuneTable {
             HEIGHT_TO_BLOCKHASH: IndexPointer::default().keyword("/blockhash/byheight/"),

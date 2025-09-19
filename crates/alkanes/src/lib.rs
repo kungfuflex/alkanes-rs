@@ -1,15 +1,17 @@
 use crate::indexer::configure_network;
-
-
-use bitcoin::{Block, OutPoint};
-use metashrew_core::environment::MetashrewEnvironment;
-use metashrew_support::environment::RuntimeEnvironment;
+use crate::indexer::index_block;
 use alkanes_support::proto;
-use metashrew_support::compat::{export_bytes};
-use metashrew_support::utils::{consume_to_end, consume_sized_int, consensus_decode};
-use crate::view::{multi_simulate_safe, simulate_safe, meta_safe, parcels_from_protobuf, parcel_from_protobuf};
+use metashrew_support::utils::consensus_decode;
+use bitcoin::hashes::Hash;
+use bitcoin::{Address, Block, OutPoint, Txid};
+#[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
+use coinaux::auxpow::AuxpowBlock;
+use metashrew_core::environment::{MetashrewEnvironment};
+use metashrew_core::export_bytes;
+use metashrew_support::utils::{consume_sized_int, consume_to_end};
+use metashrew_support::environment::RuntimeEnvironment;
+pub mod view;
 use prost::Message;
-
 use std::io::Cursor;
 pub mod block;
 pub mod etl;
@@ -18,14 +20,12 @@ pub mod message;
 pub mod network;
 pub mod precompiled;
 pub mod tables;
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-utils "))]
 pub mod tests;
 pub mod trace;
 pub mod unwrap;
 pub mod utils;
-pub mod view;
 pub mod vm;
-use crate::indexer::index_block;
 
 /*
 All the #[no_mangle] configs will fail during github action cargo test step
@@ -58,11 +58,12 @@ pub fn multisimluate() -> i32 {
     let reader = &data[4..];
     let mut result: proto::alkanes::MultiSimulateResponse =
         proto::alkanes::MultiSimulateResponse::default();
-    let responses = multi_simulate_safe(
-        &parcels_from_protobuf::<MetashrewEnvironment>(
-            proto::alkanes::MultiSimulateRequest::decode(reader).unwrap(),
-        ),
-        u64::MAX,
+    let responses = view::multi_simulate_safe(
+        &mut env,
+    	&view::parcels_from_protobuf(
+    		proto::alkanes::MultiSimulateRequest::decode(reader).unwrap(),
+    	),
+    	u64::MAX,
     );
 
     for response in responses {
@@ -91,11 +92,12 @@ pub fn simulate() -> i32 {
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
     let mut result: proto::alkanes::SimulateResponse = proto::alkanes::SimulateResponse::default();
-    match simulate_safe(
-        &parcel_from_protobuf::<MetashrewEnvironment>(
-            proto::alkanes::MessageContextParcel::decode(reader).unwrap(),
-        ),
-        u64::MAX,
+    match view::simulate_safe(
+        &mut env,
+    	&view::parcel_from_protobuf(
+    		proto::alkanes::MessageContextParcel::decode(reader).unwrap(),
+    	),
+    	u64::MAX,
     ) {
         Ok((response, gas_used)) => {
             result.execution = Some(response.into());
@@ -112,7 +114,7 @@ pub fn simulate() -> i32 {
 #[no_mangle]
 pub fn sequence() -> i32 {
     let mut env = MetashrewEnvironment::default();
-    export_bytes(view::sequence::<MetashrewEnvironment>().unwrap())
+    export_bytes(view::sequence(&mut env).unwrap())
 }
 
 #[cfg(not(test))]
@@ -123,10 +125,11 @@ pub fn meta() -> i32 {
     let data = env.load_input().unwrap().data;
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    match meta_safe(
-        &parcel_from_protobuf::<MetashrewEnvironment>(
-            proto::alkanes::MessageContextParcel::decode(reader).unwrap(),
-        ),
+    match view::meta_safe(
+        &mut env,
+    	&view::parcel_from_protobuf(
+    		proto::alkanes::MessageContextParcel::decode(reader).unwrap(),
+    	),
     ) {
         Ok(response) => export_bytes(response),
         Err(_) => export_bytes(vec![]),
@@ -141,9 +144,9 @@ pub fn runesbyaddress() -> i32 {
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::WalletResponse =
-        protorune::view::runes_by_address::<MetashrewEnvironment>(
-            &consume_to_end(&mut data).unwrap(),
+        view::protorunes_by_address(
             &mut env,
+            &consume_to_end(&mut data).unwrap(),
         )
         .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
     export_bytes(result.encode_to_vec())
@@ -156,7 +159,7 @@ pub fn unwrap() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let height = consume_sized_int::<u32>(&mut data).unwrap();
-    export_bytes(view::unwrap::<MetashrewEnvironment>(height.into()).unwrap())
+    export_bytes(view::unwrap(&mut env, height.into()).unwrap())
 }
 
 #[cfg(not(test))]
@@ -167,9 +170,9 @@ pub fn runesbyoutpoint() -> i32 {
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::OutpointResponse =
-        protorune::view::runes_by_outpoint::<MetashrewEnvironment>(
-            &consume_to_end(&mut data).unwrap(),
+        view::protorunes_by_outpoint(
             &mut env,
+            &consume_to_end(&mut data).unwrap(),
         )
         .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::default());
     export_bytes(result.encode_to_vec())
@@ -183,7 +186,8 @@ pub fn spendablesbyaddress() -> i32 {
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::WalletResponse =
-        view::protorunes_by_address::<MetashrewEnvironment>(
+        view::protorunes_by_address(
+            &mut env,
             &consume_to_end(&mut data).unwrap(),
         )
         .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
@@ -200,8 +204,9 @@ pub fn protorunesbyaddress() -> i32 {
     let input_data = consume_to_end(&mut data).unwrap();
     //  let _request = protorune_support::proto::protorune::ProtorunesWalletRequest::decode(&input_data).unwrap();
 
-    let mut result: protorune_support::proto::protorune::WalletResponse = view::protorunes_by_address::<MetashrewEnvironment>(&input_data)
-        .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
+    let mut result: protorune_support::proto::protorune::WalletResponse =
+        view::protorunes_by_address(&mut env, &input_data)
+            .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
 
     result.outpoints = result
         .outpoints
@@ -232,7 +237,7 @@ pub fn getblock() -> i32 {
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let input_data = consume_to_end(&mut data).unwrap();
-    export_bytes(view::getblock(&input_data).unwrap())
+    export_bytes(view::getblock(&mut env, &input_data).unwrap())
 }
 
 #[cfg(not(test))]
@@ -242,7 +247,8 @@ pub fn protorunesbyheight() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let result: protorune_support::proto::protorune::RunesResponse = view::protorunes_by_height::<MetashrewEnvironment>(&consume_to_end(&mut data).unwrap())
+    let result: protorune_support::proto::protorune::RunesResponse =
+        view::protorunes_by_height(&mut env, &consume_to_end(&mut data).unwrap())
         .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::default());
     export_bytes(result.encode_to_vec())
 }
@@ -256,7 +262,7 @@ pub fn alkanes_id_to_outpoint() -> i32 {
     // first 4 bytes come in as height, not used
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let data_vec = consume_to_end(&mut data).unwrap();
-    let result: alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse = view::alkanes_id_to_outpoint::<MetashrewEnvironment>(&data_vec).unwrap_or_else(|err| {
+    let result: alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse = view::alkanes_id_to_outpoint(&mut env, &data_vec).unwrap_or_else(|err| {
         eprintln!("Error in alkanes_id_to_outpoint: {:?}", err);
         alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::default()
     });
@@ -270,7 +276,7 @@ pub fn traceblock() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let height = consume_sized_int::<u32>(&mut data).unwrap();
-    export_bytes(view::traceblock::<MetashrewEnvironment>(height).unwrap())
+    export_bytes(view::traceblock(&mut env, height).unwrap())
 }
 
 #[cfg(not(test))]
@@ -286,7 +292,7 @@ pub fn trace() -> i32 {
     .unwrap()
     .try_into()
     .unwrap();
-    export_bytes(view::trace(&outpoint).unwrap())
+    export_bytes(view::trace(&mut env, &outpoint).unwrap())
 }
 
 #[cfg(not(test))]
@@ -297,7 +303,7 @@ pub fn getbytecode() -> i32 {
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     export_bytes(
-        view::getbytecode::<MetashrewEnvironment>(&consume_to_end(&mut data).unwrap()).unwrap_or_default(),
+        view::getbytecode(&mut env, &consume_to_end(&mut data).unwrap()).unwrap_or_default(),
     )
 }
 
@@ -308,7 +314,11 @@ pub fn protorunesbyoutpoint() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let result: protorune_support::proto::protorune::OutpointResponse = view::protorunes_by_outpoint::<MetashrewEnvironment>(&consume_to_end(&mut data).unwrap())
+    let result: protorune_support::proto::protorune::OutpointResponse =
+        view::protorunes_by_outpoint(
+            &mut env,
+            &consume_to_end(&mut data).unwrap()
+        )
         .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::default());
 
     export_bytes(result.encode_to_vec())
@@ -321,7 +331,11 @@ pub fn runesbyheight() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let result: protorune_support::proto::protorune::RunesResponse = protorune::view::runes_by_height::<MetashrewEnvironment>(&consume_to_end(&mut data).unwrap(), &mut env)
+    let result: protorune_support::proto::protorune::RunesResponse =
+        view::protorunes_by_height(
+            &mut env,
+            &consume_to_end(&mut data).unwrap(),
+        )
         .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::default());
     export_bytes(result.encode_to_vec())
 }
@@ -333,7 +347,8 @@ pub fn getinventory() -> i32 {
     let data = env.load_input().unwrap().data;
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    let result = view::getinventory::<MetashrewEnvironment>(
+    let result = view::getinventory(
+        &mut env,
         &proto::alkanes::AlkaneInventoryRequest::decode(reader)
             .unwrap()
             .into(),
@@ -349,7 +364,8 @@ pub fn getstorageat() -> i32 {
     let data = env.load_input().unwrap().data;
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    let result = view::getstorageat::<MetashrewEnvironment>(
+    let result = view::getstorageat(
+        &mut env,
         &proto::alkanes::AlkaneStorageRequest::decode(reader)
             .unwrap()
             .into(),
@@ -373,7 +389,7 @@ pub fn _start() {
     let block: Block =
         consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
 
-    index_block::<MetashrewEnvironment>(&mut env, &block, height).unwrap();
+    index_block(&mut env, &block, height).unwrap();
     etl::index_extensions(&mut env, height, &block);
     env.flush(&[]).unwrap();
 }
@@ -383,7 +399,7 @@ mod unit_tests {
     use super::*;
     use crate::message::AlkaneMessageContext;
     use prost::Message;
-    use protorune::view::{protorune_outpoint_to_outpoint_response, runes_by_address, runes_by_height};
+    use crate::view::{protorune_outpoint_to_outpoint_response, protorunes_by_address, protorunes_by_height};
     use protorune::Protorune;
     use protorune_support::proto::protorune::{RunesByHeightRequest, Uint128, WalletRequest};
     
@@ -392,7 +408,7 @@ mod unit_tests {
     #[wasm_bindgen_test]
     pub fn test_decode_block() {
         let mut env = MetashrewEnvironment::default();
-        let block_data = include_bytes!("tests/static/849236.txt").to_vec();
+        let block_data = include_bytes!("tests/static/849236.txt ").to_vec();
 
         assert!(block_data.len() > 0);
 
@@ -417,7 +433,7 @@ mod unit_tests {
             height: 849236,
         })
         .encode_to_vec();
-        let runes = runes_by_height::<MetashrewEnvironment>(&mut env, &req_height).unwrap();
+        let runes = protorunes_by_height(&mut env, &req_height).unwrap();
         assert!(runes.runes.len() == 2);
 
         // TODO: figure out what address to use for runesbyaddress
@@ -428,11 +444,11 @@ mod unit_tests {
         })
         .encode_to_vec();
 
-        let runes_for_addr = runes_by_address::<MetashrewEnvironment>(&mut env, &req_wallet).unwrap();
+        let runes_for_addr = protorunes_by_address(&mut env, &req_wallet).unwrap();
         // assert!(runes_for_addr.balances > 0);
         std::println!("RUNES by addr: {:?}", runes_for_addr);
 
-        let outpoint_res = protorune_outpoint_to_outpoint_response::<MetashrewEnvironment>(
+        let outpoint_res = protorune_outpoint_to_outpoint_response(
             &mut env,
             &(OutPoint {
                 txid: block.txdata[298].compute_txid(),

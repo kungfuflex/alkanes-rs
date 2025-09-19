@@ -14,7 +14,7 @@ pub struct RuneTransfer {
 
 impl RuneTransfer {
     pub fn from_balance_sheet<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone>(
-        s: BalanceSheet<E, P>,
+        s: &BalanceSheet<E, P>,
     ) -> Vec<Self> {
         s.balances()
             .iter()
@@ -55,10 +55,8 @@ pub fn refund_to_refund_pointer<E: RuntimeEnvironment, P: KeyValuePointer<E> + C
     env: &mut E,
 ) -> Result<()> {
     let sheet = balances_by_output
-        .get(&protomessage_vout)
-        .cloned()
+        .remove(&protomessage_vout)
         .unwrap_or_default();
     // we want to remove any balance from the protomessage vout
-    balances_by_output.remove(&protomessage_vout);
     increase_balances_using_sheet(balances_by_output, &sheet, refund_pointer, env)
 }

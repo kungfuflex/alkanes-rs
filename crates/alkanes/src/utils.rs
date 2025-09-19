@@ -1,4 +1,3 @@
-
 use anyhow::anyhow;
 use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::index_pointer::{AtomicPointer, IndexPointer, KeyValuePointer};
@@ -11,7 +10,7 @@ use bitcoin::OutPoint;
 use std::io::Cursor;
 use metashrew_support::utils::consensus_decode;
 
-pub fn balance_pointer<E: RuntimeEnvironment + Clone + Default>(
+pub fn balance_pointer<E: RuntimeEnvironment + Clone>(
     atomic: &mut AtomicPointer<E>,
     who: &AlkaneId,
     what: &AlkaneId,
@@ -31,14 +30,14 @@ pub fn balance_pointer<E: RuntimeEnvironment + Clone + Default>(
     ptr
 }
 
-pub fn alkane_inventory_pointer<E: RuntimeEnvironment + Clone + Default>(who: &AlkaneId) -> IndexPointer<E> {
+pub fn alkane_inventory_pointer<E: RuntimeEnvironment + Clone>(who: &AlkaneId) -> IndexPointer<E> {
     let who_bytes: Vec<u8> = who.clone().into();
     let ptr = IndexPointer::<E>::from_keyword("/alkanes/")
         .select(&who_bytes)
         .keyword("/inventory/");
     ptr
 }
-pub fn alkane_id_to_outpoint<E: RuntimeEnvironment + Clone + Default>(
+pub fn alkane_id_to_outpoint<E: RuntimeEnvironment + Clone>(
     alkane_id: &AlkaneId,
     env: &mut E,
 ) -> Result<OutPoint, anyhow::Error> {
@@ -57,7 +56,7 @@ pub fn alkane_id_to_outpoint<E: RuntimeEnvironment + Clone + Default>(
     Ok(outpoint)
 }
 
-pub fn credit_balances<E: RuntimeEnvironment + Clone + Default>(
+pub fn credit_balances<E: RuntimeEnvironment + Clone>(
     atomic: &mut AtomicPointer<E>,
     who: &AlkaneId,
     runes: &Vec<RuneTransfer>,
@@ -65,10 +64,11 @@ pub fn credit_balances<E: RuntimeEnvironment + Clone + Default>(
 ) -> Result<(), anyhow::Error> {
     for rune in runes.clone() {
         let mut ptr = balance_pointer(atomic, who, &rune.id.clone().into(), env);
+        let value = ptr.get_value::<u128>(env);
         ptr.set_value::<u128>(
             env,
             rune.value
-                .checked_add(ptr.get_value::<u128>(env))
+                .checked_add(value)
                 .ok_or("")
                 .map_err(|_| anyhow!("balance overflow during credit_balances"))?,
         );
@@ -96,7 +96,7 @@ pub fn credit_balances<E: RuntimeEnvironment + Clone + Default>(
     Ok(this_balance - transfer.value)
 }
 
-pub fn debit_balances<E: RuntimeEnvironment + Clone + Default>(
+pub fn debit_balances<E: RuntimeEnvironment + Clone>(
     atomic: &mut AtomicPointer<E>,
     who: &AlkaneId,
     runes: &AlkaneTransferParcel,
@@ -109,7 +109,7 @@ pub fn debit_balances<E: RuntimeEnvironment + Clone + Default>(
     }
     Ok(())
 }
-pub fn transfer_from<E: RuntimeEnvironment + Clone + Default>(
+pub fn transfer_from<E: RuntimeEnvironment + Clone>(
     runes: &AlkaneTransferParcel,
     atomic: &mut AtomicPointer<E>,
     from: &AlkaneId,
@@ -128,11 +128,12 @@ pub fn transfer_from<E: RuntimeEnvironment + Clone + Default>(
         from_pointer.set_value::<u128>(env, checked_debit_with_minting(transfer, from, balance)?);
         let mut to_pointer =
             balance_pointer(atomic, &to.clone().into(), &transfer.id.clone().into(), env);
-        to_pointer.set_value::<u128>(env, to_pointer.get_value::<u128>(env) + transfer.value);
+        let value = to_pointer.get_value::<u128>(env);
+        to_pointer.set_value::<u128>(env, value + transfer.value);
     }
     Ok(())
 }
-pub fn pipe_storagemap_to<E: RuntimeEnvironment + Clone + Default>(
+pub fn pipe_storagemap_to<E: RuntimeEnvironment + Clone>(
     from: &StorageMap,
     to: &mut AtomicPointer<E>,
     env: &mut E,

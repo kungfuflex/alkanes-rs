@@ -18,10 +18,10 @@ use wasmi::*;
 
 
 use std::marker::PhantomData;
-pub struct AlkanesTransaction<'a, E: RuntimeEnvironment + Clone + Default>(pub &'a Transaction, pub PhantomData<E>);
-pub struct AlkanesBlock<'a, E: RuntimeEnvironment + Clone + Default>(pub &'a Block, pub PhantomData<E>);
+pub struct AlkanesTransaction<'a, E: RuntimeEnvironment>(pub &'a Transaction, pub PhantomData<E>);
+pub struct AlkanesBlock<'a, E: RuntimeEnvironment>(pub &'a Block, pub PhantomData<E>);
 
-impl<'a, E: RuntimeEnvironment + Clone + Default + 'static> VirtualFuelBytes for AlkanesTransaction<'a, E> {
+impl<'a, E: RuntimeEnvironment + 'static> VirtualFuelBytes for AlkanesTransaction<'a, E> {
     fn vfsize(&self) -> u64 {
         if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(&self.0) {
             if let Ok(protostones) = Protostone::from_runestone(runestone) {
@@ -71,7 +71,7 @@ impl<'a, E: RuntimeEnvironment + Clone + Default + 'static> VirtualFuelBytes for
     }
 }
 
-impl<'a, E: RuntimeEnvironment + Clone + Default + 'a + 'static> VirtualFuelBytes for AlkanesBlock<'a, E> {
+impl<'a, E: RuntimeEnvironment + 'a + 'static> VirtualFuelBytes for AlkanesBlock<'a, E> {
     fn vfsize(&self) -> u64 {
         self.0
             .txdata
@@ -174,7 +174,7 @@ impl FuelTank {
         _FUEL_TANK.read().unwrap().as_ref().unwrap().current_txindex == u32::MAX
     }
 
-    pub fn initialize<E: RuntimeEnvironment + Clone + Default + 'static>(block: &Block, height: u32) {
+    pub fn initialize<E: RuntimeEnvironment + 'static>(block: &Block, height: u32) {
         let mut tank = _FUEL_TANK.write().unwrap();
         *tank = Some(FuelTank {
             current_txindex: u32::MAX,
@@ -359,21 +359,24 @@ pub trait Fuelable {
     fn consume_fuel(&mut self, n: u64) -> Result<()>;
 }
 
-impl<'a, E: RuntimeEnvironment + Clone + Default> Fuelable for Caller<'_, AlkanesState<E>> {
+impl<'a, E: RuntimeEnvironment> Fuelable for Caller<'_, AlkanesState<'a, E>> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())
     }
 }
 
-impl<E: RuntimeEnvironment + Clone + Default> Fuelable for AlkanesInstance<E> {
+impl<'a, E: RuntimeEnvironment> Fuelable for AlkanesInstance<'a, E> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.store.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())
     }
 }
 
-pub fn consume_fuel<'a, E: RuntimeEnvironment + Clone + Default>(caller: &mut Caller<'_, AlkanesState<E>>, n: u64) -> Result<()> {
+pub fn consume_fuel<'a, E: RuntimeEnvironment>(
+    caller: &mut Caller<'_, AlkanesState<'a, E>>,
+    n: u64,
+) -> Result<()> {
     caller.consume_fuel(n)
 }
 

@@ -17,7 +17,7 @@ use protorune::{
 };
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
-use protorune::protostone::Protostones;
+use protorune::protostone::{ProtostoneEncoder, Protostones};
 
 pub fn create_protostone_encoded_transaction<E: RuntimeEnvironment>(
     previous_output: OutPoint,
@@ -47,7 +47,7 @@ pub fn create_protostone_encoded_transaction<E: RuntimeEnvironment>(
         pointer: None, // points to the OP_RETURN, so therefore targets the protoburn
         edicts: vec![],
         mint: None,
-        protocol: Some(<Vec<Protostone> as Protostones<TestRuntime>>::encipher(&protostones)?),
+        protocol: Some(<Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(&protostones)?),
     })
     .encipher();
 

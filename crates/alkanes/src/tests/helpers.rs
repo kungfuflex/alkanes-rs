@@ -18,7 +18,7 @@ use metashrew_support::utils::consensus_encode;
 use ordinals::{Etching, Rune, Runestone};
 use protorune::balance_sheet::load_sheet;
 use protorune::message::MessageContext;
-use protorune::protostone::Protostones;
+use protorune::protostone::{ProtostoneEncoder, Protostones};
 use protorune::tables::RuneTable;
 use protorune::test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1};
 use protorune_support::balance_sheet::BalanceSheet;
@@ -229,7 +229,7 @@ pub fn create_protostone_tx_with_inputs_and_default_pointer<E: RuntimeEnvironmen
         pointer: Some(default_pointer), // points to the OP_RETURN, so therefore targets the protoburn
         edicts: Vec::new(),
         mint: None,
-        protocol: <Vec<Protostone> as Protostones<E>>::encipher(&vec![protostone]).ok(),
+        protocol: <Vec<Protostone> as ProtostoneEncoder<E>>::encipher(&vec![protostone]).ok(),
     })
     .encipher();
     let op_return = TxOut {
@@ -334,7 +334,7 @@ pub fn create_multiple_cellpack_with_witness_and_txins_edicts<E: RuntimeEnvironm
         }, // points to the OP_RETURN, so therefore targets the protoburn
         edicts: Vec::new(),
         mint: None,
-        protocol: <Vec<Protostone> as Protostones<E>>::encipher(&protostones).ok(),
+        protocol: <Vec<Protostone> as ProtostoneEncoder<E>>::encipher(&protostones).ok(),
     })
     .encipher();
 
@@ -421,7 +421,7 @@ pub fn get_sheet_for_outpoint<E: RuntimeEnvironment + Clone + Default + 'static>
     test_block: &Block,
     tx_num: usize,
     vout: u32,
-) -> Result<BalanceSheet<IndexPointer<E>>> {
+) -> Result<BalanceSheet<E, IndexPointer<E>>> {
     let outpoint = OutPoint {
         txid: test_block.txdata[tx_num].compute_txid(),
         vout,
@@ -433,13 +433,13 @@ pub fn get_sheet_for_outpoint<E: RuntimeEnvironment + Clone + Default + 'static>
     Ok(sheet)
 }
 
-pub fn get_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'static>() -> BalanceSheet<IndexPointer<E>> {
+pub fn get_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'static>() -> BalanceSheet<E, IndexPointer<E>> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag()).RUNTIME_BALANCE;
     let sheet = load_sheet(&ptr);
     sheet
 }
 
-pub fn get_lazy_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'static>() -> BalanceSheet<IndexPointer<E>> {
+pub fn get_lazy_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'static>() -> BalanceSheet<E, IndexPointer<E>> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag()).RUNTIME_BALANCE;
     let sheet = BalanceSheet::new_ptr_backed(ptr);
     sheet
@@ -447,7 +447,7 @@ pub fn get_lazy_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'sta
 
 pub fn get_last_outpoint_sheet<E: RuntimeEnvironment + Clone + Default + 'static>(
     test_block: &Block,
-) -> Result<BalanceSheet<IndexPointer<E>>> {
+) -> Result<BalanceSheet<E, IndexPointer<E>>> {
     let len = test_block.txdata.len();
     get_sheet_for_outpoint(test_block, len - 1, 0)
 }
@@ -639,7 +639,7 @@ pub fn create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers<E:
         }, // points to the OP_RETURN, so therefore targets the protoburn
         edicts: Vec::new(),
         mint: None,
-        protocol: <Vec<Protostone> as Protostones<E>>::encipher(&protostones).ok(),
+        protocol: <Vec<Protostone> as ProtostoneEncoder<E>>::encipher(&protostones).ok(),
     })
     .encipher();
 

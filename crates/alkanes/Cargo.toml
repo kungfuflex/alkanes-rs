@@ -28,6 +28,7 @@ prost = { workspace = true }
 hex_lit = { workspace = true }
 wasmi = { workspace = true }
 num = { workspace = true }
+downcast-rs = "1.2.0"
 
 [dev-dependencies]
 alkanes-runtime = { path = "../alkanes-runtime" }

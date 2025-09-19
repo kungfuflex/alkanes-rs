@@ -16,6 +16,7 @@ bitcoin = "0.32.4"
 hex = "0.4.3"
 protobuf = "3.7.1"
 byteorder = { workspace = true }
+downcast-rs = "1.2.0"
 
 
 [build-dependencies]

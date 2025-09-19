@@ -18,15 +18,15 @@ use std::io::Cursor;
 
 use crate::network::genesis;
 
-pub fn fr_btc_storage_pointer<E: RuntimeEnvironment + Clone + Default>() -> IndexPointer<E> {
+pub fn fr_btc_storage_pointer<E: RuntimeEnvironment>() -> IndexPointer<E> {
     IndexPointer::from_keyword("/fr_btc/storage/")
 }
 
-pub fn fr_btc_fulfilled_pointer<E: RuntimeEnvironment + Clone + Default>() -> IndexPointer<E> {
+pub fn fr_btc_fulfilled_pointer<E: RuntimeEnvironment>() -> IndexPointer<E> {
     IndexPointer::from_keyword("/fr_btc/fulfilled/")
 }
 
-pub fn fr_btc_premium<E: RuntimeEnvironment + Clone + Default>(env: &mut E) -> u128 {
+pub fn fr_btc_premium<E: RuntimeEnvironment>(env: &mut E) -> u128 {
     let bytes = fr_btc_storage_pointer::<E>().keyword("/premium").get(env);
     if bytes.is_empty() {
         0
@@ -97,7 +97,7 @@ pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
     Ok(payments)
 }
 
-pub fn fr_btc_payments_at_block<E: RuntimeEnvironment + Clone + Default>(
+pub fn fr_btc_payments_at_block<E: RuntimeEnvironment>(
     env: &mut E,
     v: u128,
 ) -> Vec<Vec<u8>> {
@@ -110,7 +110,7 @@ pub fn fr_btc_payments_at_block<E: RuntimeEnvironment + Clone + Default>(
         .collect::<Vec<Vec<u8>>>()
 }
 
-pub fn view<E: RuntimeEnvironment + Clone + Default>(
+pub fn view<E: RuntimeEnvironment>(
     env: &mut E,
     height: u128,
 ) -> Result<PendingUnwrapsResponse> {
@@ -151,7 +151,7 @@ pub fn view<E: RuntimeEnvironment + Clone + Default>(
     Ok(response)
 }
 
-pub fn update_last_block<E: RuntimeEnvironment + Clone + Default>(
+pub fn update_last_block<E: RuntimeEnvironment>(
     env: &mut E,
     height: u128,
 ) -> Result<()> {

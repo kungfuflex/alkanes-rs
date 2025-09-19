@@ -122,7 +122,7 @@ impl ChainConfiguration for GenesisAlkane {
         return (25e8 as u128) / (1u128 << ((n as u128) / 2100000u128));
     }
     fn genesis_block(&mut self) -> u64 {
-        0e64
+        0
     }
     fn average_payout_from_genesis(&mut self) -> u128 {
         2_500_000_000
@@ -138,13 +138,13 @@ impl ChainConfiguration for GenesisAlkane {
         1_000_000_000
     }
     fn genesis_block(&mut self) -> u64 {
-        0e64
+        0
     }
     fn average_payout_from_genesis(&mut self) -> u128 {
         1_000_000_000
     }
     fn max_supply(&mut self) -> u128 {
-        20e14
+        20_000_000_000_000_000
     }
 }
 
@@ -160,7 +160,7 @@ impl ChainConfiguration for GenesisAlkane {
         1_000_000_000
     }
     fn max_supply(&mut self) -> u128 {
-        20e14 as u128
+        20_000_000_000_000_000
     }
 }
 

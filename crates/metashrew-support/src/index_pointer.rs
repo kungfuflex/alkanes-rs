@@ -258,10 +258,19 @@ pub trait KeyValuePointer<E: RuntimeEnvironment> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct IndexPointer<E: RuntimeEnvironment> {
     key: Arc<Vec<u8>>,
     _phantom: PhantomData<E>,
+}
+
+impl<E: RuntimeEnvironment> Default for IndexPointer<E> {
+    fn default() -> Self {
+        Self {
+            key: Arc::new(Vec::new()),
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<E: RuntimeEnvironment> KeyValuePointer<E> for IndexPointer<E> {
@@ -319,12 +328,12 @@ impl IndexCheckpointStack {
 }
 
 #[derive(Clone, Debug)]
-pub struct AtomicPointer<E: RuntimeEnvironment> {
+pub struct AtomicPointer<E: RuntimeEnvironment + Clone> {
     pointer: IndexPointer<E>,
     store: IndexCheckpointStack,
 }
 
-impl<E: RuntimeEnvironment> KeyValuePointer<E> for AtomicPointer<E> {
+impl<E: RuntimeEnvironment + Clone> KeyValuePointer<E> for AtomicPointer<E> {
     fn wrap(word: &Vec<u8>) -> Self {
         AtomicPointer {
             pointer: IndexPointer::wrap(word),
@@ -364,7 +373,7 @@ impl<E: RuntimeEnvironment> KeyValuePointer<E> for AtomicPointer<E> {
     }
 }
 
-impl<E: RuntimeEnvironment> Default for AtomicPointer<E> {
+impl<E: RuntimeEnvironment + Clone> Default for AtomicPointer<E> {
     fn default() -> Self {
         AtomicPointer {
             pointer: IndexPointer::wrap(&Vec::<u8>::new()),
@@ -373,7 +382,7 @@ impl<E: RuntimeEnvironment> Default for AtomicPointer<E> {
     }
 }
 
-impl<E: RuntimeEnvironment> AtomicPointer<E> {
+impl<E: RuntimeEnvironment + Clone> AtomicPointer<E> {
     pub fn checkpoint(&mut self) {
         self.store
             .0

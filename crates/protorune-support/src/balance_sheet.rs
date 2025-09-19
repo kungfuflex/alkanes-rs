@@ -57,54 +57,7 @@ impl From<ProtoruneRuneId> for crate::proto::protorune::ProtoruneRuneId {
     }
 }
 
-impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> From<crate::proto::protorune::BalanceSheet>
-    for BalanceSheet<E, P>
-{
-    fn from(balance_sheet: crate::proto::protorune::BalanceSheet) -> BalanceSheet<E, P> {
-        BalanceSheet {
-            cached: CachedBalanceSheet {
-                balances: BTreeMap::<ProtoruneRuneId, u128>::from_iter(
-                    balance_sheet.entries.into_iter().map(|v| {
-                        let id = ProtoruneRuneId::new(
-                            v.rune.as_ref().unwrap().rune_id.as_ref().unwrap().height.unwrap().into(),
-                            v.rune.as_ref().unwrap().rune_id.as_ref().unwrap().txindex.unwrap().into(),
-                        );
-                        (id, v.balance.unwrap().into())
-                    }),
-                ),
-            },
-            load_ptrs: Vec::new(),
-            _phantom: PhantomData,
-        }
-    }
-}
 
-impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> From<BalanceSheet<E, P>>
-    for crate::proto::protorune::BalanceSheet
-{
-    fn from(balance_sheet: BalanceSheet<E, P>) -> crate::proto::protorune::BalanceSheet {
-        crate::proto::protorune::BalanceSheet {
-            entries: balance_sheet
-                .balances()
-                .clone()
-                .iter()
-                .map(|(k, v)| BalanceSheetItem {
-                    rune: Some(Rune {
-                        rune_id: Some(proto::protorune::ProtoruneRuneId {
-                            height: Some(k.block.into()),
-                            txindex: Some(k.tx.into()),
-                        }),
-                        name: "UNKNOWN".to_owned(),
-                        divisibility: 1,
-                        spacers: 1,
-                        symbol: "0".to_owned(),
-                    }),
-                    balance: Some((*v).into()),
-                })
-                .collect::<Vec<BalanceSheetItem>>(),
-        }
-    }
-}
 
 impl ProtoruneRuneId {
     pub fn new(block: u128, tx: u128) -> Self {
@@ -172,7 +125,7 @@ impl From<Arc<Vec<u8>>> for ProtoruneRuneId {
 
 pub trait BalanceSheetOperations<E: RuntimeEnvironment>: Sized {
     fn from_pairs(runes: Vec<ProtoruneRuneId>, balances: Vec<u128>, env: &mut E) -> Self;
-    fn concat(ary: Vec<Self>, env: &mut E) -> Result<Self>;
+    fn concat(ary: &mut Vec<Self>, env: &mut E) -> Result<Self>;
     fn get(&self, rune: &ProtoruneRuneId, env: &mut E) -> u128;
     fn set(&mut self, rune: &ProtoruneRuneId, value: u128, env: &mut E);
     fn increase(&mut self, rune: &ProtoruneRuneId, value: u128, env: &mut E) -> Result<()> {
@@ -217,7 +170,7 @@ pub trait BalanceSheetOperations<E: RuntimeEnvironment>: Sized {
     fn rune_debit(&mut self, sheet: &Self, env: &mut E) -> Result<()> {
         self.debit(sheet, env)
     }
-    fn merge(a: &Self, b: &Self, env: &mut E) -> Result<Self>;
+    fn merge(a: &mut Self, b: &mut Self, env: &mut E) -> Result<Self>;
     fn merge_sheets(&mut self, a: &Self, b: &Self, env: &mut E) -> Result<()> {
         for (rune, balance) in a.balances() {
             self.increase(rune, *balance, env)?;
@@ -249,14 +202,16 @@ impl<E: RuntimeEnvironment> BalanceSheetOperations<E> for CachedBalanceSheet {
         }
         return sheet;
     }
-    fn concat(ary: Vec<Self>, env: &mut E) -> Result<Self> {
+    fn concat(ary: &mut Vec<Self>, env: &mut E) -> Result<Self> {
         let mut concatenated = Self::default();
         for sheet in ary {
-            concatenated = Self::merge(&concatenated, &sheet, env)?;
+            for (rune, balance) in <CachedBalanceSheet as BalanceSheetOperations<E>>::balances(sheet) {
+                concatenated.increase(rune, *balance, env)?;
+            }
         }
         Ok(concatenated)
     }
-    fn merge(a: &CachedBalanceSheet, b: &CachedBalanceSheet, env: &mut E) -> Result<CachedBalanceSheet> {
+    fn merge(a: &mut CachedBalanceSheet, b: &mut CachedBalanceSheet, env: &mut E) -> Result<CachedBalanceSheet> {
         let mut merged = CachedBalanceSheet::default();
         merged.merge_sheets(a, b, env)?;
         Ok(merged)
@@ -275,16 +230,7 @@ impl PartialEq for CachedBalanceSheet {
 impl Eq for CachedBalanceSheet {}
 
 
-impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> Clone for BalanceSheet<E, P> {
-    fn clone(&self) -> Self {
-        Self {
-            cached: self.cached.clone(),
-            load_ptrs: self.load_ptrs.clone(),
-            _phantom: PhantomData,
-        }
-    }
-}
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BalanceSheet<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> {
     pub cached: CachedBalanceSheet,
     #[serde(skip)]
@@ -317,18 +263,18 @@ impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> BalanceSheetOperation
         }
         return sheet;
     }
-    fn concat(ary: Vec<Self>, env: &mut E) -> Result<Self> {
+    fn concat(ary: &mut Vec<Self>, env: &mut E) -> Result<Self> {
         let mut concatenated = Self::default();
         for sheet in ary {
-            concatenated = Self::merge(&concatenated, &sheet, env)?;
+            concatenated = Self::merge(&mut concatenated, sheet, env)?;
         }
         Ok(concatenated)
     }
-    fn merge(a: &BalanceSheet<E, P>, b: &BalanceSheet<E, P>, env: &mut E) -> Result<BalanceSheet<E, P>> {
+    fn merge(a: &mut BalanceSheet<E, P>, b: &mut BalanceSheet<E, P>, env: &mut E) -> Result<BalanceSheet<E, P>> {
         let mut merged = Self::default();
         merged.merge_sheets(a, b, env)?;
-        merged.load_ptrs.extend(a.load_ptrs.iter().cloned());
-        merged.load_ptrs.extend(b.load_ptrs.iter().cloned());
+        merged.load_ptrs.extend(a.load_ptrs.drain(..));
+        merged.load_ptrs.extend(b.load_ptrs.drain(..));
         Ok(merged)
     }
     fn balances(&self) -> &BTreeMap<ProtoruneRuneId, u128> {
@@ -417,7 +363,6 @@ impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> BalanceSheet<E, P> {
         let rune_clone = rune.clone();
         for ptr in &self.load_ptrs {
             let runes_to_balances_ptr = ptr
-                .clone()
                 .keyword("/id_to_balance")
                 .select(&rune_clone.into());
             if runes_to_balances_ptr.get(env).len() != 0 {
@@ -437,22 +382,21 @@ impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> BalanceSheet<E, P> {
 
 
 
-impl<E: RuntimeEnvironment + Default, P: KeyValuePointer<E> + Clone> TryFrom<Vec<RuneTransfer>>
+impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> TryFrom<Vec<RuneTransfer>>
     for BalanceSheet<E, P>
 {
     type Error = anyhow::Error;
 
     fn try_from(v: Vec<RuneTransfer>) -> Result<BalanceSheet<E, P>> {
         let mut balance_sheet = Self::default();
-        let mut env = E::default();
-
         for transfer in v {
-            balance_sheet.increase(&transfer.id, transfer.value, &mut env)?;
+            let current_balance = balance_sheet.cached.balances.get(&transfer.id).unwrap_or(&0);
+            balance_sheet.cached.balances.insert(transfer.id, current_balance + transfer.value);
         }
-
         Ok(balance_sheet)
     }
 }
+
 
 
 

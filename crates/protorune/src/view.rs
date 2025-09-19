@@ -4,7 +4,7 @@ use crate::{balance_sheet::load_sheet};
 use anyhow::{anyhow, Result};
 use bitcoin;
 use metashrew_support::environment::RuntimeEnvironment;
-use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
+use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::proto;
 use protorune_support::proto::protorune::{
     Outpoint,
@@ -39,7 +39,48 @@ pub fn core_outpoint_to_proto(outpoint: &OutPoint) -> Outpoint {
     }
 }
 
-pub fn protorune_outpoint_to_outpoint_response<E: RuntimeEnvironment + Clone + Default>(
+fn balance_sheet_to_proto<E: RuntimeEnvironment + Clone, P: KeyValuePointer<E> + Clone>(
+    balance_sheet: &BalanceSheet<E, P>,
+) -> proto::protorune::BalanceSheet {
+    proto::protorune::BalanceSheet {
+        entries: balance_sheet
+            .balances()
+            .iter()
+            .map(|(id, balance)| {
+                let height_u128 = proto::protorune::Uint128 {
+                    lo: id.block as u64,
+                    hi: (id.block >> 64) as u64,
+                };
+                let txindex_u128 = proto::protorune::Uint128 {
+                    lo: id.tx as u64,
+                    hi: (id.tx >> 64) as u64,
+                };
+                let proto_rune_id = proto::protorune::ProtoruneRuneId {
+                    height: Some(height_u128),
+                    txindex: Some(txindex_u128),
+                };
+                let rune = proto::protorune::Rune {
+                    rune_id: Some(proto_rune_id),
+                    name: "".to_string(),
+                    divisibility: 0,
+                    spacers: 0,
+                    symbol: "".to_string(),
+                    //runes_symbol: 0,
+                };
+                let balance_u128 = proto::protorune::Uint128 {
+                    lo: (*balance) as u64,
+                    hi: ((*balance) >> 64) as u64,
+                };
+                proto::protorune::BalanceSheetItem {
+                    rune: Some(rune),
+                    balance: Some(balance_u128),
+                }
+            })
+            .collect(),
+    }
+}
+
+pub fn protorune_outpoint_to_outpoint_response<E: RuntimeEnvironment + Clone>(
     outpoint: &OutPoint,
     protocol_id: u128,
     env: &mut E,
@@ -79,7 +120,7 @@ pub fn protorune_outpoint_to_outpoint_response<E: RuntimeEnvironment + Clone + D
             .as_slice(),
     )?;
     Ok(OutpointResponse {
-        balances: Some(balance_sheet.into()),
+        balances: Some(balance_sheet_to_proto(&balance_sheet)),
         outpoint: Some(core_outpoint_to_proto(&outpoint)),
         output: Some(decoded_output),
         height: height as u32,
@@ -87,7 +128,7 @@ pub fn protorune_outpoint_to_outpoint_response<E: RuntimeEnvironment + Clone + D
     })
 }
 
-pub fn runes_by_address<E: RuntimeEnvironment + Clone + Default>(
+pub fn runes_by_address<E: RuntimeEnvironment + Clone>(
     input: &Vec<u8>,
     env: &mut E,
 ) -> Result<WalletResponse> {
@@ -116,7 +157,7 @@ pub fn runes_by_address<E: RuntimeEnvironment + Clone + Default>(
                     .select(&outpoint_bytes)
                     .get(env);
                 if req.wallet.len() == _address.len() {
-                    Some(protorune_outpoint_to_outpoint_response::<E>(&outpoint, 0, env))
+                    Some(protorune_outpoint_to_outpoint_response(&outpoint, 0, env))
                 } else {
                     None
                 }
@@ -126,7 +167,7 @@ pub fn runes_by_address<E: RuntimeEnvironment + Clone + Default>(
     Ok(result)
 }
 
-pub fn protorunes_by_outpoint<E: RuntimeEnvironment + Clone + Default>(
+pub fn protorunes_by_outpoint<E: RuntimeEnvironment + Clone>(
     input: &Vec<u8>,
     env: &mut E,
 ) -> Result<OutpointResponse> {
@@ -140,13 +181,13 @@ pub fn protorunes_by_outpoint<E: RuntimeEnvironment + Clone + Default>(
                 ),
                 vout: req.vout,
             };
-            protorune_outpoint_to_outpoint_response::<E>(&outpoint, protocol_tag, env)
+            protorune_outpoint_to_outpoint_response(&outpoint, protocol_tag, env)
         }
         None => Err(anyhow!("malformed request")),
     }
 }
 
-pub fn runes_by_outpoint<E: RuntimeEnvironment + Clone + Default>(
+pub fn runes_by_outpoint<E: RuntimeEnvironment + Clone>(
     input: &Vec<u8>,
     env: &mut E,
 ) -> Result<OutpointResponse> {
@@ -158,13 +199,13 @@ pub fn runes_by_outpoint<E: RuntimeEnvironment + Clone + Default>(
                 ),
                 vout: req.vout,
             };
-            protorune_outpoint_to_outpoint_response::<E>(&outpoint, 0, env)
+            protorune_outpoint_to_outpoint_response(&outpoint, 0, env)
         }
         None => Err(anyhow!("malformed request")),
     }
 }
 
-pub fn protorunes_by_address<E: RuntimeEnvironment + Clone + Default>(
+pub fn protorunes_by_address<E: RuntimeEnvironment + Clone>(
     input: &Vec<u8>,
     env: &mut E,
 ) -> Result<WalletResponse> {
@@ -193,7 +234,7 @@ pub fn protorunes_by_address<E: RuntimeEnvironment + Clone + Default>(
                     .select(&outpoint_bytes)
                     .get(env);
                 if req.wallet.len() == _address.len() {
-                    Some(protorune_outpoint_to_outpoint_response::<E>(
+                    Some(protorune_outpoint_to_outpoint_response(
                         &outpoint,
                         req.clone()
                             .protocol_tag
@@ -211,7 +252,7 @@ pub fn protorunes_by_address<E: RuntimeEnvironment + Clone + Default>(
     Ok(result)
 }
 
-pub fn protorunes_by_address2<E: RuntimeEnvironment + Clone + Default>(
+pub fn protorunes_by_address2<E: RuntimeEnvironment + Clone>(
     input: &Vec<u8>,
     env: &mut E,
 ) -> Result<WalletResponse> {
@@ -226,7 +267,7 @@ pub fn protorunes_by_address2<E: RuntimeEnvironment + Clone + Default>(
                 let mut cursor = Cursor::new(v.as_ref().clone());
                 let outpoint =
                     consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?;
-                protorune_outpoint_to_outpoint_response::<E>(
+                protorune_outpoint_to_outpoint_response(
                     &outpoint,
                     req.clone()
                         .protocol_tag
@@ -241,7 +282,7 @@ pub fn protorunes_by_address2<E: RuntimeEnvironment + Clone + Default>(
     Ok(result)
 }
 
-pub fn runes_by_height<E: RuntimeEnvironment + Clone + Default>(
+pub fn runes_by_height<E: RuntimeEnvironment + Clone>(
     input: &Vec<u8>,
     env: &mut E,
 ) -> Result<RunesResponse> {
@@ -287,7 +328,7 @@ pub fn runes_by_height<E: RuntimeEnvironment + Clone + Default>(
     Ok(result)
 }
 
-pub fn protorunes_by_height<E: RuntimeEnvironment + Clone + Default>(
+pub fn protorunes_by_height<E: RuntimeEnvironment + Clone>(
     input: &Vec<u8>,
     env: &mut E,
 ) -> Result<RunesResponse> {

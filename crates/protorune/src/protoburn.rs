@@ -17,20 +17,20 @@ use ordinals::Edict;
 
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 
-#[derive(Clone, Debug)]
-pub struct Protoburn<E: RuntimeEnvironment> {
+#[derive(Debug)]
+pub struct Protoburn<E: RuntimeEnvironment + Clone> {
     pub tag: Option<u128>,
     pub pointer: Option<u32>,
     pub from: Option<Vec<u32>>,
 	pub _phantom: std::marker::PhantomData<E>
 }
 
-impl<E: RuntimeEnvironment + Clone + Default> Protoburn<E> {
+impl<E: RuntimeEnvironment + Clone> Protoburn<E> {
     pub fn process(
         &mut self,
         env: &mut E,
         atomic: &mut AtomicPointer<E>,
-        balance_sheet: BalanceSheet<E, AtomicPointer<E>>,
+        balance_sheet: &mut BalanceSheet<E, AtomicPointer<E>>,
         proto_balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
         outpoint: OutPoint,
     ) -> Result<()> {
@@ -90,7 +90,7 @@ pub trait Protoburns<E: RuntimeEnvironment + Clone, T>: Deref<Target = [T]> {
     ) -> Result<()>;
 }
 
-impl<E: RuntimeEnvironment + Clone + Default> Protoburns<E, Protoburn<E>> for Vec<Protoburn<E>> {
+impl<E: RuntimeEnvironment + Clone> Protoburns<E, Protoburn<E>> for Vec<Protoburn<E>> {
     fn process(
         &mut self,
         env: &mut E,
@@ -118,7 +118,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Protoburns<E, Protoburn<E>> for Ve
 
         // from field in Protoburn is provided, which means the burn doesn't cycle through the inputs, just pulls the inputs from the "from" field and burns those
         for (i, burn) in self.iter_mut().enumerate() {
-            if let Some(_from) = burn.clone().from {
+            if let Some(_from) = burn.from.clone() {
                 let from = _from.into_iter().collect::<BTreeSet<u32>>();
                 for j in from {
                     pull_set.insert(j, true);
@@ -163,20 +163,20 @@ impl<E: RuntimeEnvironment + Clone + Default> Protoburns<E, Protoburn<E>> for Ve
         // the default output of the runestone (all leftover runes, or the mint runes go to this output)
         // equals the runestone OP_RETURN. This is a valid protoburn
         if runestone_output_index == default_output {
-            for rune in runestone_balance_sheet.clone().balances().keys() {
-                let cycle = burn_cycles.peek(rune)?;
-                let to_apply = runestone_balance_sheet.get(rune, env);
+            for rune in runestone_balance_sheet.balances().keys().cloned().collect::<Vec<_>>() {
+                let cycle = burn_cycles.peek(&rune)?;
+                let to_apply = runestone_balance_sheet.get(&rune, env);
                 if to_apply == 0 {
                     continue;
                 };
-                burn_cycles.next(rune)?;
-                runestone_balance_sheet.decrease(rune, to_apply, env);
-                burn_sheets[cycle as usize].increase(rune, to_apply, env)?;
+                burn_cycles.next(&rune)?;
+                runestone_balance_sheet.decrease(&rune, to_apply, env);
+                burn_sheets[cycle as usize].increase(&rune, to_apply, env)?;
             }
         }
 
         for (i, burn) in self.iter_mut().enumerate() {
-            let sheet = burn_sheets[i].clone();
+            let sheet = &mut burn_sheets[i];
             burn.process(
                 env,
                 atomic,

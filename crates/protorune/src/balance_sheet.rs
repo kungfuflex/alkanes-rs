@@ -60,11 +60,11 @@ pub trait PersistentRecord<E: RuntimeEnvironment>: BalanceSheetOperations<E> {
     }
 }
 
-pub trait Mintable<E: RuntimeEnvironment> {
+pub trait Mintable<E: RuntimeEnvironment + Clone> {
     fn mintable_in_protocol(&self, atomic: &mut AtomicPointer<E>, env: &mut E) -> bool;
 }
 
-impl<E: RuntimeEnvironment + Default> Mintable<E> for ProtoruneRuneId {
+impl<E: RuntimeEnvironment + Default + Clone> Mintable<E> for ProtoruneRuneId {
     fn mintable_in_protocol(&self, atomic: &mut AtomicPointer<E>, env: &mut E) -> bool {
         // if it was not etched via runes-like etch in the Runestone and protoburned, then it is considered mintable
         atomic
@@ -79,7 +79,7 @@ impl<E: RuntimeEnvironment + Default> Mintable<E> for ProtoruneRuneId {
 
 pub trait OutgoingRunes<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> {
     fn reconcile(
-        &self,
+        self,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, P>>,
         vout: u32,
         pointer: u32,
@@ -87,43 +87,13 @@ pub trait OutgoingRunes<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> {
     ) -> Result<()>;
 }
 
-pub trait MintableDebit<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone + std::fmt::Debug> {
-    fn debit_mintable(&mut self, sheet: &BalanceSheet<E, P>, atomic: &mut AtomicPointer<E>, env: &mut E)
-        -> Result<()>;
-}
 
-impl<E: RuntimeEnvironment + Default, P: KeyValuePointer<E> + Clone + std::fmt::Debug> MintableDebit<E, P> for BalanceSheet<E, P> {
-    // logically, this will debit the input sheet from the self sheet, and if it would produce a negative value
-    // it will check if the rune id is mintable (if it was etched and protoburned or if it is an alkane).
-    // if it is mintable, we assume the extra amount was minted and do not decrease the amount.
-    // NOTE: if it was a malicious case where an alkane was minted by another alkane, this will not check for that.
-    // such a case should be checked in debit_balances in src/utils.rs
-    fn debit_mintable(
-        &mut self,
-        sheet: &BalanceSheet<E, P>,
-        atomic: &mut AtomicPointer<E>,
-        env: &mut E,
-    ) -> Result<()> {
-        for (rune, balance) in sheet.balances() {
-            let mut amount = *balance;
-            let current = self.get(&rune, env);
-            if amount > current {
-                if rune.mintable_in_protocol(atomic, env) {
-                    amount = current;
-                } else {
-                    return Err(anyhow!("balance underflow during debit_mintable"));
-                }
-            }
-            self.decrease(rune, amount, env);
-        }
-        Ok(())
-    }
-}
-impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone + std::fmt::Debug> OutgoingRunes<E, P>
+
+impl<E: RuntimeEnvironment + Clone, P: KeyValuePointer<E> + std::fmt::Debug + Clone> OutgoingRunes<E, P>
     for (Vec<RuneTransfer>, BalanceSheet<E, P>)
 {
     fn reconcile(
-        &self,
+        self,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, P>>,
         vout: u32,
         pointer: u32,
@@ -131,8 +101,8 @@ impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone + std::fmt::Debug> Out
     ) -> Result<()> {
         // self.0 is the amount to forward to the pointer
         // self.1 is the amount to put into the runtime balance
-        let outgoing: BalanceSheet<E, P> = self.0.clone().try_into()?;
-        let outgoing_runtime = self.1.clone();
+        let outgoing: BalanceSheet<E, P> = self.0.try_into()?;
+        let outgoing_runtime = self.1;
 
         // now lets update balances_by_output to correct values
 
@@ -149,7 +119,7 @@ impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone + std::fmt::Debug> Out
     }
 }
 
-pub fn load_sheet<E: RuntimeEnvironment, T: KeyValuePointer<E> + Clone>(
+pub fn load_sheet<E: RuntimeEnvironment + Clone, T: KeyValuePointer<E> + Clone>(
     ptr: &T,
     env: &mut E,
 ) -> BalanceSheet<E, T> {
@@ -179,7 +149,7 @@ pub fn clear_balances<E: RuntimeEnvironment, T: KeyValuePointer<E>>(ptr: &T, env
     }
 }
 
-impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone + std::fmt::Debug> PersistentRecord<E>
+impl<E: RuntimeEnvironment + Clone, P: KeyValuePointer<E> + std::fmt::Debug + Clone> PersistentRecord<E>
     for BalanceSheet<E, P>
 {
 }

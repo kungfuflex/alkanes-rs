@@ -19,11 +19,12 @@ use protorune_support::protostone::Protostone;
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::message::MessageContext;
 use protorune_support::balance_sheet::BalanceSheetOperations;
-use protorune::view::protorune_outpoint_to_outpoint_response;
+use crate::view::protorune_outpoint_to_outpoint_response;
 use protorune_support::balance_sheet::BalanceSheet;
 use metashrew_support::environment::RuntimeEnvironment;
 
 use protorune::tables::RuneTable;
+use crate::tests::test_runtime::TestRuntime;
 // Struct to track fuel benchmarks
 struct FuelBenchmark {
     operation: String,
@@ -47,29 +48,27 @@ impl FuelBenchmark {
         }
     }
 
-    fn display(&self) {
-        TestRuntime::log(format!(
+    fn display(&self, env: &mut TestRuntime) {
+        env.log(format!(
             "│ {:<30} │ {:>12} │ {:>12} │ {:>12} │ {:>8.2}% │",
-            self.operation,
-            self.initial_fuel,
-            self.final_fuel,
-            self.fuel_consumed,
-            self.fuel_percentage
+            self.operation, self.initial_fuel, self.final_fuel, self.fuel_consumed, self.fuel_percentage
         ));
     }
 }
 
-fn display_benchmark_header() {
-    TestRuntime::log(format!("┌────────────────────────────────┬──────────────┬──────────────┬──────────────┬──────────┐"));
-    TestRuntime::log(format!("│ Operation                      │ Initial Fuel │  Final Fuel  │ Fuel Consumed│ % of Max │"));
-    TestRuntime::log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
+fn display_benchmark_header(env: &mut TestRuntime) {
+    env.log(format!("┌────────────────────────────────┬──────────────┬──────────────┬──────────────┬──────────┐"));
+    env.log(format!("│ Operation                      │ Initial Fuel │  Final Fuel  │ Fuel Consumed│ % of Max │"));
+    env.log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
 }
 
-fn display_benchmark_footer() {
-    TestRuntime::log(format!("└────────────────────────────────┴──────────────┴──────────────┴──────────────┴──────────┘"));
+fn display_benchmark_footer(env: &mut TestRuntime) {
+    env.log(format!("└────────────────────────────────┴──────────────┴──────────────┴──────────────┴──────────┘"));
 }
-#[test] fn test_genesis() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+#[test]
+fn test_genesis() -> Result<()> {
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear::<TestRuntime>();
     let block_height = 0;
 
     // Initialize fuel benchmarks collection
@@ -78,7 +77,7 @@ fn display_benchmark_footer() {
     // Track initial fuel state
     let initial_total_fuel = TOTAL_FUEL_START;
 
-    TestRuntime::log(format!(
+    env.log(format!(
         "Starting Genesis Test with total fuel: {}",
         initial_total_fuel
     ));
@@ -104,7 +103,7 @@ fn display_benchmark_footer() {
         vout: 0,
     };
 
-    TestRuntime::log(format!(
+    env.log(format!(
         "Runestone: {}",
         hex::encode(&test_block.txdata[1].output[1].script_pubkey)
     ));
@@ -174,42 +173,44 @@ fn display_benchmark_footer() {
 
 
     // Display fuel benchmarks
-    TestRuntime::log(format!("\n=== FUEL BENCHMARKS ==="));
-    display_benchmark_header();
+    // Display fuel benchmarks
+    env.log(format!("\n=== FUEL BENCHMARKS ==="));
+    display_benchmark_header(&mut env);
     for benchmark in &benchmarks {
-        benchmark.display();
+        benchmark.display(&mut env);
     }
 
     // Calculate and display total fuel consumption
     let total_consumed = benchmarks.iter().fold(0, |acc, b| acc + b.fuel_consumed);
     let total_percentage = (total_consumed as f64 / initial_total_fuel as f64) * 100.0;
 
-    TestRuntime::log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
-    TestRuntime::log(format!(
+    env.log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
+    env.log(format!(
         "│ TOTAL                          │ {:>12} │ {:>12} │ {:>12} │ {:>8.2}% │",
         initial_total_fuel,
         initial_total_fuel - total_consumed,
         total_consumed,
         total_percentage
     ));
-    display_benchmark_footer();
-
+    display_benchmark_footer(&mut env);
     Ok(())
 }
 
-#[test] fn test_genesis_alkane_key() -> Result<()> {
-    TestRuntime::log(format!(
+#[test]
+fn test_genesis_alkane_key() -> Result<()> {
+    let mut env = TestRuntime::default();
+    env.log(format!(
         "{}",
-        (IndexPointer::<crate::tests::test_runtime::TestRuntime>::from_keyword("/alkanes/")
+        (IndexPointer::<TestRuntime>::from_keyword("/alkanes/")
             .select(&(AlkaneId { tx: 2, block: 0 }).into())
-            .get()
+            .get(&mut env)
             .as_ref()
             .len())
     ));
-    TestRuntime::log(format!(
+    env.log(format!(
         "key: {}",
         hex::encode(
-            IndexPointer::<crate::tests::test_runtime::TestRuntime>::from_keyword("/alkanes/")
+            IndexPointer::<TestRuntime>::from_keyword("/alkanes/")
                 .select(&(AlkaneId { tx: 2, block: 0 }).into())
                 .unwrap()
                 .as_ref()
@@ -251,7 +252,7 @@ fn display_benchmark_footer() {
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
     assert_eq!(sheet.get(&genesis_id), 50_000_000u128);
     let out = protorune_outpoint_to_outpoint_response::<crate::tests::test_runtime::TestRuntime>(&outpoint, 1)?;
-    let out_sheet: BalanceSheet<IndexPointer<crate::tests::test_runtime::TestRuntime>> = out.into();
+    let out_sheet: BalanceSheet<TestRuntime, IndexPointer<TestRuntime>> = out.into();
     assert_eq!(sheet, out_sheet);
 
     // make sure premine is spendable

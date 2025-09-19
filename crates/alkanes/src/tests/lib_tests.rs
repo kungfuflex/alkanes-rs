@@ -25,7 +25,7 @@ fn test_decode_block() {
     let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
     let block: Block =
-        consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
+        metashrew_support::utils::consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
     assert!(height == 849236);
 
     // calling index_block directly fails since genesis(&block).unwrap(); gets segfault

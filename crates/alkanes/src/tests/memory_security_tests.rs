@@ -26,13 +26,13 @@ fn test_integer_overflow_in_memory_operations() -> Result<()> {
     let overflow_cellpack = create_malformed_cellpack_large_inputs();
 
     // Initialize the contract and execute the cellpack
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx::<TestRuntime>(
+    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [overflow_cellpack].into(),
     );
 
     // This should not crash the indexer, but should fail gracefully
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block::<TestRuntime>(&mut TestRuntime::default(), &test_block, block_height)?;
 
     // Check that the operation failed by examining the trace
     let outpoint = OutPoint {
@@ -40,7 +40,7 @@ fn test_integer_overflow_in_memory_operations() -> Result<()> {
         vout: 3,
     };
 
-    alkane_helpers::assert_revert_context::<TestRuntime>(
+    alkane_helpers::assert_revert_context(
         &outpoint,
         "Unrecognized opcode",
     )?;

@@ -15,9 +15,9 @@ use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransferParcel;
 use anyhow::Result;
 use bitcoin::{Block, OutPoint, Transaction};
-use metashrew_core::app::Initialise;
 use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::index_pointer::{AtomicPointer, IndexPointer, KeyValuePointer};
+
 use protorune::balance_sheet::PersistentRecord;
 use protorune::message::{MessageContext, MessageContextParcel};
 use protorune::Protorune;
@@ -181,7 +181,7 @@ pub fn is_genesis<E: RuntimeEnvironment + Clone + Default>(env: &mut E, height: 
     is_genesis
 }
 
-pub fn genesis<E: RuntimeEnvironment + Clone + Default + 'static + KeyValuePointer<E>>(
+pub fn genesis<E: RuntimeEnvironment + Clone + Default + 'static>(
     env: &mut E,
     block: &Block,
 ) -> Result<()> {
@@ -271,19 +271,19 @@ pub fn genesis<E: RuntimeEnvironment + Clone + Default + 'static + KeyValuePoint
         runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
         _phantom: PhantomData,
     };
-    let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
+    let (response, _gas_used) = (match simulate_parcel(env, &parcel, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
             Err(e)
         }
     })?;
-    let (response3, _gas_used3) = (match simulate_parcel(&parcel2, u64::MAX) {
+    let (response3, _gas_used3) = (match simulate_parcel(env, &parcel2, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
             Err(e)
         }
     })?;
-    let (response2, _gas_used2) = (match simulate_parcel(&parcel3, u64::MAX) {
+    let (response2, _gas_used2) = (match simulate_parcel(env, &parcel3, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
             Err(e)
@@ -293,24 +293,13 @@ pub fn genesis<E: RuntimeEnvironment + Clone + Default + 'static + KeyValuePoint
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
     })?;
-    <AlkaneTransferParcel as TryInto<BalanceSheet<E, AtomicPointer<E>>>>::try_into(
-        response.alkanes.into(),
-    )?
-    .save(
-        &mut atomic.derive(
-            &RuneTable::for_protocol(Protorune::protocol_tag())
-                .OUTPOINT_TO_RUNES
-                .select(&outpoint_bytes),
-        ),
-        false,
-        env,
-    );
+
     <AlkaneTransferParcel as TryInto<BalanceSheet<E, AtomicPointer<E>>>>::try_into(
         response2.alkanes.into(),
     )?
     .save(
         &mut atomic.derive(
-            &RuneTable::for_protocol(Protorune::protocol_tag())
+            &RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag())
                 .OUTPOINT_TO_RUNES
                 .select(&outpoint_bytes),
         ),

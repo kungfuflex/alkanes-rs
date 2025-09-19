@@ -10,7 +10,7 @@ use std::u128;
 use metashrew_support::environment::RuntimeEnvironment;
 use std::marker::PhantomData;
 
-pub trait MessageContext<E: RuntimeEnvironment + Clone + Default> {
+pub trait MessageContext<E: RuntimeEnvironment + Clone> {
     fn handle(
         parcel: &MessageContextParcel<E>,
         env: &mut E,
@@ -58,7 +58,7 @@ impl ToBytes for OutPoint {
     }
 }
 
-impl<E: RuntimeEnvironment + Clone + Default> Default for MessageContextParcel<E> {
+impl<E: RuntimeEnvironment + Clone> Default for MessageContextParcel<E> {
     fn default() -> MessageContextParcel<E> {
         let block = bitcoin::constants::genesis_block(bitcoin::Network::Bitcoin);
         MessageContextParcel {

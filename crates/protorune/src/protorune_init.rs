@@ -8,7 +8,7 @@ use protorune_support::balance_sheet::ProtoruneRuneId;
 use std::sync::Arc;
 use metashrew_support::environment::RuntimeEnvironment;
 
-pub fn index_unique_protorunes<E: RuntimeEnvironment + Clone + Default, T: MessageContext<E>>(
+pub fn index_unique_protorunes<E: RuntimeEnvironment + Clone, T: MessageContext<E>>(
     atomic: &mut AtomicPointer<E>,
     height: u64,
     assets: Vec<ProtoruneRuneId>,

@@ -15,11 +15,13 @@ use alkanes_support::{
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_core::environment::MetashrewEnvironment;
+use downcast_rs::Downcast;
 use metashrew_support::environment::{EnvironmentInput, RuntimeEnvironment};
 
 
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::balance_sheet::MintableDebit;
+
 use protorune::message::{MessageContext, MessageContextParcel};
 #[allow(unused_imports)]
 use protorune::protorune_init::index_unique_protorunes;
@@ -32,14 +34,14 @@ use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
 
 #[derive(Clone, Default, Debug)]
-pub struct AlkaneMessageContext<E: RuntimeEnvironment>(PhantomData<E>);
+pub struct AlkaneMessageContext<E: RuntimeEnvironment + Clone>(PhantomData<E>);
 
 
 
 
 // TODO: import MessageContextParcel
 
-pub fn handle_message<E: RuntimeEnvironment + Clone + Default + 'static>(
+pub fn handle_message<E: RuntimeEnvironment + Clone + 'static>(
     parcel: &MessageContextParcel<E>,
     env: &mut E,
 ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)> {
@@ -121,15 +123,16 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + Default + 'static>(
                 ),
                 env,
             );
-            let mut combined = parcel.runtime_balances.as_ref().clone();
+            let mut combined = BalanceSheet::<E, AtomicPointer<E>>::new_ptr_backed(AtomicPointer::default());
+            (*parcel.runtime_balances).pipe(&mut combined, env)?;
             <BalanceSheet<E, AtomicPointer<E>> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 parcel.runes.clone(),
             )?
-            .pipe(&mut combined, env)?;;
+            .pipe(&mut combined, env)?;
             let sheet = <BalanceSheet<E, AtomicPointer<E>> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 response.alkanes.clone().into(),
             )?;
-            combined.debit_mintable(&sheet, &mut atomic, env)?;
+            combined.debit(&sheet, env)?;
             debit_balances(&mut atomic, &myself, &response.alkanes, env)?;
             let cloned = context.clone().lock().unwrap().trace.clone();
             let response_alkanes = response.alkanes.clone();
@@ -144,7 +147,7 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + Default + 'static>(
                 },
                 parcel.height,
                 trace.clone(),
-                env,
+                env.as_any_mut().downcast_mut::<MetashrewEnvironment>().unwrap(),
             )?;
 
             Ok((response_alkanes.into(), combined))
@@ -199,13 +202,13 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + Default + 'static>(
                 },
                 parcel.height,
                 cloned,
-                env,
+                env.as_any_mut().downcast_mut::<MetashrewEnvironment>().unwrap(),
             )?;
             Err(e)
         })
 }
 
-impl<E: RuntimeEnvironment + Clone + Default + 'static> MessageContext<E> for AlkaneMessageContext<E> {
+impl<E: RuntimeEnvironment + Clone + 'static> MessageContext<E> for AlkaneMessageContext<E> {
     fn protocol_tag() -> u128 {
         1
     }

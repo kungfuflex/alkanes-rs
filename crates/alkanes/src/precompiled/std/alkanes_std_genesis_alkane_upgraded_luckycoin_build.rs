@@ -1,0 +1,1 @@
+pub fn get_bytes() -> Vec<u8> { include_bytes!("/data/alkanes-rs/target/alkanes-wasm/alkanes_std_genesis_alkane_upgraded_luckycoin.wasm").to_vec() }

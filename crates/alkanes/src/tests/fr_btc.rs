@@ -39,7 +39,7 @@ use protorune::{
 };
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::Protostone;
-use protorune::protostone::Protostones;
+use protorune::protostone::{ProtostoneEncoder, Protostones};
 use protorune_support::utils::consensus_encode;
 use std::sync::Arc;
 
@@ -61,10 +61,10 @@ pub fn simulate_cellpack<E: RuntimeEnvironment + Clone + Default + 'static>(
         pointer: 0,
         refund_pointer: 0,
         calldata: cellpack.encipher(),
-        sheets: Box::<BalanceSheet<AtomicPointer<AlkaneMessageContext<E>>>>::new(BalanceSheet::default()),
+        sheets: Box::<BalanceSheet<E, AtomicPointer<AlkaneMessageContext<E>>>>::new(BalanceSheet::default()),
         txindex: 0,
         vout: 0,
-        runtime_balances: Box::<BalanceSheet<AtomicPointer<AlkaneMessageContext<E>>>>::new(BalanceSheet::default()),
+        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<AlkaneMessageContext<E>>>>::new(BalanceSheet::default()),
         _phantom: std::marker::PhantomData,
     };
     simulate_parcel::<E>(&parcel, u64::MAX)
@@ -132,7 +132,7 @@ pub fn create_alkane_tx_frbtc_signer_script<E: RuntimeEnvironment>(
         pointer: Some(0),
         edicts: Vec::new(),
         mint: None,
-        protocol: Some(<Vec<Protostone> as Protostones<TestRuntime>>::encipher(&protostones)?),
+        protocol: Some(<Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(&protostones)?),
     })
     .encipher();
 
@@ -220,7 +220,7 @@ fn unwrap_btc_tx<E: RuntimeEnvironment>(
         pointer: Some(0),
         edicts: Vec::new(),
         mint: None,
-        protocol: Some(<Vec<Protostone> as Protostones<TestRuntime>>::encipher(&protostone)?),
+        protocol: Some(<Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(&protostone)?),
     })
     .encipher();
 

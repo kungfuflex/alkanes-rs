@@ -68,7 +68,7 @@ pub mod test_helpers;
 pub mod tests;
 pub mod view;
 
-pub struct Protorune<E: RuntimeEnvironment + Clone + Default>(PhantomData<E>);
+pub struct Protorune<E: RuntimeEnvironment>(PhantomData<E>);
 
 pub fn default_output(tx: &Transaction) -> u32 {
     for i in 0..tx.output.len() {
@@ -155,8 +155,7 @@ pub fn handle_transfer_runes_to_vout(
     Ok(output)
 }
 
-#[cfg(not(test))]
-pub fn validate_rune_etch<E: RuntimeEnvironment + Clone + Default>(env: &mut E, tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
+pub fn validate_rune_etch<E: RuntimeEnvironment + Clone>(env: &mut E, tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
     for input in &tx.input {
         // extracting a tapscript does not indicate that the input being spent
         // was actually a taproot output. this is checked below, when we load the
@@ -193,11 +192,11 @@ pub fn validate_rune_etch<E: RuntimeEnvironment + Clone + Default>(env: &mut E, 
     Ok(false)
 }
 #[cfg(test)]
-pub fn validate_rune_etch<E: RuntimeEnvironment + Clone + Default>(env: &mut E, tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
+pub fn validate_rune_etch<E: RuntimeEnvironment + Clone>(env: &mut E, tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
     Ok(true)
 }
 
-impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
+impl<E: RuntimeEnvironment + Clone> Protorune<E> {
     pub fn index_runestone<T: MessageContext<E>>(
         env: &mut E,
         atomic: &mut AtomicPointer<E>,
@@ -208,7 +207,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
         block: &Block,
         runestone_output_index: u32,
     ) -> Result<()> {
-        let sheets: Vec<BalanceSheet<E, AtomicPointer<E>>> = tx
+        let mut sheets: Vec<BalanceSheet<E, AtomicPointer<E>>> = tx
             .input
             .iter()
             .map(|input| {
@@ -223,7 +222,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
                 ))
             })
             .collect::<Result<Vec<BalanceSheet<E, AtomicPointer<E>>>>>()?;
-        let mut balance_sheet = BalanceSheet::concat(sheets, env)?;
+        let mut balance_sheet = BalanceSheet::concat(&mut sheets, env)?;
         let mut balances_by_output = BTreeMap::<u32, BalanceSheet<E, AtomicPointer<E>>>::new();
         let unallocated_to = match runestone.pointer {
             Some(v) => v,
@@ -254,9 +253,9 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
             &mut balance_sheet,
             &tx.output,
         )?;
-        Self::handle_leftover_runes(env, &mut balance_sheet, &mut balances_by_output, unallocated_to)?;
-        for (vout, sheet) in balances_by_output.clone() {
-            let outpoint = OutPoint::new(tx.compute_txid(), vout);
+        Self::handle_leftover_runes(env, balance_sheet, &mut balances_by_output, unallocated_to)?;
+        for (vout, sheet) in &balances_by_output {
+            let outpoint = OutPoint::new(tx.compute_txid(), *vout);
             // println!(
             //     "Saving balance sheet {:?} to outpoint {:?}",
             //     sheet, outpoint
@@ -356,18 +355,17 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
     }
     pub fn handle_leftover_runes(
         env: &mut E,
-        remaining_balances: &mut BalanceSheet<E, AtomicPointer<E>>,
+        remaining_balances: BalanceSheet<E, AtomicPointer<E>>,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
         unallocated_to: u32,
     ) -> Result<()> {
         // grab the balances of the vout to send unallocated to
         match balances_by_output.get_mut(&unallocated_to) {
             // if it already has balances, then send the remaining balances over
-            Some(v) => remaining_balances.pipe(v, env)?,
-            None => {
-                balances_by_output.insert(unallocated_to, remaining_balances.clone());
-            }
-        }
+                    Some(v) => (&remaining_balances).pipe(v, env)?,
+                    None => {
+                        balances_by_output.insert(unallocated_to, remaining_balances);
+                    }        }
         Ok(())
 
         // This piece of logic allows the pointer to evenly distribute if set == number of tx outputs.
@@ -820,10 +818,10 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
                 continue;
             }
 
+            let default_sheet = BalanceSheet::<E, AtomicPointer<E>>::default();
             let sheet = map
                 .get(&(i as u32))
-                .map(|v| v.clone())
-                .unwrap_or_else(|| BalanceSheet::<E, AtomicPointer<E>>::default());
+                .unwrap_or(&default_sheet);
             let outpoint = OutPoint {
                 txid: tx.compute_txid(),
                 vout: i as u32,
@@ -844,8 +842,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
         }
         if map.contains_key(&u32::MAX) {
             map.get(&u32::MAX)
-                .map(|v| v.clone())
-                .unwrap_or_else(|| BalanceSheet::<E, AtomicPointer<E>>::default())
+                .unwrap_or(&BalanceSheet::<E, AtomicPointer<E>>::default())
                 .save(&mut atomic.derive(&table.RUNTIME_BALANCE), false, env);
         }
         index_unique_protorunes::<E, T>(
@@ -907,7 +904,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
             );
 
             // load the balance sheets
-            let sheets: Vec<BalanceSheet<E, AtomicPointer<E>>> = tx
+            let mut sheets: Vec<BalanceSheet<E, AtomicPointer<E>>> = tx
                 .input
                 .iter()
                 .map(|input| {
@@ -921,7 +918,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
                     ))
                 })
                 .collect::<Result<Vec<BalanceSheet<E, AtomicPointer<E>>>>>()?;
-            let mut balance_sheet = BalanceSheet::concat(sheets, env)?;
+            let mut balance_sheet = BalanceSheet::concat(&mut sheets, env)?;
             // TODO: Enable this at a future block when protoburns have been fully tested. For now only enabled in tests
             #[cfg(test)]
             {
@@ -947,7 +944,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
             {
                 Self::handle_leftover_runes(
                     env,
-                    &mut balance_sheet,
+                    balance_sheet,
                     &mut proto_balances_by_output,
                     (tx.output.len() as u32) + 1 + position as u32,
                 )?;
@@ -987,13 +984,13 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
                             // Get the post-message balance to use for edicts
                             prior_balance_sheet =
                                 match proto_balances_by_output.remove(&protostone_unallocated_to) {
-                                    Some(sheet) => sheet.clone(),
+                                    Some(sheet) => sheet,
                                     None => prior_balance_sheet,
                                 };
                         }
                     } else {
                         prior_balance_sheet = match proto_balances_by_output.remove(&shadow_vout) {
-                            Some(sheet) => sheet.clone(),
+                            Some(sheet) => sheet,
                             None => prior_balance_sheet,
                         };
                     }
@@ -1012,7 +1009,7 @@ impl<E: RuntimeEnvironment + Clone + Default> Protorune<E> {
                         // Handle any remaining balance
                         Self::handle_leftover_runes(
                             env,
-                            &mut prior_balance_sheet,
+                            prior_balance_sheet,
                             &mut proto_balances_by_output,
                             protostone_unallocated_to,
                         )?;
