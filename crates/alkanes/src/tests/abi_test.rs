@@ -27,7 +27,7 @@ fn test_contract_abi<E: RuntimeEnvironment + Clone + Default + 'static>(
 
     // Create a new instance of the contract
     let mut instance =
-        AlkanesInstance::<E>::from_alkane(context, Arc::new(contract_bytes), 100000000)?;
+        AlkanesInstance::<E>::from_alkane(context, Arc::new(contract_bytes), 100000000, &mut E::default())?;
 
     // Call the __meta function to get the ABI
     let abi_bytes = instance.call_meta()?;
@@ -37,7 +37,7 @@ fn test_contract_abi<E: RuntimeEnvironment + Clone + Default + 'static>(
     let abi_json: Value = serde_json::from_slice(&abi_bytes)?;
 
     // Print the ABI for debugging
-    TestRuntime::log(format!("{} ABI: {}", contract_name, abi_string));
+    TestRuntime::log(&TestRuntime::default(), format!("{} ABI: {}", contract_name, abi_string).as_str());
 
     // Verify the contract name
     assert_eq!(abi_json["contract"], contract_name);
@@ -160,7 +160,7 @@ fn test_meta_call() -> Result<()> {
         vec![auth_cellpack, test_cellpack, mint_test_cellpack],
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut crate::tests::test_runtime::TestRuntime::default(), &test_block, block_height)?;
 
     // Create a properly formatted message context parcel
     let parcel = MessageContextParcel {
@@ -171,7 +171,7 @@ fn test_meta_call() -> Result<()> {
     };
 
     // Call meta_safe with the properly formatted parcel
-    let abi_bytes = meta_safe::<crate::tests::test_runtime::TestRuntime>(&parcel)?;
+    let abi_bytes = meta_safe::<crate::tests::test_runtime::TestRuntime>(&mut crate::tests::test_runtime::TestRuntime::default(), &parcel)?;
     // Verify the response
     let abi_string = String::from_utf8(abi_bytes.clone())?;
     let abi_json: Value = serde_json::from_slice(&abi_bytes)?;
@@ -183,7 +183,7 @@ fn test_meta_call() -> Result<()> {
         "ABI should contain methods"
     );
 
-    TestRuntime::log(format!("ABI: {}", abi_string));
+    TestRuntime::log(&TestRuntime::default(), format!("ABI: {}", abi_string).as_str());
     Ok(())
 }
 

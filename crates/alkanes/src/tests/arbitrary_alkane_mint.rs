@@ -5,13 +5,14 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
-use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune::test_helpers::create_block_with_coinbase_tx;
 use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_transfer_overflow() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -30,7 +31,7 @@ fn test_transfer_overflow() -> Result<()> {
         [arb_mint_cellpack, arb_mint_cellpack2.clone()].into(),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
     let mut test_block2 = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [[].into()].into(),
@@ -69,18 +70,19 @@ fn test_transfer_overflow() -> Result<()> {
         ),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block2, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block2)?;
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
 
     Ok(())
 }
 
 #[test]
 fn test_mint_overflow() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -119,11 +121,11 @@ fn test_mint_overflow() -> Result<()> {
         ),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
     assert_eq!(
-        sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
+        sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env),
         340282366920938463463374607431768211455
     ); // it refunded
 
@@ -132,14 +134,15 @@ fn test_mint_overflow() -> Result<()> {
         vout: 3,
     };
 
-    alkane_helpers::assert_revert_context(&outpoint, "overflow error during balance sheet increase, current(340282366920938463463374607431768211455) + additional(340282366920938463463374607431768211455)")?;
+    alkane_helpers::assert_revert_context(&mut env, &outpoint, "overflow error during balance sheet increase, current(340282366920938463463374607431768211455) + additional(340282366920938463463374607431768211455)")?;
 
     Ok(())
 }
 
 #[test]
 fn test_mint_underflow() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -154,24 +157,25 @@ fn test_mint_underflow() -> Result<()> {
         [arb_mint_cellpack].into(),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
 
-    alkane_helpers::assert_revert_context(&outpoint, "balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 0 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 1 }), balance(0)")?;
+    alkane_helpers::assert_revert_context(&mut env, &outpoint, "balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 0 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 1 }), balance(0)")?;
     Ok(())
 }
 
 #[test]
 fn test_transfer_runtime() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -213,30 +217,31 @@ fn test_transfer_runtime() -> Result<()> {
         .into(),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
-    let runtime_sheet = get_sheet_for_runtime::<crate::tests::test_runtime::TestRuntime>();
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
+    let runtime_sheet = get_sheet_for_runtime::<crate::tests::test_runtime::TestRuntime>(&mut env);
 
     assert_eq!(
-        runtime_sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
+        runtime_sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env),
         1000000
     );
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 2 }), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 2 }, &mut env), 0);
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
 
-    alkane_helpers::assert_revert_context(&outpoint, "balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 1 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 2 }), balance(0)")?;
+    alkane_helpers::assert_revert_context(&mut env, &outpoint, "balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 1 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 2 }), balance(0)")?;
     Ok(())
 }
 
 #[test]
 fn test_extcall_mint() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -265,11 +270,11 @@ fn test_extcall_mint() -> Result<()> {
             false,
         ));
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -277,6 +282,7 @@ fn test_extcall_mint() -> Result<()> {
     };
 
     alkane_helpers::assert_revert_context(
+        &mut env,
         &outpoint,
         "ALKANES: revert: Error: Extcall failed: balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 0 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 1 }), balance(0)",
     )?;
@@ -286,7 +292,8 @@ fn test_extcall_mint() -> Result<()> {
 
 #[test]
 fn test_delegatecall_mint() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -315,11 +322,11 @@ fn test_delegatecall_mint() -> Result<()> {
             false,
         ));
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -327,6 +334,7 @@ fn test_delegatecall_mint() -> Result<()> {
     };
 
     alkane_helpers::assert_revert_context(
+        &mut env,
         &outpoint,
         "balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 0 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 1 }), balance(0)",
     )?;
@@ -336,7 +344,8 @@ fn test_delegatecall_mint() -> Result<()> {
 
 #[test]
 fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -369,11 +378,11 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
             false,
         ));
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -381,11 +390,13 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
     };
 
     alkane_helpers::assert_revert_context(
+        &mut env,
         &outpoint,
         "ALKANES: revert: Error: Extcall failed: balance underflow, transferring(AlkaneTransfer { id: AlkaneId { block: 2, tx: 0 }, value: 1000000 }), from(AlkaneId { block: 2, tx: 1 }), balance(0)",
     )?;
 
     alkane_helpers::assert_revert_context(
+        &mut env,
         &OutPoint {
             txid: test_block.txdata.last().unwrap().compute_txid(),
             vout: 4,
@@ -398,7 +409,8 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
 
 #[test]
 fn test_multiple_extcall_err_and_good() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -428,25 +440,26 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
             false,
         ));
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block)?;
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
 
-    alkane_helpers::assert_revert_context(&outpoint, "ALKANES: revert")?;
+    alkane_helpers::assert_revert_context(&mut env, &outpoint, "ALKANES: revert")?;
 
     Ok(())
 }
 
 #[test]
 fn test_runtime_duplication() -> Result<()> {
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 1;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -476,7 +489,7 @@ fn test_runtime_duplication() -> Result<()> {
         .into(),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
     let mut test_block2 = create_block_with_coinbase_tx(block_height);
     let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness(
@@ -571,14 +584,14 @@ fn test_runtime_duplication() -> Result<()> {
         ),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&test_block2, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&test_block2)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2)?;
 
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 3 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 2 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 3 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 2 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
 
     Ok(())
 }

@@ -18,7 +18,7 @@ use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
 
-pub fn read_arraybuffer(data: &[u8], data_start: i32, env: &mut impl RuntimeEnvironment) -> Result<Vec<u8>> {
+pub fn read_arraybuffer(data: &[u8], data_start: i32) -> Result<Vec<u8>> {
     let start = data_start
         .try_into()
         .map_err(|_| anyhow!("invalid start offset"))?;
@@ -269,7 +269,7 @@ pub trait Saveable<E: RuntimeEnvironment + Clone> {
     }
 }
 
-pub fn run_after_special<'a, E: RuntimeEnvironment + Clone + 'static>(
+pub fn run_after_special<'a, E: RuntimeEnvironment + Clone + 'static + Default>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     binary: Arc<Vec<u8>>,
     start_fuel: u64,

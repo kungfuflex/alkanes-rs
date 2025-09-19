@@ -19,6 +19,7 @@ mod tests {
     }
     #[test]
     fn test_extcall() -> Result<()> {
+        let mut env = TestRuntime::default();
         let block_height = 0;
 
         let test_cellpacks = [
@@ -37,11 +38,12 @@ mod tests {
             test_cellpacks.into(),
         );
 
-        index_block::<TestRuntime>(&test_block, block_height as u32)?;
+        index_block::<TestRuntime>(&mut env, &test_block, block_height as u32)?;
         Ok(())
     }
     #[test]
     fn test_transaction() -> Result<()> {
+        let mut env = TestRuntime::default();
         let block_height = 0;
 
         let test_cellpacks = [
@@ -62,15 +64,16 @@ mod tests {
             },
         ];
 
-        let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
             [alkanes_std_test_build::get_bytes(), vec![]].into(),
             test_cellpacks.into(),
         );
-        index_block::<TestRuntime>(&test_block, block_height as u32)?;
+        index_block::<TestRuntime>(&mut env, &test_block, block_height as u32)?;
         Ok(())
     }
     #[test]
     fn test_benchmark() -> Result<()> {
+        let mut env = TestRuntime::default();
         let block_height = 0;
 
         let test_cellpacks = [
@@ -98,7 +101,7 @@ mod tests {
             test_cellpacks.to_vec(),
         );
 
-        index_block::<TestRuntime>(&test_block, block_height as u32)?;
+        index_block::<TestRuntime>(&mut env, &test_block, block_height as u32)?;
         Ok(())
     }
 

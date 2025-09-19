@@ -22,7 +22,8 @@ use protorune_support::balance_sheet::BalanceSheetOperations;
 
 #[test]
 fn test_owned_token() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
 
     let test_cellpack = Cellpack {
@@ -50,7 +51,7 @@ fn test_owned_token() -> Result<()> {
         [auth_cellpack, test_cellpack, mint_test_cellpack].into(),
     );
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
     let _owned_token_id = AlkaneId { block: 2, tx: 1 };
     let tx = test_block.txdata.last().ok_or(anyhow!("no last el"))?;
     let outpoint = OutPoint {
@@ -61,6 +62,7 @@ fn test_owned_token() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
+        &mut env,
     );
     /*
         let _ = assert_binary_deployed_to_id(
@@ -71,8 +73,9 @@ fn test_owned_token() -> Result<()> {
     Ok(())
 }
 #[test]
-fn test_auth_and_owned_token_noop() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
+fn test_owned_token_2() -> Result<()> {
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
 
     let auth_cellpack = Cellpack {
@@ -96,7 +99,7 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
         [auth_cellpack, test_cellpack].into(),
     );
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let _auth_token_id_factory = AlkaneId {
         block: 4,
@@ -114,6 +117,7 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
+        &mut env,
     );
     // assert_eq!(sheet.get_cached(&original_rune_id.into()), 1000);
 
@@ -126,13 +130,16 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_first)?),
+        &mut env,
     );
-    assert_eq!(sheet_first.balances().len(), 0);
+    assert_eq!(sheet_first.balances(&mut env).len(), 0);
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
+        &mut env,
         owned_token_id.clone(),
         alkanes_std_owned_token_build::get_bytes(),
     );
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
+        &mut env,
         _auth_token_id_factory.clone(),
         alkanes_std_auth_token_build::get_bytes(),
     );
@@ -142,7 +149,8 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
 
 #[test]
 fn test_auth_and_owned_token() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
 
     let auth_cellpack = Cellpack {
@@ -170,7 +178,7 @@ fn test_auth_and_owned_token() -> Result<()> {
         [auth_cellpack, test_cellpack].into(),
     );
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let _auth_token_id_factory = AlkaneId {
         block: 4,
@@ -189,9 +197,10 @@ fn test_auth_and_owned_token() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
+        &mut env,
     );
-    assert_eq!(sheet.get_cached(&owned_token_id.into()), 1000);
-    assert_eq!(sheet.get_cached(&auth_token_id_deployment.into()), 1);
+    assert_eq!(sheet.get(&owned_token_id.into(), &mut env), 1000);
+    assert_eq!(sheet.get(&auth_token_id_deployment.into(), &mut env), 1);
 
     let tx_first = test_block.txdata.first().ok_or(anyhow!("no first el"))?;
     let outpoint_first = OutPoint {
@@ -202,17 +211,21 @@ fn test_auth_and_owned_token() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_first)?),
+        &mut env,
     );
-    assert_eq!(sheet_first.balances().len(), 0);
+    assert_eq!(sheet_first.balances(&mut env).len(), 0);
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
+        &mut env,
         owned_token_id.clone(),
         alkanes_std_owned_token_build::get_bytes(),
     );
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
+        &mut env,
         _auth_token_id_factory.clone(),
         alkanes_std_auth_token_build::get_bytes(),
     );
     assert_id_points_to_alkane_id::<TestRuntime>(
+        &mut env,
         auth_token_id_deployment.clone(),
         AlkaneId {
             block: 4,
@@ -225,7 +238,8 @@ fn test_auth_and_owned_token() -> Result<()> {
 
 #[test]
 fn test_owned_token_set_name_and_symbol() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
 
     // Initialize the OwnedToken contract
@@ -285,13 +299,14 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
         ),
     );
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     // Get the OwnedToken ID
     let owned_token_id = AlkaneId { block: 2, tx: 1 };
 
     // Verify the binary was deployed correctly
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
+        &mut env,
         owned_token_id.clone(),
         alkanes_std_owned_token_build::get_bytes(),
     );
@@ -302,12 +317,12 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
         vout: 3,
     };
 
-    let trace_data = view::trace(&outpoint)?;
+    let trace_data = view::trace(&mut env, &outpoint)?;
 
     // Convert trace data to string for easier searching
     let trace_str = String::from_utf8_lossy(&trace_data);
 
-    TestRuntime::log(format!("trace {:?}", trace_str));
+    env.log(format!("trace {:?}", trace_str).as_str());
 
     let expected_name = "SuperLongCustomToken";
     let expected_symbol = "SLCT";
@@ -325,12 +340,12 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
         vout: 4,
     };
 
-    let trace_data_symbol = view::trace(&outpoint_symbol)?;
+    let trace_data_symbol = view::trace(&mut env, &outpoint_symbol)?;
 
     // Convert trace data to string for easier searching
     let trace_str_symbol = String::from_utf8_lossy(&trace_data_symbol);
 
-    TestRuntime::log(format!("trace_str_symbol {:?}", trace_str_symbol));
+    env.log(format!("trace_str_symbol {:?}", trace_str_symbol).as_str());
     assert!(
         trace_str_symbol.contains(expected_symbol),
         "Trace data should contain the symbol '{}', but it doesn't",
@@ -339,10 +354,10 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
 
     Ok(())
 }
-
 #[test]
 fn test_auth_and_owned_token_multiple() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
 
     let auth_cellpack = Cellpack {
@@ -400,7 +415,7 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         .into(),
     );
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let _auth_token_id_factory = AlkaneId {
         block: 4,
@@ -419,9 +434,10 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
+        &mut env,
     );
-    assert_eq!(sheet.get_cached(&owned_token_id.into()), 1000);
-    assert_eq!(sheet.get_cached(&auth_token_id_deployment.into()), 1);
+    assert_eq!(sheet.get(&owned_token_id.into(), &mut env), 1000);
+    assert_eq!(sheet.get(&auth_token_id_deployment.into(), &mut env), 1);
 
     let tx_first = test_block.txdata.first().ok_or(anyhow!("no first el"))?;
     let outpoint_first = OutPoint {
@@ -432,17 +448,21 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_first)?),
+        &mut env,
     );
-    assert_eq!(sheet_first.balances().len(), 0);
+    assert_eq!(sheet_first.balances(&mut env).len(), 0);
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
+        &mut env,
         owned_token_id.clone(),
         alkanes_std_owned_token_build::get_bytes(),
     );
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
+        &mut env,
         _auth_token_id_factory.clone(),
         alkanes_std_auth_token_build::get_bytes(),
     );
     assert_id_points_to_alkane_id::<TestRuntime>(
+        &mut env,
         auth_token_id_deployment.clone(),
         AlkaneId {
             block: 4,

@@ -155,6 +155,7 @@ pub fn handle_transfer_runes_to_vout(
     Ok(output)
 }
 
+#[cfg(not(test))]
 pub fn validate_rune_etch<E: RuntimeEnvironment + Clone>(env: &mut E, tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
     for input in &tx.input {
         // extracting a tapscript does not indicate that the input being spent
@@ -192,7 +193,7 @@ pub fn validate_rune_etch<E: RuntimeEnvironment + Clone>(env: &mut E, tx: &Trans
     Ok(false)
 }
 #[cfg(test)]
-pub fn validate_rune_etch<E: RuntimeEnvironment + Clone>(env: &mut E, tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
+pub fn validate_rune_etch<E: RuntimeEnvironment + Clone>(_env: &mut E, _tx: &Transaction, _commitment: Vec<u8>, _height: u64) -> Result<bool> {
     Ok(true)
 }
 
@@ -918,7 +919,7 @@ impl<E: RuntimeEnvironment + Clone> Protorune<E> {
                     ))
                 })
                 .collect::<Result<Vec<BalanceSheet<E, AtomicPointer<E>>>>>()?;
-            let mut balance_sheet = BalanceSheet::concat(&mut sheets, env)?;
+            let balance_sheet = BalanceSheet::concat(&mut sheets, env)?;
             // TODO: Enable this at a future block when protoburns have been fully tested. For now only enabled in tests
             #[cfg(test)]
             {

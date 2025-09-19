@@ -19,9 +19,9 @@ use wasmi::*;
 
 use std::marker::PhantomData;
 pub struct AlkanesTransaction<'a, E: RuntimeEnvironment>(pub &'a Transaction, pub PhantomData<E>);
-pub struct AlkanesBlock<'a, E: RuntimeEnvironment>(pub &'a Block, pub PhantomData<E>);
+pub struct AlkanesBlock<'a, E: RuntimeEnvironment + Clone>(pub &'a Block, pub PhantomData<E>) where E: std::default::Default;
 
-impl<'a, E: RuntimeEnvironment + 'static> VirtualFuelBytes for AlkanesTransaction<'a, E> {
+impl<'a, E: RuntimeEnvironment + 'static + Clone + std::default::Default> VirtualFuelBytes for AlkanesTransaction<'a, E> {
     fn vfsize(&self) -> u64 {
         if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(&self.0) {
             if let Ok(protostones) = Protostone::from_runestone(runestone) {
@@ -71,7 +71,9 @@ impl<'a, E: RuntimeEnvironment + 'static> VirtualFuelBytes for AlkanesTransactio
     }
 }
 
-impl<'a, E: RuntimeEnvironment + 'a + 'static> VirtualFuelBytes for AlkanesBlock<'a, E> {
+impl<'a, E: RuntimeEnvironment + 'a + 'static + Clone + std::default::Default>
+    VirtualFuelBytes for AlkanesBlock<'a, E>
+{
     fn vfsize(&self) -> u64 {
         self.0
             .txdata
@@ -174,7 +176,7 @@ impl FuelTank {
         _FUEL_TANK.read().unwrap().as_ref().unwrap().current_txindex == u32::MAX
     }
 
-    pub fn initialize<E: RuntimeEnvironment + 'static>(block: &Block, height: u32) {
+    pub fn initialize<E: RuntimeEnvironment + Clone + 'static + std::default::Default>(block: &Block, height: u32) {
         let mut tank = _FUEL_TANK.write().unwrap();
         *tank = Some(FuelTank {
             current_txindex: u32::MAX,
@@ -373,7 +375,7 @@ impl<'a, E: RuntimeEnvironment + Clone> Fuelable for AlkanesInstance<'a, E> {
     }
 }
 
-pub fn consume_fuel<'a, E: RuntimeEnvironment>(
+pub fn consume_fuel<'a, E: RuntimeEnvironment + Clone>(
     caller: &mut Caller<'_, AlkanesState<'a, E>>,
     n: u64,
 ) -> Result<()> {

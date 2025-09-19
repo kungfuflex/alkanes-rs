@@ -20,7 +20,7 @@ impl AlkanesExportsImpl {
         })?)
     }
     pub fn _get_result<E: RuntimeEnvironment + Clone + Default + 'static>(vm: &mut AlkanesInstance<E>, result: &[Val; 1]) -> Result<Vec<u8>> {
-        vm.read_arraybuffer(
+        vm.read_from_memory(
             result[0]
                 .i32()
                 .ok_or("")

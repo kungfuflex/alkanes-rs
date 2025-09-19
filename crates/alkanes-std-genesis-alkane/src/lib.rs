@@ -16,10 +16,8 @@ use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash;
 use bitcoin::Block;
 use hex;
-use metashrew_support::block::AuxpowBlock;
 use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
-use std::io::Cursor;
 pub mod chain;
 use crate::chain::ChainConfiguration;
 

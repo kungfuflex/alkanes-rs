@@ -48,27 +48,27 @@ impl FuelBenchmark {
         }
     }
 
-    fn display(&self, env: &mut TestRuntime) {
-        env.log(&format!(
+    fn display(&self, rt_env: &mut TestRuntime) {
+        rt_env.log(&format!(
             "│ {:<30} │ {:>12} │ {:>12} │ {:>12} │ {:>8.2}% │",
             self.operation, self.initial_fuel, self.final_fuel, self.fuel_consumed, self.fuel_percentage
         ));
     }
 }
 
-fn display_benchmark_header(env: &mut TestRuntime) {
-    env.log(&format!("┌────────────────────────────────┬──────────────┬──────────────┬──────────────┬──────────┐"));
-    env.log(&format!("│ Operation                      │ Initial Fuel │  Final Fuel  │ Fuel Consumed│ % of Max │"));
-    env.log(&format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
+fn display_benchmark_header(rt_env: &mut TestRuntime) {
+    rt_env.log(&format!("┌────────────────────────────────┬──────────────┬──────────────┬──────────────┬──────────┐"));
+    rt_env.log(&format!("│ Operation                      │ Initial Fuel │  Final Fuel  │ Fuel Consumed│ % of Max │"));
+    rt_env.log(&format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
 }
 
-fn display_benchmark_footer(env: &mut TestRuntime) {
-    env.log(&format!("└────────────────────────────────┴──────────────┴──────────────┴──────────────┴──────────┘"));
+fn display_benchmark_footer(rt_env: &mut TestRuntime) {
+    rt_env.log(&format!("└────────────────────────────────┴──────────────┴──────────────┴──────────────┴──────────┘"));
 }
 #[test]
 fn test_genesis() -> Result<()> {
-    let mut env = TestRuntime::default();
-    alkane_helpers::clear(&mut env);
+    let mut rt_env = TestRuntime::default();
+    alkane_helpers::clear();
     let block_height = 0;
 
     // Initialize fuel benchmarks collection
@@ -77,7 +77,7 @@ fn test_genesis() -> Result<()> {
     // Track initial fuel state
     let initial_total_fuel = TOTAL_FUEL_START;
 
-    env.log("Starting Genesis Test with total fuel: {initial_total_fuel}");
+    rt_env.log("Starting Genesis Test with total fuel: {initial_total_fuel}");
 
     // Genesis block with initialization cellpack
     let cellpacks: Vec<Cellpack> = [
@@ -100,17 +100,17 @@ fn test_genesis() -> Result<()> {
         vout: 0,
     };
 
-    env.log(&format!(
+    rt_env.log(&format!(
         "Runestone: {}",
         hex::encode(&test_block.txdata[1].output[1].script_pubkey)
     ));
 
     // Initialize FuelTank for the first block
-    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height);
+    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height);
     let pre_genesis_fuel = TOTAL_FUEL_START;
 
     // Process the genesis block
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut rt_env, &test_block, block_height)?;
 
     // Get fuel state after genesis block
     let post_genesis_fuel = unsafe {
@@ -136,7 +136,7 @@ fn test_genesis() -> Result<()> {
     let test_block2 = alkane_helpers::init_with_multiple_cellpacks_with_tx([].into(), cellpacks2);
 
     // Initialize FuelTank for the second block
-    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2, block_height);
+    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&test_block2, block_height);
     let pre_mint_fuel = unsafe {
         match &FuelTank::get_fuel_tank_copy() {
             Some(tank) => tank.block_fuel,
@@ -145,7 +145,7 @@ fn test_genesis() -> Result<()> {
     };
 
     // Process the mint block
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut rt_env, &test_block2, block_height)?;
 
     // Get fuel state after mint block
     let post_mint_fuel = unsafe {
@@ -166,45 +166,43 @@ fn test_genesis() -> Result<()> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::<crate::tests::test_runtime::TestRuntime>::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?).unwrap();
-    let sheet = load_sheet(&mut env, &ptr);
+    let sheet = load_sheet(&ptr, &mut rt_env);
 
 
     // Display fuel benchmarks
     // Display fuel benchmarks
-    env.log(&format!("\n=== FUEL BENCHMARKS ==="));
-    display_benchmark_header(&mut env);
+    rt_env.log(&format!("\n=== FUEL BENCHMARKS ==="));
+    display_benchmark_header(&mut rt_env);
     for benchmark in &benchmarks {
-        benchmark.display(&mut env);
+        benchmark.display(&mut rt_env);
     }
 
     // Calculate and display total fuel consumption
     let total_consumed = benchmarks.iter().fold(0, |acc, b| acc + b.fuel_consumed);
     let total_percentage = (total_consumed as f64 / initial_total_fuel as f64) * 100.0;
 
-    env.log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
-    env.log(&format!(
+    rt_env.log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
+    rt_env.log(&format!(
         "│ TOTAL                          │ {:>12} │ {:>12} │ {:>12} │ {:>8.2}% │",
         initial_total_fuel,
         initial_total_fuel - total_consumed,
         total_consumed,
         total_percentage
     ));
-    display_benchmark_footer(&mut env);
+    display_benchmark_footer(&mut rt_env);
     Ok(())
 }
 
 #[test]
 fn test_genesis_alkane_key() -> Result<()> {
-    let mut env = TestRuntime::default();
-    env.log(&format!(
-        "{}",
-        (IndexPointer::<TestRuntime>::from_keyword("/alkanes/")
-            .select(&(AlkaneId { tx: 2, block: 0 }).into())
-            .get(&mut env)
-            .as_ref()
-            .len())
-    ));
-    env.log(&format!(
+    let mut rt_env = TestRuntime::default();
+    let len = IndexPointer::<TestRuntime>::from_keyword("/alkanes/")
+        .select(&(AlkaneId { tx: 2, block: 0 }).into())
+        .get(&mut rt_env)
+        .as_ref()
+        .len();
+    rt_env.log(&format!("{}", len));
+    rt_env.log(&format!(
         "key: {}",
         hex::encode(
             IndexPointer::<TestRuntime>::from_keyword("/alkanes/")
@@ -217,15 +215,27 @@ fn test_genesis_alkane_key() -> Result<()> {
     Ok(())
 }
 
-#[test] fn test_genesis_indexer_premine() -> Result<()> {
+#[test]
+fn test_genesis_indexer_premine() -> Result<()> {
     use bitcoin::Txid;
 
-    alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>();
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear();
     let block_height = 0;
+    let cellpacks: Vec<Cellpack> = [
+        // Auth token factory init
+        Cellpack {
+            target: AlkaneId { block: 1, tx: 0 },
+            inputs: vec![0],
+        },
+    ]
+    .into();
 
-    let test_block = create_block_with_coinbase_tx(block_height);
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        [alkanes_std_genesis_alkane_build::get_bytes(), vec![]].into(),
+        cellpacks,
+    );
 
-    // Process the genesis block
     index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
     let outpoint = OutPoint {
         txid: Txid::from_byte_array(
@@ -234,23 +244,26 @@ fn test_genesis_alkane_key() -> Result<()> {
                     .iter()
                     .cloned()
                     .rev()
-                    .collect::<Vec<u8>>()
+                    .collect::<Vec<u8>>(),
             )
             .try_into()?,
         ),
         vout: 0,
     };
     // Check final balances
-    let ptr = RuneTable::for_protocol(AlkaneMessageContext::<crate::tests::test_runtime::TestRuntime>::protocol_tag())
-        .OUTPOINT_TO_RUNES
-        .select(&consensus_encode(&outpoint)?).unwrap();
-    let sheet = load_sheet(&mut env, &ptr);
+    let ptr = RuneTable::for_protocol(
+        AlkaneMessageContext::<crate::tests::test_runtime::TestRuntime>::protocol_tag(),
+    )
+    .OUTPOINT_TO_RUNES
+    .select(&consensus_encode(&outpoint)?)
+    .unwrap();
+    let sheet = load_sheet(&ptr, &mut env);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
-    assert_eq!(sheet.get(&mut env, &genesis_id), 50_000_000u128);
-    let out = protorune_outpoint_to_outpoint_response::<crate::tests::test_runtime::TestRuntime>(&mut env, &outpoint, 1)?;
+    assert_eq!(sheet.get(&genesis_id, &mut env), 50_000_000u128);
+    let out = protorune_outpoint_to_outpoint_response::<crate::tests::test_runtime::TestRuntime>(&outpoint, 1, &mut env)?;
     let out_sheet: BalanceSheet<TestRuntime, IndexPointer<TestRuntime>> = out.into();
-    assert_eq!(sheet, out_sheet);
+    assert_eq!(sheet.balances, out_sheet.balances);
 
     // make sure premine is spendable
     let mut spend_block = create_block_with_coinbase_tx(block_height);
@@ -267,17 +280,17 @@ fn test_genesis_alkane_key() -> Result<()> {
         }],
     );
     spend_block.txdata.push(spend_tx.clone());
-    index_block::<crate::tests::test_runtime::TestRuntime>(&spend_block, 0)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &spend_block, 0)?;
     let new_outpoint = OutPoint {
         txid: spend_tx.compute_txid(),
         vout: 0,
     };
     let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::<crate::tests::test_runtime::TestRuntime>::protocol_tag())
         .OUTPOINT_TO_RUNES
-        .select(&consensus_encode(&new_outpoint)?)?;
-    let new_sheet = load_sheet(&new_ptr);
+        .select(&consensus_encode(&new_outpoint)?);
+    let new_sheet = load_sheet(&new_ptr, &mut env);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
-    assert_eq!(new_sheet.get(&genesis_id), 50_000_000u128);
+    assert_eq!(new_sheet.get(&genesis_id, &mut env), 50_000_000u128);
     Ok(())
 }

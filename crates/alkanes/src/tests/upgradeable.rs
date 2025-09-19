@@ -137,9 +137,10 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
     let mut test_block =
         alkane_helpers::init_with_cellpack_pairs([initialize, set_claimable, mint, double_init].into());
 
-    index_block::<E>(&mut E::default(), &test_block, block_height)?;
+    let mut env = E::default();
+    index_block::<E>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet(&mut env, &test_block)?;
     assert_eq!(
         sheet.get(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into()),
         1_000_000
@@ -149,6 +150,7 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
         0
     );
     assert_revert_context(
+        &mut env,
         &OutPoint {
             txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
             vout: 3,
@@ -167,9 +169,10 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
     // Initialize the contract and execute the cellpacks
     let mut test_block2 = alkane_helpers::init_with_cellpack_pairs([proxy_through_extcall].into());
 
-    index_block::<E>(&mut E::default(), &test_block2, block_height)?;
+    let mut env2 = E::default();
+    index_block::<E>(&mut env2, &test_block2, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet(&mut env2, &test_block2)?;
     assert_eq!(
         sheet.get(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into()),
         1_000_000
@@ -249,9 +252,10 @@ fn check_after_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>(
         ),
     );
 
-    index_block::<E>(&mut E::default(), &test_block, block_height)?;
+    let mut env = E::default();
+    index_block::<E>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet(&mut env, &test_block)?;
     assert_eq!(
         sheet.get(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into()),
         1_000_000
@@ -266,7 +270,7 @@ fn check_after_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>(
         vout: 4,
     };
 
-    alkane_helpers::assert_return_context(&outpoint, |trace_response| {
+    alkane_helpers::assert_return_context(&mut env, &outpoint, |trace_response| {
         let data = trace_response.inner.data;
 
         assert_eq!(data[0], 12);
@@ -274,6 +278,7 @@ fn check_after_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>(
     })?;
 
     assert_revert_context(
+        &mut env,
         &OutPoint {
             txid: test_block.txdata[1].compute_txid(),
             vout: 6,

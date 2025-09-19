@@ -85,8 +85,8 @@ pub fn configure_network() {
     });
 }
 
-pub fn clear<E: RuntimeEnvironment>() {
-    E::clear();
+pub fn clear<E: RuntimeEnvironment>(env: &mut E) {
+    env.clear();
     configure_network();
 }
 
@@ -379,12 +379,13 @@ pub fn create_multiple_cellpack_with_witness(
 }
 
 pub fn assert_binary_deployed_to_id<E: RuntimeEnvironment>(
+    env: &mut E,
     token_id: AlkaneId,
     binary: Vec<u8>,
 ) -> Result<()> {
     let binary_1 = IndexPointer::<E>::from_keyword("/alkanes/")
         .select(&token_id.into())
-        .get()
+        .get(env)
         .as_ref()
         .clone();
     let binary_2: Vec<u8> = compress(binary)?;
@@ -394,12 +395,13 @@ pub fn assert_binary_deployed_to_id<E: RuntimeEnvironment>(
 }
 
 pub fn assert_id_points_to_alkane_id<E: RuntimeEnvironment>(
+    env: &mut E,
     from_id: AlkaneId,
     to_id: AlkaneId,
 ) -> Result<()> {
     let wasm_payload = IndexPointer::<E>::from_keyword("/alkanes/")
         .select(&from_id.into())
-        .get()
+        .get(env)
         .as_ref()
         .clone();
     let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
@@ -407,10 +409,10 @@ pub fn assert_id_points_to_alkane_id<E: RuntimeEnvironment>(
     return Ok(());
 }
 
-pub fn assert_token_id_has_no_deployment<E: RuntimeEnvironment>(token_id: AlkaneId) -> Result<()> {
+pub fn assert_token_id_has_no_deployment<E: RuntimeEnvironment>(env: &mut E, token_id: AlkaneId) -> Result<()> {
     let binary = IndexPointer::<E>::from_keyword("/alkanes/")
         .select(&token_id.into())
-        .get()
+        .get(env)
         .as_ref()
         .clone();
     assert_eq!(binary.len(), 0);
@@ -418,6 +420,7 @@ pub fn assert_token_id_has_no_deployment<E: RuntimeEnvironment>(token_id: Alkane
 }
 
 pub fn get_sheet_for_outpoint<E: RuntimeEnvironment + Clone + Default + 'static>(
+    env: &mut E,
     test_block: &Block,
     tx_num: usize,
     vout: u32,
@@ -429,13 +432,13 @@ pub fn get_sheet_for_outpoint<E: RuntimeEnvironment + Clone + Default + 'static>
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?);
-    let sheet = load_sheet(&ptr);
+    let sheet = load_sheet(&ptr, env);
     Ok(sheet)
 }
 
-pub fn get_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'static>() -> BalanceSheet<E, IndexPointer<E>> {
+pub fn get_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'static>(env: &mut E) -> BalanceSheet<E, IndexPointer<E>> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag()).RUNTIME_BALANCE;
-    let sheet = load_sheet(&ptr);
+    let sheet = load_sheet(&ptr, env);
     sheet
 }
 
@@ -446,14 +449,19 @@ pub fn get_lazy_sheet_for_runtime<E: RuntimeEnvironment + Clone + Default + 'sta
 }
 
 pub fn get_last_outpoint_sheet<E: RuntimeEnvironment + Clone + Default + 'static>(
+    env: &mut E,
     test_block: &Block,
 ) -> Result<BalanceSheet<E, IndexPointer<E>>> {
     let len = test_block.txdata.len();
-    get_sheet_for_outpoint(test_block, len - 1, 0)
+    get_sheet_for_outpoint(env, test_block, len - 1, 0)
 }
 
-fn get_trace_event_at_index(outpoint: &OutPoint, index: Option<isize>) -> Result<TraceEvent> {
-    let trace_data: Trace = view::trace(outpoint)?.try_into()?;
+fn get_trace_event_at_index<E: RuntimeEnvironment + Clone>(
+    env: &mut E,
+    outpoint: &OutPoint,
+    index: Option<isize>,
+) -> Result<TraceEvent> {
+    let trace_data: Trace = view::trace(env, outpoint)?.try_into()?;
     let trace_events = trace_data.0.lock().expect("Mutex poisoned");
 
     if trace_events.is_empty() {
@@ -486,17 +494,22 @@ fn get_trace_event_at_index(outpoint: &OutPoint, index: Option<isize>) -> Result
     Ok(event)
 }
 
-pub fn assert_revert_context(outpoint: &OutPoint, expected_error_message: &str) -> Result<()> {
+pub fn assert_revert_context<E: RuntimeEnvironment + Clone>(
+    env: &mut E,
+    outpoint: &OutPoint,
+    expected_error_message: &str,
+) -> Result<()> {
     // This is a convenience wrapper around assert_revert_context_at_index that checks the last event
-    assert_revert_context_at_index(outpoint, expected_error_message, None)
+    assert_revert_context_at_index(env, outpoint, expected_error_message, None)
 }
 
-pub fn assert_revert_context_at_index(
+pub fn assert_revert_context_at_index<E: RuntimeEnvironment + Clone>(
+    env: &mut E,
     outpoint: &OutPoint,
     expected_error_message: &str,
     index: Option<isize>,
 ) -> Result<()> {
-    let event = get_trace_event_at_index(outpoint, index)?;
+    let event = get_trace_event_at_index(env, outpoint, index)?;
     match event {
         TraceEvent::RevertContext(trace_response) => {
             let data = String::from_utf8_lossy(&trace_response.inner.data);
@@ -515,14 +528,19 @@ pub fn assert_revert_context_at_index(
     }
 }
 
-pub fn assert_return_context<F, T>(outpoint: &OutPoint, check_function: F) -> Result<T>
+pub fn assert_return_context<F, T, E: RuntimeEnvironment + Clone>(
+    env: &mut E,
+    outpoint: &OutPoint,
+    check_function: F,
+) -> Result<T>
 where
     F: Fn(TraceResponse) -> Result<T>,
 {
-    assert_return_context_at_index(outpoint, check_function, None)
+    assert_return_context_at_index(env, outpoint, check_function, None)
 }
 
-pub fn assert_return_context_at_index<F, T>(
+pub fn assert_return_context_at_index<F, T, E: RuntimeEnvironment + Clone>(
+    env: &mut E,
     outpoint: &OutPoint,
     check_function: F,
     index: Option<isize>,
@@ -530,7 +548,7 @@ pub fn assert_return_context_at_index<F, T>(
 where
     F: Fn(TraceResponse) -> Result<T>,
 {
-    let event = get_trace_event_at_index(outpoint, index)?;
+    let event = get_trace_event_at_index(env, outpoint, index)?;
     match event {
         TraceEvent::ReturnContext(trace_response) => check_function(trace_response),
         _ => panic!(

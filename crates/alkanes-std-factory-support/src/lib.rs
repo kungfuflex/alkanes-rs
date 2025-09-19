@@ -1,4 +1,4 @@
-use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, environment::AlkaneEnvironment};
+use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer};
 use alkanes_support::utils::overflow_error;
 use alkanes_support::witness::find_witness_payload;
 use alkanes_support::{context::Context, parcel::AlkaneTransfer};

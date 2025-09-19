@@ -1,4 +1,4 @@
-use crate::tables::{TRACES, TRACES_BY_HEIGHT};
+use crate::tables::{traces, traces_by_height};
 use alkanes_support::proto;
 use alkanes_support::trace::Trace;
 use anyhow::Result;
@@ -20,11 +20,11 @@ pub fn save_trace(
     env: &mut MetashrewEnvironment,
 ) -> Result<()> {
     let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;
-    TRACES.select(&buffer).set(
+    traces().select(&buffer).set(
         env,
         Arc::new(<Trace as Into<proto::alkanes::AlkanesTrace>>::into(trace).encode_to_vec()),
     );
-    TRACES_BY_HEIGHT
+    traces_by_height()
         .select_value(height)
         .append(env, Arc::new(buffer.clone()));
     Ok(())

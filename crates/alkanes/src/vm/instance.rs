@@ -18,7 +18,7 @@ pub struct AlkanesInstance<'a, E: RuntimeEnvironment + Clone> {
     pub(crate) store: Store<AlkanesState<'a, E>>,
 }
 
-impl<'a, E: RuntimeEnvironment + 'static + Clone> AlkanesInstance<'a, E> {
+impl<'a, E: RuntimeEnvironment + 'static + Clone + Default> AlkanesInstance<'a, E> {
     pub fn consume_fuel(&mut self, fuel: u64) -> Result<()> {
         let fuel_remaining = self.store.get_fuel()?;
         if fuel_remaining < fuel {
@@ -31,9 +31,8 @@ impl<'a, E: RuntimeEnvironment + 'static + Clone> AlkanesInstance<'a, E> {
             Ok(())
         }
     }
-    pub fn read_arraybuffer(&mut self, data_start: i32) -> anyhow::Result<Vec<u8>> {
-        let env = &mut self.store.data_mut().env;
-        read_arraybuffer(self.get_memory()?.data(&self.store), data_start, env)
+    pub fn read_from_memory(&mut self, data_start: i32) -> Result<Vec<u8>> {
+        read_arraybuffer(self.get_memory()?.data(&self.store), data_start)
     }
     pub fn get_memory(&mut self) -> anyhow::Result<Memory> {
         self.instance
@@ -56,10 +55,9 @@ impl<'a, E: RuntimeEnvironment + 'static + Clone> AlkanesInstance<'a, E> {
             .checkpoint();
     }
     pub fn commit(&mut self) {
-        let env = &mut self.store.data_mut().env;
         (&mut self.store.data_mut().context.lock().unwrap().message)
             .atomic
-            .commit(env);
+            .commit(&mut self.store.data_mut().env);
     }
     pub fn rollback(&mut self) {
         (&mut self.store.data_mut().context.lock().unwrap().message)
@@ -357,7 +355,7 @@ impl<'a, E: RuntimeEnvironment + 'static + Clone> AlkanesInstance<'a, E> {
         let mut err: Option<anyhow::Error> = None;
         let (call_response, had_failure): (ExtendedCallResponse, bool) = {
             let env = &mut self.store.data_mut().env;
-            match AlkanesExportsImpl::execute(self, env) {
+            match AlkanesExportsImpl::execute(self) {
                 Ok(v) => {
                     if self.store.data().had_failure {
                         (v, true)

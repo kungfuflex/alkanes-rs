@@ -13,7 +13,8 @@ use protorune_support::balance_sheet::BalanceSheetOperations;
 
 #[test]
 fn test_factory_wasm_load() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -55,26 +56,27 @@ fn test_factory_wasm_load() -> Result<()> {
         .into(),
     );
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&test_block)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&mut env, &test_block)?;
 
-    let runtime_sheet = get_sheet_for_runtime::<TestRuntime>();
+    let runtime_sheet = get_sheet_for_runtime::<TestRuntime>(&mut env);
     let orig_alkane = AlkaneId { block: 2, tx: 1 };
     let copy_alkane = AlkaneId { block: 2, tx: 2 };
 
     assert_eq!(
-        runtime_sheet.get_cached(&orig_alkane.clone().into()),
+        runtime_sheet.get(&orig_alkane.clone().into(), &mut env),
         1000000
     );
-    assert_eq!(sheet.get_cached(&orig_alkane.clone().into()), 0);
-    assert_eq!(sheet.get_cached(&copy_alkane.clone().into()), 1000000);
+    assert_eq!(sheet.get(&orig_alkane.clone().into(), &mut env), 0);
+    assert_eq!(sheet.get(&copy_alkane.clone().into(), &mut env), 1000000);
 
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
+        &mut env,
         orig_alkane.clone(),
         alkanes_std_test_build::get_bytes(),
     );
 
-    assert_id_points_to_alkane_id::<TestRuntime>(copy_alkane.clone(), orig_alkane.clone())?;
+    assert_id_points_to_alkane_id::<TestRuntime>(&mut env, copy_alkane.clone(), orig_alkane.clone())?;
     Ok(())
 }

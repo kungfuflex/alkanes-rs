@@ -114,12 +114,12 @@ fn generate_proof(leaf_hashes: &[[u8; 32]], leaf_index: usize) -> Vec<[u8; 32]> 
 }
 
 fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'static>(
+    env: &mut E,
     block_height: u32,
     deadline: u128,
     leaf_address: String,
     output_address_index: u32,
 ) -> Result<Block> {
-    let mut env = E::default();
     let leaf1 = borsh::to_vec(&SchemaMerkleLeaf {
         address: leaf_address,
         amount: 1_000_000,
@@ -176,10 +176,10 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
         vec![mint_diesel, init_cellpack],
     );
 
-    index_block::<E>(&mut env, &test_block, block_height)?;
+    index_block::<E>(env, &test_block, block_height)?;
 
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
-    assert_binary_deployed_to_id(merkle_distributor_id.clone(), merkle_testnet_build.clone())?;
+    assert_binary_deployed_to_id(env, merkle_distributor_id.clone(), merkle_testnet_build.clone())?;
 
     let mut proof_hashes = generate_proof(&leaf_hashes, 0);
 
@@ -207,11 +207,11 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
         false,
     ));
 
-    index_block::<E>(&mut env, &claim_block, block_height + 1)?;
+    index_block::<E>(env, &claim_block, block_height + 1)?;
 
-    let sheet = get_last_outpoint_sheet(&claim_block)?;
+    let sheet = get_last_outpoint_sheet(env, &claim_block)?;
     assert_eq!(
-        sheet.get(&(ProtoruneRuneId { block: 2, tx: 0 }).into(), &mut env),
+        sheet.get(&(ProtoruneRuneId { block: 2, tx: 0 }).into(), env),
         1_000_000
     );
 
@@ -220,24 +220,25 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
 
 #[test]
 fn test_merkle_distributor() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
-    helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear(&mut env);
+    helper_test_merkle_distributor(&mut env, 840_000, 900_000, ADDRESS1(), 0)?;
     Ok(())
 }
 
 #[test]
 fn test_merkle_distributor_admin_collect() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
     let mut env = TestRuntime::default();
+    alkane_helpers::clear(&mut env);
     let init_block =
-        helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
+        helper_test_merkle_distributor(&mut env, 840_000, 900_000, ADDRESS1(), 0)?;
     let auth_outpoint = OutPoint {
         txid: init_block.txdata.last().unwrap().compute_txid(),
         vout: 0,
     };
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
     let auth_sheet =
-        get_sheet_for_outpoint(&init_block, init_block.txdata.len() - 1, 0)?;
+        get_sheet_for_outpoint(&mut env, &init_block, init_block.txdata.len() - 1, 0)?;
     assert_eq!(
         auth_sheet.get(&merkle_distributor_id.clone().into(), &mut env),
         5
@@ -263,7 +264,7 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
         );
     spend_block.txdata.push(collect_tx.clone());
     index_block::<TestRuntime>(&mut env, &spend_block, block_height)?;
-    let sheet = get_last_outpoint_sheet(&spend_block)?;
+    let sheet = get_last_outpoint_sheet(&mut env, &spend_block)?;
     assert_eq!(
         sheet.get(&merkle_distributor_id.clone().into(), &mut env),
         5
@@ -277,10 +278,10 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
 }
 #[test]
 fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
     let mut env = TestRuntime::default();
-    let init_block =
-        helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
+    alkane_helpers::clear(&mut env);
+    let _init_block =
+        helper_test_merkle_distributor(&mut env, 840_000, 900_000, ADDRESS1(), 0)?;
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
     let block_height = 840_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
@@ -299,6 +300,6 @@ fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
         txid: collect_tx.compute_txid(),
         vout: 3,
     };
-    assert_revert_context(&new_outpoint, "Auth token is not in incoming alkanes")?;
+    assert_revert_context(&mut env, &new_outpoint, "Auth token is not in incoming alkanes")?;
     Ok(())
 }

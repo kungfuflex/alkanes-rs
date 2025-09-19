@@ -1,5 +1,3 @@
-use crate::proto;
-use crate::proto::protorune::{BalanceSheetItem, Rune};
 use crate::rune_transfer::RuneTransfer;
 use anyhow::{anyhow, Result};
 use hex;

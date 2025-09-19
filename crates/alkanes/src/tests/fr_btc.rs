@@ -44,6 +44,7 @@ use protorune_support::utils::consensus_encode;
 use std::sync::Arc;
 
 pub fn simulate_cellpack<E: RuntimeEnvironment + Clone + Default + 'static>(
+    env: &mut E,
     height: u64,
     cellpack: Cellpack,
 ) -> Result<(ExtendedCallResponse, u64)> {
@@ -67,7 +68,7 @@ pub fn simulate_cellpack<E: RuntimeEnvironment + Clone + Default + 'static>(
         runtime_balances: Box::<BalanceSheet<E, AtomicPointer<AlkaneMessageContext<E>>>>::new(BalanceSheet::default()),
         _phantom: std::marker::PhantomData,
     };
-    simulate_parcel::<E>(&parcel, u64::MAX)
+    simulate_parcel::<E>(env, &parcel, u64::MAX)
 }
 
 pub fn create_frbtc_signer_output() -> TxOut {
@@ -168,16 +169,17 @@ fn wrap_btc<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<(OutP
 
     // Create a block and index it
     block.txdata.push(wrap_tx.clone());
-    index_block::<E>(&block, 1)?;
+    let mut env = E::default();
+    index_block::<E>(&mut env, &block, 1)?;
 
-    let sheet = get_last_outpoint_sheet::<E>(&block)?;
-    let balance = sheet.get_cached(&fr_btc_id.clone().into());
+    let sheet = get_last_outpoint_sheet::<E>(&mut env, &block)?;
+    let balance = sheet.get(&fr_btc_id.clone().into(), &mut env);
 
     let expected_frbtc_amt = 99500000;
 
     assert_eq!(balance, expected_frbtc_amt);
     assert_eq!(
-        sheet.get_cached(&AlkaneId { block: 2, tx: 0 }.into()),
+        sheet.get(&AlkaneId { block: 2, tx: 0 }.into(), &mut env),
         5000000000
     );
 
@@ -261,15 +263,17 @@ fn unwrap_btc<E: RuntimeEnvironment + Clone + Default + 'static>(
 
     // Create a block and index it
     block.txdata.push(unwrap_tx.clone());
-    index_block::<E>(&block, height)?;
+    let mut env = E::default();
+    index_block::<E>(&mut env, &block, height)?;
 
-    let sheet = get_last_outpoint_sheet::<E>(&block)?;
-    let balance = sheet.get_cached(&fr_btc_id.clone().into());
+    let sheet = get_last_outpoint_sheet::<E>(&mut env, &block)?;
+    let balance = sheet.get(&fr_btc_id.clone().into(), &mut env);
 
     assert_eq!(balance as u64, amount_original_frbtc - amt_actual_burn);
 
     let (response, _) =
         simulate_cellpack::<E>(
+            &mut env,
             height as u64,
             Cellpack {
                 target: AlkaneId { block: 32, tx: 0 },
@@ -292,17 +296,18 @@ fn unwrap_btc<E: RuntimeEnvironment + Clone + Default + 'static>(
 
     assert_eq!(payments[0], expected_payment);
     assert_eq!(
-        sheet.get_cached(&AlkaneId { block: 2, tx: 0 }.into()),
+        sheet.get(&AlkaneId { block: 2, tx: 0 }.into(), &mut env),
         5000000000
     );
 
-    let response = unwrap_view::view::<TestRuntime>(height as u128).unwrap();
+    let response = unwrap_view::view::<E>(&mut env, height as u128).unwrap();
     assert_eq!(response.payments[0], expected_payment.into());
 
     Ok(())
 }
 
 fn set_signer<E: RuntimeEnvironment + Clone + Default + 'static>(
+    env: &mut E,
     input_outpoint: OutPoint,
     signer_vout: u128,
 ) -> Result<Transaction> {
@@ -321,7 +326,7 @@ fn set_signer<E: RuntimeEnvironment + Clone + Default + 'static>(
 
     // Create a block and index it
     block.txdata.push(set_signer.clone());
-    index_block::<E>(&block, height)?;
+    index_block::<E>(env, &block, height)?;
 
     Ok(set_signer)
 }
@@ -352,12 +357,13 @@ fn test_fr_btc_unwrap_more() -> Result<()> {
 
 #[test]
 fn test_set_signer_no_auth() -> Result<()> {
-    let set_signer_tx = set_signer::<TestRuntime>(OutPoint::default(), 0)?;
+    let mut env = TestRuntime::default();
+    let set_signer_tx = set_signer::<TestRuntime>(&mut env, OutPoint::default(), 0)?;
     let outpoint = OutPoint {
         txid: set_signer_tx.compute_txid(),
         vout: 3,
     };
-    assert_revert_context(&outpoint, "Auth token is not in incoming alkanes")?;
+    assert_revert_context(&mut env, &outpoint, "Auth token is not in incoming alkanes")?;
     Ok(())
 }
 
@@ -381,10 +387,11 @@ fn test_fr_btc_wrap_incorrect_signer() -> Result<()> {
 
     // Create a block and index it
     block.txdata.push(wrap_tx.clone());
-    index_block::<TestRuntime>(&block, 880_001)?;
+    let mut env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut env, &block, 880_001)?;
 
-    let sheet = get_last_outpoint_sheet::<TestRuntime>(&block)?;
-    let balance = sheet.get_cached(&fr_btc_id.clone().into());
+    let sheet = get_last_outpoint_sheet::<TestRuntime>(&mut env, &block)?;
+    let balance = sheet.get(&fr_btc_id.clone().into(), &mut env);
 
     // No BTC sent to correct signer, so no frBTC should be minted.
     assert_eq!(balance, 0);
@@ -402,21 +409,22 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
     let unwrap_tx =
         unwrap_btc_tx::<TestRuntime>(wrap_outpoint, fr_btc_amount, vout_for_spendable as u128)?;
 
+    let mut env = TestRuntime::default();
     let mut block2 = create_block_with_coinbase_tx(height2);
     block2.txdata.push(unwrap_tx.clone());
-    index_block::<TestRuntime>(&block2, height2)?;
+    index_block::<TestRuntime>(&mut env, &block2, height2)?;
 
     // Before fulfillment, last_block should not have advanced past the block with unfulfilled payment
     let last_block_before = unwrap_view::fr_btc_storage_pointer::<TestRuntime>()
         .keyword("/last_block")
-        .get_value::<u128>();
+        .get_value();
 
     // wrap_btc is at height 1, which has no payments. So last_block becomes 1.
     // unwrap_btc is at height 2, which has an unfulfilled payment. So last_block stays 1.
     assert_eq!(last_block_before, 1);
 
     // Check view has one payment
-    let unwrap_view_response_before = unwrap_view::view::<TestRuntime>(height2 as u128)?;
+    let unwrap_view_response_before = unwrap_view::view::<TestRuntime>(&mut env, height2 as u128)?;
     assert_eq!(unwrap_view_response_before.payments.len(), 1);
 
     let height3 = 3;
@@ -427,16 +435,16 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
 
     // let spendable_bytes = protorune_support::utils::consensus_encode(&spendable_outpoint)?;
     // protorune::tables::OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).set(Arc::new(vec![]));
-    crate::unwrap::update_last_block::<TestRuntime>(height3 as u128)?;
+    crate::unwrap::update_last_block::<TestRuntime>(&mut env, height3 as u128)?;
 
     // After fulfillment, last_block should be updated to the latest block
     let last_block_after = unwrap_view::fr_btc_storage_pointer::<TestRuntime>()
         .keyword("/last_block")
-        .get_value::<u128>();
+        .get_value();
     assert_eq!(last_block_after, height3 as u128);
 
     // Check view has no payments because the processed blocks are skipped
-    let unwrap_view_response_after = unwrap_view::view::<TestRuntime>(height3 as u128)?;
+    let unwrap_view_response_after = unwrap_view::view::<TestRuntime>(&mut env, height3 as u128)?;
     assert_eq!(unwrap_view_response_after.payments.len(), 0);
 
     Ok(())

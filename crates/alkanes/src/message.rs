@@ -34,14 +34,14 @@ use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
 
 #[derive(Clone, Default, Debug)]
-pub struct AlkaneMessageContext<E: RuntimeEnvironment + Clone>(PhantomData<E>);
+pub struct AlkaneMessageContext<E: RuntimeEnvironment + Clone>(PhantomData<E>) where E: std::default::Default;
 
 
 
 
 // TODO: import MessageContextParcel
 
-pub fn handle_message<E: RuntimeEnvironment + Clone + 'static>(
+pub fn handle_message<E: RuntimeEnvironment + Clone + 'static + Default>(
     parcel: &MessageContextParcel<E>,
     env: &mut E,
 ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)> {
@@ -208,7 +208,7 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + 'static>(
         })
 }
 
-impl<E: RuntimeEnvironment + Clone + 'static> MessageContext<E> for AlkaneMessageContext<E> {
+impl<E: RuntimeEnvironment + Clone + 'static + Default> MessageContext<E> for AlkaneMessageContext<E> {
     fn protocol_tag() -> u128 {
         1
     }

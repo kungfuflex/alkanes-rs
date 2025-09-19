@@ -112,7 +112,8 @@ fn test_edict_to_protomessage() -> Result<()> {
         ],
     };
     test_block.txdata.push(tx);
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    let mut env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
     let edict_outpoint = OutPoint {
         txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
         vout: 0,
@@ -125,11 +126,13 @@ fn test_edict_to_protomessage() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&edict_outpoint)?),
+        &mut env,
     );
     let sheet = load_sheet(
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&result_outpoint)?),
+        &mut env,
     );
     Ok(())
 }
@@ -150,7 +153,8 @@ fn test_edict_message_same_protostone() -> Result<()> {
         [arb_mint_cellpack].into(),
     );
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    let mut env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let mut test_block2 = create_block_with_coinbase_tx(block_height);
 
@@ -182,11 +186,11 @@ fn test_edict_message_same_protostone() -> Result<()> {
         ),
     );
 
-    index_block::<TestRuntime>(&test_block2, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block2, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&test_block2)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&mut env, &test_block2)?;
 
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }.into()), 1);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }.into(), &mut env), 1);
 
     Ok(())
 }
@@ -208,7 +212,8 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
             [arb_mint_cellpack].into(),
         );
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    let mut env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let mut test_block2 = create_block_with_coinbase_tx(0);
 
@@ -240,11 +245,11 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
         ),
     );
 
-    index_block::<TestRuntime>(&test_block2, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block2, block_height)?;
 
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&test_block2)?;
+    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&mut env, &test_block2)?;
 
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }.into()), 1);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }.into(), &mut env), 1);
 
     Ok(())
 }
