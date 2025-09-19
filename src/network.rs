@@ -184,25 +184,40 @@ pub fn is_genesis(height: u64) -> bool {
     is_genesis
 }
 
-fn set_ptr_if_not_deployed(ptr: IndexPointer, binary: Vec<u8>) -> Result<()> {
+fn set_ptr_if_not_deployed(ptr: &mut IndexPointer, binary: Vec<u8>) -> Result<()> {
     if ptr.get().len() == 0 {
         ptr.set(Arc::new(compress(binary)?));
     }
+    Ok(())
 }
 
-pub fn set_precompiled_wasms_if_not_deployed() -> Result<()> {
+pub fn set_precompiled_wasms_if_not_deployed(height: u32) -> Result<()> {
+    if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
+        let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
+        if upgrade_ptr.get().len() == 0 {
+            upgrade_ptr.set_value::<u8>(0x01);
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 2, tx: 0 }).into())
+                .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
+        }
+    } else {
+        set_ptr_if_not_deployed(
+            &mut IndexPointer::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 2, tx: 0 }).into()),
+            genesis_alkane_bytes(),
+        )?;
+    }
     set_ptr_if_not_deployed(
-        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 2, tx: 0 }).into()),
-        genesis_alkane_bytes(),
-    );
-    set_ptr_if_not_deployed(
-        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 1 }).into()),
+        &mut IndexPointer::from_keyword("/alkanes/")
+            .select(&(AlkaneId { block: 32, tx: 1 }).into()),
         fr_sigil_bytes(),
-    );
+    )?;
     set_ptr_if_not_deployed(
-        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 0 }).into()),
+        &mut IndexPointer::from_keyword("/alkanes/")
+            .select(&(AlkaneId { block: 32, tx: 0 }).into()),
         fr_btc_bytes(),
-    );
+    )?;
+    Ok(())
 }
 
 pub fn genesis(block: &Block) -> Result<()> {

@@ -91,19 +91,10 @@ use std::sync::Arc;
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
     configure_network();
     clear_diesel_mints_cache();
-    set_precompiled_wasms_if_not_deployed();
+    set_precompiled_wasms_if_not_deployed(height)?;
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
         genesis(&block).unwrap();
-    }
-    if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
-        let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
-        if upgrade_ptr.get().len() == 0 {
-            upgrade_ptr.set_value::<u8>(0x01);
-            IndexPointer::from_keyword("/alkanes/")
-                .select(&(AlkaneId { block: 2, tx: 0 }).into())
-                .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
-        }
     }
     FuelTank::initialize(&block, height);
     // Get the set of updated addresses from the indexing process
