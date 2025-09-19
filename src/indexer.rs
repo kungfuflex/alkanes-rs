@@ -1,6 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::{
-    genesis, genesis_alkane_upgrade_bytes, is_genesis, set_precompiled_wasms_if_not_deployed,
+    check_and_upgrade_diesel, genesis, genesis_alkane_upgrade_bytes, is_genesis, setup_diesel,
+    setup_frbtc, setup_frsigil,
 };
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
@@ -91,11 +92,14 @@ use std::sync::Arc;
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
     configure_network();
     clear_diesel_mints_cache();
-    set_precompiled_wasms_if_not_deployed(height)?;
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
-        genesis(&block).unwrap();
+        genesis().unwrap();
     }
+    setup_diesel(block)?;
+    check_and_upgrade_diesel(height)?;
+    setup_frbtc(block)?;
+    setup_frsigil(block)?;
     FuelTank::initialize(&block, height);
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
