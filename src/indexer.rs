@@ -1,5 +1,7 @@
 use crate::message::AlkaneMessageContext;
-use crate::network::{genesis, genesis_alkane_upgrade_bytes, is_genesis};
+use crate::network::{
+    genesis, genesis_alkane_upgrade_bytes, is_genesis, set_precompiled_wasms_if_not_deployed,
+};
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
 use crate::vm::host_functions::clear_diesel_mints_cache;
@@ -89,6 +91,7 @@ use std::sync::Arc;
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
     configure_network();
     clear_diesel_mints_cache();
+    set_precompiled_wasms_if_not_deployed();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
         genesis(&block).unwrap();

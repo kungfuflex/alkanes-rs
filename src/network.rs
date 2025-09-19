@@ -184,16 +184,28 @@ pub fn is_genesis(height: u64) -> bool {
     is_genesis
 }
 
+fn set_ptr_if_not_deployed(ptr: IndexPointer, binary: Vec<u8>) -> Result<()> {
+    if ptr.get().len() == 0 {
+        ptr.set(Arc::new(compress(binary)?));
+    }
+}
+
+pub fn set_precompiled_wasms_if_not_deployed() -> Result<()> {
+    set_ptr_if_not_deployed(
+        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 2, tx: 0 }).into()),
+        genesis_alkane_bytes(),
+    );
+    set_ptr_if_not_deployed(
+        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 1 }).into()),
+        fr_sigil_bytes(),
+    );
+    set_ptr_if_not_deployed(
+        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 0 }).into()),
+        fr_btc_bytes(),
+    );
+}
+
 pub fn genesis(block: &Block) -> Result<()> {
-    IndexPointer::from_keyword("/alkanes/")
-        .select(&(AlkaneId { block: 2, tx: 0 }).into())
-        .set(Arc::new(compress(genesis_alkane_bytes())?));
-    IndexPointer::from_keyword("/alkanes/")
-        .select(&(AlkaneId { block: 32, tx: 1 }).into())
-        .set(Arc::new(compress(fr_sigil_bytes())?));
-    IndexPointer::from_keyword("/alkanes/")
-        .select(&(AlkaneId { block: 32, tx: 0 }).into())
-        .set(Arc::new(compress(fr_btc_bytes())?));
     let mut atomic: AtomicPointer = AtomicPointer::default();
     sequence_pointer(&atomic).set_value::<u128>(1);
     let myself = AlkaneId { block: 2, tx: 0 };
