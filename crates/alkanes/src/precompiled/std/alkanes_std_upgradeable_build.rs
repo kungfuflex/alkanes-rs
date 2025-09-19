@@ -1,1 +1,1 @@
-pub fn get_bytes() -> Vec<u8> { include_bytes!("../../../../../target/wasm32-unknown-unknown/release/wasm32-unknown-unknown").to_vec() }
+pub fn get_bytes() -> Vec<u8> { include_bytes!("../../../../../target/alkanes-wasm/alkanes_std_upgradeable.wasm").to_vec() }

@@ -92,9 +92,10 @@ fn main() -> Result<()> {
                 let final_wasm_path = wasm_dir.join(format!("{}_{}.wasm", subbed, network));
                 fs::write(&final_wasm_path, &f)?;
 
+                let wasm_file_name = format!("{}_{}.wasm", subbed, network);
                 let generated_file_content = format!(
-                    "pub fn get_bytes() -> Vec<u8> {{ include_bytes!(\"{}\").to_vec() }}",
-                    final_wasm_path.to_str().unwrap().replace('\\', "/")
+                    r#"pub fn get_bytes() -> Vec<u8> {{ include_bytes!("../../../../../target/alkanes-wasm/{}").to_vec() }}"#,
+                    wasm_file_name
                 );
                 fs::write(
                     &write_dir.join("std").join(format!("{}_{}_build.rs", subbed, network)),
@@ -114,15 +115,17 @@ fn main() -> Result<()> {
         
         if file_path.exists() {
             let f: Vec<u8> = fs::read(&file_path)?;
+            fs::write(&wasm_dir.join(format!("{}.wasm", subbed)), &f)?;
             let compressed: Vec<u8> = compress(f.clone())?;
             fs::write(
                 &wasm_dir.join(format!("{}.wasm.gz", subbed)),
                 &compressed,
             )?;
 
+            let wasm_file_name = format!("{}.wasm", subbed);
             let generated_file_content = format!(
-                "pub fn get_bytes() -> Vec<u8> {{ include_bytes!(\"{}\").to_vec() }}",
-                file_path.to_str().unwrap().replace('\\', "/")
+                r#"pub fn get_bytes() -> Vec<u8> {{ include_bytes!("../../../../../target/alkanes-wasm/{}").to_vec() }}"#,
+                wasm_file_name
             );
             fs::write(
                 &write_dir.join("std").join(format!("{}_build.rs", subbed)),
