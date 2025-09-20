@@ -400,8 +400,10 @@ impl AlkanesHostFunctionsImpl {
             )
         };
         let balance = {
-            let env = &mut caller.data_mut().env;
-            balance_pointer(&mut Default::default(), &who.into(), &what.into(), env)
+            let state = caller.data_mut();
+            let env = &mut state.env;
+            let atomic = &mut state.context.lock().unwrap().message.atomic;
+            balance_pointer(atomic, &who.into(), &what.into(), env)
                 .get(env)
                 .as_ref()
                 .clone()

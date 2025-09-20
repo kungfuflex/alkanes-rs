@@ -245,10 +245,9 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
     );
     let block_height = 840_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
-    let collect_tx =
-        alkane_helpers::create_multiple_cellpack_with_witness_and_in_with_edicts(
-            Witness::new(),
-            vec![
+            let collect_tx =
+            alkane_helpers::create_multiple_cellpack_with_witness_and_in_with_edicts::<TestRuntime>(
+                Witness::new(),            vec![
                 alkane_helpers::CellpackOrEdict::Edict(vec![ProtostoneEdict {
                     id: merkle_distributor_id.into(),
                     amount: 1,

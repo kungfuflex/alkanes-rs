@@ -240,16 +240,17 @@ pub fn getblock() -> i32 {
     export_bytes(view::getblock(&mut env, &input_data).unwrap())
 }
 
-#[cfg(not(test))]
-#[no_mangle]
 pub fn protorunesbyheight() -> i32 {
     let mut env = MetashrewEnvironment::default();
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let result: protorune_support::proto::protorune::RunesResponse =
-        view::protorunes_by_height(&mut env, &consume_to_end(&mut data).unwrap())
-        .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::default());
+    let result: protorune_support::proto::protorune::RunesResponse = {
+        let height_data = consume_to_end(&mut data).unwrap();
+        let height = u32::from_le_bytes(height_data.try_into().unwrap());
+        let response_bytes = view::protorunes_by_height(&mut env, &height).unwrap();
+        protorune_support::proto::protorune::RunesResponse::decode(&*response_bytes).unwrap()
+    };
     export_bytes(result.encode_to_vec())
 }
 
@@ -331,12 +332,12 @@ pub fn runesbyheight() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(env.load_input().unwrap().data);
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let result: protorune_support::proto::protorune::RunesResponse =
-        view::protorunes_by_height(
-            &mut env,
-            &consume_to_end(&mut data).unwrap(),
-        )
-        .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::default());
+    let result: protorune_support::proto::protorune::RunesResponse = {
+        let height_data = consume_to_end(&mut data).unwrap();
+        let height = u32::from_le_bytes(height_data.try_into().unwrap());
+        let response_bytes = view::protorunes_by_height(&mut env, &height).unwrap();
+        protorune_support::proto::protorune::RunesResponse::decode(&*response_bytes).unwrap()
+    };
     export_bytes(result.encode_to_vec())
 }
 
@@ -430,12 +431,10 @@ mod unit_tests {
         )
         .unwrap();
 
-        let req_height: Vec<u8> = (RunesByHeightRequest {
-            height: 849236,
-        })
-        .encode_to_vec();
-        let runes = protorunes_by_height(&mut env, &req_height).unwrap();
-        assert!(runes.runes.len() == 2);
+        let req_height: u32 = 849236;
+        let runes_bytes = protorunes_by_height(&mut env, &req_height).unwrap();
+        let runes: protorune_support::proto::protorune::RunesResponse = protorune_support::proto::protorune::RunesResponse::decode(runes_bytes.as_slice()).unwrap();
+         assert!(runes.runes.len() == 2);
 
         // TODO: figure out what address to use for runesbyaddress
         let req_wallet: Vec<u8> = (WalletRequest {
@@ -450,12 +449,12 @@ mod unit_tests {
         std::println!("RUNES by addr: {:?}", runes_for_addr);
 
         let outpoint_res = protorune_outpoint_to_outpoint_response(
-            &mut env,
             &(OutPoint {
                 txid: block.txdata[298].compute_txid(),
                 vout: 2,
             }),
             0,
+            &mut env,
         )
         .unwrap();
         let quorum_rune = outpoint_res.balances.unwrap().entries[0].clone();

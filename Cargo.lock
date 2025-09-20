@@ -1808,6 +1808,7 @@ dependencies = [
 name = "protorune"
 version = "1.2.3"
 dependencies = [
+ "alkanes",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",

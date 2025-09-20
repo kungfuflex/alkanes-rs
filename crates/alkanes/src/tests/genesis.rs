@@ -68,7 +68,7 @@ fn display_benchmark_footer(rt_env: &mut TestRuntime) {
 #[test]
 fn test_genesis() -> Result<()> {
     let mut rt_env = TestRuntime::default();
-    alkane_helpers::clear();
+    alkane_helpers::clear(&mut rt_env);
     let block_height = 0;
 
     // Initialize fuel benchmarks collection
@@ -165,7 +165,7 @@ fn test_genesis() -> Result<()> {
     // Check final balances
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::<crate::tests::test_runtime::TestRuntime>::protocol_tag())
         .OUTPOINT_TO_RUNES
-        .select(&consensus_encode(&outpoint)?).unwrap();
+        .select(&consensus_encode(&outpoint)?);
     let sheet = load_sheet(&ptr, &mut rt_env);
 
 
@@ -181,7 +181,7 @@ fn test_genesis() -> Result<()> {
     let total_consumed = benchmarks.iter().fold(0, |acc, b| acc + b.fuel_consumed);
     let total_percentage = (total_consumed as f64 / initial_total_fuel as f64) * 100.0;
 
-    rt_env.log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤"));
+    rt_env.log(format!("├────────────────────────────────┼──────────────┼──────────────┼──────────────┼──────────┤").as_str());
     rt_env.log(&format!(
         "│ TOTAL                          │ {:>12} │ {:>12} │ {:>12} │ {:>8.2}% │",
         initial_total_fuel,
@@ -220,7 +220,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
     use bitcoin::Txid;
 
     let mut env = TestRuntime::default();
-    alkane_helpers::clear();
+    alkane_helpers::clear(&mut env);
     let block_height = 0;
     let cellpacks: Vec<Cellpack> = [
         // Auth token factory init
@@ -255,19 +255,18 @@ fn test_genesis_indexer_premine() -> Result<()> {
         AlkaneMessageContext::<crate::tests::test_runtime::TestRuntime>::protocol_tag(),
     )
     .OUTPOINT_TO_RUNES
-    .select(&consensus_encode(&outpoint)?)
-    .unwrap();
+    .select(&consensus_encode(&outpoint)?);
     let sheet = load_sheet(&ptr, &mut env);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
     assert_eq!(sheet.get(&genesis_id, &mut env), 50_000_000u128);
     let out = protorune_outpoint_to_outpoint_response::<crate::tests::test_runtime::TestRuntime>(&outpoint, 1, &mut env)?;
     let out_sheet: BalanceSheet<TestRuntime, IndexPointer<TestRuntime>> = out.into();
-    assert_eq!(sheet.balances, out_sheet.balances);
+    assert_eq!(sheet.balances(), out_sheet.balances());
 
     // make sure premine is spendable
     let mut spend_block = create_block_with_coinbase_tx(block_height);
-    let spend_tx = create_protostone_encoded_tx(
+    let spend_tx = create_protostone_encoded_tx::<TestRuntime>(
         outpoint.clone(),
         vec![Protostone {
             burn: None,

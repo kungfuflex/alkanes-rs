@@ -132,7 +132,7 @@ fn test_owned_token_2() -> Result<()> {
             .select(&consensus_encode(&outpoint_first)?),
         &mut env,
     );
-    assert_eq!(sheet_first.balances(&mut env).len(), 0);
+    assert_eq!(sheet_first.balances().len(), 0);
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
         &mut env,
         owned_token_id.clone(),
@@ -213,7 +213,7 @@ fn test_auth_and_owned_token() -> Result<()> {
             .select(&consensus_encode(&outpoint_first)?),
         &mut env,
     );
-    assert_eq!(sheet_first.balances(&mut env).len(), 0);
+    assert_eq!(sheet_first.balances().len(), 0);
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
         &mut env,
         owned_token_id.clone(),
@@ -450,7 +450,7 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
             .select(&consensus_encode(&outpoint_first)?),
         &mut env,
     );
-    assert_eq!(sheet_first.balances(&mut env).len(), 0);
+    assert_eq!(sheet_first.balances().len(), 0);
     let _ = assert_binary_deployed_to_id::<TestRuntime>(
         &mut env,
         owned_token_id.clone(),

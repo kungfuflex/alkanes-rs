@@ -67,6 +67,7 @@ pub fn create_protostone_encoded_transaction<E: RuntimeEnvironment>(
 
 #[test]
 fn test_cant_forge_edicts() -> Result<()> {
+    let mut env = TestRuntime::default();
     let block_height = 0;
     let mut test_block: Block = helpers::create_block_with_coinbase_tx(block_height);
     let outpoint = OutPoint {
@@ -89,7 +90,7 @@ fn test_cant_forge_edicts() -> Result<()> {
             burn: None,
         }],
     )?);
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
     let edict_outpoint = OutPoint {
         txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
         vout: 0,
@@ -98,7 +99,8 @@ fn test_cant_forge_edicts() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&edict_outpoint)?),
+        &mut env,
     );
-    TestRuntime::log(format!("{:?}", sheet));
+    env.log(format!("{:?}", sheet).as_str());
     Ok(())
 }

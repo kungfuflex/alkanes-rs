@@ -24,10 +24,11 @@ fn test_contract_abi<E: RuntimeEnvironment + Clone + Default + 'static>(
     expected_methods: Vec<(&str, u128, Vec<(&str, &str)>, &str)>,
 ) -> Result<()> {
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::<E>::default()));
+    let mut env = E::default();
 
     // Create a new instance of the contract
     let mut instance =
-        AlkanesInstance::<E>::from_alkane(context, Arc::new(contract_bytes), 100000000, &mut E::default())?;
+        AlkanesInstance::<E>::from_alkane(context, Arc::new(contract_bytes), 100000000, &mut env)?;
 
     // Call the __meta function to get the ABI
     let abi_bytes = instance.call_meta()?;
@@ -36,8 +37,10 @@ fn test_contract_abi<E: RuntimeEnvironment + Clone + Default + 'static>(
     let abi_string = String::from_utf8(abi_bytes.clone())?;
     let abi_json: Value = serde_json::from_slice(&abi_bytes)?;
 
+    drop(instance);
+
     // Print the ABI for debugging
-    TestRuntime::log(&TestRuntime::default(), format!("{} ABI: {}", contract_name, abi_string).as_str());
+    env.log(&format!("{} ABI: {}", contract_name, abi_string));
 
     // Verify the contract name
     assert_eq!(abi_json["contract"], contract_name);
@@ -160,7 +163,8 @@ fn test_meta_call() -> Result<()> {
         vec![auth_cellpack, test_cellpack, mint_test_cellpack],
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut crate::tests::test_runtime::TestRuntime::default(), &test_block, block_height)?;
+    let mut env = crate::tests::test_runtime::TestRuntime::default();
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
 
     // Create a properly formatted message context parcel
     let parcel = MessageContextParcel {
@@ -171,7 +175,7 @@ fn test_meta_call() -> Result<()> {
     };
 
     // Call meta_safe with the properly formatted parcel
-    let abi_bytes = meta_safe::<crate::tests::test_runtime::TestRuntime>(&mut crate::tests::test_runtime::TestRuntime::default(), &parcel)?;
+    let abi_bytes = meta_safe::<crate::tests::test_runtime::TestRuntime>(&mut env, &parcel)?;
     // Verify the response
     let abi_string = String::from_utf8(abi_bytes.clone())?;
     let abi_json: Value = serde_json::from_slice(&abi_bytes)?;
@@ -183,7 +187,7 @@ fn test_meta_call() -> Result<()> {
         "ABI should contain methods"
     );
 
-    TestRuntime::log(&TestRuntime::default(), format!("ABI: {}", abi_string).as_str());
+    env.log(&format!("ABI: {}", abi_string));
     Ok(())
 }
 

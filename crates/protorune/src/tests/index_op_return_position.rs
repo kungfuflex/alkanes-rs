@@ -6,31 +6,35 @@ mod tests {
     use crate::{tables, Protorune};
     use anyhow::{anyhow, Result};
     use bitcoin::{OutPoint, Transaction};
+    use metashrew_core::environment::MetashrewEnvironment;
     use metashrew_support::index_pointer::AtomicPointer;
-    use metashrew_core::stdio::{stdout, Write};
     use metashrew_support::index_pointer::KeyValuePointer;
     use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
     use protorune_support::rune_transfer::RuneTransfer;
     use protorune_support::utils::consensus_encode;
+    use std::marker::PhantomData;
     use std::str::FromStr;
     use wasm_bindgen_test::*;
-
+    use metashrew_core::environment::RuntimeEnvironment;
     use helpers::clear;
 
     // Define a NoopMessageContext that doesn't do anything special with the protorunes
-    struct NoopMessageContext;
+    struct NoopMessageContext<E: RuntimeEnvironment + Clone> {
+        _phantom: PhantomData<E>,
+    }
 
-    impl MessageContext for NoopMessageContext {
+    impl<E: RuntimeEnvironment + Clone> MessageContext<E> for NoopMessageContext<E> {
         fn protocol_tag() -> u128 {
             122 // Using the same protocol tag as in the tests
         }
 
         fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
+            parcel: &MessageContextParcel<E>,
+            env: &mut E,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)> {
             // Just return the runes as-is without any special handling
             let runes: Vec<RuneTransfer> = parcel.runes.clone();
-            Ok((runes, BalanceSheet::default()))
+            Ok((runes, BalanceSheet::new_ptr_backed(parcel.atomic.clone())))
         }
     }
 
@@ -82,17 +86,21 @@ mod tests {
 
     // Test that protorunes are correctly indexed when OP_RETURN is at the end
     #[wasm_bindgen_test]
-#[ignore]
+    #[ignore]
     fn test_op_return_not_last() -> Result<()> {
-        clear();
+        clear(&mut MetashrewEnvironment::default());
         let block_height = 840000;
         let protocol_id = 122;
 
         // Test with OP_RETURN at the end (should work)
         let test_block_end = create_block_with_end_op_return(protocol_id);
         assert!(
-            Protorune::index_block::<NoopMessageContext>(test_block_end.clone(), block_height)
-                .is_ok()
+            Protorune::index_block::<NoopMessageContext>(
+                &mut MetashrewEnvironment::default(),
+                test_block_end.clone(),
+                block_height
+            )
+            .is_ok()
         );
 
         // Check that protorunes are correctly indexed for the output
@@ -108,6 +116,7 @@ mod tests {
             &tables::RuneTable::for_protocol(protocol_id)
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_end).unwrap()),
+            &mut MetashrewEnvironment::default(),
         );
 
         // The output should have protorunes
@@ -116,12 +125,7 @@ mod tests {
             tx: 0,
         };
 
-        // Print debug information
-        println!("Protocol ID: {}", protocol_id);
-        println!("Protorune ID: {:?}", protorune_id);
-        println!("Sheet balance: {}", sheet_end.get_cached(&protorune_id));
-
-        let has_protorunes_end = sheet_end.get_cached(&protorune_id) > 0;
+        let has_protorunes_end = sheet_end.get(&protorune_id).unwrap_or(0) > 0;
         assert!(
             has_protorunes_end,
             "Expected protorunes when OP_RETURN is at the end"

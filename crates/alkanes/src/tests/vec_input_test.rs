@@ -89,7 +89,7 @@ fn test_vec_inputs() -> Result<()> {
     };
 
     let trace_data_process_numbers = view::trace(&mut env, &outpoint_process_numbers)?;
-    env.log(format!("process_numbers trace: {:?}", trace_data_process_numbers));
+    env.log(&format!("process_numbers trace: {:?}", trace_data_process_numbers));
 
     // Verify the process_numbers result contains the expected values
     assert_eq!(
@@ -109,7 +109,7 @@ fn test_vec_inputs() -> Result<()> {
 
     let trace_data_get_strings = view::trace(&mut env, &outpoint_get_strings)?;
     let trace_str = String::from_utf8_lossy(&trace_data_get_strings);
-    env.log(format!("get_strings trace: {:?}", trace_str));
+    env.log(&format!("get_strings trace: {:?}", trace_str));
     let expected_name = "hello,world";
 
     // Verify the get_strings result contains the expected values
@@ -131,7 +131,7 @@ fn test_vec_inputs() -> Result<()> {
     };
 
     let trace_data_process_nested_vec = view::trace(&mut env, &outpoint_process_nested_vec)?;
-    env.log(format!("process_nested_vec trace: {:?}", trace_data_process_nested_vec));
+    env.log(&format!("process_nested_vec trace: {:?}", trace_data_process_nested_vec));
 
     // The result should be the total number of elements: 3 + 2 = 5
     assert_eq!(

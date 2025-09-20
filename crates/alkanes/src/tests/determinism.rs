@@ -11,7 +11,8 @@ use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_incoming_alkanes_ordered() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear(&mut env);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -60,14 +61,14 @@ fn test_incoming_alkanes_ordered() -> Result<()> {
         ),
     );
 
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let outpoint = OutPoint {
         txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
         vout: 3,
     };
 
-    alkane_helpers::assert_return_context(&outpoint, |trace_response| Ok(()))?;
+    alkane_helpers::assert_return_context(&mut env, &outpoint, |trace_response| Ok(()))?;
 
     Ok(())
 }

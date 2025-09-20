@@ -19,7 +19,8 @@ fn create_malformed_cellpack_large_inputs() -> Cellpack {
 
 #[test]
 fn test_integer_overflow_in_memory_operations() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
 
     // Create a cellpack with extremely large inputs
@@ -32,7 +33,7 @@ fn test_integer_overflow_in_memory_operations() -> Result<()> {
     );
 
     // This should not crash the indexer, but should fail gracefully
-    index_block::<TestRuntime>(&mut TestRuntime::default(), &test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     // Check that the operation failed by examining the trace
     let outpoint = OutPoint {
@@ -41,6 +42,7 @@ fn test_integer_overflow_in_memory_operations() -> Result<()> {
     };
 
     alkane_helpers::assert_revert_context(
+        &mut env,
         &outpoint,
         "Unrecognized opcode",
     )?;

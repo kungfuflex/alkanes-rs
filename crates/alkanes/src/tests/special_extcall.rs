@@ -5,7 +5,7 @@ use crate::tests::test_runtime::TestRuntime;
 use crate::view;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::trace::{Trace, TraceEvent};
+use alkanes_support::trace::{Trace, TraceEvent, TraceResponse};
 use anyhow::Result;
 use bitcoin::block::Header;
 use bitcoin::{
@@ -39,18 +39,18 @@ fn test_special_extcall() -> Result<()> {
             .txdata
             .push(create_coinbase_transaction(block_height));
     }
-    index_block::<TestRuntime>(&mut TestRuntime::default(), &test_block, block_height)?;
+    let mut env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let outpoint_1 = OutPoint {
         txid: test_block.txdata[1].compute_txid(),
         vout: 3,
     };
 
-    assert_return_context(&outpoint_1, |trace_response| {
+    assert_return_context(&mut env, &outpoint_1, |trace_response: TraceResponse| {
         let data =
             consensus_decode::<Header>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
-        TestRuntime::default().log(format!("{:?}", data).as_str());
         assert_eq!(data.time, 1231006505);
         Ok(())
     })?;
@@ -60,11 +60,10 @@ fn test_special_extcall() -> Result<()> {
         vout: 3,
     };
 
-    assert_return_context(&outpoint_2, |trace_response| {
+    assert_return_context(&mut env, &outpoint_2, |trace_response: TraceResponse| {
         let data =
             consensus_decode::<Transaction>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
-        TestRuntime::default().log(format!("{:?}", data).as_str());
         assert_eq!(data.version, bitcoin::transaction::Version(2));
         Ok(())
     })?;
@@ -106,26 +105,24 @@ fn test_special_extcall_number_diesel_mints() -> Result<()> {
             get_num_diesel,
         ]
         .into(),
-    );
-
-    index_block::<TestRuntime>(&mut TestRuntime::default(), &test_block, block_height)?;
-
-    let outpoint_1 = OutPoint {
-        txid: test_block.txdata.last().unwrap().compute_txid(),
-        vout: 3,
-    };
-
-    assert_return_context(&outpoint_1, |trace_response| {
-        let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
-
-        TestRuntime::default().log(format!("{:?}", data).as_str());
-        assert_eq!(data, 5);
+        );
+    
+        let mut env = TestRuntime::default();
+        index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
+    
+        let outpoint_1 = OutPoint {
+            txid: test_block.txdata.last().unwrap().compute_txid(),
+            vout: 3,
+        };
+    
+        assert_return_context(&mut env, &outpoint_1, |trace_response: TraceResponse| {
+            let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
+    
+            assert_eq!(data, 5);
+                    Ok(())        })?;
+    
         Ok(())
-    })?;
-
-    Ok(())
-}
-
+    }
 #[test]
 fn test_special_extcall_total_miner_fees() -> Result<()> {
     let block_height = 0;
@@ -141,17 +138,17 @@ fn test_special_extcall_total_miner_fees() -> Result<()> {
         [get_miner_fee].into(),
     );
 
-    index_block::<TestRuntime>(&mut TestRuntime::default(), &test_block, block_height)?;
+    let mut env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let outpoint_1 = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
 
-    assert_return_context(&outpoint_1, |trace_response| {
+    assert_return_context(&mut env, &outpoint_1, |trace_response: TraceResponse| {
         let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
 
-        TestRuntime::default().log(format!("{:?}", data).as_str());
         assert_eq!(data, 50_000_000 * 7);
         Ok(())
     })?;

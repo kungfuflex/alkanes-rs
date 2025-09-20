@@ -42,7 +42,6 @@ impl<'a, E: RuntimeEnvironment + 'static + Clone + Default> AlkanesInstance<'a, 
     }
     pub fn send_to_arraybuffer(&mut self, ptr: usize, v: &Vec<u8>) -> anyhow::Result<i32> {
         let mem = self.get_memory()?;
-        let env = &mut self.store.data_mut().env;
         mem.write(&mut self.store, ptr, &v.len().to_le_bytes())
             .map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
         mem.write(&mut self.store, ptr + 4, v.as_slice())
@@ -55,9 +54,18 @@ impl<'a, E: RuntimeEnvironment + 'static + Clone + Default> AlkanesInstance<'a, 
             .checkpoint();
     }
     pub fn commit(&mut self) {
-        (&mut self.store.data_mut().context.lock().unwrap().message)
-            .atomic
-            .commit(&mut self.store.data_mut().env);
+        let mut atomic = {
+            self.store
+                .data_mut()
+                .context
+                .lock()
+                .unwrap()
+                .message
+                .atomic
+                .clone()
+        };
+        let env = &mut self.store.data_mut().env;
+        atomic.commit(env);
     }
     pub fn rollback(&mut self) {
         (&mut self.store.data_mut().context.lock().unwrap().message)
@@ -354,7 +362,6 @@ impl<'a, E: RuntimeEnvironment + 'static + Clone + Default> AlkanesInstance<'a, 
         self.checkpoint();
         let mut err: Option<anyhow::Error> = None;
         let (call_response, had_failure): (ExtendedCallResponse, bool) = {
-            let env = &mut self.store.data_mut().env;
             match AlkanesExportsImpl::execute(self) {
                 Ok(v) => {
                     if self.store.data().had_failure {

@@ -4,7 +4,6 @@ use crate::{
     tests::test_runtime::TestRuntime,
 };
 use bitcoin::{
-    consensus::{Decodable, Decodable as consensus_decode},
     Block, OutPoint,
 };
 use prost::Message;
@@ -14,6 +13,7 @@ use protorune::{
 };
 use protorune_support::proto::protorune::{RunesByHeightRequest, Uint128, WalletRequest};
 use std::io::Cursor;
+use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_decode_block() {
@@ -51,7 +51,7 @@ fn test_decode_block() {
 
     let runes_for_addr = runes_by_address::<TestRuntime>(&req_wallet, &mut test_runtime).unwrap();
     // assert!(runes_for_addr.balances > 0);
-    TestRuntime::log(format!("RUNES by addr: {:?}", runes_for_addr));
+    test_runtime.log(&format!("RUNES by addr: {:?}", runes_for_addr));
 
     let outpoint_res = protorune_outpoint_to_outpoint_response::<TestRuntime>(
         &(OutPoint {
@@ -68,7 +68,7 @@ fn test_decode_block() {
     expected_balance.lo = 21000000;
     assert!(balance == expected_balance);
     // TODO: Assert rune
-    TestRuntime::log(format!(" with rune {:?}", quorum_rune.rune.unwrap()));
+    test_runtime.log(&format!(" with rune {:?}", quorum_rune.rune.unwrap()));
 
     // assert!(false);
 }

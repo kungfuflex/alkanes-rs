@@ -332,19 +332,18 @@ pub fn protorunes_by_address2<'a, E: RuntimeEnvironment + Clone + 'a + 'static +
     })
 }
 
-pub fn protorunes_by_height<'a, E: RuntimeEnvironment + Clone + 'a + 'static + std::default::Default + protorune::message::MessageContext<E>>(
+use protorune::{Protorune};
+
+pub fn protorunes_by_height<E: RuntimeEnvironment + std::default::Default + Clone>(
     env: &mut E,
-    input: &'a Vec<u8>,
-) -> Result<protorune_support::proto::protorune::RunesResponse> {
-    let request =
-        protorune_support::proto::protorune::ProtorunesByHeightRequest::decode(&**input)?;
-    protorune_view::protorunes_by_height::<E>(input, env).and_then(|mut response| {
-        if request.protocol_tag.map_or(1, |v| v.into()) == (AlkaneMessageContext::<E>::protocol_tag())
-        {
-            response.runes = to_alkanes_from_runes::<E>(env, response.runes.clone());
-        }
-        Ok(response)
-    })
+    height: &u32,
+) -> Result<Vec<u8>> {
+    let req = protorune_support::proto::protorune::RunesByHeightRequest {
+        height: *height as u64,
+    };
+    let mut input = vec![];
+    req.encode(&mut input)?;
+    protorune_view::protorunes_by_height(&input, env).map(|v| v.encode_to_vec())
 }
 
 pub fn alkanes_id_to_outpoint<E: RuntimeEnvironment + Clone>(env: &mut E, input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {

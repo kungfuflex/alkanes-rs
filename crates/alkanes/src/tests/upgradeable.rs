@@ -81,8 +81,9 @@ fn deploy_upgradeable_proxy<E: RuntimeEnvironment + Clone + Default + 'static>(
     block_height: u32,
     delegate_target: AlkaneId,
 ) -> Result<(Block, u128)> {
+    let mut env = E::default();
     let mut next_sequence_pointer = sequence_pointer(&mut AtomicPointer::<E>::default());
-    let proxy_sequence = next_sequence_pointer.get(&mut E::default()).unwrap_or_default();
+    let proxy_sequence = next_sequence_pointer.get_value(&mut env);
     let proxy = alkane_helpers::BinaryAndCellpack {
         binary: proxy_build,
         cellpack: Cellpack {
@@ -94,7 +95,7 @@ fn deploy_upgradeable_proxy<E: RuntimeEnvironment + Clone + Default + 'static>(
     // Initialize the contract and execute the cellpacks
     let mut test_block = alkane_helpers::init_with_cellpack_pairs([proxy].into());
 
-    index_block::<E>(&mut E::default(), &test_block, block_height)?;
+    index_block::<E>(&mut env, &test_block, block_height)?;
 
     Ok((test_block, proxy_sequence))
 }
@@ -142,11 +143,11 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&mut env, &test_block)?;
     assert_eq!(
-        sheet.get(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into()),
+        sheet.get(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into(), &mut env),
         1_000_000
     );
     assert_eq!(
-        sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }.into()),
+        sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }.into(), &mut env),
         0
     );
     assert_revert_context(
@@ -174,11 +175,11 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&mut env2, &test_block2)?;
     assert_eq!(
-        sheet.get(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into()),
+        sheet.get(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into(), &mut env2),
         1_000_000
     );
     assert_eq!(
-        sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }.into()),
+        sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }.into(), &mut env2),
         0
     );
     Ok(())
@@ -257,11 +258,11 @@ fn check_after_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>(
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&mut env, &test_block)?;
     assert_eq!(
-        sheet.get(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into()),
+        sheet.get(&ProtoruneRuneId { block: 2, tx: proxy_sequence }.into(), &mut env),
         1_000_000
     );
     assert_eq!(
-        sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }.into()),
+        sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }.into(), &mut env),
         0
     );
 
@@ -292,25 +293,25 @@ fn check_after_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>(
 #[test]
 fn test_proxy() -> Result<()> {
     setup_env::<TestRuntime>()?;
-    let (_, proxy_sequence) = deploy_upgradeable_proxy(
+    let (_, proxy_sequence) = deploy_upgradeable_proxy::<TestRuntime>(
         alkanes_std_upgradeable_build::get_bytes(),
         0,
         AlkaneId { block: 2, tx: 1 },
     )?;
-    upgradeability_harness(proxy_sequence, 0, AlkaneId { block: 2, tx: 1 })?;
+    upgradeability_harness::<TestRuntime>(proxy_sequence, 0, AlkaneId { block: 2, tx: 1 })?;
     Ok(())
 }
 
 #[test]
 fn test_upgradeability() -> Result<()> {
     setup_env::<TestRuntime>()?;
-    let (init_block, proxy_sequence) = deploy_upgradeable_proxy(
+    let (init_block, proxy_sequence) = deploy_upgradeable_proxy::<TestRuntime>(
         alkanes_std_upgradeable_build::get_bytes(),
         0,
         AlkaneId { block: 2, tx: 1 },
     )?;
-    upgradeability_harness(proxy_sequence, 0, AlkaneId { block: 2, tx: 1 })?;
-    upgrade_implementation(
+    upgradeability_harness::<TestRuntime>(proxy_sequence, 0, AlkaneId { block: 2, tx: 1 })?;
+    upgrade_implementation::<TestRuntime>(
         0,
         OutPoint {
             txid: init_block.txdata[init_block.txdata.len() - 1].compute_txid(),
@@ -321,15 +322,15 @@ fn test_upgradeability() -> Result<()> {
             tx: proxy_sequence,
         },
     )?;
-    check_after_upgrade(0, proxy_sequence)
+    check_after_upgrade::<TestRuntime>(0, proxy_sequence)
 }
 
 #[test]
 fn test_beacon_proxy() -> Result<()> {
-    setup_env()?;
-    let init_block = deploy_upgradeable_beacon()?;
-    TestRuntime::default().log(format!("deployed upgradeable beacon").as_str());
-    let (_, proxy_sequence_1) = deploy_upgradeable_proxy(
+    setup_env::<TestRuntime>()?;
+    let init_block = deploy_upgradeable_beacon::<TestRuntime>()?;
+    TestRuntime::default().log(&format!("deployed upgradeable beacon"));
+    let (_, proxy_sequence_1) = deploy_upgradeable_proxy::<TestRuntime>(
         alkanes_std_beacon_proxy_build::get_bytes(),
         0,
         AlkaneId {
@@ -337,8 +338,8 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    TestRuntime::default().log(format!("deployed first beacon proxy").as_str());
-    upgradeability_harness(
+    TestRuntime::default().log(&format!("deployed first beacon proxy"));
+    upgradeability_harness::<TestRuntime>(
         proxy_sequence_1,
         0,
         AlkaneId {
@@ -346,9 +347,9 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    TestRuntime::default().log(format!("tested first beacon proxy").as_str());
+    TestRuntime::default().log(&format!("tested first beacon proxy"));
 
-    let (_, proxy_sequence_2) = deploy_upgradeable_proxy(
+    let (_, proxy_sequence_2) = deploy_upgradeable_proxy::<TestRuntime>(
         alkanes_std_beacon_proxy_build::get_bytes(),
         0,
         AlkaneId {
@@ -356,8 +357,8 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    TestRuntime::default().log(format!("deployed second beacon proxy").as_str());
-    upgradeability_harness(
+    TestRuntime::default().log(&format!("deployed second beacon proxy"));
+    upgradeability_harness::<TestRuntime>(
         proxy_sequence_2,
         0,
         AlkaneId {
@@ -365,8 +366,8 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    TestRuntime::default().log(format!("tested second beacon proxy").as_str());
-    upgrade_implementation(
+    TestRuntime::default().log(&format!("tested second beacon proxy"));
+    upgrade_implementation::<TestRuntime>(
         0,
         OutPoint {
             txid: init_block.txdata[init_block.txdata.len() - 1].compute_txid(),
@@ -377,6 +378,6 @@ fn test_beacon_proxy() -> Result<()> {
             tx: BEACON_ID,
         },
     )?;
-    check_after_upgrade(0, proxy_sequence_1)?;
-    check_after_upgrade(0, proxy_sequence_2)
+    check_after_upgrade::<TestRuntime>(0, proxy_sequence_1)?;
+    check_after_upgrade::<TestRuntime>(0, proxy_sequence_2)
 }

@@ -49,7 +49,7 @@ pub fn simulate_cellpack<E: RuntimeEnvironment + Clone + Default + 'static>(
     cellpack: Cellpack,
 ) -> Result<(ExtendedCallResponse, u64)> {
     let parcel = MessageContextParcel {
-        atomic: AtomicPointer::<AlkaneMessageContext<E>>::default(),
+        atomic: AtomicPointer::<E>::default(),
         runes: vec![],
         transaction: Transaction {
             version: bitcoin::blockdata::transaction::Version::ONE,
@@ -62,10 +62,10 @@ pub fn simulate_cellpack<E: RuntimeEnvironment + Clone + Default + 'static>(
         pointer: 0,
         refund_pointer: 0,
         calldata: cellpack.encipher(),
-        sheets: Box::<BalanceSheet<E, AtomicPointer<AlkaneMessageContext<E>>>>::new(BalanceSheet::default()),
+        sheets: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
         txindex: 0,
         vout: 0,
-        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<AlkaneMessageContext<E>>>>::new(BalanceSheet::default()),
+        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
         _phantom: std::marker::PhantomData,
     };
     simulate_parcel::<E>(env, &parcel, u64::MAX)
@@ -415,9 +415,9 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
     index_block::<TestRuntime>(&mut env, &block2, height2)?;
 
     // Before fulfillment, last_block should not have advanced past the block with unfulfilled payment
-    let last_block_before = unwrap_view::fr_btc_storage_pointer::<TestRuntime>()
+    let last_block_before: u128 = unwrap_view::fr_btc_storage_pointer::<TestRuntime>()
         .keyword("/last_block")
-        .get_value();
+        .get_value(&mut env);
 
     // wrap_btc is at height 1, which has no payments. So last_block becomes 1.
     // unwrap_btc is at height 2, which has an unfulfilled payment. So last_block stays 1.
@@ -438,9 +438,9 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
     crate::unwrap::update_last_block::<TestRuntime>(&mut env, height3 as u128)?;
 
     // After fulfillment, last_block should be updated to the latest block
-    let last_block_after = unwrap_view::fr_btc_storage_pointer::<TestRuntime>()
+    let last_block_after: u128 = unwrap_view::fr_btc_storage_pointer::<TestRuntime>()
         .keyword("/last_block")
-        .get_value();
+        .get_value(&mut env);
     assert_eq!(last_block_after, height3 as u128);
 
     // Check view has no payments because the processed blocks are skipped

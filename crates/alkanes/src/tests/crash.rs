@@ -15,7 +15,8 @@ use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_owned_token_mint_crash() -> Result<()> {
-    alkane_helpers::clear::<TestRuntime>();
+    let mut env = TestRuntime::default();
+    alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
 
     // First deploy auth token factory
@@ -55,13 +56,13 @@ fn test_owned_token_mint_crash() -> Result<()> {
         [auth_factory_cellpack, owned_token_cellpack].into(),
     );
 
-    TestRuntime::log(format!("STEP 1: Indexing initial deployment block..."));
-    index_block::<TestRuntime>(&test_block, block_height)?;
-    TestRuntime::log(format!("STEP 1: Initial deployment block indexed successfully"));
+    env.log(&format!("STEP 1: Indexing initial deployment block..."));
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
+    env.log(&format!("STEP 1: Initial deployment block indexed successfully"));
 
     let owned_token_id = AlkaneId { block: 2, tx: 1 };
     let auth_token_id = AlkaneId { block: 2, tx: 2 };
-    TestRuntime::log(format!(
+    env.log(&format!(
         "STEP 2: Created token IDs: owned={:?}, auth={:?}",
         owned_token_id, auth_token_id
     ));
@@ -72,40 +73,41 @@ fn test_owned_token_mint_crash() -> Result<()> {
         txid: tx.compute_txid(),
         vout: 0,
     };
-    TestRuntime::log(format!("STEP 3: Got outpoint: {:?}", outpoint));
+    env.log(&format!("STEP 3: Got outpoint: {:?}", outpoint));
 
-    TestRuntime::log(format!("STEP 4: Loading initial balance sheet..."));
+    env.log(&format!("STEP 4: Loading initial balance sheet..."));
     let sheet = load_sheet(
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
+        &mut env,
     );
-    TestRuntime::log(format!("STEP 4: Balance sheet loaded successfully"));
+    env.log(&format!("STEP 4: Balance sheet loaded successfully"));
 
     // Verify initial balances
-    let owned_balance = sheet.get_cached(&owned_token_id.into());
-    let auth_balance = sheet.get_cached(&auth_token_id.into());
-    TestRuntime::log(format!(
+    let owned_balance = sheet.get(&owned_token_id.into(), &mut env);
+    let auth_balance = sheet.get(&auth_token_id.into(), &mut env);
+    env.log(&format!(
         "STEP 5: Initial balances - owned: {}, auth: {}",
         owned_balance, auth_balance
     ));
     assert_eq!(owned_balance, 1000, "Initial token balance incorrect");
     assert_eq!(auth_balance, 1, "Auth token balance incorrect");
 
-    TestRuntime::log(format!("STEP 6: Creating mint block..."));
+    env.log(&format!("STEP 6: Creating mint block..."));
     let mint_block = alkane_helpers::init_with_multiple_cellpacks(
         alkanes_std_owned_token_build::get_bytes(),
         vec![mint_cellpack.clone()],
     );
-    TestRuntime::log(format!("STEP 6: Mint block created successfully"));
+    env.log(&format!("STEP 6: Mint block created successfully"));
 
-    TestRuntime::log(format!("STEP 7: About to index mint block..."));
+    env.log(&format!("STEP 7: About to index mint block..."));
 
-    index_block::<TestRuntime>(&mint_block, block_height)?;
-    TestRuntime::log(format!("STEP 8: Mint block indexed successfully"));
+    index_block::<TestRuntime>(&mut env, &mint_block, block_height)?;
+    env.log(&format!("STEP 8: Mint block indexed successfully"));
 
     // Get the mint transaction info
-    TestRuntime::log(format!("STEP 9: Checking mint transaction state..."));
+    env.log(&format!("STEP 9: Checking mint transaction state..."));
     let mint_tx = mint_block.txdata.last().ok_or(anyhow!("no mint tx"))?;
     let mint_outpoint = OutPoint {
         txid: mint_tx.compute_txid(),
@@ -115,14 +117,15 @@ fn test_owned_token_mint_crash() -> Result<()> {
         &RuneTable::<TestRuntime>::for_protocol(AlkaneMessageContext::<TestRuntime>::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&mint_outpoint)?),
+        &mut env,
     );
-    TestRuntime::log(format!(
+    env.log(&format!(
         "STEP 10: Mint state - txid: {}, balances: {:?}",
         mint_tx.compute_txid(),
         mint_sheet.balances()
     ));
 
-    TestRuntime::log(format!("Test completed successfully - no crash occurred"));
+    env.log(&format!("Test completed successfully - no crash occurred"));
 
     Ok(())
 }

@@ -25,15 +25,15 @@ fn test_infinite_loop() -> Result<()> {
         [alkanes_std_test_build::get_bytes()].into(),
         [infinite_exec_cellpack].into(),
     );
-
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    let mut env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
 
-    let trace_data: Trace = view::trace(&outpoint)?.try_into()?;
+    let trace_data: Trace = view::trace(&mut env, &outpoint)?.try_into()?;
     let trace_events = trace_data.0.lock().expect("Mutex poisoned");
     let last_trace_event = trace_events[trace_events.len() - 1].clone();
     match last_trace_event {
@@ -63,15 +63,15 @@ fn test_infinite_extcall_loop() -> Result<()> {
         [alkanes_std_test_build::get_bytes()].into(),
         [infinite_exec_cellpack].into(),
     );
-
-    index_block::<TestRuntime>(&test_block, block_height)?;
+    let mut env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
 
-    let trace_data: Trace = view::trace(&outpoint)?.try_into()?;
+    let trace_data: Trace = view::trace(&mut env, &outpoint)?.try_into()?;
     let trace_events = trace_data.0.lock().expect("Mutex poisoned");
     let last_trace_event = trace_events[trace_events.len() - 1].clone();
     match last_trace_event {
