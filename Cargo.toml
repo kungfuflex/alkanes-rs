@@ -43,3 +43,11 @@ prost-build = "0.13.1"
 protobuf-codegen = "3.4.0"
 protoc-rust = { version = "2.28.0" }
 protoc-bin-vendored = "3.0.0"
+protobuf-json-mapping = "3.7.2"
+clap = { version = "4.0", features = ["derive"] }
+env_logger = "0.11"
+futures = "0.3"
+log = "0.4"
+tokio = { version = "1.28", features = ["macros", "rt", "time", "sync"] }
+reqwest = { version = "0.12", features = ["json"] }
+

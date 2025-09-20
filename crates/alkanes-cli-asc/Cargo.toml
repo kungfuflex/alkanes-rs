@@ -1,0 +1,17 @@
+[package]
+name = "alkanes-cli-asc"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["std"]
+std = ["dep:thiserror"]
+
+[dependencies]
+thiserror = { workspace = true, optional = true }
+nom = "7.1"
+crc24 = "0.1.6"
+base64 = "0.22"
+
+[dev-dependencies]
+pretty_assertions = "1.0"

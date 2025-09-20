@@ -1,0 +1,148 @@
+# Deezel Common Library
+#
+# This crate contains all the core business logic for the deezel project.
+# It's designed to be WASM-compatible and provides trait abstractions
+# for system calls, JSON-RPC, and disk I/O.
+#
+# Key features:
+# - WASM-compatible (no std::fs, no tokio::process, etc.)
+# - Trait-based abstractions for system dependencies
+# - Pure business logic without CLI concerns
+# - Can be imported into web applications
+
+[package]
+name = "alkanes-cli-common"
+version = "0.1.0"
+edition = "2021"
+description = "Core deezel library for Bitcoin wallet operations, alkanes smart contracts, and blockchain interaction"
+authors = ["Deezel Team"]
+license = "MIT OR Apache-2.0"
+keywords = ["bitcoin", "alkanes", "smart-contracts", "wallet", "blockchain"]
+categories = ["cryptography::cryptocurrencies", "web-programming", "wasm"]
+
+[lib]
+name = "alkanes-cli-common"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "deezel-common-worker"
+path = "src/worker_entry.rs"
+required-features = ["worker"]
+
+[dependencies]
+# Core Bitcoin functionality
+bitcoin = { workspace = true }
+bitcoin_hashes = { workspace = true }
+ordinals = { workspace = true }
+
+alkanes-cli-asc = { path = "../alkanes-cli-asc" }
+alkanes-cli-pretty-print-macro = { path = "../alkanes-cli-pretty-print-macro" }
+ 
+# Cryptography and wallet functionality
+secp256k1 = { workspace = true }
+bip39 = { workspace = true }
+pbkdf2 = { version = "0.12" }
+aes-gcm = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true, features = ["getrandom"] }
+sha2 = { workspace = true }
+ 
+psbt-v2 = { workspace = true }
+
+# FROST-related dependencies
+frost-secp256k1-tr = { version = "2.1.0", features = ["serde"], optional = true }
+frost-core = { version = "2.1.0", features = ["serde"], optional = true }
+elliptic-curve = { version = "0.13.8", features = ["sec1"], optional = true }
+ff = { version = "0.13.0", optional = true }
+ 
+ # Async runtime (WASM-compatible features only)
+ futures = { workspace = true }
+
+# Serialization/Deserialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+# Utilities
+hex = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+lazy_static = { workspace = true }
+regex = { workspace = true }
+chrono = { workspace = true }
+smallvec = { workspace = true }
+leb128 = { version = "0.2.5", default-features = false }
+
+# Alkanes-rs crates
+alkanes-support = { workspace = true }
+protorune-support = { workspace = true }
+metashrew-support = { workspace = true }
+prost = { workspace = true }
+protobuf = { workspace = true }
+
+# WASM runtime for alkane inspection
+wasmi = { workspace = true, optional = true }
+wasmprinter = { workspace = true, optional = true }
+wat = { workspace = true, optional = true }
+sha3 = { workspace = true }
+spin = { workspace = true, optional = true }
+wasmparser = { workspace = true, optional = true }
+web-sys = { version = "0.3", features = ["SubtleCrypto", "CryptoKey", "CryptoKeyPair", "Pbkdf2Params", "AesGcmParams", "Crypto", "Window"], optional = true }
+gloo-worker = { version = "0.5", features = [ "futures" ] }
+gloo-worker-macros = "0.1"
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen = { version = "0.2" }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+
+# Additional dependencies for comprehensive functionality
+dirs = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+flate2 = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"], optional = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true, default-features = false }
+url = { version = "2.5.0", optional = true }
+clap = { workspace = true, features = ["derive"], default-features = false }
+bitcoincore-rpc = { workspace = true, optional = true }
+bech32.workspace = true
+
+[features]
+default = ["std", "wasm-inspection", "native-deps"]
+std = ["tokio", "reqwest", "url", "bitcoincore-rpc", "dirs", "tempfile"]
+wasm-inspection = ["wasmi", "wasmprinter", "wat", "spin", "wasmparser", "web-sys", "js-sys", "wasm-bindgen-futures"]
+native-deps = []
+web-compat = ["spin", "std"]
+worker = []
+frost = ["frost-secp256k1-tr", "frost-core", "elliptic-curve", "ff"]
+
+test-utils = []
+
+[build-dependencies]
+protobuf-codegen = "3.4.0"
+protoc-rust = { version = "2.28.0" }
+protoc-bin-vendored = "3.0.0"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync", "test-util"] }
+env_logger = "0.10"
+wiremock = "0.6.0"
+mockall = { workspace = true }
+bech32 = { workspace = true }
+tempfile = { workspace = true }
+anyhow = { workspace = true }
+
+# WASM-specific configuration
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+serde-wasm-bindgen = "0.6"
+gloo-timers = { version = "0.3.0", features = ["futures"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
+version = "0.2"
+features = ["js"]
+
+
