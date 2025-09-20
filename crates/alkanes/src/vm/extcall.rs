@@ -1,4 +1,3 @@
-use crate::message::AlkaneMessageContext;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{TraceContext, TraceEvent};
 use metashrew_support::index_pointer::AtomicPointer;

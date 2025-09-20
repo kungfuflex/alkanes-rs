@@ -1296,6 +1296,7 @@ dependencies = [
  "cfg-if",
  "hex",
  "metashrew-support",
+ "once_cell",
  "ordinals 0.0.8",
  "protobuf 3.7.2",
  "protobuf-codegen 3.7.2",

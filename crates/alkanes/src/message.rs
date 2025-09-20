@@ -16,8 +16,8 @@ use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_core::environment::MetashrewEnvironment;
-use downcast_rs::Downcast;
-use metashrew_support::environment::{EnvironmentInput, RuntimeEnvironment};
+
+use metashrew_support::environment::RuntimeEnvironment;
 
 
 use metashrew_support::index_pointer::KeyValuePointer;

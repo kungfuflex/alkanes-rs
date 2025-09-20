@@ -7,7 +7,7 @@ use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode}
 use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
 use protorune_support::balance_sheet::BalanceSheetOperations;
 
-use crate::index_block;
+use crate::indexer::index_block;
 use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_owned_token_build;
 use crate::tests::test_runtime::TestRuntime;
@@ -15,6 +15,7 @@ use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_owned_token_mint_crash() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;

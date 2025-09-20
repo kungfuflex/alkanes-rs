@@ -1,4 +1,4 @@
-use crate::index_block;
+use crate::indexer::{index_block, configure_network};
 use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_test_build;
 use crate::tests::test_runtime::TestRuntime;
@@ -8,10 +8,10 @@ use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
 use bitcoin::OutPoint;
-use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_infinite_loop() -> Result<()> {
+    configure_network();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -21,7 +21,7 @@ fn test_infinite_loop() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [infinite_exec_cellpack].into(),
     );
@@ -50,6 +50,7 @@ fn test_infinite_loop() -> Result<()> {
 
 #[test]
 fn test_infinite_extcall_loop() -> Result<()> {
+    configure_network();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -59,7 +60,7 @@ fn test_infinite_extcall_loop() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [infinite_exec_cellpack].into(),
     );

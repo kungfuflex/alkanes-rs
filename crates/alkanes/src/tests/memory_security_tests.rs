@@ -1,13 +1,11 @@
-use crate::index_block;
+use crate::indexer::{index_block, configure_network};
 use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_test_build;
 use crate::tests::test_runtime::TestRuntime;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-use bitcoin::{OutPoint, Witness};
-use metashrew_support::environment::RuntimeEnvironment;
-use protorune_support::balance_sheet::BalanceSheetOperations;
+use bitcoin::OutPoint;
 
 // Helper function to create a malformed cellpack with extremely large inputs
 fn create_malformed_cellpack_large_inputs() -> Cellpack {
@@ -19,6 +17,7 @@ fn create_malformed_cellpack_large_inputs() -> Cellpack {
 
 #[test]
 fn test_integer_overflow_in_memory_operations() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -27,7 +26,7 @@ fn test_integer_overflow_in_memory_operations() -> Result<()> {
     let overflow_cellpack = create_malformed_cellpack_large_inputs();
 
     // Initialize the contract and execute the cellpack
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [overflow_cellpack].into(),
     );

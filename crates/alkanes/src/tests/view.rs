@@ -1,9 +1,9 @@
+use crate::indexer::configure_network;
 use crate::tests::test_runtime::TestRuntime;
-use crate::view::{call_view, get_statics, NAME_OPCODE, STATIC_FUEL, SYMBOL_OPCODE};
+use crate::view::get_statics;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 // Create a static counter to track the number of calls to call_view
 static CALL_VIEW_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -16,6 +16,7 @@ fn setup_test_environment() {
 
 #[test]
 fn test_get_statics_caching() -> Result<()> {
+    configure_network();
     setup_test_environment();
     let mut env = TestRuntime::default();
 

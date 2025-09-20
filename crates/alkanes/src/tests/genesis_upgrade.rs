@@ -1,4 +1,4 @@
-use crate::index_block;
+use crate::indexer::{index_block, configure_network};
 use crate::message::AlkaneMessageContext;
 use crate::network::genesis;
 use crate::tests::helpers::{
@@ -25,6 +25,7 @@ use protorune_support::protostone::Protostone;
 use protorune_support::utils::consensus_encode;
 
 fn setup_pre_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<()> {
+    configure_network();
     let mut env = E::default();
     let auth_cellpack = Cellpack {
         target: AlkaneId {
@@ -44,6 +45,7 @@ fn setup_pre_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Res
 }
 
 fn upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<OutPoint> {
+    configure_network();
     let mut env = E::default();
     let block_height = 890_000;
     let diesel = AlkaneId { block: 2, tx: 0 };
@@ -134,6 +136,7 @@ fn upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<OutPoi
 }
 
 fn mint<E: RuntimeEnvironment + Clone + Default + 'static>(num_mints: usize) -> Result<Block> {
+    configure_network();
     let mut env = E::default();
     let block_height = 890_001;
     let diesel = AlkaneId { block: 2, tx: 0 };
@@ -161,6 +164,7 @@ fn mint<E: RuntimeEnvironment + Clone + Default + 'static>(num_mints: usize) -> 
 }
 
 fn get_total_supply<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<u128> {
+    configure_network();
     let mut env = E::default();
     let block_height = 890_000;
     let diesel = AlkaneId { block: 2, tx: 0 };
@@ -198,6 +202,7 @@ fn get_total_supply<E: RuntimeEnvironment + Clone + Default + 'static>() -> Resu
 
 #[test]
 fn test_new_genesis_contract() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     setup_pre_upgrade::<TestRuntime>()?;
     upgrade::<TestRuntime>()?;
@@ -224,6 +229,7 @@ fn test_new_genesis_contract() -> Result<()> {
 
 #[test]
 fn test_new_genesis_contract_empty_calldata() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     setup_pre_upgrade::<TestRuntime>()?;
     upgrade::<TestRuntime>()?;
@@ -267,6 +273,7 @@ fn test_new_genesis_contract_empty_calldata() -> Result<()> {
 
 #[test]
 fn test_new_genesis_contract_wrong_id() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     setup_pre_upgrade::<TestRuntime>()?;
     upgrade::<TestRuntime>()?;
@@ -314,6 +321,7 @@ fn test_new_genesis_contract_wrong_id() -> Result<()> {
 
 #[test]
 fn test_new_genesis_collect_fees() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     setup_pre_upgrade::<TestRuntime>()?;
     let auth_token_outpoint = upgrade::<TestRuntime>()?;

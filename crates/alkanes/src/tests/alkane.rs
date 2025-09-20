@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::index_block;
+    use crate::indexer::index_block;
     use crate::tests::helpers as alkane_helpers;
     use crate::tests::std::alkanes_std_test_build;
     use crate::tests::test_runtime::TestRuntime;
@@ -8,7 +8,7 @@ mod tests {
     use alkanes_support::gz::{compress, decompress};
     use alkanes_support::id::AlkaneId;
     use anyhow::Result;
-    use metashrew_support::environment::RuntimeEnvironment;
+    
 
     #[test]
     pub fn test_compression() -> Result<()> {
@@ -19,6 +19,7 @@ mod tests {
     }
     #[test]
     fn test_extcall() -> Result<()> {
+        crate::indexer::configure_network();
         let mut env = TestRuntime::default();
         let block_height = 0;
 
@@ -43,6 +44,7 @@ mod tests {
     }
     #[test]
     fn test_transaction() -> Result<()> {
+        crate::indexer::configure_network();
         let mut env = TestRuntime::default();
         let block_height = 0;
 
@@ -73,6 +75,7 @@ mod tests {
     }
     #[test]
     fn test_benchmark() -> Result<()> {
+        crate::indexer::configure_network();
         let mut env = TestRuntime::default();
         let block_height = 0;
 

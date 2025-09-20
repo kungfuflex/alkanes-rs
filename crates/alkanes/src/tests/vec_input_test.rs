@@ -1,11 +1,10 @@
-use crate::{message::AlkaneMessageContext, tests::std::alkanes_std_test_build};
+use crate::{indexer::configure_network, tests::std::alkanes_std_test_build};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_support::utils::consensus_encode;
 
-use crate::index_block;
+use crate::indexer::index_block;
 use crate::tests::helpers::{self as alkane_helpers, assert_binary_deployed_to_id};
 use crate::view;
 use bitcoin::Witness;
@@ -14,6 +13,7 @@ use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_vec_inputs() -> Result<()> {
+    configure_network();
     let block_height = 0;
     let mut env = TestRuntime::default();
     // Get the LoggerAlkane ID

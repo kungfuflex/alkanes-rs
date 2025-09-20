@@ -1,8 +1,4 @@
-use crate::message::AlkaneMessageContext;
-use alkanes_support::{
-    id::AlkaneId,
-    proto::alkanes::{self as pb, Payment as ProtoPayment, PendingUnwrapsResponse},
-};
+use alkanes_support::proto::alkanes::{self as pb, Payment as ProtoPayment, PendingUnwrapsResponse};
 use anyhow::Result;
 use metashrew_support::environment::RuntimeEnvironment;
 use bitcoin::hashes::Hash;

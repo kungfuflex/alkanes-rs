@@ -22,7 +22,6 @@ use alkanes_support::proto::alkanes::{
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Version;
-use metashrew_core::environment::MetashrewEnvironment;
 use metashrew_support::environment::RuntimeEnvironment;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::hex::FromHex;
@@ -49,8 +48,6 @@ use std::fmt::Write;
 use std::io::Cursor;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::marker::PhantomData;
-use std::collections::HashMap;
-use anyhow::Error;
 
 pub fn parcels_from_protobuf<E: RuntimeEnvironment + Clone>(v: proto::alkanes::MultiSimulateRequest) -> Vec<MessageContextParcel<E>> {
     v.parcels.into_iter().map(parcel_from_protobuf).collect()
@@ -332,7 +329,6 @@ pub fn protorunes_by_address2<'a, E: RuntimeEnvironment + Clone + 'a + 'static +
     })
 }
 
-use protorune::{Protorune};
 
 pub fn protorunes_by_height<E: RuntimeEnvironment + std::default::Default + Clone>(
     env: &mut E,

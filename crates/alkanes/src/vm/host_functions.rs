@@ -16,7 +16,7 @@ use alkanes_support::{
     trace::{TraceContext, TraceEvent, TraceResponse},
     utils::overflow_error,
 };
-use metashrew_core::environment::{MetashrewEnvironment, RuntimeEnvironment};
+use metashrew_core::environment::RuntimeEnvironment;
 use anyhow::{anyhow, Result};
 use bitcoin::Transaction;
 use metashrew_support::index_pointer::IndexPointer;
@@ -534,11 +534,11 @@ impl AlkanesHostFunctionsImpl {
         }
     }
     fn _get_block_header<E: RuntimeEnvironment + Clone>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
-        let env = &mut caller.data_mut().env;
+        let _env = &mut caller.data_mut().env;
         // Return the current block header
         #[cfg(feature = "debug-log")]
         {
-            env.log(&format!("Precompiled contract: returning current block header"));
+            _env.log(&format!("Precompiled contract: returning current block header"));
         }
 
         // Get the block header from the current context
@@ -563,11 +563,11 @@ impl AlkanesHostFunctionsImpl {
     }
 
     fn _get_coinbase_tx_response<E: RuntimeEnvironment + Clone>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
-        let env = &mut caller.data_mut().env;
+        let _env = &mut caller.data_mut().env;
         // Return the coinbase transaction bytes
         #[cfg(feature = "debug-log")]
         {
-            env.log(&format!("Precompiled contract: returning coinbase transaction"));
+            _env.log(&format!("Precompiled contract: returning coinbase transaction"));
         }
 
         // Get the coinbase transaction from the current block
@@ -581,11 +581,11 @@ impl AlkanesHostFunctionsImpl {
     }
 
     fn _get_total_miner_fee<E: RuntimeEnvironment + Clone>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
-        let env = &mut caller.data_mut().env;
+        let _env = &mut caller.data_mut().env;
         // Return the coinbase transaction bytes
         #[cfg(feature = "debug-log")]
         {
-            env.log(&format!("Precompiled contract: returning total miner fee"));
+            _env.log(&format!("Precompiled contract: returning total miner fee"));
         }
 
         // Get the coinbase transaction from the current block
@@ -602,11 +602,11 @@ impl AlkanesHostFunctionsImpl {
     }
 
     fn _get_number_diesel_mints<E: RuntimeEnvironment + Clone>(caller: &mut Caller<'_, AlkanesState<E>>) -> Result<CallResponse> {
-        let env = &mut caller.data_mut().env;
+        let _env = &mut caller.data_mut().env;
         if let Some(cached_data) = DIESEL_MINTS_CACHE.read().unwrap().clone() {
             #[cfg(feature = "debug-log")]
             {
-                env.log(&format!("Precompiled contract: returning cached total number of diesel mints"));
+                _env.log(&format!("Precompiled contract: returning cached total number of diesel mints"));
             }
             let mut response = CallResponse::default();
             response.data = cached_data;
@@ -614,7 +614,7 @@ impl AlkanesHostFunctionsImpl {
         }
         #[cfg(feature = "debug-log")]
         {
-            env.log(&format!("Precompiled contract: calculating total number of diesel mints in this block"));
+            _env.log(&format!("Precompiled contract: calculating total number of diesel mints in this block"));
         }
 
         // Get the block header from the current context
@@ -663,10 +663,10 @@ impl AlkanesHostFunctionsImpl {
         caller: &mut Caller<'_, AlkanesState<E>>,
         cellpack: Cellpack,
     ) -> Result<i32> {
-        let env = &mut caller.data_mut().env;
+        let _env = &mut caller.data_mut().env;
         #[cfg(feature = "debug-log")]
         {
-            env.log(&format!("extcall: precompiled contract detected at [{},{}]",
+            _env.log(&format!("extcall: precompiled contract detected at [{},{}]",
                 cellpack.target.block, cellpack.target.tx
             ));
         }
@@ -741,7 +741,7 @@ pub(super) fn extcall<'a, E: RuntimeEnvironment + Clone + 'static + Default, T: 
                 }
             );
 
-            let mut context_guard = state.context.lock().unwrap();
+            let context_guard = state.context.lock().unwrap();
 
             if !T::isdelegate() {
                 // delegate call retains caller and myself, so no alkanes are transferred to the subcontext

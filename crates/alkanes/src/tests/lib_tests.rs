@@ -1,5 +1,5 @@
-use crate::{
-    configure_network,
+use crate::{   
+    indexer::configure_network,
     message::AlkaneMessageContext,
     tests::test_runtime::TestRuntime,
 };
@@ -31,8 +31,7 @@ fn test_decode_block() {
     // calling index_block directly fails since genesis(&block).unwrap(); gets segfault
     // index_block(&block, height).unwrap();
     configure_network();
-    let mut test_runtime = TestRuntime::default();
-    Protorune::index_block::<AlkaneMessageContext<TestRuntime>>(&mut test_runtime, block.clone(), height.into()).unwrap();
+    let mut test_runtime = TestRuntime::default();    Protorune::index_block::<AlkaneMessageContext<TestRuntime>>(&mut test_runtime, block.clone(), height.into()).unwrap();
 
     let req_height: Vec<u8> = (RunesByHeightRequest {
         height: 849236,

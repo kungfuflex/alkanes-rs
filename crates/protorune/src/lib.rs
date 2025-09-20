@@ -18,7 +18,7 @@
 // interact with the Protorune protocol. It provides a clear and well-documented
 // API for working with Protorune data and for building applications on top of
 // the Protorune ecosystem.
-use crate::balance_sheet::{load_sheet, PersistentRecord};
+pub use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{add_to_indexable_protocols, initialized_protocol_index, MessageHandler};
@@ -197,7 +197,7 @@ pub fn validate_rune_etch<E: RuntimeEnvironment + Clone>(_env: &mut E, _tx: &Tra
     Ok(true)
 }
 
-impl<E: RuntimeEnvironment + Clone> Protorune<E> {
+impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
     pub fn index_runestone<T: MessageContext<E>>(
         env: &mut E,
         atomic: &mut AtomicPointer<E>,
@@ -471,18 +471,22 @@ impl<E: RuntimeEnvironment + Clone> Protorune<E> {
         let indexer_rune_name = name.as_bytes().to_vec();
 
         // check if rune name alredy exists
-        if let std::result::Result::Ok(rune_id) = ProtoruneRuneId::try_from(
-            (*RuneTable::<E>::new()
-                .ETCHING_TO_RUNE_ID
-                .select(&indexer_rune_name)
-                .get(env))
-            .clone(),
-        ) {
-            env.log(&format!(
-                "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
-                name, rune_id
-            ));
-            return Ok(());
+        let maybe_existing_rune_id_bytes = RuneTable::<E>::new()
+            .ETCHING_TO_RUNE_ID
+            .select(&indexer_rune_name)
+            .get(env);
+
+        if !maybe_existing_rune_id_bytes.is_empty() {
+            if let std::result::Result::Ok(decoded_rune_id) =
+                proto::ProtoruneRuneId::decode(maybe_existing_rune_id_bytes.as_slice())
+            {
+                let rune_id = ProtoruneRuneId::from(decoded_rune_id);
+                env.log(&format!(
+                    "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
+                    name, rune_id
+                ));
+                return Ok(());
+            }
         }
         let rune_id = ProtoruneRuneId::new(height.into(), index.into());
         atomic
@@ -490,7 +494,7 @@ impl<E: RuntimeEnvironment + Clone> Protorune<E> {
             .set(env, Arc::new(indexer_rune_name.clone()));
         atomic
             .derive(&RuneTable::<E>::new().ETCHING_TO_RUNE_ID.select(&indexer_rune_name))
-            .set(env, rune_id.into());
+            .set(env, Arc::new(proto::ProtoruneRuneId::from(rune_id).encode_to_vec()));
         atomic
             .derive(&RuneTable::<E>::new().RUNE_ID_TO_HEIGHT.select(&rune_id.into()))
             .set_value(env, height);

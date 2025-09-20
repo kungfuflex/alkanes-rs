@@ -1,6 +1,5 @@
-use crate::tests::test_runtime::TestRuntime;
 use metashrew_support::environment::RuntimeEnvironment;
-use crate::index_block;
+use crate::indexer::index_block;
 use crate::tests::helpers::init_with_multiple_cellpacks_with_tx;
 use crate::tests::std::alkanes_std_auth_token_build;
 use crate::tests::std::alkanes_std_genesis_protorune_build;
@@ -134,6 +133,7 @@ fn test_contract_abi<E: RuntimeEnvironment + Clone + Default + 'static>(
 
 #[test]
 fn test_meta_call() -> Result<()> {
+    crate::indexer::configure_network();
     let block_height = 0;
 
     // Create test blocks with cellpacks

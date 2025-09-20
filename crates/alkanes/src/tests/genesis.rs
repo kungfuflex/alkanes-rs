@@ -1,4 +1,4 @@
-use crate::index_block;
+use crate::indexer::{index_block, configure_network};
 use crate::network::genesis;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_genesis_alkane_build;
@@ -67,6 +67,7 @@ fn display_benchmark_footer(rt_env: &mut TestRuntime) {
 }
 #[test]
 fn test_genesis() -> Result<()> {
+    configure_network();
     let mut rt_env = TestRuntime::default();
     alkane_helpers::clear(&mut rt_env);
     let block_height = 0;
@@ -101,7 +102,7 @@ fn test_genesis() -> Result<()> {
     };
 
     rt_env.log(&format!(
-        "Runestone: {}",
+        "Runestone:જી {}",
         hex::encode(&test_block.txdata[1].output[1].script_pubkey)
     ));
 
@@ -195,6 +196,7 @@ fn test_genesis() -> Result<()> {
 
 #[test]
 fn test_genesis_alkane_key() -> Result<()> {
+    configure_network();
     let mut rt_env = TestRuntime::default();
     let len = IndexPointer::<TestRuntime>::from_keyword("/alkanes/")
         .select(&(AlkaneId { tx: 2, block: 0 }).into())
@@ -217,6 +219,7 @@ fn test_genesis_alkane_key() -> Result<()> {
 
 #[test]
 fn test_genesis_indexer_premine() -> Result<()> {
+    configure_network();
     use bitcoin::Txid;
 
     let mut env = TestRuntime::default();
@@ -244,8 +247,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
                     .iter()
                     .cloned()
                     .rev()
-                    .collect::<Vec<u8>>(),
-            )
+                    .collect::<Vec<u8>>())
             .try_into()?,
         ),
         vout: 0,

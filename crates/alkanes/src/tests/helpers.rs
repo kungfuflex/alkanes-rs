@@ -18,7 +18,7 @@ use metashrew_support::utils::consensus_encode;
 use ordinals::{Etching, Rune, Runestone};
 use protorune::balance_sheet::load_sheet;
 use protorune::message::MessageContext;
-use protorune::protostone::{ProtostoneEncoder, Protostones};
+use protorune::protostone::ProtostoneEncoder;
 use protorune::tables::RuneTable;
 use protorune::test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1};
 use protorune_support::balance_sheet::BalanceSheet;

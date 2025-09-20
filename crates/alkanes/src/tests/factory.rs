@@ -1,4 +1,4 @@
-use crate::index_block;
+use crate::indexer::{index_block, configure_network};
 use crate::tests::helpers::{
     self as alkane_helpers, assert_binary_deployed_to_id, assert_id_points_to_alkane_id,
     get_sheet_for_runtime,
@@ -13,6 +13,7 @@ use protorune_support::balance_sheet::BalanceSheetOperations;
 
 #[test]
 fn test_factory_wasm_load() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -39,7 +40,7 @@ fn test_factory_wasm_load() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [
             alkanes_std_test_build::get_bytes(),
             [].into(),

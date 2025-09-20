@@ -20,13 +20,13 @@ use metashrew_support::index_pointer::{AtomicPointer, IndexPointer, KeyValuePoin
 
 use protorune::balance_sheet::PersistentRecord;
 use protorune::message::{MessageContext, MessageContextParcel};
-use protorune::Protorune;
 #[allow(unused_imports)]
-use protorune::tables::RuneTable;
+use protorune::tables::{RuneTable};
 use protorune_support::balance_sheet::BalanceSheet;
 use protorune_support::utils::{outpoint_encode, tx_hex_to_txid};
 use std::marker::PhantomData;
 use std::sync::Arc;
+
 
 pub fn fr_btc_bytes() -> Vec<u8> {
     fr_btc_build::get_bytes()
@@ -181,72 +181,20 @@ pub fn is_genesis<E: RuntimeEnvironment + Clone + Default>(env: &mut E, height: 
     is_genesis
 }
 
-pub fn genesis<E: RuntimeEnvironment + Clone + Default + 'static>(
+pub fn setup_frsigil<E: RuntimeEnvironment + Clone + Default + 'static>(
     env: &mut E,
     block: &Block,
-) -> Result<()> {
-    IndexPointer::<E>::from_keyword("/alkanes/")
-        .select(&(AlkaneId { block: 2, tx: 0 }).into())
-        .set(env, Arc::new(compress(genesis_alkane_bytes())?));
-    IndexPointer::<E>::from_keyword("/alkanes/")
-        .select(&(AlkaneId { block: 32, tx: 1 }).into())
-        .set(env, Arc::new(compress(fr_sigil_bytes())?));
-    IndexPointer::<E>::from_keyword("/alkanes/")
-        .select(&(AlkaneId { block: 32, tx: 0 }).into())
-        .set(env, Arc::new(compress(fr_btc_bytes())?));
+) -> Result<BalanceSheet<E, AtomicPointer<E>>> {
+    let mut ptr = IndexPointer::<E>::from_keyword("/alkanes/")
+        .select(&(AlkaneId { block: 32, tx: 1 }).into());
+    if ptr.get(env).len() == 0 {
+        ptr.set(env, Arc::new(compress(fr_sigil_bytes())?));
+    } else {
+        return Ok(BalanceSheet::default());
+    }
     let mut atomic: AtomicPointer<E> = AtomicPointer::default();
-    sequence_pointer(&atomic).set_value(env, 1_u128);
-    let myself = AlkaneId { block: 2, tx: 0 };
-    let fr_btc = AlkaneId { block: 32, tx: 0 };
     let fr_sigil = AlkaneId { block: 32, tx: 1 };
-    let parcel = MessageContextParcel::<E> {
-        atomic: atomic.derive(&IndexPointer::default()),
-        runes: vec![],
-        transaction: Transaction {
-            version: bitcoin::blockdata::transaction::Version::ONE,
-            input: vec![],
-            output: vec![],
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-        },
-        block: block.clone(),
-        height: genesis::GENESIS_BLOCK,
-        pointer: 0,
-        refund_pointer: 0,
-        calldata: (Cellpack {
-            target: myself.clone(),
-            inputs: vec![0],
-        })
-        .encipher(),
-        sheets: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
-        txindex: 0,
-        vout: 0,
-        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
-        _phantom: PhantomData,
-    };
-    let parcel2 = MessageContextParcel::<E> {
-        atomic: atomic.derive(&IndexPointer::default()),
-        runes: vec![],
-        transaction: Transaction {
-            version: bitcoin::blockdata::transaction::Version::ONE,
-            input: vec![],
-            output: vec![],
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-        },
-        block: block.clone(),
-        height: genesis::GENESIS_BLOCK,
-        pointer: 0,
-        refund_pointer: 0,
-        calldata: (Cellpack {
-            target: fr_btc.clone(),
-            inputs: vec![0],
-        })
-        .encipher(),
-        sheets: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
-        txindex: 0,
-        vout: 0,
-        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
-        _phantom: PhantomData,
-    };
+
     let parcel3 = MessageContextParcel::<E> {
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
@@ -271,57 +219,158 @@ pub fn genesis<E: RuntimeEnvironment + Clone + Default + 'static>(
         runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
         _phantom: PhantomData,
     };
-    let (response, _gas_used) = (match simulate_parcel(env, &parcel, u64::MAX) {
-        Ok((a, b)) => Ok((a, b)),
-        Err(e) => {
-            Err(e)
-        }
-    })?;
-    let (response3, _gas_used3) = (match simulate_parcel(env, &parcel2, u64::MAX) {
-        Ok((a, b)) => Ok((a, b)),
-        Err(e) => {
-            Err(e)
-        }
-    })?;
     let (response2, _gas_used2) = (match simulate_parcel(env, &parcel3, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
+            env.log(&format!("{:?}", e));
             Err(e)
         }
     })?;
-    let outpoint_bytes = outpoint_encode(&OutPoint {
-        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
-        vout: 0,
-    })?;
-
-    <AlkaneTransferParcel as TryInto<BalanceSheet<E, AtomicPointer<E>>>>::try_into(
-        response2.alkanes.into(),
-    )?
-    .save(
-        &mut atomic.derive(
-            &RuneTable::for_protocol(AlkaneMessageContext::<E>::protocol_tag())
-                .OUTPOINT_TO_RUNES
-                .select(&outpoint_bytes),
-        ),
-        false,
-        env,
-    );
-    pipe_storagemap_to(
-        &response.storage,
-        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
-        env,
-    );
-    pipe_storagemap_to(
-        &response3.storage,
-        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
-        env,
-    );
     pipe_storagemap_to(
         &response2.storage,
         &mut atomic
             .derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_sigil.clone().into())),
         env,
     );
+    atomic.commit(env);
+    <AlkaneTransferParcel as TryInto<BalanceSheet<E, AtomicPointer<E>>>>::try_into(
+        response2.alkanes.into(),
+    )
+}
+
+pub fn setup_frbtc<E: RuntimeEnvironment + Clone + Default + 'static>(
+    env: &mut E,
+    block: &Block,
+) -> Result<BalanceSheet<E, AtomicPointer<E>>> {
+    let mut ptr = IndexPointer::<E>::from_keyword("/alkanes/")
+        .select(&(AlkaneId { block: 32, tx: 0 }).into());
+    if ptr.get(env).len() == 0 {
+        ptr.set(env, Arc::new(compress(fr_btc_bytes())?));
+    } else {
+        return Ok(BalanceSheet::default());
+    }
+    let mut atomic: AtomicPointer<E> = AtomicPointer::default();
+    let fr_btc = AlkaneId { block: 32, tx: 0 };
+    let parcel2 = MessageContextParcel::<E> {
+        atomic: atomic.derive(&IndexPointer::default()),
+        runes: vec![],
+        transaction: Transaction {
+            version: bitcoin::blockdata::transaction::Version::ONE,
+            input: vec![],
+            output: vec![],
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+        },
+        block: block.clone(),
+        height: genesis::GENESIS_BLOCK,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: (Cellpack {
+            target: fr_btc.clone(),
+            inputs: vec![0],
+        })
+        .encipher(),
+        sheets: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
+        _phantom: PhantomData,
+    };
+    let (response3, _gas_used3) = (match simulate_parcel(env, &parcel2, u64::MAX) {
+        Ok((a, b)) => Ok((a, b)),
+        Err(e) => {
+            env.log(&format!("{:?}", e));
+            Err(e)
+        }
+    })?;
+    pipe_storagemap_to(
+        &response3.storage,
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
+        env,
+    );
+    atomic.commit(env);
+    <AlkaneTransferParcel as TryInto<BalanceSheet<E, AtomicPointer<E>>>>::try_into(
+        response3.alkanes.into(),
+    )
+}
+
+pub fn check_and_upgrade_diesel<E: RuntimeEnvironment + Clone + Default + 'static>(
+    env: &mut E,
+    height: u32,
+) -> Result<()> {
+    if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
+        let mut upgrade_ptr = IndexPointer::<E>::from_keyword("/genesis-upgraded");
+        if upgrade_ptr.get(env).len() == 0 {
+            upgrade_ptr.set_value(env, 0x01_u8);
+            IndexPointer::<E>::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 2, tx: 0 }).into())
+                .set(env, Arc::new(compress(genesis_alkane_upgrade_bytes())?));
+        }
+    }
+    Ok(())
+}
+
+pub fn setup_diesel<E: RuntimeEnvironment + Clone + Default + 'static>(
+    env: &mut E,
+    block: &Block,
+) -> Result<BalanceSheet<E, AtomicPointer<E>>> {
+    let mut ptr = IndexPointer::<E>::from_keyword("/alkanes/")
+        .select(&(AlkaneId { block: 2, tx: 0 }).into());
+    if ptr.get(env).len() == 0 {
+        ptr.set(env, Arc::new(compress(genesis_alkane_bytes())?));
+    } else {
+        return Ok(BalanceSheet::default());
+    }
+    let mut atomic: AtomicPointer<E> = AtomicPointer::default();
+    let myself = AlkaneId { block: 2, tx: 0 };
+    let parcel = MessageContextParcel::<E> {
+        atomic: atomic.derive(&IndexPointer::default()),
+        runes: vec![],
+        transaction: Transaction {
+            version: bitcoin::blockdata::transaction::Version::ONE,
+            input: vec![],
+            output: vec![],
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+        },
+        block: block.clone(),
+        height: genesis::GENESIS_BLOCK,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: (Cellpack {
+            target: myself.clone(),
+            inputs: vec![0],
+        })
+        .encipher(),
+        sheets: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
+        _phantom: PhantomData,
+    };
+    let (response, _gas_used) = (match simulate_parcel(env, &parcel, u64::MAX) {
+        Ok((a, b)) => Ok((a, b)),
+        Err(e) => {
+            env.log(&format!("{:?}", e));
+            Err(e)
+        }
+    })?;
+    pipe_storagemap_to(
+        &response.storage,
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
+        env,
+    );
+    atomic.commit(env);
+    <AlkaneTransferParcel as TryInto<BalanceSheet<E, AtomicPointer<E>>>>::try_into(
+        response.alkanes.into(),
+    )
+}
+
+pub fn genesis<E: RuntimeEnvironment + Clone + Default + 'static>(env: &mut E) -> Result<()> {
+    let mut atomic: AtomicPointer<E> = AtomicPointer::default();
+    sequence_pointer(&atomic).set_value(env, 1_u128);
+    let outpoint_bytes = outpoint_encode(&OutPoint {
+        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
+        vout: 0,
+    })?;
     atomic
         .derive(&RuneTable::<E>::new().OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
         .set_value(env, genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT);

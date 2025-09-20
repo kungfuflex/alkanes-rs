@@ -34,7 +34,7 @@ pub fn add_to_indexable_protocols(protocol_tag: u128) -> Result<()> {
     Ok(())
 }
 
-pub trait MessageHandler<E: RuntimeEnvironment + Clone> {
+pub trait MessageHandler<E: RuntimeEnvironment + Default + Clone> {
     fn process_message<T: MessageContext<E>>(
         &self,
         env: &mut E,
@@ -57,7 +57,7 @@ pub trait MessageProcessor<E: RuntimeEnvironment + Default + Clone>: ToString {
         env: &mut E,
     ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)>;
 }
-impl<E: RuntimeEnvironment + Clone> MessageHandler<E> for Protostone {
+impl<E: RuntimeEnvironment + Default + Clone> MessageHandler<E> for Protostone {
     fn process_message<T: MessageContext<E>>(
         &self,
         env: &mut E,
@@ -134,7 +134,7 @@ impl<E: RuntimeEnvironment + Clone> MessageHandler<E> for Protostone {
 
         match T::handle(&parcel, env) {
             Ok(values) => {
-                match values.reconcile(balances_by_output, protomessage_vout, pointer, env) {
+                match values.reconcile(atomic, balances_by_output, protomessage_vout, pointer, env) {
                     Ok(_) => {
                         atomic.commit(env);
                         Ok(true)

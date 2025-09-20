@@ -1,4 +1,4 @@
-use crate::index_block;
+use crate::indexer::index_block;
 use crate::tests::helpers::{self as alkane_helpers, get_sheet_for_runtime};
 use crate::tests::std::alkanes_std_test_build;
 use alkanes_support::cellpack::Cellpack;
@@ -11,6 +11,7 @@ use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_transfer_overflow() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
@@ -26,7 +27,7 @@ fn test_transfer_overflow() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes(), [].into()].into(),
         [arb_mint_cellpack, arb_mint_cellpack2.clone()].into(),
     );
@@ -81,6 +82,7 @@ fn test_transfer_overflow() -> Result<()> {
 
 #[test]
 fn test_mint_overflow() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
@@ -141,6 +143,7 @@ fn test_mint_overflow() -> Result<()> {
 
 #[test]
 fn test_mint_underflow() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
@@ -152,7 +155,7 @@ fn test_mint_underflow() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [arb_mint_cellpack].into(),
     );
@@ -174,6 +177,7 @@ fn test_mint_underflow() -> Result<()> {
 
 #[test]
 fn test_transfer_runtime() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
@@ -200,7 +204,7 @@ fn test_transfer_runtime() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [
             alkanes_std_test_build::get_bytes(),
             [].into(),
@@ -240,6 +244,7 @@ fn test_transfer_runtime() -> Result<()> {
 
 #[test]
 fn test_extcall_mint() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
@@ -292,6 +297,7 @@ fn test_extcall_mint() -> Result<()> {
 
 #[test]
 fn test_delegatecall_mint() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
@@ -344,6 +350,7 @@ fn test_delegatecall_mint() -> Result<()> {
 
 #[test]
 fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
@@ -409,6 +416,7 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
 
 #[test]
 fn test_multiple_extcall_err_and_good() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 0;
@@ -458,6 +466,7 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
 
 #[test]
 fn test_runtime_duplication() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
     let block_height = 1;
@@ -474,7 +483,7 @@ fn test_runtime_duplication() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [
             [].into(),
             alkanes_std_test_build::get_bytes(),

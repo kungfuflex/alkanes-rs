@@ -67,3 +67,6 @@ pub fn export_bytes(bytes: Vec<u8>) -> i32 {
     // Return a pointer to the buffer
     to_ptr(&mut buffer)
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod test_utils;

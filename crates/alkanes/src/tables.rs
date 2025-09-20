@@ -1,4 +1,3 @@
-use crate::message::AlkaneMessageContext;
 use metashrew_support::index_pointer::IndexPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 

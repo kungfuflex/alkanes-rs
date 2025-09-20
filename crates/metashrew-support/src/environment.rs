@@ -14,6 +14,12 @@ impl EnvironmentInput {
         let data = bytes[4..].to_vec();
         Self { height, data }
     }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend_from_slice(&self.height.to_le_bytes());
+        bytes.extend_from_slice(&self.data);
+        bytes
+    }
 }
 
 use downcast_rs::{impl_downcast, Downcast};

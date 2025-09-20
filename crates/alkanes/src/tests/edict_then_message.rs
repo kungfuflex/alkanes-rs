@@ -1,4 +1,4 @@
-use crate::indexer::index_block;
+use crate::indexer::{index_block, configure_network};
 use crate::message::AlkaneMessageContext;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_test_build;
@@ -20,11 +20,12 @@ use protorune::{
 };
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
-use protorune::protostone::{ProtostoneEncoder, Protostones};
+use protorune::protostone::ProtostoneEncoder;
 use std::str::FromStr;
 
 #[test]
 fn test_edict_to_protomessage() -> Result<()> {
+    configure_network();
     let block_height = 0;
     let mut test_block: Block = helpers::create_block_with_coinbase_tx(block_height);
     let tx = Transaction {
@@ -139,6 +140,7 @@ fn test_edict_to_protomessage() -> Result<()> {
 
 #[test]
 fn test_edict_message_same_protostone() -> Result<()> {
+    configure_network();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -148,15 +150,16 @@ fn test_edict_message_same_protostone() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
-        [alkanes_std_test_build::get_bytes()].into(),
-        [arb_mint_cellpack].into(),
-    );
+    let test_block =
+        alkane_helpers::init_with_multiple_cellpacks_with_tx(
+            [alkanes_std_test_build::get_bytes()].into(),
+            [arb_mint_cellpack].into(),
+        );
 
     let mut env = TestRuntime::default();
     index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
 
-    let mut test_block2 = create_block_with_coinbase_tx(block_height);
+    let mut test_block2 = create_block_with_coinbase_tx(0);
 
     let input_script = ScriptBuf::new();
     let txin1 = TxIn {
@@ -197,6 +200,7 @@ fn test_edict_message_same_protostone() -> Result<()> {
 
 #[test]
 fn test_edict_message_same_protostone_revert() -> Result<()> {
+    configure_network();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -206,7 +210,7 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block =
+    let test_block =
         alkane_helpers::init_with_multiple_cellpacks_with_tx(
             [alkanes_std_test_build::get_bytes()].into(),
             [arb_mint_cellpack].into(),

@@ -1,5 +1,4 @@
-use crate::index_block;
-use crate::message::AlkaneMessageContext;
+use crate::indexer::{index_block, configure_network};
 use crate::tests::helpers::{
     self as alkane_helpers,
     assert_binary_deployed_to_id,
@@ -181,7 +180,7 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
     assert_binary_deployed_to_id(env, merkle_distributor_id.clone(), merkle_testnet_build.clone())?;
 
-    let mut proof_hashes = generate_proof(&leaf_hashes, 0);
+    let proof_hashes = generate_proof(&leaf_hashes, 0);
 
     let merkle_proof = SchemaMerkleProof {
         leaf: leaf1,
@@ -220,6 +219,7 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
 
 #[test]
 fn test_merkle_distributor() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear(&mut env);
     helper_test_merkle_distributor(&mut env, 840_000, 900_000, ADDRESS1(), 0)?;
@@ -228,6 +228,7 @@ fn test_merkle_distributor() -> Result<()> {
 
 #[test]
 fn test_merkle_distributor_admin_collect() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear(&mut env);
     let init_block =
@@ -277,6 +278,7 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
 }
 #[test]
 fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear(&mut env);
     let _init_block =

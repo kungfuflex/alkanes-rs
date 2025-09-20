@@ -1,24 +1,23 @@
-use metashrew_support::environment::RuntimeEnvironment;
 use alkanes_support::logging;
-use metashrew_core::environment::{MetashrewEnvironment};
+use metashrew_support::{
+    environment::RuntimeEnvironment,
+    index_pointer::{IndexPointer, KeyValuePointer},
+};
+use protorune::{
+    balance_sheet::{BalanceSheetOperations, PersistentRecord},
+    message::MessageContext,
+};
 use crate::message::AlkaneMessageContext;
-use crate::network::{genesis, genesis_alkane_upgrade_bytes, is_genesis};
+use crate::network::{
+    check_and_upgrade_diesel, genesis, is_genesis, setup_diesel, setup_frbtc, setup_frsigil,
+};
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
 use crate::vm::host_functions::clear_diesel_mints_cache;
-use alkanes_support::gz::compress;
-use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
-use metashrew_support::index_pointer::IndexPointer;
-
-use metashrew_support::index_pointer::KeyValuePointer;
-
-
 use protorune::Protorune;
-
 use protorune_support::network::{set_network, NetworkParams};
-use std::sync::Arc;
 
 #[cfg(all(
     not(feature = "mainnet"),
@@ -86,6 +85,8 @@ use prost::Message;
 use protorune::tables::{CACHED_FILTERED_WALLET_RESPONSE, CACHED_WALLET_RESPONSE};
 #[cfg(feature = "cache")]
 use protorune_support::proto::protorune::ProtorunesWalletRequest;
+#[cfg(feature = "cache")]
+use std::sync::Arc;
 
 
 pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(
@@ -99,17 +100,30 @@ pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(
     clear_diesel_mints_cache();
     let really_is_genesis = is_genesis(env, height.into());
     if really_is_genesis {
-        genesis(env, &block).unwrap();
+        genesis(env).unwrap();
+        let mut genesis_balance_sheet = setup_diesel(env, block)?;
+        let frbtc_balance_sheet = setup_frbtc(env, block)?;
+        let frsigil_balance_sheet = setup_frsigil(env, block)?;
+        genesis_balance_sheet.merge_sheets(&frbtc_balance_sheet, &frsigil_balance_sheet, env)?;
+        let outpoint_bytes = protorune_support::utils::outpoint_encode(&bitcoin::OutPoint {
+            txid: protorune_support::utils::tx_hex_to_txid(crate::network::genesis::GENESIS_OUTPOINT)?,
+            vout: 0,
+        })?;
+        let mut atomic = metashrew_support::index_pointer::AtomicPointer::default();
+        genesis_balance_sheet.save(
+            &mut atomic.derive(
+                &protorune::tables::RuneTable::for_protocol(
+                    AlkaneMessageContext::<E>::protocol_tag(),
+                )
+                .OUTPOINT_TO_RUNES
+                .select(&outpoint_bytes),
+            ),
+            false,
+            env,
+        );
+        atomic.commit(env);
     }
-    if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
-        let mut upgrade_ptr = IndexPointer::<E>::from_keyword("/genesis-upgraded");
-        if upgrade_ptr.get(env).len() == 0 {
-            upgrade_ptr.set_value(env, 0x01_u8);
-            IndexPointer::<E>::from_keyword("/alkanes/")
-                .select(&(AlkaneId { block: 2, tx: 0 }).into())
-                .set(env, Arc::new(compress(genesis_alkane_upgrade_bytes())?));
-        }
-    }
+    check_and_upgrade_diesel(env, height)?;
     FuelTank::initialize::<E>(&block, height);
     // Get the set of updated addresses from the indexing process
     let _updated_addresses = Protorune::index_block::<AlkaneMessageContext<E>>(env, block.clone(), height.into())?;

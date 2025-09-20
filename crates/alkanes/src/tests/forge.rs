@@ -1,6 +1,5 @@
-use crate::index_block;
+use crate::indexer::{index_block, configure_network};
 use crate::message::AlkaneMessageContext;
-use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::test_runtime::TestRuntime;
 use anyhow::Result;
 use bitcoin::address::NetworkChecked;
@@ -17,7 +16,7 @@ use protorune::{
 };
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
-use protorune::protostone::{ProtostoneEncoder, Protostones};
+use protorune::protostone::ProtostoneEncoder;
 
 pub fn create_protostone_encoded_transaction<E: RuntimeEnvironment>(
     previous_output: OutPoint,
@@ -67,6 +66,7 @@ pub fn create_protostone_encoded_transaction<E: RuntimeEnvironment>(
 
 #[test]
 fn test_cant_forge_edicts() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     let block_height = 0;
     let mut test_block: Block = helpers::create_block_with_coinbase_tx(block_height);

@@ -1,31 +1,28 @@
-use crate::index_block;
+use crate::indexer::{index_block, configure_network};
 use crate::tests::helpers::{self as alkane_helpers, assert_revert_context};
 use crate::tests::std::{
     alkanes_std_auth_token_build, alkanes_std_beacon_proxy_build, alkanes_std_test_2_build,
     alkanes_std_test_build, alkanes_std_upgradeable_beacon_build, alkanes_std_upgradeable_build,
 };
 use crate::tests::test_runtime::TestRuntime;
-use crate::view;
 use crate::vm::utils::sequence_pointer;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
-use bitcoin::block::Header;
 use bitcoin::{
-    Block, OutPoint, Transaction, Witness,
+    Block, OutPoint, Witness,
 };
 use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::index_pointer::AtomicPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
+use protorune::test_helpers::create_block_with_coinbase_tx;
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
-use protorune_support::utils::consensus_decode;
 
 pub const BEACON_ID: u128 = 0xbeac0;
 
 fn setup_env<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<Block> {
+    configure_network();
     let block_height = 0;
     let auth_cellpack = Cellpack {
         target: AlkaneId {
@@ -56,6 +53,7 @@ fn setup_env<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<Bloc
 }
 
 fn deploy_upgradeable_beacon<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<Block> {
+    configure_network();
     let block_height = 0;
     let beacon = Cellpack {
         target: AlkaneId {
@@ -66,7 +64,7 @@ fn deploy_upgradeable_beacon<E: RuntimeEnvironment + Clone + Default + 'static>(
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_upgradeable_beacon_build::get_bytes()].into(),
         [beacon].into(),
     );
@@ -81,8 +79,9 @@ fn deploy_upgradeable_proxy<E: RuntimeEnvironment + Clone + Default + 'static>(
     block_height: u32,
     delegate_target: AlkaneId,
 ) -> Result<(Block, u128)> {
+    configure_network();
     let mut env = E::default();
-    let mut next_sequence_pointer = sequence_pointer(&mut AtomicPointer::<E>::default());
+    let next_sequence_pointer = sequence_pointer(&mut AtomicPointer::<E>::default());
     let proxy_sequence = next_sequence_pointer.get_value(&mut env);
     let proxy = alkane_helpers::BinaryAndCellpack {
         binary: proxy_build,
@@ -93,7 +92,7 @@ fn deploy_upgradeable_proxy<E: RuntimeEnvironment + Clone + Default + 'static>(
     };
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_cellpack_pairs([proxy].into());
+    let test_block = alkane_helpers::init_with_cellpack_pairs([proxy].into());
 
     index_block::<E>(&mut env, &test_block, block_height)?;
 
@@ -135,9 +134,10 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
     });
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block =
+    let test_block =
         alkane_helpers::init_with_cellpack_pairs([initialize, set_claimable, mint, double_init].into());
 
+    configure_network();
     let mut env = E::default();
     index_block::<E>(&mut env, &test_block, block_height)?;
 
@@ -168,8 +168,9 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
     });
 
     // Initialize the contract and execute the cellpacks
-    let mut test_block2 = alkane_helpers::init_with_cellpack_pairs([proxy_through_extcall].into());
+    let test_block2 = alkane_helpers::init_with_cellpack_pairs([proxy_through_extcall].into());
 
+    configure_network();
     let mut env2 = E::default();
     index_block::<E>(&mut env2, &test_block2, block_height)?;
 
@@ -206,6 +207,7 @@ fn upgrade_implementation<E: RuntimeEnvironment + Clone + Default + 'static>(
         ),
     );
 
+    configure_network();
     index_block::<E>(&mut E::default(), &test_block, block_height)?;
     Ok(())
 }
@@ -253,6 +255,7 @@ fn check_after_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>(
         ),
     );
 
+    configure_network();
     let mut env = E::default();
     index_block::<E>(&mut env, &test_block, block_height)?;
 

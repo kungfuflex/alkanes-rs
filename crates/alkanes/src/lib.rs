@@ -1,9 +1,8 @@
 use crate::indexer::configure_network;
-use crate::indexer::index_block;
 use alkanes_support::proto;
-use metashrew_support::utils::consensus_decode;
-use bitcoin::hashes::Hash;
-use bitcoin::{Address, Block, OutPoint, Txid};
+use bitcoin::{Block, OutPoint};
+use bitcoin::consensus::encode::deserialize as consensus_decode;
+
 #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
 use coinaux::auxpow::AuxpowBlock;
 use metashrew_core::environment::{MetashrewEnvironment};
@@ -20,7 +19,7 @@ pub mod message;
 pub mod network;
 pub mod precompiled;
 pub mod tables;
-#[cfg(any(test, feature = "test-utils "))]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod tests;
 pub mod trace;
 pub mod unwrap;
@@ -387,8 +386,7 @@ pub fn _start() {
         .unwrap()
         .to_consensus();
     #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin")))]
-    let block: Block =
-        consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
+    let block: Block = consensus_decode(reader).unwrap();
 
     index_block(&mut env, &block, height).unwrap();
     etl::index_extensions(&mut env, height, &block);
@@ -403,7 +401,7 @@ mod unit_tests {
     use crate::view::{protorunes_by_address, protorunes_by_height};
     use protorune::view::protorune_outpoint_to_outpoint_response;
     use protorune::Protorune;
-    use protorune_support::proto::protorune::{RunesByHeightRequest, Uint128, WalletRequest};
+    use protorune_support::proto::protorune::{Uint128, WalletRequest};
     
     use wasm_bindgen_test::*;
 
@@ -417,8 +415,7 @@ mod unit_tests {
         let data = block_data;
         let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
         let reader = &data[4..];
-        let block: Block =
-            consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
+        let block: Block = consensus_decode(reader).unwrap();
         assert!(height == 849236);
 
         // calling index_block directly fails since genesis(&block).unwrap(); gets segfault

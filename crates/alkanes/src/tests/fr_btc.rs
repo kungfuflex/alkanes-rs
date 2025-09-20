@@ -1,6 +1,4 @@
-use crate::indexer::index_block;
-use crate::message::AlkaneMessageContext;
-use crate::precompiled::{alkanes_std_auth_token_build, fr_btc_build};
+use crate::indexer::{index_block, configure_network};
 use crate::tests::helpers::{
     self as alkane_helpers,
     assert_revert_context,
@@ -9,39 +7,29 @@ use crate::tests::helpers::{
 use crate::tests::test_runtime::TestRuntime;
 use crate::unwrap as unwrap_view;
 use crate::unwrap::{deserialize_payments, Payment};
-use crate::view::{self, simulate_parcel, unwrap};
+use crate::view::{simulate_parcel};
 use alkanes_support::cellpack::Cellpack;
-use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
-use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::response::ExtendedCallResponse;
-use alkanes_support::trace::Trace;
 use anyhow::Result;
 use bitcoin::address::NetworkChecked;
 use bitcoin::blockdata::transaction::OutPoint;
 use bitcoin::key::TapTweak;
 use bitcoin::transaction::Version;
 use bitcoin::{
-    secp256k1::{self, Secp256k1, XOnlyPublicKey},
-    Address, Amount, Block, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    secp256k1::{Secp256k1, XOnlyPublicKey},
+    Address, Amount, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
-use hex;
 use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::index_pointer::AtomicPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::utils::format_key;
-use ordinals::{Artifact, Runestone};
+use ordinals::Runestone;
 use protorune::message::MessageContextParcel;
 use protorune::test_helpers::{create_block_with_coinbase_tx, ADDRESS1};
-use protorune::{
-    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable,
-    test_helpers::get_address,
-};
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
+use protorune::test_helpers::get_address;
+use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations};
 use protorune_support::protostone::Protostone;
-use protorune::protostone::{ProtostoneEncoder, Protostones};
-use protorune_support::utils::consensus_encode;
-use std::sync::Arc;
+use protorune::protostone::ProtostoneEncoder;
 
 pub fn simulate_cellpack<E: RuntimeEnvironment + Clone + Default + 'static>(
     env: &mut E,
@@ -153,6 +141,7 @@ pub fn create_alkane_tx_frbtc_signer_script<E: RuntimeEnvironment>(
 }
 
 fn wrap_btc<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<(OutPoint, u64)> {
+    configure_network();
     let fr_btc_id = AlkaneId { block: 32, tx: 0 };
     let mut block = create_block_with_coinbase_tx(1);
     let funding_outpoint = OutPoint {
@@ -256,6 +245,7 @@ fn unwrap_btc<E: RuntimeEnvironment + Clone + Default + 'static>(
     vout: u128,
     height: u32,
 ) -> Result<()> {
+    configure_network();
     let fr_btc_id = AlkaneId { block: 32, tx: 0 };
     let mut block = create_block_with_coinbase_tx(height);
     let unwrap_tx = unwrap_btc_tx::<E>(fr_btc_input_outpoint, amount_frbtc_to_burn, vout)?;
@@ -357,6 +347,7 @@ fn test_fr_btc_unwrap_more() -> Result<()> {
 
 #[test]
 fn test_set_signer_no_auth() -> Result<()> {
+    configure_network();
     let mut env = TestRuntime::default();
     let set_signer_tx = set_signer::<TestRuntime>(&mut env, OutPoint::default(), 0)?;
     let outpoint = OutPoint {
@@ -369,6 +360,7 @@ fn test_set_signer_no_auth() -> Result<()> {
 
 #[test]
 fn test_fr_btc_wrap_incorrect_signer() -> Result<()> {
+    configure_network();
     let fr_btc_id = AlkaneId { block: 32, tx: 0 };
     let mut block = create_block_with_coinbase_tx(880_001);
     let funding_outpoint = OutPoint {
@@ -401,6 +393,7 @@ fn test_fr_btc_wrap_incorrect_signer() -> Result<()> {
 
 #[test]
 fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
+    configure_network();
     let (wrap_outpoint, fr_btc_amount) = wrap_btc::<TestRuntime>()?; // height 1
 
     // Unwrap at height 2

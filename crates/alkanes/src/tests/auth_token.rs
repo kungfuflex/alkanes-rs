@@ -1,4 +1,4 @@
-use crate::index_block;
+use crate::indexer::index_block;
 use crate::message::AlkaneMessageContext;
 use crate::tests::helpers::{
     self as alkane_helpers, assert_binary_deployed_to_id, assert_id_points_to_alkane_id,
@@ -22,6 +22,7 @@ use protorune_support::balance_sheet::BalanceSheetOperations;
 
 #[test]
 fn test_owned_token() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -74,6 +75,7 @@ fn test_owned_token() -> Result<()> {
 }
 #[test]
 fn test_owned_token_2() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -149,6 +151,7 @@ fn test_owned_token_2() -> Result<()> {
 
 #[test]
 fn test_auth_and_owned_token() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -238,6 +241,7 @@ fn test_auth_and_owned_token() -> Result<()> {
 
 #[test]
 fn test_owned_token_set_name_and_symbol() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -356,6 +360,7 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
 }
 #[test]
 fn test_auth_and_owned_token_multiple() -> Result<()> {
+    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
