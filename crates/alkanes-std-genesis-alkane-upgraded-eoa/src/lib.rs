@@ -6,6 +6,7 @@ use alkanes_runtime::{
     stdio::{stdout, Write},
 };
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
+use alkanes_support::id::AlkaneId;
 use alkanes_support::utils::overflow_error;
 use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
@@ -82,6 +83,9 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         u128::MAX
     }
+    fn eoa_only_height(&self) -> u64 {
+        0
+    }
 }
 
 #[cfg(feature = "mainnet")]
@@ -101,6 +105,9 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         156250000000000
     }
+    fn eoa_only_height(&self) -> u64 {
+        917888
+    }
 }
 
 #[cfg(feature = "dogecoin")]
@@ -116,6 +123,9 @@ impl ChainConfiguration for GenesisAlkane {
     }
     fn max_supply(&self) -> u128 {
         4_000_000_000_000_000_000u128
+    }
+    fn eoa_only_height(&self) -> u64 {
+        0
     }
 }
 
@@ -133,6 +143,9 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         21_000_000_000_000_000
     }
+    fn eoa_only_height(&self) -> u64 {
+        0
+    }
 }
 
 #[cfg(feature = "luckycoin")]
@@ -149,6 +162,9 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         20e14
     }
+    fn eoa_only_height(&self) -> u64 {
+        0
+    }
 }
 
 #[cfg(feature = "bellscoin")]
@@ -164,6 +180,9 @@ impl ChainConfiguration for GenesisAlkane {
     }
     fn max_supply(&self) -> u128 {
         20e14 as u128
+    }
+    fn eoa_only_height(&self) -> u64 {
+        0
     }
 }
 
@@ -304,6 +323,11 @@ impl GenesisAlkane {
     pub fn create_upgraded_mint_transfer(&self) -> Result<AlkaneTransfer> {
         let context = self.context()?;
 
+        if self.height() >= self.eoa_only_height() && context.caller != AlkaneId::new(0, 0) {
+            return Err(anyhow!(
+                "Diesel mint must be called from EOA (first call in a protostone)"
+            ));
+        }
         self.enforce_one_mint_per_tx()?;
         self.enforce_no_upgraded_mints_with_legacy_mints()?;
 

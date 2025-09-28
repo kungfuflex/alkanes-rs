@@ -29,4 +29,5 @@ pub trait ChainConfiguration {
         self.block_reward(CONTEXT_HANDLE.height())
     }
     fn max_supply(&self) -> u128;
+    fn eoa_only_height(&self) -> u64;
 }
