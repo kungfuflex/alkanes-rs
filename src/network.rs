@@ -3,7 +3,10 @@ use crate::message::AlkaneMessageContext;
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
     alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
-    alkanes_std_genesis_alkane_regtest_build, alkanes_std_genesis_alkane_upgraded_mainnet_build,
+    alkanes_std_genesis_alkane_regtest_build,
+    alkanes_std_genesis_alkane_upgraded_eoa_mainnet_build,
+    alkanes_std_genesis_alkane_upgraded_eoa_regtest_build,
+    alkanes_std_genesis_alkane_upgraded_mainnet_build,
     alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_build, fr_sigil_build,
 };
 use crate::utils::pipe_storagemap_to;
@@ -91,6 +94,23 @@ pub fn genesis_alkane_upgrade_bytes() -> Vec<u8> {
 ))]
 pub fn genesis_alkane_upgrade_bytes() -> Vec<u8> {
     alkanes_std_genesis_alkane_upgraded_regtest_build::get_bytes()
+}
+
+#[cfg(feature = "mainnet")]
+pub fn genesis_alkane_upgrade_bytes_eoa() -> Vec<u8> {
+    alkanes_std_genesis_alkane_upgraded_eoa_mainnet_build::get_bytes()
+}
+
+//use if regtest
+#[cfg(all(
+    not(feature = "mainnet"),
+    not(feature = "dogecoin"),
+    not(feature = "bellscoin"),
+    not(feature = "fractal"),
+    not(feature = "luckycoin")
+))]
+pub fn genesis_alkane_upgrade_bytes_eoa() -> Vec<u8> {
+    alkanes_std_genesis_alkane_upgraded_eoa_regtest_build::get_bytes()
 }
 
 //use if regtest
@@ -305,6 +325,13 @@ pub fn check_and_upgrade_diesel(height: u32) -> Result<()> {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
+        }
+        let mut eoa_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-eoa");
+        if eoa_upgrade_ptr.get().len() == 0 {
+            eoa_upgrade_ptr.set_value::<u8>(0x01);
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 2, tx: 0 }).into())
+                .set(Arc::new(compress(genesis_alkane_upgrade_bytes_eoa())?));
         }
     }
     Ok(())

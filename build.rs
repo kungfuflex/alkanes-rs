@@ -118,6 +118,7 @@ fn main() {
             std::env::set_current_dir(&crates_dir.clone().join(v.clone()))?;
             if v == "alkanes-std-genesis-alkane"
                 || v == "alkanes-std-genesis-alkane-upgraded"
+                || v == "alkanes-std-genesis-alkane-upgraded-eoa"
                 || v == "alkanes-std-merkle-distributor"
             {
                 let precompiled_dir = write_dir.join("precompiled");
