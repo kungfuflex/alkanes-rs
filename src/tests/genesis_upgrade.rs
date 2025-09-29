@@ -46,12 +46,12 @@ fn setup_pre_upgrade() -> Result<()> {
         [alkanes_std_auth_token_build::get_bytes()].into(),
         [auth_cellpack].into(),
     );
-    index_block(&test_block, 880_000)?; // just to init the diesel
+    index_block(&test_block, 0)?; // just to init the diesel
     Ok(())
 }
 
 fn upgrade() -> Result<OutPoint> {
-    let block_height = 890_000;
+    let block_height = 1;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
     let outpoint = OutPoint {
@@ -124,7 +124,7 @@ fn upgrade() -> Result<OutPoint> {
             })?),
     );
 
-    assert_eq!(first_mint.get(&diesel.clone().into()), 312500000);
+    assert_eq!(first_mint.get(&diesel.clone().into()), 5000000000);
 
     assert_revert_context(
         &OutPoint {
@@ -137,8 +137,8 @@ fn upgrade() -> Result<OutPoint> {
     Ok(new_outpoint)
 }
 
-fn mint(num_mints: usize) -> Result<Block> {
-    let block_height = 890_001;
+fn _mint(num_mints: usize, should_index: bool) -> Result<Block> {
+    let block_height = 2;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
     let mint = Cellpack {
@@ -158,9 +158,14 @@ fn mint(num_mints: usize) -> Result<Block> {
         );
         test_block.txdata.push(mint_tx);
     }
-
-    index_block(&test_block, block_height)?;
+    if should_index {
+        index_block(&test_block, block_height)?;
+    }
     Ok(test_block)
+}
+
+fn mint(num_mints: usize) -> Result<Block> {
+    _mint(num_mints, true)
 }
 
 fn get_total_supply() -> Result<u128> {
@@ -211,12 +216,88 @@ fn test_new_genesis_contract() -> Result<()> {
         let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
         assert_eq!(
             sheet.get(&diesel.clone().into()),
-            ((312500000 - (350000000 - 312500000)) / num_mints)
-                .try_into()
-                .unwrap(),
+            (3000000000 / num_mints).try_into().unwrap(), // (5000000000 - (10_00_000_000 * 7 - 50_00_000_000))
         )
     }
-    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    assert_eq!(get_total_supply()?, prev_total_supply + 5000000000);
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_new_genesis_contract_burn() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    upgrade()?;
+    let prev_total_supply = get_total_supply()?;
+    let num_mints = 5;
+    let mint_block = mint(num_mints)?;
+
+    let block_height = 3;
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    let burn_cellpack = Cellpack {
+        target: diesel.clone(),
+        inputs: vec![79, 600000000],
+    };
+
+    // Initialize the contract and execute the cellpacks
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+
+    let burn_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+        Witness::new(),
+        vec![burn_cellpack.clone()],
+        OutPoint::new(mint_block.txdata.last().unwrap().compute_txid(), 0),
+        false,
+    );
+    test_block.txdata.push(burn_tx);
+
+    index_block(&test_block, block_height)?;
+
+    assert_eq!(
+        get_total_supply()?,
+        prev_total_supply + 5000000000 - 600000000
+    );
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_new_genesis_contract_burn_excess() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    upgrade()?;
+    let prev_total_supply = get_total_supply()?;
+    let num_mints = 5;
+    let mint_block = mint(num_mints)?;
+
+    let block_height = 2;
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    let burn_cellpack = Cellpack {
+        target: diesel.clone(),
+        inputs: vec![79, 600000001],
+    };
+
+    // Initialize the contract and execute the cellpacks
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+
+    let burn_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+        Witness::new(),
+        vec![burn_cellpack.clone()],
+        OutPoint::new(mint_block.txdata.last().unwrap().compute_txid(), 0),
+        false,
+    );
+    test_block.txdata.push(burn_tx.clone());
+
+    index_block(&test_block, block_height)?;
+    assert_revert_context(
+        &OutPoint {
+            txid: burn_tx.clone().compute_txid(),
+            vout: 3,
+        },
+        "attempting to burn more than input amount",
+    )?;
+
+    assert_eq!(get_total_supply()?, prev_total_supply + 5000000000);
     Ok(())
 }
 
@@ -228,7 +309,7 @@ fn test_new_genesis_contract_non_eoa() -> Result<()> {
     let prev_total_supply = get_total_supply()?;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
-    let block_height = 890_001;
+    let block_height = 3;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
     let mint = Cellpack {
@@ -246,7 +327,7 @@ fn test_new_genesis_contract_non_eoa() -> Result<()> {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
-    assert_revert_context(&outpoint, "Diesel mint must be called from EOA");
+    assert_revert_context(&outpoint, "Diesel mint must be called from EOA")?;
     assert_eq!(get_total_supply()?, prev_total_supply);
     Ok(())
 }
@@ -258,7 +339,7 @@ fn test_new_genesis_contract_empty_calldata() -> Result<()> {
     upgrade()?;
     let prev_total_supply = get_total_supply()?;
     let num_mints = 5;
-    let mut test_block = mint(num_mints)?;
+    let mut test_block = _mint(num_mints, false)?;
 
     // add some dummy txs that should not be indexed
     let empty_calldata = alkane_helpers::create_protostone_tx_with_inputs(
@@ -275,6 +356,7 @@ fn test_new_genesis_contract_empty_calldata() -> Result<()> {
         },
     );
     test_block.txdata.push(empty_calldata);
+    index_block(&test_block, 3)?;
 
     let diesel = AlkaneId { block: 2, tx: 0 };
 
@@ -282,12 +364,10 @@ fn test_new_genesis_contract_empty_calldata() -> Result<()> {
         let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
         assert_eq!(
             sheet.get(&diesel.clone().into()),
-            ((312500000 - (350000000 - 312500000)) / num_mints)
-                .try_into()
-                .unwrap(),
+            (3000000000 / num_mints).try_into().unwrap(),
         )
     }
-    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    assert_eq!(get_total_supply()?, prev_total_supply + 50_00_000_000);
     Ok(())
 }
 
@@ -298,7 +378,7 @@ fn test_new_genesis_contract_wrong_id() -> Result<()> {
     upgrade()?;
     let prev_total_supply = get_total_supply()?;
     let num_mints = 5;
-    let mut test_block = mint(num_mints)?;
+    let mut test_block = _mint(num_mints, false)?;
 
     let diesel = AlkaneId { block: 2, tx: 0 };
 
@@ -321,17 +401,16 @@ fn test_new_genesis_contract_wrong_id() -> Result<()> {
         },
     );
     test_block.txdata.push(protocol_tag_2);
+    index_block(&test_block, 3)?;
 
     for i in 1..=num_mints {
         let sheet = get_sheet_for_outpoint(&test_block, i, 0)?;
         assert_eq!(
             sheet.get(&diesel.clone().into()),
-            ((312500000 - (350000000 - 312500000)) / num_mints)
-                .try_into()
-                .unwrap(),
+            (3000000000 / num_mints).try_into().unwrap(),
         )
     }
-    assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    assert_eq!(get_total_supply()?, prev_total_supply + 50_00_000_000);
     Ok(())
 }
 
@@ -343,7 +422,7 @@ fn test_new_genesis_collect_fees() -> Result<()> {
     mint(5)?;
 
     let genesis_id = AlkaneId { block: 2, tx: 0 };
-    let block_height = 890_001;
+    let block_height = 3;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
     let collect_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
         Witness::new(),
@@ -368,7 +447,7 @@ fn test_new_genesis_collect_fees() -> Result<()> {
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
     assert_eq!(
         new_sheet.get(&genesis_id),
-        50_000_000u128 + 350000000 - 312500000
+        50_000_000u128 + 20_00_000_000 // (10_00_000_000 * 7 - 50_00_000_000)
     );
     Ok(())
 }

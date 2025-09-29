@@ -37,6 +37,9 @@ enum GenesisAlkaneMessage {
     #[opcode(78)]
     CollectFees,
 
+    #[opcode(79)]
+    Burn { amount: u128 },
+
     #[opcode(99)]
     #[returns(String)]
     GetName,
@@ -82,9 +85,6 @@ impl ChainConfiguration for GenesisAlkane {
     }
     fn max_supply(&self) -> u128 {
         u128::MAX
-    }
-    fn eoa_only_height(&self) -> u64 {
-        0
     }
 }
 
@@ -229,6 +229,11 @@ impl GenesisAlkane {
         Ok(())
     }
 
+    pub fn decrease_total_supply(&self, v: u128) -> Result<()> {
+        self.set_total_supply(overflow_error(self.total_supply().checked_sub(v))?);
+        Ok(())
+    }
+
     pub fn set_total_supply(&self, v: u128) {
         self.total_supply_pointer().set_value::<u128>(v);
     }
@@ -323,7 +328,7 @@ impl GenesisAlkane {
     pub fn create_upgraded_mint_transfer(&self) -> Result<AlkaneTransfer> {
         let context = self.context()?;
 
-        if self.height() >= self.eoa_only_height() && context.caller != AlkaneId::new(0, 0) {
+        if context.caller != AlkaneId::new(0, 0) {
             return Err(anyhow!(
                 "Diesel mint must be called from EOA (first call in a protostone)"
             ));
@@ -428,6 +433,27 @@ impl GenesisAlkane {
             value: self.claimable_fees(),
         });
         self.set_claimable_fees(0);
+        Ok(response)
+    }
+
+    fn burn(&self, amount: u128) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::default();
+        for transfer in context.incoming_alkanes.0 {
+            if transfer.id == context.myself {
+                if amount > transfer.value {
+                    return Err(anyhow!("attempting to burn more than input amount"));
+                }
+                response.alkanes.pay(AlkaneTransfer {
+                    id: context.myself,
+                    value: transfer.value - amount,
+                });
+                self.decrease_total_supply(amount)?;
+            } else {
+                response.alkanes.pay(transfer);
+            }
+        }
+
         Ok(response)
     }
 
