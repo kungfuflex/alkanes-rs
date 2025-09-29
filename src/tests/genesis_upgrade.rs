@@ -2,7 +2,7 @@ use crate::index_block;
 use crate::tests::helpers::{
     self as alkane_helpers, assert_revert_context, get_last_outpoint_sheet, get_sheet_for_outpoint,
 };
-use crate::tests::std::alkanes_std_auth_token_build;
+use crate::tests::std::{alkanes_std_auth_token_build, alkanes_std_test_build};
 use alkane_helpers::clear;
 use alkanes::view;
 use alkanes_support::cellpack::Cellpack;
@@ -217,6 +217,37 @@ fn test_new_genesis_contract() -> Result<()> {
         )
     }
     assert_eq!(get_total_supply()?, prev_total_supply + 312500000);
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_new_genesis_contract_non_eoa() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    upgrade()?;
+    let prev_total_supply = get_total_supply()?;
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    let block_height = 890_001;
+    let diesel = AlkaneId { block: 2, tx: 0 };
+
+    let mint = Cellpack {
+        target: AlkaneId { block: 1, tx: 0 },
+        inputs: vec![31, 2, 0, 1, 77],
+    };
+
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        [alkanes_std_test_build::get_bytes()].into(),
+        [mint.clone()].into(),
+    );
+
+    index_block(&test_block, block_height)?;
+    let outpoint = OutPoint {
+        txid: test_block.txdata.last().unwrap().compute_txid(),
+        vout: 3,
+    };
+    assert_revert_context(&outpoint, "Diesel mint must be called from EOA");
+    assert_eq!(get_total_supply()?, prev_total_supply);
     Ok(())
 }
 
