@@ -105,9 +105,6 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         156250000000000
     }
-    fn eoa_only_height(&self) -> u64 {
-        917888
-    }
 }
 
 #[cfg(feature = "dogecoin")]
@@ -123,9 +120,6 @@ impl ChainConfiguration for GenesisAlkane {
     }
     fn max_supply(&self) -> u128 {
         4_000_000_000_000_000_000u128
-    }
-    fn eoa_only_height(&self) -> u64 {
-        0
     }
 }
 
@@ -143,9 +137,6 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         21_000_000_000_000_000
     }
-    fn eoa_only_height(&self) -> u64 {
-        0
-    }
 }
 
 #[cfg(feature = "luckycoin")]
@@ -162,9 +153,6 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         20e14
     }
-    fn eoa_only_height(&self) -> u64 {
-        0
-    }
 }
 
 #[cfg(feature = "bellscoin")]
@@ -180,9 +168,6 @@ impl ChainConfiguration for GenesisAlkane {
     }
     fn max_supply(&self) -> u128 {
         20e14 as u128
-    }
-    fn eoa_only_height(&self) -> u64 {
-        0
     }
 }
 
