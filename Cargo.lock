@@ -161,6 +161,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-std-genesis-alkane-upgraded-eoa"
+version = "1.2.3"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "anyhow",
+ "bitcoin 0.32.5",
+ "hex",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
 name = "alkanes-std-genesis-protorune"
 version = "1.2.3"
 dependencies = [
