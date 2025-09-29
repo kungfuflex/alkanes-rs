@@ -127,6 +127,7 @@ pub mod genesis {
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 0;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -136,6 +137,8 @@ pub mod genesis {
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 908_888;
+
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 917_888;
 }
 
 #[cfg(feature = "fractal")]
@@ -144,7 +147,8 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 228_194;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 759_865;
+    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 228_194;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 228_194;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -153,7 +157,8 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 5_730_675;
+    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -162,7 +167,8 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 1_664_317;
+    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -171,7 +177,8 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "2c58484a86e117a445c547d8f3acb56b569f7ea036637d909224d52a5b990259";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 288_906;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 533_970;
+    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 288_906;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 288_906;
 }
 
 pub fn is_active(height: u64) -> bool {
@@ -326,6 +333,8 @@ pub fn check_and_upgrade_diesel(height: u32) -> Result<()> {
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
         }
+    }
+    if height >= genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
         let mut eoa_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-eoa");
         if eoa_upgrade_ptr.get().len() == 0 {
             eoa_upgrade_ptr.set_value::<u8>(0x01);

@@ -51,21 +51,18 @@ pub fn handle_message(
         parcel.vout,
         parcel.transaction.compute_txid()
     );
-    #[cfg(feature = "debug-log")]
-    {
-        println!(
-            "Target contract: [block={}, tx={}]",
-            cellpack.target.block, cellpack.target.tx
-        );
-        println!("Input count: {}", cellpack.inputs.len());
-        if !cellpack.inputs.is_empty() {
-            println!("First opcode: {}", cellpack.inputs[0]);
+    println!(
+        "Target contract: [block={}, tx={}]",
+        cellpack.target.block, cellpack.target.tx
+    );
+    println!("Input count: {}", cellpack.inputs.len());
+    if !cellpack.inputs.is_empty() {
+        println!("First opcode: {}", cellpack.inputs[0]);
 
-            // Print all inputs for detailed debugging
-            println!("All inputs: {:?}", cellpack.inputs);
-        }
-        println!("================================");
+        // Print all inputs for detailed debugging
+        println!("All inputs: {:?}", cellpack.inputs);
     }
+    println!("================================");
 
     let target = cellpack.target.clone();
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(

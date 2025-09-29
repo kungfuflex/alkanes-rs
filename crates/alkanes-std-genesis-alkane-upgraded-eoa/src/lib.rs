@@ -37,6 +37,9 @@ enum GenesisAlkaneMessage {
     #[opcode(78)]
     CollectFees,
 
+    #[opcode(79)]
+    Burn { amount: u128 },
+
     #[opcode(99)]
     #[returns(String)]
     GetName,
@@ -83,9 +86,6 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         u128::MAX
     }
-    fn eoa_only_height(&self) -> u64 {
-        0
-    }
 }
 
 #[cfg(feature = "mainnet")]
@@ -105,9 +105,6 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         156250000000000
     }
-    fn eoa_only_height(&self) -> u64 {
-        917888
-    }
 }
 
 #[cfg(feature = "dogecoin")]
@@ -123,9 +120,6 @@ impl ChainConfiguration for GenesisAlkane {
     }
     fn max_supply(&self) -> u128 {
         4_000_000_000_000_000_000u128
-    }
-    fn eoa_only_height(&self) -> u64 {
-        0
     }
 }
 
@@ -143,9 +137,6 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         21_000_000_000_000_000
     }
-    fn eoa_only_height(&self) -> u64 {
-        0
-    }
 }
 
 #[cfg(feature = "luckycoin")]
@@ -162,9 +153,6 @@ impl ChainConfiguration for GenesisAlkane {
     fn max_supply(&self) -> u128 {
         20e14
     }
-    fn eoa_only_height(&self) -> u64 {
-        0
-    }
 }
 
 #[cfg(feature = "bellscoin")]
@@ -180,9 +168,6 @@ impl ChainConfiguration for GenesisAlkane {
     }
     fn max_supply(&self) -> u128 {
         20e14 as u128
-    }
-    fn eoa_only_height(&self) -> u64 {
-        0
     }
 }
 
@@ -226,6 +211,11 @@ impl GenesisAlkane {
 
     pub fn increase_total_supply(&self, v: u128) -> Result<()> {
         self.set_total_supply(overflow_error(self.total_supply().checked_add(v))?);
+        Ok(())
+    }
+
+    pub fn decrease_total_supply(&self, v: u128) -> Result<()> {
+        self.set_total_supply(overflow_error(self.total_supply().checked_sub(v))?);
         Ok(())
     }
 
@@ -323,7 +313,7 @@ impl GenesisAlkane {
     pub fn create_upgraded_mint_transfer(&self) -> Result<AlkaneTransfer> {
         let context = self.context()?;
 
-        if self.height() >= self.eoa_only_height() && context.caller != AlkaneId::new(0, 0) {
+        if context.caller != AlkaneId::new(0, 0) {
             return Err(anyhow!(
                 "Diesel mint must be called from EOA (first call in a protostone)"
             ));
@@ -428,6 +418,27 @@ impl GenesisAlkane {
             value: self.claimable_fees(),
         });
         self.set_claimable_fees(0);
+        Ok(response)
+    }
+
+    fn burn(&self, amount: u128) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::default();
+        for transfer in context.incoming_alkanes.0 {
+            if transfer.id == context.myself {
+                if amount > transfer.value {
+                    return Err(anyhow!("attempting to burn more than input amount"));
+                }
+                response.alkanes.pay(AlkaneTransfer {
+                    id: context.myself,
+                    value: transfer.value - amount,
+                });
+                self.decrease_total_supply(amount)?;
+            } else {
+                response.alkanes.pay(transfer);
+            }
+        }
+
         Ok(response)
     }
 

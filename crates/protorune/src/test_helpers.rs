@@ -129,7 +129,7 @@ pub fn create_coinbase_transaction(height: u32) -> Transaction {
 
     // Create the coinbase transaction output
     let coinbase_output = TxOut {
-        value: Amount::from_sat(50_000_000), // 50 BTC in satoshis
+        value: Amount::from_sat(10_00_000_000), // 10 BTC in satoshis
         script_pubkey,
     };
 
