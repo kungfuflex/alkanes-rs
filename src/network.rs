@@ -324,7 +324,7 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
     Ok(())
 }
 
-pub fn check_and_upgrade_diesel(height: u32) -> Result<()> {
+pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
     if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
         let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
         if upgrade_ptr.get().len() == 0 {
@@ -341,6 +341,9 @@ pub fn check_and_upgrade_diesel(height: u32) -> Result<()> {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes_eoa())?));
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                .set(Arc::new(compress(fr_btc_bytes())?));
         }
     }
     Ok(())

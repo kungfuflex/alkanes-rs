@@ -1,6 +1,6 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::{
-    check_and_upgrade_diesel, genesis, genesis_alkane_upgrade_bytes, is_genesis, setup_diesel,
+    check_and_upgrade_precompiled, genesis, genesis_alkane_upgrade_bytes, is_genesis, setup_diesel,
     setup_frbtc, setup_frsigil,
 };
 use crate::unwrap;
@@ -97,7 +97,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         genesis().unwrap();
     }
     setup_diesel(block)?;
-    check_and_upgrade_diesel(height)?;
+    check_and_upgrade_precompiled(height)?;
     setup_frbtc(block)?;
     setup_frsigil(block)?;
     FuelTank::initialize(&block, height);
