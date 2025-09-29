@@ -155,7 +155,7 @@ fn test_special_extcall_total_miner_fees() -> Result<()> {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
-    let amt_per_coinbase_vout = 50_00_000_000 as u128;
+    let amt_per_coinbase_vout = 10_00_000_000 as u128;
 
     assert_return_context(&outpoint_1, |trace_response| {
         let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
