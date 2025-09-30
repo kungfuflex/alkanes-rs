@@ -97,9 +97,9 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         genesis().unwrap();
     }
     setup_diesel(block)?;
-    check_and_upgrade_precompiled(height)?;
     setup_frbtc(block)?;
     setup_frsigil(block)?;
+    check_and_upgrade_precompiled(height)?;
     FuelTank::initialize(&block, height);
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
