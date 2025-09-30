@@ -307,10 +307,8 @@ fn test_new_genesis_contract_non_eoa() -> Result<()> {
     setup_pre_upgrade()?;
     upgrade()?;
     let prev_total_supply = get_total_supply()?;
-    let diesel = AlkaneId { block: 2, tx: 0 };
 
     let block_height = 3;
-    let diesel = AlkaneId { block: 2, tx: 0 };
 
     let mint = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
@@ -329,6 +327,32 @@ fn test_new_genesis_contract_non_eoa() -> Result<()> {
     };
     assert_revert_context(&outpoint, "Diesel mint must be called from EOA")?;
     assert_eq!(get_total_supply()?, prev_total_supply);
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_new_genesis_contract_delegate() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    upgrade()?;
+    let prev_total_supply = get_total_supply()?;
+
+    let block_height = 3;
+
+    let mint = Cellpack {
+        target: AlkaneId { block: 1, tx: 0 },
+        inputs: vec![32, 2, 0, 1, 77],
+    };
+
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        [alkanes_std_test_build::get_bytes()].into(),
+        [mint.clone()].into(),
+    );
+
+    index_block(&test_block, block_height)?;
+    assert_eq!(get_total_supply()?, prev_total_supply);
+    let sheet = get_last_outpoint_sheet(&test_block)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 2 }), 5000000000);
     Ok(())
 }
 
