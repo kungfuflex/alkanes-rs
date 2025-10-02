@@ -1,4 +1,5 @@
 use crate::message::AlkaneMessageContext;
+use crate::precompiled::fr_btc_build_v1_1_0;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -343,7 +344,7 @@ pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes_eoa())?));
             IndexPointer::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 32, tx: 0 }).into())
-                .set(Arc::new(compress(fr_btc_bytes())?));
+                .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
         }
     }
     Ok(())
