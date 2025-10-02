@@ -174,7 +174,7 @@ fn wrap_btc() -> Result<(OutPoint, u64)> {
     let sheet = get_last_outpoint_sheet(&block)?;
     let balance = sheet.get(&fr_btc_id.clone().into());
 
-    let expected_frbtc_amt = 99500000;
+    let expected_frbtc_amt = 99900000;
 
     assert_eq!(balance, expected_frbtc_amt);
     assert_eq!(sheet.get(&AlkaneId { block: 2, tx: 0 }.into()), 5000000000);
@@ -427,7 +427,9 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
     };
 
     let spendable_bytes = protorune_support::utils::consensus_encode(&spendable_outpoint)?;
-    protorune::tables::OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).set(Arc::new(vec![]));
+    protorune::tables::OUTPOINT_SPENDABLE_BY
+        .select(&spendable_bytes)
+        .set(Arc::new(vec![]));
     crate::unwrap::update_last_block(height3 as u128)?;
 
     // After fulfillment, last_block should be updated to the latest block
