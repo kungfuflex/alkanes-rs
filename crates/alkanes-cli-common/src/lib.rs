@@ -335,8 +335,8 @@ impl From<reqwest::Error> for DeezelError {
     }
 }
 
-impl From<deezel_asc::errors::Error> for DeezelError {
-    fn from(err: deezel_asc::errors::Error) -> Self {
+impl From<alkanes_cli_asc::errors::Error> for DeezelError {
+    fn from(err: alkanes_cli_asc::errors::Error) -> Self {
         DeezelError::Pgp(err.to_string())
     }
 }

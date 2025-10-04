@@ -47,6 +47,7 @@ pub struct PbkdfParams {
     pub algorithm: Option<String>,
 }
 
+use alkanes_cli_asc::armor::{self, reader, writer};
 use crate::{DeezelError, Result};
 use bip39::{Mnemonic, MnemonicType, Seed};
 #[cfg(not(target_arch = "wasm32"))]
@@ -68,9 +69,9 @@ impl Keystore {
 
         // 2. Armor the encrypted mnemonic
         let mut armored_mnemonic = Vec::new();
-        deezel_asc::armor::writer::write(
+        alkanes_cli_asc::armor::writer::write(
             &encrypted_mnemonic_bytes,
-            deezel_asc::armor::reader::BlockType::EncryptedMnemonic,
+            alkanes_cli_asc::armor::reader::BlockType::EncryptedMnemonic,
             &mut armored_mnemonic,
             None,
             true,
@@ -131,7 +132,7 @@ impl Keystore {
     /// Decrypts the mnemonic from the keystore using the provided passphrase.
     pub fn decrypt_mnemonic(&self, passphrase: &str) -> Result<String> {
         // 1. Dearmor the encrypted mnemonic
-        let (_, _, encrypted_bytes) = deezel_asc::armor::reader::decode(self.encrypted_mnemonic.as_bytes())
+        let (_, _, encrypted_bytes) = alkanes_cli_asc::armor::reader::decode(self.encrypted_mnemonic.as_bytes())
             .map_err(|e| DeezelError::Crypto(format!("Failed to dearmor mnemonic: {e}")))?;
 
         // 2. Decode salt and nonce from hex

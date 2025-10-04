@@ -148,8 +148,8 @@ impl From<alkanes_support::proto::alkanes::AlkanesTrace> for Call {
             if let Some(alkanes_support::proto::alkanes::alkanes_trace_event::Event::EnterContext(enter_context)) = &first_event.event {
                 let trace_ctx = enter_context.context.as_ref().cloned().unwrap_or_default();
                 let ctx = trace_ctx.inner.as_ref().cloned().unwrap_or_default();
-                caller = ctx.caller.into_option().unwrap_or_default().into();
-                contract_id = Some(ctx.myself.into_option().unwrap_or_default().into());
+                caller = ctx.caller.clone().unwrap_or_default().into();
+                contract_id = Some(ctx.myself.clone().unwrap_or_default().into());
                 
                 // Extract input data
                 input_data = ctx.inputs.iter().flat_map(|u| {
@@ -159,7 +159,7 @@ impl From<alkanes_support::proto::alkanes::AlkanesTrace> for Call {
 
                 // Extract value from the first incoming alkane transfer
                 if let Some(transfer) = ctx.incoming_alkanes.first() {
-                    value = transfer.value.clone().into_option().map(|v| v.into());
+                    value = transfer.value.clone().clone().map(|v| v.into());
                 }
             }
         }
@@ -191,7 +191,7 @@ impl From<alkanes_support::proto::alkanes::AlkanesEnterContext> for EnterContext
     fn from(e: alkanes_support::proto::alkanes::AlkanesEnterContext) -> Self {
         Self {
             call_type: format!("{:?}", e.call_type),
-            context: e.context.into_option().unwrap().into(),
+            context: e.context.clone().unwrap().into(),
         }
     }
 }
@@ -207,7 +207,7 @@ impl From<alkanes_support::proto::alkanes::AlkanesExitContext> for ExitContext {
 impl From<alkanes_support::proto::alkanes::AlkanesCreate> for Create {
     fn from(e: alkanes_support::proto::alkanes::AlkanesCreate) -> Self {
         Self {
-            new_alkane: e.new_alkane.into_option().unwrap().into(),
+            new_alkane: e.new_alkane.clone().unwrap().into(),
         }
     }
 }
@@ -215,7 +215,7 @@ impl From<alkanes_support::proto::alkanes::AlkanesCreate> for Create {
 impl From<alkanes_support::proto::alkanes::TraceContext> for TraceContext {
     fn from(t: alkanes_support::proto::alkanes::TraceContext) -> Self {
         Self {
-            inner: t.inner.into_option().unwrap().into(),
+            inner: t.inner.clone().unwrap().into(),
             fuel: t.fuel,
         }
     }
@@ -224,8 +224,8 @@ impl From<alkanes_support::proto::alkanes::TraceContext> for TraceContext {
 impl From<alkanes_support::proto::alkanes::Context> for Context {
     fn from(c: alkanes_support::proto::alkanes::Context) -> Self {
         Self {
-            myself: c.myself.into_option().unwrap().into(),
-            caller: c.caller.into_option().unwrap().into(),
+            myself: c.myself.clone().unwrap().into(),
+            caller: c.caller.clone().unwrap().into(),
             inputs: c.inputs.into_iter().map(Into::into).collect(),
             vout: c.vout,
             incoming_alkanes: c.incoming_alkanes.into_iter().map(Into::into).collect(),
@@ -236,8 +236,8 @@ impl From<alkanes_support::proto::alkanes::Context> for Context {
 impl From<alkanes_support::proto::alkanes::AlkaneTransfer> for AlkaneTransfer {
     fn from(t: alkanes_support::proto::alkanes::AlkaneTransfer) -> Self {
         Self {
-            id: t.id.into_option().unwrap().into(),
-            value: t.value.into_option().unwrap().into(),
+            id: t.id.clone().unwrap().into(),
+            value: t.value.clone().unwrap().into(),
         }
     }
 }
@@ -246,8 +246,8 @@ impl From<alkanes_support::proto::alkanes::AlkaneTransfer> for AlkaneTransfer {
 impl From<alkanes_support::proto::alkanes::AlkaneId> for ContractId {
     fn from(id: alkanes_support::proto::alkanes::AlkaneId) -> Self {
         Self {
-            block: id.block.into_option().map(Into::into),
-            tx: id.tx.into_option().map(Into::into),
+            block: id.block.clone().map(Into::into),
+            tx: id.tx.clone().map(Into::into),
         }
     }
 }

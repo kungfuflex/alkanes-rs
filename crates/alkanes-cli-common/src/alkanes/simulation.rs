@@ -18,6 +18,6 @@ pub fn simulate_cellpack(cellpack: &[u32]) -> alkanes_support::proto::alkanes::M
         transaction: Vec::<u8>::default(),
         alkanes: Vec::<alkanes_support::proto::alkanes::AlkaneTransfer>::default(),
         calldata: Cellpack::try_from(cellpack_as_u128).unwrap().encipher(),
-        special_fields: Default::default(),
+        
     }
 }

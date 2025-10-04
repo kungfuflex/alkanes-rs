@@ -10,7 +10,7 @@
 //! - REST: `/tx/{txid}/outspend/{index}` → JSON-RPC: `esplora_tx::outspend` params: [txid, index]
 
 use serde::{Deserialize, Serialize};
-use deezel_pretty_print_macro::PrettyPrint;
+use alkanes_pretty_print_macro::PrettyPrint;
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::collections::BTreeMap as HashMap;

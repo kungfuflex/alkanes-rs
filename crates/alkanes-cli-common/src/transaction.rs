@@ -438,7 +438,7 @@ pub mod analysis {
 }
 
 /// Transaction analysis result
-use deezel_pretty_print_macro::PrettyPrint;
+use alkanes_pretty_print_macro::PrettyPrint;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PrettyPrint)]
 pub struct TransactionAnalysis {
