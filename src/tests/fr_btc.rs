@@ -245,6 +245,39 @@ fn unwrap_btc_tx(
     }
 }
 
+fn get_total_supply() -> Result<u128> {
+    let block_height = 10;
+
+    let get_total_sup = Cellpack {
+        target: AlkaneId { block: 32, tx: 0 },
+        inputs: vec![105],
+    };
+
+    // Initialize the contract and execute the cellpacks
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+    let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+        Witness::new(),
+        vec![get_total_sup.clone()],
+        OutPoint::default(),
+        false,
+    );
+    test_block.txdata.push(mint_tx.clone());
+
+    index_block(&test_block, block_height)?;
+
+    alkane_helpers::assert_return_context(
+        &OutPoint {
+            txid: test_block.txdata.last().unwrap().compute_txid(),
+            vout: 3,
+        },
+        |trace_response| {
+            Ok(u128::from_le_bytes(
+                trace_response.inner.data[0..16].try_into()?,
+            ))
+        },
+    )
+}
+
 fn unwrap_btc(
     fr_btc_input_outpoint: OutPoint,
     amount_original_frbtc: u64,
@@ -294,6 +327,10 @@ fn unwrap_btc(
     assert_eq!(
         Payment::from(response.payments[0].clone()),
         expected_payment
+    );
+    assert_eq!(
+        get_total_supply()?,
+        (amount_original_frbtc - std::cmp::min(amount_original_frbtc, amount_frbtc_to_burn)).into()
     );
 
     Ok(())
