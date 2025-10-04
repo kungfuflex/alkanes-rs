@@ -107,9 +107,9 @@ pub struct ConcreteProvider {
     rpc_config: RpcConfig,
     command: Commands,
     #[cfg(not(target_arch = "wasm32"))]
-    wallet_path: Option<PathBuf>,
+    _wallet_path: Option<PathBuf>,
     #[cfg(target_arch = "wasm32")]
-    wallet_path: Option<String>,
+    _wallet_path: Option<String>,
     passphrase: Option<String>,
     wallet_state: WalletState,
     #[cfg(feature = "native-deps")]
@@ -1347,7 +1347,7 @@ impl MetashrewRpcProvider for ConcreteProvider {
 #[async_trait(?Send)]
 impl EsploraProvider for ConcreteProvider {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
+        let _rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
         let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
@@ -2321,7 +2321,7 @@ impl BitcoinRpcProvider for ConcreteProvider {
     async fn get_block_count(&self) -> Result<u64> {
         unimplemented!()
     }
-    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue> {
+    async fn generate_to_address(&self, _nblocks: u32, _address: &str) -> Result<JsonValue> {
         unimplemented!()
     }
     async fn get_blockchain_info(&self) -> Result<JsonValue> {
@@ -2330,40 +2330,40 @@ impl BitcoinRpcProvider for ConcreteProvider {
     async fn get_new_address(&self) -> Result<JsonValue> {
         unimplemented!()
     }
-    async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
+    async fn get_transaction_hex(&self, _txid: &str) -> Result<String> {
         unimplemented!()
     }
-    async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue> {
+    async fn get_block(&self, _hash: &str, _raw: bool) -> Result<JsonValue> {
         unimplemented!()
     }
-    async fn get_block_hash(&self, height: u64) -> Result<String> {
+    async fn get_block_hash(&self, _height: u64) -> Result<String> {
         unimplemented!()
     }
-    async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
+    async fn send_raw_transaction(&self, _tx_hex: &str) -> Result<String> {
         unimplemented!()
     }
     async fn get_mempool_info(&self) -> Result<JsonValue> {
         unimplemented!()
     }
-    async fn estimate_smart_fee(&self, target: u32) -> Result<JsonValue> {
+    async fn estimate_smart_fee(&self, _target: u32) -> Result<JsonValue> {
         unimplemented!()
     }
     async fn get_esplora_blocks_tip_height(&self) -> Result<u64> {
         unimplemented!()
     }
-    async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<serde_json::Value> {
+    async fn trace_transaction(&self, _txid: &str, _vout: u32, _block: Option<&str>, _tx: Option<&str>) -> Result<serde_json::Value> {
         unimplemented!()
     }
     async fn get_network_info(&self) -> Result<JsonValue> {
         unimplemented!()
     }
-    async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<JsonValue> {
+    async fn get_raw_transaction(&self, _txid: &str, _block_hash: Option<&str>) -> Result<JsonValue> {
         unimplemented!()
     }
-    async fn get_block_header(&self, hash: &str) -> Result<JsonValue> {
+    async fn get_block_header(&self, _hash: &str) -> Result<JsonValue> {
         unimplemented!()
     }
-    async fn get_block_stats(&self, hash: &str) -> Result<JsonValue> {
+    async fn get_block_stats(&self, _hash: &str) -> Result<JsonValue> {
         unimplemented!()
     }
     async fn get_chain_tips(&self) -> Result<JsonValue> {
@@ -2372,7 +2372,7 @@ impl BitcoinRpcProvider for ConcreteProvider {
     async fn get_raw_mempool(&self) -> Result<JsonValue> {
         unimplemented!()
     }
-    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
+    async fn get_tx_out(&self, _txid: &str, _vout: u32, _include_mempool: bool) -> Result<JsonValue> {
         unimplemented!()
     }
 }

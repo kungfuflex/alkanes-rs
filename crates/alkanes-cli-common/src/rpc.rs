@@ -246,7 +246,7 @@ impl<P: DeezelProvider> RpcClient<P> {
 
         bytecode_request.id = Some(alkane_id).into();
 
-        let encoded_bytes = bytecode_request.encode_to_vec();;
+        let encoded_bytes = bytecode_request.encode_to_vec();
         let hex_input = format!("0x{}", hex::encode(encoded_bytes));
 
         let result = self.sandshrew_call(

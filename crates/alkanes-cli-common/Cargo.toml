@@ -106,9 +106,9 @@ dirs = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 flate2 = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"], optional = true }
-reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true, default-features = false }
+reqwest = { workspace = true, features = ["json", "rustls-tls"], optional = true }
 url = { workspace = true, optional = true }
-clap = { workspace = true, features = ["derive"], default-features = false }
+clap = { workspace = true, features = ["derive"] }
 bitcoincore-rpc = { workspace = true, optional = true }
 bech32.workspace = true
 

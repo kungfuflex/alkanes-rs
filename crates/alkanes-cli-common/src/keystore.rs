@@ -47,7 +47,6 @@ pub struct PbkdfParams {
     pub algorithm: Option<String>,
 }
 
-use alkanes_cli_asc::armor::{self, reader, writer};
 use crate::{DeezelError, Result};
 use bip39::{Mnemonic, MnemonicType, Seed};
 #[cfg(not(target_arch = "wasm32"))]
