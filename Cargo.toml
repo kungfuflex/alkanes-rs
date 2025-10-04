@@ -21,9 +21,50 @@ license = "MIT"
 repository = "https://github.com/kungfuflex/alkanes-rs"
 
 [workspace.dependencies]
+clap = { version = "4.3", features = ["derive"] }
+env_logger = "0.10"
 anyhow = "1.0.90"
+futures = "0.3"
+async-trait = "0.1"
+base64 = "0.22"
+bech32 = "0.11.0"
+bip39 = { version = "2.0", package = "tiny-bip39" }
+bitcoin_hashes = "0.14.0"
+bitcoincore-rpc = "0.18.0"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+flate2 = "1.0"
+lazy_static = "1.5.0"
+prost = "0.13.1"
+prost-build = "0.13.1"
+psbt-v2 = "0.1.1"
+rand = "0.8"
+rand_core = { version = "0.6", features = ["getrandom"] }
+getrandom = { version = "0.2", features = ["js"] }
+leptos = { version = "0.6.12", features = ["csr"] }
+pbkdf2 = "0.12"
+leptos_router = { version = "0.6.12", features = ["csr"] }
+regex = "1.10"
+secp256k1 = { version = "0.29", features = ["rand", "recovery"] }
+sha2 = "0.10"
+sha3 = "0.10"
+smallvec = "1.13"
+spin = "0.9.8"
+tempfile = "3.8"
+thiserror = "1.0"
+wasmparser = "0.235.0"
+wasmprinter = "0.2"
+wat = "1.0"
+mockall = "0.13.0"
+aes-gcm = "0.10"
+tabled = "0.15.0"
+url = { version = "2.5.0" }
+log = "0.4"
 num = "0.4.3"
+protobuf-json-mapping = "3.7.2"
 bitcoin = { version = "0.32.4", features = ["rand"] }
+tokio = { version = "1.28", features = ["macros", "rt", "time", "sync"] }
+reqwest = { version = "0.12", features = ["json"] }
 metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 ordinals = { path = "./crates/ordinals" }
