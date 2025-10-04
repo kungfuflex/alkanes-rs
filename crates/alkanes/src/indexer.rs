@@ -17,63 +17,7 @@ use crate::vm::host_functions::clear_diesel_mints_cache;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
 use protorune::Protorune;
-use protorune_support::network::{set_network, NetworkParams};
 
-#[cfg(all(
-    not(feature = "mainnet"),
-    not(feature = "testnet"),
-    not(feature = "luckycoin"),
-    not(feature = "dogecoin"),
-    not(feature = "bellscoin")
-))]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("bcrt"),
-        p2pkh_prefix: 0x64,
-        p2sh_prefix: 0xc4,
-    });
-}
-#[cfg(feature = "mainnet")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("bc"),
-        p2sh_prefix: 0x05,
-        p2pkh_prefix: 0x00,
-    });
-}
-#[cfg(feature = "testnet")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("tb"),
-        p2pkh_prefix: 0x6f,
-        p2sh_prefix: 0xc4,
-    });
-}
-#[cfg(feature = "luckycoin")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("lky"),
-        p2pkh_prefix: 0x2f,
-        p2sh_prefix: 0x05,
-    });
-}
-
-#[cfg(feature = "dogecoin")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("dc"),
-        p2pkh_prefix: 0x1e,
-        p2sh_prefix: 0x16,
-    });
-}
-#[cfg(feature = "bellscoin")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("bel"),
-        p2pkh_prefix: 0x19,
-        p2sh_prefix: 0x1e,
-    });
-}
 
 #[cfg(feature = "cache")]
 use crate::view::protorunes_by_address;
@@ -93,24 +37,29 @@ pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(
     env: &mut E,
     block: &Block,
     height: u32,
+    network: bitcoin::Network,
 ) -> Result<()> {
     logging::init_block_stats();
     logging::record_transactions(block.txdata.len() as u32);
-    configure_network();
     clear_diesel_mints_cache();
     let really_is_genesis = is_genesis(env, height.into());
     if really_is_genesis {
         genesis(env).unwrap();
-        let mut genesis_balance_sheet = setup_diesel(env, block)?;
+        let genesis_balance_sheet = setup_diesel(env, block)?;
+        env.log(&format!("genesis_balance_sheet: {:?}", genesis_balance_sheet));
         let frbtc_balance_sheet = setup_frbtc(env, block)?;
+        env.log(&format!("frbtc_balance_sheet: {:?}", frbtc_balance_sheet));
         let frsigil_balance_sheet = setup_frsigil(env, block)?;
-        genesis_balance_sheet.merge_sheets(&frbtc_balance_sheet, &frsigil_balance_sheet, env)?;
+        env.log(&format!("frsigil_balance_sheet: {:?}", frsigil_balance_sheet));
+        let mut merged_sheet = genesis_balance_sheet;
+        merged_sheet.merge_sheets(&frbtc_balance_sheet, &frsigil_balance_sheet, env)?;
+        env.log(&format!("merged genesis_balance_sheet: {:?}", merged_sheet));
         let outpoint_bytes = protorune_support::utils::outpoint_encode(&bitcoin::OutPoint {
             txid: protorune_support::utils::tx_hex_to_txid(crate::network::genesis::GENESIS_OUTPOINT)?,
             vout: 0,
         })?;
         let mut atomic = metashrew_support::index_pointer::AtomicPointer::default();
-        genesis_balance_sheet.save(
+        merged_sheet.save(
             &mut atomic.derive(
                 &protorune::tables::RuneTable::for_protocol(
                     AlkaneMessageContext::<E>::protocol_tag(),
@@ -126,7 +75,7 @@ pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(
     check_and_upgrade_diesel(env, height)?;
     FuelTank::initialize::<E>(&block, height);
     // Get the set of updated addresses from the indexing process
-    let _updated_addresses = Protorune::index_block::<AlkaneMessageContext<E>>(env, block.clone(), height.into())?;
+    let _updated_addresses = Protorune::index_block::<AlkaneMessageContext<E>>(env, block.clone(), height.into(), network)?;
 
     let _ = unwrap::update_last_block(env, height as u128)?;
 

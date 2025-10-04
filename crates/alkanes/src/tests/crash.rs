@@ -15,7 +15,7 @@ use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_owned_token_mint_crash() -> Result<()> {
-    crate::indexer::configure_network();
+
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;

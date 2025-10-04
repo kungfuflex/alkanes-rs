@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_test_build;
 use crate::tests::test_runtime::TestRuntime;
@@ -17,7 +17,7 @@ fn create_malformed_cellpack_large_inputs() -> Cellpack {
 
 #[test]
 fn test_integer_overflow_in_memory_operations() -> Result<()> {
-    configure_network();
+
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;

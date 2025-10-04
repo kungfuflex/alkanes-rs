@@ -19,7 +19,6 @@ mod tests {
     }
     #[test]
     fn test_extcall() -> Result<()> {
-        crate::indexer::configure_network();
         let mut env = TestRuntime::default();
         let block_height = 0;
 
@@ -44,7 +43,6 @@ mod tests {
     }
     #[test]
     fn test_transaction() -> Result<()> {
-        crate::indexer::configure_network();
         let mut env = TestRuntime::default();
         let block_height = 0;
 
@@ -75,7 +73,6 @@ mod tests {
     }
     #[test]
     fn test_benchmark() -> Result<()> {
-        crate::indexer::configure_network();
         let mut env = TestRuntime::default();
         let block_height = 0;
 

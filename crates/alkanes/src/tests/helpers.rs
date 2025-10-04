@@ -1,3 +1,4 @@
+
 use crate::message::AlkaneMessageContext;
 use crate::view;
 use alkanes_support::cellpack::Cellpack;
@@ -16,73 +17,92 @@ use metashrew_support::index_pointer::IndexPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_encode;
 use ordinals::{Etching, Rune, Runestone};
-use protorune::balance_sheet::load_sheet;
+use protorune::balance_sheet::{load_sheet, BalanceSheet};
 use protorune::message::MessageContext;
 use protorune::protostone::ProtostoneEncoder;
 use protorune::tables::RuneTable;
-use protorune::test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1};
-use protorune_support::balance_sheet::BalanceSheet;
-use protorune_support::network::{set_network, NetworkParams};
+
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
 use std::str::FromStr;
+
+pub mod test_helpers {
+    use super::*;
+    use bitcoin::{
+        blockdata::{block::Header, script::Builder},
+        hashes::Hash,
+        locktime::absolute::LockTime,
+        Address, Amount, Network, OutPoint, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness, CompactTarget
+    };
+    use std::str::FromStr;
+
+    pub fn get_address(address: &str) -> Address {
+        Address::from_str(address).unwrap().require_network(Network::Regtest).unwrap()
+    }
+
+    pub fn ADDRESS1() -> String {
+        "bcrt1qspqmsqsmrc6g5aw2h90s2xjwz7v4s0py3j5ksw".to_string()
+    }
+
+    pub fn ADDRESS2() -> String {
+        "bcrt1qg3z4k3x9js0f5wkzcfv4pj3tm2g3k2p3dw5j0a".to_string()
+    }
+
+    pub fn get_btc_network() -> Network {
+        Network::Regtest
+    }
+
+    pub fn create_coinbase_transaction(height: u64) -> Transaction {
+        let builder = Builder::new();
+        let script_sig = builder.push_int(height as i64).into_script();
+        Transaction {
+            version: bitcoin::transaction::Version(2),
+            lock_time: LockTime::from_height(height as u32).unwrap(),
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                script_sig,
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![],
+        }
+    }
+
+    pub fn create_block_with_coinbase_tx(height: u64) -> Block {
+        Block {
+            header: Header {
+                version: bitcoin::block::Version::from_consensus(0),
+                prev_blockhash: bitcoin::BlockHash::all_zeros(),
+                merkle_root: bitcoin::TxMerkleNode::all_zeros(),
+                time: 0,
+                bits: CompactTarget::from_consensus(0),
+                nonce: 0,
+            },
+            txdata: vec![create_coinbase_transaction(height)],
+        }
+    }
+
+    pub fn create_protostone_encoded_tx() -> Transaction {
+        Transaction {
+            version: bitcoin::transaction::Version(2),
+            lock_time: LockTime::from_height(0).unwrap(),
+            input: vec![],
+            output: vec![],
+        }
+    }
+}
 
 #[cfg(test)]
 use crate::tests::std::alkanes_std_test_build;
 
-#[cfg(all(
-    not(feature = "mainnet"),
-    not(feature = "dogecoin"),
-    not(feature = "bellscoin"),
-    not(feature = "fractal"),
-    not(feature = "luckycoin")
-))]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("bcrt"),
-        p2pkh_prefix: 0x64,
-        p2sh_prefix: 0xc4,
-    });
-}
-#[cfg(feature = "mainnet")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("bc"),
-        p2sh_prefix: 0x05,
-        p2pkh_prefix: 0x00,
-    });
-}
-#[cfg(feature = "testnet")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("tb"),
-        p2pkh_hash: 0x6f,
-        p2sh_hash: 0xc4,
-    });
-}
-#[cfg(feature = "luckycoin")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("tb"),
-        p2pkh_hash: 0x6f,
-        p2sh_hash: 0xc4,
-    });
-}
-
-#[cfg(feature = "dogecoin")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("dc"),
-        p2pkh_hash: 0x6f,
-        p2sh_hash: 0xc4,
-    });
-}
-#[cfg(feature = "bellscoin")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("bel"),
-        p2pkh_hash: 0x6f,
-        p2sh_hash: 0xc4,
-    });
+pub fn configure_network() -> bitcoin::Network {
+    #[cfg(feature = "mainnet")]
+    {
+        bitcoin::Network::Bitcoin
+    }
+    #[cfg(not(feature = "mainnet"))]
+    {
+        bitcoin::Network::Regtest
+    }
 }
 
 pub fn clear<E: RuntimeEnvironment>(env: &mut E) {
@@ -93,7 +113,7 @@ pub fn clear<E: RuntimeEnvironment>(env: &mut E) {
 #[cfg(test)]
 pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
     let block_height = 0;
-    let mut test_block = create_block_with_coinbase_tx(block_height);
+    let mut test_block = test_helpers::create_block_with_coinbase_tx(block_height);
 
     let wasm_binary = alkanes_std_test_build::get_bytes();
     let raw_envelope = RawEnvelope::from(wasm_binary);
@@ -165,7 +185,7 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
     _previous_out: Option<OutPoint>,
 ) -> Block {
     let block_height = 880_000;
-    let mut test_block = create_block_with_coinbase_tx(block_height);
+    let mut test_block = test_helpers::create_block_with_coinbase_tx(block_height);
     let mut previous_out: Option<OutPoint> = _previous_out;
     let mut txs = binaries
         .into_iter()
@@ -206,7 +226,7 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
 pub fn init_with_multiple_cellpacks(binary: Vec<u8>, cellpacks: Vec<Cellpack>) -> Block {
     let block_height = 0;
 
-    let mut test_block = create_block_with_coinbase_tx(block_height);
+    let mut test_block = test_helpers::create_block_with_coinbase_tx(block_height);
 
     let raw_envelope = RawEnvelope::from(binary);
     let witness = raw_envelope.to_witness(true);
@@ -244,7 +264,7 @@ pub fn create_protostone_tx_with_inputs_and_default_pointer<E: RuntimeEnvironmen
         op_return.size()
     );
 
-    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+    let address: Address<NetworkChecked> = test_helpers::get_address(&test_helpers::ADDRESS1().as_str());
     let _script_pubkey = address.script_pubkey();
     let mut _outputs = outputs.clone();
     _outputs.push(op_return);
@@ -344,7 +364,7 @@ pub fn create_multiple_cellpack_with_witness_and_txins_edicts<E: RuntimeEnvironm
         script_pubkey: runestone,
     };
 
-    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+    let address: Address<NetworkChecked> = test_helpers::get_address(&test_helpers::ADDRESS1().as_str());
 
     let script_pubkey = address.script_pubkey();
     let txout = TxOut {
@@ -666,7 +686,7 @@ pub fn create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers<E:
         value: Amount::from_sat(0),
         script_pubkey: runestone,
     };
-    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+    let address: Address<NetworkChecked> = test_helpers::get_address(&test_helpers::ADDRESS1().as_str());
 
     let script_pubkey = address.script_pubkey();
     let txout = TxOut {

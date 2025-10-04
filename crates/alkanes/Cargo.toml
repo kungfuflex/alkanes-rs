@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 alkanes-runtime = { path = "../alkanes-runtime" }
-metashrew-core = { path = "../metashrew-core", features = ["test-utils"] }
+metashrew-core = { path = "../metashrew-core" }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
 metashrew-support = { workspace = true }
@@ -22,7 +22,7 @@ wasm-bindgen-test = { workspace = true }
 once_cell = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-protorune = { workspace = true, features = ["cache", "test-utils"] }
+protorune = { workspace = true, features = ["cache"] }
 hex = { workspace = true }
 prost = { workspace = true }
 hex_lit = { workspace = true }
@@ -34,7 +34,7 @@ downcast-rs = "1.2.0"
 alkanes-runtime = { path = "../alkanes-runtime" }
 
 
-protorune = { workspace = true, features = ["test-utils"] }
+
 borsh = { workspace = true }
 sha2 = { workspace = true }
 

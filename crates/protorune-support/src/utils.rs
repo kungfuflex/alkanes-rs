@@ -86,20 +86,4 @@ pub fn field_to_name(data: &u128) -> String {
     result
 }
 
-pub fn get_network() -> bitcoin::Network {
-    let network = std::env::var("network").unwrap_or_else(|_| {
-        eprintln!("Environment variable 'network' is not set. Defaulting to 'bitcoin'.");
-        "bitcoin".to_string()
-    });
 
-    match network.as_str() {
-        "bitcoin" => bitcoin::Network::Bitcoin,
-        "testnet" => bitcoin::Network::Testnet,
-        "regtest" => bitcoin::Network::Regtest,
-        "signet" => bitcoin::Network::Signet,
-        _ => {
-            eprintln!("Invalid network '{}'. Defaulting to 'bitcoin'.", network);
-            bitcoin::Network::Bitcoin
-        }
-    }
-}

@@ -13,10 +13,7 @@ mod tests {
 
     use helpers::clear;
     #[allow(unused_imports)]
-    use metashrew_core::{
-        println,
-        stdio::{stdout, Write},
-    };
+    
     use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
 
     use std::str::FromStr;

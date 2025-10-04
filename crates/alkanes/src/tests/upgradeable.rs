@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::tests::helpers::{self as alkane_helpers, assert_revert_context};
 use crate::tests::std::{
     alkanes_std_auth_token_build, alkanes_std_beacon_proxy_build, alkanes_std_test_2_build,
@@ -16,14 +16,13 @@ use bitcoin::{
 use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::index_pointer::AtomicPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::test_helpers::create_block_with_coinbase_tx;
+use crate::tests::helpers::test_helpers::create_block_with_coinbase_tx;
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 
 pub const BEACON_ID: u128 = 0xbeac0;
 
 fn setup_env<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<Block> {
-    configure_network();
-    let block_height = 0;
+    let block_height: u64 = 0;
     let auth_cellpack = Cellpack {
         target: AlkaneId {
             block: 3,
@@ -46,15 +45,13 @@ fn setup_env<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<Bloc
         .into(),
         [auth_cellpack, test.clone(), test.clone()].into(),
     );
-
-    index_block::<E>(&mut E::default(), &test_block, block_height)?;
+index_block::<E>(&mut E::default(), &test_block, block_height as u32)?;
 
     Ok(test_block)
 }
 
 fn deploy_upgradeable_beacon<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<Block> {
-    configure_network();
-    let block_height = 0;
+    let block_height: u64 = 0;
     let beacon = Cellpack {
         target: AlkaneId {
             block: 3,
@@ -68,18 +65,16 @@ fn deploy_upgradeable_beacon<E: RuntimeEnvironment + Clone + Default + 'static>(
         [alkanes_std_upgradeable_beacon_build::get_bytes()].into(),
         [beacon].into(),
     );
-
-    index_block::<E>(&mut E::default(), &test_block, block_height)?;
-
+        
+                index_block::<E>(&mut E::default(), &test_block, block_height as u32)?;
     Ok(test_block)
 }
 
 fn deploy_upgradeable_proxy<E: RuntimeEnvironment + Clone + Default + 'static>(
     proxy_build: Vec<u8>,
-    block_height: u32,
+    block_height: u64,
     delegate_target: AlkaneId,
 ) -> Result<(Block, u128)> {
-    configure_network();
     let mut env = E::default();
     let next_sequence_pointer = sequence_pointer(&mut AtomicPointer::<E>::default());
     let proxy_sequence = next_sequence_pointer.get_value(&mut env);
@@ -91,17 +86,16 @@ fn deploy_upgradeable_proxy<E: RuntimeEnvironment + Clone + Default + 'static>(
         },
     };
 
-    // Initialize the contract and execute the cellpacks
-    let test_block = alkane_helpers::init_with_cellpack_pairs([proxy].into());
+let test_block = alkane_helpers::init_with_cellpack_pairs([proxy].into());
 
-    index_block::<E>(&mut env, &test_block, block_height)?;
+    index_block::<E>(&mut env, &test_block, block_height as u32)?;
 
     Ok((test_block, proxy_sequence))
 }
 
 fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
     proxy_sequence: u128,
-    block_height: u32,
+    block_height: u64,
     delegate_target: AlkaneId,
 ) -> Result<()> {
     let initialize = alkane_helpers::BinaryAndCellpack::cellpack_only(Cellpack {
@@ -137,9 +131,8 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
     let test_block =
         alkane_helpers::init_with_cellpack_pairs([initialize, set_claimable, mint, double_init].into());
 
-    configure_network();
     let mut env = E::default();
-    index_block::<E>(&mut env, &test_block, block_height)?;
+    index_block::<E>(&mut env, &test_block, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&mut env, &test_block)?;
     assert_eq!(
@@ -170,9 +163,8 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
     // Initialize the contract and execute the cellpacks
     let test_block2 = alkane_helpers::init_with_cellpack_pairs([proxy_through_extcall].into());
 
-    configure_network();
     let mut env2 = E::default();
-    index_block::<E>(&mut env2, &test_block2, block_height)?;
+    index_block::<E>(&mut env2, &test_block2, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&mut env2, &test_block2)?;
     assert_eq!(
@@ -187,7 +179,7 @@ fn upgradeability_harness<E: RuntimeEnvironment + Clone + Default + 'static>(
 }
 
 fn upgrade_implementation<E: RuntimeEnvironment + Clone + Default + 'static>(
-    block_height: u32,
+    block_height: u64,
     input_outpoint: OutPoint,
     contract_to_upgrade: AlkaneId,
 ) -> Result<()> {
@@ -207,13 +199,12 @@ fn upgrade_implementation<E: RuntimeEnvironment + Clone + Default + 'static>(
         ),
     );
 
-    configure_network();
-    index_block::<E>(&mut E::default(), &test_block, block_height)?;
+    index_block::<E>(&mut E::default(), &test_block, block_height as u32)?;
     Ok(())
 }
 
 fn check_after_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>(
-    block_height: u32,
+    block_height: u64,
     proxy_sequence: u128,
 ) -> Result<()> {
     let incr = Cellpack {
@@ -255,9 +246,8 @@ fn check_after_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>(
         ),
     );
 
-    configure_network();
     let mut env = E::default();
-    index_block::<E>(&mut env, &test_block, block_height)?;
+    index_block::<E>(&mut env, &test_block, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&mut env, &test_block)?;
     assert_eq!(

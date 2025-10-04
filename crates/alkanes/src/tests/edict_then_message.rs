@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::message::AlkaneMessageContext;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_test_build;
@@ -14,10 +14,11 @@ use bitcoin::{
 use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
 use ordinals::Runestone;
-use protorune::test_helpers::{create_block_with_coinbase_tx, get_btc_network, ADDRESS1};
+use crate::tests::helpers::test_helpers::{create_block_with_coinbase_tx, get_btc_network, ADDRESS1};
 use protorune::{
-    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
+    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable
 };
+use crate::tests::helpers::test_helpers as helpers;
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
 use protorune::protostone::ProtostoneEncoder;
@@ -25,8 +26,7 @@ use std::str::FromStr;
 
 #[test]
 fn test_edict_to_protomessage() -> Result<()> {
-    configure_network();
-    let block_height = 0;
+    let block_height: u64 = 0;
     let mut test_block: Block = helpers::create_block_with_coinbase_tx(block_height);
     let tx = Transaction {
         version: Version::ONE,
@@ -114,8 +114,8 @@ fn test_edict_to_protomessage() -> Result<()> {
     };
     test_block.txdata.push(tx);
     let mut env = TestRuntime::default();
-    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
-    let edict_outpoint = OutPoint {
+    index_block::<TestRuntime>(&mut env, &test_block, block_height as u32)?;
+        let edict_outpoint = OutPoint {
         txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
         vout: 0,
     };
@@ -138,11 +138,10 @@ fn test_edict_to_protomessage() -> Result<()> {
     Ok(())
 }
 
+
 #[test]
 fn test_edict_message_same_protostone() -> Result<()> {
-    configure_network();
-    let block_height = 0;
-
+    let block_height: u64 = 0;
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
@@ -157,7 +156,7 @@ fn test_edict_message_same_protostone() -> Result<()> {
         );
 
     let mut env = TestRuntime::default();
-    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let mut test_block2 = create_block_with_coinbase_tx(0);
 
@@ -176,23 +175,22 @@ fn test_edict_message_same_protostone() -> Result<()> {
         alkane_helpers::create_multiple_cellpack_with_witness_and_txins_edicts::<TestRuntime>(
             [Cellpack {
                 target: AlkaneId { block: 2, tx: 1 },
-                inputs: vec![5],
-            }]
-            .into(),
-            vec![txin1],
-            false,
-            vec![ProtostoneEdict {
-                id: ProtoruneRuneId { block: 2, tx: 1 },
-                amount: 1,
-                output: 0,
-            }],
-        ),
-    );
-
-    index_block::<TestRuntime>(&mut env, &test_block2, block_height)?;
-
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&mut env, &test_block2)?;
-
+                            inputs: vec![5],
+                        }]
+                        .into(),
+                        vec![txin1],
+                        false,
+                        vec![ProtostoneEdict {
+                            id: ProtoruneRuneId { block: 2, tx: 1 },
+                            amount: 1,
+                            output: 0,
+                        }],
+                    ),
+                );
+                
+                    index_block::<TestRuntime>(&mut env, &test_block2, block_height as u32)?;
+                
+                    let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&mut env, &test_block2)?;
     assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }.into(), &mut env), 1);
 
     Ok(())
@@ -200,8 +198,7 @@ fn test_edict_message_same_protostone() -> Result<()> {
 
 #[test]
 fn test_edict_message_same_protostone_revert() -> Result<()> {
-    configure_network();
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -217,7 +214,7 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
         );
 
     let mut env = TestRuntime::default();
-    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let mut test_block2 = create_block_with_coinbase_tx(0);
 
@@ -249,7 +246,7 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
         ),
     );
 
-    index_block::<TestRuntime>(&mut env, &test_block2, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block2, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet::<TestRuntime>(&mut env, &test_block2)?;
 

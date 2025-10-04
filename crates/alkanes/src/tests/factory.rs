@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::tests::helpers::{
     self as alkane_helpers, assert_binary_deployed_to_id, assert_id_points_to_alkane_id,
     get_sheet_for_runtime,
@@ -13,7 +13,7 @@ use protorune_support::balance_sheet::BalanceSheetOperations;
 
 #[test]
 fn test_factory_wasm_load() -> Result<()> {
-    configure_network();
+
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;

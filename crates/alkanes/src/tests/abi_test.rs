@@ -133,7 +133,7 @@ fn test_contract_abi<E: RuntimeEnvironment + Clone + Default + 'static>(
 
 #[test]
 fn test_meta_call() -> Result<()> {
-    crate::indexer::configure_network();
+
     let block_height = 0;
 
     // Create test blocks with cellpacks

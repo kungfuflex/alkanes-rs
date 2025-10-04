@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::message::AlkaneMessageContext;
 use crate::network::genesis;
 use crate::tests::helpers::{
@@ -18,14 +18,13 @@ use bitcoin::{
 };
 use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
+use crate::tests::helpers::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
 use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::consensus_encode;
 
 fn setup_pre_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<()> {
-    configure_network();
     let mut env = E::default();
     let auth_cellpack = Cellpack {
         target: AlkaneId {
@@ -40,14 +39,13 @@ fn setup_pre_upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Res
         [alkanes_std_auth_token_build::get_bytes()].into(),
         [auth_cellpack].into(),
     );
-    index_block::<E>(&mut env, &test_block, 880_000)?; // just to init the diesel
+    index_block::<E>(&mut env, &test_block, 880_000 as u32)?; // just to init the diesel
     Ok(())
 }
 
 fn upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<OutPoint> {
-    configure_network();
     let mut env = E::default();
-    let block_height = 890_000;
+    let block_height: u64 = 890_000;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
     let outpoint = OutPoint {
@@ -98,7 +96,7 @@ fn upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<OutPoi
     test_block.txdata.push(upgrade_tx.clone());
     test_block.txdata.push(mint_tx_1.clone());
 
-    index_block::<E>(&mut env, &test_block, block_height)?;
+    index_block::<E>(&mut env, &test_block, block_height as u32)?;
     let new_outpoint = OutPoint {
         txid: upgrade_tx.compute_txid(),
         vout: 0,
@@ -136,9 +134,8 @@ fn upgrade<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<OutPoi
 }
 
 fn mint<E: RuntimeEnvironment + Clone + Default + 'static>(num_mints: usize) -> Result<Block> {
-    configure_network();
     let mut env = E::default();
-    let block_height = 890_001;
+    let block_height: u64 = 890_001;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
     let mint = Cellpack {
@@ -159,14 +156,13 @@ fn mint<E: RuntimeEnvironment + Clone + Default + 'static>(num_mints: usize) -> 
         test_block.txdata.push(mint_tx);
     }
 
-    index_block::<E>(&mut env, &test_block, block_height)?;
+    index_block::<E>(&mut env, &test_block, block_height as u32)?;
     Ok(test_block)
 }
 
 fn get_total_supply<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<u128> {
-    configure_network();
     let mut env = E::default();
-    let block_height = 890_000;
+    let block_height: u64 = 890_000;
     let diesel = AlkaneId { block: 2, tx: 0 };
 
     let get_total_sup = Cellpack {
@@ -184,7 +180,7 @@ fn get_total_supply<E: RuntimeEnvironment + Clone + Default + 'static>() -> Resu
     );
     test_block.txdata.push(mint_tx.clone());
 
-    index_block::<E>(&mut env, &test_block, block_height)?;
+    index_block::<E>(&mut env, &test_block, block_height as u32)?;
 
     alkane_helpers::assert_return_context(
         &mut env,
@@ -202,7 +198,6 @@ fn get_total_supply<E: RuntimeEnvironment + Clone + Default + 'static>() -> Resu
 
 #[test]
 fn test_new_genesis_contract() -> Result<()> {
-    configure_network();
     let mut env = TestRuntime::default();
     setup_pre_upgrade::<TestRuntime>()?;
     upgrade::<TestRuntime>()?;
@@ -229,7 +224,6 @@ fn test_new_genesis_contract() -> Result<()> {
 
 #[test]
 fn test_new_genesis_contract_empty_calldata() -> Result<()> {
-    configure_network();
     let mut env = TestRuntime::default();
     setup_pre_upgrade::<TestRuntime>()?;
     upgrade::<TestRuntime>()?;
@@ -273,7 +267,6 @@ fn test_new_genesis_contract_empty_calldata() -> Result<()> {
 
 #[test]
 fn test_new_genesis_contract_wrong_id() -> Result<()> {
-    configure_network();
     let mut env = TestRuntime::default();
     setup_pre_upgrade::<TestRuntime>()?;
     upgrade::<TestRuntime>()?;
@@ -321,14 +314,13 @@ fn test_new_genesis_contract_wrong_id() -> Result<()> {
 
 #[test]
 fn test_new_genesis_collect_fees() -> Result<()> {
-    configure_network();
     let mut env = TestRuntime::default();
     setup_pre_upgrade::<TestRuntime>()?;
     let auth_token_outpoint = upgrade::<TestRuntime>()?;
     mint::<TestRuntime>(5)?;
 
     let genesis_id = AlkaneId { block: 2, tx: 0 };
-    let block_height = 890_001;
+    let block_height: u64 = 890_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
     let collect_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
         Witness::new(),
@@ -340,7 +332,7 @@ fn test_new_genesis_collect_fees() -> Result<()> {
         false,
     );
     spend_block.txdata.push(collect_tx.clone());
-    index_block::<TestRuntime>(&mut env, &spend_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &spend_block, block_height as u32)?;
     let new_outpoint = OutPoint {
         txid: collect_tx.compute_txid(),
         vout: 0,

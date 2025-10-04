@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::tests::helpers::{
     self as alkane_helpers,
     assert_revert_context,
@@ -25,8 +25,8 @@ use metashrew_support::index_pointer::AtomicPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::Runestone;
 use protorune::message::MessageContextParcel;
-use protorune::test_helpers::{create_block_with_coinbase_tx, ADDRESS1};
-use protorune::test_helpers::get_address;
+use crate::tests::helpers::test_helpers::{create_block_with_coinbase_tx, ADDRESS1};
+use crate::tests::helpers::test_helpers::get_address;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations};
 use protorune_support::protostone::Protostone;
 use protorune::protostone::ProtostoneEncoder;
@@ -45,7 +45,7 @@ pub fn simulate_cellpack<E: RuntimeEnvironment + Clone + Default + 'static>(
             output: vec![],
             lock_time: bitcoin::absolute::LockTime::ZERO,
         },
-        block: create_block_with_coinbase_tx(height as u32),
+        block: create_block_with_coinbase_tx(height),
         height,
         pointer: 0,
         refund_pointer: 0,
@@ -141,9 +141,8 @@ pub fn create_alkane_tx_frbtc_signer_script<E: RuntimeEnvironment>(
 }
 
 fn wrap_btc<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<(OutPoint, u64)> {
-    configure_network();
     let fr_btc_id = AlkaneId { block: 32, tx: 0 };
-    let mut block = create_block_with_coinbase_tx(1);
+    let mut block = create_block_with_coinbase_tx(1 as u64);
     let funding_outpoint = OutPoint {
         txid: block.txdata[0].compute_txid(),
         vout: 0,
@@ -159,7 +158,7 @@ fn wrap_btc<E: RuntimeEnvironment + Clone + Default + 'static>() -> Result<(OutP
     // Create a block and index it
     block.txdata.push(wrap_tx.clone());
     let mut env = E::default();
-    index_block::<E>(&mut env, &block, 1)?;
+    index_block::<E>(&mut env, &block, 1 as u32)?;
 
     let sheet = get_last_outpoint_sheet::<E>(&mut env, &block)?;
     let balance = sheet.get(&fr_btc_id.clone().into(), &mut env);
@@ -245,16 +244,15 @@ fn unwrap_btc<E: RuntimeEnvironment + Clone + Default + 'static>(
     vout: u128,
     height: u32,
 ) -> Result<()> {
-    configure_network();
     let fr_btc_id = AlkaneId { block: 32, tx: 0 };
-    let mut block = create_block_with_coinbase_tx(height);
+    let mut block = create_block_with_coinbase_tx(height as u64);
     let unwrap_tx = unwrap_btc_tx::<E>(fr_btc_input_outpoint, amount_frbtc_to_burn, vout)?;
     let amt_actual_burn = std::cmp::min(amount_original_frbtc, amount_frbtc_to_burn);
 
     // Create a block and index it
     block.txdata.push(unwrap_tx.clone());
     let mut env = E::default();
-    index_block::<E>(&mut env, &block, height)?;
+    index_block::<E>(&mut env, &block, height as u32)?;
 
     let sheet = get_last_outpoint_sheet::<E>(&mut env, &block)?;
     let balance = sheet.get(&fr_btc_id.clone().into(), &mut env);
@@ -303,7 +301,7 @@ fn set_signer<E: RuntimeEnvironment + Clone + Default + 'static>(
 ) -> Result<Transaction> {
     let fr_btc_id = AlkaneId { block: 32, tx: 0 };
     let height = 3;
-    let mut block = create_block_with_coinbase_tx(height);
+    let mut block = create_block_with_coinbase_tx(height as u64);
     let set_signer = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
         Witness::default(),
         vec![Cellpack {
@@ -316,7 +314,7 @@ fn set_signer<E: RuntimeEnvironment + Clone + Default + 'static>(
 
     // Create a block and index it
     block.txdata.push(set_signer.clone());
-    index_block::<E>(env, &block, height)?;
+    index_block::<E>(env, &block, height as u32)?;
 
     Ok(set_signer)
 }
@@ -347,7 +345,6 @@ fn test_fr_btc_unwrap_more() -> Result<()> {
 
 #[test]
 fn test_set_signer_no_auth() -> Result<()> {
-    configure_network();
     let mut env = TestRuntime::default();
     let set_signer_tx = set_signer::<TestRuntime>(&mut env, OutPoint::default(), 0)?;
     let outpoint = OutPoint {
@@ -360,9 +357,8 @@ fn test_set_signer_no_auth() -> Result<()> {
 
 #[test]
 fn test_fr_btc_wrap_incorrect_signer() -> Result<()> {
-    configure_network();
     let fr_btc_id = AlkaneId { block: 32, tx: 0 };
-    let mut block = create_block_with_coinbase_tx(880_001);
+    let mut block = create_block_with_coinbase_tx(880_001 as u64);
     let funding_outpoint = OutPoint {
         txid: block.txdata[0].compute_txid(),
         vout: 0,
@@ -380,7 +376,7 @@ fn test_fr_btc_wrap_incorrect_signer() -> Result<()> {
     // Create a block and index it
     block.txdata.push(wrap_tx.clone());
     let mut env = TestRuntime::default();
-    index_block::<TestRuntime>(&mut env, &block, 880_001)?;
+    index_block::<TestRuntime>(&mut env, &block, 880_001 as u32)?;
 
     let sheet = get_last_outpoint_sheet::<TestRuntime>(&mut env, &block)?;
     let balance = sheet.get(&fr_btc_id.clone().into(), &mut env);
@@ -393,7 +389,6 @@ fn test_fr_btc_wrap_incorrect_signer() -> Result<()> {
 
 #[test]
 fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
-    configure_network();
     let (wrap_outpoint, fr_btc_amount) = wrap_btc::<TestRuntime>()?; // height 1
 
     // Unwrap at height 2
@@ -403,9 +398,9 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
         unwrap_btc_tx::<TestRuntime>(wrap_outpoint, fr_btc_amount, vout_for_spendable as u128)?;
 
     let mut env = TestRuntime::default();
-    let mut block2 = create_block_with_coinbase_tx(height2);
+    let mut block2 = create_block_with_coinbase_tx(height2 as u64);
     block2.txdata.push(unwrap_tx.clone());
-    index_block::<TestRuntime>(&mut env, &block2, height2)?;
+    index_block::<TestRuntime>(&mut env, &block2, height2 as u32)?;
 
     // Before fulfillment, last_block should not have advanced past the block with unfulfilled payment
     let last_block_before: u128 = unwrap_view::fr_btc_storage_pointer::<TestRuntime>()

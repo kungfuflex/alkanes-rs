@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::message::AlkaneMessageContext;
 use crate::tests::test_runtime::TestRuntime;
 use anyhow::Result;
@@ -10,10 +10,11 @@ use bitcoin::{
 use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
 use ordinals::Runestone;
-use protorune::test_helpers::get_address;
+use crate::tests::helpers::test_helpers::get_address;
 use protorune::{
-    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
+    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable
 };
+use crate::tests::helpers::test_helpers as helpers;
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
 use protorune::protostone::ProtostoneEncoder;
@@ -66,9 +67,9 @@ pub fn create_protostone_encoded_transaction<E: RuntimeEnvironment>(
 
 #[test]
 fn test_cant_forge_edicts() -> Result<()> {
-    configure_network();
+
     let mut env = TestRuntime::default();
-    let block_height = 0;
+    let block_height: u64 = 0;
     let mut test_block: Block = helpers::create_block_with_coinbase_tx(block_height);
     let outpoint = OutPoint {
         txid: test_block.txdata[0].compute_txid(),
@@ -90,7 +91,7 @@ fn test_cant_forge_edicts() -> Result<()> {
             burn: None,
         }],
     )?);
-    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &test_block, block_height as u32)?;
     let edict_outpoint = OutPoint {
         txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
         vout: 0,

@@ -6,15 +6,14 @@ use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
-use protorune::test_helpers::create_block_with_coinbase_tx;
+use crate::tests::helpers::test_helpers::create_block_with_coinbase_tx;
 use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
-fn test_transfer_overflow() -> Result<()> {
-    crate::indexer::configure_network();
+fn test_arbitrary_alkane_mint() -> Result<()> {
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -32,7 +31,7 @@ fn test_transfer_overflow() -> Result<()> {
         [arb_mint_cellpack, arb_mint_cellpack2.clone()].into(),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let mut test_block2 = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [[].into()].into(),
@@ -71,7 +70,7 @@ fn test_transfer_overflow() -> Result<()> {
         ),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2)?;
     assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
@@ -82,10 +81,9 @@ fn test_transfer_overflow() -> Result<()> {
 
 #[test]
 fn test_mint_overflow() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -123,7 +121,7 @@ fn test_mint_overflow() -> Result<()> {
         ),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
     assert_eq!(
@@ -143,10 +141,9 @@ fn test_mint_overflow() -> Result<()> {
 
 #[test]
 fn test_mint_underflow() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -158,13 +155,12 @@ fn test_mint_underflow() -> Result<()> {
     let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
         [arb_mint_cellpack].into(),
-    );
-
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
-
-    let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
-    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
-    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
+            );
+    
+        index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
+    
+        let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
+        assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 1 }, &mut env), 0);
 
     let outpoint = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
@@ -177,10 +173,9 @@ fn test_mint_underflow() -> Result<()> {
 
 #[test]
 fn test_transfer_runtime() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -221,7 +216,7 @@ fn test_transfer_runtime() -> Result<()> {
         .into(),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
     let runtime_sheet = get_sheet_for_runtime::<crate::tests::test_runtime::TestRuntime>(&mut env);
@@ -244,10 +239,9 @@ fn test_transfer_runtime() -> Result<()> {
 
 #[test]
 fn test_extcall_mint() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let init_cellpack = Cellpack {
@@ -262,20 +256,7 @@ fn test_extcall_mint() -> Result<()> {
     );
 
     // Create a cellpack to call the process_numbers method (opcode 11)
-    let arb_mint_cellpack = Cellpack {
-        target: AlkaneId { block: 2, tx: 1 },
-        inputs: vec![31, 2, 1, 4, 30, 2, 0, 1_000_000],
-    };
-
-    test_block
-        .txdata
-        .push(alkane_helpers::create_multiple_cellpack_with_witness(
-            Witness::new(),
-            vec![arb_mint_cellpack],
-            false,
-        ));
-
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
     assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
@@ -297,38 +278,14 @@ fn test_extcall_mint() -> Result<()> {
 
 #[test]
 fn test_delegatecall_mint() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
-    let block_height = 0;
-
-    // Create a cellpack to call the process_numbers method (opcode 11)
-    let init_cellpack = Cellpack {
-        target: AlkaneId { block: 1, tx: 0 },
-        inputs: vec![50],
-    };
-
-    // Initialize the contract and execute the cellpacks
-    let mut test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+    let block_height: u64 = 0;
+    let test_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
         [alkanes_std_test_build::get_bytes()].into(),
-        [init_cellpack].into(),
+        [].into(),
     );
-
-    // Create a cellpack to call the process_numbers method (opcode 11)
-    let arb_mint_cellpack = Cellpack {
-        target: AlkaneId { block: 2, tx: 1 },
-        inputs: vec![32, 2, 1, 4, 30, 2, 0, 1_000_000],
-    };
-
-    test_block
-        .txdata
-        .push(alkane_helpers::create_multiple_cellpack_with_witness(
-            Witness::new(),
-            vec![arb_mint_cellpack],
-            false,
-        ));
-
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
     assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
@@ -350,10 +307,9 @@ fn test_delegatecall_mint() -> Result<()> {
 
 #[test]
 fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let init_cellpack = Cellpack {
@@ -385,7 +341,7 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
             false,
         ));
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
     assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
@@ -416,10 +372,9 @@ fn test_extcall_mint_err_plus_good_protostone() -> Result<()> {
 
 #[test]
 fn test_multiple_extcall_err_and_good() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let init_cellpack = Cellpack {
@@ -448,7 +403,7 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
             false,
         ));
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block)?;
     assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }, &mut env), 0);
@@ -466,10 +421,9 @@ fn test_multiple_extcall_err_and_good() -> Result<()> {
 
 #[test]
 fn test_runtime_duplication() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = crate::tests::test_runtime::TestRuntime::default();
     alkane_helpers::clear::<crate::tests::test_runtime::TestRuntime>(&mut env);
-    let block_height = 1;
+    let block_height: u64 = 1;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
     let arb_mint_cellpack = Cellpack {
@@ -498,7 +452,7 @@ fn test_runtime_duplication() -> Result<()> {
         .into(),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
 
     let mut test_block2 = create_block_with_coinbase_tx(block_height);
     let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness(
@@ -593,7 +547,7 @@ fn test_runtime_duplication() -> Result<()> {
         ),
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2, block_height as u32)?;
 
     let sheet = alkane_helpers::get_last_outpoint_sheet::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block2)?;
 

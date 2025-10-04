@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::tests::helpers::{
     self as alkane_helpers,
     assert_binary_deployed_to_id,
@@ -18,7 +18,7 @@ use bitcoin::{Block, OutPoint, Witness};
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use metashrew_support::environment::RuntimeEnvironment;
-use protorune::test_helpers::{create_block_with_coinbase_tx, ADDRESS1, ADDRESS2};
+use crate::tests::helpers::test_helpers::{create_block_with_coinbase_tx, ADDRESS1, ADDRESS2};
 use protorune_support::balance_sheet::BalanceSheetOperations;
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::protostone::ProtostoneEdict;
@@ -114,7 +114,7 @@ fn generate_proof(leaf_hashes: &[[u8; 32]], leaf_index: usize) -> Vec<[u8; 32]> 
 
 fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'static>(
     env: &mut E,
-    block_height: u32,
+    block_height: u64,
     deadline: u128,
     leaf_address: String,
     output_address_index: u32,
@@ -175,7 +175,7 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
         vec![mint_diesel, init_cellpack],
     );
 
-    index_block::<E>(env, &test_block, block_height)?;
+    index_block::<E>(env, &test_block, block_height as u32)?;
 
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
     assert_binary_deployed_to_id(env, merkle_distributor_id.clone(), merkle_testnet_build.clone())?;
@@ -206,7 +206,7 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
         false,
     ));
 
-    index_block::<E>(env, &claim_block, block_height + 1)?;
+    index_block::<E>(env, &claim_block, (block_height + 1) as u32)?;
 
     let sheet = get_last_outpoint_sheet(env, &claim_block)?;
     assert_eq!(
@@ -219,7 +219,6 @@ fn helper_test_merkle_distributor<E: RuntimeEnvironment + Clone + Default + 'sta
 
 #[test]
 fn test_merkle_distributor() -> Result<()> {
-    configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear(&mut env);
     helper_test_merkle_distributor(&mut env, 840_000, 900_000, ADDRESS1(), 0)?;
@@ -228,7 +227,6 @@ fn test_merkle_distributor() -> Result<()> {
 
 #[test]
 fn test_merkle_distributor_admin_collect() -> Result<()> {
-    configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear(&mut env);
     let init_block =
@@ -244,7 +242,7 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
         auth_sheet.get(&merkle_distributor_id.clone().into(), &mut env),
         5
     );
-    let block_height = 840_001;
+    let block_height: u64 = 840_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
             let collect_tx =
             alkane_helpers::create_multiple_cellpack_with_witness_and_in_with_edicts::<TestRuntime>(
@@ -263,7 +261,7 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
             false,
         );
     spend_block.txdata.push(collect_tx.clone());
-    index_block::<TestRuntime>(&mut env, &spend_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &spend_block, block_height as u32)?;
     let sheet = get_last_outpoint_sheet(&mut env, &spend_block)?;
     assert_eq!(
         sheet.get(&merkle_distributor_id.clone().into(), &mut env),
@@ -278,13 +276,12 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
 }
 #[test]
 fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
-    configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear(&mut env);
     let _init_block =
         helper_test_merkle_distributor(&mut env, 840_000, 900_000, ADDRESS1(), 0)?;
     let merkle_distributor_id = AlkaneId { block: 2, tx: 1 };
-    let block_height = 840_001;
+    let block_height: u64 = 840_001;
     let mut spend_block = create_block_with_coinbase_tx(block_height);
     let collect_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
         Witness::new(),
@@ -296,7 +293,7 @@ fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
         false,
     );
     spend_block.txdata.push(collect_tx.clone());
-    index_block::<TestRuntime>(&mut env, &spend_block, block_height)?;
+    index_block::<TestRuntime>(&mut env, &spend_block, block_height as u32)?;
     let new_outpoint = OutPoint {
         txid: collect_tx.compute_txid(),
         vout: 3,

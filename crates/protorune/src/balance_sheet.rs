@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
+pub use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
 pub use protorune_support::balance_sheet::{BalanceSheetOperations};
 use protorune_support::rune_transfer::{increase_balances_using_sheet, RuneTransfer};
 use std::collections::BTreeMap;

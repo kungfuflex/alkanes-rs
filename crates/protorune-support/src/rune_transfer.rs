@@ -60,3 +60,14 @@ pub fn refund_to_refund_pointer<E: RuntimeEnvironment, P: KeyValuePointer<E> + C
     // we want to remove any balance from the protomessage vout
     increase_balances_using_sheet(balances_by_output, &sheet, refund_pointer, env)
 }
+
+impl<E: RuntimeEnvironment, P: KeyValuePointer<E> + Clone> TryFrom<BalanceSheet<E, P>>
+    for Vec<RuneTransfer>
+{
+    type Error = anyhow::Error;
+
+    fn try_from(value: BalanceSheet<E, P>) -> Result<Self, Self::Error> {
+        Ok(RuneTransfer::from_balance_sheet(&value))
+    }
+}
+

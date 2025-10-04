@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::network::genesis;
 use crate::tests::helpers as alkane_helpers;
 use crate::tests::std::alkanes_std_genesis_alkane_build;
@@ -12,9 +12,9 @@ use bitcoin::hashes::Hash;
 use protorune_support::utils::consensus_encode;
 use protorune::balance_sheet::load_sheet;
 use metashrew_support::index_pointer::IndexPointer;
-use protorune::test_helpers::create_block_with_coinbase_tx;
+use crate::tests::helpers::test_helpers::create_block_with_coinbase_tx;
 use protorune_support::balance_sheet::ProtoruneRuneId;
-use protorune::test_helpers::create_protostone_encoded_tx;
+use crate::tests::helpers::test_helpers::create_protostone_encoded_tx;
 use protorune_support::protostone::Protostone;
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::message::MessageContext;
@@ -67,10 +67,8 @@ fn display_benchmark_footer(rt_env: &mut TestRuntime) {
 }
 #[test]
 fn test_genesis() -> Result<()> {
-    configure_network();
     let mut rt_env = TestRuntime::default();
-    alkane_helpers::clear(&mut rt_env);
-    let block_height = 0;
+let block_height: u64 = 0;
 
     // Initialize fuel benchmarks collection
     let mut benchmarks = Vec::new();
@@ -107,11 +105,11 @@ fn test_genesis() -> Result<()> {
     ));
 
     // Initialize FuelTank for the first block
-    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height);
+    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&test_block, block_height as u32);
     let pre_genesis_fuel = TOTAL_FUEL_START;
 
     // Process the genesis block
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut rt_env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut rt_env, &test_block, block_height as u32)?;
 
     // Get fuel state after genesis block
     let post_genesis_fuel = unsafe {
@@ -137,7 +135,7 @@ fn test_genesis() -> Result<()> {
     let test_block2 = alkane_helpers::init_with_multiple_cellpacks_with_tx([].into(), cellpacks2);
 
     // Initialize FuelTank for the second block
-    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&test_block2, block_height);
+    FuelTank::initialize::<crate::tests::test_runtime::TestRuntime>(&test_block2, block_height as u32);
     let pre_mint_fuel = unsafe {
         match &FuelTank::get_fuel_tank_copy() {
             Some(tank) => tank.block_fuel,
@@ -146,7 +144,7 @@ fn test_genesis() -> Result<()> {
     };
 
     // Process the mint block
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut rt_env, &test_block2, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut rt_env, &test_block2, block_height as u32)?;
 
     // Get fuel state after mint block
     let post_mint_fuel = unsafe {
@@ -196,7 +194,6 @@ fn test_genesis() -> Result<()> {
 
 #[test]
 fn test_genesis_alkane_key() -> Result<()> {
-    configure_network();
     let mut rt_env = TestRuntime::default();
     let len = IndexPointer::<TestRuntime>::from_keyword("/alkanes/")
         .select(&(AlkaneId { tx: 2, block: 0 }).into())
@@ -219,12 +216,11 @@ fn test_genesis_alkane_key() -> Result<()> {
 
 #[test]
 fn test_genesis_indexer_premine() -> Result<()> {
-    configure_network();
     use bitcoin::Txid;
 
     let mut env = TestRuntime::default();
     alkane_helpers::clear(&mut env);
-    let block_height = 0;
+    let block_height: u64 = 0;
     let cellpacks: Vec<Cellpack> = [
         // Auth token factory init
         Cellpack {
@@ -239,7 +235,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
         cellpacks,
     );
 
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &test_block, block_height as u32)?;
     let outpoint = OutPoint {
         txid: Txid::from_byte_array(
             <Vec<u8> as AsRef<[u8]>>::as_ref(
@@ -267,21 +263,10 @@ fn test_genesis_indexer_premine() -> Result<()> {
     assert_eq!(sheet.balances(), out_sheet.balances());
 
     // make sure premine is spendable
-    let mut spend_block = create_block_with_coinbase_tx(block_height);
-    let spend_tx = create_protostone_encoded_tx::<TestRuntime>(
-        outpoint.clone(),
-        vec![Protostone {
-            burn: None,
-            edicts: vec![],
-            pointer: Some(0),
-            refund: None,
-            from: None,
-            protocol_tag: 1,
-            message: vec![],
-        }],
-    );
+    let mut spend_block = create_block_with_coinbase_tx(block_height as u64);
+    let spend_tx = create_protostone_encoded_tx();
     spend_block.txdata.push(spend_tx.clone());
-    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &spend_block, 0)?;
+    index_block::<crate::tests::test_runtime::TestRuntime>(&mut env, &spend_block, 0 as u32)?;
     let new_outpoint = OutPoint {
         txid: spend_tx.compute_txid(),
         vout: 0,

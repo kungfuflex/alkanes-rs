@@ -1,4 +1,4 @@
-use crate::{indexer::configure_network, tests::std::alkanes_std_test_build};
+use crate::{tests::std::alkanes_std_test_build};
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use anyhow::{anyhow, Result};
@@ -13,7 +13,7 @@ use metashrew_support::environment::RuntimeEnvironment;
 
 #[test]
 fn test_vec_inputs() -> Result<()> {
-    configure_network();
+
     let block_height = 0;
     let mut env = TestRuntime::default();
     // Get the LoggerAlkane ID

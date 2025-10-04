@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::tests::helpers::{self as alkane_helpers, assert_return_context};
 use crate::tests::std::alkanes_std_test_build;
 use crate::tests::test_runtime::TestRuntime;
@@ -10,13 +10,12 @@ use bitcoin::block::Header;
 use bitcoin::{
     OutPoint, Transaction,
 };
-use protorune::test_helpers::create_coinbase_transaction;
+use crate::tests::helpers::test_helpers::create_coinbase_transaction;
 use protorune_support::utils::consensus_decode;
 
 #[test]
 fn test_special_extcall() -> Result<()> {
-    configure_network();
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     let get_header = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
@@ -38,15 +37,15 @@ fn test_special_extcall() -> Result<()> {
             .txdata
             .push(create_coinbase_transaction(block_height));
     }
-    let mut env = TestRuntime::default();
-    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
+    let mut rt_env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut rt_env, &test_block, block_height as u32)?;
 
     let outpoint_1 = OutPoint {
         txid: test_block.txdata[1].compute_txid(),
         vout: 3,
     };
 
-    assert_return_context(&mut env, &outpoint_1, |trace_response: TraceResponse| {
+    assert_return_context(&mut rt_env, &outpoint_1, |trace_response: TraceResponse| {
         let data =
             consensus_decode::<Header>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
@@ -59,7 +58,7 @@ fn test_special_extcall() -> Result<()> {
         vout: 3,
     };
 
-    assert_return_context(&mut env, &outpoint_2, |trace_response: TraceResponse| {
+    assert_return_context(&mut rt_env, &outpoint_2, |trace_response: TraceResponse| {
         let data =
             consensus_decode::<Transaction>(&mut std::io::Cursor::new(trace_response.inner.data))?;
 
@@ -72,8 +71,7 @@ fn test_special_extcall() -> Result<()> {
 
 #[test]
 fn test_special_extcall_number_diesel_mints() -> Result<()> {
-    configure_network();
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     let diesel_mint = Cellpack {
         target: AlkaneId { block: 2, tx: 0 },
@@ -107,15 +105,15 @@ fn test_special_extcall_number_diesel_mints() -> Result<()> {
         .into(),
         );
     
-        let mut env = TestRuntime::default();
-        index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
+        let mut rt_env = TestRuntime::default();
+        index_block::<TestRuntime>(&mut rt_env, &test_block, block_height as u32)?;
     
         let outpoint_1 = OutPoint {
             txid: test_block.txdata.last().unwrap().compute_txid(),
             vout: 3,
         };
     
-        assert_return_context(&mut env, &outpoint_1, |trace_response: TraceResponse| {
+        assert_return_context(&mut rt_env, &outpoint_1, |trace_response: TraceResponse| {
             let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
     
             assert_eq!(data, 5);
@@ -125,8 +123,7 @@ fn test_special_extcall_number_diesel_mints() -> Result<()> {
     }
 #[test]
 fn test_special_extcall_total_miner_fees() -> Result<()> {
-    configure_network();
-    let block_height = 0;
+    let block_height: u64 = 0;
 
     let get_miner_fee = Cellpack {
         target: AlkaneId { block: 1, tx: 0 },
@@ -139,15 +136,15 @@ fn test_special_extcall_total_miner_fees() -> Result<()> {
         [get_miner_fee].into(),
     );
 
-    let mut env = TestRuntime::default();
-    index_block::<TestRuntime>(&mut env, &test_block, block_height)?;
+    let mut rt_env = TestRuntime::default();
+    index_block::<TestRuntime>(&mut rt_env, &test_block, block_height as u32)?;
 
     let outpoint_1 = OutPoint {
         txid: test_block.txdata.last().unwrap().compute_txid(),
         vout: 3,
     };
 
-    assert_return_context(&mut env, &outpoint_1, |trace_response: TraceResponse| {
+    assert_return_context(&mut rt_env, &outpoint_1, |trace_response: TraceResponse| {
         let data = u128::from_le_bytes(trace_response.inner.data[0..16].try_into()?);
 
         assert_eq!(data, 50_000_000 * 7);

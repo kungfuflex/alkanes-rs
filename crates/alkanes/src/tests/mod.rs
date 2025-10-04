@@ -52,4 +52,6 @@ pub mod view;
 #[cfg(test)]
 pub mod lib_tests;
 #[cfg(test)]
+pub mod address_test;
+#[cfg(any(feature = "test-utils", test))]
 pub mod test_runtime;

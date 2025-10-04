@@ -464,7 +464,8 @@ pub fn simulate_parcel<E: RuntimeEnvironment + Clone + 'static + Default>(
     let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack, env)?;
     credit_balances(&mut atomic, &myself, &parcel.runes, env)?;
     prepare_context(context.clone(), &caller, &myself, false);
-    let (response, gas_used) = run_after_special(context.clone(), binary, fuel, env)?;
+    let (mut response, gas_used) = run_after_special(context.clone(), binary, fuel, env)?;
+    env.log(&format!("simulate_parcel response: {:?}", response));
     pipe_storagemap_to(
         &response.storage,
         &mut atomic.derive(&IndexPointer::<E>::from_keyword("/alkanes/").select(&myself.clone().into())),
@@ -472,13 +473,14 @@ pub fn simulate_parcel<E: RuntimeEnvironment + Clone + 'static + Default>(
     );
     let mut combined = BalanceSheet::<E, AtomicPointer<E>>::new_ptr_backed(AtomicPointer::default());
     (*parcel.runtime_balances).pipe(&mut combined, env)?;
-    <BalanceSheet<E, AtomicPointer<E>> as TryFrom<Vec<RuneTransfer>>>::try_from(parcel.runes.clone())?
-        .pipe(&mut combined, env)?;
     let sheet = <BalanceSheet<E, AtomicPointer<E>> as TryFrom<Vec<RuneTransfer>>>::try_from(
         response.alkanes.clone().into(),
     )?;
     combined.debit(&sheet, env)?;
     debit_balances(&mut atomic, &myself, &response.alkanes, env)?;
+    response.alkanes =
+        <Vec<RuneTransfer> as TryFrom<BalanceSheet<E, AtomicPointer<E>>>>::try_from(combined)?
+            .into();
     Ok((response, gas_used))
 }
 

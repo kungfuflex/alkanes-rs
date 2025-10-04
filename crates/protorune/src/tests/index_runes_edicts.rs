@@ -14,10 +14,7 @@ mod tests {
 
     use helpers::clear;
     #[allow(unused_imports)]
-    use metashrew_core::{
-        println,
-        stdio::{stdout, Write},
-    };
+    
     use ordinals::{Edict, RuneId};
 
     use wasm_bindgen_test::*;

@@ -1,4 +1,4 @@
-use crate::indexer::configure_network;
+
 use crate::tests::test_runtime::TestRuntime;
 use crate::view::get_statics;
 use alkanes_support::id::AlkaneId;
@@ -16,7 +16,7 @@ fn setup_test_environment() {
 
 #[test]
 fn test_get_statics_caching() -> Result<()> {
-    configure_network();
+
     setup_test_environment();
     let mut env = TestRuntime::default();
 

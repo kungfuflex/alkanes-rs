@@ -45,7 +45,9 @@ impl<E: RuntimeEnvironment + Default, P: KeyValuePointer<E> + Clone> TryInto<Bal
 {
     type Error = anyhow::Error;
     fn try_into(self) -> Result<BalanceSheet<E, P>> {
-        <AlkaneTransferParcel as Into<Vec<RuneTransfer>>>::into(self).try_into()
+        let transfers: Vec<RuneTransfer> = self.into();
+        let result: Result<BalanceSheet<E, P>> = transfers.try_into();
+        result
     }
 }
 

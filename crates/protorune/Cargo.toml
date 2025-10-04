@@ -37,5 +37,4 @@ bytes = { workspace = true }
 [build-dependencies]
 prost-build = { workspace = true }
 
-[dev-dependencies]
-alkanes = { path = "../alkanes", features = ["test-utils"] }
+

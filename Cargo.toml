@@ -12,7 +12,7 @@ repository = "https://github.com/kungfuflex/alkanes-rs"
 [workspace.dependencies]
 anyhow = "1.0.90"
 num = "0.4.3"
-bitcoin = { version = "0.32.4", features = ["rand"] }
+bitcoin = { version = "0.32.7", features = ["rand"] }
 metashrew-core = { path = "./crates/metashrew-core" }
 metashrew-support = { path = "./crates/metashrew-support" }
 ordinals = { path = "./crates/ordinals" }

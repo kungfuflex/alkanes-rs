@@ -5,13 +5,12 @@ use anyhow::Result;
 use bitcoin::{OutPoint, Witness};
 
 use crate::indexer::index_block;
-use crate::indexer::configure_network;
 use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::test_runtime::TestRuntime;
 
 #[test]
 fn test_incoming_alkanes_ordered() -> Result<()> {
-    configure_network();
+
     let mut env = TestRuntime::default();
     alkane_helpers::clear(&mut env);
     let block_height = 0;

@@ -11,234 +11,254 @@ mod tests {
         address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut,
         Witness,
     };
-    use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
+    use metashrew_support::environment::RuntimeEnvironment;
+    use metashrew_support::index_pointer::{IndexPointer, KeyValuePointer};
     use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
     use protorune_support::protostone::Protostone;
     use protorune_support::rune_transfer::RuneTransfer;
     use protorune_support::utils::consensus_encode;
 
-    #[allow(unused_imports)]
-    use metashrew_core::{
-        println,
-        stdio::{stdout, Write},
-    };
-
+    use alkanes::tests::test_runtime::TestRuntime;
     use helpers::clear;
-    use metashrew_support::index_pointer::KeyValuePointer;
     use ordinals::{Etching, Rune, Runestone};
     use std::str::FromStr;
     use wasm_bindgen_test::*;
 
-    struct ForwardAll(());
-    struct MixedForwarding(());
-    struct FullRefund(());
-    struct FullRefundWithErr(());
-    struct OverForward(());
-    struct MintNewProtorune(());
-    struct OverStoreInRuntime(());
+struct ForwardAll(());
+struct MixedForwarding(());
+struct FullRefund(());
+struct FullRefundWithErr(());
+struct OverForward(());
+struct MintNewProtorune(());
+struct OverStoreInRuntime(());
 
-    struct ModifyAtomicWithoutErr(());
-    struct ModifyAtomicThenErr(());
+struct ModifyAtomicWithoutErr(());
+struct ModifyAtomicThenErr(());
 
-    struct MixedForwardingStaticRuntime(());
+struct MixedForwardingStaticRuntime(());
 
-    impl MessageContext for ForwardAll {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        // takes half of the first runes balance
-        fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            let runes: Vec<RuneTransfer> = parcel.runes.clone();
-            // transfer protorunes to the pointer
-            Ok((runes, BalanceSheet::default()))
-        }
+impl<E: RuntimeEnvironment> MessageContext<E> for ForwardAll {
+    fn protocol_tag() -> u128 {
+        122
     }
-    impl MessageContext for MixedForwarding {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        /// quarter forward, eighth store in runtime, rest refund
-        /// only does it for the first input
-        fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            let mut new_runtime_balances = parcel.runtime_balances.clone();
-            let transfer = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: parcel.runes[0].value / 4,
-            };
+    // takes half of the first runes balance
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+        let runes: Vec<RuneTransfer> = parcel.runes.clone();
+        // transfer protorunes to the pointer
+        Ok((runes, BalanceSheet::default()))
+    }
+}
+impl<E: RuntimeEnvironment> MessageContext<E> for MixedForwarding {
+    fn protocol_tag() -> u128 {
+        122
+    }
+    /// quarter forward, eighth store in runtime, rest refund
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+let mut new_runtime_balances = BalanceSheet::new_ptr_backed(parcel.runtime_balances.ptr.clone());
+        let transfer = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: parcel.runes[0].value / 4,
+        };
 
-            let transfer_to_runtime = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: parcel.runes[0].value / 8,
-            };
-            println!("{:?}", transfer_to_runtime);
-            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
-                transfer_to_runtime,
-            ])?
-            .pipe(&mut new_runtime_balances)?;
-            Ok((vec![transfer], *new_runtime_balances))
-        }
+        let transfer_to_runtime = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: parcel.runes[0].value / 8,
+        };
+        env.log(&format!("{:?}", transfer_to_runtime));
+        <BalanceSheet<E, P> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+            transfer_to_runtime,
+        ])?
+        .pipe(&mut new_runtime_balances, env)?;
+        Ok((vec![transfer], new_runtime_balances))
     }
-    impl MessageContext for OverForward {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            let transfer = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: parcel.runes[0].value + 1,
-            };
-            Ok((vec![transfer], BalanceSheet::default()))
-        }
+}
+impl<E: RuntimeEnvironment> MessageContext<E> for OverForward {
+    fn protocol_tag() -> u128 {
+        122
     }
-    impl MessageContext for MintNewProtorune {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            let _ = parcel;
-            let transfer = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: parcel.runes[0].value / 2 - 1,
-            };
-            let mint_rune = ProtoruneRuneId::new(840000, 999);
-            let mint = RuneTransfer {
-                id: mint_rune,
-                value: 10001,
-            };
-            let mut runtime = BalanceSheet::default();
-            runtime.increase(&mint_rune, 12345)?;
-            Ok((vec![transfer, mint], runtime))
-        }
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+        let transfer = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: parcel.runes[0].value + 1,
+        };
+        Ok((vec![transfer], BalanceSheet::default()))
     }
-    impl MessageContext for OverStoreInRuntime {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            let mut new_runtime_balances = parcel.runtime_balances.clone();
-            let transfer = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: parcel.runes[0].value,
-            };
+}
+impl<E: RuntimeEnvironment> MessageContext<E>
+    for MintNewProtorune
+{
+    fn protocol_tag() -> u128 {
+        122
+    }
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+        let _ = parcel;
+        let transfer = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: parcel.runes[0].value / 2 - 1,
+        };
+        let mint_rune = ProtoruneRuneId::new(840000, 999);
+        let mint = RuneTransfer {
+            id: mint_rune,
+            value: 10001,
+        };
+        let mut runtime = BalanceSheet::default();
+        runtime.increase(&mint_rune, 12345, env)?;
+        Ok((vec![transfer, mint], runtime))
+    }
+}
+impl<E: RuntimeEnvironment> MessageContext<E>
+    for OverStoreInRuntime
+{
+    fn protocol_tag() -> u128 {
+        122
+    }
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+        let mut new_runtime_balances = BalanceSheet::new_ptr_backed(parcel.runtime_balances.ptr.clone());
+        let transfer = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: parcel.runes[0].value,
+        };
 
-            let transfer_to_runtime = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: 1,
-            };
-            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
-                transfer_to_runtime,
-            ])?
-            .pipe(&mut new_runtime_balances)?;
-            Ok((vec![transfer], *new_runtime_balances))
-        }
+        let transfer_to_runtime = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: 1,
+        };
+        <BalanceSheet<E, P> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+            transfer_to_runtime,
+        ])?
+        .pipe(&mut new_runtime_balances, env)?;
+        Ok((vec![transfer], new_runtime_balances))
     }
-    impl MessageContext for FullRefund {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        fn handle(
-            _parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            Ok((vec![], BalanceSheet::default()))
-        }
+}
+impl<E: RuntimeEnvironment> MessageContext<E> for FullRefund {
+    fn protocol_tag() -> u128 {
+        122
     }
-    impl MessageContext for FullRefundWithErr {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        fn handle(
-            _parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            Err(anyhow!("full refund"))
-        }
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        _parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+        Ok((vec![], BalanceSheet::default()))
     }
+}
+impl<E: RuntimeEnvironment> MessageContext<E>
+    for FullRefundWithErr
+{
+    fn protocol_tag() -> u128 {
+        122
+    }
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        _parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+        Err(anyhow!("full refund"))
+    }
+}
 
-    impl MessageContext for ModifyAtomicWithoutErr {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            let transfer = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: 50,
-            };
-            let bs = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
-                transfer,
-            ])?;
-            bs.save(
-                &mut parcel
-                    .atomic
-                    .derive(&tables::RuneTable::for_protocol(122).CAP),
-                false,
-            );
-
-            Ok((vec![], BalanceSheet::default()))
-        }
+impl<E: RuntimeEnvironment> MessageContext<E>
+    for ModifyAtomicWithoutErr
+{
+    fn protocol_tag() -> u128 {
+        122
     }
-    impl MessageContext for ModifyAtomicThenErr {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            let transfer = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: 50,
-            };
-            let bs = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
-                transfer,
-            ])?;
-            bs.save(
-                &mut parcel
-                    .atomic
-                    .derive(&tables::RuneTable::for_protocol(122).CAP),
-                false,
-            );
-            Err(anyhow!("full refund"))
-        }
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+        let transfer = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: 50,
+        };
+        let bs = <BalanceSheet<E, P> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+            transfer,
+        ])?;
+        bs.save(
+            &mut parcel
+                .atomic
+                .derive(&tables::RuneTable::<E>::for_protocol(122).CAP),
+            false,
+            env,
+        );
+
+        Ok((vec![], BalanceSheet::default()))
     }
-
-    impl MessageContext for MixedForwardingStaticRuntime {
-        fn protocol_tag() -> u128 {
-            122
-        }
-        /// quarter forward, eighth store in runtime, rest refund
-        /// only does it for the first input
-        fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            let mut new_runtime_balances = BalanceSheet::default();
-            let transfer = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: parcel.runes[0].value / 4,
-            };
-
-            let transfer_to_runtime = RuneTransfer {
-                id: parcel.runes[0].id,
-                value: parcel.runes[0].value / 8,
-            };
-            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
-                transfer_to_runtime,
-            ])?
-            .pipe(&mut new_runtime_balances)?;
-            Ok((vec![transfer], new_runtime_balances))
-        }
+}
+impl<E: RuntimeEnvironment> MessageContext<E>
+    for ModifyAtomicThenErr
+{
+    fn protocol_tag() -> u128 {
+        122
     }
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+        let transfer = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: 50,
+        };
+        let bs = <BalanceSheet<E, P> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+            transfer,
+        ])?;
+        bs.save(
+            &mut parcel
+                .atomic
+                .derive(&tables::RuneTable::<E>::for_protocol(122).CAP),
+            false,
+            env,
+        );
+        Err(anyhow!("full refund"))
+    }
+}
 
-    fn protomessage_from_protoburn_fixture(protocol_id: u128) -> bitcoin::Block {
+impl<E: RuntimeEnvironment> MessageContext<E>
+    for MixedForwardingStaticRuntime
+{
+    fn protocol_tag() -> u128 {
+        122
+    }
+    /// quarter forward, eighth store in runtime, rest refund
+    /// only does it for the first input
+    fn handle<P: KeyValuePointer<E> + Clone>(
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, P>)> {
+        let mut new_runtime_balances = BalanceSheet::default();
+        let transfer = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: parcel.runes[0].value / 4,
+        };
+
+        let transfer_to_runtime = RuneTransfer {
+            id: parcel.runes[0].id,
+            value: parcel.runes[0].value / 8,
+        };
+        <BalanceSheet<E, P> as TryFrom<Vec<RuneTransfer>>>::try_from(vec![
+            transfer_to_runtime,
+        ])?
+        .pipe(&mut new_runtime_balances, env)?;
+        Ok((vec![transfer], new_runtime_balances))
+    }
+}
+
+
+
+    fn protomessage_from_protoburn_fixture<E: RuntimeEnvironment>(env: &mut E, protocol_id: u128) -> bitcoin::Block {
         let previous_output = OutPoint {
             txid: bitcoin::Txid::from_str(
                 "0000000000000000000000000000000000000000000000000000000000000000",
@@ -313,12 +333,12 @@ mod tests {
         };
 
         // op return must be less than 80 bytes or else miners will not accept it
-        assert!(
-            op_return.size() <= 80,
-            "op return ({}) > 80 bytes",
-            op_return.size()
-        );
-
+            env.log(&format!("op return ({}) > 80 bytes", op_return.size()));
+            assert!(
+                op_return.size() <= 80,
+                "op return ({}) > 80 bytes",
+                op_return.size()
+            );
         helpers::create_block_with_txs(vec![Transaction {
             version: bitcoin::transaction::Version(2),
             lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -327,7 +347,10 @@ mod tests {
         }])
     }
 
-    fn protomessage_from_edict_fixture(protocol_id: u128, block_height: u128) -> bitcoin::Block {
+    fn protomessage_from_edict_fixture<E: RuntimeEnvironment + Clone + Default>(
+        protocol_id: u128,
+        block_height: u128,
+    ) -> bitcoin::Block {
         let first_mock_output = OutPoint {
             txid: bitcoin::Txid::from_str(
                 "0000000000000000000000000000000000000000000000000000000000000000",
@@ -337,7 +360,7 @@ mod tests {
         };
 
         let protoburn_tx =
-            helpers::create_default_protoburn_transaction(first_mock_output, protocol_id);
+            helpers::create_default_protoburn_transaction::<E>(first_mock_output, protocol_id);
         let _protorune_id = ProtoruneRuneId {
             block: block_height as u128,
             tx: 0,
@@ -350,24 +373,24 @@ mod tests {
         };
 
         let protomessage_tx =
-            helpers::create_protomessage_from_edict_tx(protoburn_input, protocol_id, vec![]);
+            helpers::create_protomessage_from_edict_tx::<E>(protoburn_input, protocol_id, vec![]);
 
         helpers::create_block_with_txs(vec![protoburn_tx, protomessage_tx])
     }
 
-    /// protomessage in the same transaction as a protoburn
-    /// The protoburn will target the protomessage and directly transfer to it
     #[wasm_bindgen_test]
-#[ignore]
-    fn protomessage_same_tx_as_protoburn_test() {
-        clear();
+    #[ignore]
+    fn protomessage_from_protoburn_test() {
+        let mut runtime = TestRuntime::default();
+        let env = &mut runtime;
+        clear(env);
         let block_height = 840000;
         let protocol_id = 122;
 
-        let test_block = protomessage_from_protoburn_fixture(protocol_id);
+        let test_block = protomessage_from_protoburn_fixture(env, protocol_id);
 
         assert!(
-            Protorune::index_block::<ForwardAll>(test_block.clone(), block_height as u64).is_ok()
+            Protorune::index_block::<ForwardAll>(env, test_block.clone(), block_height as u64).is_ok()
         );
 
         let outpoint_address: OutPoint = OutPoint {
@@ -375,49 +398,53 @@ mod tests {
             vout: 0,
         };
         // check runes balance
-        let sheet = load_sheet(
-            &tables::RUNES
+        let sheet = load_sheet::<TestRuntime, _>(
+            &tables::RuneTable::<TestRuntime>::new()
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address).unwrap()),
+            env,
         );
 
-        let protorunes_sheet = load_sheet(
+        let protorunes_sheet = load_sheet::<TestRuntime, _>(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address).unwrap()),
+            env,
         );
 
         let protorune_id = ProtoruneRuneId {
             block: block_height as u128,
             tx: 0,
         };
-        let stored_runes_balance = sheet.get_cached(&protorune_id);
+        let stored_runes_balance = sheet.get(&protorune_id, env);
         assert_eq!(stored_runes_balance, 0);
 
-        let stored_protorune_balance = protorunes_sheet.get_cached(&protorune_id);
+        let stored_protorune_balance = protorunes_sheet.get(&protorune_id, env);
         assert_eq!(stored_protorune_balance, 1000);
     }
 
-    fn protomessage_from_edict_test_template<T: MessageContext>(
+    fn protomessage_from_edict_test_template<T: MessageContext<TestRuntime>>(
         expected_pointer_amount: u128,
         expected_refunded_amount: u128,
         expected_runtime_amount: u128,
     ) -> (
-        BalanceSheet<IndexPointer>,
-        BalanceSheet<IndexPointer>,
-        BalanceSheet<IndexPointer>,
+        BalanceSheet<TestRuntime, IndexPointer<TestRuntime>>,
+        BalanceSheet<TestRuntime, IndexPointer<TestRuntime>>,
+        BalanceSheet<TestRuntime, IndexPointer<TestRuntime>>,
     ) {
-        clear();
+        let mut runtime = TestRuntime::default();
+        let env = &mut runtime;
+        clear(env);
         let block_height = 840000;
         let protocol_id = 122;
 
-        let test_block = protomessage_from_edict_fixture(protocol_id, block_height);
+        let test_block = protomessage_from_edict_fixture(env, protocol_id, block_height);
         let protorune_id = ProtoruneRuneId {
             block: block_height as u128,
             tx: 0,
         };
 
-        assert!(Protorune::index_block::<T>(test_block.clone(), block_height as u64).is_ok());
+        assert!(Protorune::index_block::<T>(env, test_block.clone(), block_height as u64).is_ok());
         // print_cache();
         // tx 0 is protoburn, tx 1 is protomessage
         let outpoint_address0: OutPoint = OutPoint {
@@ -429,33 +456,38 @@ mod tests {
             vout: 1,
         };
         // check runes balance
-        let sheet = load_sheet(
-            &tables::RUNES
+        let sheet = load_sheet::<TestRuntime, _>(
+            &tables::RuneTable::<TestRuntime>::new()
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address0).unwrap()),
+            env,
         );
 
-        let protorunes_sheet0 = load_sheet(
+        let protorunes_sheet0 = load_sheet::<TestRuntime, _>(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address0).unwrap()),
+            env,
         );
-        let protorunes_sheet1 = load_sheet(
+        let protorunes_sheet1 = load_sheet::<TestRuntime, _>(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address1).unwrap()),
+            env,
         );
-        let protorunes_sheet_runtime =
-            load_sheet(&tables::RuneTable::for_protocol(protocol_id.into()).RUNTIME_BALANCE);
+        let protorunes_sheet_runtime = load_sheet::<TestRuntime, _>(
+            &tables::RuneTable::for_protocol(protocol_id.into()).RUNTIME_BALANCE,
+            env,
+        );
 
-        let stored_runes_balance = sheet.get_cached(&protorune_id);
+        let stored_runes_balance = sheet.get(&protorune_id, env);
         assert_eq!(stored_runes_balance, 0);
 
-        let stored_protorune_balance0 = protorunes_sheet0.get_cached(&protorune_id);
+        let stored_protorune_balance0 = protorunes_sheet0.get(&protorune_id, env);
         assert_eq!(stored_protorune_balance0, expected_pointer_amount);
-        let stored_protorune_balance1 = protorunes_sheet1.get_cached(&protorune_id);
+        let stored_protorune_balance1 = protorunes_sheet1.get(&protorune_id, env);
         assert_eq!(stored_protorune_balance1, expected_refunded_amount);
-        let stored_protorune_balance_runtime = protorunes_sheet_runtime.get_cached(&protorune_id);
+        let stored_protorune_balance_runtime = protorunes_sheet_runtime.get(&protorune_id, env);
         assert_eq!(stored_protorune_balance_runtime, expected_runtime_amount);
 
         return (
@@ -465,17 +497,20 @@ mod tests {
         );
     }
 
-    fn protomessage_from_edict_multiple_protomessages_test_template<T: MessageContext>(
+    fn protomessage_from_edict_multiple_protomessages_test_template<
+        T: MessageContext<TestRuntime>>(
         expected_pointer_amount: u128,
         expected_refunded_amount: u128,
         expected_runtime_amount: u128,
     ) {
-        clear();
+        let mut runtime = TestRuntime::default();
+        let env = &mut runtime;
+        clear(env);
 
         let protocol_id = 122;
         let block_height = 840001;
 
-        let mut test_block = protomessage_from_edict_fixture(protocol_id, block_height);
+        let mut test_block = protomessage_from_edict_fixture(env, protocol_id, block_height);
         let protorune_id = ProtoruneRuneId {
             block: block_height,
             tx: 0,
@@ -491,9 +526,9 @@ mod tests {
 
         test_block.txdata.push(protomessage_tx2);
 
-        assert!(Protorune::index_block::<T>(test_block.clone(), block_height as u64).is_ok());
+        assert!(Protorune::index_block::<T>(env, test_block.clone(), block_height as u64).is_ok());
 
-        let protorunes_sheet0 = load_sheet(
+        let protorunes_sheet0 = load_sheet::<TestRuntime, _>(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(
@@ -503,8 +538,9 @@ mod tests {
                     })
                     .unwrap(),
                 ),
+            env,
         );
-        let protorunes_sheet1 = load_sheet(
+        let protorunes_sheet1 = load_sheet::<TestRuntime, _>(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(
@@ -514,15 +550,16 @@ mod tests {
                     })
                     .unwrap(),
                 ),
+            env,
         );
         let protorunes_sheet_runtime =
-            load_sheet(&tables::RuneTable::for_protocol(protocol_id.into()).RUNTIME_BALANCE);
+            load_sheet::<TestRuntime, _>(&tables::RuneTable::for_protocol(protocol_id.into()).RUNTIME_BALANCE, env);
 
-        let stored_protorune_balance0 = protorunes_sheet0.get_cached(&protorune_id);
+        let stored_protorune_balance0 = protorunes_sheet0.get(&protorune_id, env);
         assert_eq!(stored_protorune_balance0, expected_pointer_amount);
-        let stored_protorune_balance_runtime = protorunes_sheet_runtime.get_cached(&protorune_id);
+        let stored_protorune_balance_runtime = protorunes_sheet_runtime.get(&protorune_id, env);
         assert_eq!(stored_protorune_balance_runtime, expected_runtime_amount);
-        let stored_protorune_balance1 = protorunes_sheet1.get_cached(&protorune_id);
+        let stored_protorune_balance1 = protorunes_sheet1.get(&protorune_id, env);
         assert_eq!(stored_protorune_balance1, expected_refunded_amount);
     }
 
@@ -572,12 +609,14 @@ mod tests {
         let (protorunes_sheet0, protorunes_sheet1, protorunes_sheet_runtime) =
             protomessage_from_edict_test_template::<MintNewProtorune>(499, 501, 0);
         let minted_protorune = ProtoruneRuneId::new(840000, 999);
+        let mut runtime = TestRuntime::default();
+        let env = &mut runtime;
 
-        let minted_protorune_to_pointer = protorunes_sheet0.get_cached(&minted_protorune);
+        let minted_protorune_to_pointer = protorunes_sheet0.get(&minted_protorune, env);
         assert_eq!(minted_protorune_to_pointer, 10001);
-        let minted_protorune_to_runtime = protorunes_sheet_runtime.get_cached(&minted_protorune);
+        let minted_protorune_to_runtime = protorunes_sheet_runtime.get(&minted_protorune, env);
         assert_eq!(minted_protorune_to_runtime, 12345);
-        let minted_protorune_to_refund = protorunes_sheet1.get_cached(&minted_protorune);
+        let minted_protorune_to_refund = protorunes_sheet1.get(&minted_protorune, env);
         assert_eq!(minted_protorune_to_refund, 0);
     }
 
@@ -594,9 +633,11 @@ mod tests {
             block: block_height as u128,
             tx: 0,
         };
-        let bs = load_sheet(&tables::RuneTable::for_protocol(protocol_id as u128).CAP);
+        let mut runtime = TestRuntime::default();
+        let env = &mut runtime;
+        let bs = load_sheet::<TestRuntime, _>(env, &tables::RuneTable::for_protocol(protocol_id as u128).CAP);
 
-        let amount = bs.get_cached(&protorune_id);
+        let amount = bs.get(&protorune_id, env);
         assert_eq!(amount, 50);
     }
 
@@ -613,9 +654,11 @@ mod tests {
             block: block_height as u128,
             tx: 0,
         };
-        let bs = load_sheet(&tables::RuneTable::for_protocol(protocol_id as u128).CAP);
+        let mut runtime = TestRuntime::default();
+        let env = &mut runtime;
+        let bs = load_sheet::<TestRuntime, _>(env, &tables::RuneTable::for_protocol(protocol_id as u128).CAP);
 
-        let amount = bs.get_cached(&protorune_id);
+        let amount = bs.get(&protorune_id, env);
         assert_eq!(amount, 0);
     }
 

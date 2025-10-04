@@ -6,11 +6,8 @@ mod tests {
     use anyhow::Result;
     use bitcoin::OutPoint;
     use metashrew_support::index_pointer::AtomicPointer;
-    use metashrew_core::{
-        println,
-        stdio::{stdout, Write},
-    };
-    use protobuf::{Message, MessageField};
+    
+    use prost::{Message};
     use protorune_support::balance_sheet::BalanceSheet;
     use protorune_support::proto::protorune::{ProtorunesWalletRequest, WalletResponse};
     use protorune_support::rune_transfer::RuneTransfer;
@@ -80,7 +77,7 @@ mod tests {
     //     // Create a request to get protorunes for the address
     //     let mut request = ProtorunesWalletRequest::new();
     //     request.wallet = address_bytes.clone();
-    //     request.protocol_tag = MessageField::some(protocol_id.into());
+    //     request.protocol_tag = Some(protocol_id.into());
 
     //     // Call protorunes_by_address
     //     let response: WalletResponse =

@@ -1,4 +1,4 @@
-use crate::indexer::{index_block, configure_network};
+use crate::indexer::{index_block};
 use crate::tests::helpers::{self as alkane_helpers};
 use crate::tests::std::alkanes_std_test_build;
 use crate::tests::test_runtime::TestRuntime;
@@ -11,7 +11,6 @@ use bitcoin::OutPoint;
 
 #[test]
 fn test_infinite_loop() -> Result<()> {
-    configure_network();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -50,7 +49,6 @@ fn test_infinite_loop() -> Result<()> {
 
 #[test]
 fn test_infinite_extcall_loop() -> Result<()> {
-    configure_network();
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)

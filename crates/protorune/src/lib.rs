@@ -29,7 +29,7 @@ use alkanes_support::logging;
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
-use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
+use bitcoin::{opcodes, Address, Network, OutPoint, ScriptBuf, Transaction, TxOut};
 use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::environment::RuntimeEnvironment;
 use std::marker::PhantomData;
@@ -41,7 +41,6 @@ use ordinals::{Etching, Rune};
 use prost::Message;
 use protorune_support::balance_sheet::BalanceSheetOperations;
 use protorune_support::constants;
-use protorune_support::network::to_address_str;
 use protorune_support::proto::protorune as proto;
 use protorune_support::{
     balance_sheet::{BalanceSheet, ProtoruneRuneId},
@@ -207,6 +206,7 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
         index: u32,
         block: &Block,
         runestone_output_index: u32,
+        network: Network,
     ) -> Result<()> {
         let mut sheets: Vec<BalanceSheet<E, AtomicPointer<E>>> = tx
             .input
@@ -239,6 +239,7 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
                 &mut balances_by_output,
                 unallocated_to,
                 tx,
+                network,
             )?;
         }
         if let Some(mint) = runestone.mint {
@@ -452,10 +453,11 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<E, AtomicPointer<E>>>,
         unallocated_to: u32,
         tx: &Transaction,
+        network: Network,
     ) -> Result<()> {
         let etching_rune = match etching.rune {
             Some(rune) => {
-                if Self::verify_non_reserved_name(env, height.try_into()?, &rune).is_ok()
+                if Self::verify_non_reserved_name(env, height.try_into()?, &rune, network).is_ok()
                     && validate_rune_etch::<E>(env, tx, rune.commitment(), height)?
                 {
                     rune
@@ -572,9 +574,9 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
         Ok(())
     }
 
-    fn verify_non_reserved_name(env: &mut E, block: u32, rune: &Rune) -> Result<()> {
+    fn verify_non_reserved_name(env: &mut E, block: u32, rune: &Rune, network: Network) -> Result<()> {
         // TODO: chain name
-        let minimum_name = Rune::minimum_at_height(Network::Bitcoin, ordinals::Height(block));
+        let minimum_name = Rune::minimum_at_height(network, ordinals::Height(block));
         if rune.n() < minimum_name.n() {
             env.log("error not unlocked");
             return Err(anyhow!("Given name is not unlocked yet"));
@@ -611,7 +613,7 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
         Err(anyhow!("did not find a output index"))
     }
 
-    pub fn index_unspendables<T: MessageContext<E>>(env: &mut E, block: &Block, height: u64) -> Result<()> {
+    pub fn index_unspendables<T: MessageContext<E>>(env: &mut E, block: &Block, height: u64, network: Network) -> Result<()> {
         for (index, tx) in block.txdata.iter().enumerate() {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
                 let mut atomic = AtomicPointer::<E>::default();
@@ -625,6 +627,7 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
                     index as u32,
                     block,
                     runestone_output_index,
+                    network,
                 ) {
                     Err(e) => {
                         env.log(&format!("err: {:?}", e));
@@ -670,7 +673,7 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey)?;
+                    let address_str = bitcoin::Address::from_script(output_script_pubkey, bitcoin::Network::Regtest)?.to_string();
                     let address = address_str.into_bytes();
 
                     // Add address to the set of updated addresses
@@ -712,7 +715,7 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey)?;
+                    let address_str = bitcoin::Address::from_script(output_script_pubkey, bitcoin::Network::Regtest)?.to_string();
                     let address = address_str.into_bytes();
 
                     // Add address to the set of updated addresses
@@ -1057,7 +1060,7 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
     #[cfg(not(feature = "mainnet"))]
     pub fn freeze_storage(env: &mut E, _height: u64) {}
 
-    pub fn index_block<T: MessageContext<E>>(env: &mut E, block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_block<T: MessageContext<E>>(env: &mut E, block: Block, height: u64, network: Network) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));
@@ -1078,7 +1081,7 @@ impl<E: RuntimeEnvironment + Default + Clone> Protorune<E> {
         let updated_addresses = Self::index_spendables(env, &block.txdata)?;
 
         Self::freeze_storage(env, height);
-        Self::index_unspendables::<T>(env, &block, height)?;
+        Self::index_unspendables::<T>(env, &block, height, network)?;
 
         // Return the set of updated addresses
         Ok(updated_addresses)

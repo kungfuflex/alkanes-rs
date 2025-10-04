@@ -4,7 +4,7 @@ use crate::{
     protoburn::{Protoburn, Protoburns},
 };
 use anyhow::{anyhow, Result};
-use bitcoin::{Block, Transaction, Txid};
+use bitcoin::{Address, Block, Network, Transaction, Txid};
 use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
 use ordinals::Runestone;
@@ -87,16 +87,16 @@ impl<E: RuntimeEnvironment + Default + Clone> MessageHandler<E> for Protostone {
 
         // Log the Bitcoin address that can spend the output pointed to by the "pointer" field
         if pointer < num_outputs as u32 {
-            if let Ok(_address) = protorune_support::network::to_address_str(
-                &transaction.output[pointer as usize].script_pubkey,
+            if let Ok(_address) = Address::from_script(
+                &transaction.output[pointer as usize].script_pubkey, Network::Regtest
             ) {
             }
         }
 
         // Log the Bitcoin address that can spend the output pointed to by the "refund_pointer" field
         if refund_pointer < num_outputs as u32 {
-            if let Ok(_address) = protorune_support::network::to_address_str(
-                &transaction.output[refund_pointer as usize].script_pubkey,
+            if let Ok(_address) = Address::from_script(
+                &transaction.output[refund_pointer as usize].script_pubkey, Network::Regtest
             ) {
             }
         }
@@ -143,8 +143,8 @@ impl<E: RuntimeEnvironment + Default + Clone> MessageHandler<E> for Protostone {
 
                         // Log the Bitcoin address again to make it clear this is the refund address being used
                         if refund_pointer < num_outputs as u32 {
-                            if let Ok(_address) = protorune_support::network::to_address_str(
-                                &transaction.output[refund_pointer as usize].script_pubkey,
+                            if let Ok(_address) = Address::from_script(
+                                &transaction.output[refund_pointer as usize].script_pubkey, Network::Regtest
                             ) {
                             }
                         }
@@ -164,8 +164,8 @@ impl<E: RuntimeEnvironment + Default + Clone> MessageHandler<E> for Protostone {
 
                 // Log the Bitcoin address again to make it clear this is the refund address being used
                 if refund_pointer < num_outputs as u32 {
-                    if let Ok(_address) = protorune_support::network::to_address_str(
-                        &transaction.output[refund_pointer as usize].script_pubkey,
+                    if let Ok(_address) = Address::from_script(
+                        &transaction.output[refund_pointer as usize].script_pubkey, Network::Regtest
                     ) {
                     }
                 }

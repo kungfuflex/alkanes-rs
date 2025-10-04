@@ -22,7 +22,6 @@ use protorune_support::balance_sheet::BalanceSheetOperations;
 
 #[test]
 fn test_owned_token() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -75,7 +74,6 @@ fn test_owned_token() -> Result<()> {
 }
 #[test]
 fn test_owned_token_2() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -151,7 +149,6 @@ fn test_owned_token_2() -> Result<()> {
 
 #[test]
 fn test_auth_and_owned_token() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -241,7 +238,6 @@ fn test_auth_and_owned_token() -> Result<()> {
 
 #[test]
 fn test_owned_token_set_name_and_symbol() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
@@ -360,7 +356,6 @@ fn test_owned_token_set_name_and_symbol() -> Result<()> {
 }
 #[test]
 fn test_auth_and_owned_token_multiple() -> Result<()> {
-    crate::indexer::configure_network();
     let mut env = TestRuntime::default();
     alkane_helpers::clear::<TestRuntime>(&mut env);
     let block_height = 0;
