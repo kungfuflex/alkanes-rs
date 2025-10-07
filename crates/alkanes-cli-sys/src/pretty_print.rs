@@ -3,7 +3,7 @@
 //! This module provides functions to display transaction and runestone
 //! analysis results in a human-readable format for the CLI.
 
-use deezel_common::alkanes::types::{
+use alkanes_cli_common::alkanes::types::{
     AlkaneMetadata, AlkanesInspectResult, FuzzingResults, ReadyToSignRevealTx, ReadyToSignTx,
 };
 /// Pretty-prints the analysis for a transaction that is ready to be signed.
@@ -127,7 +127,7 @@ fn pretty_print_metadata(metadata: &AlkaneMetadata) {
 /// Pretty-prints the results of fuzzing analysis.
 fn pretty_print_fuzzing_results(
     fuzzing_results: &FuzzingResults,
-    alkane_id: &deezel_common::alkanes::types::AlkaneId,
+    alkane_id: &alkanes_cli_common::alkanes::types::AlkaneId,
 ) -> anyhow::Result<()> {
     println!("\n=== FUZZING ANALYSIS ===");
     println!("Alkane: {}:{}", alkane_id.block, alkane_id.tx);

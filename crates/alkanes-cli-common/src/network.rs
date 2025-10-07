@@ -3,7 +3,9 @@
 
 use crate::commands::Commands;
 
-use bitcoin::Network;
+use bitcoin::{Network, Script};
+use bech32::Hrp;
+use metashrew_support::address::{AddressEncoding, Payload};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,10 +21,100 @@ pub enum RpcError {
     JsonRpcError { code: i64, message: String },
 }
 
-use bech32::Hrp;
-use bitcoin::Script;
-use metashrew_support::address::{AddressEncoding, Payload};
 static mut _NETWORK: Option<NetworkParams> = None;
+
+impl NetworkParams {
+    pub fn mainnet() -> Self {
+        Self {
+            network: Network::Bitcoin,
+            magic: [0xf9, 0xbe, 0xb4, 0xd9],
+            default_port: 8333,
+            rpc_port: 8332,
+            bech32_hrp: "bc".to_string(),
+            bech32_prefix: "bc".to_string(),
+            p2pkh_prefix: 0,
+            p2sh_prefix: 5,
+        }
+    }
+
+    pub fn testnet() -> Self {
+        Self {
+            network: Network::Testnet,
+            magic: [0x0b, 0x11, 0x09, 0x07],
+            default_port: 18333,
+            rpc_port: 18332,
+            bech32_hrp: "tb".to_string(),
+            bech32_prefix: "tb".to_string(),
+            p2pkh_prefix: 111,
+            p2sh_prefix: 196,
+        }
+    }
+
+    pub fn signet() -> Self {
+        Self {
+            network: Network::Signet,
+            magic: [0x0a, 0x03, 0xcf, 0x40],
+            default_port: 38333,
+            rpc_port: 38332,
+            bech32_hrp: "tb".to_string(),
+            bech32_prefix: "tb".to_string(),
+            p2pkh_prefix: 111,
+            p2sh_prefix: 196,
+        }
+    }
+
+    pub fn regtest() -> Self {
+        Self {
+            network: Network::Regtest,
+            magic: [0xfa, 0xbf, 0xb5, 0xda],
+            default_port: 18444,
+            rpc_port: 18443,
+            bech32_hrp: "bcrt".to_string(),
+            bech32_prefix: "bcrt".to_string(),
+            p2pkh_prefix: 111,
+            p2sh_prefix: 196,
+        }
+    }
+
+    pub fn with_custom_magic(network: Network, p2pkh_prefix: u8, p2sh_prefix: u8, bech32_hrp: String) -> Self {
+        let mut params = match network {
+            Network::Bitcoin => Self::mainnet(),
+            Network::Testnet => Self::testnet(),
+            Network::Signet => Self::signet(),
+            Network::Regtest => Self::regtest(),
+            _ => Self::regtest(),
+        };
+        params.p2pkh_prefix = p2pkh_prefix;
+        params.p2sh_prefix = p2sh_prefix;
+        params.bech32_hrp = bech32_hrp;
+        params
+    }
+
+    pub fn from_magic_str(s: &str) -> Result<(u8, u8, String), DeezelError> {
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() != 3 {
+            return Err(DeezelError::InvalidParameters("Invalid magic string format".to_string()));
+        }
+        let p2pkh_prefix = u8::from_str_radix(parts[0].trim_start_matches("0x"), 16).map_err(|_| DeezelError::InvalidParameters("Invalid p2pkh prefix".to_string()))?;
+        let p2sh_prefix = u8::from_str_radix(parts[1].trim_start_matches("0x"), 16).map_err(|_| DeezelError::InvalidParameters("Invalid p2sh prefix".to_string()))?;
+        let bech32_hrp = parts[2].to_string();
+        Ok((p2pkh_prefix, p2sh_prefix, bech32_hrp))
+    }
+
+    pub fn supported_networks() -> Vec<&'static str> {
+        vec!["mainnet", "testnet", "signet", "regtest"]
+    }
+
+    pub fn from_network_str(s: &str) -> Result<Self, DeezelError> {
+        match s {
+            "mainnet" => Ok(Self::mainnet()),
+            "testnet" => Ok(Self::testnet()),
+            "signet" => Ok(Self::signet()),
+            "regtest" => Ok(Self::regtest()),
+            _ => Err(DeezelError::InvalidParameters(format!("Invalid network: {}", s))),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkParams {
@@ -85,6 +177,18 @@ impl FromStr for DeezelNetwork {
             "regtest" => Ok(DeezelNetwork(Network::Regtest)),
             _ => Err(DeezelError::InvalidParameters(format!("Invalid network: {}", s))),
         }
+    }
+}
+
+impl std::fmt::Display for DeezelNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self.0 {
+            Network::Bitcoin => "mainnet",
+            Network::Testnet => "testnet",
+            Network::Signet => "signet",
+            Network::Regtest => "regtest",
+            _ => "unknown",
+        })
     }
 }
 

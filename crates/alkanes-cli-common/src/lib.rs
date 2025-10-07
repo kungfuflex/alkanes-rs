@@ -27,6 +27,7 @@ pub mod crypto_worker;
 /// - `transaction`: Transaction construction and signing
 /// - `utils`: Common utilities
 pub mod provider;
+pub mod native_provider;
 extern crate alloc;
 
 #[cfg(not(feature = "std"))]
@@ -373,7 +374,7 @@ pub mod prelude {
 pub use crate::rpc::{RpcClient};
 pub use crate::network::{RpcConfig, DeezelNetwork};
     pub use bitcoin::{Network, Transaction, Address, ScriptBuf};
-    pub use ordinals::Runestone;
+    
     pub use crate::alkanes::protostone::Protostone;
 }
 

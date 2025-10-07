@@ -6,7 +6,11 @@
 //! - [external:bc1q...] - External address reference
 //! - Raw Bitcoin addresses
 
-use crate::{Result, DeezelError};
+use crate::traits::*;
+use crate::network::NetworkParams;
+use crate::{
+    DeezelError, Result,
+};
 use crate::traits::DeezelProvider;
 
 use crate::wallet::AddressType;
@@ -374,7 +378,8 @@ mod standalone_impls {
         RuneInfo as OrdRuneInfo, Runes as OrdRunes, TxInfo as OrdTxInfo,
     };
 
-    #[async_trait(?Send)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl JsonRpcProvider for StandaloneAddressResolver {
     async fn call(&self, _url: &str, _method: &str, _params: serde_json::Value, _id: u64) -> Result<serde_json::Value> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support RPC calls".to_string()))
@@ -382,7 +387,8 @@ mod standalone_impls {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl StorageProvider for StandaloneAddressResolver {
     async fn read(&self, _key: &str) -> Result<Vec<u8>> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support storage".to_string()))
@@ -397,7 +403,8 @@ impl StorageProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl NetworkProvider for StandaloneAddressResolver {
     async fn get(&self, _url: &str) -> Result<Vec<u8>> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support network operations".to_string()))
@@ -409,7 +416,8 @@ impl NetworkProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl CryptoProvider for StandaloneAddressResolver {
     fn random_bytes(&self, _len: usize) -> Result<Vec<u8>> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support crypto operations".to_string()))
@@ -434,7 +442,8 @@ impl CryptoProvider for StandaloneAddressResolver {
 #[cfg(not(target_arch = "wasm32"))]
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl TimeProvider for StandaloneAddressResolver {
     fn now_secs(&self) -> u64 { 0 }
     fn now_millis(&self) -> u64 { 0 }
@@ -466,7 +475,8 @@ impl LogProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl WalletProvider for StandaloneAddressResolver {
     async fn create_wallet(&mut self, _config: WalletConfig, _mnemonic: Option<String>, _passphrase: Option<String>) -> Result<WalletInfo> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support wallet operations".to_string()))
@@ -552,7 +562,8 @@ impl WalletProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl crate::traits::AddressResolver for StandaloneAddressResolver {
     async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
         Ok(input.to_string()) // No-op for standalone
@@ -567,7 +578,8 @@ impl crate::traits::AddressResolver for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl BitcoinRpcProvider for StandaloneAddressResolver {
     async fn get_block_count(&self) -> Result<u64> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
@@ -638,7 +650,8 @@ impl BitcoinRpcProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MetashrewRpcProvider for StandaloneAddressResolver {
     async fn get_metashrew_height(&self) -> Result<u64> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support Metashrew RPC".to_string()))
@@ -679,7 +692,8 @@ impl MetashrewRpcProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl EsploraProvider for StandaloneAddressResolver {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
@@ -774,7 +788,8 @@ impl EsploraProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl RunestoneProvider for StandaloneAddressResolver {
     async fn decode_runestone(&self, _tx: &bitcoin::Transaction) -> Result<serde_json::Value> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support runestone operations".to_string()))
@@ -788,7 +803,8 @@ impl RunestoneProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl OrdProvider for StandaloneAddressResolver {
     async fn get_inscription(&self, _inscription_id: &str) -> Result<OrdInscription> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
@@ -840,7 +856,8 @@ impl OrdProvider for StandaloneAddressResolver {
 
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MonitorProvider for StandaloneAddressResolver {
     async fn monitor_blocks(&self, _start: Option<u64>) -> Result<()> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support monitoring".to_string()))
@@ -851,7 +868,8 @@ impl MonitorProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl KeystoreProvider for StandaloneAddressResolver {
     async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support keystore operations".to_string()))
@@ -878,7 +896,8 @@ impl KeystoreProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AlkanesProvider for StandaloneAddressResolver {
     async fn execute(
         &mut self,
@@ -992,7 +1011,8 @@ impl Clone for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl DeezelProvider for StandaloneAddressResolver {
     fn get_bitcoin_rpc_url(&self) -> Option<String> {
         None
@@ -1034,7 +1054,8 @@ impl DeezelProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MetashrewProvider for StandaloneAddressResolver {
     async fn get_height(&self) -> Result<u64> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support Metashrew operations".to_string()))

@@ -34,7 +34,6 @@ use core::str::FromStr;
 use crate::keystore::Keystore;
 use crate::network::{NetworkParams, RpcConfig};
 use crate::rpc::get_rpc_url;
-use url::Url;
 use crate::rpc::{determine_rpc_call_type, RpcCallType};
 
 // Import deezel-rpgp types for PGP functionality
@@ -104,17 +103,17 @@ use crate::commands::Commands;
 
 #[derive(Clone)]
 pub struct ConcreteProvider {
-    rpc_config: RpcConfig,
-    command: Commands,
+    pub rpc_config: RpcConfig,
+    pub command: Commands,
     #[cfg(not(target_arch = "wasm32"))]
-    _wallet_path: Option<PathBuf>,
+    pub _wallet_path: Option<PathBuf>,
     #[cfg(target_arch = "wasm32")]
-    _wallet_path: Option<String>,
-    passphrase: Option<String>,
-    wallet_state: WalletState,
+    pub _wallet_path: Option<String>,
+    pub passphrase: Option<String>,
+    pub wallet_state: WalletState,
     #[cfg(feature = "native-deps")]
-    http_client: reqwest::Client,
-    secp: Secp256k1<All>,
+    pub http_client: reqwest::Client,
+    pub secp: Secp256k1<All>,
 }
 
 
@@ -141,7 +140,7 @@ impl ConcreteProvider {
         unimplemented!()
     }
 
-    fn get_keystore(&self) -> Result<&Keystore> {
+    pub fn get_keystore(&self) -> Result<&Keystore> {
         match &self.wallet_state {
             WalletState::Unlocked { keystore, .. } => Ok(keystore),
             _ => Err(DeezelError::Wallet("Wallet is not unlocked".to_string())),
@@ -180,6 +179,27 @@ impl ConcreteProvider {
         base_vsize + (num_inputs as u64 * input_vsize) + (tx.output.len() as u64 * output_vsize)
     }
 
+    pub fn get_wallet_state(&self) -> &WalletState {
+        &self.wallet_state
+    }
+
+    pub async fn unlock_wallet(&mut self, passphrase: &str) -> Result<()> {
+        if let WalletState::Locked(keystore) = &self.wallet_state {
+            let mnemonic = keystore.decrypt_mnemonic(passphrase)?;
+            self.wallet_state = WalletState::Unlocked {
+                keystore: keystore.clone(),
+                mnemonic,
+            };
+            Ok(())
+        } else {
+            Err(DeezelError::Wallet("Wallet is not locked".to_string()))
+        }
+    }
+
+    pub fn get_wallet_path(&self) -> Option<PathBuf> {
+        self._wallet_path.clone()
+    }
+
     /// A helper function to find address info from the keystore.
     fn find_address_info(keystore: &Keystore, address: &Address, network: Network) -> Result<AddressInfo> {
         // This is a placeholder. In a real wallet, you'd efficiently search
@@ -199,115 +219,61 @@ impl ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
 
 
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl JsonRpcProvider for ConcreteProvider {
-    async fn call(
-        &self,
-        url: &str,
-        method: &str,
-        params: serde_json::Value,
-        id: u64,
-    ) -> Result<serde_json::Value> {
-        // Info logging for JsonRpcProvider call - logs all RPC payloads sent
-        log::info!(
-            "JsonRpcProvider::call -> URL: {}, Method: {}, Params: {}",
-            url,
-            method,
-            serde_json::to_string_pretty(&params).unwrap_or_else(|_| "INVALID_JSON".to_string()),
-        );
+    async fn call(&self, url: &str, method: &str, params: JsonValue, id: u64) -> Result<JsonValue> {
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": id,
+        });
+
+        log::debug!("[JsonRpcProvider] Making call to {}: {}", url, payload);
+
         #[cfg(feature = "native-deps")]
         {
-            use crate::rpc::RpcRequest;
-            let request = RpcRequest::new(method, params, id);
-
-            let mut parsed_url = Url::parse(url)
-                .map_err(|e| DeezelError::InvalidParameters(format!("Invalid RPC URL in call: {e}")))?;
-
-            let username = parsed_url.username().to_string();
-            let password = parsed_url.password().map(|p| p.to_string());
-
-            // Remove user/pass from the URL before sending
-            parsed_url.set_username("").map_err(|_| DeezelError::InvalidParameters("Failed to strip username".into()))?;
-            parsed_url.set_password(None).map_err(|_| DeezelError::InvalidParameters("Failed to strip password".into()))?;
-
-            let mut request_builder = self.http_client.post(parsed_url);
-
-            if !username.is_empty() {
-                request_builder = request_builder.basic_auth(username, password);
-            }
-
-            log::debug!("Request builder: {:?}", request_builder);
-            let response = request_builder
-                .json(&request)
+            let response = self
+                .http_client
+                .post(url)
+                .json(&payload)
                 .send()
                 .await
                 .map_err(|e| DeezelError::Network(e.to_string()))?;
+
             let response_text = response.text().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            
-            log::info!("JsonRpcProvider::call <- Raw RPC response: {response_text}");
-            
-            if response_text.starts_with("Json deserialize error") {
-                return Err(DeezelError::RpcError(format!("Server-side JSON deserialization error: {}", response_text)));
-            }
+            log::debug!("[JsonRpcProvider] Response from {}: {}", url, response_text);
 
-            // First, try to parse as a standard RpcResponse
-            // A more robust parsing logic that handles different RPC response structures.
-            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&response_text) {
-                // Check for a standard JSON-RPC error object.
-                if let Some(error_obj) = json_value.get("error") {
-                    if !error_obj.is_null() {
-                        let code = error_obj.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
-                        let message = error_obj.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown RPC error");
-                        return Err(DeezelError::RpcError(format!("Code {}: {}", code, message)));
-                    }
+            let json_response: JsonValue = serde_json::from_str(&response_text)
+                .map_err(|e| DeezelError::RpcError(format!("Failed to parse JSON response: {}", e)))?;
+
+            if let Some(error) = json_response.get("error") {
+                if !error.is_null() {
+                    return Err(DeezelError::RpcError(error.to_string()));
                 }
-
-                // Check for a standard JSON-RPC result.
-                if let Some(result) = json_value.get("result") {
-                    return Ok(result.clone());
-                }
-                
-                // Fallback for non-standard responses that are just the result value.
-                return Ok(json_value);
             }
 
-            // If that fails, try to parse as a raw JsonValue (for non-compliant servers)
-            if let Ok(mut raw_result) = serde_json::from_str::<serde_json::Value>(&response_text) {
-                // Handle cases where the actual result is nested inside a "result" field
-                if let Some(obj) = raw_result.as_object_mut() {
-                    if obj.contains_key("result") {
-                        if let Some(val) = obj.remove("result") {
-                            return Ok(val);
-                        }
-                    }
-                }
-                return Ok(raw_result);
+            if let Some(result) = json_response.get("result") {
+                Ok(result.clone())
+            } else {
+                Err(DeezelError::RpcError("RPC response did not contain a 'result' field".to_string()))
             }
-
-            // If that also fails, check if the response is just a plain string
-            // This is needed for some Esplora endpoints that return plain text
-            if !response_text.starts_with('{') && !response_text.starts_with('[') {
-                // It's likely a plain string, wrap it in a JsonValue
-                return Ok(serde_json::Value::String(response_text));
-            }
-
-            // If all attempts fail, return a generic error
-            Err(DeezelError::Network(format!("Failed to decode RPC response: {response_text}")))
         }
+
         #[cfg(not(feature = "native-deps"))]
         {
-            let _ = (url, method, params, id); // Suppress unused parameter warnings
-            Err(DeezelError::NotImplemented("HTTP requests not available in WASM environment".to_string()))
+            let _ = (url, method, params, id);
+            Err(DeezelError::NotImplemented("JsonRpcProvider::call is not implemented without 'native-deps' feature".to_string()))
         }
     }
-    
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl StorageProvider for ConcreteProvider {
     async fn read(&self, _key: &str) -> Result<Vec<u8>> {
         unimplemented!()
@@ -334,7 +300,8 @@ impl StorageProvider for ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl NetworkProvider for ConcreteProvider {
     async fn get(&self, _url: &str) -> Result<Vec<u8>> {
         unimplemented!()
@@ -349,7 +316,8 @@ impl NetworkProvider for ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl CryptoProvider for ConcreteProvider {
     fn random_bytes(&self, _len: usize) -> Result<Vec<u8>> {
         unimplemented!()
@@ -378,7 +346,8 @@ impl CryptoProvider for ConcreteProvider {
 
 
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl TimeProvider for ConcreteProvider {
     fn now_secs(&self) -> u64 {
         unimplemented!()
@@ -425,7 +394,8 @@ impl LogProvider for ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl WalletProvider for ConcreteProvider {
     async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
         let mnemonic = if let Some(m) = mnemonic {
@@ -438,7 +408,7 @@ impl WalletProvider for ConcreteProvider {
         let keystore = Keystore::new(&mnemonic, config.network, &pass, None)?;
 
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(path) = &self.wallet_path {
+        if let Some(path) = &self._wallet_path {
             let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
             let original_filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("keystore");
             let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("json");
@@ -1120,7 +1090,8 @@ impl WalletProvider for ConcreteProvider {
 
 
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MetashrewRpcProvider for ConcreteProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
         let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| DeezelError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
@@ -1344,7 +1315,8 @@ impl MetashrewRpcProvider for ConcreteProvider {
 
 
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl EsploraProvider for ConcreteProvider {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
         let _rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
@@ -1803,7 +1775,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl RunestoneProvider for ConcreteProvider {
     async fn decode_runestone(&self, tx: &Transaction) -> Result<serde_json::Value> {
         if let Some(artifact) = Runestone::decipher(tx) {
@@ -1840,7 +1813,8 @@ impl RunestoneProvider for ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AlkanesProvider for ConcreteProvider {
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
         let mut executor = EnhancedAlkanesExecutor::new(self);
@@ -2113,7 +2087,8 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(result)
     }
 }
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl DeezelProvider for ConcreteProvider {
     fn provider_name(&self) -> &str {
         "ConcreteProvider"
@@ -2191,7 +2166,8 @@ impl DeezelProvider for ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AddressResolver for ConcreteProvider {
     async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
         let mut resolver = crate::address_resolver::AddressResolver::new(self.clone());
@@ -2220,7 +2196,8 @@ impl AddressResolver for ConcreteProvider {
 }
 
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MetashrewProvider for ConcreteProvider {
     async fn get_height(&self) -> Result<u64> {
         <Self as MetashrewRpcProvider>::get_metashrew_height(self).await
@@ -2238,7 +2215,8 @@ impl MetashrewProvider for ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl UtxoProvider for ConcreteProvider {
     async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>> {
         let utxos = self.get_utxos(false, Some(spec.to_vec())).await?;
@@ -2256,7 +2234,8 @@ impl UtxoProvider for ConcreteProvider {
 }
 
 // Implement KeystoreProvider trait for ConcreteProvider
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl KeystoreProvider for ConcreteProvider {
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
         <Self as AddressResolver>::get_address(self, address_type, index).await
@@ -2305,7 +2284,8 @@ impl KeystoreProvider for ConcreteProvider {
 }
 
 // Implement MonitorProvider trait for ConcreteProvider
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MonitorProvider for ConcreteProvider {
     async fn monitor_blocks(&self, _start: Option<u64>) -> Result<()> {
         Err(DeezelError::NotImplemented("MonitorProvider monitor_blocks not yet implemented".to_string()))
@@ -2316,7 +2296,8 @@ impl MonitorProvider for ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl BitcoinRpcProvider for ConcreteProvider {
     async fn get_block_count(&self) -> Result<u64> {
         unimplemented!()
@@ -2974,7 +2955,8 @@ mod esplora_provider_tests {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl OrdProvider for ConcreteProvider {
     async fn get_inscription(&self, inscription_id: &str) -> Result<ord::Inscription> {
         let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;

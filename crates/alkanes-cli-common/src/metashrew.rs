@@ -21,7 +21,8 @@ impl<R: JsonRpcProvider> MetashrewProviderImpl<R> {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<R: JsonRpcProvider + Send + Sync> MetashrewProvider for MetashrewProviderImpl<R> {
     async fn get_height(&self) -> Result<u64> {
         let result = self

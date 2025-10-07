@@ -13,7 +13,7 @@ use bitcoin::{
 use bip39::{Mnemonic, MnemonicType};
 use std::str::FromStr;
 
-use deezel_common::{
+use alkanes_cli_common::{
     keystore::{Keystore},
     traits::{KeystoreAddress, KeystoreInfo, KeystoreProvider},
     DeezelError, Result as CommonResult,
@@ -283,7 +283,7 @@ impl KeystoreManager {
     }
     
     /// Derive addresses from keystore metadata without requiring decryption
-    pub fn derive_addresses_from_metadata(&self, keystore_metadata: &Keystore, network: Network, script_types: &[&str], start_index: u32, count: u32, custom_network_params: Option<&deezel_common::network::NetworkParams>) -> AnyhowResult<Vec<KeystoreAddress>> {
+    pub fn derive_addresses_from_metadata(&self, keystore_metadata: &Keystore, network: Network, script_types: &[&str], start_index: u32, count: u32, custom_network_params: Option<&alkanes_cli_common::network::NetworkParams>) -> AnyhowResult<Vec<KeystoreAddress>> {
         let master_xpub = Xpub::from_str(&keystore_metadata.account_xpub)
             .context("Failed to parse master public key")?;
         
@@ -307,13 +307,13 @@ impl KeystoreManager {
     }
     
     /// Get default addresses from keystore metadata without requiring decryption
-    pub fn get_default_addresses_from_metadata(&self, keystore_metadata: &Keystore, network: Network, custom_network_params: Option<&deezel_common::network::NetworkParams>) -> AnyhowResult<Vec<KeystoreAddress>> {
+    pub fn get_default_addresses_from_metadata(&self, keystore_metadata: &Keystore, network: Network, custom_network_params: Option<&alkanes_cli_common::network::NetworkParams>) -> AnyhowResult<Vec<KeystoreAddress>> {
         let script_types = ["p2pkh", "p2sh", "p2wpkh", "p2wsh", "p2tr"];
         self.derive_addresses_from_metadata(keystore_metadata, network, &script_types, 0, 5, custom_network_params)
     }
     
     /// Apply custom network parameters to an address (re-derive with custom magic bytes)
-    fn apply_custom_network_params(&self, mut address: KeystoreAddress, network_params: &deezel_common::network::NetworkParams) -> AnyhowResult<KeystoreAddress> {
+    fn apply_custom_network_params(&self, mut address: KeystoreAddress, network_params: &alkanes_cli_common::network::NetworkParams) -> AnyhowResult<KeystoreAddress> {
         // Re-derive the address using the custom network parameters
         // This is needed for networks like dogecoin that have different magic bytes
         
@@ -345,13 +345,13 @@ impl KeystoreManager {
 }
 
 /// Implementation of KeystoreProvider trait for KeystoreManager
-#[async_trait(?Send)]
+#[async_trait]
 impl KeystoreProvider for KeystoreManager {
     async fn get_address(&self, _address_type: &str, _index: u32) -> CommonResult<String> {
         Err(DeezelError::NotImplemented("get_address is not implemented for KeystoreManager".to_string()))
     }
 
-    async fn derive_addresses(&self, master_public_key: &str, network_params: &deezel_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> CommonResult<Vec<KeystoreAddress>> {
+    async fn derive_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> CommonResult<Vec<KeystoreAddress>> {
         let master_xpub = Xpub::from_str(master_public_key)
             .map_err(|e| DeezelError::Crypto(format!("Failed to parse master public key: {e}")))?;
         
@@ -369,7 +369,7 @@ impl KeystoreProvider for KeystoreManager {
         Ok(addresses)
     }
     
-    async fn get_default_addresses(&self, master_public_key: &str, network_params: &deezel_common::network::NetworkParams) -> CommonResult<Vec<KeystoreAddress>> {
+    async fn get_default_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> CommonResult<Vec<KeystoreAddress>> {
         let script_types = ["p2pkh", "p2sh", "p2wpkh", "p2wsh", "p2tr"];
         // Call the trait method, not the struct method
         KeystoreProvider::derive_addresses(self, master_public_key, network_params, &script_types, 0, 5).await
@@ -388,7 +388,7 @@ impl KeystoreProvider for KeystoreManager {
             version: version.to_string(),
         })
     }
-    async fn derive_address_from_path(&self, _master_public_key: &str, _path: &DerivationPath, _script_type: &str, _network_params: &deezel_common::network::NetworkParams) -> CommonResult<KeystoreAddress> {
+    async fn derive_address_from_path(&self, _master_public_key: &str, _path: &DerivationPath, _script_type: &str, _network_params: &alkanes_cli_common::network::NetworkParams) -> CommonResult<KeystoreAddress> {
         unimplemented!()
     }
 }

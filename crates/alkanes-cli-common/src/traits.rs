@@ -40,7 +40,8 @@ use std::{vec::Vec, boxed::Box, string::String};
 use alloc::{vec::Vec, boxed::Box, string::String};
 
 /// Trait for making JSON-RPC calls
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait JsonRpcProvider {
     /// Make a JSON-RPC call to the specified URL
     async fn call(
@@ -63,7 +64,8 @@ pub trait JsonRpcProvider {
 }
 
 /// Trait for storage operations (reading/writing files, configuration, etc.)
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait StorageProvider {
     /// Read data from storage
     async fn read(&self, key: &str) -> Result<Vec<u8>>;
@@ -85,7 +87,8 @@ pub trait StorageProvider {
 }
 
 /// Trait for network operations beyond JSON-RPC
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait NetworkProvider {
     /// Make an HTTP GET request
     async fn get(&self, url: &str) -> Result<Vec<u8>>;
@@ -108,7 +111,8 @@ pub trait NetworkProvider {
 }
 
 /// Trait for cryptographic operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait CryptoProvider {
     /// Generate random bytes
     fn random_bytes(&self, len: usize) -> Result<Vec<u8>>;
@@ -130,10 +134,9 @@ pub trait CryptoProvider {
 }
 
 /// Trait for PGP operations
-#[async_trait(?Send)]
-
 /// Trait for time operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait TimeProvider {
     /// Get current Unix timestamp in seconds
     fn now_secs(&self) -> u64;
@@ -166,7 +169,8 @@ pub trait LogProvider {
 }
 
 /// Trait for wallet operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait WalletProvider {
     /// Create a new wallet
     async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo>;
@@ -335,7 +339,8 @@ pub struct Utxo {
 }
 
 /// Trait for providing UTXOs
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait UtxoProvider {
     async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>>;
 }
@@ -393,7 +398,8 @@ pub struct FeeRates {
 
 
 /// Trait for address resolution
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait AddressResolver {
     /// Resolve address identifiers in a string
     async fn resolve_all_identifiers(&self, input: &str) -> Result<String>;
@@ -409,7 +415,8 @@ pub trait AddressResolver {
 }
 
 /// Trait for dynamic address derivation from master public keys
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait KeystoreProvider {
     /// Derive addresses dynamically from master public key
     async fn derive_addresses(&self, master_public_key: &str, network_params: &NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>>;
@@ -454,7 +461,8 @@ pub struct KeystoreInfo {
 }
 
 /// Trait for Bitcoin Core RPC operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait BitcoinRpcProvider {
     /// Get current block count
     async fn get_block_count(&self) -> Result<u64>;
@@ -517,7 +525,8 @@ pub trait BitcoinRpcProvider {
 /// Trait for bitcoind RPC operations using bitcoincore_rpc_json types
 
 /// Trait for Metashrew/Sandshrew RPC operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait MetashrewRpcProvider {
     /// Get Metashrew height
     async fn get_metashrew_height(&self) -> Result<u64>;
@@ -553,7 +562,8 @@ pub trait MetashrewRpcProvider {
 }
 
 /// Trait for Metashrew provider operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait MetashrewProvider {
     /// Get the current block height.
     async fn get_height(&self) -> Result<u64>;
@@ -564,7 +574,8 @@ pub trait MetashrewProvider {
 }
 
 /// Trait for Esplora API operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait EsploraProvider {
     /// Get blocks tip hash
     async fn get_blocks_tip_hash(&self) -> Result<String>;
@@ -658,7 +669,8 @@ pub trait EsploraProvider {
 }
 
 /// Trait for runestone operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait RunestoneProvider {
     /// Decode runestone from transaction
     async fn decode_runestone(&self, tx: &Transaction) -> Result<JsonValue>;
@@ -671,7 +683,8 @@ pub trait RunestoneProvider {
 }
 
 /// Trait for ord operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait OrdProvider {
     /// Get inscription by ID
     async fn get_inscription(&self, inscription_id: &str) -> Result<OrdInscription>;
@@ -707,7 +720,8 @@ pub trait OrdProvider {
 }
 
 /// Trait for alkanes operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait AlkanesProvider {
     /// Execute alkanes smart contract
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState>;
@@ -761,7 +775,8 @@ pub trait AlkanesProvider {
 }
 
 /// Trait for monitoring operations
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait MonitorProvider {
     /// Monitor blocks for events
     async fn monitor_blocks(&self, start: Option<u64>) -> Result<()>;
@@ -780,7 +795,8 @@ pub struct BlockEvent {
 }
 
 /// Combined provider trait that includes all functionality
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait DeezelProvider:
     JsonRpcProvider +
     StorageProvider +
@@ -798,7 +814,8 @@ pub trait DeezelProvider:
     AlkanesProvider +
     MonitorProvider +
     KeystoreProvider +
-    OrdProvider
+    OrdProvider +
+    Send + Sync
 {
     /// Get provider name/type
     fn provider_name(&self) -> &str;
@@ -844,15 +861,17 @@ impl Clone for Box<dyn DeezelProvider> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> JsonRpcProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> JsonRpcProvider for Box<T> {
    async fn call(&self, url: &str, method: &str, params: serde_json::Value, id: u64) -> Result<serde_json::Value> {
        (**self).call(url, method, params, id).await
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> StorageProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> StorageProvider for Box<T> {
    async fn read(&self, key: &str) -> Result<Vec<u8>> {
        (**self).read(key).await
    }
@@ -873,8 +892,9 @@ impl<T: DeezelProvider + ?Sized> StorageProvider for Box<T> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> NetworkProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> NetworkProvider for Box<T> {
    async fn get(&self, url: &str) -> Result<Vec<u8>> {
        (**self).get(url).await
    }
@@ -886,8 +906,9 @@ impl<T: DeezelProvider + ?Sized> NetworkProvider for Box<T> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> CryptoProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> CryptoProvider for Box<T> {
    fn random_bytes(&self, len: usize) -> Result<Vec<u8>> {
        (**self).random_bytes(len)
    }
@@ -909,8 +930,9 @@ impl<T: DeezelProvider + ?Sized> CryptoProvider for Box<T> {
 }
 
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> TimeProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> TimeProvider for Box<T> {
    fn now_secs(&self) -> u64 {
        (**self).now_secs()
    }
@@ -937,8 +959,9 @@ impl<T: DeezelProvider + ?Sized> LogProvider for Box<T> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> WalletProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> WalletProvider for Box<T> {
    async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
        (**self).create_wallet(config, mnemonic, passphrase).await
    }
@@ -1025,8 +1048,9 @@ impl<T: DeezelProvider + ?Sized> WalletProvider for Box<T> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> AddressResolver for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> AddressResolver for Box<T> {
    async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
        (**self).resolve_all_identifiers(input).await
    }
@@ -1041,8 +1065,9 @@ impl<T: DeezelProvider + ?Sized> AddressResolver for Box<T> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> BitcoinRpcProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> BitcoinRpcProvider for Box<T> {
    async fn get_block_count(&self) -> Result<u64> {
        (**self).get_block_count().await
    }
@@ -1110,8 +1135,9 @@ impl<T: DeezelProvider + ?Sized> BitcoinRpcProvider for Box<T> {
 }
 
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> MetashrewRpcProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> MetashrewRpcProvider for Box<T> {
    async fn get_metashrew_height(&self) -> Result<u64> {
        (**self).get_metashrew_height().await
    }
@@ -1146,8 +1172,9 @@ impl<T: DeezelProvider + ?Sized> MetashrewRpcProvider for Box<T> {
     }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> MetashrewProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> MetashrewProvider for Box<T> {
     async fn get_height(&self) -> Result<u64> {
         (**self).get_height().await
     }
@@ -1159,8 +1186,9 @@ impl<T: DeezelProvider + ?Sized> MetashrewProvider for Box<T> {
     }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> EsploraProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> EsploraProvider for Box<T> {
    async fn get_blocks_tip_hash(&self) -> Result<String> {
        (**self).get_blocks_tip_hash().await
    }
@@ -1253,8 +1281,9 @@ impl<T: DeezelProvider + ?Sized> EsploraProvider for Box<T> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> RunestoneProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> RunestoneProvider for Box<T> {
    async fn decode_runestone(&self, tx: &bitcoin::Transaction) -> Result<serde_json::Value> {
        (**self).decode_runestone(tx).await
    }
@@ -1266,8 +1295,9 @@ impl<T: DeezelProvider + ?Sized> RunestoneProvider for Box<T> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> OrdProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> OrdProvider for Box<T> {
     async fn get_inscription(&self, inscription_id: &str) -> Result<OrdInscription> {
         (**self).get_inscription(inscription_id).await
     }
@@ -1316,8 +1346,9 @@ impl<T: DeezelProvider + ?Sized> OrdProvider for Box<T> {
     }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> AlkanesProvider for Box<T> {
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
         (**self).execute(params).await
     }
@@ -1389,8 +1420,9 @@ impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> MonitorProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> MonitorProvider for Box<T> {
    async fn monitor_blocks(&self, start: Option<u64>) -> Result<()> {
        (**self).monitor_blocks(start).await
    }
@@ -1399,8 +1431,9 @@ impl<T: DeezelProvider + ?Sized> MonitorProvider for Box<T> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> KeystoreProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> KeystoreProvider for Box<T> {
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
         <T as KeystoreProvider>::get_address(self, address_type, index).await
     }
@@ -1421,8 +1454,9 @@ impl<T: DeezelProvider + ?Sized> KeystoreProvider for Box<T> {
    }
 }
 
-#[async_trait(?Send)]
-impl<T: DeezelProvider + ?Sized> DeezelProvider for Box<T> {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<T: DeezelProvider + ?Sized + Send + Sync> DeezelProvider for Box<T> {
     fn provider_name(&self) -> &str {
         (**self).provider_name()
     }
@@ -1468,8 +1502,9 @@ impl<T: DeezelProvider + ?Sized> DeezelProvider for Box<T> {
 
 /// Trait for system-level wallet operations, corresponding to CLI commands
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
-pub trait SystemWallet {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SystemWallet: Send + Sync {
    /// Execute a wallet command
    async fn execute_wallet_command(&self, command: crate::commands::WalletCommands) -> Result<()>;
    /// Execute the legacy walletinfo command
@@ -1478,56 +1513,63 @@ pub trait SystemWallet {
 
 /// Trait for system-level Bitcoin Core RPC operations
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
-pub trait SystemBitcoind {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SystemBitcoind: Send + Sync {
    /// Execute a bitcoind command
    async fn execute_bitcoind_command(&self, command: crate::commands::BitcoindCommands) -> Result<()>;
 }
 
 /// Trait for system-level Metashrew RPC operations
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
-pub trait SystemMetashrew {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SystemMetashrew: Send + Sync {
    /// Execute a metashrew command
    async fn execute_metashrew_command(&self, command: crate::commands::MetashrewCommands) -> Result<()>;
 }
 
 /// Trait for system-level Alkanes operations
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
-pub trait SystemAlkanes {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SystemAlkanes: Send + Sync {
    /// Execute an alkanes command
    async fn execute_alkanes_command(&self, command: crate::commands::AlkanesCommands) -> Result<()>;
 }
 
 /// Trait for system-level Runestone operations
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
-pub trait SystemRunestone {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SystemRunestone: Send + Sync {
    /// Execute a runestone command
    async fn execute_runestone_command(&self, command: crate::commands::RunestoneCommands) -> Result<()>;
 }
 
 /// Trait for system-level Protorunes operations
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
-pub trait SystemProtorunes {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SystemProtorunes: Send + Sync {
    /// Execute a protorunes command
    async fn execute_protorunes_command(&self, command: crate::commands::ProtorunesCommands) -> Result<()>;
 }
 
 /// Trait for system-level monitoring operations
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
-pub trait SystemMonitor {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SystemMonitor: Send + Sync {
    /// Execute a monitor command
    async fn execute_monitor_command(&self, command: crate::commands::MonitorCommands) -> Result<()>;
 }
 
 /// Trait for system-level Esplora operations
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
-pub trait SystemEsplora {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SystemEsplora: Send + Sync {
    /// Execute an esplora command
    async fn execute_esplora_command(&self, command: crate::commands::EsploraCommands) -> Result<()>;
 }
@@ -1537,7 +1579,8 @@ pub trait SystemEsplora {
 
 /// Combined system trait that includes all system-level functionality
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait System:
    SystemWallet +
    SystemBitcoind +

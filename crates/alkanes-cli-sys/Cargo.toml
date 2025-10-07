@@ -15,7 +15,7 @@ rand = { workspace = true }
 bitcoin = { workspace = true }
 secp256k1 = { workspace = true }
 psbt-v2 = "0.1.0"
-alkanes-cli-common = { path = "../alkanes-cli-common" }
+alkanes-cli-common = { path = "../alkanes-cli-common", features = ["native-deps"] }
 alkanes-cli-asc = { path = "../alkanes-cli-asc" }
 url = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
@@ -24,3 +24,7 @@ chrono = { workspace = true }
 smallvec = { workspace = true }
 rpassword = "7.3"
 tabled = { workspace = true }
+anyhow = { workspace = true }
+
+[features]
+native-deps = []

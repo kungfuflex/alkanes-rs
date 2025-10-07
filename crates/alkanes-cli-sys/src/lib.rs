@@ -1,22 +1,24 @@
 //! Deezel System Library
 //!
 //! This library provides the system-level implementation of the deezel CLI,
-//! acting as a bridge between the command-line interface and the deezel-common
+//! acting as a bridge between the command-line interface and the alkanes_cli_common
 //! library. It is designed to be used as a library by system crates that
 //! utilize alkanes on the backend.
 
 use anyhow::{anyhow, Context};
-use deezel_common::{Result, DeezelError};
+use std::str::FromStr;
+use alkanes_cli_common::{Result, DeezelError, network::RpcConfig, provider::WalletState};
+use bitcoin::secp256k1::Secp256k1;
 use async_trait::async_trait;
-use deezel_common::provider::ConcreteProvider;
-use deezel_common::traits::*;
-use deezel_common::commands::*;
+use alkanes_cli_common::provider::ConcreteProvider;
+use alkanes_cli_common::traits::*;
+use alkanes_cli_common::commands::*;
 
 pub mod utils;
 pub mod keystore;
 pub mod pretty_print;
-use deezel_common::alkanes::AlkanesInspectConfig;
-use utils::*;
+use alkanes_cli_common::alkanes::AlkanesInspectConfig;
+use crate::utils::expand_tilde;
 use keystore::{KeystoreManager, KeystoreCreateParams};
 
 pub struct SystemDeezel {
@@ -28,25 +30,24 @@ pub struct SystemDeezel {
 impl SystemDeezel {
     pub async fn new(args: &Args) -> anyhow::Result<Self> {
         // Determine network parameters based on provider and magic flags
-        let mut network_params = if let Some(magic_str) = args.magic.as_ref() {
+        let network_params = if let Some(magic_str) = args.magic.as_ref() {
             // Parse custom magic bytes
-            match deezel_common::network::NetworkParams::from_magic_str(magic_str) {
+            match alkanes_cli_common::network::NetworkParams::from_magic_str(magic_str) {
                 Ok((p2pkh_prefix, p2sh_prefix, bech32_hrp)) => {
                     // Use the base network from provider and apply custom magic bytes
-                    let base_network = match args.provider.as_str() {
-                        "mainnet" => bitcoin::Network::Bitcoin,
-                        "testnet" => bitcoin::Network::Testnet,
-                        "signet" => bitcoin::Network::Signet,
-                        "regtest" => bitcoin::Network::Regtest,
-                        _ => bitcoin::Network::Regtest,
+                    let base_network = match args.rpc_config.network.0 {
+                        bitcoin::Network::Bitcoin => "mainnet",
+                        bitcoin::Network::Testnet => "testnet",
+                        bitcoin::Network::Signet => "signet",
+                        bitcoin::Network::Regtest => "regtest",
+                        _ => "regtest",
                     };
-                    deezel_common::network::NetworkParams::with_custom_magic(
-                        base_network,
+alkanes_cli_common::network::NetworkParams::with_custom_magic(
+                        alkanes_cli_common::network::DeezelNetwork::from_str(base_network).unwrap().0,
                         p2pkh_prefix,
                         p2sh_prefix,
                         bech32_hrp,
-                    )
-                },
+                    )                },
                 Err(e) => {
                     eprintln!("⚠️  Invalid magic bytes format: {e}");
                     eprintln!("💡 Expected format: p2pkh_prefix,p2sh_prefix,bech32_hrp (e.g., '0x00,0x05,bc')");
@@ -55,24 +56,18 @@ impl SystemDeezel {
             }
         } else {
             // Use predefined network parameters
-            match deezel_common::network::NetworkParams::from_network_str(&args.provider) {
+            match alkanes_cli_common::network::NetworkParams::from_network_str(&args.rpc_config.network.to_string()) {
                 Ok(params) => params,
                 Err(_) => {
-                    eprintln!("⚠️  Unknown network: {}", args.provider);
-                    eprintln!("💡 Supported networks: {}", deezel_common::network::NetworkParams::supported_networks().join(", "));
-                    deezel_common::network::NetworkParams::regtest() // Default fallback
+                    eprintln!("⚠️  Unknown network: {}", args.rpc_config.network.0);
+                    eprintln!("💡 Supported networks: {}", alkanes_cli_common::network::NetworkParams::supported_networks().join(", "));
+                    alkanes_cli_common::network::NetworkParams::regtest() // Default fallback
                 }
             }
         };
 
         // If a bitcoin_rpc_url is provided and the network is regtest, override the default.
-        if let Some(rpc_url) = &args.bitcoin_rpc_url {
-            if network_params.network == bitcoin::Network::Regtest {
-                network_params.bitcoin_rpc_url = rpc_url.clone();
-                network_params.metashrew_rpc_url = rpc_url.clone();
-                network_params.esplora_url = Some(rpc_url.clone());
-            }
-        }
+        
 
         // FIXED: Use user-specified wallet file path or generate default
         let wallet_file = if let Some(ref path) = args.wallet_file {
@@ -96,39 +91,38 @@ impl SystemDeezel {
         }
 
         // Determine the correct RPC URLs, prioritizing command-line args over network defaults.
-        let bitcoin_rpc_url = args
-            .bitcoin_rpc_url
-            .clone()
-            .or_else(|| Some(network_params.bitcoin_rpc_url.clone()));
+        let bitcoin_rpc_url = args.rpc_config.bitcoin_rpc_url.clone();
 
-        let metashrew_rpc_url = args
-            .metashrew_rpc_url
-            .clone()
-            .or_else(|| args.sandshrew_rpc_url.clone())
-            .unwrap_or_else(|| network_params.metashrew_rpc_url.clone());
+        let metashrew_rpc_url = args.rpc_config.metashrew_rpc_url.clone().or_else(|| args.rpc_config.sandshrew_rpc_url.clone()).unwrap_or_else(|| "".to_string());
 
-        let esplora_url = args
-            .esplora_url
-            .clone()
-            .or_else(|| network_params.esplora_url.clone());
+        let esplora_url = args.rpc_config.esplora_url.clone();
 
         // Create provider with the resolved URLs
         log::info!(
             "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, sandshrew_rpc: {:?}, esplora: {:?}",
             &bitcoin_rpc_url,
             &metashrew_rpc_url,
-            &args.sandshrew_rpc_url,
+            &args.rpc_config.sandshrew_rpc_url,
             &esplora_url
         );
-        let mut provider = ConcreteProvider::new(
-            bitcoin_rpc_url,
-            metashrew_rpc_url,
-            args.sandshrew_rpc_url.clone(),
-            esplora_url,
-            args.provider.clone(),
-            Some(std::path::PathBuf::from(&wallet_file)),
-        )
-        .await?;
+        let rpc_config = RpcConfig {
+            network: args.rpc_config.network.clone(),
+            sandshrew_rpc_url: args.rpc_config.sandshrew_rpc_url.clone(),
+            esplora_url: args.rpc_config.esplora_url.clone(),
+            ord_url: args.rpc_config.ord_url.clone(),
+            metashrew_rpc_url: args.rpc_config.metashrew_rpc_url.clone(),
+            bitcoin_rpc_url: args.rpc_config.bitcoin_rpc_url.clone(),
+            timeout_seconds: args.rpc_config.timeout_seconds,
+        };
+        let mut provider = ConcreteProvider {
+            rpc_config,
+            command: args.command.clone(),
+            _wallet_path: Some(std::path::PathBuf::from(&wallet_file)),
+            passphrase: args.passphrase.clone(),
+            wallet_state: WalletState::None,
+            http_client: reqwest::Client::new(),
+            secp: Secp256k1::new(),
+        };
 
         if let Some(passphrase) = &args.passphrase {
             provider.set_passphrase(Some(passphrase.clone()));
@@ -150,7 +144,7 @@ impl SystemDeezel {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl System for SystemDeezel {
     fn provider(&self) -> &dyn DeezelProvider {
         &self.provider
@@ -161,7 +155,35 @@ impl System for SystemDeezel {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
+impl SystemEsplora for SystemDeezel {
+    async fn execute_esplora_command(&self, _command: EsploraCommands) -> Result<()> {
+        unimplemented!()
+    }
+}
+
+#[async_trait]
+impl SystemMonitor for SystemDeezel {
+    async fn execute_monitor_command(&self, _command: MonitorCommands) -> Result<()> {
+        unimplemented!()
+    }
+}
+
+#[async_trait]
+impl SystemProtorunes for SystemDeezel {
+    async fn execute_protorunes_command(&self, _command: ProtorunesCommands) -> Result<()> {
+        unimplemented!()
+    }
+}
+
+#[async_trait]
+impl SystemRunestone for SystemDeezel {
+    async fn execute_runestone_command(&self, _command: RunestoneCommands) -> Result<()> {
+        unimplemented!()
+    }
+}
+
+#[async_trait]
 impl DeezelProvider for SystemDeezel {
     fn provider_name(&self) -> &str {
         self.provider.provider_name()
@@ -219,14 +241,14 @@ impl DeezelProvider for SystemDeezel {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl JsonRpcProvider for SystemDeezel {
-    async fn call(&self, url: &str, method: &str, params: deezel_common::JsonValue, id: u64) -> Result<deezel_common::JsonValue> {
+    async fn call(&self, url: &str, method: &str, params: alkanes_cli_common::JsonValue, id: u64) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.call(url, method, params, id).await
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl StorageProvider for SystemDeezel {
     async fn read(&self, key: &str) -> Result<Vec<u8>> {
         self.provider.read(key).await
@@ -248,7 +270,7 @@ impl StorageProvider for SystemDeezel {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl NetworkProvider for SystemDeezel {
     async fn get(&self, url: &str) -> Result<Vec<u8>> {
         self.provider.get(url).await
@@ -261,7 +283,7 @@ impl NetworkProvider for SystemDeezel {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl CryptoProvider for SystemDeezel {
     fn random_bytes(&self, len: usize) -> Result<Vec<u8>> {
         self.provider.random_bytes(len)
@@ -283,7 +305,7 @@ impl CryptoProvider for SystemDeezel {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl TimeProvider for SystemDeezel {
     fn now_secs(&self) -> u64 {
         self.provider.now_secs()
@@ -311,7 +333,7 @@ impl LogProvider for SystemDeezel {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl WalletProvider for SystemDeezel {
     async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
         self.provider.create_wallet(config, mnemonic, passphrase).await
@@ -325,13 +347,13 @@ impl WalletProvider for SystemDeezel {
     async fn get_address(&self) -> Result<String> {
         <ConcreteProvider as WalletProvider>::get_address(&self.provider).await
     }
-    async fn get_addresses(&self, count: u32) -> Result<Vec<deezel_common::traits::AddressInfo>> {
+    async fn get_addresses(&self, count: u32) -> Result<Vec<alkanes_cli_common::traits::AddressInfo>> {
         self.provider.get_addresses(count).await
     }
     async fn send(&mut self, params: SendParams) -> Result<String> {
         self.provider.send(params).await
     }
-    async fn get_utxos(&self, include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(bitcoin::OutPoint, deezel_common::traits::UtxoInfo)>> {
+    async fn get_utxos(&self, include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(bitcoin::OutPoint, alkanes_cli_common::traits::UtxoInfo)>> {
         self.provider.get_utxos(include_frozen, addresses).await
     }
     async fn get_history(&self, count: u32, address: Option<String>) -> Result<Vec<TransactionInfo>> {
@@ -390,16 +412,16 @@ impl WalletProvider for SystemDeezel {
         unimplemented!()
     }
 
-    async fn get_enriched_utxos(&self, _addresses: Option<Vec<String>>) -> Result<Vec<deezel_common::provider::EnrichedUtxo>> {
+    async fn get_enriched_utxos(&self, _addresses: Option<Vec<String>>) -> Result<Vec<alkanes_cli_common::provider::EnrichedUtxo>> {
         unimplemented!()
     }
 
-    async fn get_all_balances(&self, _addresses: Option<Vec<String>>) -> Result<deezel_common::provider::AllBalances> {
+    async fn get_all_balances(&self, _addresses: Option<Vec<String>>) -> Result<alkanes_cli_common::provider::AllBalances> {
         unimplemented!()
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl AddressResolver for SystemDeezel {
     async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
         self.provider.resolve_all_identifiers(input).await
@@ -415,24 +437,24 @@ impl AddressResolver for SystemDeezel {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl BitcoinRpcProvider for SystemDeezel {
     async fn get_block_count(&self) -> Result<u64> {
         self.provider.get_block_count().await
     }
-    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<deezel_common::JsonValue> {
+    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.generate_to_address(nblocks, address).await
     }
-    async fn get_blockchain_info(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_blockchain_info(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_blockchain_info().await
     }
-    async fn get_new_address(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_new_address(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_new_address().await
     }
     async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
         self.provider.get_transaction_hex(txid).await
     }
-    async fn get_block(&self, hash: &str, raw: bool) -> Result<deezel_common::JsonValue> {
+    async fn get_block(&self, hash: &str, raw: bool) -> Result<alkanes_cli_common::JsonValue> {
         <ConcreteProvider as BitcoinRpcProvider>::get_block(&self.provider, hash, raw).await
     }
     async fn get_block_hash(&self, height: u64) -> Result<String> {
@@ -441,74 +463,74 @@ impl BitcoinRpcProvider for SystemDeezel {
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
         self.provider.send_raw_transaction(tx_hex).await
     }
-    async fn get_mempool_info(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_mempool_info(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_mempool_info().await
     }
-    async fn estimate_smart_fee(&self, target: u32) -> Result<deezel_common::JsonValue> {
+    async fn estimate_smart_fee(&self, target: u32) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.estimate_smart_fee(target).await
     }
     async fn get_esplora_blocks_tip_height(&self) -> Result<u64> {
         self.provider.get_esplora_blocks_tip_height().await
     }
-    async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<deezel_common::JsonValue> {
+    async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.trace_transaction(txid, vout, block, tx).await
     }
 
-    async fn get_network_info(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_network_info(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_network_info().await
     }
 
-    async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<deezel_common::JsonValue> {
+    async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_raw_transaction(txid, block_hash).await
     }
 
-    async fn get_block_header(&self, hash: &str) -> Result<deezel_common::JsonValue> {
-        deezel_common::BitcoinRpcProvider::get_block_header(&self.provider, hash).await
+    async fn get_block_header(&self, hash: &str) -> Result<alkanes_cli_common::JsonValue> {
+        alkanes_cli_common::BitcoinRpcProvider::get_block_header(&self.provider, hash).await
     }
 
-    async fn get_block_stats(&self, hash: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_block_stats(&self, hash: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_block_stats(hash).await
     }
 
-    async fn get_chain_tips(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_chain_tips(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_chain_tips().await
     }
 
-    async fn get_raw_mempool(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_raw_mempool(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_raw_mempool().await
     }
 
-    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<deezel_common::JsonValue> {
+    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_tx_out(txid, vout, include_mempool).await
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl MetashrewRpcProvider for SystemDeezel {
     async fn get_metashrew_height(&self) -> Result<u64> {
         self.provider.get_metashrew_height().await
     }
-    async fn get_state_root(&self, height: deezel_common::JsonValue) -> Result<String> {
-        deezel_common::MetashrewRpcProvider::get_state_root(self, height).await
+    async fn get_state_root(&self, height: alkanes_cli_common::JsonValue) -> Result<String> {
+        alkanes_cli_common::MetashrewRpcProvider::get_state_root(self, height).await
     }
-    async fn get_contract_meta(&self, block: &str, tx: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_contract_meta(&self, block: &str, tx: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_contract_meta(block, tx).await
     }
-    async fn trace_outpoint(&self, txid: &str, vout: u32) -> Result<deezel_common::JsonValue> {
+    async fn trace_outpoint(&self, txid: &str, vout: u32) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.trace_outpoint(txid, vout).await
     }
-    async fn get_spendables_by_address(&self, address: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_spendables_by_address(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_spendables_by_address(address).await
     }
-    async fn get_protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneWalletResponse> {
+    async fn get_protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneWalletResponse> {
         self.provider.get_protorunes_by_address(address, block_tag, protocol_tag).await
     }
-    async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneOutpointResponse> {
+    async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse> {
         self.provider.get_protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl MetashrewProvider for SystemDeezel {
     async fn get_height(&self) -> Result<u64> {
         self.provider.get_height().await
@@ -516,12 +538,12 @@ impl MetashrewProvider for SystemDeezel {
     async fn get_block_hash(&self, height: u64) -> Result<String> {
         <ConcreteProvider as MetashrewProvider>::get_block_hash(&self.provider, height).await
     }
-    async fn get_state_root(&self, height: deezel_common::JsonValue) -> Result<String> {
-        deezel_common::MetashrewProvider::get_state_root(self, height).await
+    async fn get_state_root(&self, height: alkanes_cli_common::JsonValue) -> Result<String> {
+        alkanes_cli_common::MetashrewProvider::get_state_root(self, height).await
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl EsploraProvider for SystemDeezel {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
         self.provider.get_blocks_tip_hash().await
@@ -529,23 +551,23 @@ impl EsploraProvider for SystemDeezel {
     async fn get_blocks_tip_height(&self) -> Result<u64> {
         self.provider.get_blocks_tip_height().await
     }
-    async fn get_blocks(&self, start_height: Option<u64>) -> Result<deezel_common::JsonValue> {
+    async fn get_blocks(&self, start_height: Option<u64>) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_blocks(start_height).await
     }
     async fn get_block_by_height(&self, height: u64) -> Result<String> {
         self.provider.get_block_by_height(height).await
     }
-    async fn get_block(&self, hash: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_block(&self, hash: &str) -> Result<alkanes_cli_common::JsonValue> {
         <ConcreteProvider as EsploraProvider>::get_block(&self.provider, hash).await
     }
-    async fn get_block_status(&self, hash: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_block_status(&self, hash: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_block_status(hash).await
     }
-    async fn get_block_txids(&self, hash: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_block_txids(&self, hash: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_block_txids(hash).await
     }
     async fn get_block_header(&self, hash: &str) -> Result<String> {
-        deezel_common::EsploraProvider::get_block_header(&self.provider, hash).await
+        alkanes_cli_common::EsploraProvider::get_block_header(&self.provider, hash).await
     }
     async fn get_block_raw(&self, hash: &str) -> Result<String> {
         self.provider.get_block_raw(hash).await
@@ -553,28 +575,28 @@ impl EsploraProvider for SystemDeezel {
     async fn get_block_txid(&self, hash: &str, index: u32) -> Result<String> {
         self.provider.get_block_txid(hash, index).await
     }
-    async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<deezel_common::JsonValue> {
+    async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_block_txs(hash, start_index).await
     }
-    async fn get_address_info(&self, address: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_address_info(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_address_info(address).await
     }
-    async fn get_address_txs(&self, address: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_address_txs(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_address_txs(address).await
     }
-    async fn get_address_txs_chain(&self, address: &str, last_seen_txid: Option<&str>) -> Result<deezel_common::JsonValue> {
+    async fn get_address_txs_chain(&self, address: &str, last_seen_txid: Option<&str>) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_address_txs_chain(address, last_seen_txid).await
     }
-    async fn get_address_txs_mempool(&self, address: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_address_txs_mempool(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_address_txs_mempool(address).await
     }
-    async fn get_address_utxo(&self, address: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_address_utxo(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_address_utxo(address).await
     }
-    async fn get_address_prefix(&self, prefix: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_address_prefix(&self, prefix: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_address_prefix(prefix).await
     }
-    async fn get_tx(&self, txid: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_tx(&self, txid: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_tx(txid).await
     }
     async fn get_tx_hex(&self, txid: &str) -> Result<String> {
@@ -583,105 +605,105 @@ impl EsploraProvider for SystemDeezel {
     async fn get_tx_raw(&self, txid: &str) -> Result<String> {
         self.provider.get_tx_raw(txid).await
     }
-    async fn get_tx_status(&self, txid: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_tx_status(&self, txid: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_tx_status(txid).await
     }
-    async fn get_tx_merkle_proof(&self, txid: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_tx_merkle_proof(&self, txid: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_tx_merkle_proof(txid).await
     }
     async fn get_tx_merkleblock_proof(&self, txid: &str) -> Result<String> {
         self.provider.get_tx_merkleblock_proof(txid).await
     }
-    async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<deezel_common::JsonValue> {
+    async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_tx_outspend(txid, index).await
     }
-    async fn get_tx_outspends(&self, txid: &str) -> Result<deezel_common::JsonValue> {
+    async fn get_tx_outspends(&self, txid: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_tx_outspends(txid).await
     }
     async fn broadcast(&self, tx_hex: &str) -> Result<String> {
         self.provider.broadcast(tx_hex).await
     }
-    async fn get_mempool(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_mempool(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_mempool().await
     }
-    async fn get_mempool_txids(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_mempool_txids(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_mempool_txids().await
     }
-    async fn get_mempool_recent(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_mempool_recent(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_mempool_recent().await
     }
-    async fn get_fee_estimates(&self) -> Result<deezel_common::JsonValue> {
+    async fn get_fee_estimates(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_fee_estimates().await
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl RunestoneProvider for SystemDeezel {
-    async fn decode_runestone(&self, tx: &bitcoin::Transaction) -> Result<deezel_common::JsonValue> {
+    async fn decode_runestone(&self, tx: &bitcoin::Transaction) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.decode_runestone(tx).await
     }
-    async fn format_runestone_with_decoded_messages(&self, tx: &bitcoin::Transaction) -> Result<deezel_common::JsonValue> {
+    async fn format_runestone_with_decoded_messages(&self, tx: &bitcoin::Transaction) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.format_runestone_with_decoded_messages(tx).await
     }
-    async fn analyze_runestone(&self, txid: &str) -> Result<deezel_common::JsonValue> {
+    async fn analyze_runestone(&self, txid: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.analyze_runestone(txid).await
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl AlkanesProvider for SystemDeezel {
-    async fn execute(&mut self, params: deezel_common::alkanes::types::EnhancedExecuteParams) -> Result<deezel_common::alkanes::types::ExecutionState> {
+    async fn execute(&mut self, params: alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::ExecutionState> {
         self.provider.execute(params).await
     }
-    async fn resume_execution(&mut self, state: deezel_common::alkanes::types::ReadyToSignTx, params: &deezel_common::alkanes::types::EnhancedExecuteParams) -> Result<deezel_common::alkanes::types::EnhancedExecuteResult> {
+    async fn resume_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignTx, params: &alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
         self.provider.resume_execution(state, params).await
     }
-    async fn resume_commit_execution(&mut self, state: deezel_common::alkanes::types::ReadyToSignCommitTx) -> Result<deezel_common::alkanes::types::ExecutionState> {
+    async fn resume_commit_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignCommitTx) -> Result<alkanes_cli_common::alkanes::types::ExecutionState> {
         self.provider.resume_commit_execution(state).await
     }
-    async fn resume_reveal_execution(&mut self, state: deezel_common::alkanes::types::ReadyToSignRevealTx) -> Result<deezel_common::alkanes::types::EnhancedExecuteResult> {
+    async fn resume_reveal_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignRevealTx) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
         self.provider.resume_reveal_execution(state).await
     }
-    async fn protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneWalletResponse> {
+    async fn protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneWalletResponse> {
         self.provider.protorunes_by_address(address, block_tag, protocol_tag).await
     }
-    async fn protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneOutpointResponse> {
+    async fn protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse> {
         self.provider.protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
     }
-    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<deezel_common::JsonValue> {
+    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<alkanes_cli_common::JsonValue> {
         unimplemented!()
     }
 
-    async fn simulate(&self, contract_id: &str, context: &deezel_common::alkanes_pb::MessageContextParcel) -> Result<deezel_common::JsonValue> {
+    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::proto::alkanes::MessageContextParcel) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.simulate(contract_id, context).await
     }
-    async fn trace(&self, outpoint: &str) -> Result<deezel_common::alkanes_pb::Trace> {
+    async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         self.provider.trace(outpoint).await
     }
-    async fn get_block(&self, height: u64) -> Result<deezel_common::alkanes_pb::BlockResponse> {
+    async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::BlockResponse> {
         <ConcreteProvider as AlkanesProvider>::get_block(&self.provider, height).await
     }
-    async fn sequence(&self) -> Result<deezel_common::JsonValue> {
+    async fn sequence(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.sequence().await
     }
-    async fn spendables_by_address(&self, address: &str) -> Result<deezel_common::JsonValue> {
+    async fn spendables_by_address(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.spendables_by_address(address).await
     }
-    async fn trace_block(&self, height: u64) -> Result<deezel_common::alkanes_pb::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         self.provider.trace_block(height).await
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         <ConcreteProvider as AlkanesProvider>::get_bytecode(&self.provider, alkane_id, block_tag).await
     }
-    async fn inspect(&self, target: &str, config: deezel_common::alkanes::AlkanesInspectConfig) -> Result<deezel_common::alkanes::AlkanesInspectResult> {
+    async fn inspect(&self, target: &str, config: alkanes_cli_common::alkanes::AlkanesInspectConfig) -> Result<alkanes_cli_common::alkanes::AlkanesInspectResult> {
         self.provider.inspect(target, config).await
     }
-    async fn get_balance(&self, address: Option<&str>) -> Result<Vec<deezel_common::alkanes::AlkaneBalance>> {
+    async fn get_balance(&self, address: Option<&str>) -> Result<Vec<alkanes_cli_common::alkanes::AlkaneBalance>> {
         <ConcreteProvider as AlkanesProvider>::get_balance(&self.provider, address).await
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl MonitorProvider for SystemDeezel {
     async fn monitor_blocks(&self, start: Option<u64>) -> Result<()> {
         self.provider.monitor_blocks(start).await
@@ -691,12 +713,12 @@ impl MonitorProvider for SystemDeezel {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl KeystoreProvider for SystemDeezel {
-    async fn derive_addresses(&self, master_public_key: &str, network_params: &deezel_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
+    async fn derive_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
         self.provider.derive_addresses(master_public_key, network_params, script_types, start_index, count).await
     }
-    async fn get_default_addresses(&self, master_public_key: &str, network_params: &deezel_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>> {
+    async fn get_default_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>> {
         self.provider.get_default_addresses(master_public_key, network_params).await
     }
     fn parse_address_range(&self, range_spec: &str) -> Result<(String, u32, u32)> {
@@ -708,61 +730,61 @@ impl KeystoreProvider for SystemDeezel {
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
         <ConcreteProvider as KeystoreProvider>::get_address(&self.provider, address_type, index).await
     }
-    async fn derive_address_from_path(&self, _master_public_key: &str, _path: &bitcoin::bip32::DerivationPath, _script_type: &str, _network_params: &deezel_common::network::NetworkParams) -> Result<KeystoreAddress> {
+    async fn derive_address_from_path(&self, _master_public_key: &str, _path: &bitcoin::bip32::DerivationPath, _script_type: &str, _network_params: &alkanes_cli_common::network::NetworkParams) -> Result<KeystoreAddress> {
         unimplemented!()
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl OrdProvider for SystemDeezel {
-    async fn get_inscription(&self, inscription_id: &str) -> Result<deezel_common::ord::Inscription> {
+    async fn get_inscription(&self, inscription_id: &str) -> Result<alkanes_cli_common::ord::Inscription> {
         self.provider.get_inscription(inscription_id).await
     }
-    async fn get_inscriptions_in_block(&self, block_hash: &str) -> Result<deezel_common::ord::Inscriptions> {
+    async fn get_inscriptions_in_block(&self, block_hash: &str) -> Result<alkanes_cli_common::ord::Inscriptions> {
         self.provider.get_inscriptions_in_block(block_hash).await
     }
-    async fn get_ord_address_info(&self, address: &str) -> Result<deezel_common::ord::AddressInfo> {
+    async fn get_ord_address_info(&self, address: &str) -> Result<alkanes_cli_common::ord::AddressInfo> {
         self.provider.get_ord_address_info(address).await
     }
-    async fn get_block_info(&self, query: &str) -> Result<deezel_common::ord::Block> {
+    async fn get_block_info(&self, query: &str) -> Result<alkanes_cli_common::ord::Block> {
         self.provider.get_block_info(query).await
     }
     async fn get_ord_block_count(&self) -> Result<u64> {
         self.provider.get_ord_block_count().await
     }
-    async fn get_ord_blocks(&self) -> Result<deezel_common::ord::Blocks> {
+    async fn get_ord_blocks(&self) -> Result<alkanes_cli_common::ord::Blocks> {
         self.provider.get_ord_blocks().await
     }
-    async fn get_children(&self, inscription_id: &str, page: Option<u32>) -> Result<deezel_common::ord::Children> {
+    async fn get_children(&self, inscription_id: &str, page: Option<u32>) -> Result<alkanes_cli_common::ord::Children> {
         self.provider.get_children(inscription_id, page).await
     }
     async fn get_content(&self, inscription_id: &str) -> Result<Vec<u8>> {
         self.provider.get_content(inscription_id).await
     }
-    async fn get_inscriptions(&self, page: Option<u32>) -> Result<deezel_common::ord::Inscriptions> {
+    async fn get_inscriptions(&self, page: Option<u32>) -> Result<alkanes_cli_common::ord::Inscriptions> {
         self.provider.get_inscriptions(page).await
     }
-    async fn get_output(&self, output: &str) -> Result<deezel_common::ord::Output> {
+    async fn get_output(&self, output: &str) -> Result<alkanes_cli_common::ord::Output> {
         self.provider.get_output(output).await
     }
-    async fn get_parents(&self, inscription_id: &str, page: Option<u32>) -> Result<deezel_common::ord::ParentInscriptions> {
+    async fn get_parents(&self, inscription_id: &str, page: Option<u32>) -> Result<alkanes_cli_common::ord::ParentInscriptions> {
         self.provider.get_parents(inscription_id, page).await
     }
-    async fn get_rune(&self, rune: &str) -> Result<deezel_common::ord::RuneInfo> {
+    async fn get_rune(&self, rune: &str) -> Result<alkanes_cli_common::ord::RuneInfo> {
         self.provider.get_rune(rune).await
     }
-    async fn get_runes(&self, page: Option<u32>) -> Result<deezel_common::ord::Runes> {
+    async fn get_runes(&self, page: Option<u32>) -> Result<alkanes_cli_common::ord::Runes> {
         self.provider.get_runes(page).await
     }
-    async fn get_sat(&self, sat: u64) -> Result<deezel_common::ord::SatResponse> {
+    async fn get_sat(&self, sat: u64) -> Result<alkanes_cli_common::ord::SatResponse> {
         self.provider.get_sat(sat).await
     }
-    async fn get_tx_info(&self, txid: &str) -> Result<deezel_common::ord::TxInfo> {
+    async fn get_tx_info(&self, txid: &str) -> Result<alkanes_cli_common::ord::TxInfo> {
         self.provider.get_tx_info(txid).await
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl UtxoProvider for SystemDeezel {
     async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>> {
         self.provider.get_utxos_by_spec(spec).await
@@ -780,15 +802,14 @@ impl Clone for SystemDeezel {
 }
 
 // Implement the individual system traits
-#[async_trait(?Send)]
+#[async_trait]
 impl SystemWallet for SystemDeezel {
-   async fn execute_wallet_command(&self, command: WalletCommands) -> deezel_common::Result<()> {
+   async fn execute_wallet_command(&self, command: WalletCommands) -> alkanes_cli_common::Result<()> {
         let mut provider = self.provider.clone(); // Clone to allow mutation for unlocking
 
         // Conditionally load wallet based on command requirements
         if command.requires_signing() {
-            // For signing commands, ensure the full wallet is loaded, prompting for passphrase if needed
-            if let deezel_common::provider::WalletState::Locked(_) = provider.get_wallet_state() {
+if let alkanes_cli_common::provider::WalletState::Locked(_) = provider.get_wallet_state() {
                 let passphrase = if let Some(ref pass) = self.args.passphrase {
                     pass.clone()
                 } else {
@@ -796,7 +817,7 @@ impl SystemWallet for SystemDeezel {
                         .map_err(|e| DeezelError::Wallet(format!("Failed to get passphrase: {e}")))?
                 };
                 provider.unlock_wallet(&passphrase).await?;
-            } else if let deezel_common::provider::WalletState::None = provider.get_wallet_state() {
+            } else if let alkanes_cli_common::provider::WalletState::None = provider.get_wallet_state() {
                  return Err(DeezelError::Wallet("No wallet found. Please create or specify a wallet file.".to_string()));
             }
         }
@@ -960,7 +981,7 @@ impl SystemWallet for SystemDeezel {
 📋 Default Addresses (derived from public key):");
                 let default_addresses = self.keystore_manager.get_default_addresses_from_metadata(&keystore_metadata, network, None)?;
                 
-                let mut grouped_addresses: std::collections::HashMap<String, Vec<&deezel_common::traits::KeystoreAddress>> = std::collections::HashMap::new();
+                let mut grouped_addresses: std::collections::HashMap<String, Vec<&alkanes_cli_common::traits::KeystoreAddress>> = std::collections::HashMap::new();
                 for addr in &default_addresses {
                     grouped_addresses.entry(addr.script_type.clone()).or_default().push(addr);
                 }
@@ -1025,11 +1046,11 @@ impl SystemWallet for SystemDeezel {
                     ]
                 } else if let Some(ref network_name) = network {
                     // Show addresses for specific network
-                    match deezel_common::network::NetworkParams::from_network_str(network_name) {
+                    match alkanes_cli_common::network::NetworkParams::from_network_str(network_name) {
                         Ok(params) => vec![params.network],
                         Err(e) => {
                             println!("❌ Invalid network '{network_name}': {e}");
-                            println!("💡 Supported networks: {}", deezel_common::network::NetworkParams::supported_networks().join(", "));
+                            println!("💡 Supported networks: {}", alkanes_cli_common::network::NetworkParams::supported_networks().join(", "));
                             return Ok(());
                         }
                     }
@@ -1041,9 +1062,9 @@ impl SystemWallet for SystemDeezel {
                 // Handle custom magic bytes if provided, OR use global magic bytes from args
                 let custom_network_params = if let Some(ref magic_str) = magic {
                     // Local --magic flag takes precedence
-                    match deezel_common::network::NetworkParams::from_magic_str(magic_str) {
+                    match alkanes_cli_common::network::NetworkParams::from_magic_str(magic_str) {
                         Ok((p2pkh_prefix, p2sh_prefix, bech32_hrp)) => {
-                            Some(deezel_common::network::NetworkParams::with_custom_magic(
+                            Some(alkanes_cli_common::network::NetworkParams::with_custom_magic(
                                 provider.get_network(),
                                 p2pkh_prefix,
                                 p2sh_prefix,
@@ -1057,9 +1078,9 @@ impl SystemWallet for SystemDeezel {
                     }
                 } else if let Some(ref global_magic_str) = self.args.magic {
                     // Use global -p flag magic bytes if no local --magic specified
-                    match deezel_common::network::NetworkParams::from_magic_str(global_magic_str) {
+                    match alkanes_cli_common::network::NetworkParams::from_magic_str(global_magic_str) {
                         Ok((p2pkh_prefix, p2sh_prefix, bech32_hrp)) => {
-                            Some(deezel_common::network::NetworkParams::with_custom_magic(
+                            Some(alkanes_cli_common::network::NetworkParams::with_custom_magic(
                                 provider.get_network(),
                                 p2pkh_prefix,
                                 p2sh_prefix,
@@ -1067,13 +1088,12 @@ impl SystemWallet for SystemDeezel {
                             ))
                         },
                         Err(_) => {
-                            // If global magic parsing fails, try to get network params from provider string
-                            deezel_common::network::NetworkParams::from_network_str(&self.args.provider).ok()
+alkanes_cli_common::network::NetworkParams::from_network_str(&self.args.rpc_config.network.to_string()).ok()
                         }
                     }
-                } else if self.args.provider != "regtest" {
+                } else if self.args.rpc_config.network.0.to_string() != "regtest" {
                     // Use network params from provider if it's not the default regtest
-                    deezel_common::network::NetworkParams::from_network_str(&self.args.provider).ok()
+                    alkanes_cli_common::network::NetworkParams::from_network_str(&self.args.rpc_config.network.to_string()).ok()
                 } else {
                     None
                 };
@@ -1144,7 +1164,7 @@ impl SystemWallet for SystemDeezel {
                     
                     // Display network magic bytes when a specific network is selected
                     if let Some(ref network_name) = network {
-                        if let Ok(network_params) = deezel_common::network::NetworkParams::from_network_str(network_name) {
+                        if let Ok(network_params) = alkanes_cli_common::network::NetworkParams::from_network_str(network_name) {
                             println!("🔮 Network Magic Bytes:");
                             println!("   Bech32 HRP: {}", network_params.bech32_prefix);
                             println!("   P2PKH Prefix: 0x{:02x}", network_params.p2pkh_prefix);
@@ -1165,7 +1185,7 @@ impl SystemWallet for SystemDeezel {
                     }
                     
                     // Group addresses by network and script type for better display
-                    let mut grouped_addresses: std::collections::HashMap<String, std::collections::HashMap<String, Vec<&deezel_common::traits::KeystoreAddress>>> = std::collections::HashMap::new();
+                    let mut grouped_addresses: std::collections::HashMap<String, std::collections::HashMap<String, Vec<&alkanes_cli_common::traits::KeystoreAddress>>> = std::collections::HashMap::new();
                     for addr in &all_addresses {
                         let network_key = addr.network.as_ref().unwrap_or(&"unknown".to_string()).clone();
                         grouped_addresses.entry(network_key).or_default()
@@ -1518,7 +1538,7 @@ impl SystemWallet for SystemDeezel {
        res.map_err(|e| DeezelError::Wallet(e.to_string()))
    }
 
-    async fn execute_walletinfo_command(&self, raw: bool) -> deezel_common::Result<()> {
+    async fn execute_walletinfo_command(&self, raw: bool) -> alkanes_cli_common::Result<()> {
        let provider = &self.provider;
        let address = WalletProvider::get_address(provider).await.map_err(|e| DeezelError::Wallet(e.to_string()))?;
        let balance = WalletProvider::get_balance(provider, None).await.map_err(|e| DeezelError::Wallet(e.to_string()))?;
@@ -1549,7 +1569,7 @@ async fn resolve_addresses(
     provider: &ConcreteProvider,
 ) -> anyhow::Result<Vec<String>> {
     let mut resolved_addresses = Vec::new();
-    let keystore = provider.get_keystore().ok_or_else(|| anyhow!("Keystore not loaded"))?;
+    let keystore = provider.get_keystore().or_else(|_| Err(anyhow!("Keystore not loaded")))?;
 
     for part in addr_str.split(',') {
         let trimmed_part = part.trim();
@@ -1566,9 +1586,19 @@ async fn resolve_addresses(
     Ok(resolved_addresses)
 }
 
-#[async_trait(?Send)]
+fn parse_outpoint(s: &str) -> anyhow::Result<(String, u32)> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 {
+        return Err(anyhow!("Invalid outpoint format. Expected 'txid:vout'"));
+    }
+    let txid = parts[0].to_string();
+    let vout = parts[1].parse::<u32>()?;
+    Ok((txid, vout))
+}
+
+#[async_trait]
 impl SystemBitcoind for SystemDeezel {
-   async fn execute_bitcoind_command(&self, command: BitcoindCommands) -> deezel_common::Result<()> {
+   async fn execute_bitcoind_command(&self, command: BitcoindCommands) -> alkanes_cli_common::Result<()> {
        let provider = &self.provider;
        let res: anyhow::Result<()> = match command {
             BitcoindCommands::Getblockcount => {
@@ -1697,9 +1727,9 @@ impl SystemBitcoind for SystemDeezel {
    }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl SystemMetashrew for SystemDeezel {
-   async fn execute_metashrew_command(&self, command: MetashrewCommands) -> deezel_common::Result<()> {
+   async fn execute_metashrew_command(&self, command: MetashrewCommands) -> alkanes_cli_common::Result<()> {
        let provider = &self.provider;
        let res: anyhow::Result<()> = match command {
             MetashrewCommands::Height => {
@@ -1712,13 +1742,13 @@ impl SystemMetashrew for SystemDeezel {
    }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl SystemAlkanes for SystemDeezel {
-    async fn execute_alkanes_command(&self, command: AlkanesCommands) -> deezel_common::Result<()> {
+    async fn execute_alkanes_command(&self, command: AlkanesCommands) -> alkanes_cli_common::Result<()> {
         let mut provider = self.provider.clone();
 
         if command.requires_signing() {
-            if let deezel_common::provider::WalletState::Locked(_) = provider.get_wallet_state() {
+            if let alkanes_cli_common::provider::WalletState::Locked(_) = provider.get_wallet_state() {
                 let passphrase = if let Some(ref pass) = self.args.passphrase {
                     pass.clone()
                 } else {
@@ -1726,7 +1756,7 @@ impl SystemAlkanes for SystemDeezel {
                         .map_err(|e| DeezelError::Wallet(format!("Failed to get passphrase: {e}")))?
                 };
                 provider.unlock_wallet(&passphrase).await?;
-            } else if let deezel_common::provider::WalletState::None = provider.get_wallet_state() {
+            } else if let alkanes_cli_common::provider::WalletState::None = provider.get_wallet_state() {
                 return Err(DeezelError::Wallet("No wallet found. Please create or specify a wallet file.".to_string()));
             }
         }
@@ -1757,7 +1787,7 @@ impl SystemAlkanes for SystemDeezel {
                 let envelope_data = if let Some(ref envelope_file) = envelope {
                     let expanded_path = expand_tilde(envelope_file)?;
                     let data = std::fs::read(&expanded_path)
-                        .with_context(|| format!("Failed to read envelope file: {expanded_path}"))?;
+                        .with_context(|| format!("Failed to read envelope file: {}", expanded_path.display()))?;
                     log::info!("📦 Loaded envelope data: {} bytes", data.len());
                     Some(data)
                 } else {
@@ -1766,14 +1796,14 @@ impl SystemAlkanes for SystemDeezel {
 
                 // Parse input requirements from a single string
                 let parsed_input_requirements = {
-                    use deezel_common::alkanes::parsing::parse_input_requirements;
+                    use alkanes_cli_common::alkanes::parsing::parse_input_requirements;
                     parse_input_requirements(&inputs)
                         .map_err(|e| anyhow!("Failed to parse input requirements: {}", e))?
                 };
 
                 // Parse protostones from a single string
                 let parsed_protostones = {
-                    use deezel_common::alkanes::parsing::parse_protostones;
+                    use alkanes_cli_common::alkanes::parsing::parse_protostones;
                     parse_protostones(&protostones)
                         .map_err(|e| anyhow!("Failed to parse protostones: {}", e))?
                 };
@@ -1788,7 +1818,7 @@ impl SystemAlkanes for SystemDeezel {
                 };
 
                  // Create enhanced execute parameters
-                 let execute_params = deezel_common::alkanes::types::EnhancedExecuteParams {
+                 let execute_params = alkanes_cli_common::alkanes::types::EnhancedExecuteParams {
                      fee_rate,
                      to_addresses: resolved_to_addresses,
                      from_addresses: None, // This field is no longer provided by the CLI
@@ -1806,7 +1836,7 @@ impl SystemAlkanes for SystemDeezel {
 
                 loop {
                     match current_state {
-                        deezel_common::alkanes::types::ExecutionState::ReadyToSign(state) => {
+                        alkanes_cli_common::alkanes::types::ExecutionState::ReadyToSign(state) => {
                             if !yes {
                                 pretty_print::pretty_print_ready_to_sign(&state);
                                 println!("Do you want to sign and broadcast this transaction? (y/N)");
@@ -1818,9 +1848,9 @@ impl SystemAlkanes for SystemDeezel {
                                 }
                             }
                             let result = provider.resume_execution(state, &execute_params).await?;
-                            current_state = deezel_common::alkanes::types::ExecutionState::Complete(result);
+                            current_state = alkanes_cli_common::alkanes::types::ExecutionState::Complete(result);
                         }
-                        deezel_common::alkanes::types::ExecutionState::ReadyToSignCommit(state) => {
+                        alkanes_cli_common::alkanes::types::ExecutionState::ReadyToSignCommit(state) => {
                              if !yes {
                                 println!("A commit transaction is ready to be signed and broadcast.");
                                 println!("Do you want to proceed? (y/N)");
@@ -1833,7 +1863,7 @@ impl SystemAlkanes for SystemDeezel {
                             }
                             current_state = provider.resume_commit_execution(state).await?;
                         }
-                        deezel_common::alkanes::types::ExecutionState::ReadyToSignReveal(state) => {
+                        alkanes_cli_common::alkanes::types::ExecutionState::ReadyToSignReveal(state) => {
                             if !yes {
                                 pretty_print::pretty_print_reveal_analysis(&state);
                                 println!("A reveal transaction is ready to be signed and broadcast.");
@@ -1846,9 +1876,9 @@ impl SystemAlkanes for SystemDeezel {
                                 }
                             }
                             let result = provider.resume_reveal_execution(state).await?;
-                            current_state = deezel_common::alkanes::types::ExecutionState::Complete(result);
+                            current_state = alkanes_cli_common::alkanes::types::ExecutionState::Complete(result);
                         }
-                        deezel_common::alkanes::types::ExecutionState::Complete(result) => {
+                        alkanes_cli_common::alkanes::types::ExecutionState::Complete(result) => {
                             if raw {
                                 println!("{}", serde_json::to_string_pretty(&result)?);
                             } else {
@@ -1876,7 +1906,7 @@ impl SystemAlkanes for SystemDeezel {
                 Ok(())
             }
             AlkanesCommands::Balance { address, raw } => {
-                let balance_result = deezel_common::AlkanesProvider::get_balance(&provider, address.as_deref()).await?;
+                let balance_result = alkanes_cli_common::AlkanesProvider::get_balance(&provider, address.as_deref()).await?;
 
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&balance_result)?);
@@ -1977,7 +2007,7 @@ impl SystemAlkanes for SystemDeezel {
                 params: _,
                 raw,
             } => {
-                let context = deezel_common::alkanes::simulation::simulate_cellpack(&[]);
+                let context = alkanes_cli_common::alkanes::simulation::simulate_cellpack(&[]);
                 let result = provider.simulate(&contract_id, &context).await?;
 
                 if raw {
@@ -2000,693 +2030,10 @@ impl SystemAlkanes for SystemDeezel {
                 }
                 Ok(())
             }
-            AlkanesCommands::Sequence { raw } => {
-                let result = provider.sequence().await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("🔢 Sequence:
-{}", serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            }
-            AlkanesCommands::SpendablesByAddress { address, raw } => {
-                let result = provider.spendables_by_address(&address).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("💰 Spendables for {}:
-{}", address, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            }
-            AlkanesCommands::TraceBlock { height, raw } => {
-                let result = provider.trace_block(height).await?;
-                if raw {
-                    println!("{result:#?}");
-                } else {
-                    println!("📊 Trace for block {height}:
-{result:#?}");
-                }
-                Ok(())
-            }
+            AlkanesCommands::Sequence { .. } => todo!(),
+            AlkanesCommands::SpendablesByAddress { .. } => todo!(),
+            AlkanesCommands::TraceBlock { .. } => todo!(),
         };
         res.map_err(|e| DeezelError::Wallet(e.to_string()))
-    }
-}
-
-use deezel_common::runestone_analysis::{
-    analyze_transaction_with_runestone, pretty_print_transaction_analysis,
-};
-use bitcoin::Transaction;
-use bitcoin::consensus::deserialize;
-
-fn decode_transaction_hex(hex_str: &str) -> anyhow::Result<Transaction> {
-    let tx_bytes = hex::decode(hex_str.trim_start_matches("0x"))
-        .context("Failed to decode transaction hex")?;
-    
-    let tx: Transaction = deserialize(&tx_bytes)
-        .context("Failed to deserialize transaction")?;
-    
-    Ok(tx)
-}
-
-#[async_trait(?Send)]
-impl SystemRunestone for SystemDeezel {
-    async fn execute_runestone_command(&self, command: RunestoneCommands) -> deezel_common::Result<()> {
-        let provider = &self.provider;
-        let res: anyhow::Result<()> = match command {
-            RunestoneCommands::Decode { tx_hex, raw } => {
-                let tx = decode_transaction_hex(&tx_hex)?;
-                let network = provider.get_network();
-                let analysis = analyze_transaction_with_runestone(&tx, network)?;
-
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&analysis)?);
-                } else {
-                    let pretty_output = pretty_print_transaction_analysis(&analysis)?;
-                    println!("{pretty_output}");
-                }
-                Ok(())
-            },
-            RunestoneCommands::Analyze { txid, raw } => {
-                let tx_hex = provider.get_transaction_hex(&txid).await?;
-                let tx = decode_transaction_hex(&tx_hex)?;
-                let network = provider.get_network();
-                let analysis = analyze_transaction_with_runestone(&tx, network)?;
-
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&analysis)?);
-                } else {
-                    let pretty_output = pretty_print_transaction_analysis(&analysis)?;
-                    println!("{pretty_output}");
-                }
-                Ok(())
-            },
-        };
-        res.map_err(|e| DeezelError::Wallet(e.to_string()))
-    }
-}
-
-#[async_trait(?Send)]
-impl SystemProtorunes for SystemDeezel {
-   async fn execute_protorunes_command(&self, command: ProtorunesCommands) -> deezel_common::Result<()> {
-       let provider = &self.provider;
-       let res: anyhow::Result<()> = match command {
-            ProtorunesCommands::ByAddress { address, raw, block_tag, protocol_tag } => {
-                let result = provider.get_protorunes_by_address(&address, block_tag, protocol_tag).await?;
-                
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("🪙 Protorunes for address: {address}");
-                    println!("═══════════════════════════════════════");
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-           ProtorunesCommands::ByOutpoint { txid, vout, raw, block_tag, protocol_tag } => {
-               let result = provider.get_protorunes_by_outpoint(&txid, vout, block_tag, protocol_tag).await?;
-               
-               if raw {
-                   println!("{}", serde_json::to_string_pretty(&result)?);
-               } else {
-                   println!("🪙 Protorunes for outpoint: {txid}:{vout}");
-                   println!("═══════════════════════════════════════");
-                   println!("{}", serde_json::to_string_pretty(&result)?);
-               }
-               Ok(())
-           },
-       };
-       res.map_err(|e| DeezelError::Wallet(e.to_string()))
-   }
-}
-
-#[async_trait(?Send)]
-impl SystemMonitor for SystemDeezel {
-   async fn execute_monitor_command(&self, command: MonitorCommands) -> deezel_common::Result<()> {
-       let provider = &self.provider;
-       let res: anyhow::Result<()> = match command {
-            MonitorCommands::Blocks { start, raw: _ } => {
-                let start_height = start.unwrap_or({
-                    // Get current height as default
-                    0 // Placeholder - would need async context
-                });
-                
-                println!("🔍 Monitoring blocks starting from height: {start_height}");
-                provider.monitor_blocks(start).await?;
-                println!("✅ Block monitoring completed");
-                Ok(())
-            },
-       };
-       res.map_err(|e| DeezelError::Wallet(e.to_string()))
-   }
-}
-
-#[async_trait(?Send)]
-impl SystemEsplora for SystemDeezel {
-    async fn execute_esplora_command(&self, command: EsploraCommands) -> deezel_common::Result<()> {
-        let provider = &self.provider;
-        let res: anyhow::Result<()> = match command {
-            EsploraCommands::BlocksTipHash { raw } => {
-                let hash = provider.get_blocks_tip_hash().await?;
-                if raw {
-                    println!("{hash}");
-                } else {
-                    println!("⛓️ Tip Hash: {hash}");
-                }
-                Ok(())
-            },
-            EsploraCommands::BlocksTipHeight { raw } => {
-                let height = provider.get_blocks_tip_height().await?;
-                if raw {
-                    println!("{height}");
-                } else {
-                    println!("📈 Tip Height: {height}");
-                }
-                Ok(())
-            },
-            EsploraCommands::Blocks { start_height, raw } => {
-                let result = provider.get_blocks(start_height).await?;
-                if raw {
-                    if let Some(s) = result.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{result}");
-                    }
-                } else {
-                    println!("📦 Blocks:
-{}", serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::BlockHeight { height, raw } => {
-                let hash = provider.get_block_by_height(height).await?;
-                if raw {
-                    println!("{hash}");
-                } else {
-                    println!("🔗 Block Hash at {height}: {hash}");
-                }
-                Ok(())
-            },
-            EsploraCommands::Block { hash, raw } => {
-                let block = EsploraProvider::get_block(provider, &hash).await?;
-                if raw {
-                    if let Some(s) = block.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{block}");
-                    }
-                } else {
-                    println!("📦 Block {}:
-{}", hash, serde_json::to_string_pretty(&block)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::BlockStatus { hash, raw } => {
-                let status = provider.get_block_status(&hash).await?;
-                if raw {
-                    if let Some(s) = status.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{status}");
-                    }
-                } else {
-                    println!("ℹ️ Block Status {}:
-{}", hash, serde_json::to_string_pretty(&status)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::BlockTxids { hash, raw } => {
-                let txids = provider.get_block_txids(&hash).await?;
-                if raw {
-                    if let Some(s) = txids.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{txids}");
-                    }
-                } else {
-                    println!("📄 Block Txids {}:
-{}", hash, serde_json::to_string_pretty(&txids)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::BlockHeader { hash, raw } => {
-                let header = <ConcreteProvider as EsploraProvider>::get_block_header(provider, &hash).await?;
-                if raw {
-                    println!("{header}");
-                } else {
-                    println!("📄 Block Header {hash}: {header}");
-                }
-                Ok(())
-            },
-            EsploraCommands::BlockRaw { hash, raw } => {
-                let raw_block = provider.get_block_raw(&hash).await?;
-                if raw {
-                    println!("{raw_block}");
-                } else {
-                    println!("📦 Raw Block {hash}: {raw_block}");
-                }
-                Ok(())
-            },
-            EsploraCommands::BlockTxid { hash, index, raw } => {
-                let txid = provider.get_block_txid(&hash, index).await?;
-                if raw {
-                    println!("{txid}");
-                } else {
-                    println!("📄 Txid at index {index} in block {hash}: {txid}");
-                }
-                Ok(())
-            },
-            EsploraCommands::BlockTxs { hash, start_index, raw } => {
-                let txs = provider.get_block_txs(&hash, start_index).await?;
-                if raw {
-                    if let Some(s) = txs.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{txs}");
-                    }
-                } else {
-                    println!("📄 Transactions in block {}:
-{}", hash, serde_json::to_string_pretty(&txs)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::Address { params, raw } => {
-                let resolved_params = provider.resolve_all_identifiers(&params).await?;
-                let result = EsploraProvider::get_address_info(provider, &resolved_params).await?;
-                if raw {
-                    if let Some(s) = result.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{result}");
-                    }
-                } else {
-                    println!("🏠 Address {}:
-{}", params, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::AddressTxs { params, raw } => {
-                let resolved_params = provider.resolve_all_identifiers(&params).await?;
-                let result = provider.get_address_txs(&resolved_params).await?;
-                if raw {
-                    if let Some(s) = result.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{result}");
-                    }
-                } else {
-                    println!("📄 Transactions for address {}:
-{}", params, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::AddressTxsChain { params, raw } => {
-                let parts: Vec<&str> = params.split(':').collect();
-                let resolved_params = if parts.len() >= 2 {
-                    let address_part = parts[0];
-                    let resolved_address = provider.resolve_all_identifiers(address_part).await?;
-                    if parts.len() == 2 {
-                        format!("{}:{}", resolved_address, parts[1])
-                    } else {
-                        format!("{}:{}", resolved_address, parts[1..].join(":"))
-                    }
-                } else {
-                    provider.resolve_all_identifiers(&params).await?
-                };
-                let result = provider.get_address_txs_chain(&resolved_params, None).await?;
-                if raw {
-                    if let Some(s) = result.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{result}");
-                    }
-                } else {
-                    println!("⛓️ Chain transactions for address {}:
-{}", params, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::AddressTxsMempool { address, raw } => {
-                let resolved_address = provider.resolve_all_identifiers(&address).await?;
-                let result = provider.get_address_txs_mempool(&resolved_address).await?;
-                if raw {
-                    if let Some(s) = result.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{result}");
-                    }
-                } else {
-                    println!("⏳ Mempool transactions for address {}:
-{}", address, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::AddressUtxo { address, raw } => {
-                let resolved_address = provider.resolve_all_identifiers(&address).await?;
-                let result = provider.get_address_utxo(&resolved_address).await?;
-                if raw {
-                    if let Some(s) = result.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{result}");
-                    }
-                } else {
-                    println!("💰 UTXOs for address {}:
-{}", address, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::AddressPrefix { prefix, raw } => {
-                let result = provider.get_address_prefix(&prefix).await?;
-                if raw {
-                    if let Some(s) = result.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{result}");
-                    }
-                } else {
-                    println!("🔍 Addresses with prefix '{}':
-{}", prefix, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::Tx { txid, raw } => {
-                let tx = provider.get_tx(&txid).await?;
-                if raw {
-                    if let Some(s) = tx.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{tx}");
-                    }
-                } else {
-                    println!("📄 Transaction {}:
-{}", txid, serde_json::to_string_pretty(&tx)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::TxHex { txid, raw } => {
-                let hex = provider.get_tx_hex(&txid).await?;
-                if raw {
-                    println!("{hex}");
-                } else {
-                    println!("📄 Hex for tx {txid}: {hex}");
-                }
-                Ok(())
-            },
-            EsploraCommands::TxRaw { txid, raw } => {
-                let raw_tx = provider.get_tx_raw(&txid).await?;
-                if raw {
-                    println!("{raw_tx}");
-                } else {
-                    println!("📄 Raw tx {txid}: {raw_tx}");
-                }
-                Ok(())
-            },
-            EsploraCommands::TxStatus { txid, raw } => {
-                let status = provider.get_tx_status(&txid).await?;
-                if raw {
-                    if let Some(s) = status.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{status}");
-                    }
-                } else {
-                    println!("ℹ️ Status for tx {}:
-{}", txid, serde_json::to_string_pretty(&status)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::TxMerkleProof { txid, raw } => {
-                let proof = provider.get_tx_merkle_proof(&txid).await?;
-                if raw {
-                    if let Some(s) = proof.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{proof}");
-                    }
-                } else {
-                    println!("🧾 Merkle proof for tx {}:
-{}", txid, serde_json::to_string_pretty(&proof)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::TxMerkleblockProof { txid, raw } => {
-                let proof = provider.get_tx_merkleblock_proof(&txid).await?;
-                if raw {
-                    println!("{proof}");
-                } else {
-                    println!("🧾 Merkleblock proof for tx {txid}: {proof}");
-                }
-                Ok(())
-            },
-            EsploraCommands::TxOutspend { txid, index, raw } => {
-                let outspend = provider.get_tx_outspend(&txid, index).await?;
-                if raw {
-                    if let Some(s) = outspend.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{outspend}");
-                    }
-                } else {
-                    println!("💸 Outspend for tx {}, vout {}:
-{}", txid, index, serde_json::to_string_pretty(&outspend)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::TxOutspends { txid, raw } => {
-                let outspends = provider.get_tx_outspends(&txid).await?;
-                if raw {
-                    if let Some(s) = outspends.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{outspends}");
-                    }
-                } else {
-                    println!("💸 Outspends for tx {}:
-{}", txid, serde_json::to_string_pretty(&outspends)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::Broadcast { tx_hex, raw: _ } => {
-                let txid = provider.broadcast(&tx_hex).await?;
-                println!("✅ Transaction broadcast successfully!");
-                println!("🔗 Transaction ID: {txid}");
-                Ok(())
-            },
-            EsploraCommands::PostTx { tx_hex, raw: _ } => {
-                let txid = provider.broadcast(&tx_hex).await?;
-                println!("✅ Transaction posted successfully!");
-                println!("🔗 Transaction ID: {txid}");
-                Ok(())
-            },
-            EsploraCommands::Mempool { raw } => {
-                let mempool = provider.get_mempool().await?;
-                if raw {
-                    if let Some(s) = mempool.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{mempool}");
-                    }
-                } else {
-                    println!("⏳ Mempool Info:
-{}", serde_json::to_string_pretty(&mempool)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::MempoolTxids { raw } => {
-                let txids = provider.get_mempool_txids().await?;
-                if raw {
-                    if let Some(s) = txids.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{txids}");
-                    }
-                } else {
-                    println!("📄 Mempool Txids:
-{}", serde_json::to_string_pretty(&txids)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::MempoolRecent { raw } => {
-                let recent = provider.get_mempool_recent().await?;
-                if raw {
-                    if let Some(s) = recent.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{recent}");
-                    }
-                } else {
-                    println!("📄 Recent Mempool Txs:
-{}", serde_json::to_string_pretty(&recent)?);
-                }
-                Ok(())
-            },
-            EsploraCommands::FeeEstimates { raw } => {
-                let estimates = provider.get_fee_estimates().await?;
-                if raw {
-                    if let Some(s) = estimates.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{estimates}");
-                    }
-                } else {
-                    println!("💰 Fee Estimates:
-{}", serde_json::to_string_pretty(&estimates)?);
-                }
-                Ok(())
-            },
-        };
-        res.map_err(|e| DeezelError::Wallet(e.to_string()))
-    }
-}
-
-
-#[async_trait(?Send)]
-pub trait SystemOrd {
-    async fn execute_ord_command(&self, command: OrdCommands) -> deezel_common::Result<()>;
-}
-
-#[async_trait(?Send)]
-impl SystemOrd for SystemDeezel {
-    async fn execute_ord_command(&self, command: OrdCommands) -> deezel_common::Result<()> {
-        let provider = &self.provider;
-        let res: anyhow::Result<()> = match command {
-            OrdCommands::Inscription { id, raw } => {
-                let inscription = provider.get_inscription(&id).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&inscription)?);
-                } else {
-                    println!("Inscription {}:
-{}", id, serde_json::to_string_pretty(&inscription)?);
-                }
-                Ok(())
-            },
-            OrdCommands::InscriptionsInBlock { hash, raw } => {
-                let inscriptions = provider.get_inscriptions_in_block(&hash).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&inscriptions)?);
-                } else {
-                    println!("Inscriptions in block {}:
-{}", hash, serde_json::to_string_pretty(&inscriptions)?);
-                }
-                Ok(())
-            },
-            OrdCommands::AddressInfo { address, raw } => {
-                let result = provider.get_ord_address_info(&address).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("Address {}:
-{}", address, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            OrdCommands::BlockInfo { query, raw } => {
-                let result = provider.get_block_info(&query).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("Block {}:
-{}", query, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            OrdCommands::BlockCount => {
-                let result = provider.get_ord_block_count().await?;
-                println!("Block count:
-{}", serde_json::to_string_pretty(&result)?);
-                Ok(())
-            },
-            OrdCommands::Blocks { raw } => {
-                let result = provider.get_ord_blocks().await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("Blocks:
-{}", serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            OrdCommands::Children { id, page, raw } => {
-                let result = provider.get_children(&id, page).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("Children of {}:
-{}", id, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            OrdCommands::Content { id } => {
-                let result = provider.get_content(&id).await?;
-                use std::io::{self, Write};
-                io::stdout().write_all(&result)?;
-                Ok(())
-            },
-            OrdCommands::Output { outpoint, raw } => {
-                let result = provider.get_output(&outpoint).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("Output {}:
-{}", outpoint, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            OrdCommands::Parents { id, page, raw } => {
-                let result = provider.get_parents(&id, page).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("Parents of {}:
-{}", id, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            OrdCommands::Rune { rune, raw } => {
-                let result = provider.get_rune(&rune).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("Rune {}:
-{}", rune, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            OrdCommands::Sat { sat, raw } => {
-                let result = provider.get_sat(sat).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("Sat {}:
-{}", sat, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-            OrdCommands::TxInfo { txid, raw } => {
-                let result = provider.get_tx_info(&txid).await?;
-                if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                } else {
-                    println!("Transaction {}:
-{}", txid, serde_json::to_string_pretty(&result)?);
-                }
-                Ok(())
-            },
-        };
-        res.map_err(|e| DeezelError::Wallet(e.to_string()))
-    }
-}
-
-/// Expand tilde (~) in file paths to home directory
-fn expand_tilde(path: &str) -> Result<String> {
-    if path.starts_with("~/") {
-        let home = std::env::var("HOME")
-            .context("HOME environment variable not set")?;
-        Ok(path.replacen("~", &home, 1))
-    } else {
-        Ok(path.to_string())
     }
 }

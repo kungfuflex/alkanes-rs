@@ -79,7 +79,8 @@ impl<R: AddressResolver> OrdProvider<R> {
     }
 }
 
-#[async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<R: AddressResolver + Send + Sync> UtxoProvider for OrdProvider<R> {
     async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>> {
         let mut addresses = Vec::new();
