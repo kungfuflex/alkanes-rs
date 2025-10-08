@@ -1,10 +1,10 @@
-//! # Deezel Common Cryptography
+//! # Alkanes Common Cryptography
 //!
 //! This module provides `no_std` compatible cryptographic functions for encrypting
 //! and decrypting the wallet's seed mnemonic. It uses PBKDF2 to derive a key
 //! from a user-provided passphrase and AES-256-GCM for authenticated encryption.
 
-use crate::{Result, DeezelError};
+use crate::{Result, AlkanesError};
 use alloc::{string::ToString, vec, vec::Vec};
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
@@ -13,13 +13,6 @@ use aes_gcm::{
 use rand_core::RngCore;
 use pbkdf2::pbkdf2_hmac;
 use sha2::Sha256;
-// Chadson Journal:
-// 1. Removed the async `encrypt` and `decrypt` functions that used a Web Worker.
-// 2. This was causing errors in `slope-frontend` because the worker was being loaded
-//    unnecessarily.
-// 3. The `deezel-web` crate now provides the necessary async crypto functions using
-//    the Web Crypto API, making this worker-based implementation obsolete.
-// 4. Removed associated `use` statements for `gloo-worker`, `futures`, and `crypto_worker`.
 
 const SALT_SIZE: usize = 16; // 128 bits for salt
 const NONCE_SIZE: usize = 12; // 96 bits for AES-GCM nonce
@@ -42,20 +35,20 @@ pub fn encrypt_sync(data: &[u8], passphrase: &str) -> Result<(Vec<u8>, Vec<u8>, 
     let mut salt = vec![0u8; SALT_SIZE];
     OsRng.fill_bytes(&mut salt);
     let key = derive_key(passphrase, &salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| DeezelError::Crypto(e.to_string()))?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| AlkanesError::Crypto(e.to_string()))?;
     let mut nonce_bytes = vec![0u8; NONCE_SIZE];
     OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let encrypted_data = cipher.encrypt(nonce, data).map_err(|e| DeezelError::Crypto(e.to_string()))?;
+    let encrypted_data = cipher.encrypt(nonce, data).map_err(|e| AlkanesError::Crypto(e.to_string()))?;
     Ok((encrypted_data, salt, nonce_bytes))
 }
 
 /// Synchronously decrypts data. This should be called from within the worker.
 pub fn decrypt_sync(encrypted_data: &[u8], passphrase: &str, salt: &[u8], nonce_bytes: &[u8]) -> Result<Vec<u8>> {
     let key = derive_key(passphrase, salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| DeezelError::Crypto(e.to_string()))?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| AlkanesError::Crypto(e.to_string()))?;
     let nonce = Nonce::from_slice(nonce_bytes);
-    cipher.decrypt(nonce, encrypted_data).map_err(|e| DeezelError::Crypto(e.to_string()))
+    cipher.decrypt(nonce, encrypted_data).map_err(|e| AlkanesError::Crypto(e.to_string()))
 }
 
 

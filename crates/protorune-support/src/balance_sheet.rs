@@ -48,8 +48,8 @@ impl From<crate::proto::protorune::ProtoruneRuneId> for ProtoruneRuneId {
 impl From<ProtoruneRuneId> for crate::proto::protorune::ProtoruneRuneId {
     fn from(v: ProtoruneRuneId) -> crate::proto::protorune::ProtoruneRuneId {
         let mut result = crate::proto::protorune::ProtoruneRuneId::default();
-        result.height = Some(v.block.into());
-        result.txindex = Some(v.tx.into());
+        result.height = protobuf::MessageField::some(v.block.into());
+        result.txindex = protobuf::MessageField::some(v.tx.into());
         result
     }
 }
@@ -61,8 +61,8 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::BalanceSheet> for
                 balances: BTreeMap::<ProtoruneRuneId, u128>::from_iter(
                     balance_sheet.entries.into_iter().map(|v| {
                         let id = ProtoruneRuneId::new(
-                            v.rune.as_ref().unwrap().rune_id.as_ref().unwrap().height.clone().unwrap().into(),
-                            v.rune.as_ref().unwrap().rune_id.as_ref().unwrap().txindex.clone().unwrap().into(),
+                            v.rune.as_ref().unwrap().runeId.as_ref().unwrap().height.clone().unwrap().into(),
+                            v.rune.as_ref().unwrap().runeId.as_ref().unwrap().txindex.clone().unwrap().into(),
                         );
                         (id, v.balance.unwrap().into())
                     }),
@@ -81,19 +81,23 @@ impl<P: KeyValuePointer + Clone> From<BalanceSheet<P>> for crate::proto::protoru
                 .clone()
                 .iter()
                 .map(|(k, v)| BalanceSheetItem {
-                    rune: Some(Rune {
-                        rune_id: Some(proto::protorune::ProtoruneRuneId {
-                            height: Some(k.block.into()),
-                            txindex: Some(k.tx.into()),
+                    rune: protobuf::MessageField::some(Rune {
+                        runeId: protobuf::MessageField::some(proto::protorune::ProtoruneRuneId {
+                            height: protobuf::MessageField::some(k.block.into()),
+                            txindex: protobuf::MessageField::some(k.tx.into()),
+                            special_fields: ::protobuf::SpecialFields::new(),
                         }),
                         name: "UNKNOWN".to_owned(),
                         divisibility: 1,
                         spacers: 1,
                         symbol: "0".to_owned(),
+                        special_fields: ::protobuf::SpecialFields::new(),
                     }),
-                    balance: Some((*v).into()),
+                    balance: protobuf::MessageField::some((*v).into()),
+                    special_fields: ::protobuf::SpecialFields::new(),
                 })
                 .collect::<Vec<BalanceSheetItem>>(),
+            special_fields: ::protobuf::SpecialFields::new(),
         }
     }
 }
@@ -378,12 +382,12 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::OutpointResponse>
                         v.rune
                             .clone()
                             .unwrap()
-                            .rune_id
+                            .runeId
                             .unwrap()
                             .height
                             .unwrap()
                             .into(),
-                        v.rune.unwrap().rune_id.unwrap().txindex.unwrap().into(),
+                        v.rune.unwrap().runeId.unwrap().txindex.unwrap().into(),
                     ),
                     v.balance.unwrap().into(),
                 )

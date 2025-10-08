@@ -71,7 +71,8 @@ pub fn get_rpc_url(config: &crate::network::RpcConfig, command: &Commands) -> Re
 
 
 
-use prost::Message;
+use protobuf::Message;
+use prost::Message as ProstMessage;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{vec, string::String};
@@ -246,7 +247,7 @@ impl<P: DeezelProvider> RpcClient<P> {
 
         bytecode_request.id = Some(alkane_id).into();
 
-        let encoded_bytes = bytecode_request.encode_to_vec();
+        let encoded_bytes = bytecode_request.write_to_bytes()?;
         let hex_input = format!("0x{}", hex::encode(encoded_bytes));
 
         let result = self.sandshrew_call(

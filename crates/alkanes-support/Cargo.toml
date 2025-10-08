@@ -11,14 +11,18 @@ resolver = "2"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-anyhow = { workspace = true }
-protorune-support = { workspace = true }
-metashrew-support = { workspace = true }
+protobuf = { workspace = true }
+
 bitcoin = { workspace = true }
-serde = "1.0.213"
-flate2 = "1.0.34"
-prost = { workspace = true }
+anyhow = { workspace = true }
+flate2 = { workspace = true }
+metashrew-support = { workspace = true }
+
+protorune-support = { workspace = true, path = "../protorune-support" }
+serde = { workspace = true }
+
 
 [build-dependencies]
-anyhow = "1.0.90"
-prost-build = { workspace = true }
+protobuf-codegen = "3.4.0"
+protoc-rust = { version = "2.28.0" }
+protoc-bin-vendored = "3.0.0"

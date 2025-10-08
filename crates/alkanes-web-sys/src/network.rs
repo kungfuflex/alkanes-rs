@@ -1,8 +1,7 @@
 //! Web network implementation using fetch API
 //!
 //! This module provides network operations using the browser's fetch API
-//! for making HTTP requests in web environments. The [`WebNetwork`] struct
-//! implements the [`deezel_common::NetworkProvider`] trait, providing a
+//! for making HTTP requests in web environments. The [WebNetwork] struct implements the [alkanes_cli_common::NetworkProvider] trait, providing a
 //! web-compatible network backend for the Deezel Bitcoin toolkit.
 //!
 //! # Features
@@ -48,7 +47,7 @@
 //! ```
 
 use async_trait::async_trait;
-use deezel_common::{DeezelError, Result};
+use alkanes_cli_common::{DeezelError, Result};
 use js_sys::Uint8Array;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -240,7 +239,7 @@ impl WebNetwork {
 /// browser's fetch API. All operations are async-compatible and handle
 /// the web environment's constraints including CORS and security policies.
 #[async_trait(?Send)]
-impl deezel_common::NetworkProvider for WebNetwork {
+impl alkanes_cli_common::NetworkProvider for WebNetwork {
     /// Perform an HTTP GET request
     ///
     /// Makes a GET request to the specified URL and returns the response body

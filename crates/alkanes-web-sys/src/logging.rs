@@ -2,7 +2,7 @@
 //!
 //! This module provides logging operations using the browser's console API
 //! for debugging and monitoring in web environments. The [`WebLogger`] struct
-//! implements the [`deezel_common::LogProvider`] trait, providing a
+//! implements the [`alkanes_cli_common::LogProvider`] trait, providing a
 //! web-compatible logging backend for the Deezel Bitcoin toolkit.
 //!
 //! # Features
@@ -23,7 +23,7 @@
 //!
 //! ```rust,no_run
 //! use deezel_web::logging::WebLogger;
-//! use deezel_common::LogProvider;
+//! use alkanes_cli_common::LogProvider;
 //!
 //! let logger = WebLogger::new();
 //!
@@ -49,8 +49,7 @@
 //! web_warn!("Warning: {:.2}", 3.14159);
 //! web_error!("Error: {:?}", vec![1, 2, 3]);
 //! ```
-
-use deezel_common::LogProvider;
+use alkanes_cli_common::LogProvider;
 use web_sys::console;
 
 #[cfg(target_arch = "wasm32")]

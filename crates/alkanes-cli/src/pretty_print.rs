@@ -3,13 +3,13 @@
 //! This module contains functions for formatting the various data structures
 //! returned by the `ord` server into human-readable output.
 
-use deezel_common::{
+use alkanes_cli_common::{
     alkanes::protorunes::{ProtoruneOutpointResponse, ProtoruneWalletResponse},
     ord::*,
     traits::UtxoInfo,
 };
-use deezel_common::alkanes::AlkaneBalance;
-use deezel_common::traits::TransactionInfo;
+use alkanes_cli_common::alkanes::AlkaneBalance;
+use alkanes_cli_common::traits::TransactionInfo;
 use termtree::Tree;
 use colored::*;
 use bitcoin::OutPoint;
@@ -156,7 +156,7 @@ pub fn print_protorune_wallet_response(response: &ProtoruneWalletResponse) {
     }
 }
 
-pub fn print_inspection_result(result: &deezel_common::alkanes::types::AlkanesInspectResult) {
+pub fn print_inspection_result(result: &alkanes_cli_common::alkanes::types::AlkanesInspectResult) {
     let mut root = Tree::new(format!("🔍 Inspection Result for Alkane: {}:{}", result.alkane_id.block, result.alkane_id.tx));
     root.push(Tree::new(format!("📏 Bytecode Length: {} bytes", result.bytecode_length)));
 

@@ -3,7 +3,7 @@
 //! This module provides utility functions and helpers specific to web environments,
 //! including WASM interop, browser feature detection, and common web operations.
 
-use deezel_common::{DeezelError, Result};
+use alkanes_cli_common::{DeezelError, Result};
 use js_sys::{Array, Object, Uint8Array};
 use wasm_bindgen::prelude::*;
 use web_sys::{window, Document, Location, Navigator, Window};

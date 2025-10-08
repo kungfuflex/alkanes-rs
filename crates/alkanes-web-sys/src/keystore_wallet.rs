@@ -3,7 +3,7 @@
 // This file implements the WalletBackend for a local keystore wallet.
 
 use async_trait::async_trait;
-use deezel_common::{*};
+use alkanes_cli_common::{*};
 use bip39::{Mnemonic, Seed};
 use bitcoin::{
     network::Network,

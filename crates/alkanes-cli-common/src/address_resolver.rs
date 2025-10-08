@@ -959,19 +959,17 @@ impl AlkanesProvider for StandaloneAddressResolver {
         ))
     }
 
-    async fn simulate(&self, _contract_id: &str, _context: &crate::proto::alkanes::MessageContextParcel) -> Result<crate::JsonValue> {
+    async fn simulate(&self, _contract_id: &str, _context: &crate::alkanes_pb::MessageContextParcel) -> Result<crate::JsonValue> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<crate::JsonValue> {
+    
+
+    async fn trace(&self, _outpoint: &str) -> Result<crate::alkanes_pb::Trace> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn trace(&self, _outpoint: &str) -> Result<crate::proto::alkanes::Trace> {
-        Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
-
-    async fn get_block(&self, _height: u64) -> Result<crate::proto::alkanes::BlockResponse> {
+    async fn get_block(&self, _height: u64) -> Result<crate::alkanes_pb::BlockResponse> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
@@ -983,7 +981,7 @@ impl AlkanesProvider for StandaloneAddressResolver {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::Trace> {
+    async fn trace_block(&self, _height: u64) -> Result<crate::alkanes_pb::Trace> {
         Err(DeezelError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 

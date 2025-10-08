@@ -1,4 +1,4 @@
-//! # CLI Commands for `deezel`
+//! # CLI Commands for `alkanes-cli`
 //!
 //! This module defines the `clap`-based command structure for the `deezel` CLI,
 //! including subcommands for interacting with `bitcoind`. It also contains
@@ -6,6 +6,8 @@
 
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use alkanes_cli_common::network::DeezelNetwork;
+
 
 // Chad's Journal:
 //
@@ -20,10 +22,10 @@ use serde::{Deserialize, Serialize};
 // applied to other subcommands like `traceblock` and `getbalance` to keep
 // the naming consistent across the board.
 
-/// Deezel is a command-line tool for interacting with Bitcoin and Ordinals
+/// Alkanes is a command-line tool for interacting with Bitcoin and Ordinals
 #[derive(Parser, Debug, Clone, Serialize, Deserialize)]
 #[command(author, version, about, long_about = None)]
-pub struct DeezelCommands {
+pub struct AlkanesCLICommands {
     /// Path to the wallet file
     #[arg(long)]
     pub wallet_file: Option<String>,
@@ -748,14 +750,14 @@ pub struct AlkanesExecute {
     pub auto_confirm: bool,
 }
 
-impl From<WalletCommands> for deezel_common::commands::WalletCommands {
+impl From<WalletCommands> for alkanes_cli_common::commands::WalletCommands {
     fn from(cmd: WalletCommands) -> Self {
         match cmd {
             WalletCommands::Addresses {
                 ranges,
                 raw,
                 all_networks,
-            } => deezel_common::commands::WalletCommands::Addresses {
+            } => alkanes_cli_common::commands::WalletCommands::Addresses {
                 ranges,
                 hd_path: None,
                 network: None,
@@ -768,47 +770,50 @@ impl From<WalletCommands> for deezel_common::commands::WalletCommands {
     }
 }
 
-impl From<BitcoindCommands> for deezel_common::commands::BitcoindCommands {
+impl From<BitcoindCommands> for alkanes_cli_common::commands::BitcoindCommands {
     fn from(cmd: BitcoindCommands) -> Self {
         serde_json::from_value(serde_json::to_value(cmd).unwrap()).unwrap()
     }
 }
 
-impl From<EsploraCommands> for deezel_common::commands::EsploraCommands {
+impl From<EsploraCommands> for alkanes_cli_common::commands::EsploraCommands {
     fn from(cmd: EsploraCommands) -> Self {
         serde_json::from_value(serde_json::to_value(cmd).unwrap()).unwrap()
     }
 }
 
-impl From<OrdCommands> for deezel_common::commands::OrdCommands {
+impl From<OrdCommands> for alkanes_cli_common::commands::OrdCommands {
     fn from(cmd: OrdCommands) -> Self {
         serde_json::from_value(serde_json::to_value(cmd).unwrap()).unwrap()
     }
 }
 
-impl From<Runestone> for deezel_common::commands::RunestoneCommands {
+impl From<Runestone> for alkanes_cli_common::commands::RunestoneCommands {
     fn from(cmd: Runestone) -> Self {
         serde_json::from_value(serde_json::to_value(cmd).unwrap()).unwrap()
     }
 }
 
-impl From<&DeezelCommands> for deezel_common::commands::Args {
-    fn from(args: &DeezelCommands) -> Self {
-        deezel_common::commands::Args {
+impl From<&AlkanesCLICommands> for alkanes_cli_common::commands::Args {
+    fn from(args: &AlkanesCLICommands) -> Self {
+        alkanes_cli_common::commands::Args {
             keystore: args.keystore.clone(),
             wallet_file: args.wallet_file.clone(),
             passphrase: args.passphrase.clone(),
             hd_path: args.hd_path.clone(),
-            sandshrew_rpc_url: args.sandshrew_rpc_url.clone(),
-            bitcoin_rpc_url: args.bitcoin_rpc_url.clone(),
-            esplora_url: args.esplora_api_url.clone(),
-            ord_url: args.ord_server_url.clone(),
-            metashrew_rpc_url: args.metashrew_server_url.clone(),
-            provider: args.provider.clone(),
+            rpc_config: alkanes_cli_common::network::RpcConfig {
+                sandshrew_rpc_url: args.sandshrew_rpc_url.clone(),
+                bitcoin_rpc_url: args.bitcoin_rpc_url.clone(),
+                esplora_url: args.esplora_api_url.clone(),
+                ord_url: args.ord_server_url.clone(),
+                metashrew_rpc_url: args.metashrew_server_url.clone(),
+                network: DeezelNetwork(bitcoin::Network::Regtest),
+                timeout_seconds: 0,
+            },
             magic: None,
             log_level: "info".to_string(),
-            command: deezel_common::commands::Commands::Bitcoind {
-                command: deezel_common::commands::BitcoindCommands::Getblockchaininfo { raw: false },
+            command: alkanes_cli_common::commands::Commands::Bitcoind {
+                command: alkanes_cli_common::commands::BitcoindCommands::Getblockchaininfo { raw: false },
             },
         }
     }

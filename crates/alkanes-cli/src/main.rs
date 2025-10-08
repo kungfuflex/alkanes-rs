@@ -1,29 +1,29 @@
-//! DEEZEL CLI - A thin wrapper around the deezel-sys library
+//! ALKANES CLI - A thin wrapper around the alkanes-cli-sys library
 //!
 //! This crate is responsible for parsing command-line arguments and delegating
-//! the actual work to the deezel-sys library. This keeps the CLI crate
+//! the actual work to the alkanes-sys library. This keeps the CLI crate
 //! lightweight and focused on its primary role as a user interface.
 
 use anyhow::Result;
 use clap::Parser;
-use deezel_sys::{SystemDeezel, SystemOrd};
-use deezel_common::traits::*;
+
+use alkanes_cli_common::traits::*;
 use futures::future::join_all;
-use deezel_common::alkanes_pb;
+use alkanes_cli_common::alkanes_pb;
 use protobuf_json_mapping::parse_from_str;
 use serde_json::json;
 
 mod commands;
 mod pretty_print;
-use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands};
-use deezel_common::alkanes;
+use commands::{Alkanes, AlkanesExecute, Commands, AlkanesCLICommands, MetashrewCommands, Protorunes, Runestone, WalletCommands};
+use alkanes_cli_common::alkanes;
 use pretty_print::*;
 
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     // Parse command-line arguments
-    let args = DeezelCommands::parse();
+    let args = AlkanesCLICommands::parse();
 
     // Initialize logger
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -32,13 +32,14 @@ async fn main() -> Result<()> {
     // Handle keystore logic
 
     // Create a new SystemDeezel instance
-    let mut system = SystemDeezel::new(&args).await?;
+    let common_args: alkanes_cli_common::commands::Args = (&args).into();
+    let mut system = alkanes_cli_sys::SystemDeezel::new(&common_args).await?;
 
     // Execute the command
     execute_command(&mut system, args.command).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands) -> Result<()> {
+async fn execute_command<T: System + UtxoProvider>(system: &mut T, command: Commands) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
@@ -58,7 +59,7 @@ async fn execute_metashrew_command(provider: &dyn DeezelProvider, command: Metas
             println!("{height}");
         }
         MetashrewCommands::Getblockhash { height } => {
-            let hash = <dyn DeezelProvider as MetashrewProvider>::get_block_hash(provider, height).await?;
+            let hash = alkanes_cli_common::BitcoinRpcProvider::get_block_hash(provider, height).await?;
             println!("{hash}");
         }
         MetashrewCommands::Getstateroot { height } => {
@@ -67,7 +68,7 @@ async fn execute_metashrew_command(provider: &dyn DeezelProvider, command: Metas
                 Some(h) => json!(h.parse::<u64>()?),
                 None => json!("latest"),
             };
-            let root = deezel_common::MetashrewProvider::get_state_root(provider, param).await?;
+            let root = alkanes_cli_common::MetashrewProvider::get_state_root(provider, param).await?;
             println!("{root}");
         }
     }
@@ -91,7 +92,7 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
             }
         }
         WalletCommands::Send { address, amount, fee_rate, send_all, from, change_address, auto_confirm } => {
-            let params = deezel_common::traits::SendParams {
+            let params = alkanes_cli_common::traits::SendParams {
                 address,
                 amount,
                 fee_rate,
@@ -223,7 +224,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             let result = system.provider().trace(&outpoint).await;
             match result {
                 Ok(trace_val) => {
-                    let trace: deezel_common::alkanes::trace::Trace = trace_val.into();
+                    let trace: alkanes_cli_common::alkanes::trace::Trace = trace_val.into();
                     if raw {
                         println!("{:?}", trace);
                     } else {
@@ -324,12 +325,12 @@ async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone
             let tx_hex = system.provider().get_transaction_hex(&txid).await?;
             let tx_bytes = hex::decode(tx_hex)?;
             let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
-            let result = deezel_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)?;
+            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)?;
             
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                deezel_common::runestone_enhanced::print_human_readable_runestone(&tx, &result);
+                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result);
             }
         }
     }
@@ -340,10 +341,10 @@ async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone
 
 async fn execute_esplora_command(
     provider: &dyn DeezelProvider,
-    command: deezel_common::commands::EsploraCommands,
+    command: alkanes_cli_common::commands::EsploraCommands,
 ) -> anyhow::Result<()> {
     match command {
-        deezel_common::commands::EsploraCommands::BlocksTipHash { raw } => {
+        alkanes_cli_common::commands::EsploraCommands::BlocksTipHash { raw } => {
             let hash = provider.get_blocks_tip_hash().await?;
             if raw {
                 println!("{hash}");
@@ -351,7 +352,7 @@ async fn execute_esplora_command(
                 println!("⛓️ Tip Hash: {hash}");
             }
         }
-        deezel_common::commands::EsploraCommands::BlocksTipHeight { raw } => {
+        alkanes_cli_common::commands::EsploraCommands::BlocksTipHeight { raw } => {
             let height = provider.get_blocks_tip_height().await?;
             if raw {
                 println!("{height}");
@@ -359,7 +360,7 @@ async fn execute_esplora_command(
                 println!("📈 Tip Height: {height}");
             }
         }
-        deezel_common::commands::EsploraCommands::Blocks { start_height, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::Blocks { start_height, raw } => {
             let result = provider.get_blocks(start_height).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -367,7 +368,7 @@ async fn execute_esplora_command(
                 println!("📦 Blocks:\n{}", serde_json::to_string_pretty(&result)?);
             }
         }
-        deezel_common::commands::EsploraCommands::BlockHeight { height, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::BlockHeight { height, raw } => {
             let hash = provider.get_block_by_height(height).await?;
             if raw {
                 println!("{hash}");
@@ -375,15 +376,15 @@ async fn execute_esplora_command(
                 println!("🔗 Block Hash at {height}: {hash}");
             }
         }
-        deezel_common::commands::EsploraCommands::Block { hash, raw } => {
-            let block = <dyn EsploraProvider>::get_block(provider, &hash).await?;
+        alkanes_cli_common::commands::EsploraCommands::Block { hash, raw } => {
+            let block = alkanes_cli_common::EsploraProvider::get_block(provider, &hash).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&block)?);
             } else {
                 println!("📦 Block {}:\n{}", hash, serde_json::to_string_pretty(&block)?);
             }
         }
-        deezel_common::commands::EsploraCommands::BlockStatus { hash, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::BlockStatus { hash, raw } => {
             let status = provider.get_block_status(&hash).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&status)?);
@@ -391,7 +392,7 @@ async fn execute_esplora_command(
                 println!("ℹ️ Block Status {}:\n{}", hash, serde_json::to_string_pretty(&status)?);
             }
         }
-        deezel_common::commands::EsploraCommands::BlockTxids { hash, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::BlockTxids { hash, raw } => {
             let txids = provider.get_block_txids(&hash).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&txids)?);
@@ -399,15 +400,15 @@ async fn execute_esplora_command(
                 println!("📄 Block Txids {}:\n{}", hash, serde_json::to_string_pretty(&txids)?);
             }
         }
-        deezel_common::commands::EsploraCommands::BlockHeader { hash, raw } => {
-            let header = deezel_common::traits::EsploraProvider::get_block_header(provider, &hash).await?;
+        alkanes_cli_common::commands::EsploraCommands::BlockHeader { hash, raw } => {
+            let header = alkanes_cli_common::EsploraProvider::get_block_header(provider, &hash).await?;
             if raw {
                 println!("{header}");
             } else {
                 println!("📄 Block Header {hash}: {header}");
             }
         }
-        deezel_common::commands::EsploraCommands::BlockRaw { hash, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::BlockRaw { hash, raw } => {
             let raw_block = provider.get_block_raw(&hash).await?;
             if raw {
                 println!("{raw_block}");
@@ -415,7 +416,7 @@ async fn execute_esplora_command(
                 println!("📦 Raw Block {hash}: {raw_block}");
             }
         }
-        deezel_common::commands::EsploraCommands::BlockTxid { hash, index, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::BlockTxid { hash, index, raw } => {
             let txid = provider.get_block_txid(&hash, index).await?;
             if raw {
                 println!("{txid}");
@@ -423,7 +424,7 @@ async fn execute_esplora_command(
                 println!("📄 Txid at index {index} in block {hash}: {txid}");
             }
         }
-        deezel_common::commands::EsploraCommands::BlockTxs { hash, start_index, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::BlockTxs { hash, start_index, raw } => {
             let txs = provider.get_block_txs(&hash, start_index).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&txs)?);
@@ -431,7 +432,7 @@ async fn execute_esplora_command(
                 println!("📄 Transactions in block {}:\n{}", hash, serde_json::to_string_pretty(&txs)?);
             }
         }
-        deezel_common::commands::EsploraCommands::Address { params, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::Address { params, raw } => {
             let result = provider.get_address_info(&params).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -439,7 +440,7 @@ async fn execute_esplora_command(
                 println!("🏠 Address {}:\n{}", params, serde_json::to_string_pretty(&result)?);
             }
         }
-        deezel_common::commands::EsploraCommands::AddressTxs { params, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::AddressTxs { params, raw } => {
             let result = provider.get_address_txs(&params).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -447,7 +448,7 @@ async fn execute_esplora_command(
                 println!("📄 Transactions for address {}:\n{}", params, serde_json::to_string_pretty(&result)?);
             }
         }
-        deezel_common::commands::EsploraCommands::AddressTxsChain { params, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::AddressTxsChain { params, raw } => {
             let result = provider.get_address_txs_chain(&params, None).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -455,7 +456,7 @@ async fn execute_esplora_command(
                 println!("⛓️ Chain transactions for address {}:\n{}", params, serde_json::to_string_pretty(&result)?);
             }
         }
-        deezel_common::commands::EsploraCommands::AddressTxsMempool { address, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::AddressTxsMempool { address, raw } => {
             let result = provider.get_address_txs_mempool(&address).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -463,7 +464,7 @@ async fn execute_esplora_command(
                 println!("⏳ Mempool transactions for address {}:\n{}", address, serde_json::to_string_pretty(&result)?);
             }
         }
-        deezel_common::commands::EsploraCommands::AddressUtxo { address, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::AddressUtxo { address, raw } => {
             let result = provider.get_address_utxo(&address).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -471,7 +472,7 @@ async fn execute_esplora_command(
                 println!("💰 UTXOs for address {}:\n{}", address, serde_json::to_string_pretty(&result)?);
             }
         }
-        deezel_common::commands::EsploraCommands::AddressPrefix { prefix, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::AddressPrefix { prefix, raw } => {
             let result = provider.get_address_prefix(&prefix).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -479,7 +480,7 @@ async fn execute_esplora_command(
                 println!("🔍 Addresses with prefix '{}':\n{}", prefix, serde_json::to_string_pretty(&result)?);
             }
         }
-        deezel_common::commands::EsploraCommands::Tx { txid, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::Tx { txid, raw } => {
             let tx = provider.get_tx(&txid).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&tx)?);
@@ -487,15 +488,15 @@ async fn execute_esplora_command(
                 println!("📄 Transaction {}:\n{}", txid, serde_json::to_string_pretty(&tx)?);
             }
         }
-        deezel_common::commands::EsploraCommands::TxHex { txid, .. } => {
+        alkanes_cli_common::commands::EsploraCommands::TxHex { txid, .. } => {
             let hex = provider.get_tx_hex(&txid).await?;
             println!("{hex}");
         }
-        deezel_common::commands::EsploraCommands::TxRaw { txid, .. } => {
+        alkanes_cli_common::commands::EsploraCommands::TxRaw { txid, .. } => {
             let raw_tx = provider.get_tx_raw(&txid).await?;
             println!("{}", hex::encode(raw_tx));
         }
-        deezel_common::commands::EsploraCommands::TxStatus { txid, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::TxStatus { txid, raw } => {
             let status = provider.get_tx_status(&txid).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&status)?);
@@ -503,7 +504,7 @@ async fn execute_esplora_command(
                 println!("ℹ️ Status for tx {}:\n{}", txid, serde_json::to_string_pretty(&status)?);
             }
         }
-        deezel_common::commands::EsploraCommands::TxMerkleProof { txid, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::TxMerkleProof { txid, raw } => {
             let proof = provider.get_tx_merkle_proof(&txid).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&proof)?);
@@ -511,11 +512,11 @@ async fn execute_esplora_command(
                 println!("🧾 Merkle proof for tx {}:\n{}", txid, serde_json::to_string_pretty(&proof)?);
             }
         }
-        deezel_common::commands::EsploraCommands::TxMerkleblockProof { txid, .. } => {
+        alkanes_cli_common::commands::EsploraCommands::TxMerkleblockProof { txid, .. } => {
             let proof = provider.get_tx_merkleblock_proof(&txid).await?;
             println!("{proof}");
         }
-        deezel_common::commands::EsploraCommands::TxOutspend { txid, index, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::TxOutspend { txid, index, raw } => {
             let outspend = provider.get_tx_outspend(&txid, index).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&outspend)?);
@@ -523,7 +524,7 @@ async fn execute_esplora_command(
                 println!("💸 Outspend for tx {}, vout {}:\n{}", txid, index, serde_json::to_string_pretty(&outspend)?);
             }
         }
-        deezel_common::commands::EsploraCommands::TxOutspends { txid, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::TxOutspends { txid, raw } => {
             let outspends = provider.get_tx_outspends(&txid).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&outspends)?);
@@ -531,17 +532,17 @@ async fn execute_esplora_command(
                 println!("💸 Outspends for tx {}:\n{}", txid, serde_json::to_string_pretty(&outspends)?);
             }
         }
-        deezel_common::commands::EsploraCommands::Broadcast { tx_hex, .. } => {
+        alkanes_cli_common::commands::EsploraCommands::Broadcast { tx_hex, .. } => {
             let txid = provider.broadcast(&tx_hex).await?;
             println!("✅ Transaction broadcast successfully!");
             println!("🔗 Transaction ID: {txid}");
         }
-        deezel_common::commands::EsploraCommands::PostTx { tx_hex, .. } => {
+        alkanes_cli_common::commands::EsploraCommands::PostTx { tx_hex, .. } => {
             let txid = provider.broadcast(&tx_hex).await?;
             println!("✅ Transaction posted successfully!");
             println!("🔗 Transaction ID: {txid}");
         }
-        deezel_common::commands::EsploraCommands::Mempool { raw } => {
+        alkanes_cli_common::commands::EsploraCommands::Mempool { raw } => {
             let mempool = provider.get_mempool().await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&mempool)?);
@@ -549,7 +550,7 @@ async fn execute_esplora_command(
                 println!("⏳ Mempool Info:\n{}", serde_json::to_string_pretty(&mempool)?);
             }
         }
-        deezel_common::commands::EsploraCommands::MempoolTxids { raw } => {
+        alkanes_cli_common::commands::EsploraCommands::MempoolTxids { raw } => {
             let txids = provider.get_mempool_txids().await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&txids)?);
@@ -557,7 +558,7 @@ async fn execute_esplora_command(
                 println!("📄 Mempool Txids:\n{}", serde_json::to_string_pretty(&txids)?);
             }
         }
-        deezel_common::commands::EsploraCommands::MempoolRecent { raw } => {
+        alkanes_cli_common::commands::EsploraCommands::MempoolRecent { raw } => {
             let recent = provider.get_mempool_recent().await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&recent)?);
@@ -565,7 +566,7 @@ async fn execute_esplora_command(
                 println!("📄 Recent Mempool Txs:\n{}", serde_json::to_string_pretty(&recent)?);
             }
         }
-        deezel_common::commands::EsploraCommands::FeeEstimates { raw } => {
+        alkanes_cli_common::commands::EsploraCommands::FeeEstimates { raw } => {
             let estimates = provider.get_fee_estimates().await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&estimates)?);
@@ -579,10 +580,10 @@ async fn execute_esplora_command(
 
 async fn execute_ord_command(
     provider: &dyn DeezelProvider,
-    command: deezel_common::commands::OrdCommands,
+    command: alkanes_cli_common::commands::OrdCommands,
 ) -> anyhow::Result<()> {
     match command {
-        deezel_common::commands::OrdCommands::Inscription { id, raw } => {
+        alkanes_cli_common::commands::OrdCommands::Inscription { id, raw } => {
             if raw {
                 let inscription = provider.get_inscription(&id).await?;
                 let json_value = serde_json::to_value(&inscription)?;
@@ -596,7 +597,7 @@ async fn execute_ord_command(
                 print_inscription(&inscription);
             }
         }
-        deezel_common::commands::OrdCommands::InscriptionsInBlock { hash, raw } => {
+        alkanes_cli_common::commands::OrdCommands::InscriptionsInBlock { hash, raw } => {
             if raw {
                 let inscriptions = provider.get_inscriptions_in_block(&hash).await?;
                 let json_value = serde_json::to_value(&inscriptions)?;
@@ -615,8 +616,8 @@ async fn execute_ord_command(
                 let fetched_inscriptions: Result<Vec<_>, _> = results.into_iter().collect();
                 print_inscriptions(&fetched_inscriptions?);
             }
-        }
-        deezel_common::commands::OrdCommands::AddressInfo { address, raw } => {
+        },
+        alkanes_cli_common::commands::OrdCommands::AddressInfo { address, raw } => {
             if raw {
                 let info = provider.get_ord_address_info(&address).await?;
                 let json_value = serde_json::to_value(&info)?;
@@ -629,8 +630,7 @@ async fn execute_ord_command(
                 let info = provider.get_ord_address_info(&address).await?;
                 print_address_info(&info);
             }
-        }
-        deezel_common::commands::OrdCommands::BlockInfo { query, raw } => {
+        }        alkanes_cli_common::commands::OrdCommands::BlockInfo { query, raw } => {
             if raw {
                 let info = provider.get_block_info(&query).await?;
                 let json_value = serde_json::to_value(&info)?;
@@ -648,11 +648,11 @@ async fn execute_ord_command(
                 }
             }
         }
-        deezel_common::commands::OrdCommands::BlockCount => {
+        alkanes_cli_common::commands::OrdCommands::BlockCount => {
             let info = provider.get_ord_block_count().await?;
             println!("{}", serde_json::to_string_pretty(&info)?);
         }
-        deezel_common::commands::OrdCommands::Blocks { raw } => {
+        alkanes_cli_common::commands::OrdCommands::Blocks { raw } => {
             if raw {
                 let info = provider.get_ord_blocks().await?;
                 let json_value = serde_json::to_value(&info)?;
@@ -666,7 +666,7 @@ async fn execute_ord_command(
                 print_blocks(&info);
             }
         }
-        deezel_common::commands::OrdCommands::Children { id, page, raw } => {
+        alkanes_cli_common::commands::OrdCommands::Children { id, page, raw } => {
             if raw {
                 let children = provider.get_children(&id, page).await?;
                 let json_value = serde_json::to_value(&children)?;
@@ -686,12 +686,12 @@ async fn execute_ord_command(
                 print_children(&fetched_inscriptions?);
             }
         }
-        deezel_common::commands::OrdCommands::Content { id } => {
+        alkanes_cli_common::commands::OrdCommands::Content { id } => {
             let content = provider.get_content(&id).await?;
             use std::io::{self, Write};
             io::stdout().write_all(&content)?;
         }
-        deezel_common::commands::OrdCommands::Output { outpoint, raw } => {
+        alkanes_cli_common::commands::OrdCommands::Output { outpoint, raw } => {
             if raw {
                 let output = provider.get_output(&outpoint).await?;
                 let json_value = serde_json::to_value(&output)?;
@@ -705,7 +705,7 @@ async fn execute_ord_command(
                 print_output(&output);
             }
         }
-        deezel_common::commands::OrdCommands::Parents { id, page, raw } => {
+        alkanes_cli_common::commands::OrdCommands::Parents { id, page, raw } => {
             if raw {
                 let parents = provider.get_parents(&id, page).await?;
                 let json_value = serde_json::to_value(&parents)?;
@@ -719,7 +719,7 @@ async fn execute_ord_command(
                 print_parents(&parents);
             }
         }
-        deezel_common::commands::OrdCommands::Rune { rune, raw } => {
+        alkanes_cli_common::commands::OrdCommands::Rune { rune, raw } => {
             if raw {
                 let rune_info = provider.get_rune(&rune).await?;
                 let json_value = serde_json::to_value(&rune_info)?;
@@ -733,7 +733,7 @@ async fn execute_ord_command(
                 print_rune(&rune_info);
             }
         }
-        deezel_common::commands::OrdCommands::Sat { sat, raw } => {
+        alkanes_cli_common::commands::OrdCommands::Sat { sat, raw } => {
             if raw {
                 let sat_info = provider.get_sat(sat).await?;
                 let json_value = serde_json::to_value(&sat_info)?;
@@ -747,7 +747,7 @@ async fn execute_ord_command(
                 print_sat_response(&sat_info);
             }
         }
-        deezel_common::commands::OrdCommands::TxInfo { txid, raw } => {
+        alkanes_cli_common::commands::OrdCommands::TxInfo { txid, raw } => {
             if raw {
                 let tx_info = provider.get_tx_info(&txid).await?;
                 let json_value = serde_json::to_value(&tx_info)?;

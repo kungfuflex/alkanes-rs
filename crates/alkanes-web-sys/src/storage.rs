@@ -3,7 +3,7 @@
 //! This module provides a storage implementation that uses the browser's
 //! localStorage API for persistent data storage in web environments.
 //!
-//! The [`WebStorage`] struct implements the [`deezel_common::StorageProvider`] trait,
+//! The [`WebStorage`] struct implements the [`alkanes_cli_common::StorageProvider`] trait,
 //! providing a web-compatible storage backend for the Deezel Bitcoin toolkit.
 //! All data is automatically base64-encoded for safe storage in localStorage
 //! and namespaced with a "deezel:" prefix to avoid conflicts.
@@ -25,7 +25,7 @@
 //!
 //! ```rust,no_run
 //! use deezel_web::storage::WebStorage;
-//! use deezel_common::StorageProvider;
+//! use alkanes_cli_common::StorageProvider;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let storage = WebStorage::new();
@@ -52,7 +52,7 @@
 //! ```
 
 use async_trait::async_trait;
-use deezel_common::{DeezelError, Result};
+use alkanes_cli_common::{DeezelError, Result};
 use web_sys::{window, Storage};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 #[cfg(target_arch = "wasm32")]
@@ -199,7 +199,7 @@ impl WebStorage {
 /// browser's localStorage API. All operations are async-compatible and handle
 /// the web environment's constraints.
 #[async_trait(?Send)]
-impl deezel_common::StorageProvider for WebStorage {
+impl alkanes_cli_common::StorageProvider for WebStorage {
     /// Read data from localStorage by key
     ///
     /// Retrieves the value associated with the given key, automatically
@@ -376,7 +376,7 @@ impl Default for WebStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deezel_common::StorageProvider;
+    use alkanes_cli_common::StorageProvider;
     use wasm_bindgen_test::*;
 
     wasm_bindgen_test_configure!(run_in_browser);

@@ -31,7 +31,7 @@ use crate::alkanes::types::{
     ReadyToSignRevealTx, ReadyToSignTx,
 };
 use crate::alkanes::protorunes::{ProtoruneOutpointResponse, ProtoruneWalletResponse};
-use crate::proto::alkanes as alkanes_pb;
+use crate::alkanes_pb;
 use crate::network::NetworkParams;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -758,12 +758,7 @@ pub trait AlkanesProvider {
         block_tag: Option<String>,
         protocol_tag: u128,
     ) -> Result<ProtoruneOutpointResponse>;
-    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue>;
-    async fn simulate(&self, contract_id: &str, context: &crate::proto::alkanes::MessageContextParcel) -> Result<JsonValue> {
-        let mut buf = Vec::new();
-        <crate::proto::alkanes::MessageContextParcel as protobuf::Message>::write_to_writer(context, &mut buf)?;
-        self.view(contract_id, "simulate", Some(&buf)).await
-    }
+async fn simulate(&self, contract_id: &str, context: &crate::alkanes_pb::MessageContextParcel) -> Result<JsonValue>;
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace>;
     async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse>;
     async fn sequence(&self) -> Result<JsonValue>;
@@ -1388,10 +1383,8 @@ impl<T: DeezelProvider + ?Sized + Send + Sync> AlkanesProvider for Box<T> {
     ) -> Result<ProtoruneOutpointResponse> {
         AlkanesProvider::protorunes_by_outpoint(&**self, txid, vout, block_tag, protocol_tag).await
     }
-    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue> {
-        (**self).view(contract_id, view_fn, params).await
-    }
-    async fn simulate(&self, contract_id: &str, context: &crate::proto::alkanes::MessageContextParcel) -> Result<JsonValue> {
+    
+async fn simulate(&self, contract_id: &str, context: &crate::alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
         (**self).simulate(contract_id, context).await
     }
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {

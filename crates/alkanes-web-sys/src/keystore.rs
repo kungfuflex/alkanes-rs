@@ -1,4 +1,4 @@
-//! Keystore data structures for deezel-web
+//! Keystore data structures for alkanes-web-sys
 //
 // This module defines the structures used for storing and managing
 // wallet keystores, including encrypted seeds and public metadata,
@@ -10,8 +10,8 @@ use wasm_bindgen::prelude::*;
 use js_sys::Promise;
 use wasm_bindgen_futures::future_to_promise;
 use crate::crypto::WebCrypto;
-use deezel_common::{DeezelError, CryptoProvider, traits::KeystoreProvider, KeystoreAddress, KeystoreInfo};
-use deezel_asc;
+use alkanes_cli_common::{DeezelError, CryptoProvider, traits::KeystoreProvider, KeystoreAddress, KeystoreInfo};
+use alkanes_cli_asc;
 use alloc::{vec::Vec, string::{String, ToString}, format, collections::BTreeMap};
 use async_trait::async_trait;
 use bip39::{Mnemonic, Seed};
@@ -111,25 +111,25 @@ impl Keystore {
         let self_clone = self.clone();
         let passphrase_clone = passphrase.to_string();
         future_to_promise(async move {
-            async fn decrypt_internal(keystore: Keystore, passphrase: &str) -> Result<String, DeezelError> {
+            async fn decrypt_internal(keystore: Keystore, passphrase: &str) -> Result<String, AlkanesError> {
                 let crypto = WebCrypto::new();
     
                 let salt = hex::decode(&keystore.pbkdf2_params.salt)
-                    .map_err(|e| DeezelError::Crypto(e.to_string()))?;
+                    .map_err(|e| AlkanesError::Crypto(e.to_string()))?;
                 let nonce = match &keystore.pbkdf2_params.nonce {
-                    Some(n) => hex::decode(n).map_err(|e| DeezelError::Crypto(e.to_string()))?,
-                    None => return Err(DeezelError::Crypto("Nonce is missing".to_string())),
+                    Some(n) => hex::decode(n).map_err(|e| AlkanesError::Crypto(e.to_string()))?,
+                    None => return Err(AlkanesError::Crypto("Nonce is missing".to_string())),
                 };
     
                 let key = crypto.pbkdf2_derive(passphrase.as_bytes(), &salt, PBKDF_ITERATIONS, 32).await?;
                 
-                let (_, _, encrypted_bytes) = deezel_asc::armor::reader::decode(keystore.encrypted_mnemonic.as_bytes())
-                    .map_err(|e| DeezelError::Armor(format!("Failed to dearmor mnemonic: {e}")))?;
+                let (_, _, encrypted_bytes) = alkanes_cli_asc::armor::reader::decode(keystore.encrypted_mnemonic.as_bytes())
+                    .map_err(|e| AlkanesError::Armor(format!("Failed to dearmor mnemonic: {e}")))?;
     
                 let decrypted_bytes = crypto.decrypt_aes_gcm(&encrypted_bytes, &key, &nonce).await?;
                 
                 let mnemonic_str = String::from_utf8(decrypted_bytes)
-                    .map_err(|e| DeezelError::Wallet(format!("Failed to convert decrypted data to string: {e}")))?;
+                    .map_err(|e| AlkanesError::Wallet(format!("Failed to convert decrypted data to string: {e}")))?;
     
                 Ok(mnemonic_str)
             }
@@ -144,28 +144,28 @@ impl Keystore {
 
 #[async_trait(?Send)]
 impl KeystoreProvider for Keystore {
-    async fn derive_addresses(&self, _master_public_key: &str, _network_params: &deezel_common::network::NetworkParams, _script_types: &[&str], _start_index: u32, _count: u32) -> Result<Vec<KeystoreAddress>, DeezelError> {
+    async fn derive_addresses(&self, _master_public_key: &str, _network_params: &alkanes_cli_common::network::NetworkParams, _script_types: &[&str], _start_index: u32, _count: u32) -> Result<Vec<KeystoreAddress>, AlkanesError> {
         todo!()
     }
 
-    async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &protorune_support::network::NetworkParams) -> Result<Vec<KeystoreAddress>, DeezelError> {
+    async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &protorune_support::network::NetworkParams) -> Result<Vec<KeystoreAddress>, AlkanesError> {
         todo!()
     }
 
-    async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String, DeezelError> {
+    async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String, AlkanesError> {
         todo!()
     }
 
-    fn parse_address_range(&self, _range_spec: &str) -> Result<(String, u32, u32), DeezelError> {
+    fn parse_address_range(&self, _range_spec: &str) -> Result<(String, u32, u32), AlkanesError> {
         todo!()
     }
 
-    async fn get_keystore_info(&self, _master_fingerprint: &str, _created_at: u64, _version: &str) -> Result<KeystoreInfo, DeezelError> {
+    async fn get_keystore_info(&self, _master_fingerprint: &str, _created_at: u64, _version: &str) -> Result<KeystoreInfo, AlkanesError> {
         todo!()
     }
 
-    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &protorune_support::network::NetworkParams) -> Result<KeystoreAddress, DeezelError> {
-        let address = deezel_common::keystore::derive_address_from_public_key(
+    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &protorune_support::network::NetworkParams) -> Result<KeystoreAddress, AlkanesError> {
+        let address = alkanes_cli_common::keystore::derive_address_from_public_key(
             master_public_key,
             path,
             network_params,
@@ -189,7 +189,7 @@ impl KeystoreProvider for Keystore {
     }
 }
 
-fn get_account_derivation_path(script_type: &str, network: Network) -> Result<DerivationPath, DeezelError> {
+fn get_account_derivation_path(script_type: &str, network: Network) -> Result<DerivationPath, AlkanesError> {
     let network_path = match network {
         Network::Bitcoin => "0",
         Network::Testnet => "1",
@@ -201,10 +201,10 @@ fn get_account_derivation_path(script_type: &str, network: Network) -> Result<De
         "p2wpkh" => format!("m/84'/{network_path}'/0'"),
         "p2sh-p2wpkh" => format!("m/49'/{network_path}'/0'"),
         "p2pkh" => format!("m/44'/{network_path}'/0'"),
-        _ => return Err(DeezelError::InvalidParameters(format!("Invalid script type: {}", script_type))),
+        _ => return Err(AlkanesError::InvalidParameters(format!("Invalid script type: {}", script_type))),
     };
 
-    DerivationPath::from_str(&path_str).map_err(|e| DeezelError::Wallet(e.to_string()))
+    DerivationPath::from_str(&path_str).map_err(|e| AlkanesError::Wallet(e.to_string()))
 }
 
 /// Asynchronously encrypts data using the Web Crypto API.
@@ -214,7 +214,7 @@ pub fn encrypt_mnemonic(mnemonic: &str, passphrase: &str) -> Promise {
     let passphrase_clone = passphrase.to_string();
 
     future_to_promise(async move {
-        async fn encrypt_internal(mnemonic_str: &str, passphrase: &str) -> Result<Keystore, DeezelError> {
+        async fn encrypt_internal(mnemonic_str: &str, passphrase: &str) -> Result<Keystore, AlkanesError> {
             let crypto = WebCrypto::new();
             let salt = crypto.random_bytes(SALT_SIZE)?;
             let nonce = crypto.random_bytes(NONCE_SIZE)?;
@@ -224,13 +224,13 @@ pub fn encrypt_mnemonic(mnemonic: &str, passphrase: &str) -> Promise {
             let encrypted_data = crypto.encrypt_aes_gcm(mnemonic_str.as_bytes(), &key, &nonce).await?;
     
             let mut armored_mnemonic = Vec::new();
-            deezel_asc::armor::writer::write(
+            alkanes_cli_asc::armor::writer::write(
                 &encrypted_data,
-                deezel_asc::armor::reader::BlockType::EncryptedMnemonic,
+                alkanes_cli_asc::armor::reader::BlockType::EncryptedMnemonic,
                 &mut armored_mnemonic,
                 None,
                 true,
-            ).map_err(|e| DeezelError::Armor(e.to_string()))?;
+            ).map_err(|e| AlkanesError::Armor(e.to_string()))?;
 
             let mnemonic = Mnemonic::from_phrase(mnemonic_str, bip39::Language::English)?;
             let seed = Seed::new(&mnemonic, "");
@@ -249,7 +249,7 @@ pub fn encrypt_mnemonic(mnemonic: &str, passphrase: &str) -> Promise {
                 encrypted_mnemonic: String::from_utf8(armored_mnemonic).unwrap(),
                 master_fingerprint: root.fingerprint(&secp).to_string(),
                 created_at: web_sys::js_sys::Date::now() as u64 / 1000,
-                version: "deezel-web-0.1.0".to_string(),
+                version: "alkanes-web-sys-0.1.0".to_string(),
                 pbkdf2_params: PbkdfParams {
                     salt: hex::encode(&salt),
                     nonce: Some(hex::encode(&nonce)),

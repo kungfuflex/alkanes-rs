@@ -362,7 +362,7 @@ pub struct SendParams {
 }
 
 /// UTXO information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UtxoInfo {
     pub txid: String,
     pub vout: u32,
@@ -373,6 +373,19 @@ pub struct UtxoInfo {
     pub frozen: bool,
 }
 
+impl From<crate::traits::UtxoInfo> for UtxoInfo {
+    fn from(utxo: crate::traits::UtxoInfo) -> Self {
+        Self {
+            txid: utxo.txid,
+            vout: utxo.vout,
+            amount: utxo.amount,
+            address: utxo.address,
+            script_pubkey: utxo.script_pubkey.unwrap_or_default(),
+            confirmations: utxo.confirmations,
+            frozen: utxo.frozen,
+        }
+    }
+}
 /// Enriched UTXO with additional metadata
 #[derive(Debug, Clone)]
 pub struct EnrichedUtxo {

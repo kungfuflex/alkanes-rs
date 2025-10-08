@@ -15,13 +15,13 @@
 
 use wasm_bindgen::prelude::*;
 use bitcoin::psbt::Psbt;
-use deezel_common::runestone_enhanced::format_runestone_with_decoded_messages;
-use deezel_common::alkanes::inspector::analysis::perform_fuzzing_analysis;
-use deezel_common::alkanes::types::AlkaneId;
+use alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages;
+use alkanes_cli_common::alkanes::inspector::analysis::perform_fuzzing_analysis;
+use alkanes_cli_common::alkanes::types::AlkaneId;
 use js_sys::Promise;
 use wasm_bindgen_futures::future_to_promise;
 pub use crate::provider::WebProvider;
-use deezel_common::AlkanesProvider;
+use alkanes_cli_common::AlkanesProvider;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 

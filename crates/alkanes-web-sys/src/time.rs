@@ -2,7 +2,7 @@
 //!
 //! This module provides time operations using the browser's Performance API
 //! and other web-compatible timing mechanisms. The [`WebTime`] struct
-//! implements the [`deezel_common::TimeProvider`] trait, providing a
+//! implements the [`alkanes_cli_common::TimeProvider`] trait, providing a
 //! web-compatible time backend for the Deezel Bitcoin toolkit.
 //!
 //! # Features
@@ -22,7 +22,7 @@
 //!
 //! ```rust,no_run
 //! use deezel_web::time::WebTime;
-//! use deezel_common::TimeProvider;
+//! use alkanes_cli_common::TimeProvider;
 //!
 //! # async fn example() {
 //! let time = WebTime::new();
@@ -41,7 +41,7 @@
 //! # }
 //! ```
 
-use deezel_common::{DeezelError, Result};
+use alkanes_cli_common::{DeezelError, Result};
 use js_sys::{Date, Promise};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -87,7 +87,7 @@ impl WebTime {
 use async_trait::async_trait;
 
 #[async_trait(?Send)]
-impl deezel_common::TimeProvider for WebTime {
+impl alkanes_cli_common::TimeProvider for WebTime {
     fn now_secs(&self) -> u64 {
         // Use Date.now() which returns milliseconds since Unix epoch
         let millis = self.get_date_now();
@@ -193,7 +193,7 @@ impl Default for WebTime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deezel_common::TimeProvider;
+use alkanes_cli_common::TimeProvider;
     use wasm_bindgen_test::*;
 
     wasm_bindgen_test_configure!(run_in_browser);

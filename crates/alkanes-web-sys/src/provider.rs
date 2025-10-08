@@ -1,4 +1,4 @@
-//! Chadson's Journal - Refactoring `deezel-web` Provider
+//! Chadson's Journal - Refactoring `alkanes-web-sys` Provider
 //!
 //! **Date:** 2025-08-08
 //! **Objective:** Refactor the `WebProvider` to correctly fetch enriched UTXO data, specifically for Protorunes.
@@ -14,7 +14,7 @@
 //! misunderstanding of the `protorune-support` crate's API, leading to a cascade of compilation errors.
 //! Key issues included:
 //! 1.  **Type Confusion:** There was persistent confusion between the application's domain models (e.g.,
-//!     `deezel_common::alkanes::protorunes::ProtoruneOutpointResponse`) and the Protobuf-generated
+//!     `alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse`) and the Protobuf-generated
 //!     Data Transfer Objects (DTOs) from `protorune-support` (e.g.,
 //!     `protorune_support::proto::protorune::ProtoruneOutpointResponse`).
 //! 2.  **Incorrect Instantiation:** Attempts to create the `OutpointWithProtocol` request message failed
@@ -31,7 +31,7 @@
 //! - The `OutpointWithProtocol` struct requires its `protocol` field to be a `MessageField<Uint128>`.
 //! - The `Uint128` Protobuf message itself has `lo` and `hi` fields.
 //! - The response from the `metashrew_view` RPC is a `ProtoruneOutpointResponsePb` DTO that needs to be
-//!   manually mapped to the `deezel_common` `ProtoruneOutpointResponse` domain model.
+//!   manually mapped to the `alkanes_cli_common` `ProtoruneOutpointResponse` domain model.
 //!
 //! **Refactoring Implementation:**
 //! The following code implements the corrected logic based on these insights.
@@ -57,7 +57,7 @@
 
 use async_trait::async_trait;
 use bitcoin::Network;
-use deezel_common::{*, provider::{AllBalances, AssetBalance, EnrichedUtxo}};
+use alkanes_cli_common::{DeezelError, provider::{AllBalances, AssetBalance, EnrichedUtxo}};
 use protobuf::Message;
 use serde_json::Value as JsonValue;
 use wasm_bindgen::prelude::*;
@@ -85,7 +85,7 @@ use bitcoin::{
     secp256k1::{All, Keypair, Secp256k1},
     OutPoint, Transaction, TxOut, XOnlyPublicKey, ScriptBuf,
 };
-use deezel_common::{
+use alkanes_cli_common::{
     alkanes::{
         protorunes::{ProtoruneOutpointResponse, ProtoruneWalletResponse},
         types::{
@@ -103,10 +103,8 @@ use deezel_common::{
     esplora,
 };
 use alkanes_support::proto::alkanes as alkanes_pb;
-use protorune_support::proto::protorune::{OutpointWithProtocol, OutpointResponse as ProtoruneOutpointResponsePb};
-use deezel_common::alkanes::execute::EnhancedAlkanesExecutor;
-use deezel_common::index_pointer::StubPointer;
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations};
+use protorune_support::{proto::protorune::{OutpointWithProtocol, OutpointResponse as ProtoruneOutpointResponsePb}, balance_sheet::{BalanceSheet, BalanceSheetOperations}};
+use alkanes_cli_common::index_pointer::StubPointer;
 use core::str::FromStr;
 use bitcoin::hashes::hex::FromHex;
 
@@ -131,8 +129,8 @@ use protorune_support::proto::protorune::Uint128;
 /// # Example
 ///
 /// ```rust,no_run
-/// use deezel_web::WebProvider;
-/// use deezel_common::*;
+/// use alkanes_web_sys::WebProvider;
+/// use alkanes_cli_common::*;
 ///
 /// async fn create_provider() -> Result<WebProvider> {
 ///     let provider = WebProvider::new("mainnet".to_string()).await?;
@@ -151,7 +149,7 @@ pub struct WebProvider {
     crypto: WebCrypto,
     time: WebTime,
     logger: WebLogger,
-    keystore: Option<deezel_common::keystore::Keystore>,
+    keystore: Option<alkanes_cli_common::keystore::Keystore>,
     passphrase: Option<String>,
 }
 
@@ -177,8 +175,8 @@ impl WebProvider {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use deezel_web::WebProvider;
-    /// use deezel_common::Result;
+    /// use alkanes_web_sys::WebProvider;
+    /// use alkanes_cli_common::Result;
     ///
     /// async fn setup_mainnet() -> Result<WebProvider> {
     ///     let provider = WebProvider::new("mainnet".to_string()).await?;
@@ -188,7 +186,7 @@ impl WebProvider {
     pub async fn new(
         network_str: String,
     ) -> Result<Self> {
-        let params = deezel_common::network::NetworkParams::from_network_str(&network_str)?;
+        let params = alkanes_cli_common::network::NetworkParams::from_network_str(&network_str)?;
         let logger = WebLogger::new();
         logger.info(&format!(
             "WebProvider initialized with: Sandshrew RPC URL: {}, Esplora URL: {:?}, Network: {}",
@@ -209,7 +207,7 @@ impl WebProvider {
         })
     }
 
-   pub fn new_with_params(params: deezel_common::network::NetworkParams) -> Result<Self> {
+   pub fn new_with_params(params: alkanes_cli_common::network::NetworkParams) -> Result<Self> {
        Ok(Self {
            sandshrew_rpc_url: params.metashrew_rpc_url,
            esplora_rpc_url: params.esplora_url,
@@ -233,7 +231,7 @@ impl WebProvider {
             "testnet" => Network::Testnet,
             "signet" => Network::Signet,
             "regtest" | "custom" => Network::Regtest,
-            _ => return Err(DeezelError::InvalidParameters("Invalid network".to_string())),
+            _ => return Err(AlkanesError::InvalidParameters("Invalid network".to_string())),
         };
 
         Ok(Self {
@@ -263,8 +261,8 @@ impl WebProvider {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use deezel_web::WebProvider;
-    /// # use deezel_common::Result;
+    /// # use alkanes_web_sys::WebProvider;
+    /// # use alkanes_cli_common::Result;
     /// # async fn example() -> Result<()> {
     /// # let provider = WebProvider::new("mainnet".to_string()).await?;
     /// let config = provider.get_wallet_config();
@@ -288,8 +286,8 @@ impl WebProvider {
         self.network
     }
 
-    pub fn network_params(&self) -> Result<deezel_common::network::NetworkParams> {
-        let mut params = deezel_common::network::NetworkParams::from_network_str(self.network.to_string().as_str())?;
+    pub fn network_params(&self) -> Result<alkanes_cli_common::network::NetworkParams> {
+        let mut params = alkanes_cli_common::network::NetworkParams::from_network_str(self.network.to_string().as_str())?;
         params.metashrew_rpc_url = self.sandshrew_rpc_url.clone();
         params.esplora_url = self.esplora_rpc_url.clone();
         Ok(params)
@@ -307,7 +305,7 @@ impl WebProvider {
 
     /// Make a fetch request using web-sys
     async fn fetch_request(&self, url: &str, method: &str, body: Option<&str>, headers: Option<&js_sys::Object>) -> Result<Response> {
-        let window = window().ok_or_else(|| DeezelError::Network("No window object available".to_string()))?;
+        let window = window().ok_or_else(|| AlkanesError::Network("No window object available".to_string()))?;
 
         let opts = RequestInit::new();
         opts.set_method(method);
@@ -322,14 +320,14 @@ impl WebProvider {
         }
 
         let request = Request::new_with_str_and_init(url, &opts)
-            .map_err(|e| DeezelError::Network(format!("Failed to create request: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to create request: {e:?}")))?;
 
         let resp_value = JsFuture::from(window.fetch_with_request(&request))
             .await
-            .map_err(|e| DeezelError::Network(format!("Fetch failed: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Fetch failed: {e:?}")))?;
 
         let resp: Response = resp_value.dyn_into()
-            .map_err(|e| DeezelError::Network(format!("Failed to cast response: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to cast response: {e:?}")))?;
 
         Ok(resp)
     }
@@ -364,8 +362,8 @@ impl WebProvider {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use deezel_web::WebProvider;
-    /// # use deezel_common::Result;
+    /// # use alkanes_web_sys::WebProvider;
+    /// # use alkanes_cli_common::Result;
     /// # async fn example() -> Result<()> {
     /// # let provider = WebProvider::new("mainnet".to_string()).await?;
     /// let tx_hex = "0200000001..."; // Your transaction hex
@@ -393,7 +391,7 @@ impl WebProvider {
         // Create headers
         let headers = js_sys::Object::new();
         js_sys::Reflect::set(&headers, &"Content-Type".into(), &"application/json".into())
-            .map_err(|e| DeezelError::Network(format!("Failed to set header: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to set header: {e:?}")))?;
         
         // Make HTTP POST request to Rebar Labs Shield
         let response = self.fetch_request(
@@ -404,25 +402,25 @@ impl WebProvider {
         ).await?;
         
         let response_text = JsFuture::from(response.text()
-            .map_err(|e| DeezelError::Network(format!("Failed to get response text: {e:?}")))?)
+            .map_err(|e| AlkanesError::Network(format!("Failed to get response text: {e:?}")))?)
             .await
-            .map_err(|e| DeezelError::Network(format!("Failed to read Rebar Shield response: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to read Rebar Shield response: {e:?}")))?;
         
         let response_str = response_text.as_string()
-            .ok_or_else(|| DeezelError::Network("Response is not a string".to_string()))?;
+            .ok_or_else(|| AlkanesError::Network("Response is not a string".to_string()))?;
         
         let response_json: JsonValue = serde_json::from_str(&response_str)
-            .map_err(|e| DeezelError::Serialization(format!("Failed to parse Rebar Shield JSON: {e}")))?;
+            .map_err(|e| AlkanesError::Serialization(format!("Failed to parse Rebar Shield JSON: {e}")))?;
         
         // Check for JSON-RPC error
         if let Some(error) = response_json.get("error") {
-            return Err(DeezelError::JsonRpc(format!("Rebar Shield error: {error}")));
+            return Err(AlkanesError::JsonRpc(format!("Rebar Shield error: {error}")));
         }
         
         // Extract transaction ID from result
         let txid = response_json.get("result")
             .and_then(|r| r.as_str())
-            .ok_or_else(|| DeezelError::JsonRpc("No transaction ID in Rebar Shield response".to_string()))?;
+            .ok_or_else(|| AlkanesError::JsonRpc("No transaction ID in Rebar Shield response".to_string()))?;
         
         self.logger.info(&format!("✅ Transaction broadcast via Rebar Shield: {txid}"));
         self.logger.info("🛡️  Transaction sent privately to mining pools");
@@ -450,7 +448,7 @@ impl JsonRpcProvider for WebProvider {
         // Create headers
         let headers = js_sys::Object::new();
         js_sys::Reflect::set(&headers, &"Content-Type".into(), &"application/json".into())
-            .map_err(|e| DeezelError::Network(format!("Failed to set header: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to set header: {e:?}")))?;
 
         let response = self.fetch_request(
             url,
@@ -460,27 +458,27 @@ impl JsonRpcProvider for WebProvider {
         ).await?;
 
         let response_text = JsFuture::from(response.text()
-            .map_err(|e| DeezelError::Network(format!("Failed to get response text: {e:?}")))?)
+            .map_err(|e| AlkanesError::Network(format!("Failed to get response text: {e:?}")))?)
             .await
-            .map_err(|e| DeezelError::Network(format!("Failed to read response: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to read response: {e:?}")))?;
 
         let response_str = response_text.as_string()
-            .ok_or_else(|| DeezelError::Network("Response is not a string".to_string()))?;
+            .ok_or_else(|| AlkanesError::Network("Response is not a string".to_string()))?;
 
         let response_json: JsonValue = serde_json::from_str(&response_str)
-            .map_err(|e| DeezelError::Serialization(format!("Failed to parse JSON: {e}")))?;
+            .map_err(|e| AlkanesError::Serialization(format!("Failed to parse JSON: {e}")))?;
 
         self.logger.info(&format!("JsonRpcProvider::call <- Raw RPC response: {}", response_str));
  
         if let Some(error) = response_json.get("error") {
             if !error.is_null() {
-                return Err(DeezelError::JsonRpc(format!("JSON-RPC error: {error}")));
+                return Err(AlkanesError::JsonRpc(format!("JSON-RPC error: {error}")));
             }
         }
 
         response_json.get("result")
             .cloned()
-            .ok_or_else(|| DeezelError::JsonRpc("No result in JSON-RPC response".to_string()))
+            .ok_or_else(|| AlkanesError::JsonRpc("No result in JSON-RPC response".to_string()))
     }
 
 }
@@ -594,7 +592,7 @@ impl EsploraProvider for WebProvider {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH));
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH, esplora::params::empty(), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid tip hash response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tip hash response".to_string()))
     }
 
     async fn get_blocks_tip_height(&self) -> Result<u64> {
@@ -602,7 +600,7 @@ impl EsploraProvider for WebProvider {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HEIGHT));
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HEIGHT, esplora::params::empty(), 1).await?;
-        result.as_u64().ok_or_else(|| DeezelError::RpcError("Invalid tip height response".to_string()))
+        result.as_u64().ok_or_else(|| AlkanesError::RpcError("Invalid tip height response".to_string()))
     }
 
     async fn get_blocks(&self, start_height: Option<u64>) -> Result<serde_json::Value> {
@@ -613,7 +611,7 @@ impl EsploraProvider for WebProvider {
     async fn get_block_by_height(&self, height: u64) -> Result<String> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_HEIGHT, esplora::params::single(height), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid block hash response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
     }
 
     async fn get_block(&self, hash: &str) -> Result<serde_json::Value> {
@@ -634,13 +632,13 @@ impl EsploraProvider for WebProvider {
     async fn get_block_header(&self, hash: &str) -> Result<String> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_HEADER, esplora::params::single(hash), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid block header response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block header response".to_string()))
     }
 
     async fn get_block_raw(&self, hash: &str) -> Result<String> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_RAW, esplora::params::single(hash), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid raw block response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw block response".to_string()))
     }
 
     async fn get_block_txid(&self, hash: &str, index: u32) -> Result<String> {
@@ -648,7 +646,7 @@ impl EsploraProvider for WebProvider {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::BLOCK_TXID));
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_TXID, esplora::params::dual(hash, index), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid txid response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
     }
 
     async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<serde_json::Value> {
@@ -706,13 +704,13 @@ impl EsploraProvider for WebProvider {
     async fn get_tx_hex(&self, txid: &str) -> Result<String> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::TX_HEX, esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid tx hex response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tx hex response".to_string()))
     }
 
     async fn get_tx_raw(&self, txid: &str) -> Result<String> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::TX_RAW, esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid raw tx response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw tx response".to_string()))
     }
 
     async fn get_tx_status(&self, txid: &str) -> Result<serde_json::Value> {
@@ -728,7 +726,7 @@ impl EsploraProvider for WebProvider {
     async fn get_tx_merkleblock_proof(&self, txid: &str) -> Result<String> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::TX_MERKLEBLOCK_PROOF, esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid merkleblock proof response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid merkleblock proof response".to_string()))
     }
 
     async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<serde_json::Value> {
@@ -744,7 +742,7 @@ impl EsploraProvider for WebProvider {
     async fn broadcast(&self, tx_hex: &str) -> Result<String> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BROADCAST, esplora::params::single(tx_hex), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid broadcast response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid broadcast response".to_string()))
     }
 
     async fn get_mempool(&self) -> Result<serde_json::Value> {
@@ -772,13 +770,13 @@ impl EsploraProvider for WebProvider {
 impl WalletProvider for WebProvider {
     async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
         let mnemonic = if let Some(m) = mnemonic {
-            bip39::Mnemonic::from_phrase(&m, bip39::Language::English).map_err(|e| DeezelError::Wallet(format!("Invalid mnemonic: {e}")))?
+            bip39::Mnemonic::from_phrase(&m, bip39::Language::English).map_err(|e| AlkanesError::Wallet(format!("Invalid mnemonic: {e}")))?
         } else {
             bip39::Mnemonic::new(bip39::MnemonicType::Words24, bip39::Language::English)
         };
 
         let pass = passphrase.clone().unwrap_or_default();
-        let keystore = deezel_common::keystore::Keystore::new(&mnemonic, config.network, &pass, None)?;
+        let keystore = alkanes_cli_common::keystore::Keystore::new(&mnemonic, config.network, &pass, None)?;
 
         // Store the encrypted keystore
         let keystore_bytes = serde_json::to_vec(&keystore)?;
@@ -801,9 +799,9 @@ impl WalletProvider for WebProvider {
     
     async fn load_wallet(&mut self, config: WalletConfig, passphrase: Option<String>) -> Result<WalletInfo> {
         let keystore_bytes = self.storage.read(&config.wallet_path).await?;
-        let keystore: deezel_common::keystore::Keystore = serde_json::from_slice(&keystore_bytes)?;
+        let keystore: alkanes_cli_common::keystore::Keystore = serde_json::from_slice(&keystore_bytes)?;
 
-        let pass = passphrase.as_deref().ok_or_else(|| DeezelError::Wallet("Passphrase required to load wallet".to_string()))?;
+        let pass = passphrase.as_deref().ok_or_else(|| AlkanesError::Wallet("Passphrase required to load wallet".to_string()))?;
         let mnemonic = keystore.decrypt_mnemonic(pass)?;
 
         let network_params = self.network_params()?;
@@ -849,18 +847,18 @@ impl WalletProvider for WebProvider {
     
     async fn get_address(&self) -> Result<String> {
         self.logger.info("[WalletProvider] Calling get_address");
-        let keystore = self.keystore.as_ref().ok_or_else(|| DeezelError::Wallet("Wallet not loaded".to_string()))?;
+        let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let network_params = self.network_params()?;
         let addresses = self.derive_addresses(&keystore.account_xpub, &network_params, &["p2tr"], 0, 1).await?;
         let address = addresses.first()
             .map(|a| a.address.clone())
-            .ok_or_else(|| DeezelError::Wallet("Could not derive address".to_string()))?;
+            .ok_or_else(|| AlkanesError::Wallet("Could not derive address".to_string()))?;
         Ok(address)
     }
     
     async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>> {
         self.logger.info(&format!("[WalletProvider] Calling get_addresses with count: {}", count));
-        let keystore = self.keystore.as_ref().ok_or_else(|| DeezelError::Wallet("Wallet not loaded".to_string()))?;
+        let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let network_params = self.network_params()?;
         let keystore_addresses = self.derive_addresses(&keystore.account_xpub, &network_params, &["p2tr"], 0, count).await?;
         
@@ -1084,7 +1082,7 @@ impl WalletProvider for WebProvider {
         let address = <Self as WalletProvider>::get_address(self).await?;
         let utxos = self.get_utxos(false, Some(vec![address])).await?;
         if utxos.is_empty() {
-            return Err(DeezelError::Wallet("No UTXOs available".to_string()));
+            return Err(AlkanesError::Wallet("No UTXOs available".to_string()));
         }
 
         let mut inputs = vec![];
@@ -1111,7 +1109,7 @@ impl WalletProvider for WebProvider {
         let fee = fee_rate * estimated_vsize;
 
         if total_input < amount.to_sat() + fee {
-            return Err(DeezelError::Wallet("Insufficient funds".to_string()));
+            return Err(AlkanesError::Wallet("Insufficient funds".to_string()));
         }
 
         let change_address = <Self as WalletProvider>::get_address(self).await?;
@@ -1140,7 +1138,7 @@ impl WalletProvider for WebProvider {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         use bitcoin::psbt::Psbt;
 
-        let psbt_bytes = STANDARD.decode(&psbt_base64).map_err(|e| DeezelError::Parse(e.to_string()))?;
+        let psbt_bytes = STANDARD.decode(&psbt_base64).map_err(|e| AlkanesError::Parse(e.to_string()))?;
         let mut psbt: Psbt = Psbt::deserialize(&psbt_bytes)?;
         
         let signed_psbt = self.sign_psbt(&mut psbt).await?;
@@ -1193,14 +1191,14 @@ impl WalletProvider for WebProvider {
     }
     
     async fn backup(&self) -> Result<String> {
-        let keystore = self.keystore.as_ref().ok_or_else(|| DeezelError::Wallet("Wallet not loaded".to_string()))?;
+        let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let keystore_json = serde_json::to_string(keystore)?;
         Ok(keystore_json)
     }
     
     async fn get_mnemonic(&self) -> Result<Option<String>> {
-        let keystore = self.keystore.as_ref().ok_or_else(|| DeezelError::Wallet("Wallet not loaded".to_string()))?;
-        let pass = self.passphrase.as_deref().ok_or_else(|| DeezelError::Wallet("Passphrase not set".to_string()))?;
+        let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
+        let pass = self.passphrase.as_deref().ok_or_else(|| AlkanesError::Wallet("Passphrase not set".to_string()))?;
         let mnemonic = keystore.decrypt_mnemonic(pass)?;
         Ok(Some(mnemonic))
     }
@@ -1211,7 +1209,7 @@ impl WalletProvider for WebProvider {
     
     async fn get_internal_key(&self) -> Result<(XOnlyPublicKey, (Fingerprint, DerivationPath))> {
         let keypair = self.get_keypair().await?;
-        let keystore = self.keystore.as_ref().ok_or_else(|| DeezelError::Wallet("Wallet not loaded".to_string()))?;
+        let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let (x_only, _) = keypair.x_only_public_key();
         // Assuming p2tr path for internal key
         let path_str = format!("m/86'/{}/0'/0/0", if self.network == Network::Bitcoin { "0" } else { "1" });
@@ -1226,7 +1224,7 @@ impl WalletProvider for WebProvider {
         let secp = Secp256k1::new();
         let mut sighash_cache = bitcoin::sighash::SighashCache::new(&psbt.unsigned_tx);
         for i in 0..psbt.inputs.len() {
-            let prev_txo = psbt.inputs[i].witness_utxo.as_ref().ok_or(DeezelError::Wallet("Missing witness UTXO".to_string()))?;
+            let prev_txo = psbt.inputs[i].witness_utxo.as_ref().ok_or(AlkanesError::Wallet("Missing witness UTXO".to_string()))?;
             let sighash = sighash_cache.taproot_key_spend_signature_hash(i, &bitcoin::sighash::Prevouts::All(&[prev_txo.clone()]), bitcoin::sighash::TapSighashType::Default)?;
             let sig = secp.sign_schnorr_with_rng(&sighash.into(), &keypair, &mut rand::thread_rng());
             psbt.inputs[i].tap_key_sig = Some(bitcoin::taproot::Signature{ signature: sig, sighash_type: bitcoin::sighash::TapSighashType::Default });
@@ -1238,7 +1236,7 @@ impl WalletProvider for WebProvider {
         use bip39::Mnemonic;
         use bitcoin::bip32::Xpriv;
 
-        let keystore = self.keystore.as_ref().ok_or_else(|| DeezelError::Wallet("Wallet not loaded".to_string()))?;
+        let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let pass = self.passphrase.as_deref().unwrap_or_default();
         let mnemonic_str = keystore.decrypt_mnemonic(pass)?;
         let mnemonic = Mnemonic::from_phrase(&mnemonic_str, bip39::Language::English)?;
@@ -1293,7 +1291,7 @@ impl AddressResolver for WebProvider {
 impl BitcoinRpcProvider for WebProvider {
     async fn get_block_count(&self) -> Result<u64> {
         let result = self.call(&self.sandshrew_rpc_url, "getblockcount", serde_json::json!([]), 1).await?;
-        result.as_u64().ok_or_else(|| DeezelError::RpcError("Invalid block count response".to_string()))
+        result.as_u64().ok_or_else(|| AlkanesError::RpcError("Invalid block count response".to_string()))
     }
     
     async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue> {
@@ -1308,7 +1306,7 @@ impl BitcoinRpcProvider for WebProvider {
     async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
         let params = serde_json::json!([txid, true]);
         let result = self.call(&self.sandshrew_rpc_url, "getrawtransaction", params, 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid transaction hex response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid transaction hex response".to_string()))
     }
     
     async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue> {
@@ -1320,13 +1318,13 @@ impl BitcoinRpcProvider for WebProvider {
     async fn get_block_hash(&self, height: u64) -> Result<String> {
         let params = serde_json::json!([height]);
         let result = self.call(&self.sandshrew_rpc_url, "getblockhash", params, 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid block hash response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
     }
     
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
         let params = serde_json::json!([tx_hex]);
         let result = self.call(&self.sandshrew_rpc_url, "sendrawtransaction", params, 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid txid response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
     }
     
     async fn get_mempool_info(&self) -> Result<JsonValue> {
@@ -1397,7 +1395,7 @@ impl MetashrewRpcProvider for WebProvider {
 
         let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", params, 1).await?;
 
-        let hex_str = result.as_str().ok_or_else(|| DeezelError::RpcError("Invalid protorune response: not a string".to_string()))?;
+        let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid protorune response: not a string".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
 
         let response_pb = ProtoruneOutpointResponsePb::parse_from_bytes(&bytes[..])?;
@@ -1475,7 +1473,7 @@ impl OrdProvider for WebProvider {
     }
     async fn get_output(&self, output: &str) -> Result<OrdOutput> {
         let json = self.call(self.sandshrew_rpc_url(), "ord_output", serde_json::json!([output]), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdParents> {
         unimplemented!()
@@ -1551,7 +1549,7 @@ impl AlkanesProvider for WebProvider {
         let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", rpc_params, 1).await?;
 
         let hex_response = result.as_str().ok_or_else(|| {
-            DeezelError::RpcError("metashrew_view response was not a string".to_string())
+            AlkanesError::RpcError("metashrew_view response was not a string".to_string())
         })?;
 
         let result_bytes = hex::decode(hex_response.strip_prefix("0x").unwrap_or(hex_response))?;
@@ -1573,15 +1571,15 @@ impl AlkanesProvider for WebProvider {
 
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_trace", serde_json::json!([outpoint]), 1).await?;
-        let hex_str = result.as_str().ok_or_else(|| DeezelError::RpcError("Invalid trace response".to_string()))?;
+        let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
-        alkanes_pb::Trace::parse_from_bytes(&bytes[..]).map_err(|e| DeezelError::Serialization(e.to_string()))
+        alkanes_pb::Trace::parse_from_bytes(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse> {
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_get_block", serde_json::json!([height]), 1).await?;
-        let hex_str = result.as_str().ok_or_else(|| DeezelError::RpcError("Invalid block response".to_string()))?;
+        let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
-        alkanes_pb::BlockResponse::parse_from_bytes(&bytes[..]).map_err(|e| DeezelError::Serialization(e.to_string()))
+        alkanes_pb::BlockResponse::parse_from_bytes(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn sequence(&self) -> Result<JsonValue> {
         self.call(&self.sandshrew_rpc_url, "alkanes_sequence", serde_json::json!(["0x"]), 1).await
@@ -1591,15 +1589,15 @@ impl AlkanesProvider for WebProvider {
     }
     async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace> {
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_trace_block", serde_json::json!([height]), 1).await?;
-        let hex_str = result.as_str().ok_or_else(|| DeezelError::RpcError("Invalid trace block response".to_string()))?;
+        let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
-        alkanes_pb::Trace::parse_from_bytes(&bytes[..]).map_err(|e| DeezelError::Serialization(e.to_string()))
+        alkanes_pb::Trace::parse_from_bytes(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         use alkanes_support::proto::alkanes::BytecodeRequest;
         let parts: Vec<&str> = alkane_id.split(':').collect();
         if parts.len() != 2 {
-            return Err(DeezelError::InvalidParameters("Invalid alkane_id format".to_string()));
+            return Err(AlkanesError::InvalidParameters("Invalid alkane_id format".to_string()));
         }
         let block = parts[0].parse::<u64>()?;
         let tx = parts[1].parse::<u32>()?;
@@ -1618,14 +1616,14 @@ impl AlkanesProvider for WebProvider {
         let params = serde_json::json!(["getbytecode", format!("0x{}", hex_input), block_tag.as_deref().unwrap_or("latest")]);
         let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", params, 1).await?;
         
-        let hex_str = result.as_str().ok_or_else(|| DeezelError::RpcError("Invalid bytecode response: not a string".to_string()))?;
+        let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid bytecode response: not a string".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         Ok(format!("0x{}", hex::encode(bytes)))
     }
     async fn inspect(&self, target: &str, config: AlkanesInspectConfig) -> Result<AlkanesInspectResult> {
         let params = serde_json::json!([target, config]);
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_inspect", params, 1).await?;
-        serde_json::from_value(result).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<AlkaneBalance>> {
         let addr = match address {
@@ -1633,7 +1631,7 @@ impl AlkanesProvider for WebProvider {
             None => WalletProvider::get_address(self).await?,
         };
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_get_balance", serde_json::json!([addr]), 1).await?;
-        serde_json::from_value(result).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 }
 
@@ -1650,7 +1648,7 @@ impl MonitorProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl KeystoreProvider for WebProvider {
-    async fn derive_addresses(&self, master_public_key: &str, network_params: &deezel_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
+    async fn derive_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
         let mut addresses = Vec::new();
         for script_type in script_types {
             for i in start_index..(start_index + count) {
@@ -1665,7 +1663,7 @@ impl KeystoreProvider for WebProvider {
                 };
                 let path_str = format!("m/{purpose}'/{coin_type}'/0'/0/{i}");
                 let path = DerivationPath::from_str(&path_str)?;
-                let address = deezel_common::keystore::derive_address_from_public_key(
+let address = alkanes_cli_common::keystore::derive_address_from_public_key(
                     master_public_key,
                     &path,
                     network_params,
@@ -1683,7 +1681,7 @@ impl KeystoreProvider for WebProvider {
         Ok(addresses)
     }
     
-    async fn get_default_addresses(&self, master_public_key: &str, network_params: &deezel_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>> {
+    async fn get_default_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>> {
         let script_types = vec!["p2wpkh", "p2tr"];
         self.derive_addresses(master_public_key, network_params, &script_types, 0, 1).await
     }
@@ -1695,17 +1693,17 @@ impl KeystoreProvider for WebProvider {
     fn parse_address_range(&self, range_spec: &str) -> Result<(String, u32, u32)> {
         let parts: Vec<&str> = range_spec.split(':').collect();
         if parts.len() != 2 {
-            return Err(DeezelError::InvalidParameters("Invalid range specifier. Expected format: script_type:start-end".to_string()));
+            return Err(AlkanesError::InvalidParameters("Invalid range specifier. Expected format: script_type:start-end".to_string()));
         }
         let script_type = parts[0].to_string();
         let range_parts: Vec<&str> = parts[1].split('-').collect();
         if range_parts.len() != 2 {
-            return Err(DeezelError::InvalidParameters("Invalid range format. Expected start-end".to_string()));
+            return Err(AlkanesError::InvalidParameters("Invalid range format. Expected start-end".to_string()));
         }
         let start_index = range_parts[0].parse::<u32>()?;
         let end_index = range_parts[1].parse::<u32>()?;
         if end_index < start_index {
-            return Err(DeezelError::InvalidParameters("End index cannot be less than start index".to_string()));
+            return Err(AlkanesError::InvalidParameters("End index cannot be less than start index".to_string()));
         }
         let count = end_index - start_index + 1;
         Ok((script_type, start_index, count))
@@ -1719,8 +1717,8 @@ impl KeystoreProvider for WebProvider {
         })
     }
 
-    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &deezel_common::network::NetworkParams) -> Result<KeystoreAddress> {
-        let address = deezel_common::keystore::derive_address_from_public_key(
+    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> Result<KeystoreAddress> {
+        let address = alkanes_cli_common::keystore::derive_address_from_public_key(
             master_public_key,
             path,
             network_params,
@@ -1790,7 +1788,7 @@ impl DeezelProvider for WebProvider {
     }
 
     async fn wrap(&mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Result<String> {
-        use deezel_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer};
+        use alkanes_cli_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer};
         use alkanes_support::cellpack::Cellpack;
         use base64::{engine::general_purpose::STANDARD, Engine as _};
 
@@ -1805,7 +1803,7 @@ impl DeezelProvider for WebProvider {
             protostones: vec![ProtostoneSpec {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 1]).unwrap()), // Assuming 2 is for wrapping, 0 is frBTC, 1 is mint
                 edicts: vec![],
-                bitcoin_transfer: Some(BitcoinTransfer { amount, target: deezel_common::alkanes::types::OutputTarget::Split }),
+                bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
             }],
             envelope_data: None,
             raw_output: false,
@@ -1818,12 +1816,12 @@ impl DeezelProvider for WebProvider {
             ExecutionState::ReadyToSign(ready_tx) => {
                 Ok(STANDARD.encode(&ready_tx.psbt.serialize()))
             }
-            _ => Err(DeezelError::Other("Unexpected execution state".to_string())),
+            _ => Err(AlkanesError::Other("Unexpected execution state".to_string())),
         }
     }
 
     async fn unwrap(&mut self, amount: u64, address: Option<String>) -> Result<String> {
-        use deezel_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer};
+        use alkanes_cli_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer};
         use alkanes_support::cellpack::Cellpack;
         use base64::{engine::general_purpose::STANDARD, Engine as _};
 
@@ -1838,7 +1836,7 @@ impl DeezelProvider for WebProvider {
             protostones: vec![ProtostoneSpec {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 2]).unwrap()), // Assuming 2 is for unwrapping, 0 is frBTC, 2 is burn
                 edicts: vec![],
-                bitcoin_transfer: Some(BitcoinTransfer { amount, target: deezel_common::alkanes::types::OutputTarget::Split }),
+                bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
             }],
             envelope_data: None,
             raw_output: false,
@@ -1851,7 +1849,7 @@ impl DeezelProvider for WebProvider {
             ExecutionState::ReadyToSign(ready_tx) => {
                 Ok(STANDARD.encode(&ready_tx.psbt.serialize()))
             }
-            _ => Err(DeezelError::Other("Unexpected execution state".to_string())),
+            _ => Err(AlkanesError::Other("Unexpected execution state".to_string())),
         }
     }
 }

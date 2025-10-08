@@ -87,8 +87,8 @@ dependencies = [
  "hex",
  "hex_lit",
  "js-sys",
- "metashrew-core",
- "metashrew-support",
+ "metashrew-core 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "num",
  "once_cell",
  "ordinals 1.2.3",
@@ -177,6 +177,7 @@ dependencies = [
  "bitcoin 0.32.7",
  "bitcoin_hashes 0.14.0",
  "bitcoincore-rpc 0.18.0",
+ "cfg-if",
  "chrono",
  "clap",
  "dirs",
@@ -196,7 +197,7 @@ dependencies = [
  "lazy_static",
  "leb128",
  "log",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "mockall",
  "ordinals 1.2.3",
  "pbkdf2",
@@ -313,7 +314,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]
@@ -327,7 +328,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -339,7 +340,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -351,7 +352,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "ordinals 1.2.3",
 ]
 
@@ -364,7 +365,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "hex",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -377,7 +378,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "hex",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -390,7 +391,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "hex",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -403,7 +404,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "hex",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -416,7 +417,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "borsh",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "num",
  "ordinals 1.2.3",
  "protorune-support",
@@ -434,7 +435,7 @@ dependencies = [
  "bitcoin 0.32.7",
  "hex",
  "hex_lit",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -447,7 +448,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "ordinals 1.2.3",
  "protorune-support",
 ]
@@ -460,7 +461,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -472,7 +473,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "hex",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "sha2",
 ]
 
@@ -484,7 +485,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "hex",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "sha2",
 ]
 
@@ -496,7 +497,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -508,7 +509,7 @@ dependencies = [
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "protorune-support",
 ]
 
@@ -519,9 +520,11 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
  "flate2",
- "metashrew-support",
- "prost 0.13.5",
- "prost-build 0.13.5",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
+ "protobuf 3.7.2",
+ "protobuf-codegen 3.7.2",
+ "protoc-bin-vendored",
+ "protoc-rust",
  "protorune-support",
  "serde",
 ]
@@ -544,6 +547,7 @@ dependencies = [
  "js-sys",
  "pbkdf2",
  "protobuf 3.7.2",
+ "protorune-support",
  "rand 0.8.5",
  "serde",
  "serde-wasm-bindgen",
@@ -3479,6 +3483,23 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 [[package]]
 name = "metashrew-core"
 version = "9.0.1"
+dependencies = [
+ "anyhow",
+ "bitcoin 0.31.2",
+ "bytes",
+ "cfg-if",
+ "hex",
+ "metashrew-support 9.0.1",
+ "ordinals 0.0.8",
+ "prost 0.13.5",
+ "prost-build 0.13.5",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
+
+[[package]]
+name = "metashrew-core"
+version = "9.0.1"
 source = "git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost#8a49860d090c517833a3816e8507b498be975854"
 dependencies = [
  "anyhow",
@@ -3486,12 +3507,23 @@ dependencies = [
  "bytes",
  "cfg-if",
  "hex",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "ordinals 0.0.8",
  "prost 0.12.6",
  "prost-build 0.12.6",
  "wasm-bindgen",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "metashrew-support"
+version = "9.0.1"
+dependencies = [
+ "anyhow",
+ "bech32 0.11.0",
+ "bitcoin 0.32.7",
+ "hex",
+ "prost-build 0.13.5",
 ]
 
 [[package]]
@@ -4375,7 +4407,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
@@ -4571,8 +4603,8 @@ dependencies = [
  "byteorder",
  "getrandom 0.2.16",
  "hex",
- "metashrew-core",
- "metashrew-support",
+ "metashrew-core 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "once_cell",
  "ordinals 1.2.3",
  "prost 0.13.5",
@@ -4594,10 +4626,13 @@ dependencies = [
  "bech32 0.11.0",
  "bitcoin 0.32.7",
  "hex",
- "metashrew-support",
+ "metashrew-support 9.0.1 (git+https://github.com/sandshrewmetaprotocols/metashrew?branch=sandshrewmetadev/prost)",
  "ordinals 1.2.3",
  "prost 0.13.5",
- "prost-build 0.13.5",
+ "protobuf 3.7.2",
+ "protobuf-codegen 3.7.2",
+ "protoc-bin-vendored",
+ "protoc-rust",
  "serde",
 ]
 

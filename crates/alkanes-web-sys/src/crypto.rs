@@ -75,7 +75,7 @@ use alloc::{
 };
 
 use async_trait::async_trait;
-use deezel_common::{DeezelError, Result};
+use alkanes_cli_common::{DeezelError, Result};
 use js_sys::{Array, Object, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;

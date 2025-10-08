@@ -1,3 +1,5 @@
+
+
 [package]
 name = "alkanes"
 version.workspace = true
@@ -35,8 +37,8 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 flate2 = "1.0"
 lazy_static = "1.5.0"
-prost = "0.13.1"
-prost-build = "0.13.1"
+prost = "0.13.5"
+prost-build = "0.13.5"
 tokio = { version = "1.0", features = ["rt", "macros", "sync", "time"] }
 reqwest = { version = "0.12.23", features = ["json"] }
 protobuf = { version = "3.7.2" }

@@ -1,5 +1,12 @@
+use protobuf_codegen;
+use protoc_bin_vendored;
 fn main() {
-    let mut config = prost_build::Config::new();
-    config.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
-    config.compile_protos(&["proto/alkanes.proto"], &["proto/"]).unwrap();
+    protobuf_codegen::Codegen::new()
+        .protoc()
+        .protoc_path(&protoc_bin_vendored::protoc_bin_path().unwrap())
+        .out_dir("src/proto")
+        .inputs(&["proto/alkanes.proto"])
+        .include("proto")
+        .run()
+        .expect("running protoc failed");
 }

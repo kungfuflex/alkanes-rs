@@ -3,24 +3,29 @@
 //! This module provides a concrete implementation of all provider traits
 //! using deezel-rpgp for PGP operations and other concrete implementations.
 
-use crate::traits::*;
+use cfg_if::cfg_if;
 use crate::{
-    alkanes::types::{ExecutionState, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx},
+    alkanes::types::{
+        EnhancedExecuteParams, EnhancedExecuteResult, AlkanesInspectConfig, AlkanesInspectResult,
+        AlkaneBalance, AlkaneId, ExecutionState, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx
+    },
     DeezelError, JsonValue, Result,
+    traits::{self, *},
 };
+use std::path::PathBuf;
+use protobuf::Message;
+use prost::Message as ProstMessage;
+use crate::wallet;
+
 use serde_json::json;
 use crate::ord;
 use crate::alkanes::execute::EnhancedAlkanesExecutor;
 #[cfg(feature = "wasm-inspection")]
 use crate::alkanes::inspector::{AlkaneInspector, InspectionConfig};
-use crate::alkanes::types::{
-	EnhancedExecuteParams, EnhancedExecuteResult, AlkanesInspectConfig, AlkanesInspectResult,
-	AlkaneBalance, AlkaneId,
-};
-use crate::proto::alkanes as alkanes_pb;
-use crate::proto::protorune as protorune_pb;
+use alkanes_support::proto::alkanes as alkanes_pb;
+use protorune_support::proto as protorune_pb;
 use std::collections::BTreeMap;
-use protobuf::Message;
+
 use log;
 use async_trait::async_trait;
 use alloc::format;
@@ -148,7 +153,7 @@ impl ConcreteProvider {
     }
 
     /// A helper function to select coins for a transaction.
-    fn select_coins(&self, utxos: Vec<UtxoInfo>, target_amount: Amount) -> Result<(Vec<UtxoInfo>, Amount)> {
+    fn select_coins(&self, utxos: Vec<wallet::UtxoInfo>, target_amount: Amount) -> Result<(Vec<wallet::UtxoInfo>, Amount)> {
         let mut selected_utxos = Vec::new();
         let mut total_input_amount = Amount::ZERO;
 
@@ -196,12 +201,22 @@ impl ConcreteProvider {
         }
     }
 
-    pub fn get_wallet_path(&self) -> Option<PathBuf> {
-        self._wallet_path.clone()
+    cfg_if! {
+        if #[cfg(target_arch = "wasm32")] {
+            pub fn get_wallet_path(&self) -> Option<String> {
+                self._wallet_path.clone()
+            }
+        } else {
+            pub fn get_wallet_path(&self) -> Option<PathBuf> {
+                self._wallet_path.clone()
+            }
+        }
     }
 
+
+
     /// A helper function to find address info from the keystore.
-    fn find_address_info(keystore: &Keystore, address: &Address, network: Network) -> Result<AddressInfo> {
+    fn find_address_info(keystore: &Keystore, address: &Address, network: Network) -> Result<traits::AddressInfo> {
         // This is a placeholder. In a real wallet, you'd efficiently search
         // the keystore's derived addresses. 
         for i in 0..1000 { // A reasonable search limit
@@ -397,7 +412,7 @@ impl LogProvider for ConcreteProvider {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl WalletProvider for ConcreteProvider {
-    async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
+    async fn create_wallet(&mut self, config: traits::WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<traits::WalletInfo> {
         let mnemonic = if let Some(m) = mnemonic {
             Mnemonic::from_phrase(&m, bip39::Language::English).map_err(|e| DeezelError::Wallet(format!("Invalid mnemonic: {e}")))?
         } else {
@@ -426,14 +441,14 @@ impl WalletProvider for ConcreteProvider {
         };
         self.passphrase = passphrase;
 
-        Ok(WalletInfo {
+        Ok(traits::WalletInfo {
             address,
             network: config.network,
             mnemonic: Some(mnemonic.to_string()),
         })
     }
     
-    async fn load_wallet(&mut self, config: WalletConfig, passphrase: Option<String>) -> Result<WalletInfo> {
+    async fn load_wallet(&mut self, config: traits::WalletConfig, passphrase: Option<String>) -> Result<traits::WalletInfo> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let path = PathBuf::from(config.wallet_path);
@@ -449,7 +464,7 @@ impl WalletProvider for ConcreteProvider {
             };
             self.passphrase = passphrase;
 
-            Ok(WalletInfo {
+            Ok(traits::WalletInfo {
                 address,
                 network: config.network,
                 mnemonic: Some(mnemonic),
@@ -515,14 +530,14 @@ impl WalletProvider for ConcreteProvider {
         }
     }
     
-    async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>> {
+    async fn get_addresses(&self, count: u32) -> Result<Vec<traits::AddressInfo>> {
         log::info!("[WalletProvider] Calling get_addresses with count: {}", count);
         let keystore = self.get_keystore()?;
         let addresses = keystore.get_addresses(self.get_network(), "p2tr", 0, 0, count)?;
         Ok(addresses)
     }
     
-    async fn send(&mut self, params: SendParams) -> Result<String> {
+    async fn send(&mut self, params: traits::SendParams) -> Result<String> {
         log::info!("[WalletProvider] Calling send with params: {:?}", params);
         // 1. Create the transaction
         let tx_hex = self.create_transaction(params).await?;
@@ -534,7 +549,7 @@ impl WalletProvider for ConcreteProvider {
         self.broadcast_transaction(signed_tx_hex).await
     }
     
-    async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
+    async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, traits::UtxoInfo)>> {
         log::info!("[WalletProvider] Calling get_utxos for addresses: {:?}", addresses);
         if addresses.is_none() || addresses.as_ref().unwrap().is_empty() {
             return Ok(Vec::new());
@@ -558,12 +573,12 @@ impl WalletProvider for ConcreteProvider {
                     } else {
                         0
                     };
-                    let utxo_info = UtxoInfo {
+                    let utxo_info = traits::UtxoInfo {
                         txid: utxo.txid,
                         vout: utxo.vout,
                         amount: utxo.value,
                         address: address.clone(),
-                        script_pubkey: None,
+                        script_pubkey: Some(ScriptBuf::from(utxo.status.block_hash.as_ref().unwrap().to_string().as_bytes().to_vec())),
                         confirmations: confirmations as u32,
                         frozen: false,
                         freeze_reason: None,
@@ -581,7 +596,7 @@ impl WalletProvider for ConcreteProvider {
         Ok(all_utxos)
     }
     
-    async fn get_history(&self, count: u32, address: Option<String>) -> Result<Vec<TransactionInfo>> {
+    async fn get_history(&self, count: u32, address: Option<String>) -> Result<Vec<traits::TransactionInfo>> {
         log::info!("[WalletProvider] Calling get_history for address: {:?}, count: {}", address, count);
         let addr = address.ok_or_else(|| DeezelError::Wallet("get_history requires an address".to_string()))?;
         let txs_json = self.get_address_txs(&addr).await?;
@@ -596,7 +611,7 @@ impl WalletProvider for ConcreteProvider {
                     let block_time = status.and_then(|s| s.get("block_time")).and_then(|t| t.as_u64());
                     let fee = tx.get("fee").and_then(|f| f.as_u64());
 
-                    transactions.push(TransactionInfo {
+                    transactions.push(traits::TransactionInfo {
                         txid: txid.to_string(),
                         block_height,
                         block_time,
@@ -623,11 +638,11 @@ impl WalletProvider for ConcreteProvider {
         unimplemented!()
     }
     
-    async fn create_transaction(&self, params: SendParams) -> Result<String> {
+    async fn create_transaction(&self, params: traits::SendParams) -> Result<String> {
         log::info!("[WalletProvider] Calling create_transaction with params: {:?}", params);
         // 1. Determine which addresses to use for sourcing UTXOs
         let (address_strings, all_addresses) = if let Some(from_addresses) = &params.from {
-            (from_addresses.clone(), from_addresses.iter().map(|s| AddressInfo {
+            (from_addresses.clone(), from_addresses.iter().map(|s| traits::AddressInfo {
                 address: s.clone(),
                 index: 0, // Not relevant here
                 derivation_path: "".to_string(), // Not relevant here
@@ -647,8 +662,8 @@ impl WalletProvider for ConcreteProvider {
         let target_amount = Amount::from_sat(params.amount);
         let fee_rate = params.fee_rate.unwrap_or(1.0); // Default to 1 sat/vbyte
 
-        let utxo_infos: Vec<UtxoInfo> = utxos.into_iter().map(|(_, info)| info).collect();
-        let (selected_utxos, total_input_amount) = self.select_coins(utxo_infos, target_amount)?;
+        let utxo_infos: Vec<traits::UtxoInfo> = utxos.into_iter().map(|(_, info)| info).collect();
+        let (selected_utxos, total_input_amount) = self.select_coins(utxo_infos.into_iter().map(|u| u.into()).collect(), target_amount)?;
 
         // 4. Build the transaction skeleton
         let mut tx = Transaction {
@@ -795,27 +810,27 @@ impl WalletProvider for ConcreteProvider {
         self.send_raw_transaction(&tx_hex).await
     }
     
-    async fn estimate_fee(&self, target: u32) -> Result<FeeEstimate> {
+    async fn estimate_fee(&self, target: u32) -> Result<traits::FeeEstimate> {
         let fee_estimates = self.get_fee_estimates().await?;
         let fee_rate = fee_estimates
             .get(target.to_string())
             .and_then(|v| v.as_f64().map(|f| f as f32))
             .unwrap_or(1.0);
 
-        Ok(FeeEstimate {
+        Ok(traits::FeeEstimate {
             fee_rate,
             target_blocks: target,
         })
     }
     
-    async fn get_fee_rates(&self) -> Result<FeeRates> {
+    async fn get_fee_rates(&self) -> Result<traits::FeeRates> {
         let fee_estimates = self.get_fee_estimates().await?;
         
         let fast = fee_estimates.get("1").and_then(|v| v.as_f64()).unwrap_or(10.0) as f32;
         let medium = fee_estimates.get("6").and_then(|v| v.as_f64()).unwrap_or(5.0) as f32;
         let slow = fee_estimates.get("144").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
 
-        Ok(FeeRates {
+        Ok(traits::FeeRates {
             fast,
             medium,
             slow,
@@ -1142,7 +1157,7 @@ impl MetashrewRpcProvider for ConcreteProvider {
         outpoint_pb.txid = txid_parsed.to_raw_hash().to_byte_array().to_vec();
         outpoint_pb.vout = vout;
 
-        let hex_input = format!("0x{}", hex::encode(outpoint_pb.write_to_bytes()?));
+        let hex_input = format!("0x{}", hex::encode(outpoint_pb.write_to_bytes().unwrap()));
         let response_bytes = self
             .metashrew_view_call("trace", &hex_input, "latest")
             .await?;
@@ -1166,10 +1181,9 @@ impl MetashrewRpcProvider for ConcreteProvider {
         block_tag: Option<String>,
         _protocol_tag: u128,
     ) -> Result<crate::alkanes::protorunes::ProtoruneWalletResponse> {
-        let mut request = protorune_pb::ProtorunesWalletRequest::default();
+        let mut request = protorune_pb::protorune::ProtorunesWalletRequest::default();
         request.wallet = address.as_bytes().to_vec();
-        // request.protocol_tag = Some(crate::utils::to_uint128(protocol_tag));
-        let hex_input = format!("0x{}", hex::encode(request.write_to_bytes()?));
+let hex_input = format!("0x{}", hex::encode(request.write_to_bytes().unwrap()));
         let response_bytes = self
             .metashrew_view_call(
                 "protorunesbyaddress",
@@ -1182,7 +1196,7 @@ impl MetashrewRpcProvider for ConcreteProvider {
                 balances: vec![],
             });
         }
-        let wallet_response = protorune_pb::WalletResponse::parse_from_bytes(response_bytes.as_slice())?;
+        let wallet_response = protorune_pb::protorune::WalletResponse::parse_from_bytes(response_bytes.as_slice())?;
         let mut balances = vec![];
         for item in wallet_response.outpoints.into_iter() {
             let outpoint = item.outpoint.into_option().ok_or_else(|| {
@@ -1247,13 +1261,13 @@ impl MetashrewRpcProvider for ConcreteProvider {
     ) -> Result<crate::alkanes::protorunes::ProtoruneOutpointResponse> {
         let txid = bitcoin::Txid::from_str(txid)?;
         let outpoint = bitcoin::OutPoint { txid, vout };
-        let mut request = protorune_pb::OutpointWithProtocol::default();
+        let mut request = protorune_pb::protorune::OutpointWithProtocol::default();
         let mut txid_bytes = txid.to_byte_array().to_vec();
         txid_bytes.reverse();
         request.txid = txid_bytes;
         request.vout = outpoint.vout;
         // request.protocol = Some(crate::utils::to_uint128(protocol_tag));
-        let hex_input = format!("0x{}", hex::encode(request.write_to_bytes()?));
+        let hex_input = format!("0x{}", hex::encode(request.write_to_bytes().unwrap()));
         let response_bytes = self
             .metashrew_view_call(
                 "protorunesbyoutpoint",
@@ -1266,7 +1280,7 @@ impl MetashrewRpcProvider for ConcreteProvider {
                 "empty response from protorunesbyoutpoint".to_string(),
             ));
         }
-        let proto_response = protorune_pb::OutpointResponse::parse_from_bytes(response_bytes.as_slice())?;
+        let proto_response = protorune_pb::protorune::OutpointResponse::parse_from_bytes(response_bytes.as_slice())?;
         let output = proto_response
             .output
             .into_option().ok_or_else(|| DeezelError::Other("missing output in outpoint response".to_string()))?;
@@ -1865,58 +1879,38 @@ impl AlkanesProvider for ConcreteProvider {
         <Self as MetashrewRpcProvider>::get_protorunes_by_outpoint(self, txid, vout, block_tag, protocol_tag).await
     }
 
-    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue> {
-        let combined_view = format!("{}/{}", contract_id, view_fn);
-        let params_hex = params.map(|p| format!("0x{}", hex::encode(p))).unwrap_or_else(|| "0x".to_string());
-        let result_bytes = self.metashrew_view_call(&combined_view, &params_hex, "latest").await?;
 
-        // Attempt to deserialize as a simple u64 if it's 8 bytes long.
-        if result_bytes.len() == 8 {
-            let val = u64::from_le_bytes(result_bytes.try_into().unwrap());
-            return Ok(serde_json::json!(val));
-        }
-
-        // Attempt to deserialize as generic JSON.
-        if let Ok(json_val) = serde_json::from_slice(&result_bytes) {
-            return Ok(json_val);
-        }
-
-        // Fallback to a hex string representation if it's not valid JSON.
-        Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
-    }
 
     async fn simulate(&self, contract_id: &str, context: &alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
         let mut buf = Vec::new();
-        context.write_to_writer(&mut buf)?;
+        buf.extend(context.write_to_bytes()?);
         let params_hex = format!("0x{}", hex::encode(buf));
         let rpc_params = serde_json::json!([contract_id, params_hex]);
         self.call(self.rpc_config.metashrew_rpc_url.as_deref().ok_or_else(|| DeezelError::RpcError("Metashrew RPC URL not configured".to_string()))?, "alkanes_simulate", rpc_params, 1).await
     }
 
-    async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
-        let parts: Vec<&str> = outpoint.split(':').collect();
-        if parts.len() != 2 {
-            return Err(DeezelError::InvalidParameters("Invalid outpoint format. Expected 'txid:vout'".to_string()));
+        async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
+            let parts: Vec<&str> = outpoint.split(':').collect();
+            if parts.len() != 2 {
+                return Err(DeezelError::InvalidParameters("Invalid outpoint format. Expected 'txid:vout'".to_string()));
+            }
+            let txid = bitcoin::Txid::from_str(parts[0])?;
+            let vout = parts[1].parse::<u32>()?;
+    
+            let mut out_point_pb = alkanes_pb::Outpoint::default();
+            out_point_pb.txid = txid.to_raw_hash().as_byte_array().to_vec();
+            out_point_pb.vout = vout;
+    
+            let hex_input = format!("0x{}", hex::encode(out_point_pb.write_to_bytes().unwrap()));
+    		let response_bytes = self.metashrew_view_call("trace", &hex_input, "latest").await?;
+    		let trace = alkanes_pb::Trace::parse_from_bytes(response_bytes.as_slice())?;
+            Ok(trace)
         }
-        let txid = bitcoin::Txid::from_str(parts[0])?;
-        let vout = parts[1].parse::<u32>()?;
-
-        let mut out_point_pb = alkanes_pb::Outpoint::default();
-        out_point_pb.txid = txid.to_raw_hash().as_byte_array().to_vec();
-        out_point_pb.vout = vout;
-
-        let hex_input = format!("0x{}", hex::encode(out_point_pb.write_to_bytes()?));
-        let response_bytes = self.metashrew_view_call("trace", &hex_input, "latest").await?;
-        
-        let trace = alkanes_pb::Trace::parse_from_bytes(response_bytes.as_slice())?;
-        Ok(trace)
-    }
-
     async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse> {
         let mut block_request = alkanes_pb::BlockRequest::default();
         block_request.height = height as u32;
         
-        let hex_input = format!("0x{}", hex::encode(block_request.write_to_bytes()?));
+        let hex_input = format!("0x{}", hex::encode(block_request.write_to_bytes().unwrap()));
         let response_bytes = self.metashrew_view_call("getblock", &hex_input, "latest").await?;
 
         let block_response = alkanes_pb::BlockResponse::parse_from_bytes(response_bytes.as_slice())?;
@@ -1932,17 +1926,17 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(serde_json::json!(format!("0x{}", hex::encode(response_bytes))))
     }
 
+    
+
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
-        let mut request = protorune_pb::WalletRequest::default();
-        request.wallet = address.as_bytes().to_vec();
-        let hex_input = format!("0x{}", hex::encode(request.write_to_bytes()?));
-        let response_bytes = self
+        let mut request = protorune_pb::protorune::WalletRequest::default();
+        let hex_input = format!("0x{}", hex::encode(request.write_to_bytes().unwrap()));        let response_bytes = self
             .metashrew_view_call("spendablesbyaddress", &hex_input, "latest")
             .await?;
         if response_bytes.is_empty() {
             return Ok(serde_json::json!([]));
         }
-        let wallet_response = protorune_pb::WalletResponse::parse_from_bytes(response_bytes.as_slice())?;
+        let wallet_response = protorune_pb::protorune::WalletResponse::parse_from_bytes(response_bytes.as_slice())?;
         let entries: Vec<serde_json::Value> = wallet_response.outpoints.into_iter().map(|item| {
             serde_json::json!({
                 "outpoint": {
@@ -1951,7 +1945,7 @@ impl AlkanesProvider for ConcreteProvider {
                 },
                 "amount": item.output.as_ref().map_or(0, |o| o.value),
                 "script": hex::encode(item.output.as_ref().map_or(vec![], |o| o.script.clone())),
-                "runes": item.balances.into_option().map(|b| b.entries).unwrap_or_default().iter().map(|entry| {
+                "runes": item.balances.as_ref().map(|b| b.entries.iter().map(|entry| {
                     serde_json::json!({
                         "runeId": {
                             "height": entry.rune.as_ref().and_then(|r| r.runeId.as_ref()).and_then(|id| id.height.as_ref()).map_or(0, |h| h.lo),
@@ -1959,7 +1953,7 @@ impl AlkanesProvider for ConcreteProvider {
                         },
                         "amount": entry.balance.as_ref().map_or(0, |a| a.lo),
                     })
-                }).collect::<Vec<_>>(),
+                }).collect::<Vec<_>>()).unwrap_or_default(),
             })
         }).collect();
         Ok(serde_json::json!(entries))
@@ -1969,7 +1963,7 @@ impl AlkanesProvider for ConcreteProvider {
         let mut block_request = alkanes_pb::BlockRequest::default();
         block_request.height = height as u32;
         
-        let hex_input = format!("0x{}", hex::encode(block_request.write_to_bytes()?));
+        let hex_input = format!("0x{}", hex::encode(block_request.write_to_bytes().unwrap()));
         let response_bytes = self.metashrew_view_call("traceblock", &hex_input, "latest").await?;
 
         let trace = alkanes_pb::Trace::parse_from_bytes(response_bytes.as_slice())?;
@@ -1995,7 +1989,7 @@ impl AlkanesProvider for ConcreteProvider {
         let mut request = alkanes_pb::BytecodeRequest::default();
         request.id = Some(alkane_id_pb).into();
 
-        let hex_input = format!("0x{}", hex::encode(request.write_to_bytes()?));
+        let hex_input = format!("0x{}", hex::encode(request.write_to_bytes().unwrap()));
         self.info(&format!(
             "[get_bytecode] Calling metashrew_view with view_fn: getbytecode, params: {}",
             hex_input
@@ -2052,7 +2046,7 @@ impl AlkanesProvider for ConcreteProvider {
             Some(a) => a.to_string(),
             None => WalletProvider::get_address(self).await?,
         };
-        let mut request = protorune_pb::WalletRequest::default();
+        let mut request = protorune_pb::protorune::WalletRequest::default();
         request.wallet = addr_str.as_bytes().to_vec();
         let hex_input = format!("0x{}", hex::encode(request.write_to_bytes()?));
         let response_bytes = self
@@ -2061,7 +2055,7 @@ impl AlkanesProvider for ConcreteProvider {
         if response_bytes.is_empty() {
             return Ok(vec![]);
         }
-        let proto_sheet = protorune_pb::BalanceSheet::parse_from_bytes(response_bytes.as_slice())?;
+        let proto_sheet = protorune_pb::protorune::BalanceSheet::parse_from_bytes(response_bytes.as_slice())?;
 
         let result: Vec<AlkaneBalance> = proto_sheet
             .entries

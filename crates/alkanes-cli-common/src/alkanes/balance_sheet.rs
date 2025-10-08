@@ -1,5 +1,6 @@
-use crate::proto;
-use crate::proto::protorune::{BalanceSheetItem, Rune};
+
+use protorune_support::balance_sheet::RuneIdentifier;
+use protorune_support::proto::protorune::{BalanceSheetItem, Rune};
 use crate::alkanes::rune_transfer::RuneTransfer;
 use anyhow::{anyhow, Result};
 use hex;
@@ -33,12 +34,20 @@ impl TryFrom<Vec<u8>> for ProtoruneRuneId {
     }
 }
 
-pub trait RuneIdentifier {
-    fn to_pair(&self) -> (u128, u128);
+impl RuneIdentifier for RuneId {
+    fn to_pair(&self) -> (u128, u128) {
+        return (self.block as u128, self.tx as u128);
+    }
 }
 
-impl From<crate::proto::protorune::ProtoruneRuneId> for ProtoruneRuneId {
-    fn from(v: crate::proto::protorune::ProtoruneRuneId) -> ProtoruneRuneId {
+impl RuneIdentifier for ProtoruneRuneId {
+    fn to_pair(&self) -> (u128, u128) {
+        return (self.block, self.tx);
+    }
+}
+
+impl From<protorune_support::proto::protorune::ProtoruneRuneId> for ProtoruneRuneId {
+    fn from(v: protorune_support::proto::protorune::ProtoruneRuneId) -> ProtoruneRuneId {
         ProtoruneRuneId {
             block: v.height.unwrap().into(),
             tx: v.txindex.unwrap().into(),
@@ -46,17 +55,17 @@ impl From<crate::proto::protorune::ProtoruneRuneId> for ProtoruneRuneId {
     }
 }
 
-impl From<ProtoruneRuneId> for crate::proto::protorune::ProtoruneRuneId {
-    fn from(v: ProtoruneRuneId) -> crate::proto::protorune::ProtoruneRuneId {
-        let mut result = crate::proto::protorune::ProtoruneRuneId::new();
-        result.height = MessageField::some(v.block.into());
-        result.txindex = MessageField::some(v.tx.into());
+impl From<ProtoruneRuneId> for protorune_support::proto::protorune::ProtoruneRuneId {
+    fn from(v: ProtoruneRuneId) -> protorune_support::proto::protorune::ProtoruneRuneId {
+        let mut result = protorune_support::proto::protorune::ProtoruneRuneId::default();
+        result.height = Some(v.block.into()).into();
+        result.txindex = Some(v.tx.into()).into();
         result
     }
 }
 
-impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::BalanceSheet> for BalanceSheet<P> {
-    fn from(balance_sheet: crate::proto::protorune::BalanceSheet) -> BalanceSheet<P> {
+impl<P: KeyValuePointer + Clone> From<protorune_support::proto::protorune::BalanceSheet> for BalanceSheet<P> {
+    fn from(balance_sheet: protorune_support::proto::protorune::BalanceSheet) -> BalanceSheet<P> {
         BalanceSheet {
             cached: CachedBalanceSheet {
                 balances: BTreeMap::<ProtoruneRuneId, u128>::from_iter(
@@ -74,9 +83,9 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::BalanceSheet> for
     }
 }
 
-impl<P: KeyValuePointer + Clone> From<BalanceSheet<P>> for crate::proto::protorune::BalanceSheet {
-    fn from(balance_sheet: BalanceSheet<P>) -> crate::proto::protorune::BalanceSheet {
-        crate::proto::protorune::BalanceSheet {
+impl<P: KeyValuePointer + Clone> From<BalanceSheet<P>> for protorune_support::proto::protorune::BalanceSheet {
+    fn from(balance_sheet: BalanceSheet<P>) -> protorune_support::proto::protorune::BalanceSheet {
+        protorune_support::proto::protorune::BalanceSheet {
             entries: balance_sheet
                 .balances()
                 .clone()
@@ -85,17 +94,17 @@ impl<P: KeyValuePointer + Clone> From<BalanceSheet<P>> for crate::proto::protoru
                     special_fields: SpecialFields::new(),
                     rune: MessageField::some(Rune {
                         special_fields: SpecialFields::new(),
-                        runeId: MessageField::some(proto::protorune::ProtoruneRuneId {
+                        runeId: MessageField::some(protorune_support::proto::protorune::ProtoruneRuneId {
                             special_fields: SpecialFields::new(),
-                            height: MessageField::some(k.block.into()),
-                            txindex: MessageField::some(k.tx.into()),
+                            height: Some(k.block.into()).into(),
+                            txindex: Some(k.tx.into()).into(),
                         }),
                         name: "UNKNOWN".to_owned(),
                         divisibility: 1,
                         spacers: 1,
                         symbol: "0".to_owned(),
                     }),
-                    balance: MessageField::some((*v).into()),
+                    balance: Some((*v).into()).into(),
                 })
                 .collect::<Vec<BalanceSheetItem>>(),
             special_fields: SpecialFields::new(),
@@ -117,18 +126,6 @@ impl ProtoruneRuneId {
         };
 
         Some((block.into(), tx.into()))
-    }
-}
-
-impl RuneIdentifier for ProtoruneRuneId {
-    fn to_pair(&self) -> (u128, u128) {
-        return (self.block, self.tx);
-    }
-}
-
-impl RuneIdentifier for RuneId {
-    fn to_pair(&self) -> (u128, u128) {
-        return (self.block as u128, self.tx as u128);
     }
 }
 
@@ -179,7 +176,6 @@ impl From<Arc<Vec<u8>>> for ProtoruneRuneId {
         ProtoruneRuneId { block, tx }
     }
 }
-
 pub trait BalanceSheetOperations: Sized {
     fn new() -> Self;
     fn from_pairs(runes: Vec<ProtoruneRuneId>, balances: Vec<u128>) -> Self {
@@ -347,33 +343,16 @@ impl<P: KeyValuePointer + Clone> Default for BalanceSheet<P> {
     }
 }
 
-impl From<crate::proto::protorune::Uint128> for u128 {
-    fn from(v: crate::proto::protorune::Uint128) -> u128 {
-        let mut result: Vec<u8> = Vec::<u8>::with_capacity(16);
-        result.extend(&v.lo.to_le_bytes());
-        result.extend(&v.hi.to_le_bytes());
-        let bytes_ref: &[u8] = &result;
-        u128::from_le_bytes(bytes_ref.try_into().unwrap())
-    }
-}
 
-impl From<u128> for crate::proto::protorune::Uint128 {
-    fn from(v: u128) -> crate::proto::protorune::Uint128 {
-        let bytes = v.to_le_bytes().to_vec();
-        let mut container: crate::proto::protorune::Uint128 =
-            crate::proto::protorune::Uint128::new();
-        container.lo = u64::from_le_bytes((&bytes[0..8]).try_into().unwrap());
-        container.hi = u64::from_le_bytes((&bytes[8..16]).try_into().unwrap());
-        container
-    }
-}
 
-impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::OutpointResponse>
+impl<P: KeyValuePointer + Clone> From<protorune_support::proto::protorune::OutpointResponse>
     for BalanceSheet<P>
 {
-    fn from(v: crate::proto::protorune::OutpointResponse) -> BalanceSheet<P> {
+    fn from(v: protorune_support::proto::protorune::OutpointResponse) -> BalanceSheet<P> {
         let pairs = v
             .balances
+            .into_option()
+            .unwrap()
             .entries
             .clone()
             .into_iter()
@@ -382,13 +361,16 @@ impl<P: KeyValuePointer + Clone> From<crate::proto::protorune::OutpointResponse>
                     ProtoruneRuneId::new(
                         v.rune
                             .clone()
+                            .into_option()
                             .unwrap()
                             .runeId
+                            .into_option()
                             .unwrap()
                             .height
+                            .into_option()
                             .unwrap()
                             .into(),
-                        v.rune.unwrap().runeId.unwrap().txindex.unwrap().into(),
+                        v.rune.into_option().unwrap().runeId.into_option().unwrap().txindex.into_option().unwrap().into(),
                     ),
                     v.balance.into_option().unwrap().into(),
                 )

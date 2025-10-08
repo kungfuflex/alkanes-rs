@@ -12,6 +12,7 @@ use bitcoin::secp256k1::Secp256k1;
 use async_trait::async_trait;
 use alkanes_cli_common::provider::ConcreteProvider;
 use alkanes_cli_common::traits::*;
+pub use alkanes_cli_common::traits::{System, SystemAlkanes, SystemBitcoind, SystemEsplora, SystemMetashrew, SystemMonitor, SystemProtorunes, SystemRunestone, SystemWallet};
 use alkanes_cli_common::commands::*;
 
 pub mod utils;
@@ -670,17 +671,15 @@ impl AlkanesProvider for SystemDeezel {
     async fn protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse> {
         self.provider.protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
     }
-    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<alkanes_cli_common::JsonValue> {
-        unimplemented!()
-    }
 
-    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::proto::alkanes::MessageContextParcel) -> Result<alkanes_cli_common::JsonValue> {
+
+    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::alkanes_pb::MessageContextParcel) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.simulate(contract_id, context).await
     }
-    async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
+    async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::alkanes_pb::Trace> {
         self.provider.trace(outpoint).await
     }
-    async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::BlockResponse> {
+    async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::alkanes_pb::BlockResponse> {
         <ConcreteProvider as AlkanesProvider>::get_block(&self.provider, height).await
     }
     async fn sequence(&self) -> Result<alkanes_cli_common::JsonValue> {
@@ -689,7 +688,7 @@ impl AlkanesProvider for SystemDeezel {
     async fn spendables_by_address(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.spendables_by_address(address).await
     }
-    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::alkanes_pb::Trace> {
         self.provider.trace_block(height).await
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {

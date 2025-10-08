@@ -23,6 +23,7 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 hex = { workspace = true }
 alkanes-support = { workspace = true }
+protorune-support = { workspace = true }
 
 sha2 = { workspace = true }
 sha3 = { workspace = true }

@@ -111,6 +111,7 @@ url = { workspace = true, optional = true }
 clap = { workspace = true, features = ["derive"] }
 bitcoincore-rpc = { workspace = true, optional = true }
 bech32.workspace = true
+cfg-if = "1.0.0"
 
 [features]
 default = ["std", "wasm-inspection", "native-deps"]

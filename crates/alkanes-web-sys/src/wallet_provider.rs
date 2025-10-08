@@ -1,86 +1,25 @@
-//! Browser Wallet Provider System
-//!
-//! This module provides a comprehensive wallet provider system that wraps injected browser wallets
-//! (like Unisat, Xverse, Phantom, OKX, etc.) while implementing deezel-common traits. The system
-//! uses wallets minimally as signers/keystores and leverages our sandshrew RPC connections and
-//! polling strategies for most operations.
-//!
-//! # Architecture
-//!
-//! The wallet provider system consists of:
-//! - [`BrowserWalletProvider`]: Main provider that wraps injected wallets
-//! - [`WalletBackend`]: Trait for different wallet implementations
-//! - [`InjectedWallet`]: Wrapper for browser-injected wallet objects
-//! - [`WalletConnector`]: Connection management and wallet detection
-//!
-//! # Features
-//!
-//! - **Multi-wallet support**: Works with 13+ different Bitcoin wallets
-//! - **Minimal wallet usage**: Only uses wallets for signing and key operations
-//! - **Sandshrew integration**: Leverages our RPC connections for blockchain operations
-//! - **Event handling**: Supports account and network change events
-//! - **PSBT signing**: Full support for Partially Signed Bitcoin Transactions
-//! - **Mobile support**: Deep linking and device detection
-//!
-//! # Example
-//!
-//! ```rust,no_run
-//! use deezel_web::wallet_provider::*;
-//! use deezel_common::*;
-//!
-//! async fn connect_wallet() -> Result<BrowserWalletProvider> {
-//!     let connector = WalletConnector::new();
-//!     let available_wallets = connector.detect_wallets().await?;
-//!     
-//!     if let Some(wallet_info) = available_wallets.first() {
-//!         let provider = BrowserWalletProvider::connect(
-//!             wallet_info.clone(),
-//!             "mainnet".to_string(),
-//!         ).await?;
-//!         
-//!         Ok(provider)
-//!     } else {
-//!         Err(DeezelError::Wallet("No wallets detected".to_string()))
-//!     }
-//! }
-//! ```
+use std::future::Future;
+use std::pin::Pin;
 
-#[cfg(target_arch = "wasm32")]
-extern crate alloc;
-#[cfg(target_arch = "wasm32")]
-use alloc::{
-    vec,
-    vec::Vec,
-    boxed::Box,
-    string::{String, ToString},
-    format,
-};
+pub type WalletFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, AlkanesError>> + 'a>>;
 
-use async_trait::async_trait;
-use bitcoin::{
-    secp256k1::{schnorr::Signature, All, Keypair, Secp256k1, Message},
-    Network, OutPoint, Psbt, Transaction, TxOut, XOnlyPublicKey,
-    address::Address,
-    Amount, TxIn, Witness, Sequence, ScriptBuf,
-};
-use deezel_common::{*, alkanes::{AlkanesInspectConfig, AlkanesInspectResult, AlkaneBalance}, provider::{AllBalances, AssetBalance, EnrichedUtxo}};
-use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
-use wasm_bindgen::prelude::*;
+use serde::{Serialize, Deserialize};
+use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{window, js_sys};
-use hex;
-use core::str::FromStr;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-
+use web_sys::window;
+use alkanes_cli_common::{DeezelError, WalletConfig, WalletBalance, AddressInfo, SendParams, UtxoInfo, TransactionInfo, FeeEstimate, FeeRates, Network, AddressResolver, BitcoinRpcProvider, MetashrewRpcProvider, MetashrewProvider, EsploraProvider, RunestoneProvider, OrdProvider, AlkanesProvider, MonitorProvider, KeystoreProvider, KeystoreAddress, KeystoreInfo, BlockEvent};
+use alkanes_cli_common::alkanes::{AlkanesInspectConfig, AlkanesInspectResult, AlkaneBalance};
+use alkanes_cli_common::alkanes::execute::EnhancedAlkanesExecutor;
+use alkanes_cli_common::provider::{EnrichedUtxo, AllBalances, AssetBalance};
+use bitcoin::{OutPoint, TxOut, TxIn, ScriptBuf, Sequence, Witness, Transaction, Address, Amount, Psbt};
+use bitcoin::secp256k1::{Secp256k1, All, XOnlyPublicKey, Keypair};
+use bitcoin::ecdsa::Signature;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use crate::provider::WebProvider;
-use deezel_common::ord::{
-    AddressInfo as OrdAddressInfo, Block as OrdBlock, Blocks as OrdBlocks,
-    Children as OrdChildren, Inscription as OrdInscription, Inscriptions as OrdInscriptions,
-    Output as OrdOutput, ParentInscriptions as OrdParents, SatResponse as OrdSat,
-    RuneInfo as OrdRuneInfo, Runes as OrdRunes, TxInfo as OrdTxInfo,
-};
-use deezel_common::alkanes::execute::EnhancedAlkanesExecutor;
+use alkanes_cli_common::{JsonRpcProvider, StorageProvider, NetworkProvider, CryptoProvider, TimeProvider, LogProvider};
+use alkanes_cli_common::ord::{OrdInscription, OrdInscriptions, OrdAddressInfo, OrdBlock, OrdBlocks, OrdChildren, OrdOutput, OrdParents, OrdRuneInfo, OrdRunes, OrdSat, OrdTxInfo};
+use protobuf::Message;
 
 /// Information about an available wallet
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,64 +78,55 @@ pub struct PsbtSigningInput {
 }
 
 /// Trait for different wallet backend implementations
-#[async_trait(?Send)]
 pub trait WalletBackend {
     /// Get wallet information
     fn get_info(&self) -> &WalletInfo;
     
     /// Check if wallet is available in the browser
-    async fn is_available(&self) -> bool;
+    fn is_available<'a>(&'a self) -> WalletFuture<'a, bool>;
     
     /// Connect to the wallet
-    async fn connect(&self) -> Result<WalletAccount>;
+    fn connect<'a>(&'a self) -> WalletFuture<'a, WalletAccount>;
     
     /// Disconnect from the wallet
-    async fn disconnect(&self) -> Result<()>;
+    fn disconnect<'a>(&'a self) -> WalletFuture<'a, ()>;
     
     /// Get current accounts
-    async fn get_accounts(&self) -> Result<Vec<WalletAccount>>;
+    fn get_accounts<'a>(&'a self) -> WalletFuture<'a, Vec<WalletAccount>>;
     
     /// Get current network
-    async fn get_network(&self) -> Result<WalletNetworkInfo>;
+    fn get_network<'a>(&'a self) -> WalletFuture<'a, WalletNetworkInfo>;
     
     /// Switch network
-    async fn switch_network(&self, network: &str) -> Result<()>;
+    fn switch_network<'a>(&'a self, network: &'a str) -> WalletFuture<'a, ()>;
     
     /// Sign a message
-    async fn sign_message(&self, message: &str, address: &str) -> Result<String>;
+    fn sign_message<'a>(&'a self, message: &'a str, address: &'a str) -> WalletFuture<'a, String>;
     
     /// Sign a PSBT
-    async fn sign_psbt(&self, psbt_hex: &str, options: Option<PsbtSigningOptions>) -> Result<String>;
+    fn sign_psbt<'a>(&'a self, psbt_hex: &'a str, options: Option<PsbtSigningOptions>) -> WalletFuture<'a, String>;
     
     /// Sign multiple PSBTs
-    async fn sign_psbts(&self, psbt_hexs: Vec<String>, options: Option<PsbtSigningOptions>) -> Result<Vec<String>>;
+    fn sign_psbts<'a>(&'a self, psbt_hexs: Vec<String>, options: Option<PsbtSigningOptions>) -> WalletFuture<'a, Vec<String>>;
     
     /// Push a transaction to the network
-    async fn push_tx(&self, tx_hex: &str) -> Result<String>;
+    fn push_tx<'a>(&'a self, tx_hex: &'a str) -> WalletFuture<'a, String>;
     
     /// Push a PSBT to the network
-    async fn push_psbt(&self, psbt_hex: &str) -> Result<String>;
+    fn push_psbt<'a>(&'a self, psbt_hex: &'a str) -> WalletFuture<'a, String>;
     
     /// Get public key
-    async fn get_public_key(&self) -> Result<String>;
+    fn get_public_key<'a>(&'a self) -> WalletFuture<'a, String>;
     
     /// Get balance (if supported by wallet)
-    async fn get_balance(&self) -> Result<Option<u64>>;
+    fn get_balance<'a>(&'a self) -> WalletFuture<'a, Option<u64>>;
     
     /// Get inscriptions (if supported by wallet)
-    async fn get_inscriptions(&self, cursor: Option<u32>, size: Option<u32>) -> Result<JsonValue>;
+    fn get_inscriptions<'a>(&'a self, cursor: Option<u32>, size: Option<u32>) -> WalletFuture<'a, JsonValue>;
 
-    /// Get enriched UTXOs with asset information
-    async fn get_enriched_utxos(&self, addresses: Option<Vec<String>>) -> Result<Vec<EnrichedUtxo>> {
-        let _ = addresses;
-        Err(DeezelError::NotImplemented("get_enriched_utxos is not supported by this wallet".to_string()))
-    }
+    fn get_enriched_utxos<'a>(&'a self, addresses: Option<Vec<String>>) -> WalletFuture<'a, Vec<EnrichedUtxo>>;
 
-    /// Get all balances, including BTC and other assets
-    async fn get_all_balances(&self, addresses: Option<Vec<String>>) -> Result<AllBalances> {
-        let _ = addresses;
-        Err(DeezelError::NotImplemented("get_all_balances is not supported by this wallet".to_string()))
-    }
+    fn get_all_balances<'a>(&'a self, addresses: Option<Vec<String>>) -> WalletFuture<'a, AllBalances>;
 }
 
 /// Wrapper for browser-injected wallet objects
@@ -213,285 +143,326 @@ impl InjectedWallet {
     }
     
     /// Call a method on the injected wallet object
-    async fn call_method(&self, method: &str, args: &[JsValue]) -> Result<JsValue> {
-        let window = window().ok_or_else(|| DeezelError::Wallet("No window object".to_string()))?;
+    async fn call_method(&self, method: &str, args: &[JsValue]) -> Result<JsValue, AlkanesError> {
+        let window = window().ok_or_else(|| AlkanesError::Wallet("No window object".to_string()))?;
         
         // Get the wallet object from window
         let wallet_obj = js_sys::Reflect::get(&window, &JsValue::from_str(&self.info.injection_key))
-            .map_err(|e| DeezelError::Wallet(format!("Wallet not found: {e:?}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Wallet not found: {e:?}")))?;
         
         if wallet_obj.is_undefined() {
-            return Err(DeezelError::Wallet(format!("Wallet {} not available", self.info.name)));
+            return Err(AlkanesError::Wallet(format!("Wallet {} not available", self.info.name)));
         }
         
         // Get the method
         let method_fn = js_sys::Reflect::get(&wallet_obj, &JsValue::from_str(method))
-            .map_err(|e| DeezelError::Wallet(format!("Method {method} not found: {e:?}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Method {method} not found: {e:?}")))?;
         
         if !method_fn.is_function() {
-            return Err(DeezelError::Wallet(format!("Method {method} is not a function")));
+            return Err(AlkanesError::Wallet(format!("Method {method} is not a function")));
         }
         
         // Call the method
         let function = method_fn.dyn_into::<js_sys::Function>()
-            .map_err(|e| DeezelError::Wallet(format!("Failed to cast to function: {e:?}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to cast to function: {e:?}")))?;
         
         let result = function.apply(&wallet_obj, &js_sys::Array::from_iter(args.iter()))
-            .map_err(|e| DeezelError::Wallet(format!("Method call failed: {e:?}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Method call failed: {e:?}")))?;
         
         // If result is a promise, await it
         if result.has_type::<js_sys::Promise>() {
             let promise = result.dyn_into::<js_sys::Promise>()
-                .map_err(|e| DeezelError::Wallet(format!("Failed to cast to promise: {e:?}")))?;
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to cast to promise: {e:?}")))?;
             
             JsFuture::from(promise)
                 .await
-                .map_err(|e| DeezelError::Wallet(format!("Promise rejected: {e:?}")))
+                .map_err(|e| AlkanesError::Wallet(format!("Promise rejected: {e:?}")))
         } else {
             Ok(result)
         }
     }
 }
 
-#[async_trait(?Send)]
 impl WalletBackend for InjectedWallet {
     fn get_info(&self) -> &WalletInfo {
         &self.info
     }
     
-    async fn is_available(&self) -> bool {
-        let window = window();
-        if let Some(window) = window {
-            let wallet_obj = js_sys::Reflect::get(&window, &JsValue::from_str(&self.info.injection_key));
-            wallet_obj.is_ok() && !wallet_obj.unwrap().is_undefined()
-        } else {
-            false
-        }
-    }
-    
-    async fn connect(&self) -> Result<WalletAccount> {
-        let result = self.call_method("requestAccounts", &[]).await?;
-        
-        // Parse the result to get account information
-        let accounts_array = result.dyn_into::<js_sys::Array>()
-            .map_err(|e| DeezelError::Wallet(format!("Invalid accounts response: {e:?}")))?;
-        
-        if accounts_array.length() == 0 {
-            return Err(DeezelError::Wallet("No accounts returned".to_string()));
-        }
-        
-        let first_account = accounts_array.get(0);
-        let address = first_account.as_string()
-            .ok_or_else(|| DeezelError::Wallet("Invalid account format".to_string()))?;
-        
-        Ok(WalletAccount {
-            address,
-            public_key: None,
-            compressed_public_key: None,
-            address_type: "unknown".to_string(),
+    fn is_available<'a>(&'a self) -> WalletFuture<'a, bool> {
+        Box::pin(async move {
+            let window = window();
+            if let Some(window) = window {
+                let wallet_obj = js_sys::Reflect::get(&window, &JsValue::from_str(&self.info.injection_key));
+                Ok(wallet_obj.is_ok() && !wallet_obj.unwrap().is_undefined())
+            } else {
+                Ok(false)
+            }
         })
     }
     
-    async fn disconnect(&self) -> Result<()> {
-        // Some wallets support disconnect, others don't
-        match self.call_method("disconnect", &[]).await {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                // If disconnect is not supported, that's okay
-                Ok(())
+    fn connect<'a>(&'a self) -> WalletFuture<'a, WalletAccount> {
+        Box::pin(async move {
+            let result = self.call_method("requestAccounts", &[]).await?;
+            
+            // Parse the result to get account information
+            let accounts_array = result.dyn_into::<js_sys::Array>()
+                .map_err(|e| AlkanesError::Wallet(format!("Invalid accounts response: {e:?}")))?;
+            
+            if accounts_array.length() == 0 {
+                return Err(AlkanesError::Wallet("No accounts returned".to_string()));
             }
-        }
+            
+            let first_account = accounts_array.get(0);
+            let address = first_account.as_string()
+                .ok_or_else(|| AlkanesError::Wallet("Invalid account format".to_string()))?;
+            
+            Ok(WalletAccount {
+                address,
+                public_key: None,
+                compressed_public_key: None,
+                address_type: "unknown".to_string(),
+            })
+        })
     }
     
-    async fn get_accounts(&self) -> Result<Vec<WalletAccount>> {
-        let result = self.call_method("getAccounts", &[]).await?;
-        
-        let accounts_array = result.dyn_into::<js_sys::Array>()
-            .map_err(|e| DeezelError::Wallet(format!("Invalid accounts response: {e:?}")))?;
-        
-        let mut accounts = Vec::new();
-        for i in 0..accounts_array.length() {
-            let account = accounts_array.get(i);
-            if let Some(address) = account.as_string() {
-                accounts.push(WalletAccount {
-                    address,
-                    public_key: None,
-                    compressed_public_key: None,
-                    address_type: "unknown".to_string(),
-                });
+    fn disconnect<'a>(&'a self) -> WalletFuture<'a, ()> {
+        Box::pin(async move {
+            // Some wallets support disconnect, others don't
+            match self.call_method("disconnect", &[]).await {
+                Ok(_) => Ok(()),
+                Err(_) => {
+                    // If disconnect is not supported, that's okay
+                    Ok(())
+                }
             }
-        }
-        
-        Ok(accounts)
+        })
     }
     
-    async fn get_network(&self) -> Result<WalletNetworkInfo> {
-        match self.call_method("getNetwork", &[]).await {
-            Ok(result) => {
-                let network = result.as_string()
-                    .unwrap_or_else(|| "mainnet".to_string());
+    fn get_accounts<'a>(&'a self) -> WalletFuture<'a, Vec<WalletAccount>> {
+        Box::pin(async move {
+            let result = self.call_method("getAccounts", &[]).await?;
+            
+            let accounts_array = result.dyn_into::<js_sys::Array>()
+                .map_err(|e| AlkanesError::Wallet(format!("Invalid accounts response: {e:?}")))?;
+            
+            let mut accounts = Vec::new();
+            for i in 0..accounts_array.length() {
+                let account = accounts_array.get(i);
+                if let Some(address) = account.as_string() {
+                    accounts.push(WalletAccount {
+                        address,
+                        public_key: None,
+                        compressed_public_key: None,
+                        address_type: "unknown".to_string(),
+                    });
+                }
+            }
+            
+            Ok(accounts)
+        })
+    }
+    
+    fn get_network<'a>(&'a self) -> WalletFuture<'a, WalletNetworkInfo> {
+        Box::pin(async move {
+            match self.call_method("getNetwork", &[]).await {
+                Ok(result) => {
+                    let network = result.as_string()
+                        .unwrap_or_else(|| "mainnet".to_string());
+                    
+                    Ok(WalletNetworkInfo {
+                        network,
+                        chain_id: None,
+                    })
+                },
+                Err(_) => {
+                    // Default to mainnet if not supported
+                    Ok(WalletNetworkInfo {
+                        network: "mainnet".to_string(),
+                        chain_id: None,
+                    })
+                }
+            }
+        })
+    }
+    
+    fn switch_network<'a>(&'a self, network: &'a str) -> WalletFuture<'a, ()> {
+        Box::pin(async move {
+            let network_value = JsValue::from_str(network);
+            self.call_method("switchNetwork", &[network_value]).await?;
+            Ok(())
+        })
+    }
+    
+    fn sign_message<'a>(&'a self, message: &'a str, address: &'a str) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            let message_value = JsValue::from_str(message);
+            let address_value = JsValue::from_str(address);
+            
+            let result = self.call_method("signMessage", &[message_value, address_value]).await?;
+            
+            result.as_string()
+                .ok_or_else(|| AlkanesError::Wallet("Invalid signature response".to_string()))
+        })
+    }
+    
+    fn sign_psbt<'a>(&'a self, psbt_hex: &'a str, options: Option<PsbtSigningOptions>) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            let psbt_value = JsValue::from_str(psbt_hex);
+            
+            let args = if let Some(opts) = options {
+                let options_obj = js_sys::Object::new();
                 
-                Ok(WalletNetworkInfo {
-                    network,
-                    chain_id: None,
-                })
-            },
-            Err(_) => {
-                // Default to mainnet if not supported
-                Ok(WalletNetworkInfo {
-                    network: "mainnet".to_string(),
-                    chain_id: None,
-                })
-            }
-        }
-    }
-    
-    async fn switch_network(&self, network: &str) -> Result<()> {
-        let network_value = JsValue::from_str(network);
-        self.call_method("switchNetwork", &[network_value]).await?;
-        Ok(())
-    }
-    
-    async fn sign_message(&self, message: &str, address: &str) -> Result<String> {
-        let message_value = JsValue::from_str(message);
-        let address_value = JsValue::from_str(address);
-        
-        let result = self.call_method("signMessage", &[message_value, address_value]).await?;
-        
-        result.as_string()
-            .ok_or_else(|| DeezelError::Wallet("Invalid signature response".to_string()))
-    }
-    
-    async fn sign_psbt(&self, psbt_hex: &str, options: Option<PsbtSigningOptions>) -> Result<String> {
-        let psbt_value = JsValue::from_str(psbt_hex);
-        
-        let args = if let Some(opts) = options {
-            let options_obj = js_sys::Object::new();
-            
-            js_sys::Reflect::set(&options_obj, &"autoFinalized".into(), &JsValue::from_bool(opts.auto_finalized))
-                .map_err(|e| DeezelError::Wallet(format!("Failed to set options: {e:?}")))?;
-            
-            if let Some(to_sign) = opts.to_sign_inputs {
-                let to_sign_array = js_sys::Array::new();
-                for input in to_sign {
-                    let input_obj = js_sys::Object::new();
-                    js_sys::Reflect::set(&input_obj, &"index".into(), &JsValue::from_f64(input.index as f64))
-                        .map_err(|e| DeezelError::Wallet(format!("Failed to set input index: {e:?}")))?;
-                    
-                    if let Some(addr) = input.address {
-                        js_sys::Reflect::set(&input_obj, &"address".into(), &JsValue::from_str(&addr))
-                            .map_err(|e| DeezelError::Wallet(format!("Failed to set input address: {e:?}")))?;
+                js_sys::Reflect::set(&options_obj, &"autoFinalized".into(), &JsValue::from_bool(opts.auto_finalized))
+                    .map_err(|e| AlkanesError::Wallet(format!("Failed to set options: {e:?}")))?;
+                
+                if let Some(to_sign) = opts.to_sign_inputs {
+                    let to_sign_array = js_sys::Array::new();
+                    for input in to_sign {
+                        let input_obj = js_sys::Object::new();
+                        js_sys::Reflect::set(&input_obj, &"index".into(), &JsValue::from_f64(input.index as f64))
+                            .map_err(|e| AlkanesError::Wallet(format!("Failed to set input index: {e:?}")))?;
+                        
+                        if let Some(addr) = input.address {
+                            js_sys::Reflect::set(&input_obj, &"address".into(), &JsValue::from_str(&addr))
+                                .map_err(|e| AlkanesError::Wallet(format!("Failed to set input address: {e:?}")))?;
+                        }
+                        
+                        to_sign_array.push(&input_obj);
                     }
-                    
-                    to_sign_array.push(&input_obj);
+                    js_sys::Reflect::set(&options_obj, &"toSignInputs".into(), &to_sign_array)
+                        .map_err(|e| AlkanesError::Wallet(format!("Failed to set toSignInputs: {e:?}")))?;
                 }
-                js_sys::Reflect::set(&options_obj, &"toSignInputs".into(), &to_sign_array)
-                    .map_err(|e| DeezelError::Wallet(format!("Failed to set toSignInputs: {e:?}")))?;
+                
+                vec![psbt_value, options_obj.into()]
+            } else {
+                vec![psbt_value]
+            };
+            
+            let result = self.call_method("signPsbt", &args).await?;
+            
+            result.as_string()
+                .ok_or_else(|| AlkanesError::Wallet("Invalid PSBT signature response".to_string()))
+        })
+    }
+    
+    fn sign_psbts<'a>(&'a self, psbt_hexs: Vec<String>, options: Option<PsbtSigningOptions>) -> WalletFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            let psbts_array = js_sys::Array::new();
+            for psbt_hex in psbt_hexs {
+                psbts_array.push(&JsValue::from_str(&psbt_hex));
             }
             
-            vec![psbt_value, options_obj.into()]
-        } else {
-            vec![psbt_value]
-        };
-        
-        let result = self.call_method("signPsbt", &args).await?;
-        
-        result.as_string()
-            .ok_or_else(|| DeezelError::Wallet("Invalid PSBT signature response".to_string()))
-    }
-    
-    async fn sign_psbts(&self, psbt_hexs: Vec<String>, options: Option<PsbtSigningOptions>) -> Result<Vec<String>> {
-        let psbts_array = js_sys::Array::new();
-        for psbt_hex in psbt_hexs {
-            psbts_array.push(&JsValue::from_str(&psbt_hex));
-        }
-        
-        let args = if let Some(opts) = options {
-            let options_obj = js_sys::Object::new();
-            js_sys::Reflect::set(&options_obj, &"autoFinalized".into(), &JsValue::from_bool(opts.auto_finalized))
-                .map_err(|e| DeezelError::Wallet(format!("Failed to set options: {e:?}")))?;
+            let args = if let Some(opts) = options {
+                let options_obj = js_sys::Object::new();
+                js_sys::Reflect::set(&options_obj, &"autoFinalized".into(), &JsValue::from_bool(opts.auto_finalized))
+                    .map_err(|e| AlkanesError::Wallet(format!("Failed to set options: {e:?}")))?;
+                
+                vec![psbts_array.into(), options_obj.into()]
+            } else {
+                vec![psbts_array.into()]
+            };
             
-            vec![psbts_array.into(), options_obj.into()]
-        } else {
-            vec![psbts_array.into()]
-        };
-        
-        let result = self.call_method("signPsbts", &args).await?;
-        
-        let result_array = result.dyn_into::<js_sys::Array>()
-            .map_err(|e| DeezelError::Wallet(format!("Invalid PSBTs signature response: {e:?}")))?;
-        
-        let mut signed_psbts = Vec::new();
-        for i in 0..result_array.length() {
-            let psbt = result_array.get(i);
-            if let Some(psbt_hex) = psbt.as_string() {
-                signed_psbts.push(psbt_hex);
-            }
-        }
-        
-        Ok(signed_psbts)
-    }
-    
-    async fn push_tx(&self, tx_hex: &str) -> Result<String> {
-        let tx_value = JsValue::from_str(tx_hex);
-        let result = self.call_method("pushTx", &[tx_value]).await?;
-        
-        result.as_string()
-            .ok_or_else(|| DeezelError::Wallet("Invalid push transaction response".to_string()))
-    }
-    
-    async fn push_psbt(&self, psbt_hex: &str) -> Result<String> {
-        let psbt_value = JsValue::from_str(psbt_hex);
-        let result = self.call_method("pushPsbt", &[psbt_value]).await?;
-        
-        result.as_string()
-            .ok_or_else(|| DeezelError::Wallet("Invalid push PSBT response".to_string()))
-    }
-    
-    async fn get_public_key(&self) -> Result<String> {
-        let result = self.call_method("getPublicKey", &[]).await?;
-        
-        result.as_string()
-            .ok_or_else(|| DeezelError::Wallet("Invalid public key response".to_string()))
-    }
-    
-    async fn get_balance(&self) -> Result<Option<u64>> {
-        match self.call_method("getBalance", &[]).await {
-            Ok(result) => {
-                if let Some(balance_str) = result.as_string() {
-                    balance_str.parse::<u64>()
-                        .map(Some)
-                        .map_err(|e| DeezelError::Wallet(format!("Invalid balance format: {e}")))
-                } else if let Some(balance_num) = result.as_f64() {
-                    Ok(Some(balance_num as u64))
-                } else {
-                    Ok(None)
+            let result = self.call_method("signPsbts", &args).await?;
+            
+            let result_array = result.dyn_into::<js_sys::Array>()
+                .map_err(|e| AlkanesError::Wallet(format!("Invalid PSBTs signature response: {e:?}")))?;
+            
+            let mut signed_psbts = Vec::new();
+            for i in 0..result_array.length() {
+                let psbt = result_array.get(i);
+                if let Some(psbt_hex) = psbt.as_string() {
+                    signed_psbts.push(psbt_hex);
                 }
-            },
-            Err(_) => Ok(None), // Balance not supported
-        }
+            }
+            
+            Ok(signed_psbts)
+        })
     }
     
-    async fn get_inscriptions(&self, cursor: Option<u32>, size: Option<u32>) -> Result<JsonValue> {
-        let mut args = Vec::new();
-        
-        if let Some(c) = cursor {
-            args.push(JsValue::from_f64(c as f64));
-        }
-        if let Some(s) = size {
-            args.push(JsValue::from_f64(s as f64));
-        }
-        
-        let result = self.call_method("getInscriptions", &args).await?;
-        
-        // Convert JsValue to JsonValue
-        let result_str = js_sys::JSON::stringify(&result)
-            .map_err(|e| DeezelError::Wallet(format!("Failed to stringify inscriptions: {e:?}")))?
-            .as_string()
-            .ok_or_else(|| DeezelError::Wallet("Invalid inscriptions response".to_string()))?;
-        
-        serde_json::from_str(&result_str)
-            .map_err(|e| DeezelError::Wallet(format!("Failed to parse inscriptions JSON: {e}")))
+    fn push_tx<'a>(&'a self, tx_hex: &'a str) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            let tx_value = JsValue::from_str(tx_hex);
+            let result = self.call_method("pushTx", &[tx_value]).await?;
+            
+            result.as_string()
+                .ok_or_else(|| AlkanesError::Wallet("Invalid push transaction response".to_string()))
+        })
+    }
+    
+    fn push_psbt<'a>(&'a self, psbt_hex: &'a str) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            let psbt_value = JsValue::from_str(psbt_hex);
+            let result = self.call_method("pushPsbt", &[psbt_value]).await?;
+            
+            result.as_string()
+                .ok_or_else(|| AlkanesError::Wallet("Invalid push PSBT response".to_string()))
+        })
+    }
+    
+    fn get_public_key<'a>(&'a self) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            let result = self.call_method("getPublicKey", &[]).await?;
+            
+            result.as_string()
+                .ok_or_else(|| AlkanesError::Wallet("Invalid public key response".to_string()))
+        })
+    }
+    
+    fn get_balance<'a>(&'a self) -> WalletFuture<'a, Option<u64>> {
+        Box::pin(async move {
+            match self.call_method("getBalance", &[]).await {
+                Ok(result) => {
+                    if let Some(balance_str) = result.as_string() {
+                        balance_str.parse::<u64>()
+                            .map(Some)
+                            .map_err(|e| AlkanesError::Wallet(format!("Invalid balance format: {e}")))
+                    } else if let Some(balance_num) = result.as_f64() {
+                        Ok(Some(balance_num as u64))
+                    } else {
+                        Ok(None)
+                    }
+                },
+                Err(_) => Ok(None), // Balance not supported
+            }
+        })
+    }
+    
+    fn get_inscriptions<'a>(&'a self, cursor: Option<u32>, size: Option<u32>) -> WalletFuture<'a, JsonValue> {
+        Box::pin(async move {
+            let mut args = Vec::new();
+            
+            if let Some(c) = cursor {
+                args.push(JsValue::from_f64(c as f64));
+            }
+            if let Some(s) = size {
+                args.push(JsValue::from_f64(s as f64));
+            }
+            
+            let result = self.call_method("getInscriptions", &args).await?;
+            
+            // Convert JsValue to JsonValue
+            let result_str = js_sys::JSON::stringify(&result)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to stringify inscriptions: {e:?}")))?
+                .as_string()
+                .ok_or_else(|| AlkanesError::Wallet("Invalid inscriptions response".to_string()))?;
+            
+            serde_json::from_str(&result_str)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to parse inscriptions JSON: {e}")))
+        })
+    }
+
+    fn get_enriched_utxos<'a>(&'a self, addresses: Option<Vec<String>>) -> WalletFuture<'a, Vec<EnrichedUtxo>> {
+        Box::pin(async move {
+            let _ = addresses;
+            Err(AlkanesError::NotImplemented("get_enriched_utxos is not supported by this wallet".to_string()))
+        })
+    }
+
+    fn get_all_balances<'a>(&'a self, addresses: Option<Vec<String>>) -> WalletFuture<'a, AllBalances> {
+        Box::pin(async move {
+            let _ = addresses;
+            Err(AlkanesError::NotImplemented("get_all_balances is not supported by this wallet".to_string()))
+        })
     }
 }
 
@@ -654,8 +625,8 @@ impl WalletConnector {
     }
     
     /// Detect available wallets in the browser
-    pub async fn detect_wallets(&self) -> Result<Vec<WalletInfo>> {
-        let window = window().ok_or_else(|| DeezelError::Wallet("No window object".to_string()))?;
+    pub async fn detect_wallets(&self) -> Result<Vec<WalletInfo>, AlkanesError> {
+        let window = window().ok_or_else(|| AlkanesError::Wallet("No window object".to_string()))?;
         
         let mut available_wallets = Vec::new();
         
@@ -676,18 +647,18 @@ impl WalletConnector {
     }
     
     /// Create an injected wallet instance
-    pub fn create_injected_wallet(&self, wallet_info: WalletInfo) -> Result<InjectedWallet> {
-        let window = window().ok_or_else(|| DeezelError::Wallet("No window object".to_string()))?;
+    pub fn create_injected_wallet(&self, wallet_info: WalletInfo) -> Result<InjectedWallet, AlkanesError> {
+        let window = window().ok_or_else(|| AlkanesError::Wallet("No window object".to_string()))?;
         
         let wallet_obj = js_sys::Reflect::get(&window, &JsValue::from_str(&wallet_info.injection_key))
-            .map_err(|e| DeezelError::Wallet(format!("Wallet not found: {e:?}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Wallet not found: {e:?}")))?;
         
         if wallet_obj.is_undefined() {
-            return Err(DeezelError::Wallet(format!("Wallet {} not available", wallet_info.name)));
+            return Err(AlkanesError::Wallet(format!("Wallet {} not available", wallet_info.name)));
         }
         
         let js_object = wallet_obj.dyn_into::<js_sys::Object>()
-            .map_err(|e| DeezelError::Wallet(format!("Invalid wallet object: {e:?}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid wallet object: {e:?}")))?;
         
         Ok(InjectedWallet::new(wallet_info, js_object))
     }
@@ -710,7 +681,7 @@ impl BrowserWalletProvider {
     pub async fn connect(
         wallet_info: WalletInfo,
         network_str: String,
-    ) -> Result<Self> {
+    ) -> Result<Self, AlkanesError> {
         // Create the underlying web provider for blockchain operations
         let web_provider = WebProvider::new(network_str).await?;
         
@@ -805,7 +776,6 @@ impl Clone for BrowserWalletProvider {
 // Implement deezel-common traits for BrowserWalletProvider
 // Most operations delegate to the web_provider, while signing operations use the wallet
 
-#[async_trait(?Send)]
 impl JsonRpcProvider for BrowserWalletProvider {
     async fn call(&self, url: &str, method: &str, params: JsonValue, id: u64) -> Result<JsonValue> {
         self.web_provider.call(url, method, params, id).await
@@ -813,7 +783,6 @@ impl JsonRpcProvider for BrowserWalletProvider {
     
 }
 
-#[async_trait(?Send)]
 impl StorageProvider for BrowserWalletProvider {
     async fn read(&self, key: &str) -> Result<Vec<u8>> {
         self.web_provider.read(key).await
@@ -840,7 +809,6 @@ impl StorageProvider for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl NetworkProvider for BrowserWalletProvider {
     async fn get(&self, url: &str) -> Result<Vec<u8>> {
         self.web_provider.get(url).await
@@ -855,7 +823,6 @@ impl NetworkProvider for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl CryptoProvider for BrowserWalletProvider {
     fn random_bytes(&self, len: usize) -> Result<Vec<u8>> {
         self.web_provider.random_bytes(len)
@@ -882,7 +849,6 @@ impl CryptoProvider for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl TimeProvider for BrowserWalletProvider {
     fn now_secs(&self) -> u64 {
         self.web_provider.now_secs()
@@ -917,36 +883,35 @@ impl LogProvider for BrowserWalletProvider {
 
 // WalletProvider implementation - this is where we use the injected wallet for signing
 // but leverage our sandshrew RPC for most blockchain operations
-#[async_trait(?Send)]
 impl WalletProvider for BrowserWalletProvider {
-    async fn create_wallet(&mut self, _config: WalletConfig, _mnemonic: Option<String>, _passphrase: Option<String>) -> Result<deezel_common::WalletInfo> {
+    async fn create_wallet(&mut self, _config: WalletConfig, _mnemonic: Option<String>, _passphrase: Option<String>) -> Result<alkanes_cli_common::WalletInfo> {
         // For browser wallets, we don't create wallets - they're managed by the wallet extension
         // Instead, we return information about the connected wallet
         if let Some(account) = &self.current_account {
-            Ok(deezel_common::WalletInfo {
+            Ok(alkanes_cli_common::WalletInfo {
                 address: account.address.clone(),
                 network: self.web_provider.network(),
                 mnemonic: None, // Browser wallets don't expose mnemonics
             })
         } else {
-            Err(DeezelError::Wallet("No wallet connected".to_string()))
+            Err(AlkanesError::Wallet("No wallet connected".to_string()))
         }
     }
     
-    async fn load_wallet(&mut self, config: WalletConfig, _passphrase: Option<String>) -> Result<deezel_common::WalletInfo> {
+    async fn load_wallet(&mut self, config: WalletConfig, _passphrase: Option<String>) -> Result<alkanes_cli_common::WalletInfo> {
         // Similar to create_wallet - browser wallets are already "loaded"
         self.create_wallet(config, None, None).await
     }
     
     async fn get_balance(&self, addresses: Option<Vec<String>>) -> Result<WalletBalance> {
-        deezel_common::WalletProvider::get_balance(&self.web_provider, addresses).await
+        alkanes_cli_common::WalletProvider::get_balance(&self.web_provider, addresses).await
     }
     
     async fn get_address(&self) -> Result<String> {
         if let Some(account) = &self.current_account {
             Ok(account.address.clone())
         } else {
-            Err(DeezelError::Wallet("No wallet connected".to_string()))
+            Err(AlkanesError::Wallet("No wallet connected".to_string()))
         }
     }
     
@@ -989,12 +954,12 @@ impl WalletProvider for BrowserWalletProvider {
     async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
         // Browser wallets typically don't support UTXO freezing
         // We could implement this in our local storage if needed
-        Err(DeezelError::Wallet("UTXO freezing not supported by browser wallets".to_string()))
+        Err(AlkanesError::Wallet("UTXO freezing not supported by browser wallets".to_string()))
     }
     
     async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
         // Browser wallets typically don't support UTXO freezing
-        Err(DeezelError::Wallet("UTXO freezing not supported by browser wallets".to_string()))
+        Err(AlkanesError::Wallet("UTXO freezing not supported by browser wallets".to_string()))
     }
     
     async fn create_transaction(&self, params: SendParams) -> Result<String> {
@@ -1004,7 +969,7 @@ impl WalletProvider for BrowserWalletProvider {
         let address = <Self as WalletProvider>::get_address(self).await?;
         let utxos = self.get_utxos(false, Some(vec![address])).await?;
         if utxos.is_empty() {
-            return Err(DeezelError::Wallet("No UTXOs available".to_string()));
+            return Err(AlkanesError::Wallet("No UTXOs available".to_string()));
         }
 
         let mut inputs = vec![];
@@ -1031,7 +996,7 @@ impl WalletProvider for BrowserWalletProvider {
         let fee = fee_rate * estimated_vsize;
 
         if total_input < amount.to_sat() + fee {
-            return Err(DeezelError::Wallet("Insufficient funds".to_string()));
+            return Err(AlkanesError::Wallet("Insufficient funds".to_string()));
         }
 
         let change_address = <Self as WalletProvider>::get_address(self).await?;
@@ -1122,7 +1087,7 @@ impl WalletProvider for BrowserWalletProvider {
     
     async fn get_internal_key(&self) -> Result<(XOnlyPublicKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
         // Browser wallets do not expose derivation paths, so this method cannot be fully implemented.
-        Err(DeezelError::NotImplemented("get_internal_key is not supported for browser wallets as they do not expose derivation paths.".to_string()))
+        Err(AlkanesError::NotImplemented("get_internal_key is not supported for browser wallets as they do not expose derivation paths.".to_string()))
     }
     
     async fn sign_psbt(&mut self, psbt: &Psbt) -> Result<Psbt> {
@@ -1132,16 +1097,16 @@ impl WalletProvider for BrowserWalletProvider {
         
         // Parse the signed PSBT back
         let signed_psbt_bytes = hex::decode(&signed_psbt_hex)
-            .map_err(|e| DeezelError::Wallet(format!("Invalid signed PSBT hex: {e}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid signed PSBT hex: {e}")))?;
         
         Psbt::deserialize(&signed_psbt_bytes)
-            .map_err(|e| DeezelError::Wallet(format!("Failed to deserialize signed PSBT: {e}")))
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to deserialize signed PSBT: {e}")))
     }
     
     async fn get_keypair(&self) -> Result<Keypair> {
         // Browser wallets don't expose private keys for security reasons
         // This method should not be used with browser wallets
-        Err(DeezelError::Wallet("Browser wallets do not expose private keys".to_string()))
+        Err(AlkanesError::Wallet("Browser wallets do not expose private keys".to_string()))
     }
 
     fn set_passphrase(&mut self, _passphrase: Option<String>) {
@@ -1172,7 +1137,7 @@ impl WalletProvider for BrowserWalletProvider {
         self.web_provider.get_enriched_utxos(Some(addrs_to_fetch)).await
     }
 
-    async fn get_all_balances(&self, addresses: Option<Vec<String>>) -> Result<AllBalances> {
+    async fn get_all_balances(&self, addresses: Option<Vec<String>>) -> Result<AllBalances, AlkanesError> {
         let btc_balance = WalletProvider::get_balance(self, addresses.clone()).await?;
         
         let mut asset_balances: std::collections::HashMap<String, u128> = std::collections::HashMap::new();
@@ -1208,7 +1173,6 @@ impl WalletProvider for BrowserWalletProvider {
 }
 
 // Implement the remaining provider traits by delegating to web_provider
-#[async_trait(?Send)]
 impl AddressResolver for BrowserWalletProvider {
     async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
         self.web_provider.resolve_all_identifiers(input).await
@@ -1227,7 +1191,6 @@ impl AddressResolver for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl BitcoinRpcProvider for BrowserWalletProvider {
     async fn get_block_count(&self) -> Result<u64> {
         <WebProvider as BitcoinRpcProvider>::get_block_count(&self.web_provider).await
@@ -1274,7 +1237,6 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl MetashrewRpcProvider for BrowserWalletProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
         self.web_provider.get_metashrew_height().await
@@ -1292,29 +1254,27 @@ impl MetashrewRpcProvider for BrowserWalletProvider {
         self.web_provider.get_spendables_by_address(address).await
     }
     
-    async fn get_protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneWalletResponse> {
+    async fn get_protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneWalletResponse> {
         self.web_provider.get_protorunes_by_address(address, block_tag, protocol_tag).await
     }
     
-    async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneOutpointResponse> {
+    async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse> {
         self.web_provider.get_protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
     }
 }
 
-#[async_trait(?Send)]
 impl MetashrewProvider for BrowserWalletProvider {
     async fn get_height(&self) -> Result<u64> {
         self.web_provider.get_height().await
     }
     async fn get_block_hash(&self, height: u64) -> Result<String> {
-        deezel_common::MetashrewProvider::get_block_hash(&self.web_provider, height).await
+        alkanes_cli_common::MetashrewProvider::get_block_hash(&self.web_provider, height).await
     }
     async fn get_state_root(&self, height: JsonValue) -> Result<String> {
         self.web_provider.get_state_root(height).await
     }
 }
 
-#[async_trait(?Send)]
 impl EsploraProvider for BrowserWalletProvider {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
         self.web_provider.get_blocks_tip_hash().await
@@ -1439,7 +1399,6 @@ impl EsploraProvider for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl RunestoneProvider for BrowserWalletProvider {
     async fn decode_runestone(&self, tx: &Transaction) -> Result<JsonValue> {
         self.web_provider.decode_runestone(tx).await
@@ -1454,7 +1413,6 @@ impl RunestoneProvider for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl OrdProvider for BrowserWalletProvider {
     async fn get_inscription(&self, inscription_id: &str) -> Result<OrdInscription> {
         self.web_provider.get_inscription(inscription_id).await
@@ -1516,39 +1474,37 @@ impl OrdProvider for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl AlkanesProvider for BrowserWalletProvider {
-    async fn execute(&mut self, params: deezel_common::alkanes::types::EnhancedExecuteParams) -> Result<deezel_common::alkanes::types::ExecutionState> {
+    async fn execute(&mut self, params: alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::ExecutionState> {
         self.web_provider.execute(params).await
     }
 
     async fn resume_execution(
         &mut self,
-        state: deezel_common::alkanes::types::ReadyToSignTx,
-        params: &deezel_common::alkanes::types::EnhancedExecuteParams,
-    ) -> Result<deezel_common::alkanes::types::EnhancedExecuteResult> {
+        state: alkanes_cli_common::alkanes::types::ReadyToSignTx,
+) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
         self.web_provider.resume_execution(state, params).await
     }
 
     async fn resume_commit_execution(
         &mut self,
-        state: deezel_common::alkanes::types::ReadyToSignCommitTx,
-    ) -> Result<deezel_common::alkanes::types::ExecutionState> {
+        state: alkanes_cli_common::alkanes::types::ReadyToSignCommitTx,
+    ) -> Result<alkanes_cli_common::alkanes::types::ExecutionState> {
         self.web_provider.resume_commit_execution(state).await
     }
 
     async fn resume_reveal_execution(
         &mut self,
-        state: deezel_common::alkanes::types::ReadyToSignRevealTx,
-    ) -> Result<deezel_common::alkanes::types::EnhancedExecuteResult> {
+        state: alkanes_cli_common::alkanes::types::ReadyToSignRevealTx,
+    ) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
         self.web_provider.resume_reveal_execution(state).await
     }
 
-    async fn protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneWalletResponse> {
+    async fn protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneWalletResponse> {
         self.web_provider.protorunes_by_address(address, block_tag, protocol_tag).await
     }
 
-    async fn protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneOutpointResponse> {
+    async fn protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse> {
         self.web_provider.protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
     }
 
@@ -1556,7 +1512,7 @@ impl AlkanesProvider for BrowserWalletProvider {
         self.web_provider.view(contract_id, view_fn, params).await
     }
 
-    async fn simulate(&self, contract_id: &str, context: &deezel_common::alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
+    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
         self.web_provider.simulate(contract_id, context).await
     }
 
@@ -1593,7 +1549,6 @@ impl AlkanesProvider for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl MonitorProvider for BrowserWalletProvider {
     async fn monitor_blocks(&self, start: Option<u64>) -> Result<()> {
         self.web_provider.monitor_blocks(start).await
@@ -1604,23 +1559,21 @@ impl MonitorProvider for BrowserWalletProvider {
     }
 }
 
-#[async_trait(?Send)]
-#[async_trait(?Send)]
 impl KeystoreProvider for BrowserWalletProvider {
-    async fn derive_addresses(&self, _master_public_key: &str, _network_params: &deezel_common::network::NetworkParams, _script_types: &[&str], _start_index: u32, _count: u32) -> Result<Vec<KeystoreAddress>> {
-        Err(DeezelError::NotImplemented("Keystore operations not implemented for browser wallet provider".to_string()))
+    async fn derive_addresses(&self, _master_public_key: &str, _network_params: &alkanes_cli_common::network::NetworkParams, _script_types: &[&str], _start_index: u32, _count: u32) -> Result<Vec<KeystoreAddress>> {
+        Err(AlkanesError::NotImplemented("Keystore operations not implemented for browser wallet provider".to_string()))
     }
     
-    async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &deezel_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>> {
-        Err(DeezelError::NotImplemented("Keystore operations not implemented for browser wallet provider".to_string()))
+    async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &alkanes_cli_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>> {
+        Err(AlkanesError::NotImplemented("Keystore operations not implemented for browser wallet provider".to_string()))
     }
     
     fn parse_address_range(&self, _range_spec: &str) -> Result<(String, u32, u32)> {
-        Err(DeezelError::NotImplemented("Keystore operations not implemented for browser wallet provider".to_string()))
+        Err(AlkanesError::NotImplemented("Keystore operations not implemented for browser wallet provider".to_string()))
     }
     
     async fn get_keystore_info(&self, _master_fingerprint: &str, _created_at: u64, _version: &str) -> Result<KeystoreInfo> {
-        Err(DeezelError::NotImplemented("Keystore operations not implemented for browser wallet provider".to_string()))
+        Err(AlkanesError::NotImplemented("Keystore operations not implemented for browser wallet provider".to_string()))
     }
     async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String> {
        // We can't derive, but we can ask the wallet for its accounts.
@@ -1629,10 +1582,10 @@ impl KeystoreProvider for BrowserWalletProvider {
        let accounts = self.wallet.get_accounts().await?;
        accounts.first()
            .map(|acc| acc.address.clone())
-           .ok_or_else(|| DeezelError::Wallet("No accounts found in browser wallet.".to_string()))
+           .ok_or_else(|| AlkanesError::Wallet("No accounts found in browser wallet.".to_string()))
     }
    
-       async fn derive_address_from_path(&self, _master_public_key: &str, _path: &bitcoin::bip32::DerivationPath, _script_type: &str, network_params: &deezel_common::network::NetworkParams) -> Result<KeystoreAddress> {
+       async fn derive_address_from_path(&self, _master_public_key: &str, _path: &bitcoin::bip32::DerivationPath, _script_type: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> Result<KeystoreAddress> {
            // This is the core issue. Browser wallets don't expose this.
            // We will return the primary address instead, ignoring the path.
            let address = WalletProvider::get_address(self).await?;
@@ -1646,8 +1599,7 @@ impl KeystoreProvider for BrowserWalletProvider {
        }
    }
 
-#[async_trait(?Send)]
-impl DeezelProvider for BrowserWalletProvider {
+impl AlkanesProvider for BrowserWalletProvider {
     fn provider_name(&self) -> &str {
         "browser_wallet"
     }
@@ -1658,7 +1610,7 @@ impl DeezelProvider for BrowserWalletProvider {
         
         // Verify wallet connection
         if self.current_account.is_none() {
-            return Err(DeezelError::Wallet("Wallet not connected".to_string()));
+            return Err(AlkanesError::Wallet("Wallet not connected".to_string()));
         }
         
         self.info(&format!("Browser wallet provider initialized with {}", self.wallet.get_info().name));
@@ -1671,7 +1623,7 @@ impl DeezelProvider for BrowserWalletProvider {
     }
 
     async fn wrap(&mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Result<String> {
-        use deezel_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer, EnhancedExecuteParams};
+        use alkanes_cli_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer, EnhancedExecuteParams};
         use alkanes_support::cellpack::Cellpack;
 
         let is_regtest = self.get_network() == Network::Regtest;
@@ -1683,9 +1635,7 @@ impl DeezelProvider for BrowserWalletProvider {
             change_address: None,
             input_requirements: vec![],
             protostones: vec![ProtostoneSpec {
-                cellpack: Some(Cellpack::try_from(vec![2, 0, 1]).unwrap()), // wrap frBTC
-                edicts: vec![],
-                bitcoin_transfer: Some(BitcoinTransfer { amount, target: deezel_common::alkanes::types::OutputTarget::Split }),
+bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
             }],
             envelope_data: None,
             raw_output: false,
@@ -1695,18 +1645,18 @@ impl DeezelProvider for BrowserWalletProvider {
         };
 
         match executor.execute(params).await? {
-            deezel_common::alkanes::types::ExecutionState::ReadyToSign(ready_tx) => {
+            alkanes_cli_common::alkanes::types::ExecutionState::ReadyToSign(ready_tx) => {
                 let signed_psbt = self.sign_psbt(&ready_tx.psbt).await?;
                 let tx = signed_psbt.extract_tx()?;
                 let tx_hex = bitcoin::consensus::encode::serialize_hex(&tx);
                 self.broadcast_transaction(tx_hex).await
             }
-            _ => Err(DeezelError::Other("Unexpected execution state".to_string())),
+            _ => Err(AlkanesError::Other("Unexpected execution state".to_string())),
         }
     }
 
     async fn unwrap(&mut self, amount: u64, address: Option<String>) -> Result<String> {
-        use deezel_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer, EnhancedExecuteParams};
+        use alkanes_cli_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer, EnhancedExecuteParams};
         use alkanes_support::cellpack::Cellpack;
 
         let is_regtest = self.get_network() == Network::Regtest;
@@ -1720,7 +1670,7 @@ impl DeezelProvider for BrowserWalletProvider {
             protostones: vec![ProtostoneSpec {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 2]).unwrap()), // unwrap frBTC
                 edicts: vec![],
-                bitcoin_transfer: Some(BitcoinTransfer { amount, target: deezel_common::alkanes::types::OutputTarget::Split }),
+                bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
             }],
             envelope_data: None,
             raw_output: false,
@@ -1730,17 +1680,17 @@ impl DeezelProvider for BrowserWalletProvider {
         };
 
         match executor.execute(params).await? {
-            deezel_common::alkanes::types::ExecutionState::ReadyToSign(ready_tx) => {
+            alkanes_cli_common::alkanes::types::ExecutionState::ReadyToSign(ready_tx) => {
                 let signed_psbt = self.sign_psbt(&ready_tx.psbt).await?;
                 let tx = signed_psbt.extract_tx()?;
                 let tx_hex = bitcoin::consensus::encode::serialize_hex(&tx);
                 self.broadcast_transaction(tx_hex).await
             }
-            _ => Err(DeezelError::Other("Unexpected execution state".to_string())),
+            _ => Err(AlkanesError::Other("Unexpected execution state".to_string())),
         }
     }
 
-    fn clone_box(&self) -> Box<dyn DeezelProvider> {
+    fn clone_box(&self) -> Box<dyn AlkanesProvider> {
         Box::new(self.clone())
     }
 

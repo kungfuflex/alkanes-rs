@@ -129,15 +129,15 @@ impl fmt::Display for Trace {
     }
 }
 
-impl From<alkanes_support::proto::alkanes::Trace> for Trace {
-    fn from(trace: alkanes_support::proto::alkanes::Trace) -> Self {
+impl From<crate::alkanes_pb::Trace> for Trace {
+    fn from(trace: crate::alkanes_pb::Trace) -> Self {
         let calls = trace.trace.iter().map(|c| c.clone().into()).collect();
         Self { calls }
     }
 }
 
-impl From<alkanes_support::proto::alkanes::AlkanesTrace> for Call {
-    fn from(trace: alkanes_support::proto::alkanes::AlkanesTrace) -> Self {
+impl From<crate::alkanes_pb::AlkanesTrace> for Call {
+    fn from(trace: crate::alkanes_pb::AlkanesTrace) -> Self {
         let mut caller = ContractId::default();
         let mut contract_id = None;
         let mut input_data = Vec::new();
@@ -145,11 +145,11 @@ impl From<alkanes_support::proto::alkanes::AlkanesTrace> for Call {
 
         // The first event is expected to be EnterContext, which contains the call details
         if let Some(first_event) = trace.events.first() {
-            if let Some(alkanes_support::proto::alkanes::alkanes_trace_event::Event::EnterContext(enter_context)) = &first_event.event {
-                let trace_ctx = enter_context.context.as_ref().cloned().unwrap_or_default();
-                let ctx = trace_ctx.inner.as_ref().cloned().unwrap_or_default();
-                caller = ctx.caller.clone().unwrap_or_default().into();
-                contract_id = Some(ctx.myself.clone().unwrap_or_default().into());
+            if let Some(crate::alkanes_pb::alkanes_trace_event::Event::EnterContext(enter_context)) = &first_event.event {
+                let trace_ctx = enter_context.context.clone().into_option().unwrap_or_default();
+                let ctx = trace_ctx.inner.clone().into_option().unwrap_or_default();
+                caller = ctx.caller.clone().into_option().unwrap_or_default().into();
+                contract_id = Some(ctx.myself.clone().into_option().unwrap_or_default().into());
                 
                 // Extract input data
                 input_data = ctx.inputs.iter().flat_map(|u| {
@@ -159,7 +159,7 @@ impl From<alkanes_support::proto::alkanes::AlkanesTrace> for Call {
 
                 // Extract value from the first incoming alkane transfer
                 if let Some(transfer) = ctx.incoming_alkanes.first() {
-                    value = transfer.value.clone().clone().map(|v| v.into());
+                    value = transfer.value.clone().into_option().map(|v| v.into());
                 }
             }
         }
@@ -176,56 +176,56 @@ impl From<alkanes_support::proto::alkanes::AlkanesTrace> for Call {
 }
 
 #[allow(unreachable_patterns)]
-impl From<alkanes_support::proto::alkanes::alkanes_trace_event::Event> for Event {
-    fn from(event: alkanes_support::proto::alkanes::alkanes_trace_event::Event) -> Self {
+impl From<crate::alkanes_pb::alkanes_trace_event::Event> for Event {
+    fn from(event: crate::alkanes_pb::alkanes_trace_event::Event) -> Self {
         match event {
-            alkanes_support::proto::alkanes::alkanes_trace_event::Event::EnterContext(e) => Event::Enter(e.into()),
-            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ExitContext(e) => Event::Exit(e.into()),
-            alkanes_support::proto::alkanes::alkanes_trace_event::Event::CreateAlkane(e) => Event::Create(e.into()),
+            crate::alkanes_pb::alkanes_trace_event::Event::EnterContext(e) => Event::Enter(e.into()),
+            crate::alkanes_pb::alkanes_trace_event::Event::ExitContext(e) => Event::Exit(e.into()),
+            crate::alkanes_pb::alkanes_trace_event::Event::CreateAlkane(e) => Event::Create(e.into()),
             _ => Event::Unknown,
         }
     }
 }
 
-impl From<alkanes_support::proto::alkanes::AlkanesEnterContext> for EnterContext {
-    fn from(e: alkanes_support::proto::alkanes::AlkanesEnterContext) -> Self {
+impl From<crate::alkanes_pb::AlkanesEnterContext> for EnterContext {
+    fn from(e: crate::alkanes_pb::AlkanesEnterContext) -> Self {
         Self {
             call_type: format!("{:?}", e.call_type),
-            context: e.context.clone().unwrap().into(),
+            context: e.context.into_option().unwrap().into(),
         }
     }
 }
 
-impl From<alkanes_support::proto::alkanes::AlkanesExitContext> for ExitContext {
-    fn from(e: alkanes_support::proto::alkanes::AlkanesExitContext) -> Self {
+impl From<crate::alkanes_pb::AlkanesExitContext> for ExitContext {
+    fn from(e: crate::alkanes_pb::AlkanesExitContext) -> Self {
         Self {
             status: format!("{:?}", e.status),
         }
     }
 }
 
-impl From<alkanes_support::proto::alkanes::AlkanesCreate> for Create {
-    fn from(e: alkanes_support::proto::alkanes::AlkanesCreate) -> Self {
+impl From<crate::alkanes_pb::AlkanesCreate> for Create {
+    fn from(e: crate::alkanes_pb::AlkanesCreate) -> Self {
         Self {
-            new_alkane: e.new_alkane.clone().unwrap().into(),
+            new_alkane: e.new_alkane.into_option().unwrap().into(),
         }
     }
 }
 
-impl From<alkanes_support::proto::alkanes::TraceContext> for TraceContext {
-    fn from(t: alkanes_support::proto::alkanes::TraceContext) -> Self {
+impl From<crate::alkanes_pb::TraceContext> for TraceContext {
+    fn from(t: crate::alkanes_pb::TraceContext) -> Self {
         Self {
-            inner: t.inner.clone().unwrap().into(),
+            inner: t.inner.into_option().unwrap().into(),
             fuel: t.fuel,
         }
     }
 }
 
-impl From<alkanes_support::proto::alkanes::Context> for Context {
-    fn from(c: alkanes_support::proto::alkanes::Context) -> Self {
+impl From<crate::alkanes_pb::Context> for Context {
+    fn from(c: crate::alkanes_pb::Context) -> Self {
         Self {
-            myself: c.myself.clone().unwrap().into(),
-            caller: c.caller.clone().unwrap().into(),
+            myself: c.myself.into_option().unwrap().into(),
+            caller: c.caller.into_option().unwrap().into(),
             inputs: c.inputs.into_iter().map(Into::into).collect(),
             vout: c.vout,
             incoming_alkanes: c.incoming_alkanes.into_iter().map(Into::into).collect(),
@@ -233,27 +233,27 @@ impl From<alkanes_support::proto::alkanes::Context> for Context {
     }
 }
 
-impl From<alkanes_support::proto::alkanes::AlkaneTransfer> for AlkaneTransfer {
-    fn from(t: alkanes_support::proto::alkanes::AlkaneTransfer) -> Self {
+impl From<crate::alkanes_pb::AlkaneTransfer> for AlkaneTransfer {
+    fn from(t: crate::alkanes_pb::AlkaneTransfer) -> Self {
         Self {
-            id: t.id.clone().unwrap().into(),
-            value: t.value.clone().unwrap().into(),
+            id: t.id.into_option().unwrap().into(),
+            value: t.value.into_option().unwrap().into(),
         }
     }
 }
 
 
-impl From<alkanes_support::proto::alkanes::AlkaneId> for ContractId {
-    fn from(id: alkanes_support::proto::alkanes::AlkaneId) -> Self {
+impl From<crate::alkanes_pb::AlkaneId> for ContractId {
+    fn from(id: crate::alkanes_pb::AlkaneId) -> Self {
         Self {
-            block: id.block.clone().map(Into::into),
-            tx: id.tx.clone().map(Into::into),
+            block: id.block.into_option().map(Into::into),
+            tx: id.tx.into_option().map(Into::into),
         }
     }
 }
 
-impl From<alkanes_support::proto::alkanes::Uint128> for U128 {
-    fn from(u: alkanes_support::proto::alkanes::Uint128) -> Self {
+impl From<crate::alkanes_pb::Uint128> for U128 {
+    fn from(u: crate::alkanes_pb::Uint128) -> Self {
         Self { lo: u.lo, hi: u.hi }
     }
 }

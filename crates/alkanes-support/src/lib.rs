@@ -34,6 +34,7 @@ impl From<u128> for proto::alkanes::Uint128 {
         proto::alkanes::Uint128 {
             lo: u64::from_le_bytes((&bytes[0..8]).try_into().unwrap()),
             hi: u64::from_le_bytes((&bytes[8..16]).try_into().unwrap()),
+            special_fields: ::protobuf::SpecialFields::new(),
         }
     }
 }
@@ -41,8 +42,9 @@ impl From<u128> for proto::alkanes::Uint128 {
 impl Into<proto::alkanes::AlkaneId> for AlkaneId {
     fn into(self) -> proto::alkanes::AlkaneId {
         proto::alkanes::AlkaneId {
-            block: Some(self.block.into()),
-            tx: Some(self.tx.into()),
+            block: protobuf::MessageField::some(self.block.into()),
+            tx: protobuf::MessageField::some(self.tx.into()),
+            special_fields: ::protobuf::SpecialFields::new(),
         }
     }
 }
@@ -59,8 +61,9 @@ impl Into<AlkaneId> for proto::alkanes::AlkaneId {
 impl Into<proto::alkanes::AlkaneTransfer> for AlkaneTransfer {
     fn into(self) -> proto::alkanes::AlkaneTransfer {
         proto::alkanes::AlkaneTransfer {
-            id: Some(self.id.into()),
-            value: Some(self.value.into()),
+            id: protobuf::MessageField::some(self.id.into()),
+            value: protobuf::MessageField::some(self.value.into()),
+            special_fields: ::protobuf::SpecialFields::new(),
         }
     }
 }
@@ -68,8 +71,8 @@ impl Into<proto::alkanes::AlkaneTransfer> for AlkaneTransfer {
 impl Into<AlkaneTransfer> for proto::alkanes::AlkaneTransfer {
     fn into(self) -> AlkaneTransfer {
         AlkaneTransfer {
-            id: self.id.map_or(AlkaneId::default(), |v| v.into()),
-            value: self.value.map_or(0, |v| v.into()),
+            id: self.id.into_option().map_or(AlkaneId::default(), |v| v.into()),
+            value: self.value.into_option().map_or(0, |v| v.into()),
         }
     }
 }
@@ -81,7 +84,7 @@ impl Into<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
                 .storage
                 .0
                 .into_iter()
-                .map(|(key, value)| proto::alkanes::KeyValuePair { key, value })
+                .map(|(key, value)| proto::alkanes::KeyValuePair { key, value, special_fields: ::protobuf::SpecialFields::new() })
                 .collect(),
             data: self.data,
             alkanes: self
@@ -90,6 +93,7 @@ impl Into<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
                 .into_iter()
                 .map(|v| v.into())
                 .collect(),
+            special_fields: ::protobuf::SpecialFields::new(),
         }
     }
 }
@@ -103,8 +107,8 @@ impl From<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
                 v.alkanes
                     .into_iter()
                     .map(|transfer| AlkaneTransfer {
-                        id: transfer.id.map_or(AlkaneId::default(), |v| v.into()),
-                        value: transfer.value.map_or(0, |v| v.into()),
+                        id: transfer.id.into_option().map_or(AlkaneId::default(), |v| v.into()),
+                        value: transfer.value.into_option().map_or(0, |v| v.into()),
                     })
                     .collect::<Vec<AlkaneTransfer>>(),
             ),
@@ -123,6 +127,6 @@ impl Into<ProtoruneRuneId> for proto::alkanes::AlkaneId {
 
 impl Into<proto::alkanes::AlkaneInventoryRequest> for AlkaneId {
     fn into(self) -> proto::alkanes::AlkaneInventoryRequest {
-        proto::alkanes::AlkaneInventoryRequest { id: Some(self.into()) }
+        proto::alkanes::AlkaneInventoryRequest { id: protobuf::MessageField::some(self.into()), special_fields: ::protobuf::SpecialFields::new() }
     }
 }
