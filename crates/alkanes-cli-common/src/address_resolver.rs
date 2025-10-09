@@ -370,6 +370,7 @@ mod tests {
 #[cfg(not(target_arch = "wasm32"))]
 mod standalone_impls {
     use super::*;
+    use crate::JsonValue;
     use async_trait::async_trait;
     use crate::ord::{
         AddressInfo as OrdAddressInfo, Block as OrdBlock, Blocks as OrdBlocks,
@@ -1034,6 +1035,10 @@ impl AlkanesProvider for StandaloneAddressResolver {
 
     async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
+    }
+
+    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<JsonValue> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support view calls".to_string()))
     }
 }
 

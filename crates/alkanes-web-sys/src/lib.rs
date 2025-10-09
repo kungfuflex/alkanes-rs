@@ -1,3 +1,5 @@
+#![cfg(target_arch = "wasm32")]
+
 // Chadson's Journal
 // Date: 2025-08-04
 //

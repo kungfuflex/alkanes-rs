@@ -31,6 +31,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 hex = { workspace = true }
 prost = { workspace = true }
+protobuf = { workspace = true }
 
 [dev-dependencies]
 metashrew-core = { workspace = true, features = ["test-utils"] }

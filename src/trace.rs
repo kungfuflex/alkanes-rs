@@ -5,7 +5,7 @@ use anyhow::Result;
 use bitcoin::OutPoint;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_encode;
-use prost::Message;
+use protobuf::Message;
 use std::sync::Arc;
 #[allow(unused_imports)]
 use {
@@ -16,7 +16,9 @@ use {
 pub fn save_trace(outpoint: &OutPoint, height: u64, trace: Trace) -> Result<()> {
     let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;
     TRACES.select(&buffer).set(Arc::<Vec<u8>>::new(
-        <Trace as Into<proto::alkanes::AlkanesTrace>>::into(trace).encode_to_vec(),
+        <Trace as Into<proto::alkanes::AlkanesTrace>>::into(trace)
+            .write_to_bytes()
+            .unwrap(),
     ));
     TRACES_BY_HEIGHT
         .select_value(height)

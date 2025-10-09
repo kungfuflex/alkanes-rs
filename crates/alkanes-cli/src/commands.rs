@@ -6,7 +6,7 @@
 
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use alkanes_cli_common::network::DeezelNetwork;
+use alkanes_cli_common::network::AlkanesNetwork;
 
 
 // Chad's Journal:
@@ -807,7 +807,7 @@ impl From<&AlkanesCLICommands> for alkanes_cli_common::commands::Args {
                 esplora_url: args.esplora_api_url.clone(),
                 ord_url: args.ord_server_url.clone(),
                 metashrew_rpc_url: args.metashrew_server_url.clone(),
-                network: DeezelNetwork(bitcoin::Network::Regtest),
+                network: AlkanesNetwork(bitcoin::Network::Regtest),
                 timeout_seconds: 0,
             },
             magic: None,

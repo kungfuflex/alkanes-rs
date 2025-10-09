@@ -16,7 +16,7 @@ use std::str::FromStr;
 use alkanes_cli_common::{
     keystore::{Keystore},
     traits::{KeystoreAddress, KeystoreInfo, KeystoreProvider},
-    DeezelError, Result as CommonResult,
+    AlkanesError, Result as CommonResult,
 };
 use async_trait::async_trait;
 
@@ -348,12 +348,12 @@ impl KeystoreManager {
 #[async_trait]
 impl KeystoreProvider for KeystoreManager {
     async fn get_address(&self, _address_type: &str, _index: u32) -> CommonResult<String> {
-        Err(DeezelError::NotImplemented("get_address is not implemented for KeystoreManager".to_string()))
+        Err(AlkanesError::NotImplemented("get_address is not implemented for KeystoreManager".to_string()))
     }
 
     async fn derive_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> CommonResult<Vec<KeystoreAddress>> {
         let master_xpub = Xpub::from_str(master_public_key)
-            .map_err(|e| DeezelError::Crypto(format!("Failed to parse master public key: {e}")))?;
+            .map_err(|e| AlkanesError::Crypto(format!("Failed to parse master public key: {e}")))?;
         
         let secp = Secp256k1::new();
         let mut addresses = Vec::new();
@@ -361,7 +361,7 @@ impl KeystoreProvider for KeystoreManager {
         for script_type in script_types {
             for index in start_index..(start_index + count) {
                 let address = self.derive_single_address(&master_xpub, &secp, network_params.network, script_type, 0, index)
-                    .map_err(|e| DeezelError::Crypto(format!("Failed to derive address: {e}")))?;
+                    .map_err(|e| AlkanesError::Crypto(format!("Failed to derive address: {e}")))?;
                 addresses.push(address);
             }
         }
@@ -378,7 +378,7 @@ impl KeystoreProvider for KeystoreManager {
     fn parse_address_range(&self, range_spec: &str) -> CommonResult<(String, u32, u32)> {
         // Call the struct method directly to avoid infinite recursion
         KeystoreManager::parse_address_range(self, range_spec)
-            .map_err(|e| DeezelError::Parse(format!("Failed to parse address range: {e}")))
+            .map_err(|e| AlkanesError::Parse(format!("Failed to parse address range: {e}")))
     }
     
     async fn get_keystore_info(&self, master_fingerprint: &str, created_at: u64, version: &str) -> CommonResult<KeystoreInfo> {

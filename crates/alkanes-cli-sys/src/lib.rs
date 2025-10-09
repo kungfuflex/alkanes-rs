@@ -1,13 +1,13 @@
-//! Deezel System Library
+//! Alkanes System Library
 //!
-//! This library provides the system-level implementation of the deezel CLI,
+//! This library provides the system-level implementation of the alkanes CLI,
 //! acting as a bridge between the command-line interface and the alkanes_cli_common
 //! library. It is designed to be used as a library by system crates that
 //! utilize alkanes on the backend.
 
 use anyhow::{anyhow, Context};
 use std::str::FromStr;
-use alkanes_cli_common::{Result, DeezelError, network::RpcConfig, provider::WalletState};
+use alkanes_cli_common::{Result, AlkanesError, network::{RpcConfig, AlkanesNetwork}, provider::WalletState, JsonValue};
 use bitcoin::secp256k1::Secp256k1;
 use async_trait::async_trait;
 use alkanes_cli_common::provider::ConcreteProvider;
@@ -22,13 +22,13 @@ use alkanes_cli_common::alkanes::AlkanesInspectConfig;
 use crate::utils::expand_tilde;
 use keystore::{KeystoreManager, KeystoreCreateParams};
 
-pub struct SystemDeezel {
+pub struct SystemAlkanesCli {
     provider: ConcreteProvider,
     keystore_manager: KeystoreManager,
     args: Args,
 }
 
-impl SystemDeezel {
+impl SystemAlkanesCli {
     pub async fn new(args: &Args) -> anyhow::Result<Self> {
         // Determine network parameters based on provider and magic flags
         let network_params = if let Some(magic_str) = args.magic.as_ref() {
@@ -44,7 +44,7 @@ impl SystemDeezel {
                         _ => "regtest",
                     };
 alkanes_cli_common::network::NetworkParams::with_custom_magic(
-                        alkanes_cli_common::network::DeezelNetwork::from_str(base_network).unwrap().0,
+                        AlkanesNetwork::from_str(base_network).unwrap().0,
                         p2pkh_prefix,
                         p2sh_prefix,
                         bech32_hrp,
@@ -82,7 +82,7 @@ alkanes_cli_common::network::NetworkParams::with_custom_magic(
                 _ => "custom",
             };
             // Default to keystore.json extension (not .asc since we handle encryption internally)
-            expand_tilde(&format!("~/.deezel/{network_name}.keystore.json"))?
+            expand_tilde(&format!("~/.alkanes/{network_name}.keystore.json"))?
         };
         
         // Create wallet directory if it doesn't exist
@@ -146,46 +146,47 @@ alkanes_cli_common::network::NetworkParams::with_custom_magic(
 }
 
 #[async_trait]
-impl System for SystemDeezel {
-    fn provider(&self) -> &dyn DeezelProvider {
+impl System for SystemAlkanesCli {
+    fn provider(&self) -> &dyn AlkanesProvider {
         &self.provider
     }
 
-    fn provider_mut(&mut self) -> &mut dyn DeezelProvider {
+    fn provider_mut(&mut self) -> &mut dyn AlkanesProvider {
         &mut self.provider
     }
 }
 
 #[async_trait]
-impl SystemEsplora for SystemDeezel {
+impl SystemEsplora for SystemAlkanesCli {
     async fn execute_esplora_command(&self, _command: EsploraCommands) -> Result<()> {
         unimplemented!()
     }
 }
 
 #[async_trait]
-impl SystemMonitor for SystemDeezel {
+impl SystemMonitor for SystemAlkanesCli {
     async fn execute_monitor_command(&self, _command: MonitorCommands) -> Result<()> {
         unimplemented!()
     }
 }
 
 #[async_trait]
-impl SystemProtorunes for SystemDeezel {
+impl SystemProtorunes for SystemAlkanesCli {
     async fn execute_protorunes_command(&self, _command: ProtorunesCommands) -> Result<()> {
         unimplemented!()
     }
 }
 
 #[async_trait]
-impl SystemRunestone for SystemDeezel {
+impl SystemRunestone for SystemAlkanesCli {
     async fn execute_runestone_command(&self, _command: RunestoneCommands) -> Result<()> {
         unimplemented!()
     }
 }
 
 #[async_trait]
-impl DeezelProvider for SystemDeezel {
+#[async_trait]
+impl AlkanesProvider for SystemAlkanesCli {
     fn provider_name(&self) -> &str {
         self.provider.provider_name()
     }
@@ -202,7 +203,7 @@ impl DeezelProvider for SystemDeezel {
         self.provider.get_ord_server_url()
     }
 
-    fn clone_box(&self) -> Box<dyn DeezelProvider> {
+    fn clone_box(&self) -> Box<dyn AlkanesProvider> {
         Box::new(self.clone())
     }
 
@@ -240,17 +241,64 @@ impl DeezelProvider for SystemDeezel {
     ) -> Result<bitcoin::secp256k1::schnorr::Signature> {
         self.provider.sign_taproot_script_spend(sighash).await
     }
+    async fn execute(&mut self, params: alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::ExecutionState> {
+        self.provider.execute(params).await
+    }
+    async fn resume_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignTx, params: &alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
+        self.provider.resume_execution(state, params).await
+    }
+    async fn resume_commit_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignCommitTx) -> Result<alkanes_cli_common::alkanes::types::ExecutionState> {
+        self.provider.resume_commit_execution(state).await
+    }
+    async fn resume_reveal_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignRevealTx) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
+        self.provider.resume_reveal_execution(state).await
+    }
+    async fn view(&self, contract_id: &str, function: &str, params: Option<&[u8]>) -> Result<JsonValue> {
+        self.provider.view(contract_id, function, params).await
+    }
+    async fn protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneWalletResponse> {
+        self.provider.protorunes_by_address(address, block_tag, protocol_tag).await
+    }
+    async fn protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse> {
+        self.provider.protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
+    }
+    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
+        self.provider.simulate(contract_id, context).await
+    }
+    async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::alkanes_pb::Trace> {
+        self.provider.trace(outpoint).await
+    }
+    async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::alkanes_pb::BlockResponse> {
+        <ConcreteProvider as AlkanesProvider>::get_block(&self.provider, height).await
+    }
+    async fn sequence(&self) -> Result<JsonValue> {
+        self.provider.sequence().await
+    }
+    async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
+        self.provider.spendables_by_address(address).await
+    }
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::alkanes_pb::Trace> {
+        self.provider.trace_block(height).await
+    }
+    async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
+        <ConcreteProvider as AlkanesProvider>::get_bytecode(&self.provider, alkane_id, block_tag).await
+    }
+    async fn inspect(&self, target: &str, config: alkanes_cli_common::alkanes::AlkanesInspectConfig) -> Result<alkanes_cli_common::alkanes::AlkanesInspectResult> {
+        self.provider.inspect(target, config).await
+    }
+    async fn get_balance(&self, address: Option<&str>) -> Result<Vec<alkanes_cli_common::alkanes::AlkaneBalance>> {
+        <ConcreteProvider as AlkanesProvider>::get_balance(&self.provider, address).await
+    }
 }
-
 #[async_trait]
-impl JsonRpcProvider for SystemDeezel {
+impl JsonRpcProvider for SystemAlkanesCli {
     async fn call(&self, url: &str, method: &str, params: alkanes_cli_common::JsonValue, id: u64) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.call(url, method, params, id).await
     }
 }
 
 #[async_trait]
-impl StorageProvider for SystemDeezel {
+impl StorageProvider for SystemAlkanesCli {
     async fn read(&self, key: &str) -> Result<Vec<u8>> {
         self.provider.read(key).await
     }
@@ -272,7 +320,7 @@ impl StorageProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl NetworkProvider for SystemDeezel {
+impl NetworkProvider for SystemAlkanesCli {
     async fn get(&self, url: &str) -> Result<Vec<u8>> {
         self.provider.get(url).await
     }
@@ -285,7 +333,7 @@ impl NetworkProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl CryptoProvider for SystemDeezel {
+impl CryptoProvider for SystemAlkanesCli {
     fn random_bytes(&self, len: usize) -> Result<Vec<u8>> {
         self.provider.random_bytes(len)
     }
@@ -307,7 +355,7 @@ impl CryptoProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl TimeProvider for SystemDeezel {
+impl TimeProvider for SystemAlkanesCli {
     fn now_secs(&self) -> u64 {
         self.provider.now_secs()
     }
@@ -319,7 +367,7 @@ impl TimeProvider for SystemDeezel {
     }
 }
 
-impl LogProvider for SystemDeezel {
+impl LogProvider for SystemAlkanesCli {
     fn debug(&self, message: &str) {
         self.provider.debug(message)
     }
@@ -335,7 +383,7 @@ impl LogProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl WalletProvider for SystemDeezel {
+impl WalletProvider for SystemAlkanesCli {
     async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
         self.provider.create_wallet(config, mnemonic, passphrase).await
     }
@@ -423,7 +471,7 @@ impl WalletProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl AddressResolver for SystemDeezel {
+impl AddressResolver for SystemAlkanesCli {
     async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
         self.provider.resolve_all_identifiers(input).await
     }
@@ -439,7 +487,7 @@ impl AddressResolver for SystemDeezel {
 }
 
 #[async_trait]
-impl BitcoinRpcProvider for SystemDeezel {
+impl BitcoinRpcProvider for SystemAlkanesCli {
     async fn get_block_count(&self) -> Result<u64> {
         self.provider.get_block_count().await
     }
@@ -507,7 +555,7 @@ impl BitcoinRpcProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl MetashrewRpcProvider for SystemDeezel {
+impl MetashrewRpcProvider for SystemAlkanesCli {
     async fn get_metashrew_height(&self) -> Result<u64> {
         self.provider.get_metashrew_height().await
     }
@@ -532,7 +580,7 @@ impl MetashrewRpcProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl MetashrewProvider for SystemDeezel {
+impl MetashrewProvider for SystemAlkanesCli {
     async fn get_height(&self) -> Result<u64> {
         self.provider.get_height().await
     }
@@ -545,7 +593,7 @@ impl MetashrewProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl EsploraProvider for SystemDeezel {
+impl EsploraProvider for SystemAlkanesCli {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
         self.provider.get_blocks_tip_hash().await
     }
@@ -639,7 +687,7 @@ impl EsploraProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl RunestoneProvider for SystemDeezel {
+impl RunestoneProvider for SystemAlkanesCli {
     async fn decode_runestone(&self, tx: &bitcoin::Transaction) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.decode_runestone(tx).await
     }
@@ -652,58 +700,8 @@ impl RunestoneProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl AlkanesProvider for SystemDeezel {
-    async fn execute(&mut self, params: alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::ExecutionState> {
-        self.provider.execute(params).await
-    }
-    async fn resume_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignTx, params: &alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
-        self.provider.resume_execution(state, params).await
-    }
-    async fn resume_commit_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignCommitTx) -> Result<alkanes_cli_common::alkanes::types::ExecutionState> {
-        self.provider.resume_commit_execution(state).await
-    }
-    async fn resume_reveal_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignRevealTx) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
-        self.provider.resume_reveal_execution(state).await
-    }
-    async fn protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneWalletResponse> {
-        self.provider.protorunes_by_address(address, block_tag, protocol_tag).await
-    }
-    async fn protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse> {
-        self.provider.protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
-    }
-
-
-    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::alkanes_pb::MessageContextParcel) -> Result<alkanes_cli_common::JsonValue> {
-        self.provider.simulate(contract_id, context).await
-    }
-    async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::alkanes_pb::Trace> {
-        self.provider.trace(outpoint).await
-    }
-    async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::alkanes_pb::BlockResponse> {
-        <ConcreteProvider as AlkanesProvider>::get_block(&self.provider, height).await
-    }
-    async fn sequence(&self) -> Result<alkanes_cli_common::JsonValue> {
-        self.provider.sequence().await
-    }
-    async fn spendables_by_address(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
-        self.provider.spendables_by_address(address).await
-    }
-    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::alkanes_pb::Trace> {
-        self.provider.trace_block(height).await
-    }
-    async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
-        <ConcreteProvider as AlkanesProvider>::get_bytecode(&self.provider, alkane_id, block_tag).await
-    }
-    async fn inspect(&self, target: &str, config: alkanes_cli_common::alkanes::AlkanesInspectConfig) -> Result<alkanes_cli_common::alkanes::AlkanesInspectResult> {
-        self.provider.inspect(target, config).await
-    }
-    async fn get_balance(&self, address: Option<&str>) -> Result<Vec<alkanes_cli_common::alkanes::AlkaneBalance>> {
-        <ConcreteProvider as AlkanesProvider>::get_balance(&self.provider, address).await
-    }
-}
-
 #[async_trait]
-impl MonitorProvider for SystemDeezel {
+impl MonitorProvider for SystemAlkanesCli {
     async fn monitor_blocks(&self, start: Option<u64>) -> Result<()> {
         self.provider.monitor_blocks(start).await
     }
@@ -713,7 +711,7 @@ impl MonitorProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl KeystoreProvider for SystemDeezel {
+impl KeystoreProvider for SystemAlkanesCli {
     async fn derive_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
         self.provider.derive_addresses(master_public_key, network_params, script_types, start_index, count).await
     }
@@ -735,7 +733,7 @@ impl KeystoreProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl OrdProvider for SystemDeezel {
+impl OrdProvider for SystemAlkanesCli {
     async fn get_inscription(&self, inscription_id: &str) -> Result<alkanes_cli_common::ord::Inscription> {
         self.provider.get_inscription(inscription_id).await
     }
@@ -784,13 +782,13 @@ impl OrdProvider for SystemDeezel {
 }
 
 #[async_trait]
-impl UtxoProvider for SystemDeezel {
+impl UtxoProvider for SystemAlkanesCli {
     async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>> {
         self.provider.get_utxos_by_spec(spec).await
     }
 }
 
-impl Clone for SystemDeezel {
+impl Clone for SystemAlkanesCli {
     fn clone(&self) -> Self {
         Self {
             provider: self.provider.clone(),
@@ -802,7 +800,7 @@ impl Clone for SystemDeezel {
 
 // Implement the individual system traits
 #[async_trait]
-impl SystemWallet for SystemDeezel {
+impl SystemWallet for SystemAlkanesCli {
    async fn execute_wallet_command(&self, command: WalletCommands) -> alkanes_cli_common::Result<()> {
         let mut provider = self.provider.clone(); // Clone to allow mutation for unlocking
 
@@ -813,11 +811,11 @@ if let alkanes_cli_common::provider::WalletState::Locked(_) = provider.get_walle
                     pass.clone()
                 } else {
                     rpassword::prompt_password("Enter passphrase to unlock keystore for signing: ")
-                        .map_err(|e| DeezelError::Wallet(format!("Failed to get passphrase: {e}")))?
+                        .map_err(|e| AlkanesError::Wallet(format!("Failed to get passphrase: {e}")))?
                 };
                 provider.unlock_wallet(&passphrase).await?;
             } else if let alkanes_cli_common::provider::WalletState::None = provider.get_wallet_state() {
-                 return Err(DeezelError::Wallet("No wallet found. Please create or specify a wallet file.".to_string()));
+                 return Err(AlkanesError::Wallet("No wallet found. Please create or specify a wallet file.".to_string()));
             }
         }
 
@@ -831,7 +829,7 @@ if let alkanes_cli_common::provider::WalletState::Locked(_) = provider.get_walle
                    let pass = rpassword::prompt_password("Enter passphrase: ")?;
                    let confirmation = rpassword::prompt_password("Confirm passphrase: ")?;
                    if pass != confirmation {
-                       return Err(DeezelError::Wallet("Passphrases do not match".to_string()));
+                       return Err(AlkanesError::Wallet("Passphrases do not match".to_string()));
                    }
                    pass
                };
@@ -1534,13 +1532,13 @@ alkanes_cli_common::network::NetworkParams::from_network_str(&self.args.rpc_conf
                Ok(())
            },
        };
-       res.map_err(|e| DeezelError::Wallet(e.to_string()))
+       res.map_err(|e| AlkanesError::Wallet(e.to_string()))
    }
 
     async fn execute_walletinfo_command(&self, raw: bool) -> alkanes_cli_common::Result<()> {
        let provider = &self.provider;
-       let address = WalletProvider::get_address(provider).await.map_err(|e| DeezelError::Wallet(e.to_string()))?;
-       let balance = WalletProvider::get_balance(provider, None).await.map_err(|e| DeezelError::Wallet(e.to_string()))?;
+       let address = WalletProvider::get_address(provider).await.map_err(|e| AlkanesError::Wallet(e.to_string()))?;
+       let balance = WalletProvider::get_balance(provider, None).await.map_err(|e| AlkanesError::Wallet(e.to_string()))?;
        let network = provider.get_network();
        
        if raw {
@@ -1596,7 +1594,7 @@ fn parse_outpoint(s: &str) -> anyhow::Result<(String, u32)> {
 }
 
 #[async_trait]
-impl SystemBitcoind for SystemDeezel {
+impl SystemBitcoind for SystemAlkanesCli {
    async fn execute_bitcoind_command(&self, command: BitcoindCommands) -> alkanes_cli_common::Result<()> {
        let provider = &self.provider;
        let res: anyhow::Result<()> = match command {
@@ -1722,12 +1720,13 @@ impl SystemBitcoind for SystemDeezel {
                 Ok(())
             },
        };
-       res.map_err(|e| DeezelError::Wallet(e.to_string()))
-   }
+res.map_err(|e| AlkanesError::Wallet(e.to_string()))
+}
 }
 
 #[async_trait]
-impl SystemMetashrew for SystemDeezel {
+#[async_trait]
+impl SystemMetashrew for SystemAlkanesCli {
    async fn execute_metashrew_command(&self, command: MetashrewCommands) -> alkanes_cli_common::Result<()> {
        let provider = &self.provider;
        let res: anyhow::Result<()> = match command {
@@ -1737,12 +1736,11 @@ impl SystemMetashrew for SystemDeezel {
                 Ok(())
             },
        };
-       res.map_err(|e| DeezelError::Wallet(e.to_string()))
+       res.map_err(|e| AlkanesError::Wallet(e.to_string()))
    }
 }
-
 #[async_trait]
-impl SystemAlkanes for SystemDeezel {
+impl SystemAlkanes for SystemAlkanesCli {
     async fn execute_alkanes_command(&self, command: AlkanesCommands) -> alkanes_cli_common::Result<()> {
         let mut provider = self.provider.clone();
 
@@ -1752,11 +1750,11 @@ impl SystemAlkanes for SystemDeezel {
                     pass.clone()
                 } else {
                     rpassword::prompt_password("Enter passphrase to unlock keystore for signing: ")
-                        .map_err(|e| DeezelError::Wallet(format!("Failed to get passphrase: {e}")))?
+                        .map_err(|e| AlkanesError::Wallet(format!("Failed to get passphrase: {e}")))?
                 };
                 provider.unlock_wallet(&passphrase).await?;
             } else if let alkanes_cli_common::provider::WalletState::None = provider.get_wallet_state() {
-                return Err(DeezelError::Wallet("No wallet found. Please create or specify a wallet file.".to_string()));
+                return Err(AlkanesError::Wallet("No wallet found. Please create or specify a wallet file.".to_string()));
             }
         }
 
@@ -2033,6 +2031,6 @@ impl SystemAlkanes for SystemDeezel {
             AlkanesCommands::SpendablesByAddress { .. } => todo!(),
             AlkanesCommands::TraceBlock { .. } => todo!(),
         };
-        res.map_err(|e| DeezelError::Wallet(e.to_string()))
+        res.map_err(|e| AlkanesError::Wallet(e.to_string()))
     }
 }

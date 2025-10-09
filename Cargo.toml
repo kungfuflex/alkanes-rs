@@ -42,6 +42,7 @@ prost-build = "0.13.5"
 tokio = { version = "1.0", features = ["rt", "macros", "sync", "time"] }
 reqwest = { version = "0.12.23", features = ["json"] }
 protobuf = { version = "3.7.2" }
+protobuf-codegen = { version = "3.7.2" }
 psbt-v2 = "0.1.1"
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
@@ -144,6 +145,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
 prost = { workspace = true }
+protobuf = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 web-sys = { workspace = true }
 js-sys = { workspace = true }
@@ -153,7 +155,6 @@ borsh = { version = "1.5.7", features = ["derive"] }
 sha2 = "0.10.9"
 
 [dev-dependencies]
-
 alkanes = { path = ".", features = [
     "genesis_alkane",
     "genesis_protorune",
@@ -170,3 +171,4 @@ anyhow = "1.0.90"
 prost-build = { workspace = true }
 flate2 = "1.0.34"
 hex = "0.4.3"
+

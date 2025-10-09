@@ -14,7 +14,6 @@ use crate::{
 };
 use std::path::PathBuf;
 use protobuf::Message;
-use prost::Message as ProstMessage;
 use crate::wallet;
 
 use serde_json::json;
