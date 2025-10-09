@@ -3,7 +3,7 @@
 //! This module provides utility functions and helpers specific to web environments,
 //! including WASM interop, browser feature detection, and common web operations.
 
-use alkanes_cli_common::{DeezelError, Result};
+use alkanes_cli_common::{AlkanesError, Result};
 use js_sys::{Array, Object, Uint8Array};
 use wasm_bindgen::prelude::*;
 use web_sys::{window, Document, Location, Navigator, Window};
@@ -28,14 +28,14 @@ impl WebUtils {
 
     /// Get the current window object
     pub fn get_window() -> Result<Window> {
-        window().ok_or_else(|| DeezelError::Network("No window object available".to_string()))
+        window().ok_or_else(|| AlkanesError::Network("No window object available".to_string()))
     }
 
     /// Get the document object
     pub fn get_document() -> Result<Document> {
         let window = Self::get_window()?;
         window.document()
-            .ok_or_else(|| DeezelError::Network("No document object available".to_string()))
+            .ok_or_else(|| AlkanesError::Network("No document object available".to_string()))
     }
 
     /// Get the navigator object
@@ -54,7 +54,7 @@ impl WebUtils {
     pub fn get_current_url() -> Result<String> {
         let location = Self::get_location()?;
         location.href()
-            .map_err(|e| DeezelError::Network(format!("Failed to get current URL: {e:?}")))
+            .map_err(|e| AlkanesError::Network(format!("Failed to get current URL: {e:?}")))
     }
 
     /// Get the user agent string
@@ -142,7 +142,7 @@ impl WebUtils {
     /// Set a value in a JavaScript object
     pub fn set_js_object_value(obj: &Object, key: &str, value: &JsValue) -> Result<()> {
         js_sys::Reflect::set(obj, &JsValue::from_str(key), value)
-            .map_err(|e| DeezelError::Serialization(format!("Failed to set object value: {e:?}")))?;
+            .map_err(|e| AlkanesError::Serialization(format!("Failed to set object value: {e:?}")))?;
         Ok(())
     }
 
@@ -159,7 +159,7 @@ impl WebUtils {
     pub fn get_origin() -> Result<String> {
         let location = Self::get_location()?;
         location.origin()
-            .map_err(|e| DeezelError::Network(format!("Failed to get origin: {e:?}")))
+            .map_err(|e| AlkanesError::Network(format!("Failed to get origin: {e:?}")))
     }
 
     /// Check if running in an iframe
@@ -227,8 +227,8 @@ impl BrowserCapabilities {
 pub mod error_utils {
     use super::*;
 
-    /// Convert a JavaScript error to a DeezelError
-    pub fn js_error_to_deezel_error(js_error: JsValue) -> DeezelError {
+    /// Convert a JavaScript error to a AlkanesError
+    pub fn js_error_to_deezel_error(js_error: JsValue) -> AlkanesError {
         let error_string = if js_error.is_string() {
             js_error.as_string().unwrap_or_else(|| "Unknown error".to_string())
         } else if let Ok(error_obj) = js_error.clone().dyn_into::<js_sys::Error>() {
@@ -237,11 +237,11 @@ pub mod error_utils {
             format!("JavaScript error: {js_error:?}")
         };
         
-        DeezelError::Network(error_string)
+        AlkanesError::Network(error_string)
     }
 
     /// Handle and log JavaScript errors
-    pub fn handle_js_error(js_error: JsValue, context: &str) -> DeezelError {
+    pub fn handle_js_error(js_error: JsValue, context: &str) -> AlkanesError {
         let error = js_error_to_deezel_error(js_error);
         crate::logging::console_log::error(&format!("Error in {context}: {error}"));
         error

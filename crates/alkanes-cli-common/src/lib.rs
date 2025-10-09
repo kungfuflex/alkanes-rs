@@ -123,7 +123,7 @@ pub mod prelude {
     pub use crate::{AlkanesError, Result};
     pub use crate::address::{DeezelAddress, NetworkConfig};
 pub use crate::rpc::{RpcClient};
-pub use crate::network::{RpcConfig, DeezelNetwork};
+pub use crate::network::{RpcConfig, AlkanesNetwork};
     pub use bitcoin::{Network, Transaction, Address, ScriptBuf};
     
     pub use crate::alkanes::protostone::Protostone;

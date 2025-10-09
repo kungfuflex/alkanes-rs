@@ -4,7 +4,7 @@
 // It is responsible for displaying BTC and other asset balances.
 
 use leptos::*;
-use deezel_common::provider::AllBalances;
+use alkanes_cli_common::provider::AllBalances;
 
 #[component]
 pub fn BalanceView(balances: Signal<Option<AllBalances>>) -> impl IntoView {

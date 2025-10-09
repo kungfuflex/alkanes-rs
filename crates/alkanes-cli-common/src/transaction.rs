@@ -7,7 +7,7 @@
 //! - PSBT (Partially Signed Bitcoin Transaction) support
 //! - Envelope and cellpack patterns for alkanes
 
-use crate::{Result, DeezelError};
+use crate::{Result, AlkanesError};
 use alloc::{string::{String, ToString}, vec::Vec, str::FromStr, format};
 use crate::traits::*;
 use bitcoin::{Transaction, TxOut, TxIn, OutPoint, ScriptBuf, Witness, Amount, Address};
@@ -15,11 +15,11 @@ use serde::{Deserialize, Serialize};
 
 
 /// Transaction constructor that works with any provider
-pub struct TransactionConstructor<P: DeezelProvider> {
+pub struct TransactionConstructor<P: AlkanesProvider> {
     provider: P,
 }
 
-impl<P: DeezelProvider> TransactionConstructor<P> {
+impl<P: AlkanesProvider> TransactionConstructor<P> {
     /// Create a new transaction constructor
     pub fn new(provider: P) -> Self {
         Self { provider }
@@ -95,7 +95,7 @@ impl<P: DeezelProvider> TransactionConstructor<P> {
         for utxo in &params.utxos {
             tx.input.push(TxIn {
                 previous_output: OutPoint {
-                    txid: utxo.txid.parse().map_err(|_| DeezelError::Parse("Invalid TXID".to_string()))?,
+                    txid: utxo.txid.parse().map_err(|_| AlkanesError::Parse("Invalid TXID".to_string()))?,
                     vout: utxo.vout,
                 },
                 script_sig: ScriptBuf::new(),
@@ -156,7 +156,7 @@ impl<P: DeezelProvider> TransactionConstructor<P> {
         for utxo in &params.utxos {
             tx.input.push(TxIn {
                 previous_output: OutPoint {
-                    txid: utxo.txid.parse().map_err(|_| DeezelError::Parse("Invalid TXID".to_string()))?,
+                    txid: utxo.txid.parse().map_err(|_| AlkanesError::Parse("Invalid TXID".to_string()))?,
                     vout: utxo.vout,
                 },
                 script_sig: ScriptBuf::new(),
@@ -246,7 +246,7 @@ impl<P: DeezelProvider> TransactionConstructor<P> {
         }
         
         if total_selected < total_needed {
-            return Err(DeezelError::Transaction("Insufficient funds".to_string()));
+            return Err(AlkanesError::Transaction("Insufficient funds".to_string()));
         }
         
         Ok(selected)
@@ -258,18 +258,18 @@ impl<P: DeezelProvider> TransactionConstructor<P> {
             // Parse change address to script
             let network = self.provider.get_network();
             let address = Address::from_str(change_address)
-                .map_err(|e| DeezelError::AddressResolution(e.to_string()))?
+                .map_err(|e| AlkanesError::AddressResolution(e.to_string()))?
                 .require_network(network)
-                .map_err(|e| DeezelError::AddressResolution(e.to_string()))?;
+                .map_err(|e| AlkanesError::AddressResolution(e.to_string()))?;
             Ok(address.script_pubkey())
         } else {
             // Use default wallet address
             let address_str = WalletProvider::get_address(&self.provider).await?;
             let network = self.provider.get_network();
             let address = Address::from_str(&address_str)
-                .map_err(|e| DeezelError::AddressResolution(e.to_string()))?
+                .map_err(|e| AlkanesError::AddressResolution(e.to_string()))?
                 .require_network(network)
-                .map_err(|e| DeezelError::AddressResolution(e.to_string()))?;
+                .map_err(|e| AlkanesError::AddressResolution(e.to_string()))?;
             Ok(address.script_pubkey())
         }
     }
@@ -280,10 +280,10 @@ impl<P: DeezelProvider> TransactionConstructor<P> {
         let signed_hex = self.provider.sign_transaction(tx_hex).await?;
         
         let signed_bytes = hex::decode(signed_hex)
-            .map_err(|e| DeezelError::Parse(format!("Invalid signed transaction hex: {e}")))?;
+            .map_err(|e| AlkanesError::Parse(format!("Invalid signed transaction hex: {e}")))?;
         
         bitcoin::consensus::encode::deserialize(&signed_bytes)
-            .map_err(|e| DeezelError::Transaction(format!("Failed to deserialize signed transaction: {e}")))
+            .map_err(|e| AlkanesError::Transaction(format!("Failed to deserialize signed transaction: {e}")))
     }
     
     /// Broadcast transaction
@@ -345,13 +345,13 @@ pub mod fee_validation {
         let max_fee = calculated_fee * 10; // Allow 10x above calculated
         
         if actual_fee < min_fee {
-            return Err(DeezelError::Transaction(format!(
+            return Err(AlkanesError::Transaction(format!(
                 "Fee too low: {actual_fee} sats (minimum: {min_fee} sats)"
             )));
         }
         
         if actual_fee > max_fee {
-            return Err(DeezelError::Transaction(format!(
+            return Err(AlkanesError::Transaction(format!(
                 "Fee too high: {actual_fee} sats (maximum: {max_fee} sats)"
             )));
         }

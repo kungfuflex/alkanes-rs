@@ -66,7 +66,7 @@ impl WalletProvider for WebProvider {
         match self.read(&wallet_key).await {
             Ok(data) => {
                 let wallet_data: JsonValue = serde_json::from_slice(&data)
-                    .map_err(|e| DeezelError::Wallet(format!("Failed to parse wallet data: {e}")))?;
+                    .map_err(|e| AlkanesError::Wallet(format!("Failed to parse wallet data: {e}")))?;
                 
                 let address = match config.network {
                     Network::Bitcoin => "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string(),
@@ -157,7 +157,7 @@ impl WalletProvider for WebProvider {
                 for utxo in utxo_array {
                     let txid_str = utxo["txid"].as_str().unwrap_or_default();
                     let vout = utxo["vout"].as_u64().unwrap_or_default() as u32;
-                    let txid = bitcoin::Txid::from_str(txid_str).map_err(|e| DeezelError::Transaction(e.to_string()))?;
+                    let txid = bitcoin::Txid::from_str(txid_str).map_err(|e| AlkanesError::Transaction(e.to_string()))?;
                     let outpoint = OutPoint::new(txid, vout);
 
                     let status = utxo.get("status");
@@ -280,7 +280,7 @@ impl WalletProvider for WebProvider {
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
         // Mock internal key
         let key = bitcoin::XOnlyPublicKey::from_slice(&[1; 32])
-            .map_err(|e| DeezelError::Wallet(format!("Failed to create internal key: {e}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to create internal key: {e}")))?;
         let fingerprint = bitcoin::bip32::Fingerprint::from_str("00000000").unwrap();
         let path = bitcoin::bip32::DerivationPath::from_str("m/86'/1'/0'").unwrap();
         Ok((key, (fingerprint, path)))
@@ -295,7 +295,7 @@ impl WalletProvider for WebProvider {
         use bitcoin::secp256k1::{Secp256k1, SecretKey};
         let secp = Secp256k1::new();
         let secret_key = SecretKey::from_slice(&[1; 32])
-            .map_err(|e| DeezelError::Wallet(format!("Failed to create secret key: {e}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to create secret key: {e}")))?;
         Ok(bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key))
     }
 
@@ -425,13 +425,13 @@ impl MetashrewRpcProvider for WebProvider {
     async fn get_protorunes_by_address(&self, address: &str, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneWalletResponse> {
         let params = serde_json::json!([address, block_tag, protocol_tag]);
         let result = self.call(self.sandshrew_rpc_url(), "protorunesbyaddress", params, 1).await?;
-        serde_json::from_value(result).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 
     async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<deezel_common::alkanes::protorunes::ProtoruneOutpointResponse> {
         let params = serde_json::json!([txid, vout, block_tag, protocol_tag]);
         let result = self.call(self.sandshrew_rpc_url(), "protorunesbyoutpoint", params, 1).await?;
-        serde_json::from_value(result).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 }
 

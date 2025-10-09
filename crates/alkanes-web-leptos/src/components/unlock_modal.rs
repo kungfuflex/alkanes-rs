@@ -8,7 +8,7 @@ use leptos::*;
 use wasm_bindgen_futures::spawn_local;
 use gloo_storage::{LocalStorage, Storage};
 use crate::state::AppState;
-use deezel_web::keystore::Keystore;
+use alkanes_web_sys::keystore::Keystore;
 use wasm_bindgen_futures::JsFuture;
 use bip39::{Mnemonic, Seed};
 

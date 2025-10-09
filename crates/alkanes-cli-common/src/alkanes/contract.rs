@@ -22,12 +22,12 @@ use crate::wallet::WalletManager;
 use super::types::*;
 
 /// Contract operations manager
-pub struct ContractManager<P: crate::traits::DeezelProvider> {
+pub struct ContractManager<P: crate::traits::AlkanesProvider> {
     rpc_client: Arc<RpcClient<P>>,
     _wallet_manager: Arc<WalletManager<P>>,
 }
 
-impl<P: crate::traits::DeezelProvider> ContractManager<P> {
+impl<P: crate::traits::AlkanesProvider> ContractManager<P> {
     /// Create a new contract manager
     pub fn new(rpc_client: Arc<RpcClient<P>>, wallet_manager: Arc<WalletManager<P>>) -> Self {
         Self {
@@ -51,7 +51,7 @@ impl<P: crate::traits::DeezelProvider> ContractManager<P> {
         #[cfg(target_arch = "wasm32")]
         let wasm_hex = {
             let _ = &params;
-            return Err(crate::DeezelError::Validation("File system operations not supported in WASM environment".to_string()));
+            return Err(crate::AlkanesError::Validation("File system operations not supported in WASM environment".to_string()));
         };
         
         // Create deployment transaction
@@ -96,7 +96,7 @@ impl<P: crate::traits::DeezelProvider> ContractManager<P> {
         
         // Validate that we have a target contract
         if params.target.block == 0 && params.target.tx == 0 {
-            return Err(crate::DeezelError::Validation("Invalid contract target".to_string()));
+            return Err(crate::AlkanesError::Validation("Invalid contract target".to_string()));
         }
         
         // Create execution transaction
@@ -173,7 +173,7 @@ pub fn parse_edicts(edicts_str: &str) -> Result<Vec<Edict>> {
     for edict_part in edicts_str.split(',') {
         let parts: Vec<&str> = edict_part.trim().split(':').collect();
         if parts.len() != 4 {
-            return Err(crate::DeezelError::Parse("Invalid edict format. Expected 'block:tx:amount:output'".to_string()));
+            return Err(crate::AlkanesError::Parse("Invalid edict format. Expected 'block:tx:amount:output'".to_string()));
         }
         
         let block = parts[0].parse::<u64>()

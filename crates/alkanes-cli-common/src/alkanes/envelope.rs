@@ -3,7 +3,7 @@
 // CRITICAL FIX: Updated to match alkanes-rs reference implementation exactly
 // Key differences: uses gzip compression, no content-type tags, proper BIN protocol structure
 
-use crate::DeezelError;
+use crate::AlkanesError;
 use alloc::format;
 use anyhow::Result;
 use bitcoin::{
@@ -48,16 +48,16 @@ impl AlkanesEnvelope {
     /// Compress payload using gzip compression (matching alkanes-rs reference)
     /// CRITICAL FIX: Added gzip compression like alkanes-rs reference
     #[cfg(feature = "std")]
-    fn compress_payload(&self) -> Result<Vec<u8>, DeezelError> {
+    fn compress_payload(&self) -> Result<Vec<u8>, AlkanesError> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(&self.payload)
-            .map_err(|e| DeezelError::Other(format!("Failed to write payload to gzip encoder: {e}")))?;
+            .map_err(|e| AlkanesError::Other(format!("Failed to write payload to gzip encoder: {e}")))?;
         encoder.finish()
-            .map_err(|e| DeezelError::Other(format!("Failed to finish gzip compression: {e}")))
+            .map_err(|e| AlkanesError::Other(format!("Failed to finish gzip compression: {e}")))
     }
 
     #[cfg(not(feature = "std"))]
-    fn compress_payload(&self) -> Result<Vec<u8>, DeezelError> {
+    fn compress_payload(&self) -> Result<Vec<u8>, AlkanesError> {
         // This is a temporary workaround for no_std builds.
         // A full no_std compression implementation will be added later.
         Ok(self.payload.clone())
@@ -97,7 +97,7 @@ impl AlkanesEnvelope {
     /// Create complete witness for taproot script-path spending with signature
     /// CRITICAL FIX: This creates the complete 3-element witness: [signature, script, control_block]
     /// This is what should be used for the final transaction
-    pub fn create_complete_witness(&self, signature: &[u8], control_block: ControlBlock) -> Result<Witness, DeezelError> {
+    pub fn create_complete_witness(&self, signature: &[u8], control_block: ControlBlock) -> Result<Witness, AlkanesError> {
         let reveal_script = self.build_reveal_script();
         
         let mut witness = Witness::new();
@@ -118,13 +118,13 @@ impl AlkanesEnvelope {
         
         // Verify the witness was created correctly - expecting 3 items for complete P2TR
         if witness.len() != 3 {
-            return Err(DeezelError::Other(format!("Invalid complete witness length: expected 3 items (signature + script + control_block), got {}", witness.len())));
+            return Err(AlkanesError::Other(format!("Invalid complete witness length: expected 3 items (signature + script + control_block), got {}", witness.len())));
         }
         
         // Verify all elements are non-empty
         for (i, item) in witness.iter().enumerate() {
             if item.is_empty() {
-                return Err(DeezelError::Other(format!("Witness item {i} is empty")));
+                return Err(AlkanesError::Other(format!("Witness item {i} is empty")));
             }
         }
         

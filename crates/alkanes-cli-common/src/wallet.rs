@@ -1,4 +1,4 @@
-use crate::{Result, DeezelError};
+use crate::{Result, AlkanesError};
 use alloc::{string::ToString, format};
 use crate::traits::*;
 use crate::network::NetworkParams;
@@ -76,12 +76,12 @@ pub struct WalletConfig {
 }
 
 /// Wallet manager that works with any provider
-pub struct Wallet<P: DeezelProvider> {
+pub struct Wallet<P: AlkanesProvider> {
     provider: P,
     _config: WalletConfig,
 }
 
-impl<P: DeezelProvider> Wallet<P> {
+impl<P: AlkanesProvider> Wallet<P> {
     /// Create a new wallet manager
     pub fn new(provider: P, config: WalletConfig) -> Self {
         Self { provider, _config: config }
@@ -505,7 +505,7 @@ impl AddressType {
 }
 
 impl core::str::FromStr for AddressType {
-    type Err = DeezelError;
+    type Err = AlkanesError;
 
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
@@ -514,7 +514,7 @@ impl core::str::FromStr for AddressType {
             "p2wpkh" => Ok(AddressType::P2WPKH),
             "p2wsh" => Ok(AddressType::P2WSH),
             "p2tr" => Ok(AddressType::P2TR),
-            _ => Err(DeezelError::Parse(format!("Unknown address type: {s}"))),
+            _ => Err(AlkanesError::Parse(format!("Unknown address type: {s}"))),
         }
     }
 }
@@ -545,19 +545,19 @@ pub mod derivation {
     pub fn parse_derivation_path(path: &str) -> Result<(u32, u32, u32, u32, u32)> {
         let parts: Vec<&str> = path.split('/').collect();
         if parts.len() != 6 || parts[0] != "m" {
-            return Err(DeezelError::Parse("Invalid derivation path format".to_string()));
+            return Err(AlkanesError::Parse("Invalid derivation path format".to_string()));
         }
         
         let purpose = parts[1].trim_end_matches('\'').parse::<u32>()
-            .map_err(|_| DeezelError::Parse("Invalid purpose in derivation path".to_string()))?;
+            .map_err(|_| AlkanesError::Parse("Invalid purpose in derivation path".to_string()))?;
         let coin_type = parts[2].trim_end_matches('\'').parse::<u32>()
-            .map_err(|_| DeezelError::Parse("Invalid coin type in derivation path".to_string()))?;
+            .map_err(|_| AlkanesError::Parse("Invalid coin type in derivation path".to_string()))?;
         let account = parts[3].trim_end_matches('\'').parse::<u32>()
-            .map_err(|_| DeezelError::Parse("Invalid account in derivation path".to_string()))?;
+            .map_err(|_| AlkanesError::Parse("Invalid account in derivation path".to_string()))?;
         let change = parts[4].parse::<u32>()
-            .map_err(|_| DeezelError::Parse("Invalid change in derivation path".to_string()))?;
+            .map_err(|_| AlkanesError::Parse("Invalid change in derivation path".to_string()))?;
         let index = parts[5].parse::<u32>()
-            .map_err(|_| DeezelError::Parse("Invalid index in derivation path".to_string()))?;
+            .map_err(|_| AlkanesError::Parse("Invalid index in derivation path".to_string()))?;
         
         Ok((purpose, coin_type, account, change, index))
     }

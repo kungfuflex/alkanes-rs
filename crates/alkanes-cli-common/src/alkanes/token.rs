@@ -22,12 +22,12 @@ use crate::wallet::WalletManager;
 use super::types::*;
 
 /// Token operations manager
-pub struct TokenManager<P: crate::traits::DeezelProvider> {
+pub struct TokenManager<P: crate::traits::AlkanesProvider> {
     rpc_client: Arc<RpcClient<P>>,
     _wallet_manager: Arc<WalletManager<P>>,
 }
 
-impl<P: crate::traits::DeezelProvider> TokenManager<P> {
+impl<P: crate::traits::AlkanesProvider> TokenManager<P> {
     /// Create a new token manager
     pub fn new(rpc_client: Arc<RpcClient<P>>, wallet_manager: Arc<WalletManager<P>>) -> Self {
         Self {
@@ -101,12 +101,12 @@ impl<P: crate::traits::DeezelProvider> TokenManager<P> {
         
         // Validate recipient address
         if params.to.is_empty() {
-            return Err(crate::DeezelError::Validation("Recipient address cannot be empty".to_string()));
+            return Err(crate::AlkanesError::Validation("Recipient address cannot be empty".to_string()));
         }
         
         // Validate amount
         if params.amount == 0 {
-            return Err(crate::DeezelError::Validation("Amount must be greater than zero".to_string()));
+            return Err(crate::AlkanesError::Validation("Amount must be greater than zero".to_string()));
         }
         
         // Check token balance first
@@ -114,7 +114,7 @@ impl<P: crate::traits::DeezelProvider> TokenManager<P> {
         let balance = self.get_token_balance(&params.token, from_address).await?;
         
         if balance < params.amount {
-            return Err(crate::DeezelError::Validation(
+            return Err(crate::AlkanesError::Validation(
                 format!("Insufficient balance: {} < {}", balance, params.amount)
             ));
         }
@@ -223,7 +223,7 @@ pub fn parse_token_amounts(tokens_str: &str) -> Result<Vec<TokenAmount>> {
         
         let parts: Vec<&str> = trimmed.split(':').collect();
         if parts.len() != 3 {
-            return Err(crate::DeezelError::Parse("Invalid token amount format. Expected 'block:tx:amount'".to_string()));
+            return Err(crate::AlkanesError::Parse("Invalid token amount format. Expected 'block:tx:amount'".to_string()));
         }
         
         let block = parts[0].parse::<u64>()

@@ -47,7 +47,7 @@ pub struct PbkdfParams {
     pub algorithm: Option<String>,
 }
 
-use crate::{DeezelError, Result};
+use crate::{AlkanesError, Result};
 use bip39::{Mnemonic, MnemonicType, Seed};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
@@ -114,9 +114,9 @@ impl Keystore {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_file(path: &Path) -> Result<Self> {
         let data = std::fs::read_to_string(path)
-            .map_err(|e| DeezelError::Wallet(format!("Failed to read keystore file: {e}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to read keystore file: {e}")))?;
         serde_json::from_str(&data)
-            .map_err(|e| DeezelError::Wallet(format!("Failed to parse keystore: {e}")))
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to parse keystore: {e}")))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -132,7 +132,7 @@ impl Keystore {
     pub fn decrypt_mnemonic(&self, passphrase: &str) -> Result<String> {
         // 1. Dearmor the encrypted mnemonic
         let (_, _, encrypted_bytes) = alkanes_cli_asc::armor::reader::decode(self.encrypted_mnemonic.as_bytes())
-            .map_err(|e| DeezelError::Crypto(format!("Failed to dearmor mnemonic: {e}")))?;
+            .map_err(|e| AlkanesError::Crypto(format!("Failed to dearmor mnemonic: {e}")))?;
 
         // 2. Decode salt and nonce from hex
         let salt = hex::decode(&self.pbkdf2_params.salt)?;
@@ -145,11 +145,11 @@ impl Keystore {
         let decrypted_bytes = crate::crypto::decrypt_sync(&encrypted_bytes, passphrase, &salt, &nonce)?;
 
         let mnemonic_str = String::from_utf8(decrypted_bytes)
-            .map_err(|e| DeezelError::Wallet(format!("Failed to convert decrypted data to string: {e}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to convert decrypted data to string: {e}")))?;
 
         // 4. Validate that it's a valid mnemonic before returning
         Mnemonic::from_phrase(&mnemonic_str, bip39::Language::English)
-            .map_err(|e| DeezelError::Wallet(format!("Decrypted data is not a valid mnemonic: {e}")))?;
+            .map_err(|e| AlkanesError::Wallet(format!("Decrypted data is not a valid mnemonic: {e}")))?;
 
         Ok(mnemonic_str)
     }
@@ -202,13 +202,13 @@ use core::str::FromStr;
 /// Derives a Bitcoin address from a mnemonic and a derivation path.
 pub fn derive_address(mnemonic_str: &str, path: &DerivationPath, network: Network) -> Result<Address> {
     let mnemonic = Mnemonic::from_phrase(mnemonic_str, bip39::Language::English)
-        .map_err(|e| DeezelError::Wallet(format!("Invalid mnemonic: {e}")))?;
+        .map_err(|e| AlkanesError::Wallet(format!("Invalid mnemonic: {e}")))?;
     let seed = Seed::new(&mnemonic, "");
     let secp = Secp256k1::<All>::new();
     let root = Xpriv::new_master(network, seed.as_bytes())
-        .map_err(|e| DeezelError::Wallet(format!("Failed to create master key: {e}")))?;
+        .map_err(|e| AlkanesError::Wallet(format!("Failed to create master key: {e}")))?;
     let derived_xpriv = root.derive_priv(&secp, path)
-        .map_err(|e| DeezelError::Wallet(format!("Failed to derive private key: {e}")))?;
+        .map_err(|e| AlkanesError::Wallet(format!("Failed to derive private key: {e}")))?;
     let keypair = derived_xpriv.to_keypair(&secp);
     let (internal_key, _parity) = keypair.public_key().x_only_public_key();
     
@@ -228,10 +228,10 @@ pub fn derive_address_from_public_key(
 
     let secp = Secp256k1::<All>::new();
     let root = Xpub::from_str(master_public_key)
-        .map_err(|e| DeezelError::Wallet(format!("Invalid master public key: {e}")))?;
+        .map_err(|e| AlkanesError::Wallet(format!("Invalid master public key: {e}")))?;
 
     let derived_xpub = root.derive_pub(&secp, path)
-        .map_err(|e| DeezelError::Wallet(format!("Failed to derive public key: {e}. Note: Hardened derivation from a public key is not possible.")))?;
+        .map_err(|e| AlkanesError::Wallet(format!("Failed to derive public key: {e}. Note: Hardened derivation from a public key is not possible.")))?;
     
     let public_key = derived_xpub.public_key;
     let pk = bitcoin::PublicKey::new(public_key);
@@ -244,11 +244,11 @@ pub fn derive_address_from_public_key(
         "p2wpkh" => Payload::p2wpkh(&pk)?,
         "p2sh-p2wpkh" => Payload::p2shwpkh(&pk)?,
         "p2pkh" => Payload::p2pkh(&pk),
-        _ => return Err(DeezelError::InvalidParameters(format!("Unsupported address type: {}", address_type))),
+        _ => return Err(AlkanesError::InvalidParameters(format!("Unsupported address type: {}", address_type))),
     };
 
     let hrp = Hrp::parse(&network_params.bech32_prefix)
-        .map_err(|e| DeezelError::InvalidParameters(format!("Invalid bech32 HRP: {}", e)))?;
+        .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid bech32 HRP: {}", e)))?;
 
     let address = AddressEncoding {
         payload: &payload,

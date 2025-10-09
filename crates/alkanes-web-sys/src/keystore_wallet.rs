@@ -10,9 +10,12 @@ use bitcoin::{
     bip32::{DerivationPath, Xpriv},
     Address,
     secp256k1::Secp256k1,
+    key::CompressedPublicKey,
 };
+use core::convert::TryInto;
 use core::str::FromStr;
-use crate::wallet_provider::{WalletBackend, WalletInfo, WalletAccount, WalletNetworkInfo, PsbtSigningOptions};
+use crate::wallet_provider::{WalletBackend, WalletInfo, WalletAccount, WalletNetworkInfo, PsbtSigningOptions, WalletFuture};
+use alkanes_cli_common::provider::{EnrichedUtxo, AllBalances};
 use crate::keystore::Keystore;
 use wasm_bindgen_futures::JsFuture;
 
@@ -33,86 +36,126 @@ impl WalletBackend for KeystoreWallet {
     fn get_info(&self) -> &WalletInfo {
         &self.info
     }
-
-    async fn is_available(&self) -> bool {
-        // The keystore wallet is always "available" if it has been instantiated.
-        true
-    }
-
-    async fn connect(&self) -> Result<WalletAccount> {
-        // "Connecting" to a keystore wallet means decrypting it to get the address.
-        let promise = self.keystore.decrypt_mnemonic(self.password.as_deref().unwrap_or(""));
-        let mnemonic_val = JsFuture::from(promise).await.map_err(|e| DeezelError::Wallet(format!("Failed to decrypt mnemonic: {:?}", e)))?;
-        let mnemonic = mnemonic_val.as_string().ok_or_else(|| DeezelError::Wallet("Failed to get mnemonic string".to_string()))?;
-        let mnemonic = Mnemonic::from_phrase(&mnemonic, bip39::Language::English).map_err(|e| DeezelError::Wallet(e.to_string()))?;
-        let seed = Seed::new(&mnemonic, self.password.as_deref().unwrap_or(""));
-        let secp = Secp256k1::new();
-        let master_key = Xpriv::new_master(Network::Regtest, seed.as_bytes()).map_err(|e| DeezelError::Wallet(e.to_string()))?;
-        let path = DerivationPath::from_str("m/84'/1'/0'/0/0").map_err(|e| DeezelError::Wallet(e.to_string()))?;
-        let child_key = master_key.derive_priv(&secp, &path).map_err(|e| DeezelError::Wallet(e.to_string()))?;
-        let public_key = child_key.private_key.public_key(&secp);
-        let compressed_public_key = bitcoin::key::CompressedPublicKey(public_key);
-        let address = Address::p2wpkh(&compressed_public_key, Network::Regtest);
-
-        Ok(WalletAccount {
-            address: address.to_string(),
-            public_key: Some(public_key.to_string()),
-            compressed_public_key: Some(public_key.to_string()),
-            address_type: "p2wpkh".to_string(),
+    fn is_available<'a>(&'a self) -> WalletFuture<'a, bool> {
+        Box::pin(async move {
+            // The keystore wallet is always "available" if it has been instantiated.
+            Ok(true)
         })
     }
 
-    async fn disconnect(&self) -> Result<()> {
-        // No-op for keystore wallet
-        Ok(())
-    }
+    fn connect<'a>(&'a self) -> WalletFuture<'a, WalletAccount> {
+        Box::pin(async move {
+            // "Connecting" to a keystore wallet means decrypting it to get the address.
+            let promise = self.keystore.decrypt_mnemonic(self.password.as_deref().unwrap_or(""));
+            let mnemonic_val = JsFuture::from(promise).await.map_err(|e| AlkanesError::Wallet(format!("Failed to decrypt mnemonic: {:?}", e)))?;
+            let mnemonic = mnemonic_val.as_string().ok_or_else(|| AlkanesError::Wallet("Failed to get mnemonic string".to_string()))?;
+            let mnemonic = Mnemonic::from_phrase(&mnemonic, bip39::Language::English).map_err(|e| AlkanesError::Wallet(e.to_string()))?;
+            let seed = Seed::new(&mnemonic, self.password.as_deref().unwrap_or(""));
+            let secp = Secp256k1::new();
+            let master_key = Xpriv::new_master(Network::Regtest, seed.as_bytes()).map_err(|e| AlkanesError::Wallet(e.to_string()))?;
+            let path = DerivationPath::from_str("m/84'/1'/0'/0/0").map_err(|e| AlkanesError::Wallet(e.to_string()))?;
+            let child_key = master_key.derive_priv(&secp, &path).map_err(|e| AlkanesError::Wallet(e.to_string()))?;
+            let public_key = child_key.private_key.public_key(&secp);
+            let public_key_obj = bitcoin::PublicKey::new(public_key);
+            let compressed_pk: CompressedPublicKey = public_key_obj.try_into().map_err(|_| AlkanesError::Wallet("Failed to create compressed public key".to_string()))?;
+            let address = Address::p2wpkh(&compressed_pk, Network::Regtest);
 
-    async fn get_accounts(&self) -> Result<Vec<WalletAccount>> {
-        let account = self.connect().await?;
-        Ok(vec![account])
-    }
-
-    async fn get_network(&self) -> Result<WalletNetworkInfo> {
-        Ok(WalletNetworkInfo {
-            network: "regtest".to_string(),
-            chain_id: None,
+            Ok(WalletAccount {
+                address: address.to_string(),
+                public_key: Some(public_key_obj.to_string()),
+                compressed_public_key: Some(hex::encode(public_key_obj.to_bytes())),
+                address_type: "p2wpkh".to_string(),
+            })
         })
     }
 
-    async fn switch_network(&self, _network: &str) -> Result<()> {
-        // Not supported for keystore wallet
-        Err(DeezelError::NotImplemented("Switching networks is not supported for keystore wallets.".to_string()))
+    fn disconnect<'a>(&'a self) -> WalletFuture<'a, ()> {
+        Box::pin(async move {
+            // No-op for keystore wallet
+            Ok(())
+        })
     }
 
-    async fn sign_message(&self, _message: &str, _address: &str) -> Result<String> {
-        Err(DeezelError::NotImplemented("sign_message is not yet implemented for keystore wallets.".to_string()))
+    fn get_accounts<'a>(&'a self) -> WalletFuture<'a, Vec<WalletAccount>> {
+        Box::pin(async move {
+            let account = self.connect().await?;
+            Ok(vec![account])
+        })
     }
 
-    async fn sign_psbt(&self, _psbt_hex: &str, _options: Option<PsbtSigningOptions>) -> Result<String> {
-        Err(DeezelError::NotImplemented("sign_psbt is not yet implemented for keystore wallets.".to_string()))
+    fn get_network<'a>(&'a self) -> WalletFuture<'a, WalletNetworkInfo> {
+        Box::pin(async move {
+            Ok(WalletNetworkInfo {
+                network: "regtest".to_string(),
+                chain_id: None,
+            })
+        })
     }
 
-    async fn sign_psbts(&self, _psbt_hexs: Vec<String>, _options: Option<PsbtSigningOptions>) -> Result<Vec<String>> {
-        Err(DeezelError::NotImplemented("sign_psbts is not yet implemented for keystore wallets.".to_string()))
+    fn switch_network<'a>(&'a self, _network: &'a str) -> WalletFuture<'a, ()> {
+        Box::pin(async move {
+            // Not supported for keystore wallet
+            Err(AlkanesError::NotImplemented("Switching networks is not supported for keystore wallets.".to_string()))
+        })
     }
 
-    async fn push_tx(&self, _tx_hex: &str) -> Result<String> {
-        Err(DeezelError::NotImplemented("push_tx is not supported for keystore wallets.".to_string()))
+    fn sign_message<'a>(&'a self, _message: &'a str, _address: &'a str) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            Err(AlkanesError::NotImplemented("sign_message is not yet implemented for keystore wallets.".to_string()))
+        })
     }
 
-    async fn push_psbt(&self, _psbt_hex: &str) -> Result<String> {
-        Err(DeezelError::NotImplemented("push_psbt is not supported for keystore wallets.".to_string()))
+    fn sign_psbt<'a>(&'a self, _psbt_hex: &'a str, _options: Option<PsbtSigningOptions>) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            Err(AlkanesError::NotImplemented("sign_psbt is not yet implemented for keystore wallets.".to_string()))
+        })
     }
 
-    async fn get_public_key(&self) -> Result<String> {
-        Err(DeezelError::NotImplemented("get_public_key is not yet implemented for keystore wallets.".to_string()))
+    fn sign_psbts<'a>(&'a self, _psbt_hexs: Vec<String>, _options: Option<PsbtSigningOptions>) -> WalletFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            Err(AlkanesError::NotImplemented("sign_psbts is not yet implemented for keystore wallets.".to_string()))
+        })
     }
 
-    async fn get_balance(&self) -> Result<Option<u64>> {
-        Ok(None)
+    fn push_tx<'a>(&'a self, _tx_hex: &'a str) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            Err(AlkanesError::NotImplemented("push_tx is not supported for keystore wallets.".to_string()))
+        })
     }
 
-    async fn get_inscriptions(&self, _cursor: Option<u32>, _size: Option<u32>) -> Result<serde_json::Value> {
-        Err(DeezelError::NotImplemented("get_inscriptions is not supported for keystore wallets.".to_string()))
+    fn push_psbt<'a>(&'a self, _psbt_hex: &'a str) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            Err(AlkanesError::NotImplemented("push_psbt is not supported for keystore wallets.".to_string()))
+        })
+    }
+
+    fn get_public_key<'a>(&'a self) -> WalletFuture<'a, String> {
+        Box::pin(async move {
+            Err(AlkanesError::NotImplemented("get_public_key is not yet implemented for keystore wallets.".to_string()))
+        })
+    }
+
+    fn get_balance<'a>(&'a self) -> WalletFuture<'a, Option<u64>> {
+        Box::pin(async move {
+            Ok(None)
+        })
+    }
+
+    fn get_inscriptions<'a>(&'a self, _cursor: Option<u32>, _size: Option<u32>) -> WalletFuture<'a, serde_json::Value> {
+        Box::pin(async move {
+            Err(AlkanesError::NotImplemented("get_inscriptions is not supported for keystore wallets.".to_string()))
+        })
+    }
+
+    fn get_enriched_utxos<'a>(&'a self, _addresses: Option<Vec<String>>) -> WalletFuture<'a, Vec<EnrichedUtxo>> {
+        Box::pin(async move {
+            Err(AlkanesError::NotImplemented("get_enriched_utxos is not supported for keystore wallets.".to_string()))
+        })
+    }
+
+    fn get_all_balances<'a>(&'a self, _addresses: Option<Vec<String>>) -> WalletFuture<'a, AllBalances> {
+        Box::pin(async move {
+            Err(AlkanesError::NotImplemented("get_all_balances is not supported for keystore wallets.".to_string()))
+        })
     }
 }

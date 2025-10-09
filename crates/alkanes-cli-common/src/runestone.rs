@@ -7,7 +7,7 @@
 //! - Human-readable and JSON output formatting
 //! - Enhanced formatting with emoji and colors
 
-use crate::{Result, DeezelError};
+use crate::{Result, AlkanesError};
 use crate::traits::*;
 use bitcoin::{Network, Transaction};
 use serde::{Deserialize, Serialize, Serializer, Deserializer};
@@ -21,11 +21,11 @@ use alloc::collections::BTreeMap as HashMap;
 use alloc::{string::{String, ToString}, vec, vec::Vec, format};
 
 /// Runestone manager that works with any provider
-pub struct RunestoneManager<P: DeezelProvider> {
+pub struct RunestoneManager<P: AlkanesProvider> {
     provider: P,
 }
 
-impl<P: DeezelProvider> RunestoneManager<P> {
+impl<P: AlkanesProvider> RunestoneManager<P> {
     /// Create a new runestone manager
     pub fn new(provider: P) -> Self {
         Self { provider }
@@ -116,9 +116,9 @@ impl<P: DeezelProvider> RunestoneManager<P> {
     pub async fn from_transaction_hex(&self, tx_hex: String) -> Result<Option<RunestoneInfo>> {
         // Parse transaction from hex
         let tx_bytes = hex::decode(&tx_hex)
-            .map_err(|e| DeezelError::Parse(format!("Invalid hex: {e}")))?;
+            .map_err(|e| AlkanesError::Parse(format!("Invalid hex: {e}")))?;
         let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes)
-            .map_err(|e| DeezelError::Parse(format!("Invalid transaction: {e}")))?;
+            .map_err(|e| AlkanesError::Parse(format!("Invalid transaction: {e}")))?;
         
         // Use decode_runestone trait method
         let _result = self.provider.decode_runestone(&tx).await?;
@@ -547,7 +547,7 @@ pub mod utils {
         if name.chars().all(|c| c.is_ascii_uppercase() || c == '.') {
             Ok(name.to_string())
         } else {
-            Err(DeezelError::Parse(format!("Invalid rune name: {name}")))
+            Err(AlkanesError::Parse(format!("Invalid rune name: {name}")))
         }
     }
     
@@ -575,26 +575,26 @@ pub mod utils {
     pub fn parse_rune_amount(amount_str: &str, divisibility: u8) -> Result<u128> {
         if divisibility == 0 {
             return amount_str.parse::<u128>()
-                .map_err(|_| DeezelError::Parse(format!("Invalid amount: {amount_str}")));
+                .map_err(|_| AlkanesError::Parse(format!("Invalid amount: {amount_str}")));
         }
         
         let parts: Vec<&str> = amount_str.split('.').collect();
         if parts.len() > 2 {
-            return Err(DeezelError::Parse(format!("Invalid amount format: {amount_str}")));
+            return Err(AlkanesError::Parse(format!("Invalid amount format: {amount_str}")));
         }
         
         let whole: u128 = parts[0].parse()
-            .map_err(|_| DeezelError::Parse(format!("Invalid whole part: {}", parts[0])))?;
+            .map_err(|_| AlkanesError::Parse(format!("Invalid whole part: {}", parts[0])))?;
         
         let fractional = if parts.len() == 2 {
             let frac_str = parts[1];
             if frac_str.len() > divisibility as usize {
-                return Err(DeezelError::Parse(format!("Too many decimal places: {frac_str}")));
+                return Err(AlkanesError::Parse(format!("Too many decimal places: {frac_str}")));
             }
             
             let padded = format!("{:0<width$}", frac_str, width = divisibility as usize);
             padded.parse::<u128>()
-                .map_err(|_| DeezelError::Parse(format!("Invalid fractional part: {frac_str}")))?
+                .map_err(|_| AlkanesError::Parse(format!("Invalid fractional part: {frac_str}")))?
         } else {
             0
         };
@@ -606,7 +606,7 @@ pub mod utils {
     /// Validate edict
     pub fn validate_edict(edict: &Edict) -> Result<()> {
         if edict.amount == 0 {
-            return Err(DeezelError::Validation("Edict amount cannot be zero".to_string()));
+            return Err(AlkanesError::Validation("Edict amount cannot be zero".to_string()));
         }
         Ok(())
     }
@@ -619,7 +619,7 @@ pub mod utils {
         
         if let Some(divisibility) = etching.divisibility {
             if divisibility > 38 {
-                return Err(DeezelError::Validation("Divisibility cannot exceed 38".to_string()));
+                return Err(AlkanesError::Validation("Divisibility cannot exceed 38".to_string()));
             }
         }
         

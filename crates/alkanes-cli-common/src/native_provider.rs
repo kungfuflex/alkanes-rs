@@ -1,7 +1,7 @@
 
 use crate::traits::*;
 use crate::{
-    DeezelError, Result,
+    AlkanesError, Result,
 };
 
 use log;
@@ -57,14 +57,14 @@ impl JsonRpcProvider for NativeProvider {
         let request = RpcRequest::new(method, params, id);
 
         let mut parsed_url = Url::parse(url)
-            .map_err(|e| DeezelError::InvalidParameters(format!("Invalid RPC URL in call: {e}")))?;
+            .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid RPC URL in call: {e}")))?;
 
         let username = parsed_url.username().to_string();
         let password = parsed_url.password().map(|p| p.to_string());
 
         // Remove user/pass from the URL before sending
-        parsed_url.set_username("").map_err(|_| DeezelError::InvalidParameters("Failed to strip username".into()))?;
-        parsed_url.set_password(None).map_err(|_| DeezelError::InvalidParameters("Failed to strip password".into()))?;
+        parsed_url.set_username("").map_err(|_| AlkanesError::InvalidParameters("Failed to strip username".into()))?;
+        parsed_url.set_password(None).map_err(|_| AlkanesError::InvalidParameters("Failed to strip password".into()))?;
 
         let mut request_builder = self.http_client.post(parsed_url);
 
@@ -77,13 +77,13 @@ impl JsonRpcProvider for NativeProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| DeezelError::Network(e.to_string()))?;
-        let response_text = response.text().await.map_err(|e| DeezelError::Network(e.to_string()))?;
+            .map_err(|e| AlkanesError::Network(e.to_string()))?;
+        let response_text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
         
         log::info!("JsonRpcProvider::call <- Raw RPC response: {response_text}");
         
         if response_text.starts_with("Json deserialize error") {
-            return Err(DeezelError::RpcError(format!("Server-side JSON deserialization error: {}", response_text)));
+            return Err(AlkanesError::RpcError(format!("Server-side JSON deserialization error: {}", response_text)));
         }
 
         // First, try to parse as a standard RpcResponse
@@ -94,7 +94,7 @@ impl JsonRpcProvider for NativeProvider {
                 if !error_obj.is_null() {
                     let code = error_obj.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
                     let message = error_obj.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown RPC error");
-                    return Err(DeezelError::RpcError(format!("Code {}: {}", code, message)));
+                    return Err(AlkanesError::RpcError(format!("Code {}: {}", code, message)));
                 }
             }
 
@@ -128,6 +128,6 @@ impl JsonRpcProvider for NativeProvider {
         }
 
         // If all attempts fail, return a generic error
-        Err(DeezelError::Network(format!("Failed to decode RPC response: {response_text}")))
+        Err(AlkanesError::Network(format!("Failed to decode RPC response: {response_text}")))
     }
 }

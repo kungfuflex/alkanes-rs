@@ -5,16 +5,16 @@
 // from slope-frontend to be a reusable component in deezel-leptos.
 
 use leptos::*;
-use deezel_common::traits::DeezelProvider;
-use deezel_common::traits::{FeeRates};
-use deezel_common::provider::{AllBalances, EnrichedUtxo};
-use deezel_web::keystore::Keystore;
+use alkanes_cli_common::AlkanesProvider;
+use alkanes_cli_common::{FeeRates};
+use alkanes_cli_common::provider::{AllBalances, EnrichedUtxo};
+use alkanes_web_sys::keystore::Keystore;
 use gloo_storage::{LocalStorage, Storage};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-use deezel_common::traits::TransactionInfo;
+use alkanes_cli_common::TransactionInfo;
 
 // The main application state, provided as a context to all children.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,7 +34,7 @@ pub struct ConnectedAddressInfo {
 #[derive(Clone)]
 pub struct AppState {
     pub connected_address: RwSignal<Option<ConnectedAddressInfo>>,
-    pub provider: RwSignal<Option<Rc<RefCell<dyn DeezelProvider>>>>,
+    pub provider: RwSignal<Option<Rc<RefCell<dyn AlkanesProvider>>>>,
     pub keystore: RwSignal<Option<Keystore>>,
     pub is_wallet_locked: ReadSignal<bool>,
     pub set_is_wallet_locked: WriteSignal<bool>,

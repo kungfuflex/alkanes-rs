@@ -1,7 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 //! Alkanes Common Library
-// ... (rest of the file content from deezel-common/src/lib.rs, with DeezelError -> AlkanesError)
+// ... (rest of the file content from deezel-common/src/lib.rs, with AlkanesError -> AlkanesError)
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlkanesError {
@@ -237,5 +237,11 @@ impl From<reqwest::Error> for AlkanesError {
 impl From<alloc::string::FromUtf8Error> for AlkanesError {
     fn from(err: alloc::string::FromUtf8Error) -> Self {
         AlkanesError::Parse(err.to_string())
+    }
+}
+
+impl From<alkanes_cli_asc::errors::Error> for AlkanesError {
+    fn from(err: alkanes_cli_asc::errors::Error) -> Self {
+        AlkanesError::Armor(format!("{err:?}"))
     }
 }

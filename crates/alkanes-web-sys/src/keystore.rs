@@ -10,7 +10,7 @@ use wasm_bindgen::prelude::*;
 use js_sys::Promise;
 use wasm_bindgen_futures::future_to_promise;
 use crate::crypto::WebCrypto;
-use alkanes_cli_common::{DeezelError, CryptoProvider, traits::KeystoreProvider, KeystoreAddress, KeystoreInfo};
+use alkanes_cli_common::{AlkanesError, CryptoProvider, traits::KeystoreProvider, KeystoreAddress, KeystoreInfo};
 use alkanes_cli_asc;
 use alloc::{vec::Vec, string::{String, ToString}, format, collections::BTreeMap};
 use async_trait::async_trait;
@@ -148,8 +148,9 @@ impl KeystoreProvider for Keystore {
         todo!()
     }
 
-    async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &protorune_support::network::NetworkParams) -> Result<Vec<KeystoreAddress>, AlkanesError> {
-        todo!()
+    async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &alkanes_cli_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>, AlkanesError> {
+        let script_types = vec!["p2wpkh", "p2tr"];
+        self.derive_addresses(_master_public_key, _network_params, &script_types, 0, 1).await
     }
 
     async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String, AlkanesError> {
@@ -163,30 +164,9 @@ impl KeystoreProvider for Keystore {
     async fn get_keystore_info(&self, _master_fingerprint: &str, _created_at: u64, _version: &str) -> Result<KeystoreInfo, AlkanesError> {
         todo!()
     }
-
-    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &protorune_support::network::NetworkParams) -> Result<KeystoreAddress, AlkanesError> {
-        let address = alkanes_cli_common::keystore::derive_address_from_public_key(
-            master_public_key,
-            path,
-            network_params,
-            script_type,
-        )?;
-
-        let account_path = get_account_derivation_path(script_type, network_params.network)?;
-        let mut full_path = account_path.to_string();
-        let relative_path = path.to_string();
-        if let Some(stripped) = relative_path.strip_prefix("m/") {
-             full_path.push_str(&format!("/{}", stripped));
-        }
-
-        Ok(KeystoreAddress {
-            address,
-            derivation_path: full_path,
-            index: path.into_iter().last().map_or(0, |c| u32::from(*c)),
-            script_type: script_type.to_string(),
-            network: Some(network_params.network.to_string()),
-        })
-    }
+async fn derive_address_from_path(&self, _master_public_key: &str, _path: &DerivationPath, _script_type: &str, _network_params: &alkanes_cli_common::network::NetworkParams) -> Result<KeystoreAddress, AlkanesError> {
+    unimplemented!();
+}
 }
 
 fn get_account_derivation_path(script_type: &str, network: Network) -> Result<DerivationPath, AlkanesError> {

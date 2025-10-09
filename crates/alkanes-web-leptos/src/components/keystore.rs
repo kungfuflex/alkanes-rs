@@ -4,8 +4,8 @@
 
 use crate::state::AppState;
 use bip39::{Language, Mnemonic};
-use deezel_web::{
-    keystore as deezel_keystore,
+use alkanes_web_sys::{
+    keystore as alkanes_keystore,
     keystore_wallet::KeystoreWallet,
     wallet_provider::{BrowserWalletProvider, WalletConnector},
 };
@@ -44,13 +44,13 @@ pub fn CreateKeystore(set_show_modal: WriteSignal<bool>) -> impl IntoView {
         let state_clone = state.clone();
 
         spawn_local(async move {
-            let promise = deezel_keystore::encrypt_mnemonic(&mnemonic_str, &password_str);
+            let promise = alkanes_keystore::encrypt_mnemonic(&mnemonic_str, &password_str);
             let result = wasm_bindgen_futures::JsFuture::from(promise).await;
             set_is_creating_clone.set(false);
 
             match result {
                 Ok(keystore_val) => {
-                    let keystore: deezel_keystore::Keystore = match serde_wasm_bindgen::from_value(keystore_val) {
+                    let keystore: alkanes_keystore::Keystore = match serde_wasm_bindgen::from_value(keystore_val) {
                         Ok(k) => k,
                         Err(e) => {
                             log!("Failed to deserialize keystore: {:?}", e);
@@ -232,7 +232,7 @@ pub fn ImportKeystore(set_show_modal: WriteSignal<bool>) -> impl IntoView {
         let keystore_json_str = keystore_json.get_untracked();
         let password_str = password.get_untracked();
         spawn_local(async move {
-            let keystore: deezel_keystore::Keystore = match serde_json::from_str(&keystore_json_str) {
+            let keystore: alkanes_keystore::Keystore = match serde_json::from_str(&keystore_json_str) {
                 Ok(k) => k,
                 Err(e) => {
                     log!("Failed to parse keystore JSON: {:?}", e);
@@ -250,7 +250,7 @@ pub fn ImportKeystore(set_show_modal: WriteSignal<bool>) -> impl IntoView {
                             let seed = bip39::Seed::new(&mnemonic, "");
                             let connector = WalletConnector::new();
                             if let Some(wallet_info) = connector.get_wallet_info("keystore") {
-                                let mut keystore_from_json: deezel_keystore::Keystore = serde_json::from_str(&keystore_json_str).unwrap();
+                                let mut keystore_from_json: alkanes_keystore::Keystore = serde_json::from_str(&keystore_json_str).unwrap();
                                 keystore_from_json.seed = Some(seed);
                                 let keystore_wallet = KeystoreWallet::new(wallet_info.clone(), keystore_from_json.clone(), Some(password_str));
                                 match BrowserWalletProvider::connect_local(Box::new(keystore_wallet), "regtest".to_string()).await {

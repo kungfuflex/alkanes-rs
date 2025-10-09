@@ -50,7 +50,7 @@ impl RunestoneProvider for WebProvider {
 impl AlkanesProvider for WebProvider {
     async fn execute(&mut self, params: deezel_common::alkanes::types::EnhancedExecuteParams) -> Result<deezel_common::alkanes::types::ExecutionState> {
         let result = self.call(self.sandshrew_rpc_url(), "alkanes_execute", serde_json::to_value(params)?, 1).await?;
-        serde_json::from_value(result).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 
     async fn resume_execution(
@@ -134,7 +134,7 @@ impl MonitorProvider for WebProvider {
 
     async fn get_block_events(&self, height: u64) -> Result<Vec<BlockEvent>> {
         let result = self.call(self.sandshrew_rpc_url(), "monitor_events", serde_json::json!([height]), 1).await?;
-        serde_json::from_value(result).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 }
 // OrdProvider implementation
@@ -143,13 +143,13 @@ impl MonitorProvider for WebProvider {
 #[async_trait(?Send)]
 impl MetashrewProvider for WebProvider {
     async fn get_height(&self) -> Result<u64> {
-        Err(DeezelError::NotImplemented("Metashrew operations not implemented for web provider".to_string()))
+        Err(AlkanesError::NotImplemented("Metashrew operations not implemented for web provider".to_string()))
     }
     async fn get_block_hash(&self, _height: u64) -> Result<String> {
-        Err(DeezelError::NotImplemented("Metashrew operations not implemented for web provider".to_string()))
+        Err(AlkanesError::NotImplemented("Metashrew operations not implemented for web provider".to_string()))
     }
     async fn get_state_root(&self, _height: JsonValue) -> Result<String> {
-        Err(DeezelError::NotImplemented("Metashrew operations not implemented for web provider".to_string()))
+        Err(AlkanesError::NotImplemented("Metashrew operations not implemented for web provider".to_string()))
     }
 }
 
@@ -157,22 +157,22 @@ impl MetashrewProvider for WebProvider {
 #[async_trait(?Send)]
 impl KeystoreProvider for WebProvider {
     async fn derive_addresses(&self, _master_public_key: &str, _network: Network, _script_types: &[&str], _start_index: u32, _count: u32) -> Result<Vec<KeystoreAddress>> {
-        Err(DeezelError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
+        Err(AlkanesError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
     }
     
     async fn get_default_addresses(&self, _master_public_key: &str, _network: Network) -> Result<Vec<KeystoreAddress>> {
-        Err(DeezelError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
+        Err(AlkanesError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
     }
     
     fn parse_address_range(&self, _range_spec: &str) -> Result<(String, u32, u32)> {
-        Err(DeezelError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
+        Err(AlkanesError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
     }
     
     async fn get_keystore_info(&self, _master_fingerprint: &str, _created_at: u64, _version: &str) -> Result<KeystoreInfo> {
-        Err(DeezelError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
+        Err(AlkanesError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
     }
     async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String> {
-        Err(DeezelError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
+        Err(AlkanesError::NotImplemented("Keystore operations not implemented for web provider".to_string()))
     }
 }
 

@@ -20,7 +20,7 @@ pub fn u128_from_slice(slice: &[u8]) -> u128 {
 // expensive operations like key derivation.
 // Source of truth for Web Crypto API usage: wasm-bindgen source for web-sys.
 
-use crate::{DeezelError, Result};
+use crate::{AlkanesError, Result};
 use alloc::vec::Vec;
 use js_sys::Object;
 use wasm_bindgen::{JsCast, JsValue};
@@ -36,9 +36,9 @@ pub async fn derive_key_from_passphrase(
 ) -> Result<Vec<u8>> {
     // In a worker, `self.crypto()` or `web_sys::crypto()` should be available.
     let subtle = web_sys::window()
-        .ok_or_else(|| DeezelError::Crypto("no window".to_string()))?
+        .ok_or_else(|| AlkanesError::Crypto("no window".to_string()))?
         .crypto()
-        .map_err(|e| DeezelError::Crypto(format!("Failed to get crypto: {:?}", e)))?
+        .map_err(|e| AlkanesError::Crypto(format!("Failed to get crypto: {:?}", e)))?
         .subtle();
 
     // 1. Import the passphrase as a raw key material for PBKDF2.
@@ -54,12 +54,12 @@ pub async fn derive_key_from_passphrase(
                 false, // not extractable
                 &js_sys::Array::of1(&JsValue::from_str("deriveKey")),
             )
-            .map_err(|e| DeezelError::Crypto(format!("Failed to import key: {:?}", e)))?,
+            .map_err(|e| AlkanesError::Crypto(format!("Failed to import key: {:?}", e)))?,
     )
     .await
-    .map_err(|e| DeezelError::Crypto(format!("Failed to import key future: {:?}", e)))?
+    .map_err(|e| AlkanesError::Crypto(format!("Failed to import key future: {:?}", e)))?
     .dyn_into::<CryptoKey>()
-    .map_err(|_| DeezelError::Crypto("Failed to cast to CryptoKey".to_string()))?;
+    .map_err(|_| AlkanesError::Crypto("Failed to cast to CryptoKey".to_string()))?;
 
     // 2. Define the parameters for PBKDF2 key derivation.
     let hash_algorithm = Object::new();
@@ -87,21 +87,21 @@ pub async fn derive_key_from_passphrase(
                 true, // extractable
                 &js_sys::Array::of2(&JsValue::from_str("encrypt"), &JsValue::from_str("decrypt")),
             )
-            .map_err(|e| DeezelError::Crypto(format!("Failed to derive key: {:?}", e)))?,
+            .map_err(|e| AlkanesError::Crypto(format!("Failed to derive key: {:?}", e)))?,
     )
     .await
-    .map_err(|e| DeezelError::Crypto(format!("Failed to derive key future: {:?}", e)))?
+    .map_err(|e| AlkanesError::Crypto(format!("Failed to derive key future: {:?}", e)))?
     .dyn_into::<CryptoKey>()
-    .map_err(|_| DeezelError::Crypto("Failed to cast to CryptoKey".to_string()))?;
+    .map_err(|_| AlkanesError::Crypto("Failed to cast to CryptoKey".to_string()))?;
 
     // 5. Export the derived key as raw bytes.
     let exported_key = JsFuture::from(
         subtle
             .export_key("raw", &derived_key)
-            .map_err(|e| DeezelError::Crypto(format!("Failed to export key: {:?}", e)))?,
+            .map_err(|e| AlkanesError::Crypto(format!("Failed to export key: {:?}", e)))?,
     )
     .await
-    .map_err(|e| DeezelError::Crypto(format!("Failed to export key future: {:?}", e)))?;
+    .map_err(|e| AlkanesError::Crypto(format!("Failed to export key future: {:?}", e)))?;
 
     let key_bytes = js_sys::Uint8Array::new(&exported_key).to_vec();
     Ok(key_bytes)

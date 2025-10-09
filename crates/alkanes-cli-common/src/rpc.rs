@@ -3,7 +3,7 @@
 //! This module provides trait-based RPC client functionality that can work
 //! across different environments using the provider system.
 
-use crate::{Result, DeezelError};
+use crate::{Result, AlkanesError};
 use alloc::{string::ToString, format};
 use crate::traits::*;
 use crate::alkanes::protorunes::{ProtoruneWalletResponse, ProtoruneOutpointResponse};
@@ -66,7 +66,7 @@ pub fn get_rpc_url(config: &crate::network::RpcConfig, command: &Commands) -> Re
             .or_else(|| config.sandshrew_rpc_url.clone()),
         _ => None,
     };
-    rpc_url.ok_or_else(|| DeezelError::RpcError(format!("Missing RPC URL for command: {:?}", command.clone())))
+    rpc_url.ok_or_else(|| AlkanesError::RpcError(format!("Missing RPC URL for command: {:?}", command.clone())))
 }
 
 
@@ -117,7 +117,7 @@ pub struct RpcResponse {
 
 
 /// Generic RPC client that works with any provider
-pub struct RpcClient<P: DeezelProvider> {
+pub struct RpcClient<P: AlkanesProvider> {
     provider: P,
     config: RpcConfig,
     #[cfg(not(target_arch = "wasm32"))]
@@ -126,7 +126,7 @@ pub struct RpcClient<P: DeezelProvider> {
     request_id: Mutex<u64>,
 }
 
-impl<P: DeezelProvider> RpcClient<P> {
+impl<P: AlkanesProvider> RpcClient<P> {
     /// Create a new RPC client
     pub fn new(provider: P) -> Self {
         Self {
@@ -179,7 +179,7 @@ impl<P: DeezelProvider> RpcClient<P> {
     
     /// Make a Bitcoin Core RPC call
     pub async fn sandshrew_call(&self, method: &str, params: JsonValue) -> Result<JsonValue> {
-        let url = self.config.sandshrew_rpc_url.as_ref().ok_or_else(|| DeezelError::RpcError("Missing sandshrew rpc url".to_string()))?;
+        let url = self.config.sandshrew_rpc_url.as_ref().ok_or_else(|| AlkanesError::RpcError("Missing sandshrew rpc url".to_string()))?;
         self.call(url, method, params).await
     }
 
@@ -193,7 +193,7 @@ impl<P: DeezelProvider> RpcClient<P> {
     pub async fn get_block_count(&self) -> Result<u64> {
         let result = self.sandshrew_call("getblockcount", JsonValue::Array(vec![])).await?;
         result.as_u64()
-            .ok_or_else(|| DeezelError::RpcError("Invalid block count response".to_string()))
+            .ok_or_else(|| AlkanesError::RpcError("Invalid block count response".to_string()))
     }
 
     // Returns an object containing blockchain state info
@@ -212,7 +212,7 @@ impl<P: DeezelProvider> RpcClient<P> {
         let params = serde_json::json!([txid]);
         let result = self.sandshrew_call("getrawtransaction", params).await?;
         result.as_str()
-            .ok_or_else(|| DeezelError::RpcError("Invalid transaction hex response".to_string()))
+            .ok_or_else(|| AlkanesError::RpcError("Invalid transaction hex response".to_string()))
             .map(|s| s.to_string())
     }
     
@@ -220,19 +220,19 @@ impl<P: DeezelProvider> RpcClient<P> {
     pub async fn get_metashrew_height(&self) -> Result<u64> {
         let result = self.sandshrew_call("metashrew_height", JsonValue::Array(vec![])).await?;
         result.as_u64()
-            .ok_or_else(|| DeezelError::RpcError("Invalid metashrew height response".to_string()))
+            .ok_or_else(|| AlkanesError::RpcError("Invalid metashrew height response".to_string()))
     }
     
     /// Get bytecode for an alkane contract
     pub async fn get_bytecode(&self, block: &str, tx: &str) -> Result<String> {
         use alkanes_support::proto::alkanes::{BytecodeRequest, AlkaneId, Uint128};
-        use crate::DeezelError;
+        use crate::AlkanesError;
 
         let mut bytecode_request = BytecodeRequest::default();
         let mut alkane_id = AlkaneId::default();
 
-        let block_u128 = block.parse::<u128>().map_err(|e| DeezelError::Other(e.to_string()))?;
-        let tx_u128 = tx.parse::<u128>().map_err(|e| DeezelError::Other(e.to_string()))?;
+        let block_u128 = block.parse::<u128>().map_err(|e| AlkanesError::Other(e.to_string()))?;
+        let tx_u128 = tx.parse::<u128>().map_err(|e| AlkanesError::Other(e.to_string()))?;
 
         let mut block_uint128 = Uint128::default();
         block_uint128.lo = (block_u128 & 0xFFFFFFFFFFFFFFFF) as u64;
@@ -256,7 +256,7 @@ impl<P: DeezelProvider> RpcClient<P> {
         ).await?;
 
         result.as_str()
-            .ok_or_else(|| DeezelError::RpcError("Invalid bytecode response".to_string()))
+            .ok_or_else(|| AlkanesError::RpcError("Invalid bytecode response".to_string()))
             .map(|s| s.to_string())
     }
     
@@ -363,7 +363,7 @@ impl StandaloneRpcClient {
         use reqwest;
         use url::Url;
 
-        let parsed_url = Url::parse(url).map_err(|e| DeezelError::Configuration(format!("Invalid RPC URL: {e}")))?;
+        let parsed_url = Url::parse(url).map_err(|e| AlkanesError::Configuration(format!("Invalid RPC URL: {e}")))?;
         let username = parsed_url.username();
         let password = parsed_url.password();
 
@@ -371,7 +371,7 @@ impl StandaloneRpcClient {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.config.timeout_seconds))
             .build()
-            .map_err(|e| DeezelError::Network(e.to_string()))?;
+            .map_err(|e| AlkanesError::Network(e.to_string()))?;
 
         let mut req_builder = client
             .post(url)
@@ -385,20 +385,20 @@ impl StandaloneRpcClient {
         let response = req_builder
             .send()
             .await
-            .map_err(|e| DeezelError::Network(e.to_string()))?;
+            .map_err(|e| AlkanesError::Network(e.to_string()))?;
         
         let rpc_response: RpcResponse = response
             .json()
             .await
-            .map_err(|e| DeezelError::Network(e.to_string()))?;
+            .map_err(|e| AlkanesError::Network(e.to_string()))?;
         
         if let Some(error) = rpc_response.error {
-            let rpc_error: RpcError = serde_json::from_value(error).map_err(|e| DeezelError::Serialization(e.to_string()))?;
-            return Err(DeezelError::RpcError(rpc_error.to_string()));
+            let rpc_error: RpcError = serde_json::from_value(error).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
+            return Err(AlkanesError::RpcError(rpc_error.to_string()));
         }
         
         rpc_response.result
-            .ok_or_else(|| DeezelError::RpcError("No result in RPC response".to_string()))
+            .ok_or_else(|| AlkanesError::RpcError("No result in RPC response".to_string()))
     }
     
     /// WASM implementation would use fetch API
@@ -410,7 +410,7 @@ impl StandaloneRpcClient {
         
         let request = RpcRequest::new(method, params, self.next_id());
         let body = serde_json::to_string(&request)
-            .map_err(|e| DeezelError::Network(e.to_string()))?;
+            .map_err(|e| AlkanesError::Network(e.to_string()))?;
         
         let opts = RequestInit::new();
         opts.set_method("POST");
@@ -419,40 +419,40 @@ impl StandaloneRpcClient {
         opts.set_mode(RequestMode::Cors);
         
         let request = Request::new_with_str_and_init(url, &opts)
-            .map_err(|e| DeezelError::Network(format!("Failed to create request: {:?}", e)))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to create request: {:?}", e)))?;
         
         request.headers().set("Content-Type", "application/json")
-            .map_err(|e| DeezelError::Network(format!("Failed to set headers: {:?}", e)))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to set headers: {:?}", e)))?;
         
         let window = web_sys::window()
-            .ok_or_else(|| DeezelError::Network("No window object".to_string()))?;
+            .ok_or_else(|| AlkanesError::Network("No window object".to_string()))?;
         
         let resp_value = JsFuture::from(window.fetch_with_request(&request))
             .await
-            .map_err(|e| DeezelError::Network(format!("Fetch failed: {:?}", e)))?;
+            .map_err(|e| AlkanesError::Network(format!("Fetch failed: {:?}", e)))?;
         
         let resp: Response = resp_value.dyn_into()
-            .map_err(|e| DeezelError::Network(format!("Response cast failed: {:?}", e)))?;
+            .map_err(|e| AlkanesError::Network(format!("Response cast failed: {:?}", e)))?;
         
         if !resp.ok() {
-            return Err(DeezelError::Network(format!("HTTP error: {}", resp.status())));
+            return Err(AlkanesError::Network(format!("HTTP error: {}", resp.status())));
         }
         
         let json = JsFuture::from(resp.json()
-            .map_err(|e| DeezelError::Network(format!("JSON parse failed: {:?}", e)))?)
+            .map_err(|e| AlkanesError::Network(format!("JSON parse failed: {:?}", e)))?)
             .await
-            .map_err(|e| DeezelError::Network(format!("JSON future failed: {:?}", e)))?;
+            .map_err(|e| AlkanesError::Network(format!("JSON future failed: {:?}", e)))?;
         
         let rpc_response: RpcResponse = serde_wasm_bindgen::from_value(json)
-            .map_err(|e| DeezelError::Network(e.to_string()))?;
+            .map_err(|e| AlkanesError::Network(e.to_string()))?;
         
         if let Some(error) = rpc_response.error {
-            let rpc_error: RpcError = serde_json::from_value(error).map_err(|e| DeezelError::Serialization(e.to_string()))?;
-            return Err(DeezelError::RpcError(rpc_error.to_string()));
+            let rpc_error: RpcError = serde_json::from_value(error).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
+            return Err(AlkanesError::RpcError(rpc_error.to_string()));
         }
         
         rpc_response.result
-            .ok_or_else(|| DeezelError::RpcError("No result in RPC response".to_string()))
+            .ok_or_else(|| AlkanesError::RpcError("No result in RPC response".to_string()))
     }
 }
 

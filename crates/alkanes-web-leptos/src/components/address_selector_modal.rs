@@ -7,8 +7,8 @@
 use leptos::*;
 use wasm_bindgen::JsCast;
 use crate::state::{AppState, ConnectedAddressInfo};
-use deezel_common::traits::KeystoreAddress;
-use deezel_common::DeezelError;
+use alkanes_cli_common::KeystoreAddress;
+use alkanes_cli_common::AlkanesError;
 
 const ADDRESS_FETCH_BATCH_SIZE: u32 = 20;
 
@@ -74,7 +74,7 @@ pub fn AddressSelectorModal(
                     Ok(Some(xpub)) => {
                         let network_str = app_state.network.get_untracked();
                         let address_type = app_state.address_type.get_untracked();
-                        let network_params = deezel_common::network::NetworkParams::from_network_str(&network_str).unwrap();
+                        let network_params = alkanes_cli_common::network::NetworkParams::from_network_str(&network_str).unwrap();
                         
                         provider.borrow().derive_addresses(
                             &xpub,
@@ -84,10 +84,10 @@ pub fn AddressSelectorModal(
                             ADDRESS_FETCH_BATCH_SIZE
                         ).await
                     },
-                    _ => Err(DeezelError::Other("Wallet does not support address derivation or no master public key found.".to_string())),
+                    _ => Err(AlkanesError::Other("Wallet does not support address derivation or no master public key found.".to_string())),
                 }
             } else {
-                Err(DeezelError::Other("Provider not available".to_string()))
+                Err(AlkanesError::Other("Provider not available".to_string()))
             };
             set_is_loading.set(false);
             result

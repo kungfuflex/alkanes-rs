@@ -9,7 +9,7 @@ use crate::{
         EnhancedExecuteParams, EnhancedExecuteResult, AlkanesInspectConfig, AlkanesInspectResult,
         AlkaneBalance, AlkaneId, ExecutionState, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx
     },
-    DeezelError, JsonValue, Result,
+    AlkanesError, JsonValue, Result,
     traits::{self, *},
 };
 use std::path::PathBuf;
@@ -33,8 +33,6 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
 use core::str::FromStr;
 use crate::keystore::Keystore;
 use crate::network::{NetworkParams, RpcConfig};
@@ -148,7 +146,7 @@ impl ConcreteProvider {
     pub fn get_keystore(&self) -> Result<&Keystore> {
         match &self.wallet_state {
             WalletState::Unlocked { keystore, .. } => Ok(keystore),
-            _ => Err(DeezelError::Wallet("Wallet is not unlocked".to_string())),
+            _ => Err(AlkanesError::Wallet("Wallet is not unlocked".to_string())),
         }
     }
 
@@ -168,7 +166,7 @@ impl ConcreteProvider {
         }
 
         if total_input_amount < target_amount {
-            return Err(DeezelError::Wallet("Insufficient funds".to_string()));
+            return Err(AlkanesError::Wallet("Insufficient funds".to_string()));
         }
 
         Ok((selected_utxos, total_input_amount))
@@ -197,7 +195,7 @@ impl ConcreteProvider {
             };
             Ok(())
         } else {
-            Err(DeezelError::Wallet("Wallet is not locked".to_string()))
+            Err(AlkanesError::Wallet("Wallet is not locked".to_string()))
         }
     }
 
@@ -230,7 +228,7 @@ impl ConcreteProvider {
                 }
             }
         }
-        Err(DeezelError::Wallet(format!("Address {} not found in keystore", address)))
+        Err(AlkanesError::Wallet(format!("Address {} not found in keystore", address)))
     }
 }
 
@@ -258,31 +256,31 @@ impl JsonRpcProvider for ConcreteProvider {
                 .json(&payload)
                 .send()
                 .await
-                .map_err(|e| DeezelError::Network(e.to_string()))?;
+                .map_err(|e| AlkanesError::Network(e.to_string()))?;
 
-            let response_text = response.text().await.map_err(|e| DeezelError::Network(e.to_string()))?;
+            let response_text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::debug!("[JsonRpcProvider] Response from {}: {}", url, response_text);
 
             let json_response: JsonValue = serde_json::from_str(&response_text)
-                .map_err(|e| DeezelError::RpcError(format!("Failed to parse JSON response: {}", e)))?;
+                .map_err(|e| AlkanesError::RpcError(format!("Failed to parse JSON response: {}", e)))?;
 
             if let Some(error) = json_response.get("error") {
                 if !error.is_null() {
-                    return Err(DeezelError::RpcError(error.to_string()));
+                    return Err(AlkanesError::RpcError(error.to_string()));
                 }
             }
 
             if let Some(result) = json_response.get("result") {
                 Ok(result.clone())
             } else {
-                Err(DeezelError::RpcError("RPC response did not contain a 'result' field".to_string()))
+                Err(AlkanesError::RpcError("RPC response did not contain a 'result' field".to_string()))
             }
         }
 
         #[cfg(not(feature = "native-deps"))]
         {
             let _ = (url, method, params, id);
-            Err(DeezelError::NotImplemented("JsonRpcProvider::call is not implemented without 'native-deps' feature".to_string()))
+            Err(AlkanesError::NotImplemented("JsonRpcProvider::call is not implemented without 'native-deps' feature".to_string()))
         }
     }
 }
@@ -414,7 +412,7 @@ impl LogProvider for ConcreteProvider {
 impl WalletProvider for ConcreteProvider {
     async fn create_wallet(&mut self, config: traits::WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<traits::WalletInfo> {
         let mnemonic = if let Some(m) = mnemonic {
-            Mnemonic::from_phrase(&m, bip39::Language::English).map_err(|e| DeezelError::Wallet(format!("Invalid mnemonic: {e}")))?
+            Mnemonic::from_phrase(&m, bip39::Language::English).map_err(|e| AlkanesError::Wallet(format!("Invalid mnemonic: {e}")))?
         } else {
             Mnemonic::new(MnemonicType::Words24, bip39::Language::English)
         };
@@ -453,7 +451,7 @@ impl WalletProvider for ConcreteProvider {
         {
             let path = PathBuf::from(config.wallet_path);
             let keystore = Keystore::from_file(&path)?;
-            let pass = passphrase.as_deref().ok_or_else(|| DeezelError::Wallet("Passphrase required to load wallet".to_string()))?;
+            let pass = passphrase.as_deref().ok_or_else(|| AlkanesError::Wallet("Passphrase required to load wallet".to_string()))?;
             let mnemonic = keystore.decrypt_mnemonic(pass)?;
             let addresses = keystore.get_addresses(config.network, "p2tr", 0, 0, 1)?;
             let address = addresses.first().map(|a| a.address.clone()).unwrap_or_default();
@@ -473,7 +471,7 @@ impl WalletProvider for ConcreteProvider {
         #[cfg(target_arch = "wasm32")]
         {
             let _ = (config, passphrase);
-            Err(DeezelError::NotImplemented("File system not available in wasm".to_string()))
+            Err(AlkanesError::NotImplemented("File system not available in wasm".to_string()))
         }
     }
     
@@ -526,7 +524,7 @@ impl WalletProvider for ConcreteProvider {
         if let Some(address_info) = addresses.first() {
             Ok(address_info.address.clone())
         } else {
-            Err(DeezelError::Wallet("No addresses found in wallet".to_string()))
+            Err(AlkanesError::Wallet("No addresses found in wallet".to_string()))
         }
     }
     
@@ -598,7 +596,7 @@ impl WalletProvider for ConcreteProvider {
     
     async fn get_history(&self, count: u32, address: Option<String>) -> Result<Vec<traits::TransactionInfo>> {
         log::info!("[WalletProvider] Calling get_history for address: {:?}, count: {}", address, count);
-        let addr = address.ok_or_else(|| DeezelError::Wallet("get_history requires an address".to_string()))?;
+        let addr = address.ok_or_else(|| AlkanesError::Wallet("get_history requires an address".to_string()))?;
         let txs_json = self.get_address_txs(&addr).await?;
         let mut transactions = Vec::new();
 
@@ -738,12 +736,12 @@ impl WalletProvider for ConcreteProvider {
         for input in &tx.input {
             let tx_info = self.get_tx(&input.previous_output.txid.to_string()).await?;
             let vout_info = tx_info["vout"].get(input.previous_output.vout as usize)
-                .ok_or_else(|| DeezelError::Wallet(format!("Vout {} not found for tx {}", input.previous_output.vout, input.previous_output.txid)))?;
+                .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", input.previous_output.vout, input.previous_output.txid)))?;
             
             let amount = vout_info["value"].as_u64()
-                .ok_or_else(|| DeezelError::Wallet("UTXO value not found".to_string()))?;
+                .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
             let script_pubkey_hex = vout_info["scriptpubkey"].as_str()
-                .ok_or_else(|| DeezelError::Wallet("UTXO script pubkey not found".to_string()))?;
+                .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?;
             
             let script_pubkey = ScriptBuf::from(Vec::from_hex(script_pubkey_hex)?);
             prevouts.push(TxOut { value: Amount::from_sat(amount), script_pubkey });
@@ -752,7 +750,7 @@ impl WalletProvider for ConcreteProvider {
         // 4. Get mutable access to the wallet state *after* all immutable borrows are done.
         let (keystore, mnemonic) = match &mut self.wallet_state {
             WalletState::Unlocked { keystore, mnemonic } => (keystore, mnemonic),
-            _ => return Err(DeezelError::Wallet("Wallet must be unlocked to sign transactions".to_string())),
+            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign transactions".to_string())),
         };
 
         // 5. Sign each input
@@ -762,7 +760,7 @@ impl WalletProvider for ConcreteProvider {
             
             // Find the address and its derivation path from our keystore
             let address = Address::from_script(&prev_txout.script_pubkey, network)
-                .map_err(|e| DeezelError::Wallet(format!("Failed to parse address from script: {e}")))?;
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {e}")))?;
             
             // This call now takes a mutable keystore and may cache the derived address info.
             let addr_info = Self::find_address_info(keystore, &address, network)?;
@@ -883,7 +881,7 @@ impl WalletProvider for ConcreteProvider {
             self.sleep_ms(2000).await;
         }
 
-        Err(DeezelError::Other(format!("Timeout waiting for backends to sync after {max_retries} attempts")))
+        Err(AlkanesError::Other(format!("Timeout waiting for backends to sync after {max_retries} attempts")))
     }
     
     async fn backup(&self) -> Result<String> {
@@ -913,7 +911,7 @@ impl WalletProvider for ConcreteProvider {
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))> {
         let (keystore, mnemonic) = match &self.wallet_state {
             WalletState::Unlocked { keystore, mnemonic } => (keystore, mnemonic),
-            _ => return Err(DeezelError::Wallet("Wallet must be unlocked to get internal key".to_string())),
+            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to get internal key".to_string())),
         };
 
         let mnemonic = bip39::Mnemonic::from_phrase(mnemonic, bip39::Language::English)?;
@@ -935,20 +933,20 @@ impl WalletProvider for ConcreteProvider {
     
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
         let mut psbt = psbt.clone();
-        let mut tx = psbt.clone().extract_tx().map_err(|e| DeezelError::Other(e.to_string()))?;
+        let mut tx = psbt.clone().extract_tx().map_err(|e| AlkanesError::Other(e.to_string()))?;
         let network = self.get_network();
         let secp = Secp256k1::<All>::new();
 
         let mut prevouts = Vec::new();
         for input in &tx.input {
             let utxo = self.get_utxo(&input.previous_output).await?
-                .ok_or_else(|| DeezelError::Wallet(format!("UTXO not found: {}", input.previous_output)))?;
+                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", input.previous_output)))?;
             prevouts.push(utxo);
         }
 
         let (keystore, mnemonic) = match &mut self.wallet_state {
             WalletState::Unlocked { keystore, mnemonic } => (keystore, mnemonic),
-            _ => return Err(DeezelError::Wallet("Wallet must be unlocked to sign transactions".to_string())),
+            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign transactions".to_string())),
         };
 
         let mut sighash_cache = SighashCache::new(&mut tx);
@@ -969,10 +967,10 @@ impl WalletProvider for ConcreteProvider {
                 // Find the keypair corresponding to the internal public key from the PSBT's tap_key_origins.
                 // There should be exactly one entry for a script path spend.
                 let (internal_pk, (_leaf_hashes, (master_fingerprint, derivation_path))) = psbt_input.tap_key_origins.iter().next()
-                    .ok_or_else(|| DeezelError::Wallet("tap_key_origins is empty for script spend".to_string()))?;
+                    .ok_or_else(|| AlkanesError::Wallet("tap_key_origins is empty for script spend".to_string()))?;
 
                 if *master_fingerprint != Fingerprint::from_str(&keystore.master_fingerprint)? {
-                    return Err(DeezelError::Wallet(
+                    return Err(AlkanesError::Wallet(
                         "Master fingerprint mismatch in tap_key_origins".to_string(),
                     ));
                 }
@@ -986,7 +984,7 @@ impl WalletProvider for ConcreteProvider {
 
                 // Verify that the derived key matches the public key from the PSBT
                 if keypair.public_key().x_only_public_key().0 != *internal_pk {
-                    return Err(DeezelError::Wallet("Derived key does not match internal public key in PSBT".to_string()));
+                    return Err(AlkanesError::Wallet("Derived key does not match internal public key in PSBT".to_string()));
                 }
 
                 let msg = bitcoin::secp256k1::Message::from(sighash);
@@ -1007,7 +1005,7 @@ impl WalletProvider for ConcreteProvider {
             } else {
                 // Key-path spend
                 let address = Address::from_script(&prev_txout.script_pubkey, network)
-                    .map_err(|e| DeezelError::Wallet(format!("Failed to parse address from script: {e}")))?;
+                    .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {e}")))?;
                 
                 let addr_info = Self::find_address_info(keystore, &address, network)?;
                 let path = DerivationPath::from_str(&addr_info.derivation_path)?;
@@ -1046,7 +1044,7 @@ impl WalletProvider for ConcreteProvider {
     
     async fn get_keypair(&self) -> Result<bitcoin::secp256k1::Keypair> {
         let mnemonic = self.get_mnemonic().await?
-            .ok_or_else(|| DeezelError::Wallet("Wallet must be unlocked to get keypair".to_string()))?;
+            .ok_or_else(|| AlkanesError::Wallet("Wallet must be unlocked to get keypair".to_string()))?;
         let mnemonic = bip39::Mnemonic::from_phrase(&mnemonic, bip39::Language::English)?;
         let seed = bip39::Seed::new(&mnemonic, "");
         let network = self.get_network();
@@ -1109,7 +1107,7 @@ impl WalletProvider for ConcreteProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MetashrewRpcProvider for ConcreteProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
-        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| DeezelError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
+        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| AlkanesError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
         let json = self.call(&rpc_url, "metashrew_height", json!([]), 1).await?;
         log::debug!("get_metashrew_height response: {:?}", json);
         if let Some(count) = json.as_u64() {
@@ -1132,18 +1130,18 @@ impl MetashrewRpcProvider for ConcreteProvider {
                 }
             }
         }
-        Err(DeezelError::RpcError(format!("Invalid metashrew height response: not a u64 or string, got: {}", json)))
+        Err(AlkanesError::RpcError(format!("Invalid metashrew height response: not a u64 or string, got: {}", json)))
     }
 
     async fn get_state_root(&self, height: JsonValue) -> Result<String> {
-        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| DeezelError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
+        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| AlkanesError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
         let params = serde_json::json!([height]);
         let result = self.call(&rpc_url, "metashrew_stateroot", params, 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid state root response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid state root response".to_string()))
     }
 
     async fn get_contract_meta(&self, block: &str, tx: &str) -> Result<serde_json::Value> {
-        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| DeezelError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
+        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| AlkanesError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
         let params = serde_json::json!([block, tx]);
         self.call(&rpc_url, "metashrew_view", params, 1).await
     }
@@ -1170,7 +1168,7 @@ impl MetashrewRpcProvider for ConcreteProvider {
     }
     
     async fn get_spendables_by_address(&self, address: &str) -> Result<serde_json::Value> {
-        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| DeezelError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
+        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| AlkanesError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
         let params = serde_json::json!([address]);
         self.call(&rpc_url, "spendablesbyaddress", params, 1).await
     }
@@ -1200,16 +1198,16 @@ let hex_input = format!("0x{}", hex::encode(request.write_to_bytes().unwrap()));
         let mut balances = vec![];
         for item in wallet_response.outpoints.into_iter() {
             let outpoint = item.outpoint.into_option().ok_or_else(|| {
-                DeezelError::Other("missing outpoint in wallet response".to_string())
+                AlkanesError::Other("missing outpoint in wallet response".to_string())
             })?;
             let output = item.output.into_option().ok_or_else(|| {
-                DeezelError::Other("missing output in wallet response".to_string())
+                AlkanesError::Other("missing output in wallet response".to_string())
             })?;
             let balance_sheet_pb = item.balances.into_option().ok_or_else(|| {
-                DeezelError::Other("missing balance sheet in wallet response".to_string())
+                AlkanesError::Other("missing balance sheet in wallet response".to_string())
             })?;
             let txid_bytes: [u8; 32] = outpoint.txid.try_into().map_err(|_| {
-                DeezelError::Other("invalid txid length in wallet response".to_string())
+                AlkanesError::Other("invalid txid length in wallet response".to_string())
             })?;
             balances.push(crate::alkanes::protorunes::ProtoruneOutpointResponse {
                 output: TxOut {
@@ -1276,19 +1274,19 @@ let hex_input = format!("0x{}", hex::encode(request.write_to_bytes().unwrap()));
             )
             .await?;
         if response_bytes.is_empty() {
-            return Err(DeezelError::Other(
+            return Err(AlkanesError::Other(
                 "empty response from protorunesbyoutpoint".to_string(),
             ));
         }
         let proto_response = protorune_pb::protorune::OutpointResponse::parse_from_bytes(response_bytes.as_slice())?;
         let output = proto_response
             .output
-            .into_option().ok_or_else(|| DeezelError::Other("missing output in outpoint response".to_string()))?;
+            .into_option().ok_or_else(|| AlkanesError::Other("missing output in outpoint response".to_string()))?;
         let balance_sheet_pb = proto_response
             .balances
             .into_option()
             .ok_or_else(|| {
-                DeezelError::Other("missing balance sheet in outpoint response".to_string())
+                AlkanesError::Other("missing balance sheet in outpoint response".to_string())
             })?;
         Ok(crate::alkanes::protorunes::ProtoruneOutpointResponse {
             output: TxOut {
@@ -1340,8 +1338,8 @@ impl EsploraProvider for ConcreteProvider {
             let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
             let url = format!("{}/blocks/tip/hash", rpc_url);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            let text = response.text().await.map_err(|e| DeezelError::Network(e.to_string()))?;
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_blocks_tip_hash response: {}", text);
             return Ok(text);
         }
@@ -1349,7 +1347,7 @@ impl EsploraProvider for ConcreteProvider {
         log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH);
         let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH, crate::esplora::params::empty(), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid tip hash response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tip hash response".to_string()))
     }
 
     async fn get_blocks_tip_height(&self) -> Result<u64> {
@@ -1360,15 +1358,15 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/blocks/tip/height", rpc_url);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            let text = response.text().await.map_err(|e| DeezelError::Network(e.to_string()))?;
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_blocks_tip_height response: {}", text);
-            return text.parse::<u64>().map_err(|e| DeezelError::RpcError(format!("Invalid tip height response from REST API: {e}")));
+            return text.parse::<u64>().map_err(|e| AlkanesError::RpcError(format!("Invalid tip height response from REST API: {e}")));
         }
         
         log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HEIGHT);
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HEIGHT, crate::esplora::params::empty(), 1).await?;
-        result.as_u64().ok_or_else(|| DeezelError::RpcError("Invalid tip height response".to_string()))
+        result.as_u64().ok_or_else(|| AlkanesError::RpcError("Invalid tip height response".to_string()))
     }
 
     async fn get_blocks(&self, start_height: Option<u64>) -> Result<serde_json::Value> {
@@ -1383,8 +1381,8 @@ impl EsploraProvider for ConcreteProvider {
                 format!("{}/blocks", rpc_url)
             };
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            let json = response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let json = response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
             log::info!("[EsploraProvider] get_blocks response: {:?}", json);
             return json;
         }
@@ -1401,15 +1399,15 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block-height/{}", rpc_url, height);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            let text = response.text().await.map_err(|e| DeezelError::Network(e.to_string()))?;
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_block_by_height response: {}", text);
             return Ok(text);
         }
         
         log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCK_HEIGHT);
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_HEIGHT, crate::esplora::params::single(height), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid block hash response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
     }
 
     async fn get_block(&self, hash: &str) -> Result<serde_json::Value> {
@@ -1418,8 +1416,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK, crate::esplora::params::single(hash), 1).await
@@ -1431,8 +1429,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/status", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_STATUS, crate::esplora::params::single(hash), 1).await
@@ -1444,8 +1442,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/txids", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_TXIDS, crate::esplora::params::single(hash), 1).await
@@ -1457,12 +1455,12 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/header", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.text().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.text().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_HEADER, crate::esplora::params::single(hash), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid block header response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block header response".to_string()))
     }
 
     async fn get_block_raw(&self, hash: &str) -> Result<String> {
@@ -1471,13 +1469,13 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/raw", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            let bytes = response.bytes().await.map_err(|e| DeezelError::Network(e.to_string()))?;
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return Ok(hex::encode(bytes));
         }
         
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_RAW, crate::esplora::params::single(hash), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid raw block response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw block response".to_string()))
     }
 
     async fn get_block_txid(&self, hash: &str, index: u32) -> Result<String> {
@@ -1488,15 +1486,15 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/txid/{}", rpc_url, hash, index);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            let text = response.text().await.map_err(|e| DeezelError::Network(e.to_string()))?;
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_block_txid response: {}", text);
             return Ok(text);
         }
         
         log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCK_TXID);
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_TXID, crate::esplora::params::dual(hash, index), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid txid response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
     }
 
     async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<serde_json::Value> {
@@ -1509,8 +1507,8 @@ impl EsploraProvider for ConcreteProvider {
             } else {
                 format!("{}/block/{}/txs", rpc_url, hash)
             };
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_TXS, crate::esplora::params::optional_dual(hash, start_index), 1).await
@@ -1525,8 +1523,8 @@ impl EsploraProvider for ConcreteProvider {
        if call_type == RpcCallType::Rest {
            let url = format!("{}/address/{}", rpc_url, address);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-           let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-           return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+           let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+           return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
        }
        
         log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::ADDRESS);
@@ -1541,8 +1539,8 @@ impl EsploraProvider for ConcreteProvider {
        if call_type == RpcCallType::Rest {
            let url = format!("{}/address/{}/utxo", rpc_url, address);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-           let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-           return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+           let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+           return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
        }
        
         log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::ADDRESS_UTXO);
@@ -1555,8 +1553,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address/{}/txs", rpc_url, address);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS_TXS, crate::esplora::params::single(address), 1).await
@@ -1572,8 +1570,8 @@ impl EsploraProvider for ConcreteProvider {
             } else {
                 format!("{}/address/{}/txs/chain", rpc_url, address)
             };
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS_TXS_CHAIN, crate::esplora::params::optional_dual(address, last_seen_txid), 1).await
@@ -1585,8 +1583,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address/{}/txs/mempool", rpc_url, address);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS_TXS_MEMPOOL, crate::esplora::params::single(address), 1).await
@@ -1599,8 +1597,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address-prefix/{}", rpc_url, prefix);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS_PREFIX, crate::esplora::params::single(prefix), 1).await
@@ -1614,8 +1612,8 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}", rpc_url, txid);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::TX);
@@ -1630,15 +1628,15 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/hex", rpc_url, txid);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            let text = response.text().await.map_err(|e| DeezelError::Network(e.to_string()))?;
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_tx_hex response: {}", text);
             return Ok(text);
         }
         
         log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::TX_HEX);
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_HEX, crate::esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid tx hex response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tx hex response".to_string()))
     }
 
     async fn get_tx_raw(&self, txid: &str) -> Result<String> {
@@ -1647,13 +1645,13 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/raw", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            let bytes = response.bytes().await.map_err(|e| DeezelError::Network(e.to_string()))?;
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return Ok(hex::encode(bytes));
         }
         
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_RAW, crate::esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid raw tx response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw tx response".to_string()))
     }
 
     async fn get_tx_status(&self, txid: &str) -> Result<serde_json::Value> {
@@ -1662,8 +1660,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/status", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_STATUS, crate::esplora::params::single(txid), 1).await
@@ -1675,8 +1673,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/merkle-proof", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_MERKLE_PROOF, crate::esplora::params::single(txid), 1).await
@@ -1688,12 +1686,12 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/merkleblock-proof", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.text().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.text().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_MERKLEBLOCK_PROOF, crate::esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid merkleblock proof response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid merkleblock proof response".to_string()))
     }
 
     async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<serde_json::Value> {
@@ -1702,8 +1700,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/outspend/{}", rpc_url, txid, index);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_OUTSPEND, crate::esplora::params::dual(txid, index), 1).await
@@ -1715,8 +1713,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/outspends", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_OUTSPENDS, crate::esplora::params::single(txid), 1).await
@@ -1728,12 +1726,12 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx", rpc_url);
-            let response = self.http_client.post(&url).body(tx_hex.to_string()).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.text().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.post(&url).body(tx_hex.to_string()).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.text().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BROADCAST, crate::esplora::params::single(tx_hex), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| DeezelError::RpcError("Invalid broadcast response".to_string()))
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid broadcast response".to_string()))
     }
 
     async fn get_mempool(&self) -> Result<serde_json::Value> {
@@ -1742,8 +1740,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/mempool", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::MEMPOOL, crate::esplora::params::empty(), 1).await
@@ -1755,8 +1753,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/mempool/txids", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::MEMPOOL_TXIDS, crate::esplora::params::empty(), 1).await
@@ -1768,8 +1766,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/mempool/recent", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::MEMPOOL_RECENT, crate::esplora::params::empty(), 1).await
@@ -1781,8 +1779,8 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/fee-estimates", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| DeezelError::Network(e.to_string()))?;
-            return response.json().await.map_err(|e| DeezelError::Network(e.to_string()));
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
         self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::FEE_ESTIMATES, crate::esplora::params::empty(), 1).await
@@ -1796,10 +1794,10 @@ impl RunestoneProvider for ConcreteProvider {
         if let Some(artifact) = Runestone::decipher(tx) {
             match artifact {
                 Artifact::Runestone(runestone) => Ok(serde_json::to_value(runestone)?),
-                Artifact::Cenotaph(cenotaph) => Err(DeezelError::Runestone(format!("Cenotaph found: {cenotaph:?}"))),
+                Artifact::Cenotaph(cenotaph) => Err(AlkanesError::Runestone(format!("Cenotaph found: {cenotaph:?}"))),
             }
         } else {
-            Err(DeezelError::Runestone("No runestone found in transaction".to_string()))
+            Err(AlkanesError::Runestone("No runestone found in transaction".to_string()))
         }
     }
 
@@ -1812,10 +1810,10 @@ impl RunestoneProvider for ConcreteProvider {
                         "decoded_messages": format!("{:?}", runestone)
                     }))
                 },
-                Artifact::Cenotaph(cenotaph) => Err(DeezelError::Runestone(format!("Cenotaph found: {cenotaph:?}"))),
+                Artifact::Cenotaph(cenotaph) => Err(AlkanesError::Runestone(format!("Cenotaph found: {cenotaph:?}"))),
             }
         } else {
-            Err(DeezelError::Runestone("No runestone found in transaction".to_string()))
+            Err(AlkanesError::Runestone("No runestone found in transaction".to_string()))
         }
     }
 
@@ -1830,6 +1828,81 @@ impl RunestoneProvider for ConcreteProvider {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AlkanesProvider for ConcreteProvider {
+    fn provider_name(&self) -> &str {
+        "ConcreteProvider"
+    }
+
+    fn get_bitcoin_rpc_url(&self) -> Option<String> {
+        self.rpc_config.bitcoin_rpc_url.clone()
+    }
+
+    fn get_esplora_api_url(&self) -> Option<String> {
+        self.rpc_config.esplora_url.clone()
+    }
+
+    fn get_ord_server_url(&self) -> Option<String> {
+        self.rpc_config.ord_url.clone()
+    }
+
+    fn get_metashrew_rpc_url(&self) -> Option<String> {
+        self.rpc_config.metashrew_rpc_url.clone()
+    }
+
+    fn clone_box(&self) -> Box<dyn AlkanesProvider> {
+        Box::new(self.clone())
+    }
+
+    async fn initialize(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn secp(&self) -> &Secp256k1<All> {
+        &self.secp
+    }
+
+    async fn get_utxo(&self, outpoint: &OutPoint) -> Result<Option<TxOut>> {
+        let tx_info = self.get_tx(&outpoint.txid.to_string()).await?;
+        let vout_info = tx_info["vout"].get(outpoint.vout as usize)
+            .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", outpoint.vout, outpoint.txid)))?;
+
+        let amount = vout_info["value"].as_u64()
+            .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
+        let script_pubkey_hex = vout_info["scriptpubkey"].as_str()
+            .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?;
+
+        let script_pubkey = ScriptBuf::from(Vec::from_hex(script_pubkey_hex)?);
+        Ok(Some(TxOut { value: Amount::from_sat(amount), script_pubkey }))
+    }
+
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+        let mnemonic = match &self.wallet_state {
+            WalletState::Unlocked { mnemonic, .. } => mnemonic,
+            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign".to_string())),
+        };
+        let mnemonic = bip39::Mnemonic::from_phrase(mnemonic, bip39::Language::English)?;
+        let seed = bip39::Seed::new(&mnemonic, "");
+        let network = self.get_network();
+        let root_key = Xpriv::new_master(network, seed.as_bytes())?;
+        let keypair = root_key.to_keypair(&self.secp);
+        #[cfg(not(target_arch = "wasm32"))]
+        let signature = self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut rand::thread_rng());
+        #[cfg(target_arch = "wasm32")]
+        let signature = self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut OsRng);
+        Ok(signature)
+    }
+
+    async fn wrap(&mut self, _amount: u64, _address: Option<String>, _fee_rate: Option<f32>) -> Result<String> {
+        Err(AlkanesError::NotImplemented("wrap".to_string()))
+    }
+
+    async fn unwrap(&mut self, _amount: u64, _address: Option<String>) -> Result<String> {
+        Err(AlkanesError::NotImplemented("unwrap".to_string()))
+    }
+
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
         let mut executor = EnhancedAlkanesExecutor::new(self);
         executor.execute(params).await
@@ -1886,13 +1959,13 @@ impl AlkanesProvider for ConcreteProvider {
         buf.extend(context.write_to_bytes()?);
         let params_hex = format!("0x{}", hex::encode(buf));
         let rpc_params = serde_json::json!([contract_id, params_hex]);
-        self.call(self.rpc_config.metashrew_rpc_url.as_deref().ok_or_else(|| DeezelError::RpcError("Metashrew RPC URL not configured".to_string()))?, "alkanes_simulate", rpc_params, 1).await
+        self.call(self.rpc_config.metashrew_rpc_url.as_deref().ok_or_else(|| AlkanesError::RpcError("Metashrew RPC URL not configured".to_string()))?, "alkanes_simulate", rpc_params, 1).await
     }
 
         async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
             let parts: Vec<&str> = outpoint.split(':').collect();
             if parts.len() != 2 {
-                return Err(DeezelError::InvalidParameters("Invalid outpoint format. Expected 'txid:vout'".to_string()));
+                return Err(AlkanesError::InvalidParameters("Invalid outpoint format. Expected 'txid:vout'".to_string()));
             }
             let txid = bitcoin::Txid::from_str(parts[0])?;
             let vout = parts[1].parse::<u32>()?;
@@ -1973,7 +2046,7 @@ impl AlkanesProvider for ConcreteProvider {
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         let parts: Vec<&str> = alkane_id.split(':').collect();
         if parts.len() != 2 {
-            return Err(DeezelError::InvalidParameters("Invalid alkane_id format. Expected 'block:tx'".to_string()));
+            return Err(AlkanesError::InvalidParameters("Invalid alkane_id format. Expected 'block:tx'".to_string()));
         }
         let block = parts[0].parse::<u64>()?;
         let tx = parts[1].parse::<u64>()?;
@@ -2011,7 +2084,7 @@ impl AlkanesProvider for ConcreteProvider {
   let inspector = AlkaneInspector::new(self.clone());
   let parts: Vec<&str> = target.split(':').collect();
   if parts.len() != 2 {
-   return Err(DeezelError::InvalidParameters(
+   return Err(AlkanesError::InvalidParameters(
     "Invalid target format. Expected 'block:tx'".to_string(),
    ));
   }
@@ -2026,7 +2099,7 @@ impl AlkanesProvider for ConcreteProvider {
    codehash: config.codehash,
    raw: config.raw,
   };
-  let result = inspector.inspect_alkane(&alkane_id, &inspection_config).await.map_err(|e| DeezelError::Other(e.to_string()))?;
+  let result = inspector.inspect_alkane(&alkane_id, &inspection_config).await.map_err(|e| AlkanesError::Other(e.to_string()))?;
   Ok(serde_json::from_value(serde_json::to_value(result)?)?)
  }
 
@@ -2036,7 +2109,7 @@ impl AlkanesProvider for ConcreteProvider {
         _target: &str,
         _config: AlkanesInspectConfig,
     ) -> Result<AlkanesInspectResult> {
-        Err(DeezelError::NotImplemented(
+        Err(AlkanesError::NotImplemented(
             "Alkanes inspection is not available without the 'wasm-inspection' feature".to_string(),
         ))
     }
@@ -2080,83 +2153,11 @@ impl AlkanesProvider for ConcreteProvider {
 
         Ok(result)
     }
-}
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl DeezelProvider for ConcreteProvider {
-    fn provider_name(&self) -> &str {
-        "ConcreteProvider"
-    }
 
-    fn get_bitcoin_rpc_url(&self) -> Option<String> {
-        self.rpc_config.bitcoin_rpc_url.clone()
-    }
-
-    fn get_esplora_api_url(&self) -> Option<String> {
-        self.rpc_config.esplora_url.clone()
-    }
-
-    fn get_ord_server_url(&self) -> Option<String> {
-        self.rpc_config.ord_url.clone()
-    }
-
-    fn get_metashrew_rpc_url(&self) -> Option<String> {
-        self.rpc_config.metashrew_rpc_url.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn DeezelProvider> {
-        Box::new(self.clone())
-    }
-
-    async fn initialize(&self) -> Result<()> {
-        Ok(())
-    }
-
-    async fn shutdown(&self) -> Result<()> {
-        Ok(())
-    }
-
-    fn secp(&self) -> &Secp256k1<All> {
-        &self.secp
-    }
-
-    async fn get_utxo(&self, outpoint: &OutPoint) -> Result<Option<TxOut>> {
-        let tx_info = self.get_tx(&outpoint.txid.to_string()).await?;
-        let vout_info = tx_info["vout"].get(outpoint.vout as usize)
-            .ok_or_else(|| DeezelError::Wallet(format!("Vout {} not found for tx {}", outpoint.vout, outpoint.txid)))?;
-
-        let amount = vout_info["value"].as_u64()
-            .ok_or_else(|| DeezelError::Wallet("UTXO value not found".to_string()))?;
-        let script_pubkey_hex = vout_info["scriptpubkey"].as_str()
-            .ok_or_else(|| DeezelError::Wallet("UTXO script pubkey not found".to_string()))?;
-
-        let script_pubkey = ScriptBuf::from(Vec::from_hex(script_pubkey_hex)?);
-        Ok(Some(TxOut { value: Amount::from_sat(amount), script_pubkey }))
-    }
-
-    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        let mnemonic = match &self.wallet_state {
-            WalletState::Unlocked { mnemonic, .. } => mnemonic,
-            _ => return Err(DeezelError::Wallet("Wallet must be unlocked to sign".to_string())),
-        };
-        let mnemonic = bip39::Mnemonic::from_phrase(mnemonic, bip39::Language::English)?;
-        let seed = bip39::Seed::new(&mnemonic, "");
-        let network = self.get_network();
-        let root_key = Xpriv::new_master(network, seed.as_bytes())?;
-        let keypair = root_key.to_keypair(&self.secp);
-        #[cfg(not(target_arch = "wasm32"))]
-        let signature = self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut rand::thread_rng());
-        #[cfg(target_arch = "wasm32")]
-        let signature = self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut OsRng);
-        Ok(signature)
-    }
-
-    async fn wrap(&mut self, _amount: u64, _address: Option<String>, _fee_rate: Option<f32>) -> Result<String> {
-        Err(DeezelError::NotImplemented("wrap".to_string()))
-    }
-
-    async fn unwrap(&mut self, _amount: u64, _address: Option<String>) -> Result<String> {
-        Err(DeezelError::NotImplemented("unwrap".to_string()))
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue> {
+        let params_hex = params.map_or("0x".to_string(), |p| format!("0x{}", hex::encode(p)));
+        let rpc_params = serde_json::json!([contract_id, view_fn, params_hex]);
+        self.call(self.rpc_config.metashrew_rpc_url.as_deref().ok_or_else(|| AlkanesError::RpcError("Metashrew RPC URL not configured".to_string()))?, "alkanes_view", rpc_params, 1).await
     }
 }
 
@@ -2175,12 +2176,12 @@ impl AddressResolver for ConcreteProvider {
 
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
         if address_type != "p2tr" {
-            return Err(DeezelError::Wallet("Only p2tr addresses are supported".to_string()));
+            return Err(AlkanesError::Wallet("Only p2tr addresses are supported".to_string()));
         }
         let addresses = WalletProvider::get_addresses(self, index + 1).await?;
         addresses.get(index as usize)
             .map(|a| a.address.clone())
-            .ok_or_else(|| DeezelError::Wallet(format!("Address with index {index} not found")))
+            .ok_or_else(|| AlkanesError::Wallet(format!("Address with index {index} not found")))
     }
 
     async fn list_identifiers(&self) -> Result<Vec<String>> {
@@ -2204,7 +2205,7 @@ impl MetashrewProvider for ConcreteProvider {
     async fn get_state_root(&self, _height: JsonValue) -> Result<String> {
         // Placeholder implementation.
         // In a real scenario, this would call a specific RPC method like `getstateroot`.
-        // Err(DeezelError::NotImplemented("get_state_root is not implemented for ConcreteProvider".to_string()))
+        // Err(AlkanesError::NotImplemented("get_state_root is not implemented for ConcreteProvider".to_string()))
         <Self as MetashrewRpcProvider>::get_state_root(self, _height as serde_json::Value).await
     }
 }
@@ -2235,19 +2236,19 @@ impl KeystoreProvider for ConcreteProvider {
         <Self as AddressResolver>::get_address(self, address_type, index).await
     }
     async fn derive_addresses(&self, _master_public_key: &str, _network_params: &NetworkParams, _script_types: &[&str], _start_index: u32, _count: u32) -> Result<Vec<KeystoreAddress>> {
-        Err(DeezelError::NotImplemented("KeystoreProvider derive_addresses not yet implemented".to_string()))
+        Err(AlkanesError::NotImplemented("KeystoreProvider derive_addresses not yet implemented".to_string()))
     }
 
     async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &NetworkParams) -> Result<Vec<KeystoreAddress>> {
-        Err(DeezelError::NotImplemented("KeystoreProvider get_default_addresses not yet implemented".to_string()))
+        Err(AlkanesError::NotImplemented("KeystoreProvider get_default_addresses not yet implemented".to_string()))
     }
 
     fn parse_address_range(&self, _range_spec: &str) -> Result<(String, u32, u32)> {
-        Err(DeezelError::NotImplemented("KeystoreProvider parse_address_range not yet implemented".to_string()))
+        Err(AlkanesError::NotImplemented("KeystoreProvider parse_address_range not yet implemented".to_string()))
     }
 
     async fn get_keystore_info(&self, _master_fingerprint: &str, _created_at: u64, _version: &str) -> Result<KeystoreInfo> {
-        Err(DeezelError::NotImplemented("KeystoreProvider get_keystore_info not yet implemented".to_string()))
+        Err(AlkanesError::NotImplemented("KeystoreProvider get_keystore_info not yet implemented".to_string()))
     }
 
     async fn derive_address_from_path(
@@ -2282,11 +2283,11 @@ impl KeystoreProvider for ConcreteProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MonitorProvider for ConcreteProvider {
     async fn monitor_blocks(&self, _start: Option<u64>) -> Result<()> {
-        Err(DeezelError::NotImplemented("MonitorProvider monitor_blocks not yet implemented".to_string()))
+        Err(AlkanesError::NotImplemented("MonitorProvider monitor_blocks not yet implemented".to_string()))
     }
 
     async fn get_block_events(&self, _height: u64) -> Result<Vec<BlockEvent>> {
-        Err(DeezelError::NotImplemented("MonitorProvider get_block_events not yet implemented".to_string()))
+        Err(AlkanesError::NotImplemented("MonitorProvider get_block_events not yet implemented".to_string()))
     }
 }
 
@@ -2368,7 +2369,7 @@ mod esplora_provider_tests {
             metashrew_rpc_url: Some(server.uri()),
             sandshrew_rpc_url: Some(server.uri()),
             esplora_url: Some(server.uri()),
-            network: crate::network::DeezelNetwork::from_str("regtest").unwrap(),
+            network: crate::network::AlkanesNetwork::from_str("regtest").unwrap(),
             ord_url: None,
             timeout_seconds: 600,
         };
@@ -2953,100 +2954,100 @@ mod esplora_provider_tests {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl OrdProvider for ConcreteProvider {
     async fn get_inscription(&self, inscription_id: &str) -> Result<ord::Inscription> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::INSCRIPTION, crate::esplora::params::single(inscription_id), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 
     async fn get_inscriptions_in_block(&self, block_hash: &str) -> Result<ord::Inscriptions> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::INSCRIPTIONS_IN_BLOCK, crate::esplora::params::single(block_hash), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 
    async fn get_ord_address_info(&self, address: &str) -> Result<ord::AddressInfo> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::ADDRESS, crate::esplora::params::single(address), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_block_info(&self, query: &str) -> Result<ord::Block> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCK, crate::esplora::params::single(query), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_ord_block_count(&self) -> Result<u64> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCK_COUNT, crate::esplora::params::empty(), 1).await?;
         log::debug!("get_ord_block_count response: {:?}", json);
         if let Some(count) = json.as_u64() {
             return Ok(count);
         }
         if let Some(count_str) = json.as_str() {
-            return count_str.parse::<u64>().map_err(|_| DeezelError::RpcError("Invalid block count string response".to_string()));
+            return count_str.parse::<u64>().map_err(|_| AlkanesError::RpcError("Invalid block count string response".to_string()));
         }
-        Err(DeezelError::RpcError("Invalid block count response: not a u64 or string".to_string()))
+        Err(AlkanesError::RpcError("Invalid block count response: not a u64 or string".to_string()))
    }
 
    async fn get_ord_blocks(&self) -> Result<ord::Blocks> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCKS, crate::esplora::params::empty(), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_children(&self, inscription_id: &str, page: Option<u32>) -> Result<ord::Children> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::CHILDREN, crate::esplora::params::optional_dual(inscription_id, page), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_content(&self, inscription_id: &str) -> Result<Vec<u8>> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::CONTENT, crate::esplora::params::single(inscription_id), 1).await?;
-        let hex_str = result.as_str().ok_or_else(|| DeezelError::RpcError("Invalid content response".to_string()))?;
-        hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str)).map_err(|e| DeezelError::Serialization(e.to_string()))
+        let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid content response".to_string()))?;
+        hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str)).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_inscriptions(&self, page: Option<u32>) -> Result<ord::Inscriptions> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::INSCRIPTIONS, crate::esplora::params::optional_single(page), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_output(&self, output: &str) -> Result<ord::Output> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::OUTPUT, crate::esplora::params::single(output), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_parents(&self, inscription_id: &str, page: Option<u32>) -> Result<ord::ParentInscriptions> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::PARENTS, crate::esplora::params::optional_dual(inscription_id, page), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_rune(&self, rune: &str) -> Result<ord::RuneInfo> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::RUNE, crate::esplora::params::single(rune), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_runes(&self, page: Option<u32>) -> Result<ord::Runes> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::RUNES, crate::esplora::params::optional_single(page), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_sat(&self, sat: u64) -> Result<ord::SatResponse> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::SAT, crate::esplora::params::single(sat), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 
    async fn get_tx_info(&self, txid: &str) -> Result<ord::TxInfo> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| DeezelError::RpcError("Ord server URL not configured".to_string()))?;
+        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::TX, crate::esplora::params::single(txid), 1).await?;
-        serde_json::from_value(json).map_err(|e| DeezelError::Serialization(e.to_string()))
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
    }
 }

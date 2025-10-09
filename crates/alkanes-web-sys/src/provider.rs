@@ -56,8 +56,8 @@
 //! which is a more graceful failure mode.
 
 use async_trait::async_trait;
-use bitcoin::Network;
-use alkanes_cli_common::{DeezelError, provider::{AllBalances, AssetBalance, EnrichedUtxo}};
+use bitcoin::{Network, Amount};
+use alkanes_cli_common::{AlkanesError, provider::{AllBalances, AssetBalance, EnrichedUtxo}, WalletConfig, WalletInfo, SendParams, UtxoInfo, TransactionInfo, FeeEstimate, FeeRates, AddressResolver, BitcoinRpcProvider, MetashrewRpcProvider, MetashrewProvider, EsploraProvider, RunestoneProvider, OrdProvider, AlkanesProvider, MonitorProvider, KeystoreProvider, KeystoreAddress, KeystoreInfo, BlockEvent, JsonRpcProvider, StorageProvider, NetworkProvider, CryptoProvider, TimeProvider, LogProvider, WalletProvider, WalletBalance, AddressInfo, TransactionInput, TransactionOutput, alkanes::execute::EnhancedAlkanesExecutor};
 use protobuf::Message;
 use serde_json::Value as JsonValue;
 use wasm_bindgen::prelude::*;
@@ -104,7 +104,7 @@ use alkanes_cli_common::{
 };
 use alkanes_support::proto::alkanes as alkanes_pb;
 use protorune_support::{proto::protorune::{OutpointWithProtocol, OutpointResponse as ProtoruneOutpointResponsePb}, balance_sheet::{BalanceSheet, BalanceSheetOperations}};
-use alkanes_cli_common::index_pointer::StubPointer;
+use alkanes_cli_common::{index_pointer::StubPointer, alkanes::balance_sheet::BalanceSheetOperations as _};
 use core::str::FromStr;
 use bitcoin::hashes::hex::FromHex;
 
@@ -185,21 +185,21 @@ impl WebProvider {
     /// ```
     pub async fn new(
         network_str: String,
-    ) -> Result<Self> {
-        let params = alkanes_cli_common::network::NetworkParams::from_network_str(&network_str)?;
+    ) -> Result<Self, AlkanesError> {
+        let rpc_config = alkanes_cli_common::network::RpcConfig::default();
         let logger = WebLogger::new();
         logger.info(&format!(
-            "WebProvider initialized with: Sandshrew RPC URL: {}, Esplora URL: {:?}, Network: {}",
-            &params.metashrew_rpc_url, &params.esplora_url, &params.network
+            "WebProvider initialized with: Sandshrew RPC URL: {:?}, Esplora URL: {:?}, Network: {}",
+            &rpc_config.sandshrew_rpc_url, &rpc_config.esplora_url, &network_str
         ));
  
          Ok(Self {
-            sandshrew_rpc_url: params.metashrew_rpc_url,
-            esplora_rpc_url: params.esplora_url,
-            network: params.network,
-            storage: WebStorage::new(),
-            network_client: WebNetwork::new(),
-            crypto: WebCrypto::new(),
+             sandshrew_rpc_url: rpc_config.sandshrew_rpc_url.unwrap_or_default(),
+             esplora_rpc_url: rpc_config.esplora_url,
+             network: Network::from_str(&network_str).map_err(|e| AlkanesError::InvalidParameters(e.to_string()))?,
+             storage: WebStorage::new(),
+             network_client: WebNetwork::new(),
+             crypto: WebCrypto::new(),
             time: WebTime::new(),
             logger: WebLogger::new(),
             keystore: None,
@@ -207,11 +207,11 @@ impl WebProvider {
         })
     }
 
-   pub fn new_with_params(params: alkanes_cli_common::network::NetworkParams) -> Result<Self> {
+   pub fn new_with_params(params: alkanes_cli_common::network::RpcConfig) -> Result<Self, AlkanesError> {
        Ok(Self {
-           sandshrew_rpc_url: params.metashrew_rpc_url,
+           sandshrew_rpc_url: params.sandshrew_rpc_url.unwrap_or_default(),
            esplora_rpc_url: params.esplora_url,
-           network: params.network,
+           network: params.network.0,
            storage: WebStorage::new(),
            network_client: WebNetwork::new(),
            crypto: WebCrypto::new(),
@@ -225,7 +225,7 @@ impl WebProvider {
     pub async fn new_with_url(
         network_str: String,
         url: &str,
-    ) -> Result<Self> {
+    ) -> Result<Self, AlkanesError> {
         let network = match network_str.as_str() {
             "mainnet" => Network::Bitcoin,
             "testnet" => Network::Testnet,
@@ -286,10 +286,8 @@ impl WebProvider {
         self.network
     }
 
-    pub fn network_params(&self) -> Result<alkanes_cli_common::network::NetworkParams> {
+    pub fn network_params(&self) -> Result<alkanes_cli_common::network::NetworkParams, AlkanesError> {
         let mut params = alkanes_cli_common::network::NetworkParams::from_network_str(self.network.to_string().as_str())?;
-        params.metashrew_rpc_url = self.sandshrew_rpc_url.clone();
-        params.esplora_url = self.esplora_rpc_url.clone();
         Ok(params)
     }
 
@@ -304,7 +302,7 @@ impl WebProvider {
     }
 
     /// Make a fetch request using web-sys
-    async fn fetch_request(&self, url: &str, method: &str, body: Option<&str>, headers: Option<&js_sys::Object>) -> Result<Response> {
+    async fn fetch_request(&self, url: &str, method: &str, body: Option<&str>, headers: Option<&js_sys::Object>) -> Result<Response, AlkanesError> {
         let window = window().ok_or_else(|| AlkanesError::Network("No window object available".to_string()))?;
 
         let opts = RequestInit::new();
@@ -372,7 +370,7 @@ impl WebProvider {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn broadcast_via_rebar_shield(&self, tx_hex: &str) -> Result<String> {
+    pub async fn broadcast_via_rebar_shield(&self, tx_hex: &str) -> Result<String, AlkanesError> {
         self.logger.info("🛡️  Broadcasting transaction via Rebar Labs Shield (web)");
         
         // Rebar Labs Shield endpoint
@@ -431,7 +429,7 @@ impl WebProvider {
 
 #[async_trait(?Send)]
 impl JsonRpcProvider for WebProvider {
-    async fn call(&self, url: &str, method: &str, params: JsonValue, id: u64) -> Result<JsonValue> {
+    async fn call(&self, url: &str, method: &str, params: JsonValue, id: u64) -> Result<JsonValue, AlkanesError> {
         self.logger.info(&format!(
             "JsonRpcProvider::call -> URL: {}, Method: {}, Params: {}",
             url,
@@ -485,23 +483,23 @@ impl JsonRpcProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl StorageProvider for WebProvider {
-    async fn read(&self, key: &str) -> Result<Vec<u8>> {
+    async fn read(&self, key: &str) -> Result<Vec<u8>, AlkanesError> {
         self.storage.read(key).await
     }
 
-    async fn write(&self, key: &str, data: &[u8]) -> Result<()> {
+    async fn write(&self, key: &str, data: &[u8]) -> Result<(), AlkanesError> {
         self.storage.write(key, data).await
     }
 
-    async fn exists(&self, key: &str) -> Result<bool> {
+    async fn exists(&self, key: &str) -> Result<bool, AlkanesError> {
         self.storage.exists(key).await
     }
 
-    async fn delete(&self, key: &str) -> Result<()> {
+    async fn delete(&self, key: &str) -> Result<(), AlkanesError> {
         self.storage.delete(key).await
     }
 
-    async fn list_keys(&self, prefix: &str) -> Result<Vec<String>> {
+    async fn list_keys(&self, prefix: &str) -> Result<Vec<String>, AlkanesError> {
         self.storage.list_keys(prefix).await
     }
 
@@ -512,11 +510,11 @@ impl StorageProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl NetworkProvider for WebProvider {
-    async fn get(&self, url: &str) -> Result<Vec<u8>> {
+    async fn get(&self, url: &str) -> Result<Vec<u8>, AlkanesError> {
         self.network_client.get(url).await
     }
 
-    async fn post(&self, url: &str, body: &[u8], content_type: &str) -> Result<Vec<u8>> {
+    async fn post(&self, url: &str, body: &[u8], content_type: &str) -> Result<Vec<u8>, AlkanesError> {
         self.network_client.post(url, body, content_type).await
     }
 
@@ -527,27 +525,27 @@ impl NetworkProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl CryptoProvider for WebProvider {
-    fn random_bytes(&self, len: usize) -> Result<Vec<u8>> {
+    fn random_bytes(&self, len: usize) -> Result<Vec<u8>, AlkanesError> {
         self.crypto.random_bytes(len)
     }
 
-    fn sha256(&self, data: &[u8]) -> Result<[u8; 32]> {
+    fn sha256(&self, data: &[u8]) -> Result<[u8; 32], AlkanesError> {
         self.crypto.sha256(data)
     }
 
-    fn sha3_256(&self, data: &[u8]) -> Result<[u8; 32]> {
+    fn sha3_256(&self, data: &[u8]) -> Result<[u8; 32], AlkanesError> {
         self.crypto.sha3_256(data)
     }
 
-    async fn encrypt_aes_gcm(&self, data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
+    async fn encrypt_aes_gcm(&self, data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>, AlkanesError> {
         self.crypto.encrypt_aes_gcm(data, key, nonce).await
     }
 
-    async fn decrypt_aes_gcm(&self, data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
+    async fn decrypt_aes_gcm(&self, data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>, AlkanesError> {
         self.crypto.decrypt_aes_gcm(data, key, nonce).await
     }
 
-    async fn pbkdf2_derive(&self, password: &[u8], salt: &[u8], iterations: u32, key_len: usize) -> Result<Vec<u8>> {
+    async fn pbkdf2_derive(&self, password: &[u8], salt: &[u8], iterations: u32, key_len: usize) -> Result<Vec<u8>, AlkanesError> {
         self.crypto.pbkdf2_derive(password, salt, iterations, key_len).await
     }
 }
@@ -587,7 +585,7 @@ impl LogProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl EsploraProvider for WebProvider {
-    async fn get_blocks_tip_hash(&self) -> Result<String> {
+    async fn get_blocks_tip_hash(&self) -> Result<String, AlkanesError> {
         self.logger.info("[EsploraProvider] Calling get_blocks_tip_hash");
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH));
@@ -595,7 +593,7 @@ impl EsploraProvider for WebProvider {
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tip hash response".to_string()))
     }
 
-    async fn get_blocks_tip_height(&self) -> Result<u64> {
+    async fn get_blocks_tip_height(&self) -> Result<u64, AlkanesError> {
         self.logger.info("[EsploraProvider] Calling get_blocks_tip_height");
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HEIGHT));
@@ -603,45 +601,45 @@ impl EsploraProvider for WebProvider {
         result.as_u64().ok_or_else(|| AlkanesError::RpcError("Invalid tip height response".to_string()))
     }
 
-    async fn get_blocks(&self, start_height: Option<u64>) -> Result<serde_json::Value> {
+    async fn get_blocks(&self, start_height: Option<u64>) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCKS, esplora::params::optional_single(start_height), 1).await
     }
 
-    async fn get_block_by_height(&self, height: u64) -> Result<String> {
+    async fn get_block_by_height(&self, height: u64) -> Result<String, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_HEIGHT, esplora::params::single(height), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
     }
 
-    async fn get_block(&self, hash: &str) -> Result<serde_json::Value> {
+    async fn get_block(&self, hash: &str) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCK, esplora::params::single(hash), 1).await
     }
 
-    async fn get_block_status(&self, hash: &str) -> Result<serde_json::Value> {
+    async fn get_block_status(&self, hash: &str) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_STATUS, esplora::params::single(hash), 1).await
     }
 
-    async fn get_block_txids(&self, hash: &str) -> Result<serde_json::Value> {
+    async fn get_block_txids(&self, hash: &str) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_TXIDS, esplora::params::single(hash), 1).await
     }
 
-    async fn get_block_header(&self, hash: &str) -> Result<String> {
+    async fn get_block_header(&self, hash: &str) -> Result<String, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_HEADER, esplora::params::single(hash), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block header response".to_string()))
     }
 
-    async fn get_block_raw(&self, hash: &str) -> Result<String> {
+    async fn get_block_raw(&self, hash: &str) -> Result<String, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_RAW, esplora::params::single(hash), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw block response".to_string()))
     }
 
-    async fn get_block_txid(&self, hash: &str, index: u32) -> Result<String> {
+    async fn get_block_txid(&self, hash: &str, index: u32) -> Result<String, AlkanesError> {
         self.logger.info(&format!("[EsploraProvider] Calling get_block_txid for hash: {}, index: {}", hash, index));
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::BLOCK_TXID));
@@ -649,19 +647,19 @@ impl EsploraProvider for WebProvider {
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
     }
 
-    async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<serde_json::Value> {
+    async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_TXS, esplora::params::optional_dual(hash, start_index), 1).await
     }
 
-    async fn get_address_info(&self, address: &str) -> Result<serde_json::Value> {
+    async fn get_address_info(&self, address: &str) -> Result<serde_json::Value, AlkanesError> {
         self.logger.info(&format!("[EsploraProvider] Calling get_address_info for address: {}", address));
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::ADDRESS));
         self.call(url, esplora::EsploraJsonRpcMethods::ADDRESS, esplora::params::single(address), 1).await
     }
 
-    async fn get_address_utxo(&self, address: &str) -> Result<serde_json::Value> {
+    async fn get_address_utxo(&self, address: &str) -> Result<serde_json::Value, AlkanesError> {
         self.logger.info(&format!("[EsploraProvider] Calling get_address_utxo for address: {}", address));
         if let Some(url) = self.esplora_rpc_url.as_deref() {
             self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method esplora_address::utxo", url));
@@ -674,93 +672,93 @@ impl EsploraProvider for WebProvider {
         self.call(&self.sandshrew_rpc_url, "esplora_address::utxo", esplora::params::single(address), 1).await
     }
 
-    async fn get_address_txs(&self, address: &str) -> Result<serde_json::Value> {
+    async fn get_address_txs(&self, address: &str) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, "esplora_address::txs", esplora::params::single(address), 1).await
     }
 
-    async fn get_address_txs_chain(&self, address: &str, last_seen_txid: Option<&str>) -> Result<serde_json::Value> {
+    async fn get_address_txs_chain(&self, address: &str, last_seen_txid: Option<&str>) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::ADDRESS_TXS_CHAIN, esplora::params::optional_dual(address, last_seen_txid), 1).await
     }
 
-    async fn get_address_txs_mempool(&self, address: &str) -> Result<serde_json::Value> {
+    async fn get_address_txs_mempool(&self, address: &str) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::ADDRESS_TXS_MEMPOOL, esplora::params::single(address), 1).await
     }
 
-    async fn get_address_prefix(&self, prefix: &str) -> Result<serde_json::Value> {
+    async fn get_address_prefix(&self, prefix: &str) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::ADDRESS_PREFIX, esplora::params::single(prefix), 1).await
     }
 
-    async fn get_tx(&self, txid: &str) -> Result<serde_json::Value> {
+    async fn get_tx(&self, txid: &str) -> Result<serde_json::Value, AlkanesError> {
         self.logger.info(&format!("[EsploraProvider] Calling get_tx for txid: {}", txid));
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::TX));
         self.call(url, esplora::EsploraJsonRpcMethods::TX, esplora::params::single(txid), 1).await
     }
 
-    async fn get_tx_hex(&self, txid: &str) -> Result<String> {
+    async fn get_tx_hex(&self, txid: &str) -> Result<String, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::TX_HEX, esplora::params::single(txid), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tx hex response".to_string()))
     }
 
-    async fn get_tx_raw(&self, txid: &str) -> Result<String> {
+    async fn get_tx_raw(&self, txid: &str) -> Result<String, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::TX_RAW, esplora::params::single(txid), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw tx response".to_string()))
     }
 
-    async fn get_tx_status(&self, txid: &str) -> Result<serde_json::Value> {
+    async fn get_tx_status(&self, txid: &str) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::TX_STATUS, esplora::params::single(txid), 1).await
     }
 
-    async fn get_tx_merkle_proof(&self, txid: &str) -> Result<serde_json::Value> {
+    async fn get_tx_merkle_proof(&self, txid: &str) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::TX_MERKLE_PROOF, esplora::params::single(txid), 1).await
     }
 
-    async fn get_tx_merkleblock_proof(&self, txid: &str) -> Result<String> {
+    async fn get_tx_merkleblock_proof(&self, txid: &str) -> Result<String, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::TX_MERKLEBLOCK_PROOF, esplora::params::single(txid), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid merkleblock proof response".to_string()))
     }
 
-    async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<serde_json::Value> {
+    async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::TX_OUTSPEND, esplora::params::dual(txid, index), 1).await
     }
 
-    async fn get_tx_outspends(&self, txid: &str) -> Result<serde_json::Value> {
+    async fn get_tx_outspends(&self, txid: &str) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::TX_OUTSPENDS, esplora::params::single(txid), 1).await
     }
 
-    async fn broadcast(&self, tx_hex: &str) -> Result<String> {
+    async fn broadcast(&self, tx_hex: &str) -> Result<String, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BROADCAST, esplora::params::single(tx_hex), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid broadcast response".to_string()))
     }
 
-    async fn get_mempool(&self) -> Result<serde_json::Value> {
+    async fn get_mempool(&self) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::MEMPOOL, esplora::params::empty(), 1).await
     }
 
-    async fn get_mempool_txids(&self) -> Result<serde_json::Value> {
+    async fn get_mempool_txids(&self) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::MEMPOOL_TXIDS, esplora::params::empty(), 1).await
     }
 
-    async fn get_mempool_recent(&self) -> Result<serde_json::Value> {
+    async fn get_mempool_recent(&self) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::MEMPOOL_RECENT, esplora::params::empty(), 1).await
     }
 
-    async fn get_fee_estimates(&self) -> Result<serde_json::Value> {
+    async fn get_fee_estimates(&self) -> Result<serde_json::Value, AlkanesError> {
         let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::FEE_ESTIMATES, esplora::params::empty(), 1).await
     }
@@ -768,7 +766,7 @@ impl EsploraProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl WalletProvider for WebProvider {
-    async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
+    async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo, AlkanesError> {
         let mnemonic = if let Some(m) = mnemonic {
             bip39::Mnemonic::from_phrase(&m, bip39::Language::English).map_err(|e| AlkanesError::Wallet(format!("Invalid mnemonic: {e}")))?
         } else {
@@ -797,7 +795,7 @@ impl WalletProvider for WebProvider {
         })
     }
     
-    async fn load_wallet(&mut self, config: WalletConfig, passphrase: Option<String>) -> Result<WalletInfo> {
+    async fn load_wallet(&mut self, config: WalletConfig, passphrase: Option<String>) -> Result<WalletInfo, AlkanesError> {
         let keystore_bytes = self.storage.read(&config.wallet_path).await?;
         let keystore: alkanes_cli_common::keystore::Keystore = serde_json::from_slice(&keystore_bytes)?;
 
@@ -819,7 +817,7 @@ impl WalletProvider for WebProvider {
         })
     }
     
-    async fn get_balance(&self, addresses: Option<Vec<String>>) -> Result<WalletBalance> {
+    async fn get_balance(&self, addresses: Option<Vec<String>>) -> Result<WalletBalance, AlkanesError> {
         self.logger.info(&format!("[WalletProvider] Calling get_balance for addresses: {:?}", addresses));
         let addrs = if let Some(a) = addresses {
             a
@@ -845,7 +843,7 @@ impl WalletProvider for WebProvider {
         })
     }
     
-    async fn get_address(&self) -> Result<String> {
+    async fn get_address(&self) -> Result<String, AlkanesError> {
         self.logger.info("[WalletProvider] Calling get_address");
         let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let network_params = self.network_params()?;
@@ -856,7 +854,7 @@ impl WalletProvider for WebProvider {
         Ok(address)
     }
     
-    async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>> {
+    async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>, AlkanesError> {
         self.logger.info(&format!("[WalletProvider] Calling get_addresses with count: {}", count));
         let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let network_params = self.network_params()?;
@@ -875,14 +873,14 @@ impl WalletProvider for WebProvider {
         Ok(addresses)
     }
     
-    async fn send(&mut self, params: SendParams) -> Result<String> {
+    async fn send(&mut self, params: SendParams) -> Result<String, AlkanesError> {
         self.logger.info(&format!("[WalletProvider] Calling send with params: {:?}", params));
         let psbt_str = self.create_transaction(params).await?;
         let signed_tx_hex = self.sign_transaction(psbt_str).await?;
         self.broadcast_transaction(signed_tx_hex).await
     }
     
-    async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(bitcoin::OutPoint, UtxoInfo)>> {
+    async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(bitcoin::OutPoint, UtxoInfo)>, AlkanesError> {
         self.logger.info(&format!("[WalletProvider] Calling get_utxos for addresses: {:?}", addresses));
         let addrs = if let Some(a) = addresses {
             a
@@ -930,7 +928,7 @@ impl WalletProvider for WebProvider {
     }
     
     
-    async fn get_history(&self, _count: u32, address: Option<String>) -> Result<Vec<TransactionInfo>> {
+    async fn get_history(&self, _count: u32, address: Option<String>) -> Result<Vec<TransactionInfo>, AlkanesError> {
         self.logger.info(&format!("[WalletProvider] Calling get_history for address: {:?}, count: {}", address, _count));
         let addr = if let Some(a) = address {
             a
@@ -986,7 +984,7 @@ impl WalletProvider for WebProvider {
         Ok(history)
     }
 
-    async fn get_enriched_utxos(&self, addresses: Option<Vec<String>>) -> Result<Vec<EnrichedUtxo>> {
+    async fn get_enriched_utxos(&self, addresses: Option<Vec<String>>) -> Result<Vec<EnrichedUtxo>, AlkanesError> {
         let utxo_tuples = self.get_utxos(false, addresses).await?;
         let mut enriched_utxos = Vec::new();
 
@@ -1022,7 +1020,7 @@ impl WalletProvider for WebProvider {
         Ok(enriched_utxos)
     }
 
-    async fn get_all_balances(&self, addresses: Option<Vec<String>>) -> Result<AllBalances> {
+    async fn get_all_balances(&self, addresses: Option<Vec<String>>) -> Result<AllBalances, AlkanesError> {
         let btc_balance = WalletProvider::get_balance(self, addresses.clone()).await?;
         
         let mut asset_balances: std::collections::HashMap<String, u128> = std::collections::HashMap::new();
@@ -1056,19 +1054,19 @@ impl WalletProvider for WebProvider {
         })
     }
     
-    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
+    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<(), AlkanesError> {
         // This would typically interact with the wallet's internal database of UTXOs.
         // Not implemented for this web-based, stateless provider.
         unimplemented!()
     }
     
-    async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
+    async fn unfreeze_utxo(&self, _utxo: String) -> Result<(), AlkanesError> {
         // This would typically interact with the wallet's internal database of UTXOs.
         // Not implemented for this web-based, stateless provider.
         unimplemented!()
     }
     
-    async fn create_transaction(&self, params: SendParams) -> Result<String> {
+    async fn create_transaction(&self, params: SendParams) -> Result<String, AlkanesError> {
         self.logger.info(&format!("[WalletProvider] Calling create_transaction with params: {:?}", params));
         use bitcoin::psbt::Psbt;
         use bitcoin::address::Address;
@@ -1132,7 +1130,7 @@ impl WalletProvider for WebProvider {
         Ok(STANDARD.encode(&psbt.serialize()))
     }
     
-    async fn sign_transaction(&mut self, psbt_base64: String) -> Result<String> {
+    async fn sign_transaction(&mut self, psbt_base64: String) -> Result<String, AlkanesError> {
         self.logger.info("[WalletProvider] Calling sign_transaction");
         use bitcoin::consensus::encode;
         use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -1146,7 +1144,7 @@ impl WalletProvider for WebProvider {
         Ok(encode::serialize_hex(&tx))
     }
     
-    async fn broadcast_transaction(&self, tx_hex: String) -> Result<String> {
+    async fn broadcast_transaction(&self, tx_hex: String) -> Result<String, AlkanesError> {
         self.logger.info("[WalletProvider] Calling broadcast_transaction");
         if self.network == Network::Bitcoin {
             self.broadcast_via_rebar_shield(&tx_hex).await
@@ -1155,7 +1153,7 @@ impl WalletProvider for WebProvider {
         }
     }
     
-    async fn estimate_fee(&self, target: u32) -> Result<FeeEstimate> {
+    async fn estimate_fee(&self, target: u32) -> Result<FeeEstimate, AlkanesError> {
         let fee_rates = self.get_fee_rates().await?;
         let rate = match target {
             1 => fee_rates.fast,
@@ -1168,7 +1166,7 @@ impl WalletProvider for WebProvider {
         })
     }
     
-    async fn get_fee_rates(&self) -> Result<FeeRates> {
+    async fn get_fee_rates(&self) -> Result<FeeRates, AlkanesError> {
         let estimates_val = <Self as EsploraProvider>::get_fee_estimates(self).await?;
         let estimates: esplora::EsploraFeeEstimates = serde_json::from_value(estimates_val)?;
         
@@ -1183,20 +1181,20 @@ impl WalletProvider for WebProvider {
         })
     }
     
-    async fn sync(&self) -> Result<()> {
+    async fn sync(&self) -> Result<(), AlkanesError> {
         // Syncing is a complex process involving checking all derived addresses for activity.
         // For a web provider, this might be a lighter operation, perhaps just updating balances.
         // For now, we'll consider it a no-op.
         Ok(())
     }
     
-    async fn backup(&self) -> Result<String> {
+    async fn backup(&self) -> Result<String, AlkanesError> {
         let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let keystore_json = serde_json::to_string(keystore)?;
         Ok(keystore_json)
     }
     
-    async fn get_mnemonic(&self) -> Result<Option<String>> {
+    async fn get_mnemonic(&self) -> Result<Option<String>, AlkanesError> {
         let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let pass = self.passphrase.as_deref().ok_or_else(|| AlkanesError::Wallet("Passphrase not set".to_string()))?;
         let mnemonic = keystore.decrypt_mnemonic(pass)?;
@@ -1207,7 +1205,7 @@ impl WalletProvider for WebProvider {
         self.network
     }
     
-    async fn get_internal_key(&self) -> Result<(XOnlyPublicKey, (Fingerprint, DerivationPath))> {
+    async fn get_internal_key(&self) -> Result<(XOnlyPublicKey, (Fingerprint, DerivationPath)), AlkanesError> {
         let keypair = self.get_keypair().await?;
         let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let (x_only, _) = keypair.x_only_public_key();
@@ -1218,7 +1216,7 @@ impl WalletProvider for WebProvider {
         Ok((x_only, (fingerprint, path)))
     }
     
-    async fn sign_psbt(&mut self, psbt: &Psbt) -> Result<Psbt> {
+    async fn sign_psbt(&mut self, psbt: &Psbt) -> Result<Psbt, AlkanesError> {
         let mut psbt = psbt.clone();
         let keypair = self.get_keypair().await?;
         let secp = Secp256k1::new();
@@ -1232,7 +1230,7 @@ impl WalletProvider for WebProvider {
         Ok(psbt)
     }
     
-    async fn get_keypair(&self) -> Result<Keypair> {
+    async fn get_keypair(&self) -> Result<Keypair, AlkanesError> {
         use bip39::Mnemonic;
         use bitcoin::bip32::Xpriv;
 
@@ -1257,20 +1255,20 @@ impl WalletProvider for WebProvider {
         self.passphrase = passphrase;
     }
 
-    async fn get_last_used_address_index(&self) -> Result<u32> {
+    async fn get_last_used_address_index(&self) -> Result<u32, AlkanesError> {
         // This would require iterating through derived addresses and checking their history.
         // A full implementation is complex. Returning 0 for now.
         Ok(0)
     }
 
-    async fn get_master_public_key(&self) -> Result<Option<String>> {
+    async fn get_master_public_key(&self) -> Result<Option<String>, AlkanesError> {
         Ok(self.keystore.as_ref().map(|k| k.account_xpub.to_string()))
     }
 }
 
 #[async_trait(?Send)]
 impl AddressResolver for WebProvider {
-    async fn resolve_all_identifiers(&self, _input: &str) -> Result<String> {
+    async fn resolve_all_identifiers(&self, _input: &str) -> Result<String, AlkanesError> {
         unimplemented!()
     }
     
@@ -1278,90 +1276,126 @@ impl AddressResolver for WebProvider {
         unimplemented!()
     }
     
-    async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String> {
+    async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String, AlkanesError> {
         unimplemented!()
     }
     
-    async fn list_identifiers(&self) -> Result<Vec<String>> {
+    async fn list_identifiers(&self) -> Result<Vec<String>, AlkanesError> {
         unimplemented!()
     }
 }
 
 #[async_trait(?Send)]
 impl BitcoinRpcProvider for WebProvider {
-    async fn get_block_count(&self) -> Result<u64> {
+    async fn get_block_count(&self) -> Result<u64, AlkanesError> {
         let result = self.call(&self.sandshrew_rpc_url, "getblockcount", serde_json::json!([]), 1).await?;
         result.as_u64().ok_or_else(|| AlkanesError::RpcError("Invalid block count response".to_string()))
     }
     
-    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue> {
+    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue, AlkanesError> {
         let params = serde_json::json!([nblocks, address]);
         self.call(&self.sandshrew_rpc_url, "generatetoaddress", params, 1).await
     }
 
-    async fn get_new_address(&self) -> Result<JsonValue> {
+    async fn get_new_address(&self) -> Result<JsonValue, AlkanesError> {
         self.call(&self.sandshrew_rpc_url, "getnewaddress", serde_json::json!([]), 1).await
     }
     
-    async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
+    async fn get_transaction_hex(&self, txid: &str) -> Result<String, AlkanesError> {
         let params = serde_json::json!([txid, true]);
         let result = self.call(&self.sandshrew_rpc_url, "getrawtransaction", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid transaction hex response".to_string()))
     }
     
-    async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue> {
+    async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue, AlkanesError> {
         let verbosity = if raw { 1 } else { 2 };
         let params = serde_json::json!([hash, verbosity]);
         self.call(&self.sandshrew_rpc_url, "getblock", params, 1).await
     }
     
-    async fn get_block_hash(&self, height: u64) -> Result<String> {
+    async fn get_block_hash(&self, height: u64) -> Result<String, AlkanesError> {
         let params = serde_json::json!([height]);
         let result = self.call(&self.sandshrew_rpc_url, "getblockhash", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
     }
     
-    async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
+    async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String, AlkanesError> {
         let params = serde_json::json!([tx_hex]);
         let result = self.call(&self.sandshrew_rpc_url, "sendrawtransaction", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
     }
     
-    async fn get_mempool_info(&self) -> Result<JsonValue> {
+    async fn get_mempool_info(&self) -> Result<JsonValue, AlkanesError> {
         self.call(&self.sandshrew_rpc_url, "getmempoolinfo", serde_json::json!([]), 1).await
     }
     
-    async fn estimate_smart_fee(&self, target: u32) -> Result<JsonValue> {
+    async fn estimate_smart_fee(&self, target: u32) -> Result<JsonValue, AlkanesError> {
         let params = serde_json::json!([target]);
         self.call(&self.sandshrew_rpc_url, "estimatesmartfee", params, 1).await
     }
     
-    async fn get_esplora_blocks_tip_height(&self) -> Result<u64> {
+    async fn get_esplora_blocks_tip_height(&self) -> Result<u64, AlkanesError> {
         // This is an Esplora-specific method, but we can implement it using get_block_count for compatibility
         self.get_block_count().await
     }
     
-    async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<serde_json::Value> {
+    async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<serde_json::Value, AlkanesError> {
         let params = serde_json::json!([txid, vout, block, tx]);
         self.call(&self.sandshrew_rpc_url, "trace_transaction", params, 1).await
+    }
+
+    async fn get_blockchain_info(&self) -> Result<JsonValue, AlkanesError> {
+        unimplemented!()
+    }
+
+    async fn get_network_info(&self) -> Result<JsonValue, AlkanesError> {
+        unimplemented!()
+    }
+
+    async fn get_raw_transaction(&self, _txid: &str, _block_hash: Option<&str>) -> Result<JsonValue, AlkanesError> {
+        unimplemented!()
+    }
+
+    async fn get_block_header(&self, _hash: &str) -> Result<JsonValue, AlkanesError> {
+        unimplemented!()
+    }
+
+    async fn get_block_stats(&self, _hash: &str) -> Result<JsonValue, AlkanesError> {
+        unimplemented!()
+    }
+
+    async fn get_chain_tips(&self) -> Result<JsonValue, AlkanesError> {
+        unimplemented!()
+    }
+
+    async fn get_raw_mempool(&self) -> Result<JsonValue, AlkanesError> {
+        unimplemented!()
+    }
+
+    async fn get_tx_out(&self, _txid: &str, _vout: u32, _include_mempool: bool) -> Result<JsonValue, AlkanesError> {
+        unimplemented!()
     }
 }
 
 #[async_trait(?Send)]
 impl MetashrewRpcProvider for WebProvider {
-    async fn get_metashrew_height(&self) -> Result<u64> {
+    async fn get_metashrew_height(&self) -> Result<u64, AlkanesError> {
+        unimplemented!()
+    }
+
+    async fn get_state_root(&self, _height: JsonValue) -> Result<String, AlkanesError> {
         unimplemented!()
     }
     
-    async fn get_contract_meta(&self, _block: &str, _tx: &str) -> Result<JsonValue> {
+    async fn get_contract_meta(&self, _block: &str, _tx: &str) -> Result<JsonValue, AlkanesError> {
         unimplemented!()
     }
     
-    async fn trace_outpoint(&self, _txid: &str, _vout: u32) -> Result<JsonValue> {
+    async fn trace_outpoint(&self, _txid: &str, _vout: u32) -> Result<JsonValue, AlkanesError> {
         unimplemented!()
     }
     
-    async fn get_spendables_by_address(&self, _address: &str) -> Result<JsonValue> {
+    async fn get_spendables_by_address(&self, _address: &str) -> Result<JsonValue, AlkanesError> {
         unimplemented!()
     }
     
@@ -1370,7 +1404,7 @@ impl MetashrewRpcProvider for WebProvider {
         _address: &str,
         _block_tag: Option<String>,
         _protocol_tag: u128,
-    ) -> Result<ProtoruneWalletResponse> {
+    ) -> Result<ProtoruneWalletResponse, AlkanesError> {
         unimplemented!()
     }
     
@@ -1380,7 +1414,7 @@ impl MetashrewRpcProvider for WebProvider {
         vout: u32,
         _block_tag: Option<String>,
         protocol_tag: u128,
-    ) -> Result<ProtoruneOutpointResponse> {
+    ) -> Result<ProtoruneOutpointResponse, AlkanesError> {
         let mut outpoint_pb = OutpointWithProtocol::default();
         outpoint_pb.txid = Vec::from_hex(txid)?;
         outpoint_pb.vout = vout;
@@ -1403,7 +1437,7 @@ impl MetashrewRpcProvider for WebProvider {
 
         // Convert from the protobuf-generated `BalanceSheet` to the `protorune_support` `BalanceSheet`
         let balances_pb = response_pb.balances.unwrap_or_default();
-        let balance_sheet = BalanceSheet::<StubPointer>::from(balances_pb);
+        let balance_sheet = alkanes_cli_common::alkanes::balance_sheet::BalanceSheet::<StubPointer>::from(balances_pb);
 
         Ok(ProtoruneOutpointResponse {
             balance_sheet,
@@ -1415,86 +1449,122 @@ impl MetashrewRpcProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl MetashrewProvider for WebProvider {
-    async fn get_height(&self) -> Result<u64> {
+    async fn get_height(&self) -> Result<u64, AlkanesError> {
         unimplemented!()
     }
-    async fn get_block_hash(&self, _height: u64) -> Result<String> {
+    async fn get_block_hash(&self, _height: u64) -> Result<String, AlkanesError> {
         unimplemented!()
     }
-    async fn get_state_root(&self, _height: JsonValue) -> Result<String> {
+    async fn get_state_root(&self, _height: JsonValue) -> Result<String, AlkanesError> {
         unimplemented!()
     }
 }
 
 #[async_trait(?Send)]
 impl RunestoneProvider for WebProvider {
-    async fn decode_runestone(&self, _tx: &Transaction) -> Result<JsonValue> {
+    async fn decode_runestone(&self, _tx: &Transaction) -> Result<JsonValue, AlkanesError> {
         unimplemented!()
     }
     
-    async fn format_runestone_with_decoded_messages(&self, _tx: &Transaction) -> Result<JsonValue> {
+    async fn format_runestone_with_decoded_messages(&self, _tx: &Transaction) -> Result<JsonValue, AlkanesError> {
         unimplemented!()
     }
     
-    async fn analyze_runestone(&self, _txid: &str) -> Result<JsonValue> {
+    async fn analyze_runestone(&self, _txid: &str) -> Result<JsonValue, AlkanesError> {
         unimplemented!()
     }
 }
 
 #[async_trait(?Send)]
 impl OrdProvider for WebProvider {
-    async fn get_inscription(&self, _inscription_id: &str) -> Result<OrdInscription> {
+    async fn get_inscription(&self, _inscription_id: &str) -> Result<OrdInscription, AlkanesError> {
         unimplemented!()
     }
     
-    async fn get_inscriptions_in_block(&self, _block_hash: &str) -> Result<OrdInscriptions> {
+    async fn get_inscriptions_in_block(&self, _block_hash: &str) -> Result<OrdInscriptions, AlkanesError> {
         unimplemented!()
     }
-    async fn get_ord_address_info(&self, _address: &str) -> Result<OrdAddressInfo> {
+    async fn get_ord_address_info(&self, _address: &str) -> Result<OrdAddressInfo, AlkanesError> {
         unimplemented!()
     }
-    async fn get_block_info(&self, _query: &str) -> Result<OrdBlock> {
+    async fn get_block_info(&self, _query: &str) -> Result<OrdBlock, AlkanesError> {
         unimplemented!()
     }
-    async fn get_ord_block_count(&self) -> Result<u64> {
+    async fn get_ord_block_count(&self) -> Result<u64, AlkanesError> {
         unimplemented!()
     }
-    async fn get_ord_blocks(&self) -> Result<OrdBlocks> {
+    async fn get_ord_blocks(&self) -> Result<OrdBlocks, AlkanesError> {
         unimplemented!()
     }
-    async fn get_children(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdChildren> {
+    async fn get_children(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdChildren, AlkanesError> {
         unimplemented!()
     }
-    async fn get_content(&self, _inscription_id: &str) -> Result<Vec<u8>> {
+    async fn get_content(&self, _inscription_id: &str) -> Result<Vec<u8>, AlkanesError> {
         unimplemented!()
     }
-    async fn get_inscriptions(&self, _page: Option<u32>) -> Result<OrdInscriptions> {
+    async fn get_inscriptions(&self, _page: Option<u32>) -> Result<OrdInscriptions, AlkanesError> {
         unimplemented!()
     }
-    async fn get_output(&self, output: &str) -> Result<OrdOutput> {
+    async fn get_output(&self, output: &str) -> Result<OrdOutput, AlkanesError> {
         let json = self.call(self.sandshrew_rpc_url(), "ord_output", serde_json::json!([output]), 1).await?;
         serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdParents> {
+    async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdParents, AlkanesError> {
         unimplemented!()
     }
-    async fn get_rune(&self, _rune: &str) -> Result<OrdRuneInfo> {
+    async fn get_rune(&self, _rune: &str) -> Result<OrdRuneInfo, AlkanesError> {
         unimplemented!()
     }
-    async fn get_runes(&self, _page: Option<u32>) -> Result<OrdRunes> {
+    async fn get_runes(&self, _page: Option<u32>) -> Result<OrdRunes, AlkanesError> {
         unimplemented!()
     }
-    async fn get_sat(&self, _sat: u64) -> Result<OrdSat> {
+    async fn get_sat(&self, _sat: u64) -> Result<OrdSat, AlkanesError> {
         unimplemented!()
     }
-    async fn get_tx_info(&self, _txid: &str) -> Result<OrdTxInfo> {
+    async fn get_tx_info(&self, _txid: &str) -> Result<OrdTxInfo, AlkanesError> {
         unimplemented!()
     }
 }
 
 #[async_trait(?Send)]
 impl AlkanesProvider for WebProvider {
-    async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
+    fn provider_name(&self) -> &str { "WebProvider" }
+    fn get_bitcoin_rpc_url(&self) -> Option<String> { Some(self.sandshrew_rpc_url.clone()) }
+    fn get_esplora_api_url(&self) -> Option<String> { self.esplora_rpc_url.clone() }
+    fn get_ord_server_url(&self) -> Option<String> { None }
+    fn get_metashrew_rpc_url(&self) -> Option<String> { Some(self.sandshrew_rpc_url.clone()) }
+    fn clone_box(&self) -> Box<dyn AlkanesProvider> { Box::new(self.clone()) }
+    async fn initialize(&self) -> Result<(), AlkanesError> { Ok(()) }
+    async fn shutdown(&self) -> Result<(), AlkanesError> { Ok(()) }
+    fn secp(&self) -> &Secp256k1<All> {
+        // This is not ideal, but for web, we don't have a long-lived secp context.
+        // A new one is created on demand.
+        unimplemented!("Secp context not available in WebProvider")
+    }
+    async fn get_utxo(&self, outpoint: &OutPoint) -> Result<Option<TxOut>, AlkanesError> {
+        let tx_info = self.get_tx(&outpoint.txid.to_string()).await?;
+        let tx: esplora::EsploraTransaction = serde_json::from_value(tx_info)?;
+        Ok(tx.vout.get(outpoint.vout as usize).map(|vout| {
+            TxOut {
+                value: Amount::from_sat(vout.value),
+                script_pubkey: ScriptBuf::from_hex(&vout.scriptpubkey).unwrap_or_default(),
+            }
+        }))
+    }
+    async fn sign_taproot_script_spend(&self, _sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature, AlkanesError> {
+        unimplemented!("sign_taproot_script_spend not implemented for WebProvider")
+    }
+    async fn wrap(&mut self, _amount: u64, _address: Option<String>, _fee_rate: Option<f32>) -> Result<String, AlkanesError> {
+        unimplemented!("wrap not implemented for WebProvider")
+    }
+    async fn unwrap(&mut self, _amount: u64, _address: Option<String>) -> Result<String, AlkanesError> {
+        unimplemented!("unwrap not implemented for WebProvider")
+    }
+    async fn simulate(&self, _contract_id: &str, _context: &alkanes_pb::MessageContextParcel) -> Result<JsonValue, AlkanesError> {
+        unimplemented!("simulate not implemented for WebProvider")
+    }
+
+    async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState, AlkanesError> {
         let mut executor = EnhancedAlkanesExecutor::new(self);
         executor.execute(params).await
     }
@@ -1503,7 +1573,7 @@ impl AlkanesProvider for WebProvider {
         &mut self,
         state: ReadyToSignTx,
         params: &EnhancedExecuteParams,
-    ) -> Result<EnhancedExecuteResult> {
+    ) -> Result<EnhancedExecuteResult, AlkanesError> {
         let mut executor = EnhancedAlkanesExecutor::new(self);
         executor.resume_execution(state, params).await
     }
@@ -1511,7 +1581,7 @@ impl AlkanesProvider for WebProvider {
     async fn resume_commit_execution(
         &mut self,
         state: ReadyToSignCommitTx,
-    ) -> Result<ExecutionState> {
+    ) -> Result<ExecutionState, AlkanesError> {
         let mut executor = EnhancedAlkanesExecutor::new(self);
         executor.resume_commit_execution(state).await
     }
@@ -1519,7 +1589,7 @@ impl AlkanesProvider for WebProvider {
     async fn resume_reveal_execution(
         &mut self,
         state: ReadyToSignRevealTx,
-    ) -> Result<EnhancedExecuteResult> {
+    ) -> Result<EnhancedExecuteResult, AlkanesError> {
         let mut executor = EnhancedAlkanesExecutor::new(self);
         executor.resume_reveal_execution(state).await
     }
@@ -1529,7 +1599,7 @@ impl AlkanesProvider for WebProvider {
         address: &str,
         block_tag: Option<String>,
         protocol_tag: u128,
-    ) -> Result<ProtoruneWalletResponse> {
+    ) -> Result<ProtoruneWalletResponse, AlkanesError> {
         <Self as MetashrewRpcProvider>::get_protorunes_by_address(self, address, block_tag, protocol_tag).await
     }
     async fn protorunes_by_outpoint(
@@ -1538,10 +1608,10 @@ impl AlkanesProvider for WebProvider {
         vout: u32,
         block_tag: Option<String>,
         protocol_tag: u128,
-    ) -> Result<ProtoruneOutpointResponse> {
+    ) -> Result<ProtoruneOutpointResponse, AlkanesError> {
         <Self as MetashrewRpcProvider>::get_protorunes_by_outpoint(self, txid, vout, block_tag, protocol_tag).await
     }
-    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue> {
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue, AlkanesError> {
         let combined_view = format!("{}/{}", contract_id, view_fn);
         let params_hex = params.map(|p| format!("0x{}", hex::encode(p))).unwrap_or_else(|| "0x".to_string());
         
@@ -1569,31 +1639,31 @@ impl AlkanesProvider for WebProvider {
         Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
     }
 
-    async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
+    async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace, AlkanesError> {
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_trace", serde_json::json!([outpoint]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         alkanes_pb::Trace::parse_from_bytes(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse> {
+    async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse, AlkanesError> {
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_get_block", serde_json::json!([height]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         alkanes_pb::BlockResponse::parse_from_bytes(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn sequence(&self) -> Result<JsonValue> {
+    async fn sequence(&self) -> Result<JsonValue, AlkanesError> {
         self.call(&self.sandshrew_rpc_url, "alkanes_sequence", serde_json::json!(["0x"]), 1).await
     }
-    async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
+    async fn spendables_by_address(&self, address: &str) -> Result<JsonValue, AlkanesError> {
         self.call(&self.sandshrew_rpc_url, "alkanes_spendables_by_address", serde_json::json!([address]), 1).await
     }
-    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace, AlkanesError> {
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_trace_block", serde_json::json!([height]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         alkanes_pb::Trace::parse_from_bytes(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
+    async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String, AlkanesError> {
         use alkanes_support::proto::alkanes::BytecodeRequest;
         let parts: Vec<&str> = alkane_id.split(':').collect();
         if parts.len() != 2 {
@@ -1620,12 +1690,12 @@ impl AlkanesProvider for WebProvider {
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         Ok(format!("0x{}", hex::encode(bytes)))
     }
-    async fn inspect(&self, target: &str, config: AlkanesInspectConfig) -> Result<AlkanesInspectResult> {
+    async fn inspect(&self, target: &str, config: AlkanesInspectConfig) -> Result<AlkanesInspectResult, AlkanesError> {
         let params = serde_json::json!([target, config]);
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_inspect", params, 1).await?;
         serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_balance(&self, address: Option<&str>) -> Result<Vec<AlkaneBalance>> {
+    async fn get_balance(&self, address: Option<&str>) -> Result<Vec<AlkaneBalance>, AlkanesError> {
         let addr = match address {
             Some(a) => a.to_string(),
             None => WalletProvider::get_address(self).await?,
@@ -1637,18 +1707,18 @@ impl AlkanesProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl MonitorProvider for WebProvider {
-    async fn monitor_blocks(&self, _start: Option<u64>) -> Result<()> {
+    async fn monitor_blocks(&self, _start: Option<u64>) -> Result<(), AlkanesError> {
         unimplemented!()
     }
     
-    async fn get_block_events(&self, _height: u64) -> Result<Vec<BlockEvent>> {
+    async fn get_block_events(&self, _height: u64) -> Result<Vec<BlockEvent>, AlkanesError> {
         unimplemented!()
     }
 }
 
 #[async_trait(?Send)]
 impl KeystoreProvider for WebProvider {
-    async fn derive_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
+    async fn derive_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>, AlkanesError> {
         let mut addresses = Vec::new();
         for script_type in script_types {
             for i in start_index..(start_index + count) {
@@ -1681,16 +1751,16 @@ let address = alkanes_cli_common::keystore::derive_address_from_public_key(
         Ok(addresses)
     }
     
-    async fn get_default_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>> {
+    async fn get_default_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>, AlkanesError> {
         let script_types = vec!["p2wpkh", "p2tr"];
         self.derive_addresses(master_public_key, network_params, &script_types, 0, 1).await
     }
 
-    async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
+    async fn get_address(&self, address_type: &str, index: u32) -> Result<String, AlkanesError> {
         <Self as AddressResolver>::get_address(self, address_type, index).await
     }
     
-    fn parse_address_range(&self, range_spec: &str) -> Result<(String, u32, u32)> {
+    fn parse_address_range(&self, range_spec: &str) -> Result<(String, u32, u32), AlkanesError> {
         let parts: Vec<&str> = range_spec.split(':').collect();
         if parts.len() != 2 {
             return Err(AlkanesError::InvalidParameters("Invalid range specifier. Expected format: script_type:start-end".to_string()));
@@ -1709,7 +1779,7 @@ let address = alkanes_cli_common::keystore::derive_address_from_public_key(
         Ok((script_type, start_index, count))
     }
     
-    async fn get_keystore_info(&self, master_fingerprint: &str, created_at: u64, version: &str) -> Result<KeystoreInfo> {
+    async fn get_keystore_info(&self, master_fingerprint: &str, created_at: u64, version: &str) -> Result<KeystoreInfo, AlkanesError> {
         Ok(KeystoreInfo {
             master_fingerprint: master_fingerprint.to_string(),
             created_at,
@@ -1717,7 +1787,7 @@ let address = alkanes_cli_common::keystore::derive_address_from_public_key(
         })
     }
 
-    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> Result<KeystoreAddress> {
+    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> Result<KeystoreAddress, AlkanesError> {
         let address = alkanes_cli_common::keystore::derive_address_from_public_key(
             master_public_key,
             path,
@@ -1735,121 +1805,5 @@ let address = alkanes_cli_common::keystore::derive_address_from_public_key(
             script_type: script_type.to_string(),
             network: Some(network_params.network.to_string()),
         })
-    }
-}
-
-#[async_trait(?Send)]
-impl DeezelProvider for WebProvider {
-    fn provider_name(&self) -> &str {
-        "WebProvider"
-    }
-
-    fn get_bitcoin_rpc_url(&self) -> Option<String> {
-        self.esplora_rpc_url.clone()
-    }
-
-    fn get_esplora_api_url(&self) -> Option<String> {
-        self.esplora_rpc_url.clone()
-    }
-
-    fn get_ord_server_url(&self) -> Option<String> {
-        // Assuming no separate ord server for web provider, using sandshrew
-        Some(self.sandshrew_rpc_url.clone())
-    }
-
-    fn get_metashrew_rpc_url(&self) -> Option<String> {
-        Some(self.sandshrew_rpc_url.clone())
-    }
-
-    fn clone_box(&self) -> Box<dyn DeezelProvider> {
-        Box::new(self.clone())
-    }
-    
-    async fn initialize(&self) -> Result<()> {
-        self.logger.info("Deezel WebProvider Initialized");
-        Ok(())
-    }
-    
-    async fn shutdown(&self) -> Result<()> {
-        self.logger.info("Deezel WebProvider Shutdown");
-        Ok(())
-    }
-
-    fn secp(&self) -> &Secp256k1<All> {
-        unimplemented!("WebProvider does not hold a secp context directly. It should be handled in the crypto module.")
-    }
-
-    async fn get_utxo(&self, _outpoint: &OutPoint) -> Result<Option<TxOut>> {
-        unimplemented!()
-    }
-
-    async fn sign_taproot_script_spend(&self, _sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        unimplemented!()
-    }
-
-    async fn wrap(&mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Result<String> {
-        use alkanes_cli_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer};
-        use alkanes_support::cellpack::Cellpack;
-        use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-        let is_regtest = self.network == Network::Regtest;
-        let mut executor = EnhancedAlkanesExecutor::new(self);
-        let params = EnhancedExecuteParams {
-            fee_rate,
-            to_addresses: vec![],
-            from_addresses: address.map(|a| vec![a]),
-            change_address: None,
-            input_requirements: vec![],
-            protostones: vec![ProtostoneSpec {
-                cellpack: Some(Cellpack::try_from(vec![2, 0, 1]).unwrap()), // Assuming 2 is for wrapping, 0 is frBTC, 1 is mint
-                edicts: vec![],
-                bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
-            }],
-            envelope_data: None,
-            raw_output: false,
-            trace_enabled: false,
-            mine_enabled: is_regtest,
-            auto_confirm: false,
-        };
-
-        match executor.execute(params).await? {
-            ExecutionState::ReadyToSign(ready_tx) => {
-                Ok(STANDARD.encode(&ready_tx.psbt.serialize()))
-            }
-            _ => Err(AlkanesError::Other("Unexpected execution state".to_string())),
-        }
-    }
-
-    async fn unwrap(&mut self, amount: u64, address: Option<String>) -> Result<String> {
-        use alkanes_cli_common::alkanes::types::{ProtostoneSpec, BitcoinTransfer};
-        use alkanes_support::cellpack::Cellpack;
-        use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-        let is_regtest = self.network == Network::Regtest;
-        let mut executor = EnhancedAlkanesExecutor::new(self);
-        let params = EnhancedExecuteParams {
-            fee_rate: None,
-            to_addresses: vec![],
-            from_addresses: address.map(|a| vec![a]),
-            change_address: None,
-            input_requirements: vec![],
-            protostones: vec![ProtostoneSpec {
-                cellpack: Some(Cellpack::try_from(vec![2, 0, 2]).unwrap()), // Assuming 2 is for unwrapping, 0 is frBTC, 2 is burn
-                edicts: vec![],
-                bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
-            }],
-            envelope_data: None,
-            raw_output: false,
-            trace_enabled: false,
-            mine_enabled: is_regtest,
-            auto_confirm: false,
-        };
-
-        match executor.execute(params).await? {
-            ExecutionState::ReadyToSign(ready_tx) => {
-                Ok(STANDARD.encode(&ready_tx.psbt.serialize()))
-            }
-            _ => Err(AlkanesError::Other("Unexpected execution state".to_string())),
-        }
     }
 }

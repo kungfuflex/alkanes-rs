@@ -65,14 +65,14 @@ impl<'de> Deserialize<'de> for SystemTime {
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Block monitor that works with any provider
-pub struct BlockMonitor<P: DeezelProvider> {
+pub struct BlockMonitor<P: AlkanesProvider> {
     provider: P,
     config: MonitorConfig,
     state: MonitorStats,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl<P: DeezelProvider> BlockMonitor<P> {
+impl<P: AlkanesProvider> BlockMonitor<P> {
     /// Create a new block monitor
     pub fn new(provider: P) -> Self {
         Self {
@@ -271,9 +271,9 @@ impl<P: DeezelProvider> BlockMonitor<P> {
             Ok(tx_hex) => {
                 // Parse transaction from hex
                 let tx_bytes = hex::decode(&tx_hex)
-                    .map_err(|e| crate::DeezelError::Parse(format!("Invalid hex: {e}")))?;
+                    .map_err(|e| crate::AlkanesError::Parse(format!("Invalid hex: {e}")))?;
                 let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)
-                    .map_err(|e| crate::DeezelError::Parse(format!("Invalid transaction: {e}")))?;
+                    .map_err(|e| crate::AlkanesError::Parse(format!("Invalid transaction: {e}")))?;
                 
                 // Check inputs and outputs for monitored addresses
                 for input in &tx.input {
@@ -403,12 +403,12 @@ pub struct MonitorStats {
 }
 
 /// Address monitor for tracking specific addresses
-pub struct AddressMonitor<P: DeezelProvider> {
+pub struct AddressMonitor<P: AlkanesProvider> {
     provider: P,
     addresses: HashMap<String, AddressMonitorInfo>,
 }
 
-impl<P: DeezelProvider> AddressMonitor<P> {
+impl<P: AlkanesProvider> AddressMonitor<P> {
     /// Create a new address monitor
     pub fn new(provider: P) -> Self {
         Self {

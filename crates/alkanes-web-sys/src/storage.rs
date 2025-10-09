@@ -52,7 +52,7 @@
 //! ```
 
 use async_trait::async_trait;
-use alkanes_cli_common::{DeezelError, Result};
+use alkanes_cli_common::{AlkanesError, Result};
 use web_sys::{window, Storage};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 #[cfg(target_arch = "wasm32")]
@@ -124,11 +124,11 @@ impl WebStorage {
     ///
     /// # Errors
     ///
-    /// Returns [`DeezelError::Storage`] if localStorage is not available
+    /// Returns [`AlkanesError::Storage`] if localStorage is not available
     /// in the current browser environment.
     fn get_storage(&self) -> Result<&Storage> {
         self.storage.as_ref()
-            .ok_or_else(|| DeezelError::Storage("localStorage not available".to_string()))
+            .ok_or_else(|| AlkanesError::Storage("localStorage not available".to_string()))
     }
 
     /// Encode binary data as base64 for safe text storage
@@ -161,10 +161,10 @@ impl WebStorage {
     ///
     /// # Errors
     ///
-    /// Returns [`DeezelError::Storage`] if the input is not valid base64
+    /// Returns [`AlkanesError::Storage`] if the input is not valid base64
     fn decode_data(&self, encoded: &str) -> Result<Vec<u8>> {
         BASE64.decode(encoded)
-            .map_err(|e| DeezelError::Storage(format!("Failed to decode base64 data: {e}")))
+            .map_err(|e| AlkanesError::Storage(format!("Failed to decode base64 data: {e}")))
     }
 
     /// Get the namespaced key for localStorage operations
@@ -215,17 +215,17 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Storage`] if localStorage is not available
-    /// * [`DeezelError::Storage`] if the key is not found
-    /// * [`DeezelError::Storage`] if the stored data is not valid base64
-    /// * [`DeezelError::Storage`] if localStorage access fails
+    /// * [`AlkanesError::Storage`] if localStorage is not available
+    /// * [`AlkanesError::Storage`] if the key is not found
+    /// * [`AlkanesError::Storage`] if the stored data is not valid base64
+    /// * [`AlkanesError::Storage`] if localStorage access fails
     async fn read(&self, key: &str) -> Result<Vec<u8>> {
         let storage = self.get_storage()?;
         let prefixed_key = self.get_prefixed_key(key);
         
         let value = storage.get_item(&prefixed_key)
-            .map_err(|e| DeezelError::Storage(format!("Failed to read from localStorage: {e:?}")))?
-            .ok_or_else(|| DeezelError::Storage(format!("Key not found: {key}")))?;
+            .map_err(|e| AlkanesError::Storage(format!("Failed to read from localStorage: {e:?}")))?
+            .ok_or_else(|| AlkanesError::Storage(format!("Key not found: {key}")))?;
         
         self.decode_data(&value)
     }
@@ -242,16 +242,16 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Storage`] if localStorage is not available
-    /// * [`DeezelError::Storage`] if localStorage is full (quota exceeded)
-    /// * [`DeezelError::Storage`] if localStorage access fails
+    /// * [`AlkanesError::Storage`] if localStorage is not available
+    /// * [`AlkanesError::Storage`] if localStorage is full (quota exceeded)
+    /// * [`AlkanesError::Storage`] if localStorage access fails
     async fn write(&self, key: &str, data: &[u8]) -> Result<()> {
         let storage = self.get_storage()?;
         let prefixed_key = self.get_prefixed_key(key);
         let encoded_data = self.encode_data(data);
         
         storage.set_item(&prefixed_key, &encoded_data)
-            .map_err(|e| DeezelError::Storage(format!("Failed to write to localStorage: {e:?}")))?;
+            .map_err(|e| AlkanesError::Storage(format!("Failed to write to localStorage: {e:?}")))?;
         
         Ok(())
     }
@@ -270,14 +270,14 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Storage`] if localStorage is not available
-    /// * [`DeezelError::Storage`] if localStorage access fails
+    /// * [`AlkanesError::Storage`] if localStorage is not available
+    /// * [`AlkanesError::Storage`] if localStorage access fails
     async fn exists(&self, key: &str) -> Result<bool> {
         let storage = self.get_storage()?;
         let prefixed_key = self.get_prefixed_key(key);
         
         let exists = storage.get_item(&prefixed_key)
-            .map_err(|e| DeezelError::Storage(format!("Failed to check localStorage: {e:?}")))?
+            .map_err(|e| AlkanesError::Storage(format!("Failed to check localStorage: {e:?}")))?
             .is_some();
         
         Ok(exists)
@@ -293,8 +293,8 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Storage`] if localStorage is not available
-    /// * [`DeezelError::Storage`] if localStorage access fails
+    /// * [`AlkanesError::Storage`] if localStorage is not available
+    /// * [`AlkanesError::Storage`] if localStorage access fails
     ///
     /// # Note
     ///
@@ -304,7 +304,7 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
         let prefixed_key = self.get_prefixed_key(key);
         
         storage.remove_item(&prefixed_key)
-            .map_err(|e| DeezelError::Storage(format!("Failed to delete from localStorage: {e:?}")))?;
+            .map_err(|e| AlkanesError::Storage(format!("Failed to delete from localStorage: {e:?}")))?;
         
         Ok(())
     }
@@ -324,8 +324,8 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Storage`] if localStorage is not available
-    /// * [`DeezelError::Storage`] if localStorage access fails
+    /// * [`AlkanesError::Storage`] if localStorage is not available
+    /// * [`AlkanesError::Storage`] if localStorage access fails
     ///
     /// # Performance
     ///
@@ -338,7 +338,7 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
         
         // Get the length of localStorage
         let length = storage.length()
-            .map_err(|e| DeezelError::Storage(format!("Failed to get localStorage length: {e:?}")))?;
+            .map_err(|e| AlkanesError::Storage(format!("Failed to get localStorage length: {e:?}")))?;
         
         // Iterate through all keys
         for i in 0..length {

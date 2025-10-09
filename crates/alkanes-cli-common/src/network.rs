@@ -90,13 +90,13 @@ impl NetworkParams {
         params
     }
 
-    pub fn from_magic_str(s: &str) -> Result<(u8, u8, String), DeezelError> {
+    pub fn from_magic_str(s: &str) -> Result<(u8, u8, String), AlkanesError> {
         let parts: Vec<&str> = s.split(',').collect();
         if parts.len() != 3 {
-            return Err(DeezelError::InvalidParameters("Invalid magic string format".to_string()));
+            return Err(AlkanesError::InvalidParameters("Invalid magic string format".to_string()));
         }
-        let p2pkh_prefix = u8::from_str_radix(parts[0].trim_start_matches("0x"), 16).map_err(|_| DeezelError::InvalidParameters("Invalid p2pkh prefix".to_string()))?;
-        let p2sh_prefix = u8::from_str_radix(parts[1].trim_start_matches("0x"), 16).map_err(|_| DeezelError::InvalidParameters("Invalid p2sh prefix".to_string()))?;
+        let p2pkh_prefix = u8::from_str_radix(parts[0].trim_start_matches("0x"), 16).map_err(|_| AlkanesError::InvalidParameters("Invalid p2pkh prefix".to_string()))?;
+        let p2sh_prefix = u8::from_str_radix(parts[1].trim_start_matches("0x"), 16).map_err(|_| AlkanesError::InvalidParameters("Invalid p2sh prefix".to_string()))?;
         let bech32_hrp = parts[2].to_string();
         Ok((p2pkh_prefix, p2sh_prefix, bech32_hrp))
     }
@@ -105,13 +105,13 @@ impl NetworkParams {
         vec!["mainnet", "testnet", "signet", "regtest"]
     }
 
-    pub fn from_network_str(s: &str) -> Result<Self, DeezelError> {
+    pub fn from_network_str(s: &str) -> Result<Self, AlkanesError> {
         match s {
             "mainnet" => Ok(Self::mainnet()),
             "testnet" => Ok(Self::testnet()),
             "signet" => Ok(Self::signet()),
             "regtest" => Ok(Self::regtest()),
-            _ => Err(DeezelError::InvalidParameters(format!("Invalid network: {}", s))),
+            _ => Err(AlkanesError::InvalidParameters(format!("Invalid network: {}", s))),
         }
     }
 }
@@ -159,28 +159,28 @@ pub fn to_address_str(script: &Script) -> Result<String, anyhow::Error> {
 
 
 
-use crate::DeezelError;
+use crate::AlkanesError;
 use clap::Args;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeezelNetwork(pub Network);
+pub struct AlkanesNetwork(pub Network);
 
-impl FromStr for DeezelNetwork {
-    type Err = DeezelError;
+impl FromStr for AlkanesNetwork {
+    type Err = AlkanesError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "mainnet" => Ok(DeezelNetwork(Network::Bitcoin)),
-            "testnet" => Ok(DeezelNetwork(Network::Testnet)),
-            "signet" => Ok(DeezelNetwork(Network::Signet)),
-            "regtest" => Ok(DeezelNetwork(Network::Regtest)),
-            _ => Err(DeezelError::InvalidParameters(format!("Invalid network: {}", s))),
+            "mainnet" => Ok(AlkanesNetwork(Network::Bitcoin)),
+            "testnet" => Ok(AlkanesNetwork(Network::Testnet)),
+            "signet" => Ok(AlkanesNetwork(Network::Signet)),
+            "regtest" => Ok(AlkanesNetwork(Network::Regtest)),
+            _ => Err(AlkanesError::InvalidParameters(format!("Invalid network: {}", s))),
         }
     }
 }
 
-impl std::fmt::Display for DeezelNetwork {
+impl std::fmt::Display for AlkanesNetwork {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", match self.0 {
             Network::Bitcoin => "mainnet",
@@ -196,7 +196,7 @@ impl std::fmt::Display for DeezelNetwork {
 pub struct RpcConfig {
     /// Network provider
     #[arg(short, long, default_value = "regtest")]
-    pub network: DeezelNetwork,
+    pub network: AlkanesNetwork,
 
     /// Sandshrew RPC URL (defaults based on network if not provided)
     #[arg(long)]
@@ -228,7 +228,7 @@ pub struct RpcConfig {
 impl Default for RpcConfig {
     fn default() -> Self {
         Self {
-            network: DeezelNetwork(Network::Regtest),
+            network: AlkanesNetwork(Network::Regtest),
             sandshrew_rpc_url: Some("http://localhost:18443".to_string()),
             esplora_url: None,
             ord_url: None,

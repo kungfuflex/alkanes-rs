@@ -41,7 +41,7 @@
 //! # }
 //! ```
 
-use alkanes_cli_common::{DeezelError, Result};
+use alkanes_cli_common::{AlkanesError, Result};
 use js_sys::{Date, Promise};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -130,7 +130,7 @@ impl WebSleep {
     }
 
     fn create_promise(&mut self) -> Result<Promise> {
-        let window = window().ok_or_else(|| DeezelError::Io("No window object available".to_string()))?;
+        let window = window().ok_or_else(|| AlkanesError::Io("No window object available".to_string()))?;
         
         // Create a promise that resolves after the specified duration
         let promise = Promise::new(&mut |resolve, _reject| {

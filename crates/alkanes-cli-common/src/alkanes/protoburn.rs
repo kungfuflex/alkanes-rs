@@ -1,4 +1,4 @@
-use crate::{DeezelError, Result};
+use crate::{AlkanesError, Result};
 use alloc::{
     collections::BTreeMap,
     vec::Vec,
@@ -15,7 +15,7 @@ pub struct Protoburn {
 
 pub trait Protoburns<T>: Deref<Target = [T]> {
     fn construct_burncycle(&self) -> Result<BurnCycle> {
-        let length = u32::try_from(self.len()).map_err(|_| DeezelError::Other("Failed to convert length".into()))?;
+        let length = u32::try_from(self.len()).map_err(|_| AlkanesError::Other("Failed to convert length".into()))?;
         Ok(BurnCycle::new(length))
     }
 }
@@ -39,7 +39,7 @@ impl BurnCycle {
             self.cycles.insert(rune.clone(), 0);
         }
         let cycles = self.cycles.clone();
-        let cycle = cycles.get(rune).ok_or(DeezelError::Other("no value found".into()))?;
+        let cycle = cycles.get(rune).ok_or(AlkanesError::Other("no value found".into()))?;
         self.cycles
             .insert(rune.clone(), (cycle.clone() + 1) % (self.max as i32));
         Ok(cycle.clone())
@@ -51,7 +51,7 @@ impl BurnCycle {
         Ok(self
             .cycles
             .get(rune)
-            .ok_or(DeezelError::Other("value not found".into()))?
+            .ok_or(AlkanesError::Other("value not found".into()))?
             .clone())
     }
 }

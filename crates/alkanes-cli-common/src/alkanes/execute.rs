@@ -14,7 +14,7 @@
 //! - Address identifier resolution for outputs and change
 //! - Transaction tracing with metashrew synchronization
 
-use crate::{Result, DeezelError, DeezelProvider};
+use crate::{Result, AlkanesError, AlkanesProvider};
 use crate::traits::{WalletProvider, UtxoInfo};
 use bitcoin::{Transaction, ScriptBuf, OutPoint, TxOut, Address, XOnlyPublicKey, psbt::Psbt};
 use anyhow::Context;
@@ -39,12 +39,12 @@ const DUST_LIMIT: u64 = 546;
 
 /// Enhanced alkanes executor
 pub struct EnhancedAlkanesExecutor<'a> {
-    pub provider: &'a mut dyn DeezelProvider,
+    pub provider: &'a mut dyn AlkanesProvider,
 }
 
 impl<'a> EnhancedAlkanesExecutor<'a> {
     /// Create a new enhanced alkanes executor
-    pub fn new(provider: &'a mut dyn DeezelProvider) -> Self {
+    pub fn new(provider: &'a mut dyn AlkanesProvider) -> Self {
         Self { provider }
     }
 
@@ -282,10 +282,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let reveal_script = envelope.build_reveal_script();
 
         let taproot_builder = TaprootBuilder::new()
-            .add_leaf(0, reveal_script.clone()).map_err(|e| DeezelError::Other(format!("{e:?}")))?;
+            .add_leaf(0, reveal_script.clone()).map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
 
         let taproot_spend_info = taproot_builder
-            .finalize(self.provider.secp(), internal_key).map_err(|e| DeezelError::Other(format!("{e:?}")))?;
+            .finalize(self.provider.secp(), internal_key).map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
 
         let commit_address = Address::p2tr_tweaked(taproot_spend_info.output_key(), network);
 
@@ -335,7 +335,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             for edict in &protostone.edicts {
                 if let OutputTarget::Protostone(p) = edict.target {
                     if p <= i as u32 {
-                        return Err(DeezelError::Validation(format!(
+                        return Err(AlkanesError::Validation(format!(
                             "Protostone {i} refers to protostone {p} which is not allowed (must be > {i})"
                         )));
                     }
@@ -344,7 +344,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             
             if let Some(bitcoin_transfer) = &protostone.bitcoin_transfer {
                 if matches!(bitcoin_transfer.target, OutputTarget::Protostone(_)) {
-                    return Err(DeezelError::Validation(format!(
+                    return Err(AlkanesError::Validation(format!(
                         "Bitcoin transfer in protostone {i} cannot target another protostone"
                     )));
                 }
@@ -354,14 +354,14 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 match edict.target {
                     OutputTarget::Output(v) => {
                         if v as usize >= num_outputs {
-                            return Err(DeezelError::Validation(format!(
+                            return Err(AlkanesError::Validation(format!(
                                 "Edict in protostone {i} targets output v{v} but only {num_outputs} outputs exist"
                             )));
                         }
                     },
                     OutputTarget::Protostone(p) => {
                         if p as usize >= protostones.len() {
-                            return Err(DeezelError::Validation(format!(
+                            return Err(AlkanesError::Validation(format!(
                                 "Edict in protostone {} targets protostone p{} but only {} protostones exist",
                                 i, p, protostones.len()
                             )));
@@ -420,7 +420,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
 
         if bitcoin_collected < bitcoin_needed {
-            return Err(DeezelError::Wallet(format!(
+            return Err(AlkanesError::Wallet(format!(
                 "Insufficient funds: need {bitcoin_needed} sats, have {bitcoin_collected}"
             )));
         }
@@ -443,7 +443,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }).sum();
 
         if total_explicit_bitcoin > 0 && to_addresses.is_empty() {
-            return Err(DeezelError::Validation("Bitcoin input requirement provided but no recipient addresses.".to_string()));
+            return Err(AlkanesError::Validation("Bitcoin input requirement provided but no recipient addresses.".to_string()));
         }
 
         let amount_per_recipient = if total_explicit_bitcoin > 0 {
@@ -513,7 +513,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             protocol: Some(
                 converted_protostones
                     .iter()
-                    .map(|p| p.to_integers().map_err(|e| DeezelError::Other(e.to_string())))
+                    .map(|p| p.to_integers().map_err(|e| AlkanesError::Other(e.to_string())))
                     .collect::<Result<Vec<_>>>()?
                     .into_iter()
                     .flatten()
@@ -548,7 +548,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut input_txouts = Vec::new();
         for outpoint in &utxos {
             let utxo = self.provider.get_utxo(outpoint).await?
-                .ok_or_else(|| DeezelError::Wallet(format!("UTXO not found: {outpoint}")))?;
+                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {outpoint}")))?;
             total_input_value += utxo.value.to_sat();
             input_txouts.push(utxo);
         }
@@ -651,7 +651,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut input_txouts = Vec::new();
         for outpoint in &funding_utxos {
             let utxo = self.provider.get_utxo(outpoint).await?
-                .ok_or_else(|| DeezelError::Wallet(format!("UTXO not found: {outpoint}")))?;
+                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {outpoint}")))?;
             total_input_value += utxo.value.to_sat();
             input_txouts.push(utxo);
         }
@@ -681,7 +681,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     
         let change_value = total_input_value.saturating_sub(commit_output.value.to_sat()).saturating_sub(fee);
         if change_value < 546 {
-            return Err(DeezelError::Wallet("Not enough funds for commit and change".to_string()));
+            return Err(AlkanesError::Wallet("Not enough funds for commit and change".to_string()));
         }
     
         let final_change_output = TxOut { value: bitcoin::Amount::from_sat(change_value), script_pubkey: change_address.script_pubkey() };
@@ -777,15 +777,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let taproot_builder = TaprootBuilder::new()
             .add_leaf(0, reveal_script.clone())
-            .map_err(|e| DeezelError::Other(format!("{e:?}")))?;
+            .map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
 
         let taproot_spend_info = taproot_builder
             .finalize(self.provider.secp(), internal_key)
-            .map_err(|e| DeezelError::Other(format!("{e:?}")))?;
+            .map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
 
         let control_block = taproot_spend_info
             .control_block(&(reveal_script, LeafVersion::TapScript))
-            .ok_or_else(|| DeezelError::Other("Failed to create control block".to_string()))?;
+            .ok_or_else(|| AlkanesError::Other("Failed to create control block".to_string()))?;
 
         Ok((taproot_spend_info, control_block))
     }
@@ -820,7 +820,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 leaf_hash,
                 TapSighashType::Default,
             )
-            .map_err(|e| DeezelError::Transaction(e.to_string()))?;
+            .map_err(|e| AlkanesError::Transaction(e.to_string()))?;
 
         log::info!("Computed taproot script-path sighash for input {input_index}");
 
@@ -843,8 +843,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         log::info!("Starting enhanced transaction tracing for reveal transaction: {txid}");
         
         let tx_hex = self.provider.get_transaction_hex(txid).await?;
-        let tx_bytes = hex::decode(&tx_hex).map_err(|e| DeezelError::Hex(e.to_string()))?;
-        let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes).map_err(|e| DeezelError::Serialization(e.to_string()))?;
+        let tx_bytes = hex::decode(&tx_hex).map_err(|e| AlkanesError::Hex(e.to_string()))?;
+        let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
         
         if let Ok(decoded) = crate::runestone_enhanced::format_runestone_with_decoded_messages(&tx) {
             log::debug!("Decoded Runestone for tracing:\n{decoded:#?}");
@@ -902,7 +902,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let has_cellpacks = params.protostones.iter().any(|p| p.cellpack.is_some());
 
         if has_envelope && !has_cellpacks {
-            return Err(DeezelError::Other(anyhow!(
+            return Err(AlkanesError::Other(anyhow!(
                 "Incomplete deployment: Envelope provided but no cellpack to trigger deployment."
             ).to_string()));
         }
@@ -912,7 +912,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
         
         if !has_envelope && !has_cellpacks && !params.protostones.is_empty() {
-             return Err(DeezelError::Other(anyhow!(
+             return Err(AlkanesError::Other(anyhow!(
                 "No operation: Protostones provided without envelope or cellpack."
             ).to_string()));
         }
@@ -928,10 +928,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             .iter()
             .find_map(|p| p.cellpack.as_ref())
             .map(|c| c.encipher())
-            .ok_or_else(|| DeezelError::Other("No cellpack found in protostones for inspection.".to_string()))?;
+            .ok_or_else(|| AlkanesError::Other("No cellpack found in protostones for inspection.".to_string()))?;
 
         if cellpack_data.len() < 48 {
-            return Err(DeezelError::Other("Cellpack data is too short for inspection.".to_string()));
+            return Err(AlkanesError::Other("Cellpack data is too short for inspection.".to_string()));
         }
 
         let alkane_id = AlkaneId {
@@ -1017,7 +1017,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let input = input.trim().to_lowercase();
 
         if input != "y" && input != "yes" {
-            return Err(DeezelError::Other("Transaction cancelled by user".to_string()));
+            return Err(AlkanesError::Other("Transaction cancelled by user".to_string()));
         }
 
         Ok(())

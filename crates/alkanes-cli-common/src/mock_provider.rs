@@ -3,7 +3,7 @@ use crate::traits::{
     AlkanesProvider,
     BitcoinRpcProvider,
     CryptoProvider,
-    DeezelProvider,
+    AlkanesProvider,
     EsploraProvider,
     JsonRpcProvider,
     KeystoreProvider,
@@ -33,7 +33,7 @@ use crate::traits::{
 use crate::{
     alkanes::protorunes::{ProtoruneOutpointResponse, ProtoruneWalletResponse},
     network::NetworkParams,
-    DeezelError, Result,
+    AlkanesError, Result,
 };
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;
@@ -91,7 +91,7 @@ impl JsonRpcProvider for MockProvider {
     async fn call(&self, _url: &str, method: &str, _params: JsonValue, _id: u64) -> Result<JsonValue> {
         self.responses.get(method)
             .cloned()
-            .ok_or_else(|| DeezelError::JsonRpc(format!("No mock response for method: {method}")))
+            .ok_or_else(|| AlkanesError::JsonRpc(format!("No mock response for method: {method}")))
     }
     
 
@@ -305,8 +305,8 @@ impl WalletProvider for MockProvider {
     }
     
     async fn broadcast_transaction(&self, tx_hex: String) -> Result<String> {
-        let tx_bytes = hex::decode(&tx_hex).map_err(|e| DeezelError::Hex(e.to_string()))?;
-        let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes).map_err(|e| DeezelError::Serialization(e.to_string()))?;
+        let tx_bytes = hex::decode(&tx_hex).map_err(|e| AlkanesError::Hex(e.to_string()))?;
+        let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
         let txid = tx.compute_txid();
         
         // Add the new outputs of this transaction to the UTXO set
@@ -362,7 +362,7 @@ impl WalletProvider for MockProvider {
         let mut keys = HashMap::new();
         let private_key = PrivateKey::new(self.secret_key, self.network);
         keys.insert(self.internal_key, private_key);
-        psbt.sign(&keys, secp).map_err(|e| DeezelError::Other(format!("{e:?}")))?;
+        psbt.sign(&keys, secp).map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
         Ok(psbt)
     }
     
@@ -429,7 +429,7 @@ impl BitcoinRpcProvider for MockProvider {
             .unwrap()
             .get(txid)
             .cloned()
-            .ok_or_else(|| DeezelError::JsonRpc(format!("No mock tx hex for txid: {txid}")))
+            .ok_or_else(|| AlkanesError::JsonRpc(format!("No mock tx hex for txid: {txid}")))
     }
     
     async fn get_block(&self, _hash: &str, _raw: bool) -> Result<JsonValue> {
@@ -719,7 +719,7 @@ impl AlkanesProvider for MockProvider {
         _block_tag: Option<String>,
         _protocol_tag: u128,
     ) -> Result<crate::alkanes::protorunes::ProtoruneWalletResponse> {
-        Err(DeezelError::NotImplemented(
+        Err(AlkanesError::NotImplemented(
             "protorunes_by_address".to_string(),
         ))
     }
@@ -730,7 +730,7 @@ impl AlkanesProvider for MockProvider {
         _block_tag: Option<String>,
         _protocol_tag: u128,
     ) -> Result<crate::alkanes::protorunes::ProtoruneOutpointResponse> {
-        Err(DeezelError::NotImplemented(
+        Err(AlkanesError::NotImplemented(
             "protorunes_by_outpoint".to_string(),
         ))
     }
@@ -741,10 +741,10 @@ impl AlkanesProvider for MockProvider {
         todo!()
     }
     async fn trace(&self, _outpoint: &str) -> Result<crate::proto::alkanes::Trace> {
-        Err(DeezelError::NotImplemented("trace".to_string()))
+        Err(AlkanesError::NotImplemented("trace".to_string()))
     }
     async fn get_block(&self, _height: u64) -> Result<crate::proto::alkanes::BlockResponse> {
-        Err(DeezelError::NotImplemented("get_block".to_string()))
+        Err(AlkanesError::NotImplemented("get_block".to_string()))
     }
     async fn sequence(&self) -> Result<JsonValue> {
         todo!()
@@ -753,7 +753,7 @@ impl AlkanesProvider for MockProvider {
         todo!()
     }
     async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::Trace> {
-        Err(DeezelError::NotImplemented("trace_block".to_string()))
+        Err(AlkanesError::NotImplemented("trace_block".to_string()))
     }
     async fn get_bytecode(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<String> {
         todo!()
@@ -891,7 +891,7 @@ impl OrdProvider for MockProvider {
 }
 
 #[async_trait(?Send)]
-impl DeezelProvider for MockProvider {
+impl AlkanesProvider for MockProvider {
     fn provider_name(&self) -> &str {
         "mock"
     }
@@ -904,7 +904,7 @@ impl DeezelProvider for MockProvider {
         Ok(())
     }
 
-    fn clone_box(&self) -> Box<dyn DeezelProvider> {
+    fn clone_box(&self) -> Box<dyn AlkanesProvider> {
         Box::new(self.clone())
     }
 

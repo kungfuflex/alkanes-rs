@@ -4,10 +4,10 @@
 // It has been moved from slope-frontend to deezel-leptos.
 
 use leptos::{*, logging::log};
-use deezel_common::traits::WalletProvider;
+use alkanes_cli_common::WalletProvider;
 use crate::state::AppState;
 use crate::state::ConnectedAddressInfo;
-use deezel_web::wallet_provider::{WalletConnector, BrowserWalletProvider, WalletInfo, WalletBackend};
+use alkanes_web_sys::wallet_provider::{WalletConnector, BrowserWalletProvider, WalletInfo, WalletBackend};
 use crate::components::keystore::{CreateKeystore, ImportKeystore};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -44,7 +44,7 @@ pub fn WalletModal(set_show_modal: WriteSignal<bool>) -> impl IntoView {
                     let is_available = if let Some(iw) = injected_wallet {
                         iw.is_available().await
                     } else {
-                        false
+                        Ok(false)
                     };
                     (info_clone, is_available)
                 });
@@ -109,6 +109,7 @@ pub fn WalletModal(set_show_modal: WriteSignal<bool>) -> impl IntoView {
                             view! {
                                 <ul class="mt-2 gap-4 grid grid-cols-1">
                                     {wallets.into_iter().map(|(wallet, is_available)| {
+                                        let is_available = is_available.unwrap_or(false);
                                         let wallet_clone = wallet.clone();
                                         let connect_disabled = !is_available;
                                         view! {
@@ -120,7 +121,7 @@ pub fn WalletModal(set_show_modal: WriteSignal<bool>) -> impl IntoView {
                                                         }
                                                     }
                                                     class="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-between transition-colors duration-200"
-                                                    class:hover:bg-gray-600=!connect_disabled
+                                                    class:hover:bg-gray-600={!connect_disabled}
                                                     class:opacity-50=connect_disabled
                                                     class:cursor-not-allowed=connect_disabled
                                                     disabled=connect_disabled

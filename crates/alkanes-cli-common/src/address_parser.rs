@@ -7,7 +7,7 @@
 //! - Address types with comma-separated indices (e.g., `p2wpkh:0,1,5`)
 //! - Address types with a single index (e.g., `p2sh:10`)
 
-use crate::{Result, DeezelError};
+use crate::{Result, AlkanesError};
 use crate::traits::AddressResolver;
 use bitcoin::{Address, address::NetworkChecked};
 use alloc::{string::{String, ToString}, vec::Vec, str::FromStr};
@@ -25,14 +25,14 @@ impl<R: AddressResolver> AddressParser<R> {
     pub async fn parse(&self, spec: &str) -> Result<Vec<String>> {
         // Check if it's a plain address
         if let Ok(address) = Address::from_str(spec) {
-            let checked_address: Address<NetworkChecked> = address.require_network(bitcoin::Network::Bitcoin).map_err(|_| DeezelError::InvalidParameters("Address has an invalid network".to_string()))?;
+            let checked_address: Address<NetworkChecked> = address.require_network(bitcoin::Network::Bitcoin).map_err(|_| AlkanesError::InvalidParameters("Address has an invalid network".to_string()))?;
             return Ok(vec![checked_address.to_string()]);
         }
 
         // Try to parse as a range or list
         let parts: Vec<&str> = spec.split(':').collect();
         if parts.len() != 2 {
-            return Err(DeezelError::Parse(format!("Invalid address specifier: {}", spec)));
+            return Err(AlkanesError::Parse(format!("Invalid address specifier: {}", spec)));
         }
 
         let address_type = parts[0];
@@ -43,7 +43,7 @@ impl<R: AddressResolver> AddressParser<R> {
             // Range
             let range_parts: Vec<&str> = indices_part.split('-').collect();
             if range_parts.len() != 2 {
-                return Err(DeezelError::Parse(format!("Invalid range: {}", indices_part)));
+                return Err(AlkanesError::Parse(format!("Invalid range: {}", indices_part)));
             }
             let start = range_parts[0].parse::<u32>()?;
             let end = range_parts[1].parse::<u32>()?;

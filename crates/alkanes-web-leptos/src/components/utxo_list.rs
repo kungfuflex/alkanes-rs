@@ -4,7 +4,7 @@
 // It is responsible for displaying a paginated list of UTXOs.
 
 use leptos::*;
-use deezel_common::provider::EnrichedUtxo;
+use alkanes_cli_common::provider::EnrichedUtxo;
 
 #[component]
 pub fn UtxoList(utxos: Signal<Option<Vec<EnrichedUtxo>>>) -> impl IntoView {

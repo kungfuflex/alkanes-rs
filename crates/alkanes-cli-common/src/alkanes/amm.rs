@@ -30,14 +30,14 @@ use alloc::vec;
 use super::types::{PoolCreateParams, LiquidityAddParams, LiquidityRemoveParams, SwapParams, TokenAmount, LiquidityRemovalPreview};
 use super::types::AlkaneId as TypesAlkaneId;
 use super::execute::{EnhancedAlkanesExecutor, EnhancedExecuteParams, EnhancedExecuteResult, InputRequirement};
-use crate::traits::DeezelProvider;
+use crate::traits::AlkanesProvider;
 
 /// AMM operations manager that leverages enhanced execute functionality
-pub struct AmmManager<P: DeezelProvider> {
+pub struct AmmManager<P: AlkanesProvider> {
     executor: Arc<EnhancedAlkanesExecutor<P>>,
 }
 
-impl<P: DeezelProvider> AmmManager<P> {
+impl<P: AlkanesProvider> AmmManager<P> {
     /// Create a new AMM manager
     pub fn new(executor: Arc<EnhancedAlkanesExecutor<P>>) -> Self {
         Self { executor }
@@ -55,13 +55,13 @@ impl<P: DeezelProvider> AmmManager<P> {
         
         // Validate that we have exactly 2 tokens (standard AMM pool)
         if params.tokens.len() != 2 {
-            return Err(crate::DeezelError::Validation("Pool creation requires exactly 2 tokens".to_string()));
+            return Err(crate::AlkanesError::Validation("Pool creation requires exactly 2 tokens".to_string()));
         }
         
         // Validate token amounts
         for token in &params.tokens {
             if token.amount == 0 {
-                return Err(crate::DeezelError::Validation("Token amounts must be greater than zero".to_string()));
+                return Err(crate::AlkanesError::Validation("Token amounts must be greater than zero".to_string()));
             }
         }
         
@@ -124,13 +124,13 @@ impl<P: DeezelProvider> AmmManager<P> {
         
         // Validate that we have tokens to add
         if params.tokens.is_empty() {
-            return Err(crate::DeezelError::Validation("Cannot add liquidity without tokens".to_string()));
+            return Err(crate::AlkanesError::Validation("Cannot add liquidity without tokens".to_string()));
         }
         
         // Validate token amounts
         for token in &params.tokens {
             if token.amount == 0 {
-                return Err(crate::DeezelError::Validation("Token amounts must be greater than zero".to_string()));
+                return Err(crate::AlkanesError::Validation("Token amounts must be greater than zero".to_string()));
             }
         }
         
@@ -219,7 +219,7 @@ impl<P: DeezelProvider> AmmManager<P> {
         
         // Validate amount
         if params.amount == 0 {
-            return Err(crate::DeezelError::Validation("Cannot remove zero liquidity".to_string()));
+            return Err(crate::AlkanesError::Validation("Cannot remove zero liquidity".to_string()));
         }
         
         // Preview the removal to get expected amounts
@@ -286,7 +286,7 @@ impl<P: DeezelProvider> AmmManager<P> {
         
         // Validate amount
         if params.amount == 0 {
-            return Err(crate::DeezelError::Validation("Cannot swap zero tokens".to_string()));
+            return Err(crate::AlkanesError::Validation("Cannot swap zero tokens".to_string()));
         }
         
         // Get pool reserves to calculate swap output
@@ -299,7 +299,7 @@ impl<P: DeezelProvider> AmmManager<P> {
             .unwrap_or(0);
         
         if input_reserve == 0 {
-            return Err(crate::DeezelError::Validation("Token not found in pool".to_string()));
+            return Err(crate::AlkanesError::Validation("Token not found in pool".to_string()));
         }
         
         // Calculate expected output (simplified - assumes 2-token pool)
@@ -431,7 +431,7 @@ pub fn calculate_swap_output(
     fee_rate: u64, // Fee rate in basis points (e.g., 30 for 0.3%)
 ) -> Result<u64> {
     if input_reserve == 0 || output_reserve == 0 {
-        return Err(crate::DeezelError::Validation("Cannot swap with zero reserves".to_string()));
+        return Err(crate::AlkanesError::Validation("Cannot swap with zero reserves".to_string()));
     }
     
     // Apply fee to input amount

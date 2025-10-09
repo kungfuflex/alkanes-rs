@@ -47,7 +47,7 @@
 //! ```
 
 use async_trait::async_trait;
-use alkanes_cli_common::{DeezelError, Result};
+use alkanes_cli_common::{AlkanesError, Result};
 use js_sys::Uint8Array;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -143,10 +143,10 @@ impl WebNetwork {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Network`] if the window object is not available
-    /// * [`DeezelError::Network`] if request creation fails
-    /// * [`DeezelError::Network`] if the fetch operation fails
-    /// * [`DeezelError::Network`] if the response has an error status code
+    /// * [`AlkanesError::Network`] if the window object is not available
+    /// * [`AlkanesError::Network`] if request creation fails
+    /// * [`AlkanesError::Network`] if the fetch operation fails
+    /// * [`AlkanesError::Network`] if the response has an error status code
     async fn fetch_request(
         &self,
         url: &str,
@@ -154,7 +154,7 @@ impl WebNetwork {
         body: Option<&[u8]>,
         content_type: Option<&str>,
     ) -> Result<Response> {
-        let window = window().ok_or_else(|| DeezelError::Network("No window object available".to_string()))?;
+        let window = window().ok_or_else(|| AlkanesError::Network("No window object available".to_string()))?;
 
         let opts = RequestInit::new();
         opts.set_method(method);
@@ -162,14 +162,14 @@ impl WebNetwork {
 
         // Set headers
         let headers = Headers::new()
-            .map_err(|e| DeezelError::Network(format!("Failed to create headers: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to create headers: {e:?}")))?;
         
         headers.set("User-Agent", &self.user_agent)
-            .map_err(|e| DeezelError::Network(format!("Failed to set User-Agent: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to set User-Agent: {e:?}")))?;
 
         if let Some(ct) = content_type {
             headers.set("Content-Type", ct)
-                .map_err(|e| DeezelError::Network(format!("Failed to set Content-Type: {e:?}")))?;
+                .map_err(|e| AlkanesError::Network(format!("Failed to set Content-Type: {e:?}")))?;
         }
 
         opts.set_headers(&headers);
@@ -182,17 +182,17 @@ impl WebNetwork {
         }
 
         let request = Request::new_with_str_and_init(url, &opts)
-            .map_err(|e| DeezelError::Network(format!("Failed to create request: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to create request: {e:?}")))?;
 
         let resp_value = JsFuture::from(window.fetch_with_request(&request))
             .await
-            .map_err(|e| DeezelError::Network(format!("Fetch failed: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Fetch failed: {e:?}")))?;
 
         let resp: Response = resp_value.dyn_into()
-            .map_err(|e| DeezelError::Network(format!("Failed to cast response: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to cast response: {e:?}")))?;
 
         if !resp.ok() {
-            return Err(DeezelError::Network(format!(
+            return Err(AlkanesError::Network(format!(
                 "HTTP error: {} {}",
                 resp.status(),
                 resp.status_text()
@@ -217,13 +217,13 @@ impl WebNetwork {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Network`] if reading the array buffer fails
-    /// * [`DeezelError::Network`] if converting the buffer to bytes fails
+    /// * [`AlkanesError::Network`] if reading the array buffer fails
+    /// * [`AlkanesError::Network`] if converting the buffer to bytes fails
     async fn response_to_bytes(&self, response: Response) -> Result<Vec<u8>> {
         let array_buffer = JsFuture::from(response.array_buffer()
-            .map_err(|e| DeezelError::Network(format!("Failed to get array buffer: {e:?}")))?)
+            .map_err(|e| AlkanesError::Network(format!("Failed to get array buffer: {e:?}")))?)
             .await
-            .map_err(|e| DeezelError::Network(format!("Failed to read array buffer: {e:?}")))?;
+            .map_err(|e| AlkanesError::Network(format!("Failed to read array buffer: {e:?}")))?;
 
         let uint8_array = Uint8Array::new(&array_buffer);
         let mut bytes = vec![0u8; uint8_array.length() as usize];
@@ -255,9 +255,9 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Network`] if the request fails
-    /// * [`DeezelError::Network`] if the response has an error status code
-    /// * [`DeezelError::Network`] if reading the response body fails
+    /// * [`AlkanesError::Network`] if the request fails
+    /// * [`AlkanesError::Network`] if the response has an error status code
+    /// * [`AlkanesError::Network`] if reading the response body fails
     async fn get(&self, url: &str) -> Result<Vec<u8>> {
         let response = self.fetch_request(url, "GET", None, None).await?;
         self.response_to_bytes(response).await
@@ -280,9 +280,9 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Network`] if the request fails
-    /// * [`DeezelError::Network`] if the response has an error status code
-    /// * [`DeezelError::Network`] if reading the response body fails
+    /// * [`AlkanesError::Network`] if the request fails
+    /// * [`AlkanesError::Network`] if the response has an error status code
+    /// * [`AlkanesError::Network`] if reading the response body fails
     async fn post(&self, url: &str, body: &[u8], content_type: &str) -> Result<Vec<u8>> {
         let response = self.fetch_request(url, "POST", Some(body), Some(content_type)).await?;
         self.response_to_bytes(response).await
@@ -303,9 +303,9 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     ///
     /// # Errors
     ///
-    /// * [`DeezelError::Network`] if the request fails
-    /// * [`DeezelError::Network`] if the response has an error status code
-    /// * [`DeezelError::Network`] if reading the response body fails
+    /// * [`AlkanesError::Network`] if the request fails
+    /// * [`AlkanesError::Network`] if the response has an error status code
+    /// * [`AlkanesError::Network`] if reading the response body fails
     async fn download(&self, url: &str) -> Result<Vec<u8>> {
         self.get(url).await
     }
