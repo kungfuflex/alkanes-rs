@@ -1,10 +1,6 @@
 use crate::id::AlkaneId;
 use anyhow::{anyhow, Result};
 
-pub fn field_or_default<T: Into<RT>, RT: Default>(v: Option<T>) -> RT {
-    v.map(|v| v.into()).unwrap_or_else(RT::default)
-}
-
 pub fn shift<T>(v: &mut Vec<T>) -> Option<T> {
     if v.is_empty() {
         None

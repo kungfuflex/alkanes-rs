@@ -15,15 +15,18 @@ use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer, response::CallRespon
 use anyhow::{anyhow, ensure, Context, Result};
 use bitcoin::{Address, Transaction};
 use borsh::BorshDeserialize;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
-use protorune_support::{protostone::Protostone, utils::consensus_decode};
-use std::io::Cursor;
+use protorune_support::protostone::Protostone;
 use std::sync::Arc;
 
+use alkanes_runtime::runtime::AlkaneEnvironment;
+
 #[derive(Default)]
-pub struct MerkleDistributor(());
+pub struct MerkleDistributor {
+    env: AlkaneEnvironment,
+}
 
 #[derive(MessageDispatch)]
 enum MerkleDistributorMessage {
@@ -63,24 +66,24 @@ impl MerkleDistributor {
         StoragePointer::from_keyword("/root")
     }
 
-    pub fn set_root(&self, v: Vec<u8>) {
-        self.root_pointer().set(Arc::new(v))
+    pub fn set_root(&mut self, v: Vec<u8>) {
+        self.root_pointer().set(self.env(), Arc::new(v))
     }
 
     pub fn end_height_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/end_height")
     }
 
-    pub fn set_end_height(&self, v: u128) {
-        self.end_height_pointer().set_value::<u128>(v);
+    pub fn set_end_height(&mut self, v: u128) {
+        self.end_height_pointer().set_value(self.env(), v);
     }
 
-    pub fn end_height(&self) -> u128 {
-        self.end_height_pointer().get_value::<u128>()
+    pub fn end_height(&mut self) -> u128 {
+        self.end_height_pointer().get_value::<u128>(self.env())
     }
 
-    pub fn root(&self) -> Result<[u8; 32]> {
-        let root_vec: Vec<u8> = self.root_pointer().get().as_ref().clone();
+    pub fn root(&mut self) -> Result<[u8; 32]> {
+        let root_vec: Vec<u8> = self.root_pointer().get(self.env()).as_ref().clone();
         let root_bytes: &[u8] = root_vec.as_ref();
         root_bytes
             .try_into()
@@ -91,12 +94,12 @@ impl MerkleDistributor {
         StoragePointer::from_keyword("/alkane")
     }
 
-    pub fn alkane(&self) -> Result<AlkaneId> {
-        Ok(self.alkane_pointer().get().as_ref().clone().try_into()?)
+    pub fn alkane(&mut self) -> Result<AlkaneId> {
+        Ok(self.alkane_pointer().get(self.env()).as_ref().clone().try_into()?)
     }
 
-    pub fn set_alkane(&self, v: AlkaneId) {
-        self.alkane_pointer().set(Arc::<Vec<u8>>::new(v.into()));
+    pub fn set_alkane(&mut self, v: AlkaneId) {
+        self.alkane_pointer().set(self.env(), Arc::<Vec<u8>>::new(v.into()));
     }
 
     fn get_used_leaf_pointer(&self, leaf_bytes: &Vec<u8>) -> StoragePointer {
@@ -121,7 +124,7 @@ impl MerkleDistributor {
     pub fn get_network(&self) -> bitcoin::Network {
         bitcoin::Network::Bitcoin
     }
-    fn validate_proof(&self, proof: &SchemaMerkleProof) -> Result<()> {
+    fn validate_proof(&mut self, proof: &SchemaMerkleProof) -> Result<()> {
         let merkle_root = self.root()?;
         let airdrop_end_height = self.end_height();
 
@@ -132,7 +135,7 @@ impl MerkleDistributor {
         Ok(())
     }
     pub fn validate_protostone_tx(
-        &self,
+        &mut self,
         ctx: &alkanes_support::context::Context,
         tx: &Transaction,
     ) -> Result<()> {
@@ -173,7 +176,7 @@ impl MerkleDistributor {
 
         Ok(())
     }
-    pub fn verify_output(&self) -> Result<u128> {
+    pub fn verify_output(&mut self) -> Result<u128> {
         let ctx = self.context()?;
         let tx = self.transaction_object()?;
 
@@ -190,7 +193,7 @@ impl MerkleDistributor {
         self.validate_proof(&merkle_proof)?;
 
         let mut ptr_used_leaf = self.get_used_leaf_pointer(&merkle_proof.leaf);
-        let used_leaf_check = ptr_used_leaf.get_value::<u8>();
+        let used_leaf_check = ptr_used_leaf.get_value::<u8>(self.env());
 
         ensure!(
             used_leaf_check == 0u8,
@@ -211,12 +214,12 @@ impl MerkleDistributor {
             "MERKLE DISTRIBUTOR: vout #0 doesnt contain the address in merkle proof"
         );
 
-        ptr_used_leaf.set_value(1u8);
+        ptr_used_leaf.set_value(self.env(), 1u8);
         Ok(leaf.amount)
     }
 
     fn _return_leftovers(
-        &self,
+        &mut self,
         input_alkane: AlkaneId,
         input_amount: u128,
         input_alkanes: AlkaneTransferParcel,
@@ -237,7 +240,7 @@ impl MerkleDistributor {
     }
 
     fn initialize(
-        &self,
+        &mut self,
         input_alkane: AlkaneId,
         input_amount: u128,
         end_height: u128,
@@ -270,7 +273,7 @@ impl MerkleDistributor {
         Ok(response)
     }
 
-    fn claim(&self) -> Result<CallResponse> {
+    fn claim(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -282,7 +285,7 @@ impl MerkleDistributor {
         Ok(response)
     }
 
-    fn auth_cleanup(&self, alkane: AlkaneId) -> Result<CallResponse> {
+    fn auth_cleanup(&mut self, alkane: AlkaneId) -> Result<CallResponse> {
         self.only_owner()?;
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -294,17 +297,21 @@ impl MerkleDistributor {
         Ok(response)
     }
 
-    fn forward_incoming(&self) -> Result<CallResponse> {
+    fn forward_incoming(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 
-    fn donate(&self) -> Result<CallResponse> {
+    fn donate(&mut self) -> Result<CallResponse> {
         Ok(CallResponse::default())
     }
 }
 
-impl AlkaneResponder for MerkleDistributor {}
+impl AlkaneResponder for MerkleDistributor {
+    fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.env
+    }
+}
 impl AuthenticatedResponder for MerkleDistributor {}
 
 // Use the new macro format

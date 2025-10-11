@@ -9,7 +9,8 @@
 
 use crate::{Result, AlkanesError};
 use alloc::{string::{String, ToString}, vec::Vec, str::FromStr, format};
-use crate::traits::*;
+use crate::traits::{AlkanesProvider, WalletProvider};
+use crate::types::UtxoInfo;
 use bitcoin::{Transaction, TxOut, TxIn, OutPoint, ScriptBuf, Witness, Amount, Address};
 use serde::{Deserialize, Serialize};
 
@@ -312,7 +313,7 @@ pub struct TransactionOutput {
 /// Envelope transaction parameters
 #[derive(Debug, Clone)]
 pub struct EnvelopeTransactionParams {
-    pub utxos: Vec<crate::traits::UtxoInfo>,
+    pub utxos: Vec<crate::types::UtxoInfo>,
     pub outputs: Vec<TransactionOutput>,
     pub envelope_data: Option<Vec<u8>>,
     pub change_script: ScriptBuf,

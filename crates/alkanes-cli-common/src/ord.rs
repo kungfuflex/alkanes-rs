@@ -45,18 +45,19 @@ use crate::vendored_ord::{InscriptionId, SpacedRune};
 use ordinals::{Rarity, Sat, SatPoint};
 use crate::{
     address_parser::AddressParser,
-    traits::{AddressResolver, Utxo, UtxoProvider},
+    traits::{AddressResolverProvider, UtxoProvider},
+    types::UtxoInfo,
     Result,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
-pub struct OrdProvider<R: AddressResolver> {
+pub struct OrdProvider<R: AddressResolverProvider> {
     address_parser: AddressParser<R>,
 }
 
-impl<R: AddressResolver> OrdProvider<R> {
+impl<R: AddressResolverProvider> OrdProvider<R> {
     pub fn new(address_resolver: R) -> Self {
         Self {
             address_parser: AddressParser::new(address_resolver),
@@ -81,8 +82,8 @@ impl<R: AddressResolver> OrdProvider<R> {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl<R: AddressResolver + Send + Sync> UtxoProvider for OrdProvider<R> {
-    async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>> {
+impl<R: AddressResolverProvider + Send + Sync> UtxoProvider for OrdProvider<R> {
+    async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<UtxoInfo>> {
         let mut addresses = Vec::new();
         for s in spec {
             addresses.extend(self.address_parser.parse(s).await?);
@@ -94,7 +95,7 @@ impl<R: AddressResolver + Send + Sync> UtxoProvider for OrdProvider<R> {
             for outpoint in address_info.outputs {
                 let output = self.get_output(&outpoint).await?;
                 if !output.spent {
-                    utxos.push(Utxo {
+                    utxos.push(UtxoInfo {
                         txid: outpoint.txid.to_string(),
                         vout: outpoint.vout,
                         amount: output.value,
@@ -381,5 +382,3 @@ impl OrdJsonRpcMethods {
     pub const SAT: &'static str = "ord_sat";
     pub const TX: &'static str = "ord_tx";
 }
-
-

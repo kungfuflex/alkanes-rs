@@ -8,16 +8,15 @@
 //! - Address types with a single index (e.g., `p2sh:10`)
 
 use crate::{Result, AlkanesError};
-use crate::traits::AddressResolver;
+use crate::address_resolver::AddressResolverProvider;
 use bitcoin::{Address, address::NetworkChecked};
 use alloc::{string::{String, ToString}, vec::Vec, str::FromStr};
 
-#[derive(Clone)]
-pub struct AddressParser<R: AddressResolver> {
+pub struct AddressParser<R: AddressResolverProvider> {
     address_resolver: R,
 }
 
-impl<R: AddressResolver> AddressParser<R> {
+impl<R: AddressResolverProvider> AddressParser<R> {
     pub fn new(address_resolver: R) -> Self {
         Self { address_resolver }
     }

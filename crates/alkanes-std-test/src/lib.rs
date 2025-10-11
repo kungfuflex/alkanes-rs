@@ -11,7 +11,7 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use metashrew_support::{
-    compat::{to_arraybuffer_layout, to_passback_ptr},
+    compat::to_arraybuffer_layout,
     index_pointer::KeyValuePointer,
     utils::consensus_encode,
 };
@@ -22,8 +22,12 @@ use {
     std::fmt::Write,
 };
 
+use alkanes_runtime::environment::AlkaneEnvironment;
+
 #[derive(Default)]
-pub struct LoggerAlkane(());
+pub struct LoggerAlkane {
+	env: AlkaneEnvironment,
+}
 
 #[derive(MessageDispatch)]
 enum LoggerAlkaneMessage {
@@ -133,7 +137,7 @@ enum LoggerAlkaneMessage {
 }
 
 impl LoggerAlkane {
-    fn initialize(&self) -> Result<CallResponse> {
+    fn initialize(&mut self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
         let response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
@@ -142,25 +146,26 @@ impl LoggerAlkane {
     fn claimable_fees_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/claimablefees")
     }
-    fn claimable_fees(&self) -> Result<CallResponse> {
+    fn claimable_fees(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        let fees = self.claimable_fees_pointer().get_value::<u128>();
+        let fees = self.claimable_fees_pointer().get_value::<u128>(self.env());
         response.data = fees.to_le_bytes().to_vec();
         Ok(response)
     }
-    fn set_claimable_fees(&self, v: u128) -> Result<CallResponse> {
+    fn set_claimable_fees(&mut self, v: u128) -> Result<CallResponse> {
         let context = self.context()?;
-        self.claimable_fees_pointer().set_value::<u128>(v);
+        self.claimable_fees_pointer().set_value::<u128>(self.env(), v);
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
-    fn inc_claimable_fees(&self) -> Result<CallResponse> {
+    fn inc_claimable_fees(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
+        let fees = self.claimable_fees_pointer().get_value::<u128>(self.env());
         self.claimable_fees_pointer()
-            .set_value::<u128>(self.claimable_fees_pointer().get_value::<u128>() + 1);
+            .set_value::<u128>(self.env(), fees + 1);
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
-    fn self_call(&self) -> Result<CallResponse> {
+    fn self_call(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -178,7 +183,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn check_incoming(&self) -> Result<CallResponse> {
+    fn check_incoming(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
 
         if context.incoming_alkanes.0.len() != 1 {
@@ -189,11 +194,11 @@ impl LoggerAlkane {
         }
     }
 
-    fn donate(&self) -> Result<CallResponse> {
+    fn donate(&mut self) -> Result<CallResponse> {
         Ok(CallResponse::default())
     }
 
-    fn mint_tokens(&self) -> Result<CallResponse> {
+    fn mint_tokens(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -205,7 +210,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn return_data_1(&self) -> Result<CallResponse> {
+    fn return_data_1(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -214,9 +219,9 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn test_ordered_incoming(&self) -> Result<CallResponse> {
+    fn test_ordered_incoming(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
         let transfers = context.incoming_alkanes.0;
         println!("{:?}", transfers);
         for i in 1..transfers.len() {
@@ -228,18 +233,18 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn get_transaction(&self) -> Result<CallResponse> {
+    fn get_transaction(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         self.transaction();
 
         Ok(response)
     }
 
-    fn hash_loop(&self) -> Result<CallResponse> {
+    fn hash_loop(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         let mut data = vec![0x01, 0x02];
         loop {
@@ -255,16 +260,17 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn test_infinite_loop(&self) -> Result<CallResponse> {
+    #[allow(unreachable_code)]
+    fn test_infinite_loop(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let _response = CallResponse::forward(&context.incoming_alkanes);
 
         loop {}
 
-        Ok(response)
+        Ok(_response)
     }
 
-    fn test_infinite_extcall(&self) -> Result<CallResponse> {
+    fn test_infinite_extcall(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let cellpack = Cellpack {
             target: context.myself,
@@ -274,7 +280,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn test_arbitrary_mint(&self, alkane: AlkaneId, amount: u128) -> Result<CallResponse> {
+    fn test_arbitrary_mint(&mut self, alkane: AlkaneId, amount: u128) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -286,7 +292,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn test_self_mint(&self, amount: u128) -> Result<CallResponse> {
+    fn test_self_mint(&mut self, amount: u128) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -299,7 +305,7 @@ impl LoggerAlkane {
     }
 
     fn _return_leftovers(
-        &self,
+        &mut self,
         myself: AlkaneId,
         result: CallResponse,
         input_alkanes: AlkaneTransferParcel,
@@ -321,7 +327,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn test_ext_call(&self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
+    fn test_ext_call(&mut self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
         let cellpack = Cellpack {
             target: target,
@@ -332,7 +338,7 @@ impl LoggerAlkane {
     }
 
     fn test_ext_call_return_leftovers(
-        &self,
+        &mut self,
         target: AlkaneId,
         inputs: Vec<u128>,
     ) -> Result<CallResponse> {
@@ -345,7 +351,7 @@ impl LoggerAlkane {
         self._return_leftovers(context.myself, response, context.incoming_alkanes)
     }
 
-    fn test_ext_delegate_call(&self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
+    fn test_ext_delegate_call(&mut self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
         let cellpack = Cellpack {
             target: target,
@@ -355,7 +361,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn test_static_call(&self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
+    fn test_static_call(&mut self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
         let cellpack = Cellpack {
             target: target,
@@ -366,7 +372,7 @@ impl LoggerAlkane {
     }
 
     fn test_multiple_ext_call(
-        &self,
+        &mut self,
         target: AlkaneId,
         inputs: Vec<u128>,
         target2: AlkaneId,
@@ -387,7 +393,7 @@ impl LoggerAlkane {
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 
-    fn test_large_transfer_parcel(&self) -> Result<CallResponse> {
+    fn test_large_transfer_parcel(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -399,7 +405,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn test_large_transfer_parcel_extcall(&self) -> Result<CallResponse> {
+    fn test_large_transfer_parcel_extcall(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let cellpack = Cellpack {
             target: context.myself,
@@ -416,7 +422,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn return_default_data(&self) -> Result<CallResponse> {
+    fn return_default_data(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -425,7 +431,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn process_numbers(&self, numbers: Vec<u128>) -> Result<CallResponse> {
+    fn process_numbers(&mut self, numbers: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -436,7 +442,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn process_strings(&self, strings: Vec<String>) -> Result<CallResponse> {
+    fn process_strings(&mut self, strings: Vec<String>) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -447,7 +453,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn process_nested_vec(&self, nested: Vec<Vec<u128>>) -> Result<CallResponse> {
+    fn process_nested_vec(&mut self, nested: Vec<Vec<u128>>) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -458,11 +464,11 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn revert(&self) -> Result<CallResponse> {
+    fn revert(&mut self) -> Result<CallResponse> {
         Err(anyhow!("Revert"))
     }
 
-    fn my_get_block_header(&self) -> Result<CallResponse> {
+    fn my_get_block_header(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
         let header = self.block_header()?;
@@ -471,7 +477,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn my_get_coinbase_tx(&self) -> Result<CallResponse> {
+    fn my_get_coinbase_tx(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
         let tx = self.coinbase_tx()?;
@@ -480,7 +486,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn my_get_number_diesel_mints(&self) -> Result<CallResponse> {
+    fn my_get_number_diesel_mints(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
         let v = self.number_diesel_mints()?;
@@ -489,7 +495,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn my_get_total_miner_fee(&self) -> Result<CallResponse> {
+    fn my_get_total_miner_fee(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
         let v = self.total_miner_fee()?;
@@ -499,7 +505,11 @@ impl LoggerAlkane {
     }
 }
 
-impl AlkaneResponder for LoggerAlkane {}
+impl AlkaneResponder for LoggerAlkane {
+    fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.env
+    }
+}
 
 // Use the new macro format
 declare_alkane! {

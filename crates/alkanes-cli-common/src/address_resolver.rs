@@ -6,12 +6,12 @@
 //! - [external:bc1q...] - External address reference
 //! - Raw Bitcoin addresses
 
-use crate::traits::*;
 use crate::network::NetworkParams;
 use crate::{
-    AlkanesError, Result,
+    AlkanesError, Result, 
 };
-use crate::traits::AlkanesProvider;
+use crate::traits::{AlkanesProvider, AddressResolverProvider, JsonRpcProvider, BitcoinRpcProvider, MetashrewRpcProvider, EsploraProvider, RunestoneProvider, OrdProvider, MonitorProvider, KeystoreProvider};
+use crate::types::{WalletConfig, WalletInfo, WalletBalance, AddressInfo, SendParams, UtxoInfo, TransactionInfo, FeeEstimate, FeeRates, EnrichedUtxo, AllBalances, BlockEvent, KeystoreAddress, KeystoreInfo};
 
 use crate::wallet::AddressType;
 use bitcoin::Network;
@@ -175,7 +175,7 @@ impl<P: AlkanesProvider> AddressResolver<P> {
         
         let address = match parsed {
             AddressIdentifier::SelfWallet { address_type, index } => {
-                crate::traits::AddressResolver::get_address(&self.provider, address_type.as_str(), index).await?
+                crate::traits::AddressResolverProvider::get_address(&self.provider, address_type.as_str(), index).await?
             },
             AddressIdentifier::External { address } => address,
             AddressIdentifier::Raw { address } => {
@@ -213,7 +213,7 @@ impl<P: AlkanesProvider> AddressResolver<P> {
     
     /// Get address for specific type and index
     pub async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
-        crate::traits::AddressResolver::get_address(&self.provider, address_type, index).await
+        crate::traits::AddressResolverProvider::get_address(&self.provider, address_type, index).await
     }
     
     /// List available address identifiers
@@ -387,21 +387,7 @@ mod standalone_impls {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl StorageProvider for StandaloneAddressResolver {
-    async fn read(&self, _key: &str) -> Result<Vec<u8>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support storage".to_string()))
-    }
-    async fn write(&self, _key: &str, _data: &[u8]) -> Result<()> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support storage".to_string()))
-    }
-    async fn exists(&self, _key: &str) -> Result<bool> { Ok(false) }
-    async fn delete(&self, _key: &str) -> Result<()> { Ok(()) }
-    async fn list_keys(&self, _prefix: &str) -> Result<Vec<String>> { Ok(vec![]) }
-    fn storage_type(&self) -> &'static str { "none" }
-}
+
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -565,7 +551,7 @@ impl WalletProvider for StandaloneAddressResolver {
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl crate::traits::AddressResolver for StandaloneAddressResolver {
+impl crate::traits::AddressResolverProvider for StandaloneAddressResolver {
     async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
         Ok(input.to_string()) // No-op for standalone
     }
@@ -654,7 +640,7 @@ impl BitcoinRpcProvider for StandaloneAddressResolver {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MetashrewRpcProvider for StandaloneAddressResolver {
-    async fn get_metashrew_height(&self) -> Result<u64> {
+    async fn get_height(&self) -> Result<u64> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Metashrew RPC".to_string()))
     }
     async fn get_state_root(&self, _height: serde_json::Value) -> Result<String> {
@@ -696,163 +682,67 @@ impl MetashrewRpcProvider for StandaloneAddressResolver {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl EsploraProvider for StandaloneAddressResolver {
-    async fn get_blocks_tip_hash(&self) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_blocks_tip_height(&self) -> Result<u64> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_blocks(&self, _start_height: Option<u64>) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_block_by_height(&self, _height: u64) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_block(&self, _hash: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_block_status(&self, _hash: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_block_txids(&self, _hash: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_block_header(&self, _hash: &str) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_block_raw(&self, _hash: &str) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_block_txid(&self, _hash: &str, _index: u32) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_block_txs(&self, _hash: &str, _start_index: Option<u32>) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_address_info(&self, _address: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_address_utxo(&self, _address: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_address_txs(&self, _address: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_address_txs_chain(&self, _address: &str, _last_seen_txid: Option<&str>) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_address_txs_mempool(&self, _address: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_address_prefix(&self, _prefix: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_tx(&self, _txid: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_tx_hex(&self, _txid: &str) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_tx_raw(&self, _txid: &str) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_tx_status(&self, _txid: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_tx_merkle_proof(&self, _txid: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_tx_merkleblock_proof(&self, _txid: &str) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_tx_outspend(&self, _txid: &str, _index: u32) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_tx_outspends(&self, _txid: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn broadcast(&self, _tx_hex: &str) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_mempool(&self) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_mempool_txids(&self) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_mempool_recent(&self) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
-    async fn get_fee_estimates(&self) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
-    }
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl RunestoneProvider for StandaloneAddressResolver {
-    async fn decode_runestone(&self, _tx: &bitcoin::Transaction) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support runestone operations".to_string()))
-    }
-    async fn format_runestone_with_decoded_messages(&self, _tx: &bitcoin::Transaction) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support runestone operations".to_string()))
-    }
-    async fn analyze_runestone(&self, _txid: &str) -> Result<serde_json::Value> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support runestone operations".to_string()))
-    }
+    
+    
+    
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl OrdProvider for StandaloneAddressResolver {
-    async fn get_inscription(&self, _inscription_id: &str) -> Result<OrdInscription> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
+    
 
-    async fn get_inscriptions_in_block(&self, _block_hash: &str) -> Result<OrdInscriptions> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_ord_address_info(&self, _address: &str) -> Result<OrdAddressInfo> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_block_info(&self, _query: &str) -> Result<OrdBlock> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_ord_block_count(&self) -> Result<u64> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_ord_blocks(&self) -> Result<OrdBlocks> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_children(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdChildren> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_content(&self, _inscription_id: &str) -> Result<Vec<u8>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_inscriptions(&self, _page: Option<u32>) -> Result<OrdInscriptions> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_output(&self, _output: &str) -> Result<OrdOutput> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdParents> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_rune(&self, _rune: &str) -> Result<OrdRuneInfo> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_runes(&self, _page: Option<u32>) -> Result<OrdRunes> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_sat(&self, _sat: u64) -> Result<OrdSat> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
-    async fn get_tx_info(&self, _txid: &str) -> Result<OrdTxInfo> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support ord operations".to_string()))
-    }
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
 }
 
 
@@ -860,9 +750,7 @@ impl OrdProvider for StandaloneAddressResolver {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MonitorProvider for StandaloneAddressResolver {
-    async fn monitor_blocks(&self, _start: Option<u64>) -> Result<()> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support monitoring".to_string()))
-    }
+    
     async fn get_block_events(&self, _height: u64) -> Result<Vec<BlockEvent>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support monitoring".to_string()))
     }
@@ -872,174 +760,72 @@ impl MonitorProvider for StandaloneAddressResolver {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl KeystoreProvider for StandaloneAddressResolver {
-    async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support keystore operations".to_string()))
-    }
-    async fn derive_addresses(&self, _master_public_key: &str, _network_params: &NetworkParams, _script_types: &[&str], _start_index: u32, _count: u32) -> Result<Vec<KeystoreAddress>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support keystore operations".to_string()))
-    }
+    
+    
     
     async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &NetworkParams) -> Result<Vec<KeystoreAddress>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support keystore operations".to_string()))
     }
     
-    fn parse_address_range(&self, _range_spec: &str) -> Result<(String, u32, u32)> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support keystore operations".to_string()))
-    }
+    
     
     async fn get_keystore_info(&self, _master_fingerprint: &str, _created_at: u64, _version: &str) -> Result<KeystoreInfo> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support keystore operations".to_string()))
     }
 
-    async fn derive_address_from_path(&self, _master_public_key: &str, _path: &bitcoin::bip32::DerivationPath, _script_type: &str, _network_params: &NetworkParams) -> Result<KeystoreAddress> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support keystore operations".to_string()))
-    }
+    
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AlkanesProvider for StandaloneAddressResolver {
-    fn provider_name(&self) -> &str {
-        "StandaloneAddressResolver"
-    }
-    fn get_bitcoin_rpc_url(&self) -> Option<String> {
-        None
-    }
-    fn get_esplora_api_url(&self) -> Option<String> {
-        None
-    }
-    fn get_ord_server_url(&self) -> Option<String> {
-        None
-    }
-    fn get_metashrew_rpc_url(&self) -> Option<String> {
-        None
-    }
-    fn clone_box(&self) -> Box<dyn AlkanesProvider> {
-        Box::new(self.clone())
-    }
-    async fn initialize(&self) -> Result<()> {
-        Ok(())
-    }
-    async fn shutdown(&self) -> Result<()> {
-        Ok(())
-    }
-    fn secp(&self) -> &bitcoin::secp256k1::Secp256k1<bitcoin::secp256k1::All> {
-        unimplemented!()
-    }
-    async fn get_utxo(&self, _outpoint: &bitcoin::OutPoint) -> Result<Option<bitcoin::TxOut>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support get_utxo".to_string()))
-    }
-    async fn sign_taproot_script_spend(&self, _sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support sign_taproot_script_spend".to_string()))
-    }
-    async fn wrap(&mut self, _amount: u64, _address: Option<String>, _fee_rate: Option<f32>) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support wrap".to_string()))
-    }
-    async fn unwrap(&mut self, _amount: u64, _address: Option<String>) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support unwrap".to_string()))
-    }
-    async fn execute(
-        &mut self,
-        _params: crate::alkanes::types::EnhancedExecuteParams,
-    ) -> Result<crate::alkanes::types::ExecutionState> {
-        Err(AlkanesError::NotImplemented(
-            "StandaloneAddressResolver does not support alkanes operations".to_string(),
-        ))
-    }
-
-    async fn resume_execution(
-        &mut self,
-        _state: crate::alkanes::types::ReadyToSignTx,
-        _params: &crate::alkanes::types::EnhancedExecuteParams,
-    ) -> Result<crate::alkanes::types::EnhancedExecuteResult> {
-        Err(AlkanesError::NotImplemented(
-            "StandaloneAddressResolver does not support alkanes operations".to_string(),
-        ))
-    }
-
-    async fn resume_commit_execution(
-        &mut self,
-        _state: crate::alkanes::types::ReadyToSignCommitTx,
-    ) -> Result<crate::alkanes::types::ExecutionState> {
-        Err(AlkanesError::NotImplemented(
-            "StandaloneAddressResolver does not support alkanes operations".to_string(),
-        ))
-    }
-
-    async fn resume_reveal_execution(
-        &mut self,
-        _state: crate::alkanes::types::ReadyToSignRevealTx,
-    ) -> Result<crate::alkanes::types::EnhancedExecuteResult> {
-        Err(AlkanesError::NotImplemented(
-            "StandaloneAddressResolver does not support alkanes operations".to_string(),
-        ))
-    }
-
-    async fn protorunes_by_address(
-        &self,
-        _address: &str,
-        _block_tag: Option<String>,
-        _protocol_tag: u128,
-    ) -> Result<crate::alkanes::protorunes::ProtoruneWalletResponse> {
-        Err(AlkanesError::NotImplemented(
-            "StandaloneAddressResolver does not support alkanes operations".to_string(),
-        ))
-    }
-
-    async fn protorunes_by_outpoint(
-        &self,
-        _txid: &str,
-        _vout: u32,
-        _block_tag: Option<String>,
-        _protocol_tag: u128,
-    ) -> Result<crate::alkanes::protorunes::ProtoruneOutpointResponse> {
-        Err(AlkanesError::NotImplemented(
-            "StandaloneAddressResolver does not support alkanes operations".to_string(),
-        ))
-    }
-
-    async fn simulate(&self, _contract_id: &str, _context: &crate::alkanes_pb::MessageContextParcel) -> Result<crate::JsonValue> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
 
     
 
-    async fn trace(&self, _outpoint: &str) -> Result<crate::alkanes_pb::Trace> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
+    
 
-    async fn get_block(&self, _height: u64) -> Result<crate::alkanes_pb::BlockResponse> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
+    
 
-    async fn sequence(&self) -> Result<crate::JsonValue> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
+    
 
-    async fn spendables_by_address(&self, _address: &str) -> Result<crate::JsonValue> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
+    
 
-    async fn trace_block(&self, _height: u64) -> Result<crate::alkanes_pb::Trace> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
+    
 
-    async fn get_bytecode(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<String> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
+    
 
-    async fn inspect(&self, _target: &str, _config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
+    
 
-    async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
-    }
+    
 
-    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<JsonValue> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support view calls".to_string()))
-    }
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
 }
 
 #[cfg(not(target_arch = "wasm32"))]

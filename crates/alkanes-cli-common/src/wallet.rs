@@ -1,6 +1,7 @@
 use crate::{Result, AlkanesError};
 use alloc::{string::ToString, format};
-use crate::traits::*;
+use crate::traits::{AlkanesProvider, WalletProvider};
+use crate::types::{WalletBalance, EnrichedUtxo, WalletConfig, SendParams, FeeEstimate, FeeRates, AddressInfo, TransactionInfo, TransactionInput, TransactionOutput, UtxoInfo};
 use crate::network::NetworkParams;
 use bitcoin::Network;
 use serde::{Deserialize, Serialize};
@@ -65,16 +66,6 @@ fn network_to_params(network: bitcoin::Network) -> NetworkParams {
     }
 }
 
-/// Wallet configuration
-#[derive(Debug, Clone)]
-pub struct WalletConfig {
-    pub wallet_path: String,
-    pub network: Network,
-    pub bitcoin_rpc_url: String,
-    pub metashrew_rpc_url: String,
-    pub network_params: Option<NetworkParams>,
-}
-
 /// Wallet manager that works with any provider
 pub struct Wallet<P: AlkanesProvider> {
     provider: P,
@@ -95,7 +86,7 @@ impl<P: AlkanesProvider> Wallet<P> {
     ) -> Result<Self> {
         let params = network_to_params(config.network);
         crate::network::set_network(params.clone());
-        let trait_config = crate::traits::WalletConfig {
+        let trait_config = crate::types::WalletConfig {
             wallet_path: config.wallet_path.clone(),
             bitcoin_rpc_url: config.bitcoin_rpc_url.clone(),
             metashrew_rpc_url: config.metashrew_rpc_url.clone(),
@@ -112,7 +103,7 @@ impl<P: AlkanesProvider> Wallet<P> {
     pub async fn load(mut provider: P, config: WalletConfig, passphrase: Option<String>) -> Result<Self> {
         let params = network_to_params(config.network);
         crate::network::set_network(params.clone());
-        let trait_config = crate::traits::WalletConfig {
+        let trait_config = crate::types::WalletConfig {
             wallet_path: config.wallet_path.clone(),
             bitcoin_rpc_url: config.bitcoin_rpc_url.clone(),
             metashrew_rpc_url: config.metashrew_rpc_url.clone(),
@@ -133,130 +124,42 @@ impl<P: AlkanesProvider> Wallet<P> {
     
     /// Get wallet balance
     pub async fn get_balance(&self) -> Result<WalletBalance> {
-        crate::traits::WalletProvider::get_balance(&self.provider, None).await
+        self.provider.get_balance(None).await
     }
     
     /// Get wallet address
     pub async fn get_address(&self) -> Result<String> {
-        crate::traits::WalletProvider::get_address(&self.provider).await
+        self.provider.get_address().await
     }
     
     /// Get multiple addresses
     pub async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>> {
-        let trait_addresses = self.provider.get_addresses(count).await?;
-        Ok(trait_addresses.into_iter().map(|addr| AddressInfo {
-            address: addr.address.clone(),
-            index: addr.index,
-            used: addr.used,
-        }).collect())
+        self.provider.get_addresses(count).await
     }
     
     /// Send Bitcoin transaction
     pub async fn send(&mut self, params: SendParams) -> Result<String> {
-        let trait_params = crate::traits::SendParams {
-            address: params.address,
-            amount: params.amount,
-            fee_rate: params.fee_rate,
-            send_all: params.send_all,
-            from: params.from,
-            change_address: params.change_address,
-            auto_confirm: params.auto_confirm,
-        };
-        self.provider.send(trait_params).await
+        self.provider.send(params).await
     }
     
     /// Get UTXOs
     pub async fn get_utxos(&self) -> Result<Vec<UtxoInfo>> {
-        let trait_utxos = self.provider.get_utxos(false, None).await?;
-        let wallet_utxos = trait_utxos.into_iter().map(|(_, utxo)| UtxoInfo {
-            txid: utxo.txid,
-            vout: utxo.vout,
-            amount: utxo.amount,
-            address: utxo.address.clone(),
-            script_pubkey: utxo.script_pubkey.unwrap_or_default(),
-            confirmations: utxo.confirmations,
-            frozen: utxo.frozen,
-        }).collect();
-        Ok(wallet_utxos)
+        self.provider.get_utxos(false, None).await.map(|utxos| utxos.into_iter().map(|(_, utxo)| utxo).collect())
     }
     
     /// Get enriched UTXOs (with additional metadata)
     pub async fn get_enriched_utxos(&self) -> Result<Vec<EnrichedUtxo>> {
-        let utxos = self.provider.get_utxos(false, None).await?;
-        let mut enriched = Vec::new();
-        
-        for (_, utxo) in utxos {
-            enriched.push(EnrichedUtxo {
-                utxo: UtxoInfo {
-                    txid: utxo.txid.clone(),
-                    vout: utxo.vout,
-                    amount: utxo.amount,
-                    address: utxo.address.clone(),
-                    script_pubkey: utxo.script_pubkey.clone().unwrap_or_else(bitcoin::ScriptBuf::new),
-                    confirmations: utxo.confirmations,
-                    frozen: utxo.frozen,
-                },
-                freeze_reason: utxo.freeze_reason.clone(),
-                block_height: utxo.block_height,
-                has_inscriptions: utxo.has_inscriptions,
-                has_runes: utxo.has_runes,
-                has_alkanes: utxo.has_alkanes,
-                is_coinbase: utxo.is_coinbase,
-            });
-        }
-        
-        Ok(enriched)
+        self.provider.get_enriched_utxos(None).await
     }
     
     /// Get UTXOs for a specific address
     pub async fn get_enriched_utxos_for_address(&self, address: &str) -> Result<Vec<EnrichedUtxo>> {
-        let utxos = self.provider.get_utxos(false, Some(vec![address.to_string()])).await?;
-        let mut enriched = Vec::new();
-        
-        for (_, utxo) in utxos {
-            enriched.push(EnrichedUtxo {
-                utxo: UtxoInfo {
-                    txid: utxo.txid.clone(),
-                    vout: utxo.vout,
-                    amount: utxo.amount,
-                    address: utxo.address.clone(),
-                    script_pubkey: utxo.script_pubkey.clone().unwrap_or_else(bitcoin::ScriptBuf::new),
-                    confirmations: utxo.confirmations,
-                    frozen: utxo.frozen,
-                },
-                freeze_reason: utxo.freeze_reason.clone(),
-                block_height: utxo.block_height,
-                has_inscriptions: utxo.has_inscriptions,
-                has_runes: utxo.has_runes,
-                has_alkanes: utxo.has_alkanes,
-                is_coinbase: utxo.is_coinbase,
-            });
-        }
-        
-        Ok(enriched)
+        self.provider.get_enriched_utxos(Some(vec![address.to_string()])).await
     }
     
     /// Get transaction history
     pub async fn get_history(&self, count: u32, address: Option<String>) -> Result<Vec<TransactionInfo>> {
-        let trait_history = self.provider.get_history(count, address).await?;
-        Ok(trait_history.into_iter().map(|tx| TransactionInfo {
-            txid: tx.txid,
-            block_height: tx.block_height,
-            block_time: tx.block_time,
-            confirmed: tx.confirmed,
-            fee: tx.fee,
-            inputs: tx.inputs.into_iter().map(|input| TransactionInput {
-                txid: input.txid,
-                vout: input.vout,
-                address: input.address,
-                amount: input.amount,
-            }).collect(),
-            outputs: tx.outputs.into_iter().map(|output| TransactionOutput {
-                address: output.address,
-                amount: output.amount,
-                script_hex: hex::encode(output.script.as_bytes()),
-            }).collect(),
-        }).collect())
+        self.provider.get_history(count, address).await
     }
     
     /// Freeze UTXO
@@ -271,16 +174,7 @@ impl<P: AlkanesProvider> Wallet<P> {
     
     /// Create transaction without broadcasting
     pub async fn create_transaction(&self, params: SendParams) -> Result<String> {
-        let trait_params = crate::traits::SendParams {
-            address: params.address,
-            amount: params.amount,
-            fee_rate: params.fee_rate,
-            send_all: params.send_all,
-            from: params.from,
-            change_address: params.change_address,
-            auto_confirm: params.auto_confirm,
-        };
-        self.provider.create_transaction(trait_params).await
+        self.provider.create_transaction(params).await
     }
     
     /// Sign transaction
@@ -295,21 +189,12 @@ impl<P: AlkanesProvider> Wallet<P> {
     
     /// Estimate fee
     pub async fn estimate_fee(&self, target: u32) -> Result<FeeEstimate> {
-        let trait_estimate = self.provider.estimate_fee(target).await?;
-        Ok(FeeEstimate {
-            fee_rate: trait_estimate.fee_rate,
-            target_blocks: trait_estimate.target_blocks,
-        })
+        self.provider.estimate_fee(target).await
     }
     
     /// Get current fee rates
     pub async fn get_fee_rates(&self) -> Result<FeeRates> {
-        let trait_rates = self.provider.get_fee_rates().await?;
-        Ok(FeeRates {
-            slow: trait_rates.slow,
-            medium: trait_rates.medium,
-            fast: trait_rates.fast,
-        })
+        self.provider.get_fee_rates().await
     }
     
     /// Synchronize wallet
@@ -348,138 +233,6 @@ impl<P: AlkanesProvider> Wallet<P> {
     }
 }
 
-
-/// Send transaction parameters
-#[derive(Debug, Clone)]
-pub struct SendParams {
-    pub address: String,
-    pub amount: u64,
-    pub fee_rate: Option<f32>,
-    pub send_all: bool,
-    pub from: Option<Vec<String>>,
-    pub change_address: Option<String>,
-    pub auto_confirm: bool,
-}
-
-/// UTXO information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UtxoInfo {
-    pub txid: String,
-    pub vout: u32,
-    pub amount: u64,
-    pub address: String,
-    pub script_pubkey: bitcoin::ScriptBuf,
-    pub confirmations: u32,
-    pub frozen: bool,
-}
-
-impl From<crate::traits::UtxoInfo> for UtxoInfo {
-    fn from(utxo: crate::traits::UtxoInfo) -> Self {
-        Self {
-            txid: utxo.txid,
-            vout: utxo.vout,
-            amount: utxo.amount,
-            address: utxo.address,
-            script_pubkey: utxo.script_pubkey.unwrap_or_default(),
-            confirmations: utxo.confirmations,
-            frozen: utxo.frozen,
-        }
-    }
-}
-/// Enriched UTXO with additional metadata
-#[derive(Debug, Clone)]
-pub struct EnrichedUtxo {
-    pub utxo: UtxoInfo,
-    pub freeze_reason: Option<String>,
-    pub block_height: Option<u64>,
-    pub has_inscriptions: bool,
-    pub has_runes: bool,
-    pub has_alkanes: bool,
-    pub is_coinbase: bool,
-}
-
-/// Address information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AddressInfo {
-    pub address: String,
-    pub index: u32,
-    pub used: bool,
-}
-
-/// Transaction information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionInfo {
-    pub txid: String,
-    pub block_height: Option<u64>,
-    pub block_time: Option<u64>,
-    pub confirmed: bool,
-    pub fee: Option<u64>,
-    pub inputs: Vec<TransactionInput>,
-    pub outputs: Vec<TransactionOutput>,
-}
-
-/// Transaction input
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionInput {
-    pub txid: String,
-    pub vout: u32,
-    pub address: Option<String>,
-    pub amount: Option<u64>,
-}
-
-/// Transaction output
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionOutput {
-    pub address: Option<String>,
-    pub amount: u64,
-    pub script_hex: String,
-}
-
-/// Fee estimate
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FeeEstimate {
-    pub fee_rate: f32,
-    pub target_blocks: u32,
-}
-
-/// Fee rates
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FeeRates {
-    pub fast: f32,
-    pub medium: f32,
-    pub slow: f32,
-}
-
-/// Wallet creation parameters
-#[derive(Debug, Clone)]
-pub struct WalletCreationParams {
-    pub mnemonic: Option<String>,
-    pub passphrase: Option<String>,
-    pub derivation_path: Option<String>,
-    pub network: Network,
-}
-
-/// Wallet information
-#[derive(Debug, Clone)]
-pub struct WalletInfo {
-    pub address: String,
-    pub network: Network,
-    pub mnemonic: Option<String>,
-    pub derivation_path: String,
-}
-
-/// Wallet statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalletStats {
-    pub total_balance: u64,
-    pub confirmed_balance: u64,
-    pub pending_balance: u64,
-    pub total_utxos: usize,
-    pub frozen_utxos: usize,
-    pub total_transactions: usize,
-    pub last_sync: Option<u64>,
-}
-
 /// Address type enumeration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AddressType {
@@ -514,7 +267,7 @@ impl core::str::FromStr for AddressType {
             "p2wpkh" => Ok(AddressType::P2WPKH),
             "p2wsh" => Ok(AddressType::P2WSH),
             "p2tr" => Ok(AddressType::P2TR),
-            _ => Err(AlkanesError::Parse(format!("Unknown address type: {s}"))),
+            _ => Err(AlkanesError::Parse(format!("Unknown address type: {{s}}"))),
         }
     }
 }
@@ -538,7 +291,7 @@ pub mod derivation {
             AddressType::P2TR => 86,
         };
         
-        format!("m/{purpose}'/{coin_type}'/{account}'/{change}/{index}")
+        format!("m/{{purpose}}'/{{coin_type}}'/{{account}}'/{{change}}/{{index}}")
     }
     
     /// Parse derivation path

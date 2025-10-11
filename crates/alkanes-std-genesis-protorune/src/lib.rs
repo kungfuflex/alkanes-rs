@@ -5,16 +5,18 @@ use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
-use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
+use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token, environment::AlkaneEnvironment};
 use alkanes_support::{
     context::Context, id::AlkaneId, parcel::AlkaneTransfer, response::CallResponse,
 };
-use anyhow::{anyhow, Result};
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use anyhow::Result;
+use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 
 #[derive(Default)]
-pub struct GenesisProtorune(());
+pub struct GenesisProtorune {
+	env: AlkaneEnvironment,
+}
 
 #[derive(MessageDispatch)]
 enum GenesisProtoruneMessage {
@@ -51,16 +53,16 @@ impl GenesisProtorune {
         StoragePointer::from_keyword("/totalsupply")
     }
 
-    pub fn total_supply(&self) -> u128 {
-        self.total_supply_pointer().get_value::<u128>()
+    pub fn total_supply(&mut self) -> u128 {
+        self.total_supply_pointer().get_value::<u128>(self.env())
     }
 
-    pub fn set_total_supply(&self, v: u128) {
-        self.total_supply_pointer().set_value::<u128>(v);
+    pub fn set_total_supply(&mut self, v: u128) {
+        self.total_supply_pointer().set_value::<u128>(self.env(), v);
     }
 
     // Helper method that creates a mint transfer
-    pub fn create_mint_transfer(&self, context: &Context) -> Result<AlkaneTransfer> {
+    pub fn create_mint_transfer(&mut self, context: &Context) -> Result<AlkaneTransfer> {
         if context.incoming_alkanes.0.len() != 1
             || &context.incoming_alkanes.0[0].id
                 != &(AlkaneId {
@@ -72,17 +74,18 @@ impl GenesisProtorune {
         }
         let value = context.incoming_alkanes.0[0].value;
         let mut total_supply_pointer = self.total_supply_pointer();
-        total_supply_pointer.set_value::<u128>(total_supply_pointer.get_value::<u128>() + value);
+		let total_supply = total_supply_pointer.get_value::<u128>(self.env());
+        total_supply_pointer.set_value::<u128>(self.env(), total_supply + value);
         Ok(AlkaneTransfer {
             id: context.myself.clone(),
             value,
         })
     }
 
-    fn initialize(&self) -> Result<CallResponse> {
+    fn initialize(&mut self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let response = CallResponse::forward(&context.incoming_alkanes);
 
         // No initialization logic
 
@@ -90,7 +93,7 @@ impl GenesisProtorune {
     }
 
     // Method that matches the MessageDispatch enum
-    fn mint(&self) -> Result<CallResponse> {
+    fn mint(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -102,7 +105,7 @@ impl GenesisProtorune {
         Ok(response)
     }
 
-    fn get_name(&self) -> Result<CallResponse> {
+    fn get_name(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -111,7 +114,7 @@ impl GenesisProtorune {
         Ok(response)
     }
 
-    fn get_symbol(&self) -> Result<CallResponse> {
+    fn get_symbol(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -120,7 +123,7 @@ impl GenesisProtorune {
         Ok(response)
     }
 
-    fn get_total_supply(&self) -> Result<CallResponse> {
+    fn get_total_supply(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -130,7 +133,11 @@ impl GenesisProtorune {
     }
 }
 
-impl AlkaneResponder for GenesisProtorune {}
+impl AlkaneResponder for GenesisProtorune {
+	fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.env
+    }
+}
 
 // Use the new macro format
 declare_alkane! {

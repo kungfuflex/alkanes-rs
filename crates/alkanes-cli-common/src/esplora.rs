@@ -18,18 +18,19 @@ use serde_json::json;
 
 use crate::{
     address_parser::AddressParser,
-    traits::{AddressResolver, Utxo, UtxoProvider},
+    traits::{AddressResolverProvider, UtxoProvider},
+    types::UtxoInfo,
     Result,
 };
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;
 
 #[derive(Clone)]
-pub struct EsploraProvider<R: AddressResolver> {
+pub struct EsploraProvider<R: AddressResolverProvider> {
     address_parser: AddressParser<R>,
 }
 
-impl<R: AddressResolver> EsploraProvider<R> {
+impl<R: AddressResolverProvider> EsploraProvider<R> {
     pub fn new(address_resolver: R) -> Self {
         Self {
             address_parser: AddressParser::new(address_resolver),
@@ -45,8 +46,8 @@ impl<R: AddressResolver> EsploraProvider<R> {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl<R: AddressResolver + Send + Sync> UtxoProvider for EsploraProvider<R> {
-    async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>> {
+impl<R: AddressResolverProvider + Send + Sync> UtxoProvider for EsploraProvider<R> {
+    async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<UtxoInfo>> {
         let mut addresses = Vec::new();
         for s in spec {
             addresses.extend(self.address_parser.parse(s).await?);

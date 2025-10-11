@@ -48,6 +48,7 @@ pub struct PbkdfParams {
 }
 
 use crate::{AlkanesError, Result};
+use crate::types::AddressInfo;
 use bip39::{Mnemonic, MnemonicType, Seed};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
@@ -160,7 +161,7 @@ impl Keystore {
         chain: u32,
         start_index: u32,
         count: u32,
-    ) -> Result<Vec<crate::traits::AddressInfo>> {
+    ) -> Result<Vec<crate::types::AddressInfo>> {
         let secp = Secp256k1::new();
         let xpub = Xpub::from_str(&self.account_xpub)?;
         let mut addresses = Vec::new();

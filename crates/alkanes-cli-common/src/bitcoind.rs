@@ -7,7 +7,8 @@
 
 use crate::{
     address_parser::AddressParser,
-    traits::{AddressResolver, Utxo, UtxoProvider},
+    traits::{AddressResolverProvider, UtxoProvider},
+    types::UtxoInfo,
     Result,
 };
 use async_trait::async_trait;
@@ -41,8 +42,8 @@ impl<R: AddressResolver> BitcoindProvider<R> {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl<R: AddressResolver + Send + Sync> UtxoProvider for BitcoindProvider<R> {
-    async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>> {
+impl<R: AddressResolverProvider + Send + Sync> UtxoProvider for BitcoindProvider<R> {
+    async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<UtxoInfo>> {
         let mut addresses = Vec::new();
         for s in spec {
             addresses.extend(self.address_parser.parse(s).await?);
@@ -59,7 +60,7 @@ impl<R: AddressResolver + Send + Sync> UtxoProvider for BitcoindProvider<R> {
 
         let utxos = bitcoind_utxos
             .into_iter()
-            .map(|u| Utxo {
+            .map(|u| UtxoInfo {
                 txid: u.txid,
                 vout: u.vout,
                 amount: u.amount.to_sat(),

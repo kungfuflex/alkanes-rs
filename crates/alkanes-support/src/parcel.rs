@@ -1,8 +1,9 @@
 use crate::id::AlkaneId;
 use anyhow::Result;
+use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_support::utils::consume_sized_int;
 use metashrew_support::{byte_view::ByteView, index_pointer::KeyValuePointer};
-use protorune_support::balance_sheet::CachedBalanceSheet;
+
 use protorune_support::{balance_sheet::BalanceSheet, rune_transfer::RuneTransfer};
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -39,19 +40,18 @@ impl Into<Vec<RuneTransfer>> for AlkaneTransferParcel {
     }
 }
 
-impl<P: KeyValuePointer + Clone> TryInto<BalanceSheet<P>> for AlkaneTransferParcel {
+impl<E: RuntimeEnvironment + Default, P: KeyValuePointer<E> + Clone> TryInto<BalanceSheet<E, P>>
+    for AlkaneTransferParcel
+{
     type Error = anyhow::Error;
-    fn try_into(self) -> Result<BalanceSheet<P>> {
-        <AlkaneTransferParcel as Into<Vec<RuneTransfer>>>::into(self).try_into()
+    fn try_into(self) -> Result<BalanceSheet<E, P>> {
+        let transfers: Vec<RuneTransfer> = self.into();
+        let result: Result<BalanceSheet<E, P>> = transfers.try_into();
+        result
     }
 }
 
-impl TryInto<CachedBalanceSheet> for AlkaneTransferParcel {
-    type Error = anyhow::Error;
-    fn try_into(self) -> Result<CachedBalanceSheet> {
-        <AlkaneTransferParcel as Into<Vec<RuneTransfer>>>::into(self).try_into()
-    }
-}
+
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AlkaneTransferParcel(pub Vec<AlkaneTransfer>);

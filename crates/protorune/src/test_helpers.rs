@@ -1,6 +1,4 @@
-use crate::balance_sheet::load_sheet;
-use crate::protostone::Protostones;
-use crate::tables;
+use crate::protostone::ProtostoneEncoder;
 use bitcoin::address::NetworkChecked;
 use bitcoin::blockdata::block::{Block, Header};
 use bitcoin::blockdata::script::ScriptBuf;
@@ -11,16 +9,18 @@ use bitcoin::{Address, Amount, BlockHash, Network, OutPoint, Script, Sequence, W
 use byteorder::{ByteOrder, LittleEndian};
 use core::str::FromStr;
 use hex::decode;
-use metashrew_core::{get_cache, println, stdio::stdout};
-use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::utils::format_key;
+use metashrew_runtime::Runtime;
+use metashrew_storage::memory::MemoryStorage;
+use metashrew_test_helpers::{clear_cache, TestRuntime};
+
 use ordinals::{Edict, Etching, Rune, RuneId, Runestone};
-use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::network::{set_network, to_address_str, NetworkParams};
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
 use protorune_support::utils::consensus_encode;
 use std::fmt::Write;
-use std::sync::Arc;
+
+use crate::tables;
 
 #[cfg(feature = "mainnet")]
 pub fn get_btc_network() -> Network {
@@ -51,7 +51,7 @@ pub fn init_network() {
 }
 
 pub fn clear() {
-    metashrew_core::clear();
+    clear_cache();
     init_network();
 }
 
@@ -76,16 +76,6 @@ pub fn ADDRESS2() -> String {
     get_address_from_bytes(ADDRESS2_BYTES)
 }
 
-pub fn print_cache() {
-    let cache = get_cache();
-
-    for (key, value) in cache.iter() {
-        let formatted_key = format_key(key);
-        let formatted_value = format_key(value);
-
-        println!("{}: {}", formatted_key, formatted_value);
-    }
-}
 pub fn display_vec_as_hex(data: Vec<u8>) -> String {
     let mut hex_string = String::new();
     for byte in data {
@@ -94,11 +84,11 @@ pub fn display_vec_as_hex(data: Vec<u8>) -> String {
     hex_string
 }
 
-pub fn display_list_as_hex(data: Vec<Arc<Vec<u8>>>) -> String {
+pub fn display_list_as_hex(data: Vec<Vec<u8>>) -> String {
     let mut hex_string = String::new();
 
-    for arc_data in data {
-        for byte in arc_data.to_vec().iter() {
+    for vec_data in data {
+        for byte in vec_data.iter() {
             write!(&mut hex_string, "{:02x}", byte).expect("Unable to write");
         }
     }
@@ -273,34 +263,32 @@ pub fn get_address(address: &str) -> Address<NetworkChecked> {
 }
 
 pub fn get_rune_balance_by_outpoint(
+    runtime: &TestRuntime,
     outpoint: OutPoint,
     protorune_ids: Vec<ProtoruneRuneId>,
-) -> Vec<u128> {
-    let mint_sheet = load_sheet(
-        &tables::RUNES
-            .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint).unwrap()),
+) -> Vec<Option<u128>> {
+    let mint_sheet: BalanceSheet<TestRuntime, MemoryStorage> = BalanceSheet::new_ptr_backed(
+        tables::runes::OutpointToRunes::get(runtime, &consensus_encode(&outpoint).unwrap()),
     );
     let stored_amount = protorune_ids
         .into_iter()
-        .map(|id| mint_sheet.get_cached(&id))
+        .map(|id| mint_sheet.get(&id))
         .collect();
     return stored_amount;
 }
 
 pub fn get_protorune_balance_by_outpoint(
-    protocol_id: u128,
+    runtime: &TestRuntime,
+    _protocol_id: u128,
     outpoint: OutPoint,
     protorune_ids: Vec<ProtoruneRuneId>,
-) -> Vec<u128> {
-    let mint_sheet = load_sheet(
-        &tables::RuneTable::for_protocol(protocol_id.into())
-            .OUTPOINT_TO_RUNES
-            .select(&consensus_encode(&outpoint).unwrap()),
+) -> Vec<Option<u128>> {
+    let mint_sheet: BalanceSheet<TestRuntime, MemoryStorage> = BalanceSheet::new_ptr_backed(
+        tables::runes::OutpointToRunes::get(runtime, &consensus_encode(&outpoint).unwrap()),
     );
     let stored_amount = protorune_ids
         .into_iter()
-        .map(|id| mint_sheet.get_cached(&id))
+        .map(|id| mint_sheet.get(&id))
         .collect();
     return stored_amount;
 }
@@ -575,17 +563,17 @@ pub fn create_transaction_with_middle_op_return(
         pointer: Some(0), // Point to output 0 (before OP_RETURN)
         edicts: Vec::new(),
         mint: None,
-        protocol: match vec![Protostone {
-            burn: Some(protocol_id),
-            edicts: vec![],
-            pointer: Some(0), // Point to output 0 (before OP_RETURN)
-            refund: None,
-            from: None,
-            protocol_tag: protocol_id,
-            message: vec![],
-        }]
-        .encipher()
-        {
+        protocol: match <Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(&vec![
+            Protostone {
+                burn: Some(protocol_id),
+                edicts: vec![],
+                pointer: Some(0), // Point to output 0 (before OP_RETURN)
+                refund: None,
+                from: None,
+                protocol_tag: protocol_id,
+                message: vec![],
+            },
+        ]) {
             Ok(v) => Some(v),
             Err(_) => None,
         },
@@ -727,7 +715,8 @@ pub fn create_protostone_encoded_tx(
             output: 2,
         }],
         mint: None,
-        protocol: match protostones.encipher() {
+        protocol: match <Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(&protostones)
+        {
             Ok(v) => Some(v),
             Err(_) => None,
         },
@@ -793,21 +782,21 @@ pub fn create_multi_protoburn_transaction(
         pointer: Some(1),
         edicts: Vec::new(),
         mint: None,
-        protocol: match burn_protocol_ids
-            .into_iter()
-            .enumerate()
-            .map(|(i, id)| Protostone {
-                burn: Some(*id),
-                edicts: vec![],
-                pointer: Some(i as u32),
-                refund: None,
-                from: None,
-                protocol_tag: 13,
-                message: vec![],
-            })
-            .collect::<Vec<Protostone>>()
-            .encipher()
-        {
+        protocol: match <Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(
+            &burn_protocol_ids
+                .into_iter()
+                .enumerate()
+                .map(|(i, id)| Protostone {
+                    burn: Some(*id),
+                    edicts: vec![],
+                    pointer: Some(i as u32),
+                    refund: None,
+                    from: None,
+                    protocol_tag: 13,
+                    message: vec![],
+                })
+                .collect::<Vec<Protostone>>(),
+        ) {
             Ok(v) => Some(v),
             Err(_) => None,
         },
@@ -907,17 +896,17 @@ pub fn create_protostone_transaction(
         pointer: Some(output_rune_pointer),
         edicts: Vec::new(),
         mint: None,
-        protocol: match vec![Protostone {
-            burn: burn_protocol_id,
-            edicts: protostone_edicts,
-            pointer: Some(output_protostone_pointer),
-            refund: None,
-            from: None,
-            protocol_tag: protocol_tag,
-            message: vec![],
-        }]
-        .encipher()
-        {
+        protocol: match <Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(&vec![
+            Protostone {
+                burn: burn_protocol_id,
+                edicts: protostone_edicts,
+                pointer: Some(output_protostone_pointer),
+                refund: None,
+                from: None,
+                protocol_tag: protocol_tag,
+                message: vec![],
+            },
+        ]) {
             Ok(v) => Some(v),
             Err(_) => None,
         },
@@ -999,7 +988,8 @@ pub fn create_multiple_protomessage_from_edict_tx(
         pointer: Some(2), // all leftover runes points to the OP_RETURN, so therefore targets the protoburn. in this case, there are no runes
         edicts: Vec::new(),
         mint: None,
-        protocol: match protostones.encipher() {
+        protocol: match <Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(&protostones)
+        {
             Ok(v) => Some(v),
             Err(_) => None,
         },
@@ -1071,18 +1061,18 @@ pub fn create_protomessage_from_edict_tx(
         pointer: Some(2), // all leftover runes points to the OP_RETURN, so therefore targets the protoburn. in this case, there are no runes
         edicts: Vec::new(),
         mint: None,
-        protocol: match vec![Protostone {
-            // protomessage which should transfer protorunes to the pointer
-            message: vec![1u8],
-            pointer: Some(0),
-            refund: Some(1),
-            edicts: protostone_edicts,
-            from: None,
-            burn: None,
-            protocol_tag: protocol_id as u128,
-        }]
-        .encipher()
-        {
+        protocol: match <Vec<Protostone> as ProtostoneEncoder<TestRuntime>>::encipher(&vec![
+            Protostone {
+                // protomessage which should transfer protorunes to the pointer
+                message: vec![1u8],
+                pointer: Some(0),
+                refund: Some(1),
+                edicts: protostone_edicts,
+                from: None,
+                burn: None,
+                protocol_tag: protocol_id as u128,
+            },
+        ]) {
             Ok(v) => Some(v),
             Err(_) => None,
         },

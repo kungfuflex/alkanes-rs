@@ -1,8 +1,3 @@
-#[allow(unused_imports)]
-use crate::{
-    println,
-    stdio::{stdout, Write},
-};
 use crate::{runtime::AlkaneResponder, storage::StoragePointer};
 use alkanes_support::{
     cellpack::Cellpack,
@@ -12,24 +7,27 @@ use alkanes_support::{
     utils::string_to_u128_list,
 };
 use anyhow::{anyhow, Result};
+
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::sync::Arc;
+use crate::environment::AlkaneEnvironment;
 
 pub trait AuthenticatedResponder: AlkaneResponder {
+
     fn auth_token_pointer(&self) -> StoragePointer {
-        StoragePointer::from_keyword("/auth")
+        <StoragePointer as KeyValuePointer<AlkaneEnvironment>>::from_keyword("/auth")
     }
-    fn set_auth_token(&self, auth_token: AlkaneId) -> Result<()> {
+    fn set_auth_token(&mut self, auth_token: AlkaneId) -> Result<()> {
         let mut ptr = self.auth_token_pointer();
-        if ptr.get().len() == 0 {
-            ptr.set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(auth_token)));
+        if ptr.get(self.env()).len() == 0 {
+            ptr.set(self.env(), Arc::new(<AlkaneId as Into<Vec<u8>>>::into(auth_token)));
             Ok(())
         } else {
             Err(anyhow!("auth token already set"))
         }
     }
     fn deploy_auth_token_name_symbol(
-        &self,
+        &mut self,
         name: String,
         symbol: String,
         units: u128,
@@ -57,7 +55,7 @@ pub trait AuthenticatedResponder: AlkaneResponder {
             Ok(response.alkanes.0[0])
         }
     }
-    fn deploy_auth_token(&self, units: u128) -> Result<AlkaneTransfer> {
+    fn deploy_auth_token(&mut self, units: u128) -> Result<AlkaneTransfer> {
         let context = self.context()?;
         self.deploy_auth_token_name_symbol(
             format!("AUTH {:?}", context.myself),
@@ -66,7 +64,7 @@ pub trait AuthenticatedResponder: AlkaneResponder {
         )
     }
     // self auth uses the same contract alkane id as the auth token, avoids needing to deploy and have to manage a separate token
-    fn deploy_self_auth_token(&self, units: u128) -> Result<AlkaneTransfer> {
+    fn deploy_self_auth_token(&mut self, units: u128) -> Result<AlkaneTransfer> {
         let context = self.context()?;
         self.set_auth_token(context.myself)?;
         Ok(AlkaneTransfer {
@@ -74,11 +72,11 @@ pub trait AuthenticatedResponder: AlkaneResponder {
             value: units,
         })
     }
-    fn auth_token(&self) -> Result<AlkaneId> {
-        let pointer = self.auth_token_pointer().get();
+    fn auth_token(&mut self) -> Result<AlkaneId> {
+        let pointer = self.auth_token_pointer().get(self.env());
         Ok(pointer.as_ref().clone().try_into()?)
     }
-    fn only_owner(&self) -> Result<()> {
+    fn only_owner(&mut self) -> Result<()> {
         let context = self.context()?;
         let auth_token = self.auth_token()?;
         if !context

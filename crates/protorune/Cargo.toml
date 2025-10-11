@@ -5,7 +5,6 @@ edition.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
-resolver = "2"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -16,10 +15,11 @@ mainnet = []
 cache = []
 
 [dependencies]
+metashrew-core = { path = "../metashrew-core", features = ["test-utils"] }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
-metashrew-core = { workspace = true }
 metashrew-support = { workspace = true }
+alkanes-support = { workspace = true }
 protorune-support = { workspace = true }
 ordinals = { workspace = true }
 ruint = { workspace = true }
@@ -31,10 +31,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 hex = { workspace = true }
 prost = { workspace = true }
-protobuf = { workspace = true }
+bytes = { workspace = true }
 
-[dev-dependencies]
-metashrew-core = { workspace = true, features = ["test-utils"] }
-wasm-bindgen-cli = "0.2.99"
-getrandom = { version = "0.2.15", features = ["js"] }
-protorune = { path = ".", features = ["test-utils"] }
+[build-dependencies]
+prost-build = { workspace = true }

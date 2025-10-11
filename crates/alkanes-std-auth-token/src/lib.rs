@@ -1,19 +1,22 @@
 use alkanes_runtime::runtime::AlkaneResponder;
-use alkanes_runtime::{declare_alkane, message::MessageDispatch, storage::StoragePointer};
+use alkanes_runtime::{declare_alkane, message::MessageDispatch};
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
 use alkanes_std_factory_support::MintableToken;
-use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
+use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
-use metashrew_support::index_pointer::KeyValuePointer;
-use std::sync::Arc;
+use metashrew_support::compat::to_arraybuffer_layout;
+
+
+use alkanes_runtime::runtime::AlkaneEnvironment;
 
 #[derive(Default)]
-pub struct AuthToken(());
+pub struct AuthToken {
+    env: AlkaneEnvironment,
+}
 
 impl MintableToken for AuthToken {}
 
@@ -39,7 +42,7 @@ enum AuthTokenMessage {
 }
 
 impl AuthToken {
-    fn initialize(&self, name: String, symbol: String, amount: u128) -> Result<CallResponse> {
+    fn initialize(&mut self, name: String, symbol: String, amount: u128) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
         self.set_name_and_symbol_str(name, symbol);
@@ -52,7 +55,7 @@ impl AuthToken {
         Ok(response)
     }
 
-    fn authenticate(&self) -> Result<CallResponse> {
+    fn authenticate(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
 
@@ -75,7 +78,7 @@ impl AuthToken {
         Ok(response)
     }
 
-    fn get_name(&self) -> Result<CallResponse> {
+    fn get_name(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
 
@@ -83,7 +86,7 @@ impl AuthToken {
         Ok(response)
     }
 
-    fn get_symbol(&self) -> Result<CallResponse> {
+    fn get_symbol(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
 
@@ -92,7 +95,11 @@ impl AuthToken {
     }
 }
 
-impl AlkaneResponder for AuthToken {}
+impl AlkaneResponder for AuthToken {
+    fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.env
+    }
+}
 
 // Use the new macro format
 declare_alkane! {

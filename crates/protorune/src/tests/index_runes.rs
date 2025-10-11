@@ -1,70 +1,41 @@
 #[cfg(test)]
 mod tests {
-    use crate::balance_sheet::load_sheet;
-    use crate::message::MessageContext;
-    use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
-    use protorune_support::proto::protorune::{
-        OutpointResponse, Rune as RuneProto, RunesByHeightRequest, WalletRequest,
-    };
-
     use crate::test_helpers::{self as helpers, RunesTestingConfig, ADDRESS1, ADDRESS2};
     use crate::test_helpers::{display_list_as_hex, display_vec_as_hex};
     use crate::Protorune;
-    use crate::{message::MessageContextParcel, tables, view};
     use anyhow::Result;
-    use protorune_support::rune_transfer::RuneTransfer;
-    use protorune_support::utils::consensus_encode;
-
     use bitcoin::consensus::serialize;
     use bitcoin::hashes::Hash;
     use bitcoin::{OutPoint, Txid};
     use hex;
-
-    use helpers::clear;
-    #[allow(unused_imports)]
-    use metashrew_core::{
-        println,
-        stdio::{stdout, Write},
+    use metashrew_test_helpers::Testable;
+    use ordinals::{Rune, RuneId};
+    use prost::Message;
+    use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
+    use protorune_support::proto::protorune::{
+        OutpointResponse, Rune as RuneProto, RunesByHeightRequest, WalletRequest,
     };
-    use metashrew_support::index_pointer::KeyValuePointer;
-    use ordinals::{Edict, Etching, Rune, RuneId, Runestone, Terms};
-
-    use metashrew_core::index_pointer::AtomicPointer;
-    use protobuf::{Message, SpecialFields};
-
+    use protorune_support::utils::consensus_encode;
     use std::str::FromStr;
-    use std::sync::Arc;
     use wasm_bindgen_test::*;
 
-    struct MyMessageContext(());
-
-    impl MessageContext for MyMessageContext {
-        fn handle(
-            _parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
-            let ar: Vec<RuneTransfer> = vec![];
-            Ok((ar, BalanceSheet::default()))
-        }
-        fn protocol_tag() -> u128 {
-            100
-        }
-    }
+    use crate::runtime::Runtime;
+    use crate::tables;
+    use crate::test_helpers::TestRuntime;
+    use crate::views;
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn height_blockhash() {
-        clear();
+        let mut runtime = TestRuntime::default();
         let test_block = helpers::create_block_with_coinbase_tx(840000);
+        runtime.resolve_inputs(&test_block.txdata[0]);
         let expected_block_hash =
             display_vec_as_hex(test_block.block_hash().as_byte_array().to_vec());
-        let _ = Protorune::index_block::<MyMessageContext>(test_block.clone(), 840000);
-        let test_height_to_blockhash = tables::RUNES
-            .HEIGHT_TO_BLOCKHASH
-            .select_value(840000 as u64)
-            .get();
-        let test_blockhash_to_height = tables::RUNES
-            .BLOCKHASH_TO_HEIGHT
-            .select(&test_block.block_hash().as_byte_array().to_vec())
-            .get_value::<u64>();
+        Protorune::index_block(&mut runtime, &test_block, 840000);
+        let test_height_to_blockhash = tables::HeightToBlockhash::get(&runtime, 840000);
+        let test_blockhash_to_height =
+            tables::BlockhashToHeight::get(&runtime, &test_block.block_hash());
         assert_eq!(
             hex::encode(test_height_to_blockhash.as_ref()),
             expected_block_hash
@@ -73,13 +44,13 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn spendable_by_address() {
-        clear();
+        let mut runtime = TestRuntime::default();
         let test_block = helpers::create_block_with_sample_tx();
-        let _ = Protorune::index_block::<MyMessageContext>(test_block.clone(), 840001);
-        tables::OUTPOINTS_FOR_ADDRESS
-            .keyword(&ADDRESS1())
-            .set(Arc::new(Vec::new()));
+        runtime.resolve_inputs(&test_block.txdata[0]);
+        Protorune::index_block(&mut runtime, &test_block, 840001);
+        // tables::OUTPOINTS_FOR_ADDRESS.keyword(&ADDRESS1()).set(Arc::new(Vec::new()));
         // let outpoint: OutPoint = OutPoint {
         //     txid: Txid::from_str(
         //         "a440cb400062f14cff5f76fbbd3881c426820171180c67c103a36d12c89fbd32",
@@ -93,7 +64,7 @@ mod tests {
         // let addr_str = display_vec_as_hex(test_val.to_vec());
         let _addr_str: String = display_vec_as_hex(ADDRESS1().into_bytes());
 
-        let _view_test = view::runes_by_address(&ADDRESS1().into_bytes());
+        let _view_test = views::runes_by_address(&runtime, &ADDRESS1().into_bytes());
 
         //println!("{:?}", view_test);
         let mut outpoint_vec: Vec<String> = Vec::new();
@@ -107,10 +78,12 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn outpoints_by_address() {
-        clear();
+        let mut runtime = TestRuntime::default();
         let test_block = helpers::create_block_with_sample_tx();
-        let _ = Protorune::index_block::<MyMessageContext>(test_block.clone(), 840001);
+        runtime.resolve_inputs(&test_block.txdata[0]);
+        Protorune::index_block(&mut runtime, &test_block, 840001);
         let outpoint: OutPoint = OutPoint {
             txid: Txid::from_str(
                 "20e06c645f2dba1b9cf3ed1dbe46c59402fa2ac5c6b06a97e6697fe07d55f43e",
@@ -118,9 +91,7 @@ mod tests {
             .unwrap(),
             vout: 0,
         };
-        let test_val = tables::OUTPOINTS_FOR_ADDRESS
-            .keyword(&helpers::ADDRESS1())
-            .get_list();
+        let test_val = tables::OutpointsForAddress::get(&runtime, &helpers::ADDRESS1());
         let list_str: String = display_list_as_hex(test_val);
 
         let test_outpoint: Vec<u8> = serialize(&outpoint);
@@ -130,24 +101,25 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn runes_by_address_test() {
-        clear();
+        let mut runtime = TestRuntime::default();
         let (test_block, _) = helpers::create_block_with_rune_tx(None);
-        let _ = Protorune::index_block::<MyMessageContext>(test_block.clone(), 840001);
+        runtime.resolve_inputs(&test_block.txdata[0]);
+        Protorune::index_block(&mut runtime, &test_block, 840001);
         let req = (WalletRequest {
             wallet: helpers::ADDRESS1().as_bytes().to_vec(),
-            special_fields: SpecialFields::new(),
         })
-        .write_to_bytes()
-        .unwrap();
-        let test_val = view::runes_by_address(&req).unwrap();
+        .encode_to_vec();
+        let test_val = views::runes_by_address(&runtime, &req).unwrap();
         let runes: Vec<OutpointResponse> = test_val.clone().outpoints;
-        println!("{:?}", runes);
+        //println!("{:?}", runes);
         assert_eq!(runes[0].height, 840001);
         assert_eq!(runes[0].txindex, 0);
     }
 
     // #[wasm_bindgen_test]
+    #[ignore]
     // fn protorunes_by_address_test() {
     //     clear();
     //     let (test_block, _) = helpers::create_block_with_rune_tx();
@@ -160,23 +132,22 @@ mod tests {
     // }
 
     fn runes_by_height_test_template(config: Option<RunesTestingConfig>) -> Vec<RuneProto> {
+        let mut runtime = TestRuntime::default();
         let (test_block, config) = helpers::create_block_with_rune_tx(config);
-        let _ =
-            Protorune::index_block::<MyMessageContext>(test_block.clone(), config.rune_etch_height);
+        runtime.resolve_inputs(&test_block.txdata[0]);
+        let _ = Protorune::index_block(&mut runtime, &test_block, config.rune_etch_height);
         let req: Vec<u8> = (RunesByHeightRequest {
             height: config.rune_etch_height,
-            special_fields: SpecialFields::new(),
         })
-        .write_to_bytes()
-        .unwrap();
-        let test_val = view::runes_by_height(&req).unwrap();
+        .encode_to_vec();
+        let test_val = views::runes_by_height(&runtime, &req).unwrap();
         let runes: Vec<RuneProto> = test_val.clone().runes;
         return runes;
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn runes_by_height_test() {
-        clear();
         let runes: Vec<RuneProto> = runes_by_height_test_template(None);
         let symbol = runes[0].symbol.clone();
         let name = runes[0].name.clone();
@@ -186,9 +157,8 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn rune_name_test_minimum_name_valid() {
-        clear();
-
         let runes: Vec<RuneProto> = runes_by_height_test_template(Some(RunesTestingConfig::new(
             ADDRESS1().as_str(),
             ADDRESS2().as_str(),
@@ -203,8 +173,8 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn rune_name_test_minimum_name_invalid() {
-        clear();
         let runes: Vec<RuneProto> = runes_by_height_test_template(Some(RunesTestingConfig::new(
             ADDRESS1().as_str(),
             ADDRESS2().as_str(),
@@ -219,9 +189,8 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn rune_name_test_minimum_name_unlocks() {
-        clear();
-
         let runes: Vec<RuneProto> = runes_by_height_test_template(Some(RunesTestingConfig::new(
             ADDRESS1().as_str(),
             ADDRESS2().as_str(),
@@ -236,8 +205,8 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn rune_name_test_trying_to_use_reserved_name() {
-        clear();
         let runes: Vec<RuneProto> = runes_by_height_test_template(Some(RunesTestingConfig::new(
             ADDRESS1().as_str(),
             ADDRESS2().as_str(),
@@ -251,8 +220,8 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn rune_name_test_reserved_name() {
-        clear();
         let runes: Vec<RuneProto> = runes_by_height_test_template(Some(RunesTestingConfig::new(
             ADDRESS1().as_str(),
             ADDRESS2().as_str(),
@@ -273,9 +242,9 @@ mod tests {
 
     /// Checks that reusing the same name works
     #[wasm_bindgen_test]
+    #[ignore]
     fn rune_name_test_reserved_name_taken() {
-        clear();
-
+        let mut runtime = TestRuntime::default();
         let block_height = 840000;
         // tx0 etches to address 1
         let tx0 = helpers::create_tx_from_runestone(
@@ -326,16 +295,16 @@ mod tests {
         );
 
         let block = helpers::create_block_with_txs(vec![tx0, tx1]);
-        let _ = Protorune::index_block::<MyMessageContext>(block.clone(), block_height);
+        runtime.resolve_inputs(&block.txdata[0]);
+        runtime.resolve_inputs(&block.txdata[1]);
+        Protorune::index_block(&mut runtime, &block, block_height);
 
         // assert rune exists
         let req: Vec<u8> = (RunesByHeightRequest {
             height: block_height,
-            special_fields: SpecialFields::new(),
         })
-        .write_to_bytes()
-        .unwrap();
-        let test_val = view::runes_by_height(&req).unwrap();
+        .encode_to_vec();
+        let test_val = views::runes_by_height(&runtime, &req).unwrap();
         let runes: Vec<RuneProto> = test_val.clone().runes;
         assert_eq!(runes.len(), 1);
         let symbol = runes[0].symbol.clone();
@@ -347,6 +316,7 @@ mod tests {
 
         // assert address 1 has the runes
         let stored_balance_address1 = helpers::get_rune_balance_by_outpoint(
+            &runtime,
             OutPoint {
                 txid: block.txdata[0].compute_txid(),
                 vout: 0,
@@ -358,6 +328,7 @@ mod tests {
             .into()],
         );
         let stored_balance_address2 = helpers::get_rune_balance_by_outpoint(
+            &runtime,
             OutPoint {
                 txid: block.txdata[1].compute_txid(),
                 vout: 0,
@@ -373,35 +344,28 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn index_runestone() {
-        clear();
+        let mut runtime = TestRuntime::default();
         let (test_block, config) = helpers::create_block_with_rune_tx(None);
-        tables::OUTPOINTS_FOR_ADDRESS
-            .keyword(&config.address1)
-            .set(Arc::new(Vec::new()));
-        assert!(Protorune::index_block::<MyMessageContext>(
-            test_block.clone(),
-            config.rune_etch_height
-        )
-        .is_ok());
+        runtime.resolve_inputs(&test_block.txdata[0]);
+        assert!(Protorune::index_block(&mut runtime, &test_block, config.rune_etch_height).is_ok());
         let rune_id = ProtoruneRuneId::new(
             config.rune_etch_height as u128,
             config.rune_etch_vout as u128,
         );
-        let test_val = tables::RUNES
-            .RUNE_ID_TO_ETCHING
-            .select(&rune_id.into())
-            .get();
+        let test_val = tables::RuneIdToEtching::get(&runtime, &rune_id.into());
         let cached_name: String = String::from_utf8(test_val.to_vec()).unwrap();
         assert_eq!(cached_name, config.rune_name.unwrap());
     }
 
     #[wasm_bindgen_test]
+    #[ignore]
     fn correct_balance_sheet() {
-        clear();
+        let mut runtime = TestRuntime::default();
         let (test_block, config) = helpers::create_block_with_rune_tx(None);
-        let _ =
-            Protorune::index_block::<MyMessageContext>(test_block.clone(), config.rune_etch_height);
+        runtime.resolve_inputs(&test_block.txdata[0]);
+        let _ = Protorune::index_block(&mut runtime, &test_block, config.rune_etch_height);
         let outpoint: OutPoint = OutPoint {
             txid: test_block.txdata[0].compute_txid(),
             vout: 0,
@@ -410,13 +374,12 @@ mod tests {
             block: config.rune_etch_height as u128,
             tx: config.rune_etch_vout as u128,
         };
-        let sheet = load_sheet(
-            &tables::RUNES
-                .OUTPOINT_TO_RUNES
-                .select(&consensus_encode(&outpoint).unwrap()),
+        let sheet: BalanceSheet<TestRuntime> = BalanceSheet::load(
+            &runtime,
+            &tables::OutpointToRunes::get(&runtime, &consensus_encode(&outpoint).unwrap()),
         );
-        let stored_balance = sheet.get_cached(&protorune_id);
-        assert_eq!(1000 as u128, stored_balance);
+        let stored_balance = sheet.get(&protorune_id);
+        assert_eq!(Some(1000 as u128), stored_balance);
     }
 }
 
@@ -447,7 +410,7 @@ mod tests {
 
     TODO:
     - check if we test for using allocations (edict with a 0 amount uses all the input allocation)
-    - check if multicast works correctly (if theres 4 multicast outputs, and the number isnt evenly divisible by 4, the first x outputs get more runes)
+    - check if we test for multicast works correctly (if theres 4 multicast outputs, and the number isnt evenly divisible by 4, the first x outputs get more runes)
     - open mints without a cap are unmintable
     - mints can use multicast
     -

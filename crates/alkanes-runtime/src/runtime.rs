@@ -1,3 +1,4 @@
+
 #[allow(unused_imports)]
 use crate::imports::{
     __balance, __call, __delegatecall, __fuel, __height, __load_block, __load_context,
@@ -39,29 +40,18 @@ fn _abort() {
     }
 }
 
-static mut _CACHE: Option<StorageMap> = None;
 
-pub fn initialize_cache() {
-    unsafe {
-        if _CACHE.is_none() {
-            _CACHE = Some(StorageMap::default());
-        }
-    }
-}
 
 #[allow(static_mut_refs)]
-pub fn get_cache() -> StorageMap {
-    unsafe {
-        initialize_cache();
-        _CACHE.as_ref().unwrap().clone()
-    }
-}
-
-#[allow(static_mut_refs)]
-pub fn handle_success(response: CallResponse) -> ExtendedCallResponse {
+pub fn handle_success(response: CallResponse, env: &mut AlkaneEnvironment) -> ExtendedCallResponse {
     let mut extended: ExtendedCallResponse = response.into();
-    initialize_cache();
-    extended.storage = get_cache();
+    let storage = StorageMap(
+        env.cache
+            .iter()
+            .map(|(k, v)| ((**k).clone(), (**v).clone()))
+            .collect(),
+    );
+    extended.storage = storage;
     extended
 }
 
@@ -88,6 +78,7 @@ pub trait Extcall {
     fn __call(cellpack: i32, outgoing_alkanes: i32, checkpoint: i32, fuel: u64) -> i32;
     #[allow(static_mut_refs)]
     fn call(
+        env: &mut AlkaneEnvironment,
         cellpack: &Cellpack,
         outgoing_alkanes: &AlkaneTransferParcel,
         fuel: u64,
@@ -95,7 +86,13 @@ pub trait Extcall {
         let mut cellpack_buffer = to_arraybuffer_layout::<&[u8]>(&cellpack.serialize());
         let mut outgoing_alkanes_buffer: Vec<u8> =
             to_arraybuffer_layout::<&[u8]>(&outgoing_alkanes.serialize());
-        let mut storage_map_buffer = to_arraybuffer_layout::<&[u8]>(&get_cache().serialize());
+        let storage = StorageMap(
+            env.cache
+                .iter()
+                .map(|(k, v)| ((**k).clone(), (**v).clone()))
+                .collect(),
+        );
+        let mut storage_map_buffer = to_arraybuffer_layout::<&[u8]>(&storage.serialize());
         let _call_result = Self::__call(
             to_passback_ptr(&mut cellpack_buffer),
             to_passback_ptr(&mut outgoing_alkanes_buffer),
@@ -162,20 +159,23 @@ impl Extcall for Staticcall {
     }
 }
 
+pub use crate::environment::AlkaneEnvironment;
+
 pub trait AlkaneResponder: 'static {
-    fn observe_initialization(&self) -> Result<()> {
-        let mut pointer = StoragePointer::from_keyword("/initialized");
-        if pointer.get().len() == 0 {
-            pointer.set_value::<u8>(0x01);
+    fn env(&mut self) -> &mut AlkaneEnvironment;
+    fn observe_initialization(&mut self) -> Result<()> {
+        let mut pointer: StoragePointer = KeyValuePointer::<AlkaneEnvironment>::from_keyword("/initialized");
+        if pointer.get(self.env()).len() == 0 {
+            pointer.set_value::<u8>(self.env(), 0x01);
             Ok(())
         } else {
             Err(anyhow!("already initialized"))
         }
     }
-    fn observe_proxy_initialization(&self) -> Result<()> {
-        let mut pointer = StoragePointer::from_keyword("/proxy_initialized");
-        if pointer.get().len() == 0 {
-            pointer.set_value::<u8>(0x01);
+    fn observe_proxy_initialization(&mut self) -> Result<()> {
+        let mut pointer: StoragePointer = KeyValuePointer::<AlkaneEnvironment>::from_keyword("/proxy_initialized");
+        if pointer.get(self.env()).len() == 0 {
+            pointer.set_value::<u8>(self.env(), 0x01);
             Ok(())
         } else {
             Err(anyhow!("proxy already initialized"))
@@ -196,17 +196,7 @@ pub trait AlkaneResponder: 'static {
             (&buffer[4..]).to_vec()
         }
     }
-    #[allow(static_mut_refs)]
-    fn initialize(&self) -> &Self {
-        unsafe {
-            if _CACHE.is_none() {
-                initialize_cache();
-                #[cfg(feature = "panic-hook")]
-                panic::set_hook(Box::new(panic_hook));
-            }
-            self
-        }
-    }
+
     fn transaction(&self) -> Vec<u8> {
         unsafe {
             let mut buffer: Vec<u8> =
@@ -241,34 +231,7 @@ pub trait AlkaneResponder: 'static {
         }
     }
     */
-    #[allow(static_mut_refs)]
-    fn load(&self, k: Vec<u8>) -> Vec<u8> {
-        unsafe {
-            initialize_cache();
-            if _CACHE.as_ref().unwrap().0.contains_key(&k) {
-                _CACHE
-                    .as_ref()
-                    .unwrap()
-                    .get(&k)
-                    .map(|v| v.clone())
-                    .unwrap_or_else(|| Vec::<u8>::new())
-            } else {
-                let mut key_bytes = to_arraybuffer_layout(&k);
-                let key = to_passback_ptr(&mut key_bytes);
-                let buf_size = __request_storage(key) as usize;
-                let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; buf_size]);
-                __load_storage(key, to_passback_ptr(&mut buffer));
-                (&buffer[4..]).to_vec()
-            }
-        }
-    }
-    #[allow(static_mut_refs)]
-    fn store(&self, k: Vec<u8>, v: Vec<u8>) {
-        unsafe {
-            initialize_cache();
-            _CACHE.as_mut().unwrap().set(&k, &v);
-        }
-    }
+
     fn balance(&self, who: &AlkaneId, what: &AlkaneId) -> u128 {
         unsafe {
             let mut who_bytes: Vec<u8> = to_arraybuffer_layout::<Vec<u8>>(who.clone().into());
@@ -302,15 +265,15 @@ pub trait AlkaneResponder: 'static {
         }
     }
     fn extcall<T: Extcall>(
-        &self,
+        &mut self,
         cellpack: &Cellpack,
         outgoing_alkanes: &AlkaneTransferParcel,
         fuel: u64,
     ) -> Result<CallResponse> {
-        T::call(cellpack, outgoing_alkanes, fuel)
+        T::call(self.env(), cellpack, outgoing_alkanes, fuel)
     }
     fn call(
-        &self,
+        &mut self,
         cellpack: &Cellpack,
         outgoing_alkanes: &AlkaneTransferParcel,
         fuel: u64,
@@ -318,7 +281,7 @@ pub trait AlkaneResponder: 'static {
         self.extcall::<Call>(cellpack, outgoing_alkanes, fuel)
     }
     fn delegatecall(
-        &self,
+        &mut self,
         cellpack: &Cellpack,
         outgoing_alkanes: &AlkaneTransferParcel,
         fuel: u64,
@@ -326,7 +289,7 @@ pub trait AlkaneResponder: 'static {
         self.extcall::<Delegatecall>(cellpack, outgoing_alkanes, fuel)
     }
     fn staticcall(
-        &self,
+        &mut self,
         cellpack: &Cellpack,
         outgoing_alkanes: &AlkaneTransferParcel,
         fuel: u64,
@@ -334,7 +297,7 @@ pub trait AlkaneResponder: 'static {
         self.extcall::<Staticcall>(cellpack, outgoing_alkanes, fuel)
     }
 
-    fn block_header(&self) -> Result<Header> {
+    fn block_header(&mut self) -> Result<Header> {
         let result = self.staticcall(
             &Cellpack {
                 target: AlkaneId {
@@ -349,7 +312,7 @@ pub trait AlkaneResponder: 'static {
         consensus_decode::<Header>(&mut std::io::Cursor::new(result.data))
     }
 
-    fn coinbase_tx(&self) -> Result<Transaction> {
+    fn coinbase_tx(&mut self) -> Result<Transaction> {
         let result = self.staticcall(
             &Cellpack {
                 target: AlkaneId {
@@ -364,7 +327,7 @@ pub trait AlkaneResponder: 'static {
         consensus_decode::<Transaction>(&mut std::io::Cursor::new(result.data))
     }
 
-    fn number_diesel_mints(&self) -> Result<u128> {
+    fn number_diesel_mints(&mut self) -> Result<u128> {
         let result = self.staticcall(
             &Cellpack {
                 target: AlkaneId {
@@ -379,7 +342,7 @@ pub trait AlkaneResponder: 'static {
         Ok(u128::from_le_bytes(result.data[0..16].try_into()?))
     }
 
-    fn total_miner_fee(&self) -> Result<u128> {
+    fn total_miner_fee(&mut self) -> Result<u128> {
         let result = self.staticcall(
             &Cellpack {
                 target: AlkaneId {
@@ -398,7 +361,7 @@ pub trait AlkaneResponder: 'static {
     ///
     /// This default implementation reverts with an error.
     /// Contracts can override this method to provide custom fallback behavior.
-    fn fallback(&self) -> Result<CallResponse> {
+    fn fallback(&mut self) -> Result<CallResponse> {
         Err(anyhow!("Unrecognized opcode"))
     }
 }

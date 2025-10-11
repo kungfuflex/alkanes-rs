@@ -1,3 +1,3 @@
-pub mod metashrew {
-    include!(concat!(env!("OUT_DIR"), "/metashrew.rs"));
-}
+// @generated
+
+pub mod metashrew;

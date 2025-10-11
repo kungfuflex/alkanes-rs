@@ -5,24 +5,19 @@ edition.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
-resolver = "2"
-
-[lib]
-crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-protobuf = { workspace = true }
-
-bitcoin = { workspace = true }
 anyhow = { workspace = true }
-flate2 = { workspace = true }
+protorune-support = { workspace = true }
 metashrew-support = { workspace = true }
-
-protorune-support = { workspace = true, path = "../protorune-support" }
+bitcoin = { workspace = true }
 serde = { workspace = true }
-
+flate2 = { workspace = true }
+bytes = { workspace = true }
+prost = { workspace = true }
+hex = { workspace = true }
 
 [build-dependencies]
-protobuf-codegen = "3.4.0"
-protoc-rust = { version = "2.28.0" }
-protoc-bin-vendored = "3.0.0"
+anyhow = { workspace = true }
+prost-build = { workspace = true }
+flate2 = { workspace = true }

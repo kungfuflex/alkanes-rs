@@ -5,23 +5,20 @@ edition.workspace = true
 description.workspace = true
 license.workspace = true
 repository.workspace = true
-resolver = "2"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-protobuf = { workspace = true }
 bitcoin = { workspace = true }
 serde = { workspace = true }
 ordinals = { workspace = true }
 anyhow = { workspace = true }
 metashrew-support = { workspace = true }
-hex = "0.4.3"
+hex = { workspace = true }
 prost = { workspace = true }
-bech32 = "0.11.0"
+bytes = { workspace = true }
+bech32 = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }
-anyhow = { workspace = true }
-protobuf-codegen = { workspace = true }

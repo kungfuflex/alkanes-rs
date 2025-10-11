@@ -10,7 +10,7 @@ pub trait MessageDispatch<T>: Sized {
     fn from_opcode(opcode: u128, inputs: Vec<u128>) -> Result<Self>;
 
     /// Dispatch the message to the appropriate method on the responder
-    fn dispatch(&self, responder: &T) -> Result<CallResponse>;
+    fn dispatch(&mut self, responder: &mut T) -> Result<CallResponse>;
 
     /// Export ABI metadata for the message enum
     fn export_abi() -> Vec<u8>;

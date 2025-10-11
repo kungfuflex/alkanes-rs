@@ -1,12 +1,22 @@
 use anyhow::Result;
 use metashrew_support::utils::consume_sized_int;
 use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::proto as protorune_proto;
 use std::hash::{Hash, Hasher};
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AlkaneId {
     pub block: u128,
     pub tx: u128,
+}
+
+impl From<AlkaneId> for [u8; 32] {
+    fn from(alkane_id: AlkaneId) -> Self {
+        let mut bytes = [0u8; 32];
+        bytes[0..16].copy_from_slice(&alkane_id.block.to_le_bytes());
+        bytes[16..32].copy_from_slice(&alkane_id.tx.to_le_bytes());
+        bytes
+    }
 }
 
 impl Into<Vec<u128>> for AlkaneId {
@@ -22,6 +32,16 @@ impl TryFrom<Vec<u8>> for AlkaneId {
         let block = consume_sized_int::<u128>(&mut cursor)?;
         let tx = consume_sized_int::<u128>(&mut cursor)?;
         Ok(Self::new(block, tx))
+    }
+}
+
+
+impl From<protorune_proto::protorune::ProtoruneRuneId> for AlkaneId {
+    fn from(id: protorune_proto::protorune::ProtoruneRuneId) -> AlkaneId {
+        AlkaneId {
+            block: id.height.map_or(0, |v| v.into()),
+            tx: id.txindex.map_or(0, |v| v.into()),
+        }
     }
 }
 

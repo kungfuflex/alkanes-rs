@@ -1,6 +1,6 @@
 use alkanes_runtime::declare_alkane;
 use alkanes_runtime::message::MessageDispatch;
-use alkanes_runtime::runtime::AlkaneResponder;
+use alkanes_runtime::runtime::{AlkaneEnvironment, AlkaneResponder};
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -12,11 +12,13 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Transaction;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use metashrew_support::compat::to_arraybuffer_layout;
 use protorune_support::utils::consensus_decode;
 
 #[derive(Default)]
-pub struct Proxy(());
+pub struct Proxy {
+    env: AlkaneEnvironment,
+}
 
 #[derive(MessageDispatch)]
 enum ProxyMessage {
@@ -62,7 +64,7 @@ impl Proxy {
         }
     }
 
-    fn initialize(&self) -> Result<CallResponse> {
+    fn initialize(&mut self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
         let mut response: CallResponse = CallResponse::default();
@@ -74,7 +76,7 @@ impl Proxy {
         return Ok(response);
     }
 
-    fn call_witness(&self, witness_index: u128) -> Result<CallResponse> {
+    fn call_witness(&mut self, witness_index: u128) -> Result<CallResponse> {
         let mut context = self.context()?;
         let auth = self.pull_incoming(&mut context);
         self.only_owner(auth.clone())?;
@@ -92,7 +94,7 @@ impl Proxy {
         Ok(response)
     }
 
-    fn delegatecall_witness(&self, witness_index: u128) -> Result<CallResponse> {
+    fn delegatecall_witness(&mut self, witness_index: u128) -> Result<CallResponse> {
         let mut context = self.context()?;
         let auth = self.pull_incoming(&mut context);
         self.only_owner(auth.clone())?;
@@ -110,7 +112,7 @@ impl Proxy {
         Ok(response)
     }
 
-    fn call_inputs(&self) -> Result<CallResponse> {
+    fn call_inputs(&mut self) -> Result<CallResponse> {
         let mut context = self.context()?;
         let auth = self.pull_incoming(&mut context);
         self.only_owner(auth.clone())?;
@@ -122,7 +124,7 @@ impl Proxy {
         Ok(response)
     }
 
-    fn delegatecall_inputs(&self) -> Result<CallResponse> {
+    fn delegatecall_inputs(&mut self) -> Result<CallResponse> {
         let mut context = self.context()?;
         let auth = self.pull_incoming(&mut context);
         self.only_owner(auth.clone())?;
@@ -140,7 +142,11 @@ fn unwrap_auth(v: Option<AlkaneTransfer>) -> Result<AlkaneTransfer> {
         .map_err(|_| anyhow!("authentication token not present"))
 }
 
-impl AlkaneResponder for Proxy {}
+impl AlkaneResponder for Proxy {
+    fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.env
+    }
+}
 
 // Use the new macro format
 declare_alkane! {

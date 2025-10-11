@@ -6,12 +6,16 @@ use alkanes_runtime::{
     stdio::{stdout, Write},
 };
 use alkanes_std_factory_support::MintableToken;
-use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
+use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use metashrew_support::compat::to_arraybuffer_layout;
+
+use alkanes_runtime::runtime::AlkaneEnvironment;
 
 #[derive(Default)]
-pub struct OwnedToken(());
+pub struct OwnedToken {
+    env: AlkaneEnvironment,
+}
 
 impl MintableToken for OwnedToken {}
 
@@ -57,7 +61,7 @@ enum OwnedTokenMessage {
 }
 
 impl OwnedToken {
-    fn initialize(&self, auth_token_units: u128, token_units: u128) -> Result<CallResponse> {
+    fn initialize(&mut self, auth_token_units: u128, token_units: u128) -> Result<CallResponse> {
         self.initialize_with_name_symbol(
             auth_token_units,
             token_units,
@@ -67,7 +71,7 @@ impl OwnedToken {
     }
 
     fn initialize_with_name_symbol(
-        &self,
+        &mut self,
         auth_token_units: u128,
         token_units: u128,
         name: String,
@@ -92,7 +96,7 @@ impl OwnedToken {
         Ok(response)
     }
 
-    fn mint(&self, token_units: u128) -> Result<CallResponse> {
+    fn mint(&mut self, token_units: u128) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
 
@@ -105,7 +109,7 @@ impl OwnedToken {
         Ok(response)
     }
 
-    fn burn(&self) -> Result<CallResponse> {
+    fn burn(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         if context.incoming_alkanes.0.len() != 1 {
             return Err(anyhow!("Input must be 1 alkane"));
@@ -119,7 +123,7 @@ impl OwnedToken {
         Ok(CallResponse::default())
     }
 
-    fn get_name(&self) -> Result<CallResponse> {
+    fn get_name(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
 
@@ -128,7 +132,7 @@ impl OwnedToken {
         Ok(response)
     }
 
-    fn get_symbol(&self) -> Result<CallResponse> {
+    fn get_symbol(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
 
@@ -137,7 +141,7 @@ impl OwnedToken {
         Ok(response)
     }
 
-    fn get_total_supply(&self) -> Result<CallResponse> {
+    fn get_total_supply(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
 
@@ -146,7 +150,7 @@ impl OwnedToken {
         Ok(response)
     }
 
-    fn get_data(&self) -> Result<CallResponse> {
+    fn get_data(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes.clone());
 
@@ -156,7 +160,11 @@ impl OwnedToken {
     }
 }
 
-impl AlkaneResponder for OwnedToken {}
+impl AlkaneResponder for OwnedToken {
+    fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.env
+    }
+}
 
 // Use the new macro format
 declare_alkane! {

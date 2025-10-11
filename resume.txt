@@ -1,0 +1,17 @@
+The build is failing with over 90 errors. The main problem is in the `alkanes-cli-common` crate, where a refactoring of traits and types was not completed correctly. There are also errors in `alkanes-std-genesis-alkane-upgraded-eoa` due to an API change.
+
+**Plan:**
+
+1.  **Fix `alkanes-cli-common` crate:**
+    *   Consolidate all shared data structs (`WalletConfig`, `WalletInfo`, `WalletBalance`, `AddressInfo`, `SendParams`, `UtxoInfo`, `TransactionInfo`, `FeeEstimate`, `FeeRates`, `EnrichedUtxo`, `AllBalances`, `TransactionInput`, `TransactionOutput`) into `crates/alkanes-cli-common/src/types.rs`.
+    *   Ensure all traits are defined in `crates/alkanes-cli-common/src/traits.rs` and are public.
+    *   Remove struct definitions from `crates/alkanes-cli-common/src/traits.rs` and `crates/alkanes-cli-common/src/wallet.rs`.
+    *   Update all `use` statements within the `alkanes-cli-common` crate to correctly import types from `crate::types` and traits from `crate::traits`.
+    *   Rename the `AddressResolver` trait to `AddressResolverProvider` to resolve the name collision with the `AddressResolver` struct and update its usages.
+
+2.  **Fix `alkanes-std-genesis-alkane-upgraded-eoa` crate:**
+    *   Implement the missing `env` method for the `AlkaneResponder` trait implementations.
+    *   Update all calls to methods like `get()`, `get_value()`, and `set_value()` to pass the required `env` parameter.
+
+3.  **Verify:**
+    *   Run `cargo build` to ensure all compilation errors are resolved.

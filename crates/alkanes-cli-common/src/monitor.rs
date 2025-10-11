@@ -7,7 +7,8 @@
 //! - Runestone and alkanes event detection
 
 use crate::{Result, ToString, format};
-use crate::traits::*;
+use crate::traits::{AlkanesProvider, BitcoinRpcProvider, MetashrewRpcProvider, MonitorProvider};
+use crate::types::BlockEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -383,13 +384,7 @@ impl Default for MonitorConfig {
 
 
 /// Block event
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockEvent {
-    pub event_type: String,
-    pub block_height: u64,
-    pub txid: String,
-    pub data: JsonValue,
-}
+
 
 /// Monitor statistics
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

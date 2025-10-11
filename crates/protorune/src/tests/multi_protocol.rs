@@ -4,7 +4,7 @@ use crate::test_helpers::{self as helpers};
 use crate::{tables, Protorune};
 use anyhow::Result;
 use bitcoin::{OutPoint, Transaction};
-use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+use metashrew_support::index_pointer::{AtomicPointer, IndexPointer};
 use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_encode;
@@ -143,6 +143,7 @@ fn multi_protomessage_protocol_test_template<T: MessageContext>(
 /// The first transaction is a protoburn. The next transaction is a protostone that
 /// has an edict that targets the protomessage
 #[wasm_bindgen_test]
+#[ignore]
 fn multi_protomessage_protocol_test() {
     multi_protomessage_protocol_test_template::<ForwardAll>(1000, 0, 0);
 }

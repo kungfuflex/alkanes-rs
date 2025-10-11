@@ -1,21 +1,6 @@
-// This file is part of the deezel project.
-// Copyright (c) 2023, Casey Rodarmor, all rights reserved.
-// Copyright (c) 2024, The Deezel Developers, all rights reserved.
-// Deezel is licensed under the MIT license.
-// See LICENSE file in the project root for full license information.
-
-//! Enhanced alkanes execute functionality with commit/reveal transaction support
-//!
-//! This module implements the complex alkanes execute command that supports:
-//! - Commit/reveal transaction pattern for envelope data
-//! - Complex protostone parsing with cellpacks and edicts
-//! - UTXO selection based on alkanes and Bitcoin requirements
-//! - Runestone construction with multiple protostones
-//! - Address identifier resolution for outputs and change
-//! - Transaction tracing with metashrew synchronization
-
-use crate::{Result, AlkanesError, AlkanesProvider};
-use crate::traits::{WalletProvider, UtxoInfo};
+use crate::{Result, AlkanesError};
+use crate::traits::{AlkanesProvider, WalletProvider};
+use crate::types::UtxoInfo;
 use bitcoin::{Transaction, ScriptBuf, OutPoint, TxOut, Address, XOnlyPublicKey, psbt::Psbt};
 use anyhow::Context;
 use core::str::FromStr;
@@ -245,9 +230,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         required_reveal_amount += estimated_reveal_fee;
         required_reveal_amount += params.to_addresses.len() as u64 * 546;
 
-        let funding_utxos = self
-            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses)
-            .await?;
+        let funding_utxos =
+            self
+                .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses)
+                .await?;
 
         let commit_output = TxOut {
             value: bitcoin::Amount::from_sat(required_reveal_amount),
@@ -547,7 +533,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut total_input_value = 0;
         let mut input_txouts = Vec::new();
         for outpoint in &utxos {
-            let utxo = self.provider.get_utxo(outpoint).await?
+            let utxo = self.provider.get_utxo(outpoint).await? 
                 .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {outpoint}")))?;
             total_input_value += utxo.value.to_sat();
             input_txouts.push(utxo);
@@ -650,7 +636,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut total_input_value = 0;
         let mut input_txouts = Vec::new();
         for outpoint in &funding_utxos {
-            let utxo = self.provider.get_utxo(outpoint).await?
+            let utxo = self.provider.get_utxo(outpoint).await? 
                 .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {outpoint}")))?;
             total_input_value += utxo.value.to_sat();
             input_txouts.push(utxo);

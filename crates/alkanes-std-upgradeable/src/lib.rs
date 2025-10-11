@@ -1,6 +1,8 @@
 use alkanes_runtime::auth::AuthenticatedResponder;
 use alkanes_runtime::declare_alkane;
+use alkanes_runtime::environment::AlkaneEnvironment;
 use alkanes_runtime::message::MessageDispatch;
+use metashrew_support::compat::to_arraybuffer_layout;
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -8,13 +10,12 @@ use alkanes_runtime::{
 };
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer};
 use alkanes_support::{cellpack::Cellpack, id::AlkaneId, response::CallResponse};
-use anyhow::{anyhow, Result};
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use anyhow::Result;
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::sync::Arc;
 
 #[derive(Default)]
-pub struct Upgradeable(());
+pub struct Upgradeable(AlkaneEnvironment);
 
 #[derive(MessageDispatch)]
 enum UpgradeableMessage {
@@ -31,28 +32,28 @@ enum UpgradeableMessage {
 }
 
 impl Upgradeable {
-    fn forward(&self) -> Result<CallResponse> {
+    fn forward(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let response = CallResponse::forward(&context.incoming_alkanes);
         Ok(response)
     }
-    pub fn alkane_pointer() -> StoragePointer {
+    pub fn alkane_pointer(&mut self) -> StoragePointer {
         StoragePointer::from_keyword("/implementation")
     }
 
-    pub fn alkane() -> Result<AlkaneId> {
-        Ok(Self::alkane_pointer().get().as_ref().clone().try_into()?)
+    pub fn alkane(&mut self) -> Result<AlkaneId> {
+        Ok(self.alkane_pointer().get(&mut self.0).as_ref().clone().try_into()?)
     }
 
-    pub fn set_alkane(v: AlkaneId) {
-        Self::alkane_pointer().set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
+    pub fn set_alkane(&mut self, v: AlkaneId) {
+        self.alkane_pointer().set(&mut self.0, Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
     }
 
-    fn initialize(&self, implementation: AlkaneId, auth_token_units: u128) -> Result<CallResponse> {
+    fn initialize(&mut self, implementation: AlkaneId, auth_token_units: u128) -> Result<CallResponse> {
         self.observe_proxy_initialization()?;
         let context = self.context()?;
 
-        Self::set_alkane(implementation);
+        self.set_alkane(implementation);
         let mut response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
 
         response
@@ -62,12 +63,12 @@ impl Upgradeable {
         Ok(response)
     }
 
-    fn upgrade(&self, implementation: AlkaneId) -> Result<CallResponse> {
+    fn upgrade(&mut self, implementation: AlkaneId) -> Result<CallResponse> {
         let context = self.context()?;
 
         self.only_owner()?;
 
-        Self::set_alkane(implementation);
+        self.set_alkane(implementation);
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 }
@@ -75,11 +76,15 @@ impl Upgradeable {
 impl AuthenticatedResponder for Upgradeable {}
 
 impl AlkaneResponder for Upgradeable {
-    fn fallback(&self) -> Result<CallResponse> {
+    fn env(&mut self) -> &mut AlkaneEnvironment {
+        &mut self.0
+    }
+
+    fn fallback(&mut self) -> Result<CallResponse> {
         let context = self.context()?;
         let inputs: Vec<u128> = context.inputs.clone();
         let cellpack = Cellpack {
-            target: Self::alkane()?,
+            target: self.alkane()?,
             inputs: inputs,
         };
         self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())

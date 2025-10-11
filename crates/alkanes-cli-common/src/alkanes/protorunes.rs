@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct ProtoruneOutpointResponse {
     pub output: TxOut,
     pub outpoint: OutPoint,
-    pub balance_sheet: crate::alkanes::balance_sheet::BalanceSheet<StubPointer>,
+    pub balance_sheet: crate::alkanes::balance_sheet::BalanceSheet<StubPointer, ()>,
 }
 
 impl Default for ProtoruneOutpointResponse {

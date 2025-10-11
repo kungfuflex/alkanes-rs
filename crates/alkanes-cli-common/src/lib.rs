@@ -29,6 +29,7 @@ pub mod crypto_worker;
 pub mod provider;
 pub mod native_provider;
 pub mod error;
+pub mod types;
 
 extern crate alloc;
 

@@ -4,12 +4,18 @@ pub mod context;
 pub mod envelope;
 pub mod gz;
 pub mod id;
+pub mod logging;
 pub mod parcel;
-pub mod proto;
+pub mod proto {
+    pub mod alkanes {
+        include!(concat!(env!("OUT_DIR"), "/alkanes.rs"));
+    }
+}
 pub mod response;
 pub mod storage;
 pub mod trace;
 pub mod utils;
+pub mod virtual_fuel;
 pub mod witness;
 
 use crate::id::AlkaneId;
@@ -17,6 +23,16 @@ use crate::parcel::{AlkaneTransfer, AlkaneTransferParcel};
 use crate::response::ExtendedCallResponse;
 use crate::storage::StorageMap;
 use protorune_support::balance_sheet::ProtoruneRuneId;
+use protorune_support::rune_transfer::RuneTransfer;
+
+impl From<proto::alkanes::AlkaneTransfer> for RuneTransfer {
+    fn from(val: proto::alkanes::AlkaneTransfer) -> Self {
+        RuneTransfer {
+            id: val.id.map_or(ProtoruneRuneId::default(), |v| v.into()),
+            value: val.value.map_or(0, |v| v.into()),
+        }
+    }
+}
 
 impl From<proto::alkanes::Uint128> for u128 {
     fn from(v: proto::alkanes::Uint128) -> u128 {
@@ -31,69 +47,65 @@ impl From<proto::alkanes::Uint128> for u128 {
 impl From<u128> for proto::alkanes::Uint128 {
     fn from(v: u128) -> proto::alkanes::Uint128 {
         let bytes = v.to_le_bytes().to_vec();
-        proto::alkanes::Uint128 {
-            lo: u64::from_le_bytes((&bytes[0..8]).try_into().unwrap()),
-            hi: u64::from_le_bytes((&bytes[8..16]).try_into().unwrap()),
-            special_fields: ::protobuf::SpecialFields::new(),
-        }
+        let mut container: proto::alkanes::Uint128 = proto::alkanes::Uint128::default();
+        container.lo = u64::from_le_bytes((&bytes[0..8]).try_into().unwrap());
+        container.hi = u64::from_le_bytes((&bytes[8..16]).try_into().unwrap());
+        container
     }
 }
 
-impl Into<proto::alkanes::AlkaneId> for AlkaneId {
-    fn into(self) -> proto::alkanes::AlkaneId {
+impl From<AlkaneId> for proto::alkanes::AlkaneId {
+    fn from(val: AlkaneId) -> Self {
         proto::alkanes::AlkaneId {
-            block: protobuf::MessageField::some(self.block.into()),
-            tx: protobuf::MessageField::some(self.tx.into()),
-            special_fields: ::protobuf::SpecialFields::new(),
+            block: Some(val.block.into()),
+            tx: Some(val.tx.into()),
         }
     }
 }
 
-impl Into<AlkaneId> for proto::alkanes::AlkaneId {
-    fn into(self) -> AlkaneId {
+impl From<proto::alkanes::AlkaneId> for AlkaneId {
+    fn from(val: proto::alkanes::AlkaneId) -> Self {
         AlkaneId {
-            block: self.block.unwrap_or_default().into(),
-            tx: self.tx.unwrap_or_default().into(),
+            block: val.block.map_or(0, |v| v.into()),
+            tx: val.tx.map_or(0, |v| v.into()),
         }
     }
 }
 
-impl Into<proto::alkanes::AlkaneTransfer> for AlkaneTransfer {
-    fn into(self) -> proto::alkanes::AlkaneTransfer {
+impl From<AlkaneTransfer> for proto::alkanes::AlkaneTransfer {
+    fn from(val: AlkaneTransfer) -> Self {
         proto::alkanes::AlkaneTransfer {
-            id: protobuf::MessageField::some(self.id.into()),
-            value: protobuf::MessageField::some(self.value.into()),
-            special_fields: ::protobuf::SpecialFields::new(),
+            id: Some(val.id.into()),
+            value: Some(val.value.into()),
         }
     }
 }
 
-impl Into<AlkaneTransfer> for proto::alkanes::AlkaneTransfer {
-    fn into(self) -> AlkaneTransfer {
+impl From<proto::alkanes::AlkaneTransfer> for AlkaneTransfer {
+    fn from(val: proto::alkanes::AlkaneTransfer) -> Self {
         AlkaneTransfer {
-            id: self.id.into_option().map_or(AlkaneId::default(), |v| v.into()),
-            value: self.value.into_option().map_or(0, |v| v.into()),
+            id: val.id.map_or(AlkaneId::default(), |v| v.into()),
+            value: val.value.map_or(0, |v| v.into()),
         }
     }
 }
 
-impl Into<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
-    fn into(self) -> proto::alkanes::ExtendedCallResponse {
+impl From<ExtendedCallResponse> for proto::alkanes::ExtendedCallResponse {
+    fn from(val: ExtendedCallResponse) -> Self {
         proto::alkanes::ExtendedCallResponse {
-            storage: self
+            storage: val
                 .storage
                 .0
                 .into_iter()
-                .map(|(key, value)| proto::alkanes::KeyValuePair { key, value, special_fields: ::protobuf::SpecialFields::new() })
+                .map(|(key, value)| proto::alkanes::KeyValuePair { key, value })
                 .collect(),
-            data: self.data,
-            alkanes: self
+            data: val.data,
+            alkanes: val
                 .alkanes
                 .0
                 .into_iter()
                 .map(|v| v.into())
                 .collect(),
-            special_fields: ::protobuf::SpecialFields::new(),
         }
     }
 }
@@ -106,27 +118,26 @@ impl From<proto::alkanes::ExtendedCallResponse> for ExtendedCallResponse {
             alkanes: AlkaneTransferParcel(
                 v.alkanes
                     .into_iter()
-                    .map(|transfer| AlkaneTransfer {
-                        id: transfer.id.into_option().map_or(AlkaneId::default(), |v| v.into()),
-                        value: transfer.value.into_option().map_or(0, |v| v.into()),
-                    })
+                    .map(|transfer| transfer.into())
                     .collect::<Vec<AlkaneTransfer>>(),
             ),
         }
     }
 }
 
-impl Into<ProtoruneRuneId> for proto::alkanes::AlkaneId {
-    fn into(self) -> ProtoruneRuneId {
+impl From<proto::alkanes::AlkaneId> for ProtoruneRuneId {
+    fn from(val: proto::alkanes::AlkaneId) -> Self {
         ProtoruneRuneId {
-            block: self.block.unwrap_or_default().into(),
-            tx: self.tx.unwrap_or_default().into(),
+            block: val.block.map_or(0, |v| v.into()),
+            tx: val.tx.map_or(0, |v| v.into()),
         }
     }
 }
 
-impl Into<proto::alkanes::AlkaneInventoryRequest> for AlkaneId {
-    fn into(self) -> proto::alkanes::AlkaneInventoryRequest {
-        proto::alkanes::AlkaneInventoryRequest { id: protobuf::MessageField::some(self.into()), special_fields: ::protobuf::SpecialFields::new() }
+impl From<AlkaneId> for proto::alkanes::AlkaneInventoryRequest {
+    fn from(val: AlkaneId) -> Self {
+        proto::alkanes::AlkaneInventoryRequest {
+            id: Some(val.into()),
+        }
     }
 }

@@ -3,7 +3,7 @@
 //! This module provides an implementation of the `MetashrewProvider` trait.
 
 use crate::{
-    traits::{JsonRpcProvider, MetashrewProvider},
+    traits::{JsonRpcProvider, MetashrewRpcProvider as MetashrewProvider},
     Result,
 };
 use async_trait::async_trait;
@@ -33,14 +33,7 @@ impl<R: JsonRpcProvider + Send + Sync> MetashrewProvider for MetashrewProviderIm
         Ok(height)
     }
 
-    async fn get_block_hash(&self, height: u64) -> Result<String> {
-        let result = self
-            .rpc_provider
-            .call(&self.url, "getblockhash", json!([height]), 1)
-            .await?;
-        let hash = result.as_str().unwrap_or_default().to_string();
-        Ok(hash)
-    }
+    
 
     async fn get_state_root(&self, height: Value) -> Result<String> {
         let result = self

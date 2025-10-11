@@ -8,7 +8,7 @@
 //! - Enhanced formatting with emoji and colors
 
 use crate::{Result, AlkanesError};
-use crate::traits::*;
+use crate::traits::AlkanesProvider;
 use bitcoin::{Network, Transaction};
 use serde::{Deserialize, Serialize, Serializer, Deserializer};
 

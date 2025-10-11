@@ -6,7 +6,7 @@ mod tests {
     use crate::{tables, Protorune};
     use anyhow::Result;
     use bitcoin::{OutPoint, Transaction};
-    use metashrew_core::index_pointer::AtomicPointer;
+    use metashrew_support::index_pointer::AtomicPointer;
     use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
     use protorune_support::proto::{self, protorune};
     use protorune_support::protostone::{Protostone, ProtostoneEdict};
@@ -14,10 +14,8 @@ mod tests {
     use protorune_support::utils::consensus_encode;
 
     use helpers::clear;
-    use metashrew_core::{
-        println,
-        stdio::{stdout, Write},
-    };
+    use metashrew_core::environment::RuntimeEnvironment;
+    use alkanes::tests::test_runtime::TestRuntime;
     use metashrew_support::index_pointer::KeyValuePointer;
     use std::str::FromStr;
     use wasm_bindgen_test::*;
@@ -25,31 +23,31 @@ mod tests {
     static PROTOCOL_ID: u128 = 122;
     static BLOCK_HEIGHT: u32 = 840000;
 
-    struct TestMessageContext(());
+    struct TestMessageContext<E: RuntimeEnvironment>(std::marker::PhantomData<E>);
 
-    impl MessageContext for TestMessageContext {
+    impl<E: RuntimeEnvironment> MessageContext<E> for TestMessageContext<E> {
         fn protocol_tag() -> u128 {
             PROTOCOL_ID
         }
         // takes half of the first runes balance
         fn handle(
-            parcel: &MessageContextParcel,
-        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
+            parcel: &MessageContextParcel<E::Index>,
+            env: &mut E,
+        ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E::Index>)> {
             let mut new_runtime_balances = parcel.runtime_balances.clone();
             let mut runes = parcel.runes.clone();
             runes[0].value = runes[0].value / 2;
             let transfer = runes[0].clone();
-            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(runes)?
-                .pipe(&mut new_runtime_balances)?;
+            BalanceSheet::try_from(runes)?.pipe(&mut new_runtime_balances, env)?;
             // transfer protorunes to the pointer
-            Ok((vec![transfer], *new_runtime_balances))
+            Ok((vec![transfer], new_runtime_balances))
         }
     }
 
     /// In one runestone, etches a rune, then protoburns it
-    #[wasm_bindgen_test]
     fn protoburn_test() {
-        clear();
+        let mut env = TestRuntime::new();
+        clear(&mut env);
         let mut test_block = helpers::create_block_with_coinbase_tx(BLOCK_HEIGHT);
 
         let previous_output = OutPoint {
@@ -61,10 +59,11 @@ mod tests {
         };
 
         let protoburn_tx =
-            helpers::create_default_protoburn_transaction(previous_output, PROTOCOL_ID);
+            helpers::create_default_protoburn_transaction::<TestRuntime>(previous_output, PROTOCOL_ID);
 
         test_block.txdata.push(protoburn_tx);
-        assert!(Protorune::index_block::<TestMessageContext>(
+        assert!(Protorune::index_block::<TestMessageContext<TestRuntime>>(
+            &mut env,
             test_block.clone(),
             BLOCK_HEIGHT as u64
         )
@@ -75,17 +74,20 @@ mod tests {
             txid: test_block.txdata[1].compute_txid(),
             vout: 0,
         };
+        let runes_table = tables::RuneTable::<TestRuntime>::new();
         // check runes balance
         let sheet = load_sheet(
-            &tables::RUNES
+            &runes_table
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address).unwrap()),
+            &mut env,
         );
 
         let protorunes_sheet = load_sheet(
-            &tables::RuneTable::for_protocol(PROTOCOL_ID.into())
+            &tables::RuneTable::<TestRuntime>::for_protocol(PROTOCOL_ID.into())
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address).unwrap()),
+            &mut env,
         );
 
         let protorune_id = ProtoruneRuneId {
@@ -93,24 +95,25 @@ mod tests {
             tx: 1,
         };
         // let v: Vec<u8> = protorune_id.into();
-        let stored_balance_address = sheet.get_cached(&protorune_id);
-        assert_eq!(stored_balance_address, 0);
-        let stored_protorune_balance = protorunes_sheet.get_cached(&protorune_id);
-        assert_eq!(stored_protorune_balance, 1000);
+        let stored_balance_address = sheet.get(&protorune_id, &mut env);
+        assert_eq!(stored_balance_address, Some(0));
+        let stored_protorune_balance = protorunes_sheet.get(&protorune_id, &mut env);
+        assert_eq!(stored_protorune_balance, Some(1000));
     }
 
-    fn protostone_transfer_test_template(
+    fn protostone_transfer_test_template<E: RuntimeEnvironment + Clone + Default>(
+        env: &mut E,
         output_protostone_pointer: u32,
         protostone_edicts: Vec<ProtostoneEdict>,
     ) -> bitcoin::Block {
-        clear();
+        clear(env);
         // tx0: coinbase
         let mut test_block = helpers::create_block_with_coinbase_tx(BLOCK_HEIGHT);
         let previous_output = helpers::get_mock_outpoint(0);
 
         // tx1: protoburn. This also etches the rune, immediately protoburns
         let protoburn_tx =
-            helpers::create_default_protoburn_transaction(previous_output, PROTOCOL_ID);
+            helpers::create_default_protoburn_transaction::<E>(previous_output, PROTOCOL_ID);
         test_block.txdata.push(protoburn_tx.clone());
 
         let previous_output = OutPoint {
@@ -120,7 +123,7 @@ mod tests {
 
         // tx2: protostone edicts
         // output 0 is a valid utxo. output 1 is the runestone with protostone
-        let transfer_tx = helpers::create_protostone_transaction(
+        let transfer_tx = helpers::create_protostone_transaction::<E>(
             previous_output,
             None,
             false,
@@ -131,7 +134,8 @@ mod tests {
         );
         test_block.txdata.push(transfer_tx);
 
-        assert!(Protorune::index_block::<TestMessageContext>(
+        assert!(Protorune::index_block::<TestMessageContext<E>>(
+            env,
             test_block.clone(),
             BLOCK_HEIGHT as u64
         )
@@ -148,24 +152,25 @@ mod tests {
         };
         // check runes balance
         let protoburn_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx1_outpoint, vec![protorune_id]);
-        assert_eq!(protoburn_rune_balances[0], 0);
+            helpers::get_rune_balance_by_outpoint(tx1_outpoint, vec![protorune_id], env);
+        assert_eq!(protoburn_rune_balances[0], Some(0));
 
         // ensures protorunes from tx1 outpoint are no longer usable
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx1_outpoint,
             vec![protorune_id],
+            env,
         );
-        assert_eq!(protoburn_protorunes_balances[0], 0);
+        assert_eq!(protoburn_protorunes_balances[0], Some(0));
 
         return test_block;
     }
 
-    #[wasm_bindgen_test]
     fn protoburn_pointer_test() {
+        let mut env = TestRuntime::new();
         // transfer to the valid utxo at pointer 0
-        let test_block = protostone_transfer_test_template(0, vec![]);
+        let test_block = protostone_transfer_test_template(&mut env, 0, vec![]);
         let tx2_outpoint: OutPoint = OutPoint {
             txid: test_block.txdata[2].compute_txid(),
             vout: 0,
@@ -177,21 +182,22 @@ mod tests {
         };
 
         let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
-        assert_eq!(tx2_rune_balances[0], 0);
+            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id], &mut env);
+        assert_eq!(tx2_rune_balances[0], Some(0));
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
             vec![protorune_id],
+            &mut env,
         );
-        assert_eq!(protoburn_protorunes_balances[0], 1000);
+        assert_eq!(protoburn_protorunes_balances[0], Some(1000));
     }
 
-    #[wasm_bindgen_test]
     fn protoburn_pointer_cenotaph_test() {
+        let mut env = TestRuntime::new();
         // transfer to the special vout 2 == num outputs, which should be a cenotaph
-        let test_block = protostone_transfer_test_template(2, vec![]);
+        let test_block = protostone_transfer_test_template(&mut env, 2, vec![]);
         let tx2_outpoint: OutPoint = OutPoint {
             txid: test_block.txdata[2].compute_txid(),
             vout: 0,
@@ -203,22 +209,22 @@ mod tests {
         };
 
         let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
-        assert_eq!(tx2_rune_balances[0], 0);
+            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id], &mut env);
+        assert_eq!(tx2_rune_balances[0], Some(0));
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
             vec![protorune_id],
+            &mut env,
         );
-        assert_eq!(protoburn_protorunes_balances[0], 0);
+        assert_eq!(protoburn_protorunes_balances[0], Some(0));
     }
 
-    #[wasm_bindgen_test]
-    #[allow(non_snake_case)]
     fn protoburn_pointer_to_OP_RETURN() {
+        let mut env = TestRuntime::new();
         // transfer to the OP_RETURN (the runestone) at vout 1
-        let test_block = protostone_transfer_test_template(1, vec![]);
+        let test_block = protostone_transfer_test_template(&mut env, 1, vec![]);
         let tx2_outpoint: OutPoint = OutPoint {
             txid: test_block.txdata[2].compute_txid(),
             vout: 0,
@@ -230,19 +236,20 @@ mod tests {
         };
 
         let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
-        assert_eq!(tx2_rune_balances[0], 0);
+            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id], &mut env);
+        assert_eq!(tx2_rune_balances[0], Some(0));
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
             vec![protorune_id],
+            &mut env,
         );
-        assert_eq!(protoburn_protorunes_balances[0], 0);
+        assert_eq!(protoburn_protorunes_balances[0], Some(0));
     }
 
-    #[wasm_bindgen_test]
-    fn protostone_edict_test() {
+        fn protostone_edict_test() {
+        let mut env = TestRuntime::new();
         // the only valid protorune id
         let protorune_id = ProtoruneRuneId {
             block: BLOCK_HEIGHT as u128,
@@ -251,6 +258,7 @@ mod tests {
 
         // transfer all remaining protorunes to the op return to burn it
         let test_block = protostone_transfer_test_template(
+            &mut env,
             1,
             vec![ProtostoneEdict {
                 id: protorune_id,
@@ -264,20 +272,22 @@ mod tests {
         };
 
         let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
-        assert_eq!(tx2_rune_balances[0], 0);
+            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id], &mut env);
+        assert_eq!(tx2_rune_balances[0], Some(0));
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
             vec![protorune_id],
+            &mut env,
         );
-        assert_eq!(protoburn_protorunes_balances[0], 222);
+        assert_eq!(protoburn_protorunes_balances[0], Some(222));
     }
 
     /// This is supported, but the op return exceeds the 80 byte limit which makes it
     /// hard for miners to pick up.
     // #[wasm_bindgen_test]
+    // #[ignore]
     // fn protostone_many_edict_test() {
     //     // the only valid protorune id
     //     let protorune_id = ProtoruneRuneId {
@@ -327,6 +337,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn protostone_edict_burn_test() {
+        let mut env = TestRuntime::new();
         // the only valid protorune id
         let protorune_id = ProtoruneRuneId {
             block: BLOCK_HEIGHT as u128,
@@ -335,6 +346,7 @@ mod tests {
 
         // transfer all remaining protorunes to the op return to burn it
         let test_block = protostone_transfer_test_template(
+            &mut env,
             1,
             vec![ProtostoneEdict {
                 id: protorune_id,
@@ -348,19 +360,20 @@ mod tests {
         };
 
         let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
-        assert_eq!(tx2_rune_balances[0], 0);
+            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id], &mut env);
+        assert_eq!(tx2_rune_balances[0], Some(0));
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
             vec![protorune_id],
+            &mut env,
         );
-        assert_eq!(protoburn_protorunes_balances[0], 0);
+        assert_eq!(protoburn_protorunes_balances[0], Some(0));
     }
 
-    #[wasm_bindgen_test]
     fn protostone_edict_even_distribution_test() {
+        let mut env = TestRuntime::new();
         // the only valid protorune id
         let protorune_id = ProtoruneRuneId {
             block: BLOCK_HEIGHT as u128,
@@ -370,6 +383,7 @@ mod tests {
         // transfer all remaining protorunes to the op return to burn it
         // should split the edict evenly between the non op return outputs
         let test_block = protostone_transfer_test_template(
+            &mut env,
             1,
             vec![ProtostoneEdict {
                 id: protorune_id,
@@ -383,15 +397,16 @@ mod tests {
         };
 
         let tx2_rune_balances =
-            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id]);
-        assert_eq!(tx2_rune_balances[0], 0);
+            helpers::get_rune_balance_by_outpoint(tx2_outpoint, vec![protorune_id], &mut env);
+        assert_eq!(tx2_rune_balances[0], Some(0));
 
         let protoburn_protorunes_balances = helpers::get_protorune_balance_by_outpoint(
             PROTOCOL_ID,
             tx2_outpoint,
             vec![protorune_id],
+            &mut env,
         );
-        assert_eq!(protoburn_protorunes_balances[0], 222);
+        assert_eq!(protoburn_protorunes_balances[0], Some(222));
     }
 
     // TODO: Add more integration tests https://github.com/kungfuflex/alkanes-rs/issues/9

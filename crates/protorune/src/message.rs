@@ -1,21 +1,30 @@
 use crate::tables::RuneTable;
 use anyhow::Result;
 use bitcoin::{Block, OutPoint, Transaction};
-use metashrew_core::index_pointer::AtomicPointer;
+use metashrew_support::index_pointer::AtomicPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_encode;
 use std::u128;
+use metashrew_support::environment::RuntimeEnvironment;
+use std::marker::PhantomData;
 
-pub trait MessageContext {
+pub trait MessageContext<E: RuntimeEnvironment + Clone> {
     fn handle(
-        parcel: &MessageContextParcel,
-    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)>;
+        parcel: &MessageContextParcel<E>,
+        env: &mut E,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)>;
     fn protocol_tag() -> u128;
-    fn asset_protoburned_in_protocol(id: ProtoruneRuneId) -> bool {
-        let table = RuneTable::for_protocol(Self::protocol_tag());
-        if table.RUNE_ID_TO_ETCHING.select(&id.into()).get().len() > 0 {
+    fn asset_protoburned_in_protocol(id: ProtoruneRuneId, env: &mut E) -> bool {
+        let table = RuneTable::<E>::for_protocol(Self::protocol_tag());
+        if table
+            .RUNE_ID_TO_ETCHING
+            .select(&id.into())
+            .get(env)
+            .len()
+            > 0
+        {
             return true;
         }
         false
@@ -23,8 +32,8 @@ pub trait MessageContext {
 }
 
 #[derive(Clone, Debug)]
-pub struct MessageContextParcel {
-    pub atomic: AtomicPointer,
+pub struct MessageContextParcel<E: RuntimeEnvironment + Clone> {
+    pub atomic: AtomicPointer<E>,
     pub runes: Vec<RuneTransfer>,
     pub transaction: Transaction,
     pub block: Block,
@@ -32,10 +41,11 @@ pub struct MessageContextParcel {
     pub pointer: u32,
     pub refund_pointer: u32,
     pub calldata: Vec<u8>,
-    pub sheets: Box<BalanceSheet<AtomicPointer>>,
+    pub sheets: Box<BalanceSheet<E, AtomicPointer<E>>>,
     pub txindex: u32,
     pub vout: u32,
-    pub runtime_balances: Box<BalanceSheet<AtomicPointer>>,
+    pub runtime_balances: Box<BalanceSheet<E, AtomicPointer<E>>>,
+    pub _phantom: PhantomData<E>,
 }
 
 pub trait ToBytes {
@@ -48,8 +58,8 @@ impl ToBytes for OutPoint {
     }
 }
 
-impl Default for MessageContextParcel {
-    fn default() -> MessageContextParcel {
+impl<E: RuntimeEnvironment + Clone> Default for MessageContextParcel<E> {
+    fn default() -> MessageContextParcel<E> {
         let block = bitcoin::constants::genesis_block(bitcoin::Network::Bitcoin);
         MessageContextParcel {
             atomic: AtomicPointer::default(),
@@ -62,8 +72,9 @@ impl Default for MessageContextParcel {
             refund_pointer: 0,
             calldata: Vec::<u8>::default(),
             txindex: 0,
-            runtime_balances: Box::new(BalanceSheet::default()),
-            sheets: Box::new(BalanceSheet::default()),
+            runtime_balances: Box::new(BalanceSheet::new_ptr_backed(AtomicPointer::default())),
+            sheets: Box::new(BalanceSheet::new_ptr_backed(AtomicPointer::default())),
+            _phantom: PhantomData,
         }
     }
 }

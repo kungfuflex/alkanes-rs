@@ -1,230 +1,15 @@
-//! Hierarchical key-value storage abstraction for Bitcoin indexers
-//!
-//! This module provides the [`KeyValuePointer`] trait, which enables building
-//! complex hierarchical data structures on top of simple key-value stores.
-//! It's designed specifically for Bitcoin indexing workloads where data needs
-//! to be organized in nested, queryable structures.
-//!
-//! # Architecture
-//!
-//! The [`KeyValuePointer`] trait abstracts over key-value storage by providing:
-//! - **Hierarchical keys**: Build nested key structures with path-like semantics
-//! - **Type-safe values**: Automatic serialization/deserialization via [`ByteView`]
-//! - **List operations**: Array-like operations with length tracking
-//! - **Linked lists**: Efficient insertion/deletion with pointer chaining
-//!
-//! # Key Concepts
-//!
-//! ## Hierarchical Keys
-//! Keys are built hierarchically using separators and keywords:
-//! ```text
-//! base_key/keyword/subkey/index
-//! ```
-//!
-//! ## Value Storage
-//! Values are stored using the [`ByteView`] trait for type-safe serialization:
-//! - Automatic conversion to/from bytes
-//! - Support for primitive types and custom structures
-//! - Zero-value handling for empty/missing data
-//!
-//! ## List Operations
-//! The trait provides array-like operations:
-//! - Length tracking with `/length` suffix
-//! - Index-based access with `/{index}` suffix
-//! - Append/pop operations with automatic length management
-//!
-//! ## Linked List Operations
-//! For efficient insertion/deletion:
-//! - Head pointer tracking with `/head` suffix
-//! - Next pointer chains with `/next/{index}` suffix
-//! - Deletion without array shifting
-//!
-//! # Usage Patterns
-//!
-//! ## Basic Key-Value Operations
-//! ```rust,ignore
-//! use metashrew_support::index_pointer::KeyValuePointer;
-//!
-//! // Create hierarchical keys
-//! let balances = IndexPointer::from_keyword("balances");
-//! let user_balance = balances.keyword("user123");
-//!
-//! // Store and retrieve typed values
-//! user_balance.set_value(1000u64);
-//! let balance: u64 = user_balance.get_value();
-//! ```
-//!
-//! ## List Operations
-//! ```rust,ignore
-//! // Create a list of transactions
-//! let tx_list = IndexPointer::from_keyword("transactions");
-//!
-//! // Append transactions
-//! tx_list.append_value(tx_hash1);
-//! tx_list.append_value(tx_hash2);
-//!
-//! // Access by index
-//! let first_tx: [u8; 32] = tx_list.select_index(0).get_value();
-//!
-//! // Get all transactions
-//! let all_txs: Vec<[u8; 32]> = tx_list.get_list_values();
-//! ```
-//!
-//! ## Nested Structures
-//! ```rust,ignore
-//! // Create nested address/transaction mapping
-//! let addr_txs = IndexPointer::from_keyword("address_transactions");
-//! let user_txs = addr_txs.keyword("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa");
-//!
-//! // Store transaction list for this address
-//! user_txs.append_value(tx_hash);
-//! ```
-
 use crate::byte_view::ByteView;
-#[allow(unused_imports)]
-use core::prelude;
-use std::sync::Arc;
+use crate::cache::{get, set};
+use crate::environment::RuntimeEnvironment;
+use std::collections::HashMap;
+use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
 
-/// Hierarchical key-value storage abstraction for Bitcoin indexers
-///
-/// [`KeyValuePointer`] provides a powerful abstraction for building complex
-/// data structures on top of simple key-value stores. It enables hierarchical
-/// key organization, type-safe value storage, and efficient list operations.
-///
-/// # Core Operations
-///
-/// ## Key Management
-/// - `wrap`: Create pointer from raw key bytes
-/// - `unwrap`: Extract raw key bytes
-/// - `select`: Create child pointer with extended key
-/// - `keyword`: Extend key with string suffix
-///
-/// ## Value Operations
-/// - `get`/`set`: Raw byte value access
-/// - `get_value`/`set_value`: Type-safe value access via [`ByteView`]
-/// - `nullify`: Set value to zero/empty state
-///
-/// ## List Operations
-/// - `append`/`append_value`: Add items to end of list
-/// - `pop`/`pop_value`: Remove and return last item
-/// - `length`: Get current list length
-/// - `get_list`/`get_list_values`: Retrieve all list items
-///
-/// ## Linked List Operations
-/// - `append_ll`: Add item to linked list
-/// - `delete_value`: Remove item from linked list
-/// - `map_ll`: Iterate over linked list items
-///
-/// # Implementation Requirements
-///
-/// Implementors must provide:
-/// - Key wrapping/unwrapping for raw byte access
-/// - Value get/set operations for storage backend
-/// - Inheritance mechanism for sharing configuration
-///
-/// # Thread Safety
-///
-/// The trait itself doesn't enforce thread safety, but implementations
-/// should consider concurrent access patterns for multi-threaded indexers.
-///
-/// # Example Implementation
-///
-/// ```rust,ignore
-/// struct IndexPointer {
-///     key: Arc<Vec<u8>>,
-///     // ... storage backend reference
-/// }
-///
-/// impl KeyValuePointer for IndexPointer {
-///     fn wrap(word: &Vec<u8>) -> Self {
-///         Self { key: Arc::new(word.clone()) }
-///     }
-///
-///     fn unwrap(&self) -> Arc<Vec<u8>> {
-///         self.key.clone()
-///     }
-///
-///     // ... implement other required methods
-/// }
-/// ```
-pub trait KeyValuePointer {
-    /// Create a new pointer from raw key bytes
-    ///
-    /// This is the primary constructor for creating pointers from byte keys.
-    /// The key represents the full path in the hierarchical key space.
-    ///
-    /// # Parameters
-    ///
-    /// - `word`: Raw key bytes representing the storage key
-    ///
-    /// # Returns
-    ///
-    /// A new pointer instance wrapping the provided key
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let ptr = IndexPointer::wrap(&b"balances/user123".to_vec());
-    /// ```
+pub trait KeyValuePointer<E: RuntimeEnvironment> {
     fn wrap(word: &Vec<u8>) -> Self;
-    
-    /// Extract the raw key bytes from this pointer
-    ///
-    /// Returns the underlying key bytes that identify this pointer's
-    /// location in the key-value store.
-    ///
-    /// # Returns
-    ///
-    /// Arc-wrapped vector containing the raw key bytes
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let key_bytes = ptr.unwrap();
-    /// println!("Key: {}", String::from_utf8_lossy(&key_bytes));
-    /// ```
     fn unwrap(&self) -> Arc<Vec<u8>>;
-    
-    /// Set the value at this pointer's key
-    ///
-    /// Stores raw byte data at the key location represented by this pointer.
-    /// This is the low-level storage operation that other methods build upon.
-    ///
-    /// # Parameters
-    ///
-    /// - `v`: Arc-wrapped byte vector to store
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// ptr.set(Arc::new(b"some_data".to_vec()));
-    /// ```
-    fn set(&mut self, v: Arc<Vec<u8>>);
-    
-    /// Get the value at this pointer's key
-    ///
-    /// Retrieves raw byte data from the key location represented by this pointer.
-    /// Returns empty vector if no value exists at this key.
-    ///
-    /// # Returns
-    ///
-    /// Arc-wrapped byte vector containing the stored data
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let data = ptr.get();
-    /// ```
-    fn get(&self) -> Arc<Vec<u8>>;
-    
-    /// Inherit configuration from another pointer
-    ///
-    /// This method allows pointers to inherit settings or context from
-    /// parent pointers, enabling shared configuration across hierarchies.
-    ///
-    /// # Parameters
-    ///
-    /// - `from`: Pointer to inherit configuration from
+    fn set(&mut self, env: &mut E, v: Arc<Vec<u8>>);
+    fn get(&self, env: &mut E) -> Arc<Vec<u8>>;
     fn inherits(&mut self, from: &Self);
     fn select(&self, word: &Vec<u8>) -> Self
     where
@@ -253,12 +38,12 @@ pub trait KeyValuePointer {
         ptr
     }
 
-    fn set_value<T: ByteView>(&mut self, v: T) {
-        self.set(Arc::new(v.to_bytes()));
+    fn set_value<T: ByteView>(&mut self, env: &mut E, v: T) {
+        self.set(env, Arc::new(v.to_bytes()));
     }
 
-    fn get_value<T: ByteView>(&self) -> T {
-        let cloned = self.get().as_ref().clone();
+    fn get_value<T: ByteView>(&self, env: &mut E) -> T {
+        let cloned = self.get(env).as_ref().clone();
         if cloned.is_empty() {
             T::zero()
         } else {
@@ -290,11 +75,11 @@ pub trait KeyValuePointer {
     {
         self.keyword(&"/next".to_string()).select_value(i)
     }
-    fn length(&self) -> u32
+    fn length(&self, env: &mut E) -> u32
     where
         Self: Sized,
     {
-        self.length_key().get_value::<u32>()
+        self.length_key().get_value::<u32>(env)
     }
     fn select_index(&self, index: u32) -> Self
     where
@@ -303,119 +88,119 @@ pub trait KeyValuePointer {
         self.keyword(&format!("/{}", index))
     }
 
-    fn drop_index(&self, index: u32) -> ()
+    fn drop_index(&mut self, env: &mut E, index: u32) -> ()
     where
         Self: Sized,
     {
         let mut idx = self.keyword(&format!("/{}", index));
-        idx.nullify();
+        idx.nullify(env);
     }
-    fn get_list(&self) -> Vec<Arc<Vec<u8>>>
+    fn get_list(&self, env: &mut E) -> Vec<Arc<Vec<u8>>>
     where
         Self: Sized,
     {
         let mut result: Vec<Arc<Vec<u8>>> = vec![];
-        for i in 0..self.length() {
-            result.push(self.select_index(i as u32).get().clone());
+        for i in 0..self.length(env) {
+            result.push(self.select_index(i as u32).get(env).clone());
         }
         result
     }
-    fn get_list_values<T: ByteView>(&self) -> Vec<T>
+    fn get_list_values<T: ByteView>(&self, env: &mut E) -> Vec<T>
     where
         Self: Sized,
     {
         let mut result: Vec<T> = vec![];
-        for i in 0..self.length() {
-            result.push(self.select_index(i as u32).get_value());
+        for i in 0..self.length(env) {
+            result.push(self.select_index(i as u32).get_value(env));
         }
         result
     }
-    fn nullify(&mut self) {
-        self.set(Arc::from(vec![0]))
+    fn nullify(&mut self, env: &mut E) {
+        self.set(env, Arc::from(vec![0]))
     }
-    fn set_or_nullify(&mut self, v: Arc<Vec<u8>>) {
+    fn set_or_nullify(&mut self, env: &mut E, v: Arc<Vec<u8>>) {
         let val = Arc::try_unwrap(v).unwrap();
         if <usize>::from_bytes(val.clone()) == 0 {
-            self.nullify();
+            self.nullify(env);
         } else {
-            self.set(Arc::from(val));
+            self.set(env, Arc::from(val));
         }
     }
 
-    fn pop(&self) -> Arc<Vec<u8>>
+    fn pop(&mut self, env: &mut E) -> Arc<Vec<u8>>
     where
         Self: Sized,
     {
         let mut length_key = self.length_key();
-        let length = length_key.get_value::<u32>();
+        let length = length_key.get_value::<u32>(env);
 
         if length == 0 {
             return Arc::new(Vec::new()); // Return empty Vec if there are no elements
         }
 
         let new_length = length - 1;
-        length_key.set_value::<u32>(new_length); // Update the length
-        self.select_index(new_length).get() // Return the value at the new length
+        length_key.set_value::<u32>(env, new_length); // Update the length
+        self.select_index(new_length).get(env) // Return the value at the new length
     }
 
-    fn pop_value<T: ByteView>(&self) -> T
+    fn pop_value<T: ByteView>(&mut self, env: &mut E) -> T
     where
         Self: Sized,
     {
         let mut length_key = self.length_key();
-        let length = length_key.get_value::<u32>();
+        let length = length_key.get_value::<u32>(env);
 
         if length == 0 {
             return T::from_bytes(Vec::new()); // Return a default value if there are no elements
         }
 
         let new_length = length - 1;
-        length_key.set_value::<u32>(new_length); // Update the length
-        self.select_index(new_length).get_value::<T>() // Return the value at the new length
+        length_key.set_value::<u32>(env, new_length); // Update the length
+        self.select_index(new_length).get_value::<T>(env) // Return the value at the new length
     }
 
-    fn append(&self, v: Arc<Vec<u8>>)
+    fn append(&mut self, env: &mut E, v: Arc<Vec<u8>>) 
     where
         Self: Sized,
     {
-        let mut new_index = self.extend();
-        new_index.set(v);
+        let mut new_index = self.extend(env);
+        new_index.set(env, v);
     }
-    fn append_ll(&self, v: Arc<Vec<u8>>)
+    fn append_ll(&mut self, env: &mut E, v: Arc<Vec<u8>>) 
     where
         Self: Sized,
     {
-        let mut new_index = self.extend_ll();
-        new_index.set(v);
+        let mut new_index = self.extend_ll(env);
+        new_index.set(env, v);
     }
-    fn append_value<T: ByteView>(&self, v: T)
+    fn append_value<T: ByteView>(&mut self, env: &mut E, v: T)
     where
         Self: Sized,
     {
-        let mut new_index = self.extend();
-        new_index.set_value(v);
+        let mut new_index = self.extend(env);
+        new_index.set_value(env, v);
     }
 
-    fn extend(&self) -> Self
+    fn extend(&mut self, env: &mut E) -> Self
     where
         Self: Sized,
     {
         let mut length_key = self.length_key();
-        let length = length_key.get_value::<u32>();
-        length_key.set_value::<u32>(length + 1);
+        let length = length_key.get_value::<u32>(env);
+        length_key.set_value::<u32>(env, length + 1);
         self.select_index(length)
     }
-    fn extend_ll(&self) -> Self
+    fn extend_ll(&mut self, env: &mut E) -> Self
     where
         Self: Sized,
     {
         let mut length_key = self.length_key();
-        let length = length_key.get_value::<u32>();
+        let length = length_key.get_value::<u32>(env);
         if length > 0 {
             let mut next_key = self.next_key(length - 1);
-            next_key.set_value(length);
+            next_key.set_value(env, length);
         }
-        length_key.set_value::<u32>(length + 1);
+        length_key.set_value::<u32>(env, length + 1);
         self.select_index(length)
     }
     fn prefix(&self, keyword: &str) -> Self
@@ -428,45 +213,212 @@ pub trait KeyValuePointer {
         ptr.inherits(self);
         ptr
     }
-    fn set_next_for(&self, i: u32, v: u32) -> ()
+    fn set_next_for(&mut self, env: &mut E, i: u32, v: u32) -> ()
     where
         Self: Sized,
     {
         let mut next_key = self.next_key(i);
-        next_key.set_value(v);
+        next_key.set_value(env, v);
     }
-    fn delete_value(&self, i: u32) -> ()
+    fn delete_value(&mut self, env: &mut E, i: u32) -> ()
     where
         Self: Sized,
     {
         let mut head_key = self.head_key();
-        if i == head_key.get_value::<u32>() {
-            let next = self.next_key(i).get_value::<u32>();
-            head_key.set_value::<u32>(next);
-        } else {
-            let mut prev = self.next_key(i - 1);
-            let next = self.next_key(i).get_value::<u32>();
-            prev.set_value::<u32>(next);
+        if i == head_key.get_value::<u32>(env) {
+            let next = self.next_key(i).get_value::<u32>(env);
+            head_key.set_value::<u32>(env, next);
         }
-        self.drop_index(i);
+        else {
+            let mut prev = self.next_key(i - 1);
+            let next = self.next_key(i).get_value::<u32>(env);
+            prev.set_value::<u32>(env, next);
+        }
+        self.drop_index(env, i);
     }
-    fn map_ll<T>(&self, mut f: impl FnMut(&mut Self, u32) -> T) -> Vec<T>
+    fn map_ll<T>(&self, env: &mut E, mut f: impl FnMut(&mut Self, u32) -> T) -> Vec<T>
     where
         Self: Sized + Clone,
     {
         let length_key = self.length_key();
-        let length = length_key.get_value::<u32>();
+        let length = length_key.get_value::<u32>(env);
         let mut result = Vec::new();
-        let mut i: u32 = self.head_key().get_value::<u32>();
+        let mut i: u32 = self.head_key().get_value::<u32>(env);
         while i < length {
             let item = self.select_index(i);
             let mut item_mut = item.clone();
             result.push(f(&mut item_mut, i));
-            i = self.next_key(i).get_value::<u32>();
+            i = self.next_key(i).get_value::<u32>(env);
             if i == 0 {
                 break;
             }
         }
         result
+    }
+}
+
+#[derive(Debug)]
+pub struct IndexPointer<E: RuntimeEnvironment> {
+    key: Arc<Vec<u8>>,
+    _phantom: PhantomData<E>,
+}
+
+impl<E: RuntimeEnvironment> Default for IndexPointer<E> {
+    fn default() -> Self {
+        Self {
+            key: Arc::new(Vec::new()),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<E: RuntimeEnvironment> KeyValuePointer<E> for IndexPointer<E> {
+    fn wrap(word: &Vec<u8>) -> Self {
+        Self {
+            key: Arc::new(word.clone()),
+            _phantom: PhantomData,
+        }
+    }
+    fn unwrap(&self) -> Arc<Vec<u8>> {
+        self.key.clone()
+    }
+    fn inherits(&mut self, _v: &Self) {}
+    fn set(&mut self, env: &mut E, v: Arc<Vec<u8>>) {
+        set(env, self.unwrap(), v)
+    }
+    fn get(&self, env: &mut E) -> Arc<Vec<u8>> {
+        get(env, self.unwrap())
+    }
+}
+
+impl<E: RuntimeEnvironment> Clone for IndexPointer<E> {
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct IndexCheckpoint(pub HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>>);
+
+impl IndexCheckpoint {
+    fn pipe_to(&self, target: &mut IndexCheckpoint) {
+        self.0.iter().for_each(|(k, v)| {
+            target.0.insert(k.clone(), v.clone());
+        });
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct IndexCheckpointStack(pub Arc<Mutex<Vec<IndexCheckpoint>>>);
+
+impl Default for IndexCheckpointStack {
+    fn default() -> Self {
+        Self(Arc::new(Mutex::new(vec![IndexCheckpoint::default()]))) 
+    }
+}
+
+impl IndexCheckpointStack {
+    pub fn depth(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AtomicPointer<E: RuntimeEnvironment + Clone> {
+    pointer: IndexPointer<E>,
+    store: IndexCheckpointStack,
+}
+
+impl<E: RuntimeEnvironment + Clone> KeyValuePointer<E> for AtomicPointer<E> {
+    fn wrap(word: &Vec<u8>) -> Self {
+        AtomicPointer {
+            pointer: IndexPointer::wrap(word),
+            store: IndexCheckpointStack::default(),
+        }
+    }
+    fn unwrap(&self) -> Arc<Vec<u8>> {
+        self.pointer.unwrap()
+    }
+    fn inherits(&mut self, from: &Self) {
+        self.store = from.store.clone()
+    }
+    fn set(&mut self, _env: &mut E, v: Arc<Vec<u8>>) {
+        self.store
+            .0
+            .lock()
+            .unwrap()
+            .last_mut()
+            .unwrap()
+            .0
+            .insert(self.unwrap(), v.clone());
+    }
+    fn get(&self, env: &mut E) -> Arc<Vec<u8>> {
+        let unwrapped = self.unwrap();
+        match self
+            .store
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|map| map.0.contains_key(&unwrapped))
+        {
+            Some(map) => map.0.get(&unwrapped).unwrap().clone(),
+            None => self.pointer.get(env),
+        }
+    }
+}
+
+impl<E: RuntimeEnvironment + Clone> Default for AtomicPointer<E> {
+    fn default() -> Self {
+        AtomicPointer {
+            pointer: IndexPointer::wrap(&Vec::<u8>::new()),
+            store: IndexCheckpointStack::default(),
+        }
+    }
+}
+
+impl<E: RuntimeEnvironment + Clone> AtomicPointer<E> {
+    pub fn checkpoint(&mut self) {
+        self.store
+            .0
+            .lock()
+            .unwrap()
+            .push(IndexCheckpoint::default());
+    }
+    pub fn commit(&mut self, env: &mut E) {
+        let checkpoints = &mut self.store.0.lock().unwrap();
+        if checkpoints.len() > 1 {
+            checkpoints
+                .pop()
+                .unwrap()
+                .pipe_to(checkpoints.last_mut().unwrap());
+        } else if checkpoints.len() == 1 {
+            checkpoints.last().unwrap().0.iter().for_each(|(k, v)| {
+                set(env, k.clone(), v.clone());
+            });
+        } else {
+            panic!("commit() called without checkpoints in memory");
+        }
+    }
+    pub fn rollback(&mut self) {
+        self.store.0.lock().unwrap().pop();
+    }
+    pub fn derive(&self, pointer: &IndexPointer<E>) -> Self {
+        AtomicPointer {
+            store: self.store.clone(),
+            pointer: pointer.clone(),
+        }
+    }
+    pub fn get_pointer(&self) -> IndexPointer<E> {
+        return self.pointer.clone();
+    }
+
+    // Get the current depth of the checkpoint stack
+    pub fn checkpoint_depth(&self) -> usize {
+        self.store.depth()
     }
 }
