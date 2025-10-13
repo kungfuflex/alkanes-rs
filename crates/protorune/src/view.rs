@@ -285,20 +285,10 @@ pub fn runes_by_height(input: &Vec<u8>) -> Result<RunesResponse> {
             .get_list()
             .into_iter()
         {
+            let tmp: ProtoruneRuneId = tables::RUNES.ETCHING_TO_RUNE_ID.select(&rune).get().into();
             let mut _rune: Rune = Rune::default();
             _rune.name = String::from_utf8(rune.as_ref().clone())?;
-            _rune.rune_id = Some(
-                proto::protorune::ProtoruneRuneId::decode(
-                    tables::RUNES
-                        .ETCHING_TO_RUNE_ID
-                        .select(&rune)
-                        .get()
-                        .as_ref()
-                        .as_slice(),
-                )
-                .unwrap()
-                .into(),
-            );
+            _rune.rune_id = Some(tmp.into());
             _rune.spacers = tables::RUNES.SPACERS.select(&rune).get_value::<u32>();
 
             let symbol_bytes = tables::RUNES.SYMBOL.select(&rune).get().as_ref().clone();
