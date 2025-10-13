@@ -2,7 +2,7 @@ use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
-    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor,
+    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
 };
 use crate::tables::RuneTable;
 use anyhow::{anyhow, Ok, Result};
@@ -835,8 +835,8 @@ impl Protorune {
         height: u64,
         runestone: &Runestone,
         runestone_output_index: u32,
-        _balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        _unallocated_to: u32,
+        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
+        unallocated_to: u32,
     ) -> Result<()> {
         // Check if this transaction is in the blacklist
         let tx_id = tx.compute_txid();

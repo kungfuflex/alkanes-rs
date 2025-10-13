@@ -1,0 +1,1 @@
+pub fn get_bytes() -> Vec<u8> { include_bytes!("../../../../../target/alkanes-wasm/alkanes_std_genesis_alkane_upgraded_fractal.wasm").to_vec() }

@@ -1,0 +1,1 @@
+pub fn get_bytes() -> Vec<u8> { include_bytes!("../../../../../target/alkanes-wasm/alkanes_std_beacon_proxy.wasm").to_vec() }

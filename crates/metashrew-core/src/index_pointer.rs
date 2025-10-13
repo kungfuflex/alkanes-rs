@@ -1,5 +1,5 @@
 use crate::{get, set};
-use metashrew_support::index_pointer::KeyValuePointer;
+pub use metashrew_support::index_pointer::KeyValuePointer;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

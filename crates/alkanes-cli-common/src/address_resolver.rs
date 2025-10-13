@@ -404,43 +404,6 @@ impl StorageProvider for StandaloneAddressResolver {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl NetworkProvider for StandaloneAddressResolver {
-    async fn get(&self, _url: &str) -> Result<Vec<u8>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support network operations".to_string()))
-    }
-    async fn post(&self, _url: &str, _body: &[u8], _content_type: &str) -> Result<Vec<u8>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support network operations".to_string()))
-    }
-    async fn is_reachable(&self, _url: &str) -> bool { false }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl CryptoProvider for StandaloneAddressResolver {
-    fn random_bytes(&self, _len: usize) -> Result<Vec<u8>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support crypto operations".to_string()))
-    }
-    fn sha256(&self, _data: &[u8]) -> Result<[u8; 32]> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support crypto operations".to_string()))
-    }
-    fn sha3_256(&self, _data: &[u8]) -> Result<[u8; 32]> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support crypto operations".to_string()))
-    }
-    async fn encrypt_aes_gcm(&self, _data: &[u8], _key: &[u8], _nonce: &[u8]) -> Result<Vec<u8>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support crypto operations".to_string()))
-    }
-    async fn decrypt_aes_gcm(&self, _data: &[u8], _key: &[u8], _nonce: &[u8]) -> Result<Vec<u8>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support crypto operations".to_string()))
-    }
-    async fn pbkdf2_derive(&self, _password: &[u8], _salt: &[u8], _iterations: u32, _key_len: usize) -> Result<Vec<u8>> {
-        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support crypto operations".to_string()))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

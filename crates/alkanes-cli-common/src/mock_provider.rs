@@ -1,13 +1,10 @@
 use crate::traits::{
-    AddressResolver,
+    AlkanesNetwork,
     AlkanesProvider,
     BitcoinRpcProvider,
-    CryptoProvider,
-    AlkanesProvider,
-    EsploraProvider,
+    ChainProvider,
     JsonRpcProvider,
     KeystoreProvider,
-    LogProvider,
     MetashrewProvider,
     MetashrewRpcProvider,
     MonitorProvider,
@@ -15,27 +12,15 @@ use crate::traits::{
     OrdProvider,
     RunestoneProvider,
     StorageProvider,
-    TimeProvider,
+    UtxoProvider,
     WalletProvider,
-    WalletBalance,
-    WalletConfig,
-    WalletInfo,
-    AddressInfo,
-    SendParams,
-    UtxoInfo,
-    TransactionInfo,
-    FeeEstimate,
-    FeeRates,
-    BlockEvent,
-    KeystoreAddress,
-    KeystoreInfo
 };
 use crate::{
     alkanes::protorunes::{ProtoruneOutpointResponse, ProtoruneWalletResponse},
     network::NetworkParams,
     AlkanesError, Result,
 };
-use async_trait::async_trait;
+
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -86,37 +71,47 @@ impl MockProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl JsonRpcProvider for MockProvider {
-    async fn call(&self, _url: &str, method: &str, _params: JsonValue, _id: u64) -> Result<JsonValue> {
-        self.responses.get(method)
-            .cloned()
-            .ok_or_else(|| AlkanesError::JsonRpc(format!("No mock response for method: {method}")))
+    fn call<'a>(&'a self, _url: &'a str, method: &'a str, _params: JsonValue, _id: u64) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>> {
+        Box::pin(async move {
+            self.responses.get(method)
+                .cloned()
+                .ok_or_else(|| AlkanesError::JsonRpc(format!("No mock response for method: {method}")))
+        })
     }
     
 
 }
 
-#[async_trait(?Send)]
 impl StorageProvider for MockProvider {
-    async fn read(&self, _key: &str) -> Result<Vec<u8>> {
-        Ok(b"mock_data".to_vec())
+    fn read<'a>(&'a self, _key: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(b"mock_data".to_vec())
+        })
     }
     
-    async fn write(&self, _key: &str, _data: &[u8]) -> Result<()> {
-        Ok(())
+    fn write<'a>(&'a self, _key: &'a str, _data: &'a [u8]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(())
+        })
     }
     
-    async fn exists(&self, _key: &str) -> Result<bool> {
-        Ok(true)
+    fn exists<'a>(&'a self, _key: &'a str) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(true)
+        })
     }
     
-    async fn delete(&self, _key: &str) -> Result<()> {
-        Ok(())
+    fn delete<'a>(&'a self, _key: &'a str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(())
+        })
     }
     
-    async fn list_keys(&self, _prefix: &str) -> Result<Vec<String>> {
-        Ok(vec!["mock_key".to_string()])
+    fn list_keys<'a>(&'a self, _prefix: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(vec!["mock_key".to_string()])
+        })
     }
     
     fn storage_type(&self) -> &'static str {
@@ -124,22 +119,26 @@ impl StorageProvider for MockProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl NetworkProvider for MockProvider {
-    async fn get(&self, _url: &str) -> Result<Vec<u8>> {
-        Ok(b"mock_response".to_vec())
+    fn get<'a>(&'a self, _url: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(b"mock_response".to_vec())
+        })
     }
     
-    async fn post(&self, _url: &str, _body: &[u8], _content_type: &str) -> Result<Vec<u8>> {
-        Ok(b"mock_response".to_vec())
+    fn post<'a>(&'a self, _url: &'a str, _body: &'a [u8], _content_type: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(b"mock_response".to_vec())
+        })
     }
     
-    async fn is_reachable(&self, _url: &str) -> bool {
-        true
+    fn is_reachable<'a>(&'a self, _url: &'a str) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            true
+        })
     }
 }
 
-#[async_trait(?Send)]
 impl CryptoProvider for MockProvider {
     fn random_bytes(&self, len: usize) -> Result<Vec<u8>> {
         Ok(vec![0u8; len])
@@ -153,20 +152,25 @@ impl CryptoProvider for MockProvider {
         Ok([0u8; 32])
     }
     
-    async fn encrypt_aes_gcm(&self, data: &[u8], _key: &[u8], _nonce: &[u8]) -> Result<Vec<u8>> {
-        Ok(data.to_vec())
+    fn encrypt_aes_gcm<'a>(&'a self, data: &'a [u8], _key: &'a [u8], _nonce: &'a [u8]) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(data.to_vec())
+        })
     }
     
-    async fn decrypt_aes_gcm(&self, data: &[u8], _key: &[u8], _nonce: &[u8]) -> Result<Vec<u8>> {
-        Ok(data.to_vec())
+    fn decrypt_aes_gcm<'a>(&'a self, data: &'a [u8], _key: &'a [u8], _nonce: &'a [u8]) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(data.to_vec())
+        })
     }
     
-    async fn pbkdf2_derive(&self, _password: &[u8], _salt: &[u8], _iterations: u32, key_len: usize) -> Result<Vec<u8>> {
-        Ok(vec![0u8; key_len])
+    fn pbkdf2_derive<'a>(&'a self, _password: &'a [u8], _salt: &'a [u8], _iterations: u32, key_len: usize) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(vec![0u8; key_len])
+        })
     }
 }
 
-#[async_trait(?Send)]
 impl TimeProvider for MockProvider {
     fn now_secs(&self) -> u64 {
         1640995200 // 2022-01-01 00:00:00 UTC
@@ -176,8 +180,10 @@ impl TimeProvider for MockProvider {
         1640995200000
     }
     
-    async fn sleep_ms(&self, _ms: u64) {
-        // No-op for mock
+    fn sleep_ms<'a>(&'a self, _ms: u64) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            // No-op for mock
+        })
     }
 }
 
@@ -188,252 +194,315 @@ impl LogProvider for MockProvider {
     fn error(&self, _message: &str) {}
 }
 
-#[async_trait(?Send)]
 impl WalletProvider for MockProvider {
-    async fn create_wallet(&mut self, _config: WalletConfig, _mnemonic: Option<String>, _passphrase: Option<String>) -> Result<WalletInfo> {
-        Ok(WalletInfo {
-            address: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string(),
-            network: self.network,
-            mnemonic: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
+    fn create_wallet<'a>(&'a mut self, _config: WalletConfig, _mnemonic: Option<String>, _passphrase: Option<String>) -> Pin<Box<dyn Future<Output = Result<WalletInfo>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(WalletInfo {
+                address: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string(),
+                network: self.network,
+                mnemonic: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
+            })
         })
     }
     
-    async fn load_wallet(&mut self, _config: WalletConfig, _passphrase: Option<String>) -> Result<WalletInfo> {
-        self.create_wallet(WalletConfig {
-            wallet_path: "test".to_string(),
-            network: self.network,
-            bitcoin_rpc_url: "http://localhost:8332".to_string(),
-            metashrew_rpc_url: "http://localhost:8080".to_string(),
-            network_params: None,
-        }, None, None).await
-    }
-    
-    async fn get_balance(&self, _addresses: Option<Vec<String>>) -> Result<WalletBalance> {
-        Ok(WalletBalance {
-            confirmed: 100000000,
-            pending: 0,
+    fn load_wallet<'a>(&'a mut self, _config: WalletConfig, _passphrase: Option<String>) -> Pin<Box<dyn Future<Output = Result<WalletInfo>> + Send + 'a>> {
+        Box::pin(async move {
+            self.create_wallet(WalletConfig {
+                wallet_path: "test".to_string(),
+                network: self.network,
+                bitcoin_rpc_url: "http://localhost:8332".to_string(),
+                metashrew_rpc_url: "http://localhost:8080".to_string(),
+                network_params: None,
+            }, None, None).await
         })
     }
     
-    async fn get_address(&self) -> Result<String> {
-        let address = Address::p2tr(&self.secp, self.internal_key, None, self.network);
-        Ok(address.to_string())
+    fn get_balance<'a>(&'a self, _addresses: Option<Vec<String>>) -> Pin<Box<dyn Future<Output = Result<WalletBalance>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(WalletBalance {
+                confirmed: 100000000,
+                pending: 0,
+            })
+        })
     }
     
-    async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>> {
-        let mut addresses = Vec::new();
-        for i in 0..count {
-            addresses.push(AddressInfo {
-                address: format!("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t{i}"),
-                script_type: "p2wpkh".to_string(),
-                derivation_path: format!("m/84'/0'/0'/0/{i}"),
-                index: i,
-                used: false,
-            });
-        }
-        Ok(addresses)
+    fn get_address<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            let address = Address::p2tr(&self.secp, self.internal_key, None, self.network);
+            Ok(address.to_string())
+        })
     }
     
-    async fn send(&mut self, _params: SendParams) -> Result<String> {
-        Ok("mock_txid".to_string())
-    }
-    
-    async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
-        let utxos = self.utxos.lock().unwrap();
-        let mut utxo_infos: Vec<(OutPoint, UtxoInfo)> = utxos.iter().map(|(outpoint, tx_out)| {
-            let address = Address::from_script(&tx_out.script_pubkey, self.network)
-                .map(|addr| addr.to_string())
-                .unwrap_or_else(|_| "unknown_script".to_string()); // Handle unrecognized scripts
-
-            let info = UtxoInfo {
-                txid: outpoint.txid.to_string(),
-                vout: outpoint.vout,
-                amount: tx_out.value.to_sat(),
-                address,
-                script_pubkey: Some(tx_out.script_pubkey.clone()),
-                confirmations: 10,
-                frozen: false,
-                freeze_reason: None,
-                block_height: Some(100),
-                has_inscriptions: false,
-                has_runes: false,
-                has_alkanes: false,
-                is_coinbase: false,
-            };
-            (*outpoint, info)
-        }).collect();
-
-        if let Some(addresses) = addresses {
-            if !addresses.is_empty() {
-                utxo_infos.retain(|(_, info)| addresses.contains(&info.address));
+    fn get_addresses<'a>(&'a self, count: u32) -> Pin<Box<dyn Future<Output = Result<Vec<AddressInfo>>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut addresses = Vec::new();
+            for i in 0..count {
+                addresses.push(AddressInfo {
+                    address: format!("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t{i}"),
+                    script_type: "p2wpkh".to_string(),
+                    derivation_path: format!("m/84'/0'/0'/0/{i}"),
+                    index: i,
+                    used: false,
+                });
             }
-        }
-
-        Ok(utxo_infos)
-    }
-    
-    async fn get_history(&self, _count: u32, _address: Option<String>) -> Result<Vec<TransactionInfo>> {
-        Ok(vec![TransactionInfo {
-            txid: "mock_txid".to_string(),
-            block_height: Some(800000),
-            block_time: Some(1640995200),
-            confirmed: true,
-            fee: Some(1000),
-            weight: Some(0),
-            inputs: vec![],
-            outputs: vec![],
-            is_op_return: false,
-            has_protostones: false,
-            is_rbf: false,
-        }])
-    }
-    
-    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
-        Ok(())
-    }
-    
-    async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
-        Ok(())
-    }
-    
-    async fn create_transaction(&self, _params: SendParams) -> Result<String> {
-        Ok("mock_tx_hex".to_string())
-    }
-    
-    async fn sign_transaction(&mut self, _tx_hex: String) -> Result<String> {
-        Ok("mock_signed_tx_hex".to_string())
-    }
-    
-    async fn broadcast_transaction(&self, tx_hex: String) -> Result<String> {
-        let tx_bytes = hex::decode(&tx_hex).map_err(|e| AlkanesError::Hex(e.to_string()))?;
-        let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
-        let txid = tx.compute_txid();
-        
-        // Add the new outputs of this transaction to the UTXO set
-        let mut utxos = self.utxos.lock().unwrap();
-        for (i, tx_out) in tx.output.iter().enumerate() {
-            utxos.push((OutPoint::new(txid, i as u32), tx_out.clone()));
-        }
-
-        self.broadcasted_txs.lock().unwrap().insert(txid.to_string(), tx_hex);
-        Ok(txid.to_string())
-    }
-    
-    async fn estimate_fee(&self, _target: u32) -> Result<FeeEstimate> {
-        Ok(FeeEstimate {
-            fee_rate: 10.0,
-            target_blocks: 6,
+            Ok(addresses)
         })
     }
     
-    async fn get_fee_rates(&self) -> Result<FeeRates> {
-        Ok(FeeRates {
-            fast: 20.0,
-            medium: 10.0,
-            slow: 5.0,
+    fn send<'a>(&'a mut self, _params: SendParams) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok("mock_txid".to_string())
         })
     }
     
-    async fn sync(&self) -> Result<()> {
-        Ok(())
+    fn get_utxos<'a>(&'a self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Pin<Box<dyn Future<Output = Result<Vec<(OutPoint, UtxoInfo)>>> + Send + 'a>> {
+        Box::pin(async move {
+            let utxos = self.utxos.lock().unwrap();
+            let mut utxo_infos: Vec<(OutPoint, UtxoInfo)> = utxos.iter().map(|(outpoint, tx_out)| {
+                let address = Address::from_script(&tx_out.script_pubkey, self.network)
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|_| "unknown_script".to_string()); // Handle unrecognized scripts
+
+                let info = UtxoInfo {
+                    txid: outpoint.txid.to_string(),
+                    vout: outpoint.vout,
+                    amount: tx_out.value.to_sat(),
+                    address,
+                    script_pubkey: Some(tx_out.script_pubkey.clone()),
+                    confirmations: 10,
+                    frozen: false,
+                    freeze_reason: None,
+                    block_height: Some(100),
+                    has_inscriptions: false,
+                    has_runes: false,
+                    has_alkanes: false,
+                    is_coinbase: false,
+                };
+                (*outpoint, info)
+            }).collect();
+
+            if let Some(addresses) = addresses {
+                if !addresses.is_empty() {
+                    utxo_infos.retain(|(_, info)| addresses.contains(&info.address));
+                }
+            }
+
+            Ok(utxo_infos)
+        })
     }
     
-    async fn backup(&self) -> Result<String> {
-        Ok("mock_backup_data".to_string())
+    fn get_history<'a>(&'a self, _count: u32, _address: Option<String>) -> Pin<Box<dyn Future<Output = Result<Vec<TransactionInfo>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(vec![TransactionInfo {
+                txid: "mock_txid".to_string(),
+                block_height: Some(800000),
+                block_time: Some(1640995200),
+                confirmed: true,
+                fee: Some(1000),
+                weight: Some(0),
+                inputs: vec![],
+                outputs: vec![],
+                is_op_return: false,
+                has_protostones: false,
+                is_rbf: false,
+            }])
+        })
     }
     
-    async fn get_mnemonic(&self) -> Result<Option<String>> {
-        Ok(Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()))
+    fn freeze_utxo<'a>(&'a self, _utxo: String, _reason: Option<String>) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(())
+        })
+    }
+    
+    fn unfreeze_utxo<'a>(&'a self, _utxo: String) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(())
+        })
+    }
+    
+    fn create_transaction<'a>(&'a self, _params: SendParams) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok("mock_tx_hex".to_string())
+        })
+    }
+    
+    fn sign_transaction<'a>(&'a mut self, _tx_hex: String) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok("mock_signed_tx_hex".to_string())
+        })
+    }
+    
+    fn broadcast_transaction<'a>(&'a self, tx_hex: String) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            let tx_bytes = hex::decode(&tx_hex).map_err(|e| AlkanesError::Hex(e.to_string()))?;
+            let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
+            let txid = tx.compute_txid();
+            
+            // Add the new outputs of this transaction to the UTXO set
+            let mut utxos = self.utxos.lock().unwrap();
+            for (i, tx_out) in tx.output.iter().enumerate() {
+                utxos.push((OutPoint::new(txid, i as u32), tx_out.clone()));
+            }
+
+            self.broadcasted_txs.lock().unwrap().insert(txid.to_string(), tx_hex);
+            Ok(txid.to_string())
+        })
+    }
+    
+    fn estimate_fee<'a>(&'a self, _target: u32) -> Pin<Box<dyn Future<Output = Result<FeeEstimate>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(FeeEstimate {
+                fee_rate: 10.0,
+                target_blocks: 6,
+            })
+        })
+    }
+    
+    fn get_fee_rates<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<FeeRates>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(FeeRates {
+                fast: 20.0,
+                medium: 10.0,
+                slow: 5.0,
+            })
+        })
+    }
+    
+    fn sync<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(())
+        })
+    }
+    
+    fn backup<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok("mock_backup_data".to_string())
+        })
+    }
+    
+    fn get_mnemonic<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()))
+        })
     }
     
     fn get_network(&self) -> Network {
         self.network
     }
     
-    async fn get_internal_key(&self) -> Result<(XOnlyPublicKey, (Fingerprint, DerivationPath))> {
-        let fingerprint = Fingerprint::from_str("00000000").unwrap();
-        let path = DerivationPath::from_str("m/86'/1'/0'").unwrap();
-        Ok((self.internal_key, (fingerprint, path)))
+    fn get_internal_key<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<(XOnlyPublicKey, (Fingerprint, DerivationPath))>> + Send + 'a>> {
+        Box::pin(async move {
+            let fingerprint = Fingerprint::from_str("00000000").unwrap();
+            let path = DerivationPath::from_str("m/86'/1'/0'").unwrap();
+            Ok((self.internal_key, (fingerprint, path)))
+        })
     }
     
-    async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
-        let secp = self.secp();
-        let mut psbt = psbt.clone();
-        let mut keys = HashMap::new();
-        let private_key = PrivateKey::new(self.secret_key, self.network);
-        keys.insert(self.internal_key, private_key);
-        psbt.sign(&keys, secp).map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
-        Ok(psbt)
+    fn sign_psbt<'a>(&'a mut self, psbt: &'a bitcoin::psbt::Psbt) -> Pin<Box<dyn Future<Output = Result<bitcoin::psbt::Psbt>> + Send + 'a>> {
+        Box::pin(async move {
+            let secp = self.secp();
+            let mut psbt = psbt.clone();
+            let mut keys = HashMap::new();
+            let private_key = PrivateKey::new(self.secret_key, self.network);
+            keys.insert(self.internal_key, private_key);
+            psbt.sign(&keys, secp).map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
+            Ok(psbt)
+        })
     }
     
-    async fn get_keypair(&self) -> Result<Keypair> {
-        Ok(Keypair::from_secret_key(&self.secp, &self.secret_key))
+    fn get_keypair<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Keypair>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(Keypair::from_secret_key(&self.secp, &self.secret_key))
+        })
     }
 
     fn set_passphrase(&mut self, _passphrase: Option<String>) {}
 
-    async fn get_last_used_address_index(&self) -> Result<u32> {
-        Ok(0)
+    fn get_last_used_address_index<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<u32>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(0)
+        })
     }
 
-    async fn get_enriched_utxos(&self, _addresses: Option<Vec<String>>) -> Result<Vec<crate::provider::EnrichedUtxo>> {
-        unimplemented!("get_enriched_utxos is not implemented for MockProvider")
+    fn get_enriched_utxos<'a>(&'a self, _addresses: Option<Vec<String>>) -> Pin<Box<dyn Future<Output = Result<Vec<crate::provider::EnrichedUtxo>>> + Send + 'a>> {
+        Box::pin(async move {
+            unimplemented!("get_enriched_utxos is not implemented for MockProvider")
+        })
     }
 
-    async fn get_all_balances(&self, _addresses: Option<Vec<String>>) -> Result<crate::provider::AllBalances> {
-        unimplemented!("get_all_balances is not implemented for MockProvider")
+    fn get_all_balances<'a>(&'a self, _addresses: Option<Vec<String>>) -> Pin<Box<dyn Future<Output = Result<crate::provider::AllBalances>> + Send + 'a>> {
+        Box::pin(async move {
+            unimplemented!("get_all_balances is not implemented for MockProvider")
+        })
     }
-    async fn get_master_public_key(&self) -> Result<Option<String>> {
-        Ok(None)
+    fn get_master_public_key<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(None)
+        })
     }
 }
 
-#[async_trait(?Send)]
 impl AddressResolver for MockProvider {
-    async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
-        // Replace identifiers with actual addresses
-        let result = input.replace("p2tr:0", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4");
-        Ok(result)
+    fn resolve_all_identifiers<'a>(&'a self, input: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            // Replace identifiers with actual addresses
+            let result = input.replace("p2tr:0", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4");
+            Ok(result)
+        })
     }
     
     fn contains_identifiers(&self, input: &str) -> bool {
         input.contains("p2tr:") || input.contains("p2wpkh:")
     }
     
-    async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String> {
-        Ok("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string())
+    fn get_address<'a>(&'a self, _address_type: &'a str, _index: u32) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string())
+        })
     }
     
-    async fn list_identifiers(&self) -> Result<Vec<String>> {
-        Ok(vec!["p2tr:0".to_string(), "p2wpkh:0".to_string()])
+    fn list_identifiers<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(vec!["p2tr:0".to_string(), "p2wpkh:0".to_string()])
+        })
     }
 }
 
-#[async_trait(?Send)]
 impl BitcoinRpcProvider for MockProvider {
-    async fn get_block_count(&self) -> Result<u64> {
-        Ok(800000)
+    fn get_block_count<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(800000)
+        })
     }
     
-    async fn generate_to_address(&self, _nblocks: u32, _address: &str) -> Result<JsonValue> {
-        Ok(serde_json::json!(["mock_block_hash"]))
+    fn generate_to_address<'a>(&'a self, _nblocks: u32, _address: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(serde_json::json!(["mock_block_hash"]))
+        })
     }
     
-    async fn get_new_address(&self) -> Result<JsonValue> {
-        Ok(serde_json::json!("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"))
+    fn get_new_address<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(serde_json::json!("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"))
+        })
     }
     
-    async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
-        self.broadcasted_txs
-            .lock()
-            .unwrap()
-            .get(txid)
-            .cloned()
-            .ok_or_else(|| AlkanesError::JsonRpc(format!("No mock tx hex for txid: {txid}")))
+    fn get_transaction_hex<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            self.broadcasted_txs
+                .lock()
+                .unwrap()
+                .get(txid)
+                .cloned()
+                .ok_or_else(|| AlkanesError::JsonRpc(format!("No mock tx hex for txid: {txid}")))
+        })
     }
     
-    async fn get_block(&self, _hash: &str, _raw: bool) -> Result<JsonValue> {
-        Ok(serde_json::json!({"height": 800000}))
+    fn get_block<'a>(&'a self, _hash: &'a str, _raw: bool) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(serde_json::json!({"height": 800000}))
+        })
     }
     
     async fn get_block_hash(&self, _height: u64) -> Result<String> {
@@ -493,7 +562,6 @@ impl BitcoinRpcProvider for MockProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl MetashrewRpcProvider for MockProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
         Ok(800001)
@@ -524,7 +592,6 @@ impl MetashrewRpcProvider for MockProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl MetashrewProvider for MockProvider {
     async fn get_height(&self) -> Result<u64> {
         Ok(800000)
@@ -537,7 +604,6 @@ impl MetashrewProvider for MockProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl EsploraProvider for MockProvider {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
         Ok("mock_tip_hash".to_string())
@@ -666,7 +732,6 @@ impl EsploraProvider for MockProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl RunestoneProvider for MockProvider {
     async fn decode_runestone(&self, _tx: &Transaction) -> Result<JsonValue> {
         Ok(serde_json::json!({"etching": {"rune": "BITCOIN"}}))
@@ -681,7 +746,6 @@ impl RunestoneProvider for MockProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl AlkanesProvider for MockProvider {
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
         let mut executor = EnhancedAlkanesExecutor::new(self);
@@ -766,7 +830,6 @@ impl AlkanesProvider for MockProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl MonitorProvider for MockProvider {
     async fn monitor_blocks(&self, _start: Option<u64>) -> Result<()> {
         Ok(())
@@ -782,7 +845,6 @@ impl MonitorProvider for MockProvider {
     }
 }
 
-#[async_trait(?Send)]
 impl KeystoreProvider for MockProvider {
     async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String> {
         Ok("mock_address".to_string())
@@ -841,7 +903,6 @@ use crate::ord::{
     Runes as OrdRunes, TxInfo as OrdTxInfo,
 };
 
-#[async_trait(?Send)]
 impl OrdProvider for MockProvider {
     async fn get_inscription(&self, _inscription_id: &str) -> Result<OrdInscription> {
         todo!()
@@ -890,7 +951,7 @@ impl OrdProvider for MockProvider {
     }
 }
 
-#[async_trait(?Send)]
+
 impl AlkanesProvider for MockProvider {
     fn provider_name(&self) -> &str {
         "mock"
