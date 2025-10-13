@@ -9,7 +9,6 @@ use metashrew_core::index_pointer::IndexPointer;
 use metashrew_core::{get_cache, println, stdio::stdout};
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consensus_encode, is_empty};
-use protobuf::{MessageField, SpecialFields};
 use protorune::tables::OUTPOINT_SPENDABLE_BY;
 use std::fmt::Write;
 use std::io::Cursor;
@@ -113,14 +112,12 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
                 }
                 if !payment.fulfilled {
                     response.payments.push(ProtoPayment {
-                        spendable: MessageField::some(pb::Outpoint {
+                        spendable: Some(pb::Outpoint {
                             txid: payment.spendable.txid.as_byte_array().to_vec(),
                             vout: payment.spendable.vout,
-                            special_fields: SpecialFields::default(),
                         }),
                         output: consensus_encode::<TxOut>(&payment.output)?,
                         fulfilled: payment.fulfilled,
-                        special_fields: SpecialFields::default(),
                     });
                 }
             }

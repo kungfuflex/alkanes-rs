@@ -3,8 +3,7 @@ use crate::id::AlkaneId;
 use crate::parcel::{AlkaneTransfer, AlkaneTransferParcel};
 use crate::proto;
 use crate::response::ExtendedCallResponse;
-use crate::utils::field_or_default;
-use protobuf::{Message, MessageField};
+use prost::Message;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Default)]
@@ -52,86 +51,88 @@ impl Into<TraceContext> for Context {
 
 impl Into<proto::alkanes::Context> for Context {
     fn into(self) -> proto::alkanes::Context {
-        let mut result = proto::alkanes::Context::new();
-        result.myself = MessageField::some(self.myself.into());
-        result.caller = MessageField::some(self.caller.into());
-        result.vout = self.vout as u32;
-        result.incoming_alkanes = self
-            .incoming_alkanes
-            .0
-            .into_iter()
-            .map(|v| v.into())
-            .collect::<Vec<proto::alkanes::AlkaneTransfer>>();
-        result.inputs = self
-            .inputs
-            .into_iter()
-            .map(|v| v.into())
-            .collect::<Vec<proto::alkanes::Uint128>>();
-        result
+        proto::alkanes::Context {
+            myself: Some(self.myself.into()),
+            caller: Some(self.caller.into()),
+            vout: self.vout as u32,
+            incoming_alkanes: self
+                .incoming_alkanes
+                .0
+                .into_iter()
+                .map(|v| v.into())
+                .collect::<Vec<proto::alkanes::AlkaneTransfer>>(),
+            inputs: self
+                .inputs
+                .into_iter()
+                .map(|v| v.into())
+                .collect::<Vec<proto::alkanes::Uint128>>(),
+        }
     }
 }
 
 impl Into<proto::alkanes::AlkanesExitContext> for TraceResponse {
     fn into(self) -> proto::alkanes::AlkanesExitContext {
-        let mut result = proto::alkanes::AlkanesExitContext::new();
-        result.response = MessageField::some(self.inner.into());
-        result
+        proto::alkanes::AlkanesExitContext {
+            response: Some(self.inner.into()),
+            ..Default::default()
+        }
     }
 }
 
 impl Into<proto::alkanes::TraceContext> for TraceContext {
     fn into(self) -> proto::alkanes::TraceContext {
-        let mut result = proto::alkanes::TraceContext::new();
-        result.inner = MessageField::some(self.inner.into());
-        result.fuel = self.fuel;
-        result
+        proto::alkanes::TraceContext {
+            inner: Some(self.inner.into()),
+            fuel: self.fuel,
+        }
     }
 }
 
 impl Into<proto::alkanes::AlkanesEnterContext> for TraceContext {
     fn into(self) -> proto::alkanes::AlkanesEnterContext {
-        let mut result = proto::alkanes::AlkanesEnterContext::new();
-        result.context = MessageField::some(self.into());
-        result
+        proto::alkanes::AlkanesEnterContext {
+            context: Some(self.into()),
+            ..Default::default()
+        }
     }
 }
 
 impl Into<proto::alkanes::AlkanesTraceEvent> for TraceEvent {
     fn into(self) -> proto::alkanes::AlkanesTraceEvent {
-        let mut result = proto::alkanes::AlkanesTraceEvent::new();
-        result.event = Some(match self {
+        let event = match self {
             TraceEvent::EnterCall(v) => {
                 let mut context: proto::alkanes::AlkanesEnterContext = v.into();
-                context.call_type = protobuf::EnumOrUnknown::from_i32(1);
+                context.call_type = 1;
                 proto::alkanes::alkanes_trace_event::Event::EnterContext(context)
             }
             TraceEvent::EnterStaticcall(v) => {
                 let mut context: proto::alkanes::AlkanesEnterContext = v.into();
-                context.call_type = protobuf::EnumOrUnknown::from_i32(3);
+                context.call_type = 3;
                 proto::alkanes::alkanes_trace_event::Event::EnterContext(context)
             }
             TraceEvent::EnterDelegatecall(v) => {
                 let mut context: proto::alkanes::AlkanesEnterContext = v.into();
-                context.call_type = protobuf::EnumOrUnknown::from_i32(2);
+                context.call_type = 2;
                 proto::alkanes::alkanes_trace_event::Event::EnterContext(context)
             }
             TraceEvent::ReturnContext(v) => {
                 let mut context: proto::alkanes::AlkanesExitContext = v.into();
-                context.status = protobuf::EnumOrUnknown::from_i32(0);
+                context.status = 0;
                 proto::alkanes::alkanes_trace_event::Event::ExitContext(context)
             }
             TraceEvent::RevertContext(v) => {
                 let mut context: proto::alkanes::AlkanesExitContext = v.into();
-                context.status = protobuf::EnumOrUnknown::from_i32(1);
+                context.status = 1;
                 proto::alkanes::alkanes_trace_event::Event::ExitContext(context)
             }
             TraceEvent::CreateAlkane(v) => {
-                let mut creation = proto::alkanes::AlkanesCreate::new();
-                creation.new_alkane = MessageField::some(v.into());
+                let creation = proto::alkanes::AlkanesCreate {
+                    new_alkane: Some(v.into()),
+                };
                 proto::alkanes::alkanes_trace_event::Event::CreateAlkane(creation)
             }
-        });
-        result
+        };
+        proto::alkanes::AlkanesTraceEvent { event: Some(event) }
     }
 }
 
@@ -156,18 +157,8 @@ impl From<TraceContext> for Context {
 impl From<proto::alkanes::Context> for Context {
     fn from(v: proto::alkanes::Context) -> Context {
         Context {
-            myself: v
-                .myself
-                .into_option()
-                .ok_or("")
-                .and_then(|v| Ok(v.into()))
-                .unwrap_or_else(|_| AlkaneId::default()),
-            caller: v
-                .caller
-                .into_option()
-                .ok_or("")
-                .and_then(|v| Ok(v.into()))
-                .unwrap_or_else(|_| AlkaneId::default()),
+            myself: v.myself.map_or(AlkaneId::default(), |v| v.into()),
+            caller: v.caller.map_or(AlkaneId::default(), |v| v.into()),
             vout: v.vout,
             incoming_alkanes: AlkaneTransferParcel(
                 v.incoming_alkanes
@@ -186,14 +177,10 @@ impl From<proto::alkanes::Context> for Context {
 
 impl From<proto::alkanes::AlkanesExitContext> for TraceResponse {
     fn from(v: proto::alkanes::AlkanesExitContext) -> TraceResponse {
-        let response = v
-            .response
-            .into_option()
-            .ok_or("")
-            .and_then(|v| Ok(v.into()))
-            .unwrap_or_else(|_| ExtendedCallResponse::default());
         TraceResponse {
-            inner: response,
+            inner: v
+                .response
+                .map_or(ExtendedCallResponse::default(), |v| v.into()),
             fuel_used: 0,
         }
     }
@@ -202,12 +189,7 @@ impl From<proto::alkanes::AlkanesExitContext> for TraceResponse {
 impl From<proto::alkanes::TraceContext> for TraceContext {
     fn from(v: proto::alkanes::TraceContext) -> Self {
         Self {
-            inner: v
-                .inner
-                .into_option()
-                .ok_or("")
-                .and_then(|v| Ok(v.into()))
-                .unwrap_or_else(|_| Context::default()),
+            inner: v.inner.map_or(Context::default(), |v| v.into()),
             fuel: v.fuel.into(),
             target: AlkaneId::default(),
         }
@@ -216,8 +198,8 @@ impl From<proto::alkanes::TraceContext> for TraceContext {
 
 impl From<proto::alkanes::AlkanesEnterContext> for TraceContext {
     fn from(v: proto::alkanes::AlkanesEnterContext) -> TraceContext {
-        let mut context: TraceContext = field_or_default(v.context); //.into_option().ok_or("").and_then(|v| Ok(v.into())).unwrap_or_else(|_| TraceContext::default());
-        context.target = match v.call_type.value() {
+        let mut context: TraceContext = v.context.map_or(TraceContext::default(), |v| v.into());
+        context.target = match v.call_type {
             1 => context.inner.myself.clone(),
             3 => context.inner.myself.clone(),
             2 => context.inner.caller.clone(),
@@ -229,25 +211,26 @@ impl From<proto::alkanes::AlkanesEnterContext> for TraceContext {
 
 impl From<proto::alkanes::AlkanesTraceEvent> for TraceEvent {
     fn from(v: proto::alkanes::AlkanesTraceEvent) -> Self {
-        if v.event.is_some() {
-            match v.event.unwrap() {
+        if let Some(event) = v.event {
+            match event {
                 proto::alkanes::alkanes_trace_event::Event::EnterContext(context) => {
-                    match context.call_type.value() {
+                    match context.call_type {
                         1 => TraceEvent::EnterCall(context.into()),
                         2 => TraceEvent::EnterDelegatecall(context.into()),
                         3 => TraceEvent::EnterStaticcall(context.into()),
                         _ => TraceEvent::EnterCall(context.into()),
                     }
                 }
-                proto::alkanes::alkanes_trace_event::Event::ExitContext(v) => {
-                    match v.status.value() {
-                        0 => TraceEvent::ReturnContext(field_or_default(v.response)),
-                        1 => TraceEvent::RevertContext(field_or_default(v.response)),
-                        _ => TraceEvent::RevertContext(field_or_default(v.response)),
-                    }
-                }
+                proto::alkanes::alkanes_trace_event::Event::ExitContext(v) => match v.status {
+                    0 => TraceEvent::ReturnContext(
+                        v.response.map_or(Default::default(), |r| r.into()),
+                    ),
+                    _ => TraceEvent::RevertContext(
+                        v.response.map_or(Default::default(), |r| r.into()),
+                    ),
+                },
                 proto::alkanes::alkanes_trace_event::Event::CreateAlkane(v) => {
-                    TraceEvent::CreateAlkane(field_or_default(v.new_alkane))
+                    TraceEvent::CreateAlkane(v.new_alkane.map_or(Default::default(), |a| a.into()))
                 }
             }
         } else {
@@ -273,12 +256,12 @@ impl Clone for Trace {
 
 impl Into<proto::alkanes::AlkanesTrace> for Vec<TraceEvent> {
     fn into(self) -> proto::alkanes::AlkanesTrace {
-        let mut result = proto::alkanes::AlkanesTrace::new();
-        result.events = self
-            .into_iter()
-            .map(|v| v.into())
-            .collect::<Vec<proto::alkanes::AlkanesTraceEvent>>();
-        result
+        proto::alkanes::AlkanesTrace {
+            events: self
+                .into_iter()
+                .map(|v| v.into())
+                .collect::<Vec<proto::alkanes::AlkanesTraceEvent>>(),
+        }
     }
 }
 
@@ -306,7 +289,6 @@ impl Into<Trace> for proto::alkanes::AlkanesTrace {
 impl TryFrom<Vec<u8>> for Trace {
     type Error = anyhow::Error;
     fn try_from(v: Vec<u8>) -> Result<Self, Self::Error> {
-        let reference: &[u8] = v.as_ref();
-        Ok(proto::alkanes::AlkanesTrace::parse_from_bytes(reference)?.into())
+        Ok(proto::alkanes::AlkanesTrace::decode(v.as_ref())?.into())
     }
 }
