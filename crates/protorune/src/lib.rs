@@ -21,7 +21,7 @@ use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
 use ordinals::{Etching, Rune};
-use protobuf::{Message, SpecialFields};
+use prost::Message;
 use protorune_support::balance_sheet::BalanceSheetOperations;
 use protorune_support::constants;
 use protorune_support::network::to_address_str;
@@ -438,13 +438,14 @@ impl Protorune {
         let indexer_rune_name = name.as_bytes().to_vec();
 
         // check if rune name alredy exists
-        if let std::result::Result::Ok(rune_id) = ProtoruneRuneId::try_from(
-            (*tables::RUNES
-                .ETCHING_TO_RUNE_ID
-                .select(&indexer_rune_name)
-                .get())
-            .clone(),
-        ) {
+        let rune_id_bytes: Vec<u8> = (*tables::RUNES
+            .ETCHING_TO_RUNE_ID
+            .select(&indexer_rune_name)
+            .get())
+        .clone()
+        .into();
+        if !rune_id_bytes.is_empty() {
+            let rune_id = ProtoruneRuneId::try_from(rune_id_bytes)?;
             println!(
                 "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
                 name, rune_id
@@ -758,9 +759,8 @@ impl Protorune {
                         (proto::protorune::Output {
                             script: tx.output[i].clone().script_pubkey.into_bytes(),
                             value: tx.output[i].clone().value.to_sat(),
-                            special_fields: SpecialFields::new(),
                         })
-                        .write_to_bytes()?,
+                        .encode_to_vec(),
                     ));
             }
         }
