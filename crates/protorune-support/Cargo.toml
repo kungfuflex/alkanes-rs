@@ -23,4 +23,3 @@ bech32 = "0.11.0"
 
 [build-dependencies]
 prost-build = { workspace = true }
-protoc-bin-vendored = "3.0.0"

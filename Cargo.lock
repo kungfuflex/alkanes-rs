@@ -51,8 +51,6 @@ dependencies = [
  "ordinals 1.2.3",
  "prost",
  "prost-types",
- "protoc-bin-vendored",
- "protoc-rust",
  "protorune",
  "protorune-support",
  "ruint",
@@ -2381,7 +2379,6 @@ dependencies = [
  "prost",
  "prost-build",
  "prost-types",
- "protoc-bin-vendored",
  "serde",
 ]
 
