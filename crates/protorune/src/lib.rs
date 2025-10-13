@@ -10,7 +10,7 @@ use balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
-use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut, Txid};
+use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -21,7 +21,8 @@ use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
 use ordinals::{Etching, Rune};
-use protobuf::{Message, SpecialFields};
+use protobuf;
+use protobuf::Message;
 use protorune_support::balance_sheet::BalanceSheetOperations;
 use protorune_support::constants;
 use protorune_support::network::to_address_str;
@@ -739,34 +740,33 @@ impl Protorune {
         }
         Ok(())
     }
+
     pub fn index_outpoints(block: &Block, height: u64) -> Result<()> {
-        let mut atomic = AtomicPointer::default();
-        for tx in &block.txdata {
-            for i in 0..tx.output.len() {
-                let outpoint_bytes = outpoint_encode(
-                    &(OutPoint {
-                        txid: tx.compute_txid(),
-                        vout: i as u32,
-                    }),
-                )?;
-                atomic
-                    .derive(&tables::RUNES.OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
-                    .set_value(height);
-                atomic
-                    .derive(&tables::OUTPOINT_TO_OUTPUT.select(&outpoint_bytes))
-                    .set(Arc::new(
-                        (proto::protorune::Output {
-                            script: tx.output[i].clone().script_pubkey.into_bytes(),
-                            value: tx.output[i].clone().value.to_sat(),
-                            special_fields: SpecialFields::new(),
-                        })
-                        .write_to_bytes()?,
-                    ));
+            let mut atomic = AtomicPointer::default();
+            for tx in &block.txdata {
+                for i in 0..tx.output.len() {
+                    let outpoint_bytes = outpoint_encode(
+                        &(OutPoint {
+                            txid: tx.compute_txid(),
+                            vout: i as u32,
+                        }),
+                    )?;
+                    atomic
+                        .derive(&tables::RUNES.OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
+                        .set_value(height);
+                    atomic
+                        .derive(&tables::OUTPOINT_TO_OUTPUT.select(&outpoint_bytes))
+                        .set(Arc::new({
+                            let mut output = proto::protorune::Output::new();
+                            output.script = tx.output[i].clone().script_pubkey.into_bytes();
+                            output.value = tx.output[i].clone().value.to_sat();
+                            output.write_to_bytes()?
+                        }));
+                }
             }
+            atomic.commit();
+            Ok(())
         }
-        atomic.commit();
-        Ok(())
-    }
     pub fn save_balances<T: MessageContext>(
         height: u64,
         atomic: &mut AtomicPointer,
@@ -1049,4 +1049,3 @@ impl Protorune {
 //     SPACERS.select(name).setValue<u32>(128);
 //     SYMBOL.select(name).setValue<u8>(<u8>"\u{29C9}".charCodeAt(0));
 //     ETCHINGS.append(name);
-//   }

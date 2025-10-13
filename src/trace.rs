@@ -16,7 +16,9 @@ use {
 pub fn save_trace(outpoint: &OutPoint, height: u64, trace: Trace) -> Result<()> {
     let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;
     TRACES.select(&buffer).set(Arc::<Vec<u8>>::new(
-        <Trace as Into<proto::alkanes::AlkanesTrace>>::into(trace).write_to_bytes()?,
+        <Trace as Into<proto::alkanes::AlkanesTrace>>::into(trace)
+            .write_to_bytes()
+            .unwrap(),
     ));
     TRACES_BY_HEIGHT
         .select_value(height)

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use metashrew_support::index_pointer::KeyValuePointer;
 
 use crate::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RuneTransfer {

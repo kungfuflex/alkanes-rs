@@ -1,0 +1,56 @@
+[package]
+name = "rockshrew-mono"
+version = "9.0.1"
+edition = "2021"
+
+[lib]
+name = "rockshrew_mono"
+path = "src/lib.rs"
+
+[dependencies]
+async-trait = "0.1"
+rand = "0.8"
+reqwest = { version = "0.12.12", features = ["json"] }
+metashrew-runtime = { path = "../metashrew-runtime" }
+rockshrew-runtime = { path = "../rockshrew-runtime" }
+metashrew-sync = { path = "../metashrew-sync" }
+serde_json = "1.0.136"
+actix-web = "4.9.0"
+serde = "1.0.217"
+log = "0.4.25"
+env_logger = "0.11.6"
+hex = "0.4.3"
+rocksdb = { version = "0.21.0", features = ["multi-threaded-cf"] }
+tokio = { version = "1.43.0", features = ["full", "tracing"] }
+clap = { version = "4.5", features = ["unstable-doc", "derive"] }
+actix-cors = "0.7.0"
+itertools = "0.14.0"
+anyhow = "1.0.95"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+console-subscriber = { version = "0.2", optional = true }
+num_cpus = "1.16.0"
+url = "2.5.0"  # Added for URL parsing in SSH tunneling
+dirs = "5.0.1"  # Added for home directory detection
+bytes = "1.5.0"  # Added for handling binary data in responses
+russh = "0.50.0-beta.7"  # Added for SSH tunneling
+russh-keys = "0.50.0-beta.7"  # Added for SSH key handling
+once_cell = "1.19.0"  # Added for lazy static initialization
+sha2 = "0.10.9"
+zstd = "0.13.0"  # Added for snapshot compression
+
+[features]
+default = []
+console = ["console-subscriber"]
+debug-tracing = ["tracing-subscriber/json"]
+ssh_e2e_tests = []
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.8"
+memshrew-runtime = { path = "../memshrew" }
+metashrew-core = { path = "../metashrew-core" }
+
+
+[profile.release]
+debug = true

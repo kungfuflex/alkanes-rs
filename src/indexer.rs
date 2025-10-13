@@ -116,9 +116,10 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                 continue;
             }
 
+            let address_str = protorune_support::network::to_address_str(&bitcoin::Script::from_bytes(&address))?;
             // Create a request for this address
             let mut request = ProtorunesWalletRequest::new();
-            request.wallet = address.clone();
+            request.wallet = address_str.as_bytes().to_vec();
             request.protocol_tag = Some(<u128 as Into<
                 protorune_support::proto::protorune::Uint128,
             >>::into(AlkaneMessageContext::protocol_tag()))
@@ -129,7 +130,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                 Ok(full_response) => {
                     // Cache the serialized full WalletResponse
                     CACHED_WALLET_RESPONSE
-                        .select(&address)
+                        .select(address_str.as_bytes())
                         .set(Arc::new(full_response.write_to_bytes()?));
 
                     // Create a filtered version with only outpoints that have runes
@@ -155,7 +156,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
 
                     // Cache the serialized filtered WalletResponse
                     CACHED_FILTERED_WALLET_RESPONSE
-                        .select(&address)
+                        .select(address_str.as_bytes())
                         .set(Arc::new(filtered_response.write_to_bytes()?));
                 }
                 Err(e) => {

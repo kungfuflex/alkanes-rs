@@ -1,0 +1,190 @@
+syntax = "proto3";
+package alkanes;
+message uint128 {
+  uint64 lo = 1;
+  uint64 hi = 2;
+}
+
+message AlkaneId {
+  uint128 block = 1;
+  uint128 tx = 2;
+}
+
+message AlkaneTransfer {
+  AlkaneId id = 1;
+  uint128 value = 2;
+}
+
+message MultiSimulateRequest {
+    repeated MessageContextParcel parcels = 1;
+}
+
+message MessageContextParcel {
+  repeated AlkaneTransfer alkanes = 1;
+  bytes transaction = 2;
+  bytes block = 3;
+  uint64 height = 4;
+  uint32 txindex = 6;
+  bytes calldata = 5;
+  uint32 vout = 7;
+  uint32 pointer = 8;
+  uint32 refund_pointer = 9;
+}
+
+message KeyValuePair {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message ExtendedCallResponse {
+  repeated AlkaneTransfer alkanes = 1;
+  repeated KeyValuePair storage = 2;
+  bytes data = 3;
+}
+
+message Context {
+  AlkaneId myself = 1;
+  AlkaneId caller = 2;
+  repeated uint128 inputs = 3;
+  uint32 vout = 4;
+  repeated AlkaneTransfer incoming_alkanes = 5;
+}
+
+message TraceContext {
+  Context inner = 1;
+  uint64 fuel = 2;
+}
+
+enum AlkanesTraceCallType {
+  NONE = 0;
+  CALL = 1;
+  DELEGATECALL = 2;
+  STATICCALL = 3;
+}
+
+enum AlkanesTraceStatusFlag {
+  SUCCESS = 0;
+  FAILURE = 1;
+}
+
+message AlkanesEnterContext {
+  AlkanesTraceCallType call_type = 1;
+  TraceContext context = 2;
+}
+
+message AlkanesExitContext {
+  AlkanesTraceStatusFlag status = 1;
+  ExtendedCallResponse response = 2;
+}
+
+message AlkanesCreate {
+  AlkaneId new_alkane = 1;
+}
+
+message AlkanesTraceEvent {
+  oneof event {
+    AlkanesEnterContext enter_context = 1;
+    AlkanesExitContext exit_context = 2;
+    AlkanesCreate create_alkane = 3;
+  }
+}
+
+message AlkanesBlockEvent {
+    AlkanesTrace traces = 1;
+    Outpoint outpoint = 2;
+    uint64 txindex = 3;
+}
+
+message AlkanesBlockTraceEvent {
+    repeated AlkanesBlockEvent events = 1;
+}
+
+message AlkanesTrace {
+  repeated AlkanesTraceEvent events = 1;
+}
+
+message SimulateResponse {
+  ExtendedCallResponse execution = 1;
+  uint64 gas_used = 2;
+  string error = 3;
+}
+
+message MultiSimulateResponse {
+    repeated SimulateResponse responses = 1;
+    string error = 2;
+}
+
+message AlkaneInventoryRequest {
+  AlkaneId id = 1;
+}
+
+message AlkaneIdToOutpointRequest {
+  AlkaneId id = 1;
+}
+
+message AlkaneInventoryResponse {
+  repeated AlkaneTransfer alkanes = 1;
+}
+
+message AlkaneStorageRequest {
+  AlkaneId id = 1;
+  bytes path = 2;
+}
+
+message AlkaneStorageResponse {
+  bytes value = 1;
+}
+
+message AlkaneIdToOutpointResponse {
+  bytes txid = 1;
+  uint32 vout = 2;
+}
+
+message Outpoint {
+  bytes txid = 1;
+  uint32 vout = 2;
+}
+
+message Trace {
+  Outpoint outpoint = 1;
+  AlkanesTrace trace = 2;
+}
+
+message TraceBlockRequest {
+  uint64 block = 1;
+}
+
+message TraceBlockResponse {
+  repeated Trace traces = 1;
+}
+
+message BytecodeRequest {
+  AlkaneId id = 1;
+}
+
+message BlockRequest {
+  uint32 height = 1;
+}
+
+message BlockResponse {
+  bytes block = 1;
+  uint32 height = 2;
+}
+
+message TransactionRequest {
+  bytes txid = 1;
+}
+
+message TransactionResponse {
+  bytes transaction = 1;
+}
+
+message Payment {
+  Outpoint spendable = 1;
+  bytes output = 2;
+  bool fulfilled = 3;
+}
+
+message PendingUnwrapsResponse {
+  repeated Payment payments = 1;
+}

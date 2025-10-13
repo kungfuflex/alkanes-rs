@@ -30,10 +30,11 @@ once_cell = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 hex = { workspace = true }
+prost = { workspace = true }
 protobuf = { workspace = true }
 
 [dev-dependencies]
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
+metashrew-core = { workspace = true, features = ["test-utils"] }
 wasm-bindgen-cli = "0.2.99"
 getrandom = { version = "0.2.15", features = ["js"] }
 protorune = { path = ".", features = ["test-utils"] }

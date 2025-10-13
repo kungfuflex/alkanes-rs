@@ -1,0 +1,74 @@
+[package]
+name = "alkanes"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+alkanes-runtime = { path = "../alkanes-runtime" }
+metashrew-core = { path = "../metashrew-core" }
+anyhow = { workspace = true }
+bitcoin = { workspace = true }
+metashrew-support = { workspace = true }
+alkanes-support = { workspace = true }
+protorune-support = { workspace = true }
+ordinals = { workspace = true }
+ruint = { workspace = true }
+wasm-bindgen = { workspace = true }
+byteorder = { workspace = true }
+wasm-bindgen-test = { workspace = true }
+once_cell = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+protorune = { workspace = true, features = ["cache"] }
+hex = { workspace = true }
+prost = { workspace = true }
+hex_lit = { workspace = true }
+wasmi = { workspace = true }
+num = { workspace = true }
+downcast-rs = "1.2.0"
+
+[dev-dependencies]
+alkanes-runtime = { path = "../alkanes-runtime" }
+
+
+
+borsh = { workspace = true }
+sha2 = { workspace = true }
+
+[features]
+regtest = []
+genesis_protorune = []
+genesis_alkane = []
+amm = ["amm_pool", "amm_factory"]
+orbital = []
+auth_token = []
+minimal = [
+    "refunder",
+    "merkle_distributor",
+    "free_mint",
+    "upgradeable",
+    "proxy",
+]
+amm_pool = ["auth_token"]
+amm_factory = ["auth_token"]
+refunder = []
+merkle_distributor = []
+free_mint = []
+upgradeable = []
+proxy = []
+test-utils = []
+mainnet = []
+testnet = []
+luckycoin = []
+dogecoin = []
+bellscoin = []
+fractal = []
+cache = []
+"debug-log" = []
+all = ["genesis_protorune", "genesis_alkane", "amm", "orbital", "minimal", "auth_token", "test-utils", "cache", "debug-log"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
