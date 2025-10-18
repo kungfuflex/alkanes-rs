@@ -633,19 +633,18 @@ impl Protorune {
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey)?;
-                    let address = address_str.into_bytes();
+                    let script_pubkey_bytes = output_script_pubkey.as_bytes().to_vec();
 
                     // Add address to the set of updated addresses
                     #[cfg(feature = "cache")]
-                    updated_addresses.insert(address.to_vec());
+                    updated_addresses.insert(script_pubkey_bytes.to_vec());
 
                     tables::OUTPOINTS_FOR_ADDRESS
-                        .select(&address.clone())
+                        .select(&script_pubkey_bytes.clone())
                         .append(Arc::new(outpoint_bytes.clone()));
                     tables::OUTPOINT_SPENDABLE_BY
                         .select(&outpoint_bytes.clone())
-                        .set(Arc::new(address.clone()))
+                        .set(Arc::new(script_pubkey_bytes.clone()))
                 }
             }
         }
@@ -675,24 +674,23 @@ impl Protorune {
                 let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
                 if Payload::from_script(output_script_pubkey).is_ok() {
                     let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey)?;
-                    let address = address_str.into_bytes();
+                    let script_pubkey_bytes = output_script_pubkey.as_bytes().to_vec();
 
                     // Add address to the set of updated addresses
                     #[cfg(feature = "cache")]
-                    if address.len() > 0 {
-                        updated_addresses.insert(address.to_vec());
+                    if script_pubkey_bytes.len() > 0 {
+                        updated_addresses.insert(script_pubkey_bytes.to_vec());
                     }
 
                     tables::OUTPOINTS_FOR_ADDRESS
-                        .select(&address.clone())
+                        .select(&script_pubkey_bytes.clone())
                         .append(Arc::new(outpoint_bytes.clone()));
-                    if address.len() > 0 {
+                    if script_pubkey_bytes.len() > 0 {
                         tables::OUTPOINT_SPENDABLE_BY_ADDRESS
-                            .select(&address.clone())
+                            .select(&script_pubkey_bytes.clone())
                             .append_ll(Arc::new(outpoint_bytes.clone()));
                         let pos = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
-                            .select(&address.clone())
+                            .select(&script_pubkey_bytes.clone())
                             .length()
                             - 1;
                         tables::OUTPOINT_SPENDABLE_BY_ADDRESS
@@ -701,7 +699,7 @@ impl Protorune {
                     }
                     tables::OUTPOINT_SPENDABLE_BY
                         .select(&outpoint_bytes.clone())
-                        .set(Arc::new(address.clone()))
+                        .set(Arc::new(script_pubkey_bytes.clone()))
                 }
             }
             for input in transaction.input.iter() {
@@ -709,14 +707,14 @@ impl Protorune {
                 let pos: u32 = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
                     .select(&outpoint_bytes)
                     .get_value();
-                let address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
-                if address.len() > 0 {
+                let script_pubkey_bytes = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+                if script_pubkey_bytes.len() > 0 {
                     // Add address to the set of updated addresses (for spent inputs)
                     #[cfg(feature = "cache")]
-                    updated_addresses.insert(address.as_ref().to_vec());
+                    updated_addresses.insert(script_pubkey_bytes.as_ref().to_vec());
 
                     tables::OUTPOINT_SPENDABLE_BY_ADDRESS
-                        .select(&address)
+                        .select(&script_pubkey_bytes)
                         .delete_value(pos);
                     if pos > 0 {
                         tables::OUTPOINT_SPENDABLE_BY_ADDRESS

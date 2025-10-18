@@ -278,20 +278,7 @@ pub fn sequence() -> Result<Vec<u8>> {
         .to_vec())
 }
 
-pub fn protorunes_by_address(
-    input: &Vec<u8>,
-) -> Result<protorune_support::proto::protorune::WalletResponse> {
-    let request = protorune_support::proto::protorune::ProtorunesWalletRequest::decode(&**input)?;
-    view::protorunes_by_address(input).and_then(|mut response| {
-        if into_u128(request.protocol_tag.unwrap_or_else(|| {
-            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
-        })) == AlkaneMessageContext::protocol_tag()
-        {
-            response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
-        }
-        Ok(response)
-    })
-}
+
 
 pub fn protorunes_by_address2(
     input: &Vec<u8>,
