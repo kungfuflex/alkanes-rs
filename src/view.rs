@@ -25,6 +25,7 @@ use bitcoin::blockdata::transaction::Version;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::Hash;
 use bitcoin::{
+    address::{Address, NetworkUnchecked},
     blockdata::block::Header, Block, BlockHash, CompactTarget, OutPoint, Transaction, TxMerkleNode,
 };
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
@@ -44,6 +45,7 @@ use std::collections::BTreeMap;
 #[allow(unused_imports)]
 use std::fmt::Write;
 use std::io::Cursor;
+use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 
 pub fn parcels_from_protobuf(v: proto::alkanes::MultiSimulateRequest) -> Vec<MessageContextParcel> {
@@ -280,10 +282,20 @@ pub fn sequence() -> Result<Vec<u8>> {
 
 
 
+#[derive(serde::Deserialize)]
+struct WalletRequest {
+    address: String,
+}
+
 pub fn protorunes_by_address2(
     input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
-    let request = protorune_support::proto::protorune::ProtorunesWalletRequest::decode(&**input)?;
+    let mut request = protorune_support::proto::protorune::ProtorunesWalletRequest::decode(&**input)?;
+    let wallet_request: WalletRequest = serde_json::from_slice(&request.wallet)?;
+    let address = Address::<NetworkUnchecked>::from_str(&wallet_request.address)?;
+    let script_pubkey = address.require_network(bitcoin::Network::Bitcoin)?.script_pubkey();
+    request.wallet = hex::encode(script_pubkey.as_bytes()).into_bytes();
+    let new_input = request.encode_to_vec();
 
     #[cfg(feature = "cache")]
     {
@@ -307,7 +319,7 @@ pub fn protorunes_by_address2(
     }
 
     // If no cached response or parsing failed, compute it
-    view::protorunes_by_address2(input).and_then(|mut response| {
+    view::protorunes_by_address2(&new_input).and_then(|mut response| {
         if into_u128(request.protocol_tag.unwrap_or_else(|| {
             <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
         })) == AlkaneMessageContext::protocol_tag()
