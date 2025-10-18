@@ -7,6 +7,10 @@ use anyhow::{anyhow, Result};
 use bitcoin::{Block, Transaction, Txid};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use ordinals::Runestone;
+use alkanes_support::{
+    parcel::AlkaneTransferParcel,
+    trace::{Trace, TraceEvent},
+};
 use protorune_support::{
     balance_sheet::BalanceSheet,
     protostone::{split_bytes, Protostone},
@@ -65,7 +69,7 @@ pub trait MessageProcessor {
         protomessage_vout: u32,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         num_protostones: usize,
-    ) -> Result<bool>;
+    ) -> Result<(bool, Trace)>;
 }
 impl MessageProcessor for Protostone {
     fn process_message<T: MessageContext>(
@@ -79,7 +83,7 @@ impl MessageProcessor for Protostone {
         protomessage_vout: u32,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         num_protostones: usize,
-    ) -> Result<bool> {
+    ) -> Result<(bool, Trace)> {
         // Validate output indexes and protomessage_vout
         let num_outputs = transaction.output.len();
         let pointer = self.pointer.ok_or_else(|| anyhow!("Missing pointer"))?;
@@ -129,6 +133,9 @@ impl MessageProcessor for Protostone {
             .map(|v| v.clone())
             .unwrap_or_else(|| BalanceSheet::default());
 
+        let trace = Trace::default();
+
+
         // Create a nested atomic transaction for the entire message processing
         atomic.checkpoint();
 
@@ -150,6 +157,7 @@ impl MessageProcessor for Protostone {
                     .unwrap_or_else(|| BalanceSheet::default()),
             ),
             sheets: Box::new(BalanceSheet::default()),
+            trace: trace.clone(),
         };
 
         match T::handle(&parcel) {
@@ -157,7 +165,7 @@ impl MessageProcessor for Protostone {
                 match values.reconcile(atomic, balances_by_output, protomessage_vout, pointer) {
                     Ok(_) => {
                         atomic.commit();
-                        Ok(true)
+                        Ok((true, trace))
                     }
                     Err(e) => {
                         println!("Got error inside reconcile! {:?} \n\n", e);
@@ -178,7 +186,7 @@ impl MessageProcessor for Protostone {
                             refund_pointer,
                         )?;
                         atomic.rollback();
-                        Ok(false)
+                        Ok((false, trace))
                     }
                 }
             }
@@ -201,7 +209,7 @@ impl MessageProcessor for Protostone {
                 refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
                 atomic.rollback();
 
-                Ok(false)
+                Ok((false, trace))
             }
         }
     }
