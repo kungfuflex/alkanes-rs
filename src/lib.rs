@@ -171,7 +171,7 @@ pub fn spendablesbyaddress() -> i32 {
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::WalletResponse =
-        view::protorunes_by_address(&consume_to_end(&mut data).unwrap())
+        view::protorunes_by_address2(&consume_to_end(&mut data).unwrap())
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
     export_bytes(result.encode_to_vec())
 }
@@ -186,7 +186,7 @@ pub fn protorunesbyaddress() -> i32 {
     //  let _request = protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(&input_data).unwrap();
 
     let mut result: protorune_support::proto::protorune::WalletResponse =
-        view::protorunes_by_address(&input_data)
+        view::protorunes_by_address2(&input_data)
             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
 
     result.outpoints = result
