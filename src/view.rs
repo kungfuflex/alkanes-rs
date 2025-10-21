@@ -199,15 +199,26 @@ pub fn to_alkanes_balances(
             .height
             .unwrap()
             .into();
-        if simulate_calls < MAX_SIMULATE_CALLS && (block == 2 || block == 4 || block == 32) {
-            (
-                entry.rune.as_mut().unwrap().name,
-                entry.rune.as_mut().unwrap().symbol,
-            ) = get_statics(&from_protobuf(
-                entry.rune.as_ref().unwrap().rune_id.clone().unwrap(),
-            ));
-            entry.rune.as_mut().unwrap().spacers = 0;
-            simulate_calls += 1;
+        if (block == 2 || block == 4 || block == 32) {
+            if simulate_calls < MAX_SIMULATE_CALLS {
+                (
+                    entry.rune.as_mut().unwrap().name,
+                    entry.rune.as_mut().unwrap().symbol,
+                ) = get_statics(&from_protobuf(
+                    entry.rune.as_ref().unwrap().rune_id.clone().unwrap(),
+                ));
+                entry.rune.as_mut().unwrap().spacers = 0;
+                simulate_calls += 1;
+            } else {
+                let id = entry.rune.as_ref().unwrap().rune_id.as_ref().unwrap();
+                let name_from_id = format!(
+                    "{:?}:{:?}",
+                    id.height.as_ref().unwrap(),
+                    id.txindex.as_ref().unwrap()
+                );
+                entry.rune.as_mut().unwrap().name = name_from_id.clone();
+                entry.rune.as_mut().unwrap().symbol = name_from_id.clone();
+            }
         }
     }
     clone
