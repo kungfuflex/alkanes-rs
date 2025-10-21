@@ -185,7 +185,9 @@ pub fn get_statics(id: &AlkaneId) -> (String, String) {
 pub fn to_alkanes_balances(
     balances: protorune_support::proto::protorune::BalanceSheet,
 ) -> protorune_support::proto::protorune::BalanceSheet {
+    const MAX_SIMULATE_CALLS: usize = 300;
     let mut clone = balances.clone();
+    let mut simulate_calls = 0;
     for entry in &mut clone.entries {
         let block: u128 = entry
             .rune
@@ -197,7 +199,7 @@ pub fn to_alkanes_balances(
             .height
             .unwrap()
             .into();
-        if block == 2 || block == 4 || block == 32 {
+        if simulate_calls < MAX_SIMULATE_CALLS && (block == 2 || block == 4 || block == 32) {
             (
                 entry.rune.as_mut().unwrap().name,
                 entry.rune.as_mut().unwrap().symbol,
@@ -205,6 +207,7 @@ pub fn to_alkanes_balances(
                 entry.rune.as_ref().unwrap().rune_id.clone().unwrap(),
             ));
             entry.rune.as_mut().unwrap().spacers = 0;
+            simulate_calls += 1;
         }
     }
     clone
