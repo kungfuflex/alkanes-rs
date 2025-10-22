@@ -32,6 +32,7 @@ serde_json = { workspace = true }
 hex = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
+alkanes-support = { path = "../alkanes-support" }
 
 [dev-dependencies]
 metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
