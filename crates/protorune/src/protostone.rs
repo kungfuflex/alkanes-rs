@@ -3,14 +3,11 @@ use crate::{
     message::{MessageContext, MessageContextParcel},
     protoburn::{Protoburn, Protoburns},
 };
+use alkanes_support::trace::Trace;
 use anyhow::{anyhow, Result};
 use bitcoin::{Block, Transaction, Txid};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use ordinals::Runestone;
-use alkanes_support::{
-    parcel::AlkaneTransferParcel,
-    trace::{Trace, TraceEvent},
-};
 use protorune_support::{
     balance_sheet::BalanceSheet,
     protostone::{split_bytes, Protostone},
@@ -57,6 +54,7 @@ pub trait MessageProcessor {
     ///                 will hold balances before the process message
     ///   balances_by_output: The running store of balances by each transaction output for
     ///                       the current transaction being handled.
+    ///   trace: The trace object for this protostone (should already have ReceiveIntent)
     /// Return: true if success, false if failure and refunded to refund pointer
     fn process_message<T: MessageContext>(
         &self,
@@ -69,6 +67,7 @@ pub trait MessageProcessor {
         protomessage_vout: u32,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         num_protostones: usize,
+        trace: Trace,
     ) -> Result<(bool, Trace)>;
 }
 impl MessageProcessor for Protostone {
@@ -83,6 +82,7 @@ impl MessageProcessor for Protostone {
         protomessage_vout: u32,
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         num_protostones: usize,
+        trace: Trace,
     ) -> Result<(bool, Trace)> {
         // Validate output indexes and protomessage_vout
         let num_outputs = transaction.output.len();
@@ -132,13 +132,6 @@ impl MessageProcessor for Protostone {
             .get(&protomessage_vout)
             .map(|v| v.clone())
             .unwrap_or_else(|| BalanceSheet::default());
-
-        let trace = Trace::default();
-        trace.clock(TraceEvent::ReceiveIntent {
-            incoming_alkanes: AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(
-                initial_sheet.clone(),
-            )),
-        });
 
         // Create a nested atomic transaction for the entire message processing
         atomic.checkpoint();

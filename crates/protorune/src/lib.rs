@@ -941,6 +941,16 @@ impl Protorune {
                 // if there is no protomessage, all incoming runes will be available to be transferred by the edict
                 let mut prior_balance_sheet = BalanceSheet::default();
                 let mut did_message_fail_and_refund = false;
+                let initial_sheet = proto_balances_by_output
+                    .get(&shadow_vout)
+                    .map(|v| v.clone())
+                    .unwrap_or_else(|| BalanceSheet::default());
+                let mut trace = Trace::default();
+                trace.clock(TraceEvent::ReceiveIntent {
+                    incoming_alkanes: AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(
+                        initial_sheet.clone(),
+                    )),
+                });
                 if stone.is_message() && stone.protocol_tag == T::protocol_tag() {
                     let (success, protostone_trace) = stone.process_message::<T>(
                         &mut atomic.derive(&IndexPointer::default()),
@@ -952,33 +962,10 @@ impl Protorune {
                         shadow_vout,
                         &mut proto_balances_by_output,
                         num_protostones,
+                        trace,
                     )?;
                     did_message_fail_and_refund = !success;
-
-                    // Add ValueTransfer events for this protostone's outputs
-                    for (vout, sheet) in &proto_balances_by_output {
-                        let transfers = AlkaneTransferParcel::from(
-                            RuneTransfer::from_balance_sheet(sheet.clone()),
-                        )
-                        .0;
-                        if transfers.iter().any(|t| t.value > 0) {
-                            protostone_trace.clock(TraceEvent::ValueTransfer {
-                                transfers,
-                                redirect_to: *vout,
-                            });
-                        }
-                    }
-
-                    // Save the trace for this protostone
-                    save_trace(
-                        &OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: shadow_vout,
-                        },
-                        height,
-                        protostone_trace,
-                    )?;
-
+                    trace = protostone_trace;
                     if success {
                         // Get the post-message balance to use for edicts
                         prior_balance_sheet =
@@ -1011,6 +998,28 @@ impl Protorune {
                         protostone_unallocated_to,
                     )?;
                 }
+                // Add ValueTransfer events for this protostone's outputs
+                for (vout, sheet) in &proto_balances_by_output {
+                    let transfers =
+                        AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(sheet.clone()))
+                            .0;
+                    if transfers.iter().any(|t| t.value > 0) {
+                        trace.clock(TraceEvent::ValueTransfer {
+                            transfers,
+                            redirect_to: *vout,
+                        });
+                    }
+                }
+
+                // Save the trace for this protostone
+                save_trace(
+                    &OutPoint {
+                        txid: tx.compute_txid(),
+                        vout: shadow_vout,
+                    },
+                    height,
+                    trace,
+                )?;
             }
             Self::save_balances::<T>(
                 height,
