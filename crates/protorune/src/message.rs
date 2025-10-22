@@ -11,7 +11,7 @@ use std::u128;
 
 pub trait MessageContext {
     fn handle(
-        parcel: &MessageContextParcel,
+        parcel: &mut MessageContextParcel,
     ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)>;
     fn protocol_tag() -> u128;
     fn asset_protoburned_in_protocol(id: ProtoruneRuneId) -> bool {

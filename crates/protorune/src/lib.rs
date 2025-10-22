@@ -1,16 +1,20 @@
+use crate::balance_sheet::clear_balances;
 use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
-use crate::protostone::{
-    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
-};
+#[cfg(test)]
+use crate::protostone::Protostones;
+use crate::protostone::{add_to_indexable_protocols, initialized_protocol_index, MessageProcessor};
 use crate::tables::RuneTable;
+use alkanes_support::{
+    parcel::AlkaneTransferParcel,
+    trace::{Trace, TraceEvent},
+};
 use anyhow::{anyhow, Ok, Result};
-use crate::balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
-use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut, Txid};
+use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -31,10 +35,6 @@ use protorune_support::{
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
     rune_transfer::RuneTransfer,
     utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
-};
-use alkanes_support::{
-    parcel::AlkaneTransferParcel,
-    trace::{Trace, TraceEvent},
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Sub;
@@ -65,6 +65,22 @@ pub fn default_output(tx: &Transaction) -> u32 {
         }
     }
     0
+}
+
+pub fn save_trace(outpoint: &OutPoint, height: u64, trace: Trace) -> Result<()> {
+    use once_cell::sync::Lazy;
+    static TRACES: Lazy<IndexPointer> = Lazy::new(|| IndexPointer::from_keyword("/trace/"));
+    static TRACES_BY_HEIGHT: Lazy<IndexPointer> =
+        Lazy::new(|| IndexPointer::from_keyword("/trace/"));
+
+    let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;
+    TRACES.select(&buffer).set(Arc::<Vec<u8>>::new(
+        <Trace as Into<alkanes_support::proto::alkanes::AlkanesTrace>>::into(trace).encode_to_vec(),
+    ));
+    TRACES_BY_HEIGHT
+        .select_value(height)
+        .append(Arc::new(buffer));
+    Ok(())
 }
 
 pub fn num_op_return_outputs(tx: &Transaction) -> usize {
@@ -876,12 +892,6 @@ impl Protorune {
                 })
                 .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
             let mut balance_sheet = BalanceSheet::concat(sheets)?;
-            let trace = Trace::default();
-            trace.clock(TraceEvent::ReceiveIntent {
-                incoming_alkanes: AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(
-                    balance_sheet.clone(),
-                )),
-            });
 
             // set the starting runtime balance
             proto_balances_by_output.insert(
@@ -932,7 +942,7 @@ impl Protorune {
                 let mut prior_balance_sheet = BalanceSheet::default();
                 let mut did_message_fail_and_refund = false;
                 if stone.is_message() && stone.protocol_tag == T::protocol_tag() {
-                    let (success, _trace) = stone.process_message::<T>(
+                    let (success, protostone_trace) = stone.process_message::<T>(
                         &mut atomic.derive(&IndexPointer::default()),
                         tx,
                         txindex,
@@ -944,9 +954,31 @@ impl Protorune {
                         num_protostones,
                     )?;
                     did_message_fail_and_refund = !success;
-                    let mut trace_guard = trace.0.lock().unwrap();
-                    let _trace_guard = _trace.0.lock().unwrap();
-                    trace_guard.extend(_trace_guard.clone());
+
+                    // Add ValueTransfer events for this protostone's outputs
+                    for (vout, sheet) in &proto_balances_by_output {
+                        let transfers = AlkaneTransferParcel::from(
+                            RuneTransfer::from_balance_sheet(sheet.clone()),
+                        )
+                        .0;
+                        if transfers.iter().any(|t| t.value > 0) {
+                            protostone_trace.clock(TraceEvent::ValueTransfer {
+                                transfers,
+                                redirect_to: *vout,
+                            });
+                        }
+                    }
+
+                    // Save the trace for this protostone
+                    save_trace(
+                        &OutPoint {
+                            txid: tx.compute_txid(),
+                            vout: shadow_vout,
+                        },
+                        height,
+                        protostone_trace,
+                    )?;
+
                     if success {
                         // Get the post-message balance to use for edicts
                         prior_balance_sheet =
@@ -978,15 +1010,6 @@ impl Protorune {
                         &mut proto_balances_by_output,
                         protostone_unallocated_to,
                     )?;
-                }
-            }
-            for (vout, sheet) in &proto_balances_by_output {
-                let transfers = AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(sheet.clone())).0;
-                if transfers.iter().any(|t| t.value > 0) {
-                    trace.clock(TraceEvent::ValueTransfer {
-                        transfers,
-                        redirect_to: *vout,
-                    });
                 }
             }
             Self::save_balances::<T>(

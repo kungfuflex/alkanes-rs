@@ -134,12 +134,16 @@ impl MessageProcessor for Protostone {
             .unwrap_or_else(|| BalanceSheet::default());
 
         let trace = Trace::default();
-
+        trace.clock(TraceEvent::ReceiveIntent {
+            incoming_alkanes: AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(
+                initial_sheet.clone(),
+            )),
+        });
 
         // Create a nested atomic transaction for the entire message processing
         atomic.checkpoint();
 
-        let parcel = MessageContextParcel {
+        let mut parcel = MessageContextParcel {
             atomic: atomic.derive(&IndexPointer::default()),
             runes: RuneTransfer::from_balance_sheet(initial_sheet.clone()),
             transaction: transaction.clone(),
@@ -160,12 +164,12 @@ impl MessageProcessor for Protostone {
             trace: trace.clone(),
         };
 
-        match T::handle(&parcel) {
+        match T::handle(&mut parcel) {
             Ok(values) => {
                 match values.reconcile(atomic, balances_by_output, protomessage_vout, pointer) {
                     Ok(_) => {
                         atomic.commit();
-                        Ok((true, trace))
+                        Ok((true, parcel.trace))
                     }
                     Err(e) => {
                         println!("Got error inside reconcile! {:?} \n\n", e);
@@ -186,7 +190,7 @@ impl MessageProcessor for Protostone {
                             refund_pointer,
                         )?;
                         atomic.rollback();
-                        Ok((false, trace))
+                        Ok((false, parcel.trace))
                     }
                 }
             }
@@ -209,7 +213,7 @@ impl MessageProcessor for Protostone {
                 refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
                 atomic.rollback();
 
-                Ok((false, trace))
+                Ok((false, parcel.trace))
             }
         }
     }
