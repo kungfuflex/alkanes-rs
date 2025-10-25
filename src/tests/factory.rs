@@ -5,21 +5,15 @@ use crate::tests::helpers::{
 };
 use crate::tests::std::alkanes_std_test_build;
 use alkane_helpers::clear;
-use alkanes::view;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
-use alkanes_support::trace::{Trace, TraceEvent};
 use anyhow::Result;
-use bitcoin::{OutPoint, ScriptBuf, Sequence, TxIn, Witness};
-use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
-use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::ProtoruneRuneId;
-use protorune_support::protostone::ProtostoneEdict;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -70,7 +64,6 @@ fn test_factory_wasm_load() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block)?;
 
-    println!("Last sheet: {:?}", sheet);
     let runtime_sheet = get_sheet_for_runtime();
     let orig_alkane = AlkaneId { block: 2, tx: 1 };
     let copy_alkane = AlkaneId { block: 2, tx: 2 };

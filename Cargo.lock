@@ -298,6 +298,7 @@ dependencies = [
  "bitcoin 0.32.5",
  "flate2",
  "hex",
+ "metashrew-core",
  "metashrew-support",
  "prost",
  "prost-build",
@@ -2352,6 +2353,7 @@ dependencies = [
 name = "protorune"
 version = "1.2.3"
 dependencies = [
+ "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",
  "byteorder",
