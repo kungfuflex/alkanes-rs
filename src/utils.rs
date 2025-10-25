@@ -43,7 +43,7 @@ pub fn balance_pointer(
 
 pub fn alkane_inventory_pointer(who: &AlkaneId) -> IndexPointer {
     let who_bytes: Vec<u8> = who.clone().into();
-    let ptr = IndexPointer::from_keyword("/alkanes")
+    let ptr = IndexPointer::from_keyword("/alkanes/")
         .select(&who_bytes)
         .keyword("/inventory/");
     ptr

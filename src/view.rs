@@ -1,6 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::set_view_mode;
 use crate::tables::{TRACES, TRACES_BY_HEIGHT};
+use crate::unwrap as unwrap_view;
 use crate::utils::{
     alkane_id_to_outpoint, alkane_inventory_pointer, balance_pointer, credit_balances,
     debit_balances, pipe_storagemap_to,
@@ -8,7 +9,7 @@ use crate::utils::{
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
 use crate::vm::utils::{
-    prepare_context, run_after_special, run_special_cellpacks, sequence_pointer,
+    get_alkane_binary, prepare_context, run_after_special, run_special_cellpacks, sequence_pointer,
 };
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
@@ -16,7 +17,7 @@ use alkanes_support::parcel::AlkaneTransfer;
 use alkanes_support::proto;
 use alkanes_support::proto::alkanes::{
     AlkaneIdToOutpointRequest, AlkaneIdToOutpointResponse, AlkaneInventoryRequest,
-    AlkaneInventoryResponse,
+    AlkaneInventoryResponse, AlkaneStorageRequest, AlkaneStorageResponse,
 };
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
@@ -30,7 +31,7 @@ use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{println, stdio::stdout};
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
-use protobuf::{Message, MessageField};
+use prost::Message;
 use protorune::balance_sheet::MintableDebit;
 use protorune::message::{MessageContext, MessageContextParcel};
 use protorune::tables::RUNES;
@@ -68,8 +69,8 @@ pub fn parcel_from_protobuf(v: proto::alkanes::MessageContextParcel) -> MessageC
         .alkanes
         .into_iter()
         .map(|v| RuneTransfer {
-            id: v.id.into_option().unwrap().clone().into(),
-            value: v.value.into_option().unwrap().into(),
+            id: v.id.clone().unwrap().into(),
+            value: v.value.clone().unwrap().into(),
         })
         .collect::<Vec<RuneTransfer>>();
     result.pointer = v.pointer;
@@ -117,6 +118,10 @@ pub fn call_view(id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>
         fuel,
     )?;
     Ok(response.data)
+}
+
+pub fn unwrap(height: u128) -> Result<Vec<u8>> {
+    Ok(unwrap_view::view(height).unwrap().encode_to_vec())
 }
 
 pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> Result<Vec<u8>> {
@@ -180,23 +185,40 @@ pub fn get_statics(id: &AlkaneId) -> (String, String) {
 pub fn to_alkanes_balances(
     balances: protorune_support::proto::protorune::BalanceSheet,
 ) -> protorune_support::proto::protorune::BalanceSheet {
+    const MAX_SIMULATE_CALLS: usize = 300;
     let mut clone = balances.clone();
+    let mut simulate_calls = 0;
     for entry in &mut clone.entries {
         let block: u128 = entry
             .rune
             .clone()
             .unwrap()
-            .runeId
-            .height
+            .rune_id
             .clone()
             .unwrap()
+            .height
+            .unwrap()
             .into();
-        if block == 2 || block == 4 {
-            (
-                entry.rune.as_mut().unwrap().name,
-                entry.rune.as_mut().unwrap().symbol,
-            ) = get_statics(&from_protobuf(entry.rune.runeId.clone().unwrap()));
-            entry.rune.as_mut().unwrap().spacers = 0;
+        if (block == 2 || block == 4 || block == 32) {
+            if simulate_calls < MAX_SIMULATE_CALLS {
+                (
+                    entry.rune.as_mut().unwrap().name,
+                    entry.rune.as_mut().unwrap().symbol,
+                ) = get_statics(&from_protobuf(
+                    entry.rune.as_ref().unwrap().rune_id.clone().unwrap(),
+                ));
+                entry.rune.as_mut().unwrap().spacers = 0;
+                simulate_calls += 1;
+            } else {
+                let id = entry.rune.as_ref().unwrap().rune_id.as_ref().unwrap();
+                let name_from_id = format!(
+                    "{:?}:{:?}",
+                    id.height.as_ref().unwrap(),
+                    id.txindex.as_ref().unwrap()
+                );
+                entry.rune.as_mut().unwrap().name = name_from_id.clone();
+                entry.rune.as_mut().unwrap().symbol = name_from_id.clone();
+            }
         }
     }
     clone
@@ -208,9 +230,9 @@ pub fn to_alkanes_from_runes(
     runes
         .into_iter()
         .map(|mut v| {
-            let block: u128 = v.clone().runeId.height.clone().unwrap().into();
-            if block == 2 || block == 4 {
-                (v.name, v.symbol) = get_statics(&from_protobuf(v.runeId.clone().unwrap()));
+            let block: u128 = v.clone().rune_id.clone().unwrap().height.unwrap().into();
+            if block == 2 || block == 4 || block == 32 {
+                (v.name, v.symbol) = get_statics(&from_protobuf(v.rune_id.clone().unwrap()));
                 v.spacers = 0;
             }
             v
@@ -230,20 +252,18 @@ fn into_u128(v: protorune_support::proto::protorune::Uint128) -> u128 {
 pub fn protorunes_by_outpoint(
     input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::OutpointResponse> {
-    let request =
-        protorune_support::proto::protorune::OutpointWithProtocol::parse_from_bytes(input)?;
+    let request = protorune_support::proto::protorune::OutpointWithProtocol::decode(&**input)?;
     view::protorunes_by_outpoint(input).and_then(|mut response| {
         if into_u128(request.protocol.unwrap_or_else(|| {
             <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
         })) == AlkaneMessageContext::protocol_tag()
         {
-            response.balances =
-                MessageField::some(
-                    to_alkanes_balances(response.balances.unwrap_or_else(|| {
-                        protorune_support::proto::protorune::BalanceSheet::new()
-                    }))
-                    .clone(),
-                );
+            response.balances = Some(
+                to_alkanes_balances(response.balances.unwrap_or_else(|| {
+                    protorune_support::proto::protorune::BalanceSheet::default()
+                }))
+                .clone(),
+            );
         }
         Ok(response)
     })
@@ -254,14 +274,13 @@ pub fn to_alkanes_outpoints(
 ) -> Vec<protorune_support::proto::protorune::OutpointResponse> {
     let mut cloned = v.clone();
     for item in &mut cloned {
-        item.balances = MessageField::some(
-            to_alkanes_balances(
-                item.balances
-                    .clone()
-                    .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new()),
-            )
-            .clone(),
-        );
+        item.balances =
+            Some(
+                to_alkanes_balances(item.balances.clone().unwrap_or_else(|| {
+                    protorune_support::proto::protorune::BalanceSheet::default()
+                }))
+                .clone(),
+            );
     }
     cloned
 }
@@ -276,8 +295,7 @@ pub fn sequence() -> Result<Vec<u8>> {
 pub fn protorunes_by_address(
     input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
-    let request =
-        protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input)?;
+    let request = protorune_support::proto::protorune::ProtorunesWalletRequest::decode(&**input)?;
     view::protorunes_by_address(input).and_then(|mut response| {
         if into_u128(request.protocol_tag.unwrap_or_else(|| {
             <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
@@ -292,8 +310,7 @@ pub fn protorunes_by_address(
 pub fn protorunes_by_address2(
     input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
-    let request =
-        protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(input)?;
+    let request = protorune_support::proto::protorune::ProtorunesWalletRequest::decode(&**input)?;
 
     #[cfg(feature = "cache")]
     {
@@ -304,9 +321,7 @@ pub fn protorunes_by_address2(
 
         if !cached_response.is_empty() {
             // Use the cached response if available
-            match protorune_support::proto::protorune::WalletResponse::parse_from_bytes(
-                &cached_response,
-            ) {
+            match protorune_support::proto::protorune::WalletResponse::decode(&*cached_response) {
                 Ok(response) => {
                     return Ok(response);
                 }
@@ -333,8 +348,7 @@ pub fn protorunes_by_address2(
 pub fn protorunes_by_height(
     input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::RunesResponse> {
-    let request =
-        protorune_support::proto::protorune::ProtorunesByHeightRequest::parse_from_bytes(input)?;
+    let request = protorune_support::proto::protorune::ProtorunesByHeightRequest::decode(&**input)?;
     view::protorunes_by_height(input).and_then(|mut response| {
         if into_u128(request.protocol_tag.unwrap_or_else(|| {
             <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
@@ -347,9 +361,9 @@ pub fn protorunes_by_height(
 }
 
 pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {
-    let request = AlkaneIdToOutpointRequest::parse_from_bytes(input)?;
-    let mut response = AlkaneIdToOutpointResponse::new();
-    let outpoint = alkane_id_to_outpoint(&request.id.unwrap().into())?;
+    let request = AlkaneIdToOutpointRequest::decode(&**input)?;
+    let mut response = AlkaneIdToOutpointResponse::default();
+    let outpoint = alkane_id_to_outpoint(&request.id.clone().unwrap().into())?;
     // get the human readable txid (LE byte order), but comes out as a string
     let hex_string = outpoint.txid.to_string();
     // convert the hex string to a byte array
@@ -358,8 +372,8 @@ pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointRespo
     return Ok(response);
 }
 
-pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
-    let mut result: AlkaneInventoryResponse = AlkaneInventoryResponse::new();
+pub fn getinventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
+    let mut result: AlkaneInventoryResponse = AlkaneInventoryResponse::default();
     let alkane_inventory = alkane_inventory_pointer(&req.id.clone().unwrap().into());
     result.alkanes = alkane_inventory
         .get_list()
@@ -385,6 +399,16 @@ pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryR
     Ok(result)
 }
 
+pub fn getstorageat(req: &AlkaneStorageRequest) -> Result<AlkaneStorageResponse> {
+    let mut result: AlkaneStorageResponse = AlkaneStorageResponse::default();
+    let alkane_storage_pointer = IndexPointer::from_keyword("/alkanes/")
+        .select(&crate::utils::from_protobuf(req.id.clone().unwrap()).into())
+        .keyword("/storage/")
+        .select(&req.path);
+    result.value = alkane_storage_pointer.get().to_vec();
+    Ok(result)
+}
+
 pub fn traceblock(height: u32) -> Result<Vec<u8>> {
     let mut block_events: Vec<proto::alkanes::AlkanesBlockEvent> = vec![];
     for outpoint in TRACES_BY_HEIGHT.select_value(height as u64).get_list() {
@@ -393,26 +417,23 @@ pub fn traceblock(height: u32) -> Result<Vec<u8>> {
         let txid = outpoint_decoded.txid.as_byte_array().to_vec();
         let txindex: u32 = RUNES.TXID_TO_TXINDEX.select(&txid).get_value();
         let trace = TRACES.select(outpoint.as_ref()).get();
-        let trace = proto::alkanes::AlkanesTrace::parse_from_bytes(trace.as_ref())?;
+        let trace = proto::alkanes::AlkanesTrace::decode(trace.as_slice())?;
         let block_event = proto::alkanes::AlkanesBlockEvent {
             txindex: txindex as u64,
-            outpoint: MessageField::some(proto::alkanes::Outpoint {
+            outpoint: Some(proto::alkanes::Outpoint {
                 txid,
                 vout: outpoint_decoded.vout,
-                ..Default::default()
             }),
-            traces: MessageField::some(trace),
-            ..Default::default()
+            traces: Some(trace),
         };
         block_events.push(block_event);
     }
 
     let result = proto::alkanes::AlkanesBlockTraceEvent {
         events: block_events,
-        ..Default::default()
     };
 
-    result.write_to_bytes().map_err(|e| anyhow!("{:?}", e))
+    Ok(result.encode_to_vec())
 }
 
 pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
@@ -494,18 +515,19 @@ pub fn multi_simulate_safe(
 }
 
 pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
-    let request = alkanes_support::proto::alkanes::BytecodeRequest::parse_from_bytes(input)?;
-    let alkane_id = request.id.unwrap();
+    let request = alkanes_support::proto::alkanes::BytecodeRequest::decode(&**input)?;
+    let alkane_id = request.id.clone().unwrap();
     let alkane_id = crate::utils::from_protobuf(alkane_id);
 
     // Get the bytecode from the storage
-    let bytecode = metashrew_core::index_pointer::IndexPointer::from_keyword("/alkanes/")
-        .select(&alkane_id.into())
-        .get();
+    let bytecode = get_alkane_binary(
+        metashrew_core::index_pointer::IndexPointer::from_keyword("/alkanes/"),
+        &alkane_id,
+    )?;
 
     // Return the uncompressed bytecode. Note that gzip bomb is not possible since these bytecodes are upper bound by the size of the Witness
     if bytecode.len() > 0 {
-        Ok(alkanes_support::gz::decompress(bytecode.to_vec())?)
+        Ok(bytecode.to_vec())
     } else {
         Err(anyhow!("No bytecode found for the given AlkaneId"))
     }
@@ -514,9 +536,9 @@ pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
 pub fn getblock(input: &Vec<u8>) -> Result<Vec<u8>> {
     use crate::etl;
     use alkanes_support::proto::alkanes::{BlockRequest, BlockResponse};
-    use protobuf::Message;
+    use prost::Message;
 
-    let request = BlockRequest::parse_from_bytes(input)?;
+    let request = BlockRequest::decode(&**input)?;
     let height = request.height;
 
     // Get the block from the etl module
@@ -525,10 +547,9 @@ pub fn getblock(input: &Vec<u8>) -> Result<Vec<u8>> {
     // Create a response with the block data
     let response = BlockResponse {
         block: serialize(&block),
-        height: height,
-        special_fields: protobuf::SpecialFields::new(),
+        height,
     };
 
     // Serialize the response
-    response.write_to_bytes().map_err(|e| anyhow!("{:?}", e))
+    Ok(response.encode_to_vec())
 }

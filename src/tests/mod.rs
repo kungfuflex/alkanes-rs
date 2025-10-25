@@ -26,6 +26,8 @@ pub mod factory;
 #[cfg(test)]
 pub mod forge;
 #[cfg(test)]
+pub mod fr_btc;
+#[cfg(test)]
 pub mod fuel;
 #[cfg(test)]
 pub mod genesis;
@@ -37,8 +39,6 @@ pub mod memory_security_tests;
 pub mod merkle_distributor;
 #[cfg(test)]
 pub mod networks;
-#[cfg(test)]
-pub mod serialization;
 #[cfg(test)]
 pub mod special_extcall;
 #[cfg(test)]

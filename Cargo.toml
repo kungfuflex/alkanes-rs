@@ -41,7 +41,10 @@ wasmi = "0.37.2"
 serde = "1.0.210"
 serde_json = "1.0.128"
 hex = "0.4.3"
-protobuf = "3.7.1"
+prost = "0.12.6"
+prost-types = "0.12.6"
+prost-build = "0.12.6"
+bytes = "1.6.1"
 wasm-bindgen-futures = "0.4.45"
 web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
@@ -55,7 +58,7 @@ dogecoin = []
 luckycoin = []
 bellscoin = []
 fractal = []
-mainnet = []
+mainnet = ["protorune/mainnet"]
 proxy = []
 owned_token = []
 auth_token = []
@@ -100,7 +103,9 @@ wasmi = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
-protobuf = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+bytes = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 web-sys = { workspace = true }
 js-sys = { workspace = true }
@@ -124,8 +129,5 @@ protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]
 anyhow = { workspace = true }
-protobuf-codegen = "3.4.0"
 flate2 = "1.0.34"
-protoc-rust = { version = "2.28.0" }
-protoc-bin-vendored = "3.0.0"
 hex = { workspace = true }

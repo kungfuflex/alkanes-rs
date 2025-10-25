@@ -1,10 +1,14 @@
 use crate::message::AlkaneMessageContext;
+use crate::precompiled::fr_btc_build_v1_1_0;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
     alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
-    alkanes_std_genesis_alkane_regtest_build, alkanes_std_genesis_alkane_upgraded_mainnet_build,
-    alkanes_std_genesis_alkane_upgraded_regtest_build,
+    alkanes_std_genesis_alkane_regtest_build,
+    alkanes_std_genesis_alkane_upgraded_eoa_mainnet_build,
+    alkanes_std_genesis_alkane_upgraded_eoa_regtest_build,
+    alkanes_std_genesis_alkane_upgraded_mainnet_build,
+    alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_build, fr_sigil_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -30,6 +34,14 @@ use {
     metashrew_core::{println, stdio::stdout},
     std::fmt::Write,
 };
+
+pub fn fr_btc_bytes() -> Vec<u8> {
+    fr_btc_build::get_bytes()
+}
+
+pub fn fr_sigil_bytes() -> Vec<u8> {
+    fr_sigil_build::get_bytes()
+}
 
 #[cfg(feature = "mainnet")]
 pub fn genesis_alkane_bytes() -> Vec<u8> {
@@ -85,6 +97,23 @@ pub fn genesis_alkane_upgrade_bytes() -> Vec<u8> {
     alkanes_std_genesis_alkane_upgraded_regtest_build::get_bytes()
 }
 
+#[cfg(feature = "mainnet")]
+pub fn genesis_alkane_upgrade_bytes_eoa() -> Vec<u8> {
+    alkanes_std_genesis_alkane_upgraded_eoa_mainnet_build::get_bytes()
+}
+
+//use if regtest
+#[cfg(all(
+    not(feature = "mainnet"),
+    not(feature = "dogecoin"),
+    not(feature = "bellscoin"),
+    not(feature = "fractal"),
+    not(feature = "luckycoin")
+))]
+pub fn genesis_alkane_upgrade_bytes_eoa() -> Vec<u8> {
+    alkanes_std_genesis_alkane_upgraded_eoa_regtest_build::get_bytes()
+}
+
 //use if regtest
 #[cfg(all(
     not(feature = "mainnet"),
@@ -99,6 +128,7 @@ pub mod genesis {
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 0;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -108,6 +138,8 @@ pub mod genesis {
         "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 908_888;
+
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 917_888;
 }
 
 #[cfg(feature = "fractal")]
@@ -116,7 +148,8 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 228_194;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 759_865;
+    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 228_194;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 228_194;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -125,7 +158,8 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 5_730_675;
+    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -134,7 +168,8 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "cf2b52ffaaf1c094df22f190b888fb0e474fe62990547a34e144ec9f8e135b07";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 1_664_317;
+    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -143,7 +178,8 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT: &str =
         "2c58484a86e117a445c547d8f3acb56b569f7ea036637d909224d52a5b990259";
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 288_906;
-    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 533_970;
+    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 288_906;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 288_906;
 }
 
 pub fn is_active(height: u64) -> bool {
@@ -176,12 +212,153 @@ pub fn is_genesis(height: u64) -> bool {
     is_genesis
 }
 
-pub fn genesis(block: &Block) -> Result<()> {
-    IndexPointer::from_keyword("/alkanes/")
-        .select(&(AlkaneId { block: 2, tx: 0 }).into())
-        .set(Arc::new(compress(genesis_alkane_bytes())?));
+pub fn setup_frsigil(block: &Block) -> Result<()> {
+    let mut ptr =
+        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 1 }).into());
+    if ptr.get().len() == 0 {
+        ptr.set(Arc::new(compress(fr_sigil_bytes())?));
+    } else {
+        return Ok(());
+    }
     let mut atomic: AtomicPointer = AtomicPointer::default();
-    sequence_pointer(&atomic).set_value::<u128>(1);
+    let fr_sigil = AlkaneId { block: 32, tx: 1 };
+
+    let parcel3 = MessageContextParcel {
+        atomic: atomic.derive(&IndexPointer::default()),
+        runes: vec![],
+        transaction: Transaction {
+            version: bitcoin::blockdata::transaction::Version::ONE,
+            input: vec![],
+            output: vec![],
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+        },
+        block: block.clone(),
+        height: genesis::GENESIS_BLOCK,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: (Cellpack {
+            target: fr_sigil.clone(),
+            inputs: vec![0, 1],
+        })
+        .encipher(),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+    };
+    let (response2, _gas_used2) = (match simulate_parcel(&parcel3, u64::MAX) {
+        Ok((a, b)) => Ok((a, b)),
+        Err(e) => {
+            println!("{:?}", e);
+            Err(e)
+        }
+    })?;
+    let outpoint_bytes = outpoint_encode(&OutPoint {
+        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
+        vout: 0,
+    })?;
+    <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
+        response2.alkanes.into(),
+    )?
+    .save(
+        &mut atomic.derive(
+            &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+                .OUTPOINT_TO_RUNES
+                .select(&outpoint_bytes),
+        ),
+        false,
+    );
+    pipe_storagemap_to(
+        &response2.storage,
+        &mut atomic
+            .derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_sigil.clone().into())),
+    );
+    atomic.commit();
+    Ok(())
+}
+
+pub fn setup_frbtc(block: &Block) -> Result<()> {
+    let mut ptr =
+        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 0 }).into());
+    if ptr.get().len() == 0 {
+        ptr.set(Arc::new(compress(fr_btc_bytes())?));
+    } else {
+        return Ok(());
+    }
+    let mut atomic: AtomicPointer = AtomicPointer::default();
+    let fr_btc = AlkaneId { block: 32, tx: 0 };
+    let parcel2 = MessageContextParcel {
+        atomic: atomic.derive(&IndexPointer::default()),
+        runes: vec![],
+        transaction: Transaction {
+            version: bitcoin::blockdata::transaction::Version::ONE,
+            input: vec![],
+            output: vec![],
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+        },
+        block: block.clone(),
+        height: genesis::GENESIS_BLOCK,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: (Cellpack {
+            target: fr_btc.clone(),
+            inputs: vec![0],
+        })
+        .encipher(),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+    };
+    let (response3, _gas_used3) = (match simulate_parcel(&parcel2, u64::MAX) {
+        Ok((a, b)) => Ok((a, b)),
+        Err(e) => {
+            println!("{:?}", e);
+            Err(e)
+        }
+    })?;
+    pipe_storagemap_to(
+        &response3.storage,
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
+    );
+    atomic.commit();
+    Ok(())
+}
+
+pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
+    if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
+        let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
+        if upgrade_ptr.get().len() == 0 {
+            upgrade_ptr.set_value::<u8>(0x01);
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 2, tx: 0 }).into())
+                .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
+        }
+    }
+    if height >= genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
+        let mut eoa_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-eoa");
+        if eoa_upgrade_ptr.get().len() == 0 {
+            eoa_upgrade_ptr.set_value::<u8>(0x01);
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 2, tx: 0 }).into())
+                .set(Arc::new(compress(genesis_alkane_upgrade_bytes_eoa())?));
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
+        }
+    }
+    Ok(())
+}
+
+pub fn setup_diesel(block: &Block) -> Result<()> {
+    let mut ptr =
+        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 2, tx: 0 }).into());
+    if ptr.get().len() == 0 {
+        ptr.set(Arc::new(compress(genesis_alkane_bytes())?));
+    } else {
+        return Ok(());
+    }
+    let mut atomic: AtomicPointer = AtomicPointer::default();
     let myself = AlkaneId { block: 2, tx: 0 };
     let parcel = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
@@ -232,7 +409,17 @@ pub fn genesis(block: &Block) -> Result<()> {
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
     );
+    atomic.commit();
+    Ok(())
+}
 
+pub fn genesis() -> Result<()> {
+    let mut atomic: AtomicPointer = AtomicPointer::default();
+    sequence_pointer(&atomic).set_value::<u128>(1);
+    let outpoint_bytes = outpoint_encode(&OutPoint {
+        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
+        vout: 0,
+    })?;
     atomic
         .derive(&RUNES.OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
         .set_value(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT);

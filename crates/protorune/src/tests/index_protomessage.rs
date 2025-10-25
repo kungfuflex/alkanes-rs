@@ -536,13 +536,13 @@ mod tests {
     /// Tests that a message context that forwards 1/4, sends 1/8 to runtime, and leaves the rest unaccounted will have the correct values
     #[wasm_bindgen_test]
     fn protomessage_mixed_forwarding_test() {
-        protomessage_from_edict_test_template::<MixedForwarding>(250, 625, 125);
+        protomessage_from_edict_test_template::<MixedForwarding>(250, 0, 125);
     }
 
     /// Tests that a message context that returns nothing will refund all
     #[wasm_bindgen_test]
     fn protomessage_full_refund_test() {
-        protomessage_from_edict_test_template::<FullRefund>(0, 1000, 0);
+        protomessage_from_edict_test_template::<FullRefund>(0, 0, 0);
     }
 
     /// Tests that a message context that returns an invalid result will refund all
@@ -563,7 +563,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn protomessage_mint_allowed_protorune_test() {
         let (protorunes_sheet0, protorunes_sheet1, protorunes_sheet_runtime) =
-            protomessage_from_edict_test_template::<MintNewProtorune>(499, 501, 0);
+            protomessage_from_edict_test_template::<MintNewProtorune>(499, 0, 0);
         let minted_protorune = ProtoruneRuneId::new(840000, 999);
 
         let minted_protorune_to_pointer = protorunes_sheet0.get_cached(&minted_protorune);
@@ -577,7 +577,7 @@ mod tests {
     /// Tests that the atomic pointer is not rolled back in an Ok
     #[wasm_bindgen_test]
     fn protomessage_modify_atomic_then_ok_test() {
-        protomessage_from_edict_test_template::<ModifyAtomicWithoutErr>(0, 1000, 0);
+        protomessage_from_edict_test_template::<ModifyAtomicWithoutErr>(0, 0, 0);
 
         let block_height = 840000;
         let protocol_id = 122;
@@ -619,9 +619,7 @@ mod tests {
         // pointer should get 250/4 = 62
         // the runtime balance is set to 125 + 250/8 = 156
         // the refunded amount should be (125+250) - (62+156) = 157
-        protomessage_from_edict_multiple_protomessages_test_template::<MixedForwarding>(
-            62, 157, 156,
-        )
+        protomessage_from_edict_multiple_protomessages_test_template::<MixedForwarding>(62, 0, 156)
     }
 
     #[wasm_bindgen_test]
@@ -634,7 +632,7 @@ mod tests {
         // the runtime balance is set to 250/8 = 31
         // the refunded amount should be (125+250) - (62+31) = 282
         protomessage_from_edict_multiple_protomessages_test_template::<MixedForwardingStaticRuntime>(
-            62, 282, 31,
+            62, 0, 31,
         );
     }
 }

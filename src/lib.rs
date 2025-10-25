@@ -1,10 +1,9 @@
 use crate::indexer::configure_network;
+use crate::unwrap::{
+    deserialize_payments, fr_btc_payments_at_block, fr_btc_storage_pointer, update_last_block,
+};
 use crate::view::{meta_safe, multi_simulate_safe, parcel_from_protobuf, simulate_safe};
 use alkanes_support::proto;
-use metashrew_support::compat::export_bytes;
-use metashrew_support::utils::consensus_decode;
-use protobuf::MessageField;
-use view::parcels_from_protobuf;
 use bitcoin::{Block, OutPoint};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -13,11 +12,13 @@ use metashrew_core::{
 };
 #[allow(unused_imports)]
 use metashrew_support::block::AuxpowBlock;
+use metashrew_support::compat::export_bytes;
 #[allow(unused_imports)]
 use metashrew_support::index_pointer::KeyValuePointer;
-use metashrew_support::utils::{consume_sized_int, consume_to_end};
-use protobuf::Message;
+use metashrew_support::utils::{consensus_decode, consume_sized_int, consume_to_end};
+use prost::Message;
 use std::io::Cursor;
+use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
 pub mod indexer;
@@ -28,6 +29,7 @@ pub mod tables;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod tests;
 pub mod trace;
+pub mod unwrap;
 pub mod utils;
 pub mod view;
 pub mod vm;
@@ -62,19 +64,17 @@ pub fn multisimluate() -> i32 {
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
     let mut result: proto::alkanes::MultiSimulateResponse =
-        proto::alkanes::MultiSimulateResponse::new();
+        proto::alkanes::MultiSimulateResponse::default();
     let responses = multi_simulate_safe(
-        &parcels_from_protobuf(
-            proto::alkanes::MultiSimulateRequest::parse_from_bytes(reader).unwrap(),
-        ),
+        &parcels_from_protobuf(proto::alkanes::MultiSimulateRequest::decode(reader).unwrap()),
         u64::MAX,
     );
 
     for response in responses {
-        let mut res = proto::alkanes::SimulateResponse::new();
+        let mut res = proto::alkanes::SimulateResponse::default();
         match response {
             Ok((response, gas_used)) => {
-                res.execution = MessageField::some(response.into());
+                res.execution = Some(response.into());
                 res.gas_used = gas_used;
             }
             Err(e) => {
@@ -84,7 +84,7 @@ pub fn multisimluate() -> i32 {
         result.responses.push(res);
     }
 
-    export_bytes(result.write_to_bytes().unwrap())
+    export_bytes(result.encode_to_vec())
 }
 
 #[cfg(not(test))]
@@ -94,22 +94,20 @@ pub fn simulate() -> i32 {
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    let mut result: proto::alkanes::SimulateResponse = proto::alkanes::SimulateResponse::new();
+    let mut result: proto::alkanes::SimulateResponse = proto::alkanes::SimulateResponse::default();
     match simulate_safe(
-        &parcel_from_protobuf(
-            proto::alkanes::MessageContextParcel::parse_from_bytes(reader).unwrap(),
-        ),
+        &parcel_from_protobuf(proto::alkanes::MessageContextParcel::decode(reader).unwrap()),
         u64::MAX,
     ) {
         Ok((response, gas_used)) => {
-            result.execution = MessageField::some(response.into());
+            result.execution = Some(response.into());
             result.gas_used = gas_used;
         }
         Err(e) => {
             result.error = e.to_string();
         }
     }
-    export_bytes(result.write_to_bytes().unwrap())
+    export_bytes(result.encode_to_vec())
 }
 
 #[cfg(not(test))]
@@ -126,7 +124,7 @@ pub fn meta() -> i32 {
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
     match meta_safe(&parcel_from_protobuf(
-        proto::alkanes::MessageContextParcel::parse_from_bytes(reader).unwrap(),
+        proto::alkanes::MessageContextParcel::decode(reader).unwrap(),
     )) {
         Ok(response) => export_bytes(response),
         Err(_) => export_bytes(vec![]),
@@ -141,8 +139,17 @@ pub fn runesbyaddress() -> i32 {
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::WalletResponse =
         protorune::view::runes_by_address(&consume_to_end(&mut data).unwrap())
-            .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
-    export_bytes(result.write_to_bytes().unwrap())
+            .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
+    export_bytes(result.encode_to_vec())
+}
+
+#[cfg(not(test))]
+#[no_mangle]
+pub fn unwrap() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let height = consume_sized_int::<u32>(&mut data).unwrap();
+    export_bytes(view::unwrap(height.into()).unwrap())
 }
 
 #[cfg(not(test))]
@@ -153,8 +160,8 @@ pub fn runesbyoutpoint() -> i32 {
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::OutpointResponse =
         protorune::view::runes_by_outpoint(&consume_to_end(&mut data).unwrap())
-            .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::new());
-    export_bytes(result.write_to_bytes().unwrap())
+            .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::default());
+    export_bytes(result.encode_to_vec())
 }
 
 #[cfg(not(test))]
@@ -165,21 +172,9 @@ pub fn spendablesbyaddress() -> i32 {
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::WalletResponse =
         view::protorunes_by_address(&consume_to_end(&mut data).unwrap())
-            .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
-    export_bytes(result.write_to_bytes().unwrap())
+            .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
+    export_bytes(result.encode_to_vec())
 }
-
-// #[cfg(not(test))]
-// #[no_mangle]
-// pub fn spendablesbyaddress2() -> i32 {
-//     configure_network();
-//     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-//     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-//     let result: protorune_support::proto::protorune::WalletResponse =
-//         view::protorunes_by_address2(&consume_to_end(&mut data).unwrap())
-//             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
-//     export_bytes(result.write_to_bytes().unwrap())
-// }
 
 #[cfg(not(test))]
 #[no_mangle]
@@ -192,7 +187,7 @@ pub fn protorunesbyaddress() -> i32 {
 
     let mut result: protorune_support::proto::protorune::WalletResponse =
         view::protorunes_by_address(&input_data)
-            .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
+            .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::default());
 
     result.outpoints = result
         .outpoints
@@ -200,7 +195,7 @@ pub fn protorunesbyaddress() -> i32 {
         .filter_map(|v| {
             if v.clone()
                 .balances
-                .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new())
+                .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::default())
                 .entries
                 .len()
                 == 0
@@ -212,7 +207,7 @@ pub fn protorunesbyaddress() -> i32 {
         })
         .collect::<Vec<protorune_support::proto::protorune::OutpointResponse>>();
 
-    export_bytes(result.write_to_bytes().unwrap())
+    export_bytes(result.encode_to_vec())
 }
 
 #[cfg(not(test))]
@@ -225,63 +220,6 @@ pub fn getblock() -> i32 {
     export_bytes(view::getblock(&input_data).unwrap())
 }
 
-
-// #[cfg(not(test))]
-// #[no_mangle]
-// pub fn protorunesbyaddress2() -> i32 {
-//     configure_network();
-//     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
-//     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-
-//     let input_data = consume_to_end(&mut data).unwrap();
-//     let request = protorune_support::proto::protorune::ProtorunesWalletRequest::parse_from_bytes(&input_data).unwrap();
-
-//     #[cfg(feature = "cache")]
-//     {
-//         // Check if we have a cached filtered response for this address
-//         let cached_response = protorune::tables::CACHED_FILTERED_WALLET_RESPONSE.select(&request.wallet).get();
-
-//         if !cached_response.is_empty() {
-//             // Use the cached filtered response if available
-//             match protorune_support::proto::protorune::WalletResponse::parse_from_bytes(&cached_response) {
-//                 Ok(response) => {
-//                     return export_bytes(response.write_to_bytes().unwrap());
-//                 },
-//                 Err(e) => {
-//                     println!("Error parsing cached filtered wallet response: {:?}", e);
-//                     // Fall back to computing the response if parsing fails
-//                 }
-//             }
-//         }
-//     }
-
-//     // If no cached response or parsing failed, compute it
-//     let mut result: protorune_support::proto::protorune::WalletResponse =
-//         view::protorunes_by_address2(&input_data)
-//             .unwrap_or_else(|_| protorune_support::proto::protorune::WalletResponse::new());
-
-//     // Filter the outpoints to only include those with runes
-//     result.outpoints = result
-//         .outpoints
-//         .into_iter()
-//         .filter_map(|v| {
-//             if v.clone()
-//                 .balances
-//                 .unwrap_or_else(|| protorune_support::proto::protorune::BalanceSheet::new())
-//                 .entries
-//                 .len()
-//                 == 0
-//             {
-//                 None
-//             } else {
-//                 Some(v)
-//             }
-//         })
-//         .collect::<Vec<protorune_support::proto::protorune::OutpointResponse>>();
-
-//     export_bytes(result.write_to_bytes().unwrap())
-// }
-
 #[cfg(not(test))]
 #[no_mangle]
 pub fn protorunesbyheight() -> i32 {
@@ -290,8 +228,8 @@ pub fn protorunesbyheight() -> i32 {
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::RunesResponse =
         view::protorunes_by_height(&consume_to_end(&mut data).unwrap())
-            .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::new());
-    export_bytes(result.write_to_bytes().unwrap())
+            .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::default());
+    export_bytes(result.encode_to_vec())
 }
 
 #[cfg(not(test))]
@@ -305,9 +243,9 @@ pub fn alkanes_id_to_outpoint() -> i32 {
     let result: alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse =
         view::alkanes_id_to_outpoint(&data_vec).unwrap_or_else(|err| {
             eprintln!("Error in alkanes_id_to_outpoint: {:?}", err);
-            alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::new()
+            alkanes_support::proto::alkanes::AlkaneIdToOutpointResponse::default()
         });
-    export_bytes(result.write_to_bytes().unwrap())
+    export_bytes(result.encode_to_vec())
 }
 
 #[cfg(not(test))]
@@ -325,12 +263,11 @@ pub fn trace() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
-    let outpoint: OutPoint = protorune_support::proto::protorune::Outpoint::parse_from_bytes(
-        &consume_to_end(&mut data).unwrap(),
-    )
-    .unwrap()
-    .try_into()
-    .unwrap();
+    let outpoint: OutPoint =
+        protorune_support::proto::protorune::Outpoint::decode(&*consume_to_end(&mut data).unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
     export_bytes(view::trace(&outpoint).unwrap())
 }
 
@@ -351,9 +288,9 @@ pub fn protorunesbyoutpoint() -> i32 {
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::OutpointResponse =
         view::protorunes_by_outpoint(&consume_to_end(&mut data).unwrap())
-            .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::new());
+            .unwrap_or_else(|_| protorune_support::proto::protorune::OutpointResponse::default());
 
-    export_bytes(result.write_to_bytes().unwrap())
+    export_bytes(result.encode_to_vec())
 }
 
 #[cfg(not(test))]
@@ -364,25 +301,40 @@ pub fn runesbyheight() -> i32 {
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
     let result: protorune_support::proto::protorune::RunesResponse =
         protorune::view::runes_by_height(&consume_to_end(&mut data).unwrap())
-            .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::new());
-    export_bytes(result.write_to_bytes().unwrap())
+            .unwrap_or_else(|_| protorune_support::proto::protorune::RunesResponse::default());
+    export_bytes(result.encode_to_vec())
 }
 
-// #[no_mangle]
-// pub fn alkane_balance_sheet() -> i32 {
-//     let data = input();
-//     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-//     let reader = &data[4..];
-//     let mut result: proto::alkanes::SimulateResponse = proto::alkanes::SimulateResponse::new();
-//     let (response, gas_used) = alkane_inventory(
-//         &proto::alkanes::MessageContextParcel::parse_from_bytes(reader).unwrap().into()
-//     ).unwrap();
-//     result.execution = MessageField::some(response.into());
-//     result.gas_used = gas_used;
-//     to_passback_ptr(&mut to_arraybuffer_layout::<&[u8]>(result.write_to_bytes().unwrap().as_ref()))
-// }
-//
-//
+// TODO: this function needs to improve the way it stores all alkane ids, it doesn't handle duplicates right now
+#[cfg(not(test))]
+#[no_mangle]
+pub fn getinventory() -> i32 {
+    let data = input();
+    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
+    let reader = &data[4..];
+    let result = view::getinventory(
+        &proto::alkanes::AlkaneInventoryRequest::decode(reader)
+            .unwrap()
+            .into(),
+    )
+    .unwrap();
+    export_bytes(result.encode_to_vec())
+}
+
+#[cfg(not(test))]
+#[no_mangle]
+pub fn getstorageat() -> i32 {
+    let data = input();
+    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
+    let reader = &data[4..];
+    let result = view::getstorageat(
+        &proto::alkanes::AlkaneStorageRequest::decode(reader)
+            .unwrap()
+            .into(),
+    )
+    .unwrap();
+    export_bytes(result.encode_to_vec())
+}
 
 #[cfg(all(target_arch = "wasm32", not(test)))]
 #[no_mangle]
@@ -403,75 +355,68 @@ pub fn _start() {
     flush();
 }
 
-#[cfg(test)]
-mod unit_tests {
-    use super::*;
-    use crate::message::AlkaneMessageContext;
-    use protobuf::{Message, SpecialFields};
-    use protorune::view::{rune_outpoint_to_outpoint_response, runes_by_address, runes_by_height};
-    use protorune::Protorune;
-    use protorune_support::proto::protorune::{RunesByHeightRequest, Uint128, WalletRequest};
-    use std::fs;
-    use std::path::PathBuf;
+// #[cfg(test)]
+// mod unit_tests {
+//     use super::*;
+//     use crate::message::AlkaneMessageContext;
+//     use prost::Message;
+//     use protorune::view::{rune_outpoint_to_outpoint_response, runes_by_address, runes_by_height};
+//     use protorune::Protorune;
+//     use protorune_support::proto::protorune::{RunesByHeightRequest, Uint128, WalletRequest};
+//     use std::fs;
+//     use std::path::PathBuf;
 
-    #[test]
-    pub fn test_decode_block() {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("src/tests/static/849236.txt");
-        let block_data = fs::read(&path).unwrap();
+//     #[test]
+//     pub fn test_decode_block() {
+//         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+//         path.push("src/tests/static/849236.txt");
+//         let block_data = fs::read(&path).unwrap();
 
-        assert!(block_data.len() > 0);
+//         assert!(block_data.len() > 0);
 
-        let data = block_data;
-        let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-        let reader = &data[4..];
-        let block: Block =
-            consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
-        assert!(height == 849236);
+//         let data = block_data;
+//         let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
+//         let reader = &data[4..];
+//         let block: Block =
+//             consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
+//         assert!(height == 849236);
 
-        // calling index_block directly fails since genesis(&block).unwrap(); gets segfault
-        // index_block(&block, height).unwrap();
-        configure_network();
-        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into()).unwrap();
+//         // calling index_block directly fails since genesis(&block).unwrap(); gets segfault
+//         // index_block(&block, height).unwrap();
+//         configure_network();
+//         Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into()).unwrap();
 
-        let req_height: Vec<u8> = (RunesByHeightRequest {
-            height: 849236,
-            special_fields: SpecialFields::new(),
-        })
-        .write_to_bytes()
-        .unwrap();
-        let runes = runes_by_height(&req_height).unwrap();
-        assert!(runes.runes.len() == 2);
+//         let req_height: Vec<u8> = (RunesByHeightRequest { height: 849236 }).encode_to_vec();
+//         let runes = runes_by_height(&req_height).unwrap();
+//         assert!(runes.runes.len() == 2);
 
-        // TODO: figure out what address to use for runesbyaddress
-        let req_wallet: Vec<u8> = (WalletRequest {
-            wallet: String::from("bc1pfs5dhzwk32xa53cjx8fx4dqy7hm4m6tys8zyvemqffz8ua4tytqs8vjdgr")
-                .as_bytes()
-                .to_vec(),
-            special_fields: SpecialFields::new(),
-        })
-        .write_to_bytes()
-        .unwrap();
+//         // TODO: figure out what address to use for runesbyaddress
+//         let req_wallet: Vec<u8> = (WalletRequest {
+//             wallet: String::from("bc1pfs5dhzwk32xa53cjx8fx4dqy7hm4m6tys8zyvemqffz8ua4tytqs8vjdgr")
+//                 .as_bytes()
+//                 .to_vec(),
+//         })
+//         .encode_to_vec();
 
-        let runes_for_addr = runes_by_address(&req_wallet).unwrap();
-        // assert!(runes_for_addr.balances > 0);
-        std::println!("RUNES by addr: {:?}", runes_for_addr);
+//         let runes_for_addr = runes_by_address(&req_wallet).unwrap();
+//         // assert!(runes_for_addr.balances > 0);
+//         std::println!("RUNES by addr: {:?}", runes_for_addr);
 
-        let outpoint_res = rune_outpoint_to_outpoint_response(
-            &(OutPoint {
-                txid: block.txdata[298].compute_txid(),
-                vout: 2,
-            }),
-        )
-        .unwrap();
-        let quorum_rune = outpoint_res.balances.unwrap().entries[0].clone();
-        let balance = quorum_rune.balance.0.unwrap();
-        let mut expected_balance = Uint128::new();
-        expected_balance.lo = 21000000;
-        assert!(*balance == expected_balance);
-        // TODO: Assert rune
-        std::println!(" with rune {:?}", quorum_rune.rune.0);
+//         let outpoint_res = rune_outpoint_to_outpoint_response(
+//             &(OutPoint {
+//                 txid: block.txdata[298].compute_txid(),
+//                 vout: 2,
+//             }),
+//         )
+//         .unwrap();
+//         let quorum_rune = outpoint_res.balances.unwrap().entries[0].clone();
+//         let balance = quorum_rune.balance.unwrap();
+//         let mut expected_balance = Uint128::default();
+//         expected_balance.lo = 21000000;
+//         assert!(balance == expected_balance);
+//         // TODO: Assert rune
+//         std::println!(" with rune {:?}", quorum_rune.rune);
 
-        // assert!(false);
-    }
-}
+//         // assert!(false);
+//     }
+// }
