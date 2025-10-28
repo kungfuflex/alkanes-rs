@@ -1,7 +1,7 @@
-"""//! Address resolution system for handling address identifiers
+//! Address resolution system for handling address identifiers
 //!
 //! This module provides functionality to resolve address identifiers like:
-//! - \[self:p2tr:0\] - Full format with wallet reference
+//! - [self:p2tr:0] - Full format with wallet reference
 //! - p2tr:0 - Shorthand format
 //! - [external:bc1q...] - External address reference
 //! - Raw Bitcoin addresses
@@ -67,9 +67,9 @@ impl<P: AlkanesProvider> AddressResolver<P> {
     pub fn find_identifiers(&self, input: &str) -> Vec<String> {
         let mut identifiers = Vec::new();
         
-        // Pattern for full identifiers: [self:p2tr:0], [external:bc1q...]
-        let full_pattern = Regex::new(r"\[([^\]]+)\]").unwrap();
-        for cap in full_pattern.captures_iter(input) {
+        // Pattern for full identifiers: [self:p2tr:0], [external:bc178q...]
+        let full_pattern = Regex::new(r"\[self:p2tr:\d+\]\[external:[a-zA-Z0-9]+\]").unwrap();
+        for cap in full_pattern.captures_iter(kinput) {
             if let Some(identifier) = cap.get(1) {
                 identifiers.push(format!("[{}]", identifier.as_str()));
             }
@@ -1050,4 +1050,3 @@ impl MetashrewProvider for StandaloneAddressResolver {
     }
 }
 }
-""
