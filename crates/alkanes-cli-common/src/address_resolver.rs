@@ -13,6 +13,7 @@ use crate::{WalletConfig, WalletInfo, WalletBalance, AddressInfo, SendParams, Ut
 use crate::{BlockEvent, KeystoreAddress, KeystoreInfo};
 use crate::network::NetworkParams;
 use crate::wallet::AddressType;
+use alkanes_support::proto::alkanes;
 use bitcoin::Network;
 use regex::Regex;
 #[cfg(not(target_arch = "wasm32"))]
@@ -69,7 +70,7 @@ impl<P: AlkanesProvider> AddressResolver<P> {
         
         // Pattern for full identifiers: [self:p2tr:0], [external:bc178q...]
         let full_pattern = Regex::new(r"\[self:p2tr:\d+\]\[external:[a-zA-Z0-9]+\]").unwrap();
-        for cap in full_pattern.captures_iter(kinput) {
+        for cap in full_pattern.captures_iter(input) {
             if let Some(identifier) = cap.get(1) {
                 identifiers.push(format!("[{}]", identifier.as_str()));
             }

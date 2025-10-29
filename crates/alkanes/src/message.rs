@@ -17,7 +17,7 @@ use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_core::MetashrewEnvironment;
 
-use metashrew_sync::traits::RuntimeAdapter;
+use metashrew_core::traits::RuntimeAdapter;
 
 
 use metashrew_core::index_pointer::KeyValuePointer;

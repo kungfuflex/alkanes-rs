@@ -4,7 +4,7 @@ use crate::{
 };
 use alkanes_support::{utils::overflow_error};
 use anyhow::{anyhow, Result};
-use metashrew_sync::traits::RuntimeAdapter;
+use metashrew_support::environment::RuntimeEnvironment;
 use bitcoin::{Block, Transaction, Witness};
 use ordinals::{Artifact, Runestone};
 use protorune::message::MessageContext;
@@ -19,7 +19,7 @@ use wasmi::*;
 
 use std::marker::PhantomData;
 pub struct AlkanesTransaction<'a, E: RuntimeAdapter>(pub &'a Transaction, pub PhantomData<E>);
-pub struct AlkanesBlock<'a, E: RuntimeAdapter + Clone>(pub &'a Block, pub PhantomData<E>) where E: std::default::Default;
+pub struct AlkanesBlock<'a, E: RuntimeEnvironment + Clone>(pub &'a Block, pub PhantomData<E>) where E: std::default::Default;
 
 impl<'a, E: RuntimeAdapter + 'static + Clone + std::default::Default> VirtualFuelBytes for AlkanesTransaction<'a, E> {
     fn vfsize(&self) -> u64 {
@@ -176,7 +176,7 @@ impl FuelTank {
         _FUEL_TANK.read().unwrap().as_ref().unwrap().current_txindex == u32::MAX
     }
 
-    pub fn initialize<E: RuntimeAdapter + Clone + 'static + std::default::Default>(block: &Block, height: u32) {
+    pub fn initialize<E: RuntimeEnvironment + Clone + 'static + std::default::Default>(block: &Block, height: u32) {
         let mut tank = _FUEL_TANK.write().unwrap();
         *tank = Some(FuelTank {
             current_txindex: u32::MAX,
@@ -361,7 +361,7 @@ pub trait Fuelable {
     fn consume_fuel(&mut self, n: u64) -> Result<()>;
 }
 
-impl<'a, E: RuntimeAdapter + Clone> Fuelable for Caller<'_, AlkanesState<'a, E>> {
+impl<'a, E: RuntimeEnvironment + Clone> Fuelable for Caller<'_, AlkanesState<'a, E>> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())

@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-metashrew-sync = { path = "../metashrew-sync" }
 alkanes-runtime = { path = "../alkanes-runtime" }
 metashrew-core = { path = "../metashrew-core" }
 anyhow = { workspace = true }

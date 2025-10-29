@@ -22,7 +22,7 @@ use alkanes_support::proto::alkanes::{
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Version;
-use metashrew_sync::traits::RuntimeAdapter;
+use metashrew_core::traits::RuntimeAdapter;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::Hash;

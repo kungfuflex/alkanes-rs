@@ -6,14 +6,14 @@ use alkanes_support::{
     response::ExtendedCallResponse,
 };
 use anyhow::{anyhow, Result};
-use metashrew_sync::traits::RuntimeAdapter;
+use metashrew_support::environment::RuntimeEnvironment;
 use hex;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
 
 
 
-pub struct AlkanesInstance<'a, E: RuntimeAdapter + Clone> {
+pub struct AlkanesInstance<'a, E: RuntimeEnvironment + Clone> {
     pub(crate) instance: Instance,
     pub(crate) store: Store<AlkanesState<'a, E>>,
 }

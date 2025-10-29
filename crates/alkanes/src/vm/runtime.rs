@@ -1,5 +1,5 @@
 use std::fmt;
-use metashrew_sync::traits::RuntimeAdapter;
+use metashrew_support::environment::RuntimeEnvironment;
 
 use alkanes_support::{
     cellpack::Cellpack, context::Context, id::AlkaneId, parcel::AlkaneTransferParcel, trace::Trace,
@@ -11,7 +11,7 @@ use protorune::message::MessageContextParcel;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct AlkanesRuntimeContext<E: RuntimeAdapter + Clone> {
+E: RuntimeEnvironment + Clone
     pub myself: AlkaneId,
     pub caller: AlkaneId,
     pub incoming_alkanes: AlkaneTransferParcel,

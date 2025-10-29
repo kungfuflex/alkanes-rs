@@ -9,7 +9,7 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_sync::traits::RuntimeAdapter;
+use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 
 use metashrew_core::index_pointer::KeyValuePointer;
@@ -35,7 +35,7 @@ pub fn read_arraybuffer(data: &[u8], data_start: i32) -> Result<Vec<u8>> {
         .to_vec())
 }
 
-pub fn get_memory<'a, E: RuntimeAdapter + Clone>(caller: &mut Caller<'_, AlkanesState<'a, E>>) -> Result<Memory> {
+pub E: RuntimeEnvironment + Clone(caller: &mut Caller<'_, AlkanesState<'a, E>>) -> Result<Memory> {
     caller
         .get_export("memory")
         .ok_or(anyhow!("export was not memory region"))?
