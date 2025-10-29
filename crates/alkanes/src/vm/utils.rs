@@ -9,7 +9,7 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_support::environment::RuntimeEnvironment;
+use metashrew_sync::traits::RuntimeAdapter;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 
 use metashrew_core::index_pointer::KeyValuePointer;
@@ -35,7 +35,7 @@ pub fn read_arraybuffer(data: &[u8], data_start: i32) -> Result<Vec<u8>> {
         .to_vec())
 }
 
-pub fn get_memory<'a, E: RuntimeEnvironment + Clone>(caller: &mut Caller<'_, AlkanesState<'a, E>>) -> Result<Memory> {
+pub fn get_memory<'a, E: RuntimeAdapter + Clone>(caller: &mut Caller<'_, AlkanesState<'a, E>>) -> Result<Memory> {
     caller
         .get_export("memory")
         .ok_or(anyhow!("export was not memory region"))?
@@ -43,11 +43,11 @@ pub fn get_memory<'a, E: RuntimeEnvironment + Clone>(caller: &mut Caller<'_, Alk
         .ok_or(anyhow!("export was not memory region"))
 }
 
-pub fn sequence_pointer<E: RuntimeEnvironment + Clone>(ptr: &AtomicPointer<E>) -> AtomicPointer<E> {
+pub fn sequence_pointer<E: RuntimeAdapter + Clone>(ptr: &AtomicPointer<E>) -> AtomicPointer<E> {
     ptr.derive(&IndexPointer::from_keyword("/alkanes/sequence"))
 }
 
-fn set_alkane_id_to_tx_id<E: RuntimeEnvironment + Clone>(
+fn set_alkane_id_to_tx_id<E: RuntimeAdapter + Clone>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     alkane_id: &AlkaneId,
     env: &mut E,
@@ -71,7 +71,7 @@ fn set_alkane_id_to_tx_id<E: RuntimeEnvironment + Clone>(
     Ok(())
 }
 
-pub fn get_alkane_binary<E: RuntimeEnvironment + Clone>(
+pub fn get_alkane_binary<E: RuntimeAdapter + Clone>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     alkane_id: &AlkaneId,
     env: &mut E,
@@ -92,7 +92,7 @@ pub fn get_alkane_binary<E: RuntimeEnvironment + Clone>(
     Ok(Arc::new(decompress(wasm_payload.clone())?))
 }
 
-pub fn run_special_cellpacks<E: RuntimeEnvironment + Clone>(
+pub fn run_special_cellpacks<E: RuntimeAdapter + Clone>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     cellpack: &Cellpack,
     env: &mut E,
@@ -190,14 +190,14 @@ pub fn run_special_cellpacks<E: RuntimeEnvironment + Clone>(
 }
 
 #[derive(Clone, Debug)]
-pub struct SaveableExtendedCallResponse<E: RuntimeEnvironment + Clone> {
+pub struct SaveableExtendedCallResponse<E: RuntimeAdapter + Clone> {
     pub result: ExtendedCallResponse,
     pub _from: AlkaneId,
     pub _to: AlkaneId,
     _phantom: PhantomData<E>,
 }
 
-impl<E: RuntimeEnvironment + Clone> Default for SaveableExtendedCallResponse<E> {
+impl<E: RuntimeAdapter + Clone> Default for SaveableExtendedCallResponse<E> {
     fn default() -> Self {
         Self {
             result: ExtendedCallResponse::default(),
@@ -208,7 +208,7 @@ impl<E: RuntimeEnvironment + Clone> Default for SaveableExtendedCallResponse<E> 
     }
 }
 
-impl<E: RuntimeEnvironment + Clone> From<ExtendedCallResponse> for SaveableExtendedCallResponse<E> {
+impl<E: RuntimeAdapter + Clone> From<ExtendedCallResponse> for SaveableExtendedCallResponse<E> {
     fn from(v: ExtendedCallResponse) -> Self {
         let mut response = Self::default();
         response.result = v;
@@ -216,14 +216,14 @@ impl<E: RuntimeEnvironment + Clone> From<ExtendedCallResponse> for SaveableExten
     }
 }
 
-impl<E: RuntimeEnvironment + Clone> SaveableExtendedCallResponse<E> {
+impl<E: RuntimeAdapter + Clone> SaveableExtendedCallResponse<E> {
     pub(super) fn associate(&mut self, context: &AlkanesRuntimeContext<E>) {
         self._from = context.myself.clone();
         self._to = context.caller.clone();
     }
 }
 
-impl<E: RuntimeEnvironment + Clone> Saveable<E> for SaveableExtendedCallResponse<E> {
+impl<E: RuntimeAdapter + Clone> Saveable<E> for SaveableExtendedCallResponse<E> {
     fn from(&self) -> AlkaneId {
         self._from.clone()
     }
@@ -238,7 +238,7 @@ impl<E: RuntimeEnvironment + Clone> Saveable<E> for SaveableExtendedCallResponse
     }
 }
 
-pub trait Saveable<E: RuntimeEnvironment + Clone> {
+pub trait Saveable<E: RuntimeAdapter + Clone> {
     fn from(&self) -> AlkaneId;
     fn to(&self) -> AlkaneId;
     fn storage_map(&self) -> StorageMap;
@@ -269,7 +269,7 @@ pub trait Saveable<E: RuntimeEnvironment + Clone> {
     }
 }
 
-pub fn run_after_special<'a, E: RuntimeEnvironment + Clone + 'static + Default>(
+pub fn run_after_special<'a, E: RuntimeAdapter + Clone + 'static + Default>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     binary: Arc<Vec<u8>>,
     start_fuel: u64,
@@ -326,7 +326,7 @@ pub fn run_after_special<'a, E: RuntimeEnvironment + Clone + 'static + Default>(
 
     Ok((response, fuel_used))
 }
-pub fn prepare_context<E: RuntimeEnvironment + Clone>(
+pub fn prepare_context<E: RuntimeAdapter + Clone>(
     context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
     caller: &AlkaneId,
     myself: &AlkaneId,
@@ -339,7 +339,7 @@ pub fn prepare_context<E: RuntimeEnvironment + Clone>(
     }
 }
 
-pub fn send_to_arraybuffer<'a, E: RuntimeEnvironment + Clone>(
+pub fn send_to_arraybuffer<'a, E: RuntimeAdapter + Clone>(
     caller: &mut Caller<'_, AlkanesState<'a, E>>,
     ptr: usize,
     v: &Vec<u8>,

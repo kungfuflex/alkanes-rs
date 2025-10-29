@@ -40,15 +40,17 @@ use std::{vec::Vec, boxed::Box, string::String, pin::Pin, future::Future};
 use alloc::{vec::Vec, boxed::Box, string::String, pin::Pin, future::Future};
 
 /// Trait for making JSON-RPC calls
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait JsonRpcProvider {
     /// Make a JSON-RPC call to the specified URL
-    fn call<'a>(
-        &'a self,
-        url: &'a str,
-        method: &'a str,
+    async fn call(
+        &self,
+        url: &str,
+        method: &str,
         params: JsonValue,
         id: u64,
-    ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    ) -> Result<JsonValue>;
     
     /// Get the timeout for requests (in seconds)
     fn timeout_seconds(&self) -> u64 {
@@ -62,41 +64,45 @@ pub trait JsonRpcProvider {
 }
 
 /// Trait for storage operations (reading/writing files, configuration, etc.)
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait StorageProvider {
     /// Read data from storage
-    fn read<'a>(&'a self, key: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
+    async fn read(&self, key: &str) -> Result<Vec<u8>>;
     
     /// Write data to storage
-    fn write<'a>(&'a self, key: &'a str, data: &'a [u8]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+    async fn write(&self, key: &str, data: &[u8]) -> Result<()>;
     
     /// Check if a key exists in storage
-    fn exists<'a>(&'a self, key: &'a str) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + 'a>>;
+    async fn exists(&self, key: &str) -> Result<bool>;
     
     /// Delete data from storage
-    fn delete<'a>(&'a self, key: &'a str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+    async fn delete(&self, key: &str) -> Result<()>;
     
     /// List all keys with a given prefix
-    fn list_keys<'a>(&'a self, prefix: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + 'a>>;
+    async fn list_keys(&self, prefix: &str) -> Result<Vec<String>>;
     
     /// Get the storage type identifier
     fn storage_type(&self) -> &'static str;
 }
 
 /// Trait for network operations beyond JSON-RPC
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait NetworkProvider {
     /// Make an HTTP GET request
-    fn get<'a>(&'a self, url: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
+    async fn get(&self, url: &str) -> Result<Vec<u8>>;
     
     /// Make an HTTP POST request
-    fn post<'a>(&'a self, url: &'a str, body: &'a [u8], content_type: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
+    async fn post(&self, url: &str, body: &[u8], content_type: &str) -> Result<Vec<u8>>;
     
     /// Download a file from a URL
-    fn download<'a>(&'a self, url: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>> {
-        self.get(url)
+    async fn download(&self, url: &str) -> Result<Vec<u8>> {
+        self.get(url).await
     }
     
     /// Check if a URL is reachable
-    fn is_reachable<'a>(&'a self, url: &'a str) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+    async fn is_reachable(&self, url: &str) -> bool;
     
     /// Get the user agent string
     fn user_agent(&self) -> &str {
@@ -105,6 +111,8 @@ pub trait NetworkProvider {
 }
 
 /// Trait for cryptographic operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait CryptoProvider {
     /// Generate random bytes
     fn random_bytes(&self, len: usize) -> Result<Vec<u8>>;
@@ -116,17 +124,19 @@ pub trait CryptoProvider {
     fn sha3_256(&self, data: &[u8]) -> Result<[u8; 32]>;
     
     /// Encrypt data with AES-GCM
-    fn encrypt_aes_gcm<'a>(&'a self, data: &'a [u8], key: &'a [u8], nonce: &'a [u8]) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
+    async fn encrypt_aes_gcm(&self, data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>>;
     
     /// Decrypt data with AES-GCM
-    fn decrypt_aes_gcm<'a>(&'a self, data: &'a [u8], key: &'a [u8], nonce: &'a [u8]) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
+    async fn decrypt_aes_gcm(&self, data: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>>;
     
     /// Derive key using PBKDF2
-    fn pbkdf2_derive<'a>(&'a self, password: &'a [u8], salt: &'a [u8], iterations: u32, key_len: usize) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
+    async fn pbkdf2_derive(&self, password: &[u8], salt: &[u8], iterations: u32, key_len: usize) -> Result<Vec<u8>>;
 }
 
 /// Trait for PGP operations
 /// Trait for time operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait TimeProvider {
     /// Get current Unix timestamp in seconds
     fn now_secs(&self) -> u64;
@@ -135,7 +145,7 @@ pub trait TimeProvider {
     fn now_millis(&self) -> u64;
 
     /// Sleep for a specified duration in milliseconds
-    fn sleep_ms<'a>(&'a self, ms: u64) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+    async fn sleep_ms(&self, ms: u64);
 }
 
 /// Trait for logging operations
@@ -159,85 +169,87 @@ pub trait LogProvider {
 }
 
 /// Trait for wallet operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait WalletProvider {
     /// Create a new wallet
-    fn create_wallet<'a>(&'a mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Pin<Box<dyn Future<Output = Result<WalletInfo>> + Send + 'a>>;
+    async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo>;
     
     /// Load an existing wallet
-    fn load_wallet<'a>(&'a mut self, config: WalletConfig, passphrase: Option<String>) -> Pin<Box<dyn Future<Output = Result<WalletInfo>> + Send + 'a>>;
+    async fn load_wallet(&mut self, config: WalletConfig, passphrase: Option<String>) -> Result<WalletInfo>;
     
     /// Get wallet balance
-    fn get_balance<'a>(&'a self, addresses: Option<Vec<String>>) -> Pin<Box<dyn Future<Output = Result<WalletBalance>> + Send + 'a>>;
+    async fn get_balance(&self, addresses: Option<Vec<String>>) -> Result<WalletBalance>;
     
     /// Get wallet address
-    fn get_address<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_address(&self) -> Result<String>;
     
     /// Get multiple addresses
-    fn get_addresses<'a>(&'a self, count: u32) -> Pin<Box<dyn Future<Output = Result<Vec<AddressInfo>>> + Send + 'a>>;
+    async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>>;
     
     /// Send Bitcoin transaction
-    fn send<'a>(&'a mut self, params: SendParams) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn send(&mut self, params: SendParams) -> Result<String>;
     
     /// Get UTXOs
-    fn get_utxos<'a>(&'a self, include_frozen: bool, addresses: Option<Vec<String>>) -> Pin<Box<dyn Future<Output = Result<Vec<(bitcoin::OutPoint, UtxoInfo)>>> + Send + 'a>>;
+    async fn get_utxos(&self, include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(bitcoin::OutPoint, UtxoInfo)>>;
     
     /// Get transaction history
-    fn get_history<'a>(&'a self, count: u32, address: Option<String>) -> Pin<Box<dyn Future<Output = Result<Vec<TransactionInfo>>> + Send + 'a>>;
+    async fn get_history(&self, count: u32, address: Option<String>) -> Result<Vec<TransactionInfo>>;
     
     /// Freeze a UTXO
-    fn freeze_utxo<'a>(&'a self, utxo: String, reason: Option<String>) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+    async fn freeze_utxo(&self, utxo: String, reason: Option<String>) -> Result<()>;
     
     /// Unfreeze a UTXO
-    fn unfreeze_utxo<'a>(&'a self, utxo: String) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+    async fn unfreeze_utxo(&self, utxo: String) -> Result<()>;
     
     /// Create transaction without broadcasting
-    fn create_transaction<'a>(&'a self, params: SendParams) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn create_transaction(&self, params: SendParams) -> Result<String>;
     
     /// Sign transaction
-    fn sign_transaction<'a>(&'a mut self, tx_hex: String) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn sign_transaction(&mut self, tx_hex: String) -> Result<String>;
     
     /// Broadcast transaction
-    fn broadcast_transaction<'a>(&'a self, tx_hex: String) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn broadcast_transaction(&self, tx_hex: String) -> Result<String>;
     
     /// Estimate fee
-    fn estimate_fee<'a>(&'a self, target: u32) -> Pin<Box<dyn Future<Output = Result<FeeEstimate>> + Send + 'a>>;
+    async fn estimate_fee(&self, target: u32) -> Result<FeeEstimate>;
     
     /// Get current fee rates
-    fn get_fee_rates<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<FeeRates>> + Send + 'a>>;
+    async fn get_fee_rates(&self) -> Result<FeeRates>;
     
     /// Synchronize wallet
-    fn sync<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+    async fn sync(&self) -> Result<()>;
     
     /// Backup wallet
-    fn backup<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn backup(&self) -> Result<String>;
     
     /// Get mnemonic
-    fn get_mnemonic<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + 'a>>;
+    async fn get_mnemonic(&self) -> Result<Option<String>>;
     
     /// Get network
     fn get_network(&self) -> Network;
 
     /// Get master public key (xpub) if available
-    fn get_master_public_key<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + 'a>>;
+    async fn get_master_public_key(&self) -> Result<Option<String>>;
     
     /// Get internal key for wallet
-    fn get_internal_key<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))>> + Send + 'a>>;
+    async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))>;
     
     /// Sign PSBT
-    fn sign_psbt<'a>(&'a mut self, psbt: &bitcoin::psbt::Psbt) -> Pin<Box<dyn Future<Output = Result<bitcoin::psbt::Psbt>> + Send + 'a>>;
+    async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt>;
     
     /// Get keypair for wallet
-    fn get_keypair<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<bitcoin::secp256k1::Keypair>> + Send + 'a>>;
+    async fn get_keypair(&self) -> Result<bitcoin::secp256k1::Keypair>;
 
     /// Set the passphrase for the wallet
     fn set_passphrase(&mut self, passphrase: Option<String>);
 
     /// Get the index of the last used address.
-    fn get_last_used_address_index<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<u32>> + Send + 'a>>;
+    async fn get_last_used_address_index(&self) -> Result<u32>;
 
-    fn get_enriched_utxos<'a>(&'a self, addresses: Option<Vec<String>>) -> Pin<Box<dyn Future<Output = Result<Vec<crate::provider::EnrichedUtxo>>> + Send + 'a>>;
+    async fn get_enriched_utxos(&self, addresses: Option<Vec<String>>) -> Result<Vec<crate::provider::EnrichedUtxo>>;
 
-    fn get_all_balances<'a>(&'a self, addresses: Option<Vec<String>>) -> Pin<Box<dyn Future<Output = Result<crate::provider::AllBalances>> + Send + 'a>>;
+    async fn get_all_balances(&self, addresses: Option<Vec<String>>) -> Result<crate::provider::AllBalances>;
 
 }
 
@@ -327,8 +339,10 @@ pub struct Utxo {
 }
 
 /// Trait for providing UTXOs
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait UtxoProvider {
-    fn get_utxos_by_spec<'a>(&'a self, spec: &'a [String]) -> Pin<Box<dyn Future<Output = Result<Vec<Utxo>>> + Send + 'a>>;
+    async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>>;
 }
 
 
@@ -384,39 +398,43 @@ pub struct FeeRates {
 
 
 /// Trait for address resolution
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait AddressResolver {
     /// Resolve address identifiers in a string
-    fn resolve_all_identifiers<'a>(&'a self, input: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn resolve_all_identifiers(&self, input: &str) -> Result<String>;
     
     /// Check if string contains identifiers
     fn contains_identifiers(&self, input: &str) -> bool;
     
     /// Get address for specific type and index
-    fn get_address<'a>(&'a self, address_type: &'a str, index: u32) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_address(&self, address_type: &str, index: u32) -> Result<String>;
     
     /// List available address identifiers
-    fn list_identifiers<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + 'a>>;
+    async fn list_identifiers(&self) -> Result<Vec<String>>;
 }
 
 /// Trait for dynamic address derivation from master public keys
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait KeystoreProvider {
     /// Derive addresses dynamically from master public key
-    fn derive_addresses<'a>(&'a self, master_public_key: &'a str, network_params: &'a NetworkParams, script_types: &'a [&'a str], start_index: u32, count: u32) -> Pin<Box<dyn Future<Output = Result<Vec<KeystoreAddress>>> + Send + 'a>>;
+    async fn derive_addresses(&self, master_public_key: &str, network_params: &NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>>;
     
     /// Get default addresses for display (first 5 of each type for given network)
-    fn get_default_addresses<'a>(&'a self, master_public_key: &'a str, network_params: &'a NetworkParams) -> Pin<Box<dyn Future<Output = Result<Vec<KeystoreAddress>>> + Send + 'a>>;
+    async fn get_default_addresses(&self, master_public_key: &str, network_params: &NetworkParams) -> Result<Vec<KeystoreAddress>>;
 
     /// Get address for specific type and index
-    fn get_address<'a>(&'a self, address_type: &'a str, index: u32) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_address(&self, address_type: &str, index: u32) -> Result<String>;
     
     /// Parse address range specification (e.g., "p2tr:0-1000", "p2sh:0-500")
     fn parse_address_range(&self, range_spec: &str) -> Result<(String, u32, u32)>;
     
     /// Get keystore info from master public key
-    fn get_keystore_info<'a>(&'a self, master_fingerprint: &'a str, created_at: u64, version: &'a str) -> Pin<Box<dyn Future<Output = Result<KeystoreInfo>> + Send + 'a>>;
+    async fn get_keystore_info(&self, master_fingerprint: &str, created_at: u64, version: &str) -> Result<KeystoreInfo>;
 
     /// Derive a single address from a full derivation path
-    fn derive_address_from_path<'a>(&'a self, master_public_key: &'a str, path: &'a DerivationPath, script_type: &'a str, network_params: &'a NetworkParams) -> Pin<Box<dyn Future<Output = Result<KeystoreAddress>> + Send + 'a>>;
+    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &NetworkParams) -> Result<KeystoreAddress>;
 }
 
 /// Address information for keystore operations
@@ -443,259 +461,273 @@ pub struct KeystoreInfo {
 }
 
 /// Trait for Bitcoin Core RPC operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait BitcoinRpcProvider {
     /// Get current block count
-    fn get_block_count<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + 'a>>;
+    async fn get_block_count(&self) -> Result<u64>;
     
     /// Generate blocks to address (regtest only)
-    fn generate_to_address<'a>(&'a self, nblocks: u32, address: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue>;
 
     // Get the state info
-    fn get_blockchain_info<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_blockchain_info(&self) -> Result<JsonValue>;
 
     /// Get a new address from the node's wallet
-    fn get_new_address<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_new_address(&self) -> Result<JsonValue>;
     
     /// Get transaction hex
-    fn get_transaction_hex<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_transaction_hex(&self, txid: &str) -> Result<String>;
     
     /// Get block by hash
-    fn get_block<'a>(&'a self, hash: &'a str, raw: bool) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue>;
     
     /// Get block hash by height
-    fn get_block_hash<'a>(&'a self, height: u64) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_block_hash(&self, height: u64) -> Result<String>;
     
     /// Send raw transaction
-    fn send_raw_transaction<'a>(&'a self, tx_hex: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String>;
     
     /// Get mempool info
-    fn get_mempool_info<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_mempool_info(&self) -> Result<JsonValue>;
     
     /// Estimate smart fee
-    fn estimate_smart_fee<'a>(&'a self, target: u32) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn estimate_smart_fee(&self, target: u32) -> Result<JsonValue>;
     
     /// Get Esplora blocks tip height
-    fn get_esplora_blocks_tip_height<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + 'a>>;
+    async fn get_esplora_blocks_tip_height(&self) -> Result<u64>;
     
     /// Trace transaction
-    fn trace_transaction<'a>(&'a self, txid: &'a str, vout: u32, block: Option<&'a str>, tx: Option<&'a str>) -> Pin<Box<dyn Future<Output = Result<serde_json::Value>> + Send + 'a>>;
+    async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<serde_json::Value>;
 
     /// Get network info
-    fn get_network_info<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_network_info(&self) -> Result<JsonValue>;
 
     /// Get raw transaction
-    fn get_raw_transaction<'a>(&'a self, txid: &'a str, block_hash: Option<&'a str>) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<JsonValue>;
 
     /// Get block header
-    fn get_block_header<'a>(&'a self, hash: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_block_header(&self, hash: &str) -> Result<JsonValue>;
 
     /// Get block stats
-    fn get_block_stats<'a>(&'a self, hash: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_block_stats(&self, hash: &str) -> Result<JsonValue>;
 
     /// Get chain tips
-    fn get_chain_tips<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_chain_tips(&self) -> Result<JsonValue>;
 
     /// Get raw mempool
-    fn get_raw_mempool<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_raw_mempool(&self) -> Result<JsonValue>;
 
     /// Get tx out
-    fn get_tx_out<'a>(&'a self, txid: &'a str, vout: u32, include_mempool: bool) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue>;
 }
 
 /// Trait for bitcoind RPC operations using bitcoincore_rpc_json types
 
 /// Trait for Metashrew/Sandshrew RPC operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait MetashrewRpcProvider {
     /// Get Metashrew height
-    fn get_metashrew_height<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + 'a>>;
+    async fn get_metashrew_height(&self) -> Result<u64>;
 
     /// Get the state root for a given height.
-    fn get_state_root<'a>(&'a self, height: JsonValue) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_state_root(&self, height: JsonValue) -> Result<String>;
     
     /// Get contract metadata
-    fn get_contract_meta<'a>(&'a self, block: &'a str, tx: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_contract_meta(&self, block: &str, tx: &str) -> Result<JsonValue>;
     
     /// Trace transaction outpoint
-    fn trace_outpoint<'a>(&'a self, txid: &'a str, vout: u32) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn trace_outpoint(&self, txid: &str, vout: u32) -> Result<JsonValue>;
     
     /// Get spendables by address
-    fn get_spendables_by_address<'a>(&'a self, address: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_spendables_by_address(&self, address: &str) -> Result<JsonValue>;
     
     /// Get protorunes by address
-    fn get_protorunes_by_address<'a>(
-        &'a self,
-        address: &'a str,
+    async fn get_protorunes_by_address(
+        &self,
+        address: &str,
         block_tag: Option<String>,
         protocol_tag: u128,
-    ) -> Pin<Box<dyn Future<Output = Result<ProtoruneWalletResponse>> + Send + 'a>>;
+    ) -> Result<ProtoruneWalletResponse>;
     
     /// Get protorunes by outpoint
-    fn get_protorunes_by_outpoint<'a>(
-        &'a self,
-        txid: &'a str,
+    async fn get_protorunes_by_outpoint(
+        &self,
+        txid: &str,
         vout: u32,
         block_tag: Option<String>,
         protocol_tag: u128,
-    ) -> Pin<Box<dyn Future<Output = Result<ProtoruneOutpointResponse>> + Send + 'a>>;
+    ) -> Result<ProtoruneOutpointResponse>;
 }
 
 /// Trait for Metashrew provider operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait MetashrewProvider {
     /// Get the current block height.
-    fn get_height<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + 'a>>;
+    async fn get_height(&self) -> Result<u64>;
     /// Get the block hash for a given height.
-    fn get_block_hash<'a>(&'a self, height: u64) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_block_hash(&self, height: u64) -> Result<String>;
     /// Get the state root for a given height.
-    fn get_state_root<'a>(&'a self, height: JsonValue) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_state_root(&self, height: JsonValue) -> Result<String>;
 }
 
 /// Trait for Esplora API operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait EsploraProvider {
     /// Get blocks tip hash
-    fn get_blocks_tip_hash<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_blocks_tip_hash(&self) -> Result<String>;
     
     /// Get blocks tip height
-    fn get_blocks_tip_height<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + 'a>>;
+    async fn get_blocks_tip_height(&self) -> Result<u64>;
     
     /// Get blocks starting from height
-    fn get_blocks<'a>(&'a self, start_height: Option<u64>) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_blocks(&self, start_height: Option<u64>) -> Result<JsonValue>;
     
     /// Get block by height
-    fn get_block_by_height<'a>(&'a self, height: u64) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_block_by_height(&self, height: u64) -> Result<String>;
     
     /// Get block information
-    fn get_block<'a>(&'a self, hash: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_block(&self, hash: &str) -> Result<JsonValue>;
     
     /// Get block status
-    fn get_block_status<'a>(&'a self, hash: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_block_status(&self, hash: &str) -> Result<JsonValue>;
     
     /// Get block transaction IDs
-    fn get_block_txids<'a>(&'a self, hash: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_block_txids(&self, hash: &str) -> Result<JsonValue>;
     
     /// Get block header
-    fn get_block_header<'a>(&'a self, hash: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_block_header(&self, hash: &str) -> Result<String>;
     
     /// Get raw block data
-    fn get_block_raw<'a>(&'a self, hash: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_block_raw(&self, hash: &str) -> Result<String>;
     
     /// Get transaction ID by block hash and index
-    fn get_block_txid<'a>(&'a self, hash: &'a str, index: u32) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_block_txid(&self, hash: &str, index: u32) -> Result<String>;
     
     /// Get block transactions
-    fn get_block_txs<'a>(&'a self, hash: &'a str, start_index: Option<u32>) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<JsonValue>;
     
     /// Get address information
-    fn get_address_info<'a>(&'a self, address: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_address_info(&self, address: &str) -> Result<JsonValue>;
 
     /// Get address UTXOs
-    fn get_address_utxo<'a>(&'a self, address: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_address_utxo(&self, address: &str) -> Result<JsonValue>;
 
     /// Get address transactions
-    fn get_address_txs<'a>(&'a self, address: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_address_txs(&self, address: &str) -> Result<JsonValue>;
     
     /// Get address chain transactions
-    fn get_address_txs_chain<'a>(&'a self, address: &'a str, last_seen_txid: Option<&'a str>) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_address_txs_chain(&self, address: &str, last_seen_txid: Option<&str>) -> Result<JsonValue>;
     
     /// Get address mempool transactions
-    fn get_address_txs_mempool<'a>(&'a self, address: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_address_txs_mempool(&self, address: &str) -> Result<JsonValue>;
     
     /// Search addresses by prefix
-    fn get_address_prefix<'a>(&'a self, prefix: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_address_prefix(&self, prefix: &str) -> Result<JsonValue>;
     
     /// Get transaction information
-    fn get_tx<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_tx(&self, txid: &str) -> Result<JsonValue>;
     
     /// Get transaction hex
-    fn get_tx_hex<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_tx_hex(&self, txid: &str) -> Result<String>;
     
     /// Get raw transaction
-    fn get_tx_raw<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_tx_raw(&self, txid: &str) -> Result<String>;
     
     /// Get transaction status
-    fn get_tx_status<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_tx_status(&self, txid: &str) -> Result<JsonValue>;
     
     /// Get transaction merkle proof
-    fn get_tx_merkle_proof<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_tx_merkle_proof(&self, txid: &str) -> Result<JsonValue>;
     
     /// Get transaction merkle block proof
-    fn get_tx_merkleblock_proof<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn get_tx_merkleblock_proof(&self, txid: &str) -> Result<String>;
     
     /// Get transaction output spend status
-    fn get_tx_outspend<'a>(&'a self, txid: &'a str, index: u32) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<JsonValue>;
     
     /// Get transaction output spends
-    fn get_tx_outspends<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_tx_outspends(&self, txid: &str) -> Result<JsonValue>;
     
     /// Broadcast transaction
-    fn broadcast<'a>(&'a self, tx_hex: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn broadcast(&self, tx_hex: &str) -> Result<String>;
     
     /// Get mempool information
-    fn get_mempool<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_mempool(&self) -> Result<JsonValue>;
     
     /// Get mempool transaction IDs
-    fn get_mempool_txids<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_mempool_txids(&self) -> Result<JsonValue>;
     
     /// Get recent mempool transactions
-    fn get_mempool_recent<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_mempool_recent(&self) -> Result<JsonValue>;
     
     /// Get fee estimates
-    fn get_fee_estimates<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn get_fee_estimates(&self) -> Result<JsonValue>;
 }
 
 /// Trait for runestone operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait RunestoneProvider {
     /// Decode runestone from transaction
-    fn decode_runestone<'a>(&'a self, tx: &'a Transaction) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn decode_runestone(&self, tx: &Transaction) -> Result<JsonValue>;
     
     /// Format runestone with decoded messages
-    fn format_runestone_with_decoded_messages<'a>(&'a self, tx: &'a Transaction) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn format_runestone_with_decoded_messages(&self, tx: &Transaction) -> Result<JsonValue>;
     
     /// Analyze runestone from transaction ID
-    fn analyze_runestone<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn analyze_runestone(&self, txid: &str) -> Result<JsonValue>;
 }
 
 /// Trait for ord operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait OrdProvider {
     /// Get inscription by ID
-    fn get_inscription<'a>(&'a self, inscription_id: &'a str) -> Pin<Box<dyn Future<Output = Result<OrdInscription>> + Send + 'a>>;
+    async fn get_inscription(&self, inscription_id: &str) -> Result<OrdInscription>;
     
     /// Get inscriptions for a block
-    fn get_inscriptions_in_block<'a>(&'a self, block_hash: &'a str) -> Pin<Box<dyn Future<Output = Result<OrdInscriptions>> + Send + 'a>>;
+    async fn get_inscriptions_in_block(&self, block_hash: &str) -> Result<OrdInscriptions>;
     /// Get address information
-    fn get_ord_address_info<'a>(&'a self, address: &'a str) -> Pin<Box<dyn Future<Output = Result<OrdAddressInfo>> + Send + 'a>>;
+    async fn get_ord_address_info(&self, address: &str) -> Result<OrdAddressInfo>;
     /// Get block information
-    fn get_block_info<'a>(&'a self, query: &'a str) -> Pin<Box<dyn Future<Output = Result<OrdBlock>> + Send + 'a>>;
+    async fn get_block_info(&self, query: &str) -> Result<OrdBlock>;
     /// Get latest block count
-    fn get_ord_block_count<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + 'a>>;
+    async fn get_ord_block_count(&self) -> Result<u64>;
     /// Get latest blocks
-    fn get_ord_blocks<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<OrdBlocks>> + Send + 'a>>;
+    async fn get_ord_blocks(&self) -> Result<OrdBlocks>;
     /// Get children of an inscription
-    fn get_children<'a>(&'a self, inscription_id: &'a str, page: Option<u32>) -> Pin<Box<dyn Future<Output = Result<OrdChildren>> + Send + 'a>>;
+    async fn get_children(&self, inscription_id: &str, page: Option<u32>) -> Result<OrdChildren>;
     /// Get inscription content
-    fn get_content<'a>(&'a self, inscription_id: &'a str) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
+    async fn get_content(&self, inscription_id: &str) -> Result<Vec<u8>>;
     /// Get all inscriptions
-    fn get_inscriptions<'a>(&'a self, page: Option<u32>) -> Pin<Box<dyn Future<Output = Result<OrdInscriptions>> + Send + 'a>>;
+    async fn get_inscriptions(&self, page: Option<u32>) -> Result<OrdInscriptions>;
     /// Get output information
-    fn get_output<'a>(&'a self, output: &'a str) -> Pin<Box<dyn Future<Output = Result<OrdOutput>> + Send + 'a>>;
+    async fn get_output(&self, output: &str) -> Result<OrdOutput>;
     /// Get parents of an inscription
-    fn get_parents<'a>(&'a self, inscription_id: &'a str, page: Option<u32>) -> Pin<Box<dyn Future<Output = Result<OrdParents>> + Send + 'a>>;
+    async fn get_parents(&self, inscription_id: &str, page: Option<u32>) -> Result<OrdParents>;
     /// Get rune information
-    fn get_rune<'a>(&'a self, rune: &'a str) -> Pin<Box<dyn Future<Output = Result<OrdRuneInfo>> + Send + 'a>>;
+    async fn get_rune(&self, rune: &str) -> Result<OrdRuneInfo>;
     /// Get all runes
-    fn get_runes<'a>(&'a self, page: Option<u32>) -> Pin<Box<dyn Future<Output = Result<OrdRunes>> + Send + 'a>>;
+    async fn get_runes(&self, page: Option<u32>) -> Result<OrdRunes>;
     /// Get sat information
-    fn get_sat<'a>(&'a self, sat: u64) -> Pin<Box<dyn Future<Output = Result<OrdSat>> + Send + 'a>>;
+    async fn get_sat(&self, sat: u64) -> Result<OrdSat>;
     /// Get transaction information
-    fn get_tx_info<'a>(&'a self, txid: &'a str) -> Pin<Box<dyn Future<Output = Result<OrdTxInfo>> + Send + 'a>>;
+    async fn get_tx_info(&self, txid: &str) -> Result<OrdTxInfo>;
 }
 
 /// Trait for monitoring operations
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait MonitorProvider {
     /// Monitor blocks for events
-    fn monitor_blocks<'a>(&'a self, start: Option<u64>) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+    async fn monitor_blocks(&self, start: Option<u64>) -> Result<()>;
     
     /// Get block events
-    fn get_block_events<'a>(&'a self, height: u64) -> Pin<Box<dyn Future<Output = Result<Vec<BlockEvent>>> + Send + 'a>>;
+    async fn get_block_events(&self, height: u64) -> Result<Vec<BlockEvent>>;
 }
 
 /// Block event
@@ -708,6 +740,8 @@ pub struct BlockEvent {
 }
 
 /// Combined provider trait that includes all functionality
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait AlkanesProvider:
     JsonRpcProvider +
     StorageProvider +
@@ -746,70 +780,70 @@ pub trait AlkanesProvider:
     fn clone_box(&self) -> Box<dyn AlkanesProvider>;
     
     /// Initialize the provider
-    fn initialize<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+    async fn initialize(&self) -> Result<()>;
     
     /// Shutdown the provider
-    fn shutdown<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+    async fn shutdown(&self) -> Result<()>;
 
     /// Get a reference to the secp256k1 context
     fn secp(&self) -> &bitcoin::secp256k1::Secp256k1<bitcoin::secp256k1::All>;
 
     /// Get a single UTXO by its outpoint
-    fn get_utxo<'a>(&'a self, outpoint: &'a bitcoin::OutPoint) -> Pin<Box<dyn Future<Output = Result<Option<bitcoin::TxOut>>> + Send + 'a>>;
+    async fn get_utxo(&self, outpoint: &bitcoin::OutPoint) -> Result<Option<bitcoin::TxOut>>;
 
     /// Sign a taproot script spend sighash
-    fn sign_taproot_script_spend<'a>(&'a self, sighash: bitcoin::secp256k1::Message) -> Pin<Box<dyn Future<Output = Result<bitcoin::secp256k1::schnorr::Signature>> + Send + 'a>>;
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature>;
 
-    fn wrap<'a>(&'a mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn wrap(&mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Result<String>;
 
-    fn unwrap<'a>(&'a mut self, amount: u64, address: Option<String>) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    async fn unwrap(&mut self, amount: u64, address: Option<String>) -> Result<String>;
 
     /// Execute alkanes smart contract
-    fn execute<'a>(&'a mut self, params: EnhancedExecuteParams) -> Pin<Box<dyn Future<Output = Result<ExecutionState>> + Send + 'a>>;
+    async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState>;
 
     /// Resume execution after user confirmation (for simple transactions)
-    fn resume_execution<'a>(
-        &'a mut self,
+    async fn resume_execution(
+        &mut self,
         state: ReadyToSignTx,
-        params: &'a EnhancedExecuteParams,
-    ) -> Pin<Box<dyn Future<Output = Result<EnhancedExecuteResult>> + Send + 'a>>;
+        params: &EnhancedExecuteParams,
+    ) -> Result<EnhancedExecuteResult>;
 
     /// Resume execution after commit transaction confirmation
-    fn resume_commit_execution<'a>(
-        &'a mut self,
+    async fn resume_commit_execution(
+        &mut self,
         state: ReadyToSignCommitTx,
-    ) -> Pin<Box<dyn Future<Output = Result<ExecutionState>> + Send + 'a>>;
+    ) -> Result<ExecutionState>;
 
     /// Resume execution after reveal transaction confirmation
-    fn resume_reveal_execution<'a>(
-        &'a mut self,
+    async fn resume_reveal_execution(
+        &mut self,
         state: ReadyToSignRevealTx,
-    ) -> Pin<Box<dyn Future<Output = Result<EnhancedExecuteResult>> + Send + 'a>>;
+    ) -> Result<EnhancedExecuteResult>;
 
-    fn view<'a>(&'a self, contract_id: &'a str, view_fn: &'a str, params: Option<&'a [u8]>) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue>;
     
-    fn protorunes_by_address<'a>(
-        &'a self,
-        address: &'a str,
+    async fn protorunes_by_address(
+        &self,
+        address: &str,
         block_tag: Option<String>,
         protocol_tag: u128,
-    ) -> Pin<Box<dyn Future<Output = Result<ProtoruneWalletResponse>> + Send + 'a>>;
-    fn protorunes_by_outpoint<'a>(
-        &'a self,
-        txid: &'a str,
+    ) -> Result<ProtoruneWalletResponse>;
+    async fn protorunes_by_outpoint(
+        &self,
+        txid: &str,
         vout: u32,
         block_tag: Option<String>,
         protocol_tag: u128,
-    ) -> Pin<Box<dyn Future<Output = Result<ProtoruneOutpointResponse>> + Send + 'a>>;
-    fn simulate<'a>(&'a self, contract_id: &'a str, context: &'a crate::alkanes_pb::MessageContextParcel) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
-    fn trace<'a>(&'a self, outpoint: &'a str) -> Pin<Box<dyn Future<Output = Result<alkanes_pb::Trace>> + Send + 'a>>;
-    fn get_block<'a>(&'a self, height: u64) -> Pin<Box<dyn Future<Output = Result<alkanes_pb::BlockResponse>> + Send + 'a>>;
-    fn sequence<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
-    fn spendables_by_address<'a>(&'a self, address: &'a str) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>;
-    fn trace_block<'a>(&'a self, height: u64) -> Pin<Box<dyn Future<Output = Result<alkanes_pb::Trace>> + Send + 'a>>;
-    fn get_bytecode<'a>(&'a self, alkane_id: &'a str, block_tag: Option<String>) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
-    fn inspect<'a>(&'a self, target: &'a str, config: crate::alkanes::AlkanesInspectConfig) -> Pin<Box<dyn Future<Output = Result<crate::alkanes::AlkanesInspectResult>> + Send + 'a>>;
-    fn get_balance<'a>(&'a self, address: Option<&'a str>) -> Pin<Box<dyn Future<Output = Result<Vec<crate::alkanes::AlkaneBalance>>> + Send + 'a>>;
+    ) -> Result<ProtoruneOutpointResponse>;
+    async fn simulate(&self, contract_id: &str, context: &crate::alkanes_pb::MessageContextParcel) -> Result<JsonValue>;
+    async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace>;
+    async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse>;
+    async fn sequence(&self) -> Result<JsonValue>;
+    async fn spendables_by_address(&self, address: &str) -> Result<JsonValue>;
+    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace>;
+    async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String>;
+    async fn inspect(&self, target: &str, config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult>;
+    async fn get_balance(&self, address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>>;
 }
 
 #[cfg(target_arch = "wasm32")]

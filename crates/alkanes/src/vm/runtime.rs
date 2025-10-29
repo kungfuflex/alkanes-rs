@@ -1,5 +1,5 @@
 use std::fmt;
-use metashrew_support::environment::RuntimeEnvironment;
+use metashrew_sync::traits::RuntimeAdapter;
 
 use alkanes_support::{
     cellpack::Cellpack, context::Context, id::AlkaneId, parcel::AlkaneTransferParcel, trace::Trace,
@@ -11,7 +11,7 @@ use protorune::message::MessageContextParcel;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct AlkanesRuntimeContext<E: RuntimeEnvironment + Clone> {
+pub struct AlkanesRuntimeContext<E: RuntimeAdapter + Clone> {
     pub myself: AlkaneId,
     pub caller: AlkaneId,
     pub incoming_alkanes: AlkaneTransferParcel,
@@ -22,7 +22,7 @@ pub struct AlkanesRuntimeContext<E: RuntimeEnvironment + Clone> {
     _phantom: PhantomData<E>,
 }
 
-impl<E: RuntimeEnvironment + Clone> Default for AlkanesRuntimeContext<E> {
+impl<E: RuntimeAdapter + Clone> Default for AlkanesRuntimeContext<E> {
     fn default() -> Self {
         Self {
             myself: AlkaneId::default(),
@@ -37,7 +37,7 @@ impl<E: RuntimeEnvironment + Clone> Default for AlkanesRuntimeContext<E> {
     }
 }
 
-impl<E: RuntimeEnvironment + Clone> fmt::Debug for AlkanesRuntimeContext<E> {
+impl<E: RuntimeAdapter + Clone> fmt::Debug for AlkanesRuntimeContext<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AlkanesRuntimeContext")
             .field("myself", &self.myself)
@@ -48,7 +48,7 @@ impl<E: RuntimeEnvironment + Clone> fmt::Debug for AlkanesRuntimeContext<E> {
     }
 }
 
-impl<E: RuntimeEnvironment + Clone> AlkanesRuntimeContext<E> {
+impl<E: RuntimeAdapter + Clone> AlkanesRuntimeContext<E> {
     pub fn from_parcel_and_cellpack(
         message: &MessageContextParcel<E>,
         cellpack: &Cellpack,

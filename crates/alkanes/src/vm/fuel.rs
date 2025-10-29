@@ -2,9 +2,9 @@ use crate::{
     message::AlkaneMessageContext,
     vm::{instance::AlkanesInstance, state::AlkanesState},
 };
-use alkanes_support::{logging, utils::overflow_error, virtual_fuel::VirtualFuelBytes};
+use alkanes_support::{utils::overflow_error};
 use anyhow::{anyhow, Result};
-use metashrew_support::environment::RuntimeEnvironment;
+use metashrew_sync::traits::RuntimeAdapter;
 use bitcoin::{Block, Transaction, Witness};
 use ordinals::{Artifact, Runestone};
 use protorune::message::MessageContext;
@@ -18,10 +18,10 @@ use wasmi::*;
 
 
 use std::marker::PhantomData;
-pub struct AlkanesTransaction<'a, E: RuntimeEnvironment>(pub &'a Transaction, pub PhantomData<E>);
-pub struct AlkanesBlock<'a, E: RuntimeEnvironment + Clone>(pub &'a Block, pub PhantomData<E>) where E: std::default::Default;
+pub struct AlkanesTransaction<'a, E: RuntimeAdapter>(pub &'a Transaction, pub PhantomData<E>);
+pub struct AlkanesBlock<'a, E: RuntimeAdapter + Clone>(pub &'a Block, pub PhantomData<E>) where E: std::default::Default;
 
-impl<'a, E: RuntimeEnvironment + 'static + Clone + std::default::Default> VirtualFuelBytes for AlkanesTransaction<'a, E> {
+impl<'a, E: RuntimeAdapter + 'static + Clone + std::default::Default> VirtualFuelBytes for AlkanesTransaction<'a, E> {
     fn vfsize(&self) -> u64 {
         if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(&self.0) {
             if let Ok(protostones) = Protostone::from_runestone(runestone) {
@@ -71,7 +71,7 @@ impl<'a, E: RuntimeEnvironment + 'static + Clone + std::default::Default> Virtua
     }
 }
 
-impl<'a, E: RuntimeEnvironment + 'a + 'static + Clone + std::default::Default>
+impl<'a, E: RuntimeAdapter + 'a + 'static + Clone + std::default::Default>
     VirtualFuelBytes for AlkanesBlock<'a, E>
 {
     fn vfsize(&self) -> u64 {
@@ -176,7 +176,7 @@ impl FuelTank {
         _FUEL_TANK.read().unwrap().as_ref().unwrap().current_txindex == u32::MAX
     }
 
-    pub fn initialize<E: RuntimeEnvironment + Clone + 'static + std::default::Default>(block: &Block, height: u32) {
+    pub fn initialize<E: RuntimeAdapter + Clone + 'static + std::default::Default>(block: &Block, height: u32) {
         let mut tank = _FUEL_TANK.write().unwrap();
         *tank = Some(FuelTank {
             current_txindex: u32::MAX,
@@ -256,7 +256,7 @@ impl FuelTank {
         // Only refund the remaining fuel (block_metered_fuel) that wasn't consumed
         // This value is updated by consume_fuel() to reflect the remaining amount
         // after transaction execution
-        logging::record_excess_fuel_unused(tank.block_metered_fuel);
+        //logging::record_excess_fuel_unused(tank.block_metered_fuel);
         tank.block_fuel = tank.block_fuel + tank.block_metered_fuel;
         tank.size = tank.size - tank.txsize;
 
@@ -269,7 +269,7 @@ impl FuelTank {
     }
 
     pub fn consume_fuel(n: u64) -> Result<()> {
-        logging::record_fuel_consumed(n);
+        //logging::record_fuel_consumed(n);
         let mut tank = _FUEL_TANK.write().unwrap();
         let tank = tank.as_mut().unwrap();
 
@@ -361,21 +361,21 @@ pub trait Fuelable {
     fn consume_fuel(&mut self, n: u64) -> Result<()>;
 }
 
-impl<'a, E: RuntimeEnvironment + Clone> Fuelable for Caller<'_, AlkanesState<'a, E>> {
+impl<'a, E: RuntimeAdapter + Clone> Fuelable for Caller<'_, AlkanesState<'a, E>> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())
     }
 }
 
-impl<'a, E: RuntimeEnvironment + Clone> Fuelable for AlkanesInstance<'a, E> {
+impl<'a, E: RuntimeAdapter + Clone> Fuelable for AlkanesInstance<'a, E> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
         overflow_error((self.store.get_fuel().unwrap() as u64).checked_sub(n))?;
         Ok(())
     }
 }
 
-pub fn consume_fuel<'a, E: RuntimeEnvironment + Clone>(
+pub fn consume_fuel<'a, E: RuntimeAdapter + Clone>(
     caller: &mut Caller<'_, AlkanesState<'a, E>>,
     n: u64,
 ) -> Result<()> {

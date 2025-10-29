@@ -2,9 +2,9 @@ use alkanes_support::id::AlkaneId;
 use alkanes_support::trace::{TraceContext, TraceEvent};
 use metashrew_core::index_pointer::AtomicPointer;
 
-use metashrew_support::environment::RuntimeEnvironment;
+use metashrew_sync::traits::RuntimeAdapter;
 
-pub trait Extcall<E: RuntimeEnvironment + Clone> {
+pub trait Extcall<E: RuntimeAdapter + Clone> {
     fn isdelegate() -> bool;
     fn isstatic() -> bool;
     fn event(context: TraceContext) -> TraceEvent;
@@ -30,7 +30,7 @@ pub trait Extcall<E: RuntimeEnvironment + Clone> {
 
 pub struct Call(());
 
-impl<E: RuntimeEnvironment + Clone> Extcall<E> for Call {
+impl<E: RuntimeAdapter + Clone> Extcall<E> for Call {
     fn isdelegate() -> bool {
         false
     }
@@ -44,7 +44,7 @@ impl<E: RuntimeEnvironment + Clone> Extcall<E> for Call {
 
 pub struct Delegatecall(());
 
-impl<E: RuntimeEnvironment + Clone> Extcall<E> for Delegatecall {
+impl<E: RuntimeAdapter + Clone> Extcall<E> for Delegatecall {
     fn isdelegate() -> bool {
         true
     }
@@ -58,7 +58,7 @@ impl<E: RuntimeEnvironment + Clone> Extcall<E> for Delegatecall {
 
 pub struct Staticcall(());
 
-impl<E: RuntimeEnvironment + Clone> Extcall<E> for Staticcall {
+impl<E: RuntimeAdapter + Clone> Extcall<E> for Staticcall {
     fn isdelegate() -> bool {
         false
     }

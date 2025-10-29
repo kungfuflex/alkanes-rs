@@ -6,19 +6,19 @@ use alkanes_support::{
     response::ExtendedCallResponse,
 };
 use anyhow::{anyhow, Result};
-use metashrew_support::environment::RuntimeEnvironment;
+use metashrew_sync::traits::RuntimeAdapter;
 use hex;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
 
 
 
-pub struct AlkanesInstance<'a, E: RuntimeEnvironment + Clone> {
+pub struct AlkanesInstance<'a, E: RuntimeAdapter + Clone> {
     pub(crate) instance: Instance,
     pub(crate) store: Store<AlkanesState<'a, E>>,
 }
 
-impl<'a, E: RuntimeEnvironment + 'static + Clone + Default> AlkanesInstance<'a, E> {
+impl<'a, E: RuntimeAdapter + 'static + Clone + Default> AlkanesInstance<'a, E> {
     pub fn consume_fuel(&mut self, fuel: u64) -> Result<()> {
         let fuel_remaining = self.store.get_fuel()?;
         if fuel_remaining < fuel {

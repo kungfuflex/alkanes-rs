@@ -295,6 +295,7 @@ dependencies = [
  "hex_lit",
  "metashrew-core",
  "metashrew-support",
+ "metashrew-sync",
  "num",
  "once_cell",
  "ordinals 1.2.3",

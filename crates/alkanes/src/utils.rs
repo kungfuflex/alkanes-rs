@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use metashrew_support::environment::RuntimeEnvironment;
+use metashrew_core::traits::RuntimeAdapter;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer, KeyValuePointer};
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::{AlkaneTransfer, AlkaneTransferParcel};
@@ -10,7 +10,7 @@ use bitcoin::OutPoint;
 use std::io::Cursor;
 use metashrew_support::utils::consensus_decode;
 
-pub fn balance_pointer<E: RuntimeEnvironment + Clone>(
+pub fn balance_pointer<E: RuntimeAdapter + Clone>(
     atomic: &mut AtomicPointer<E>,
     who: &AlkaneId,
     what: &AlkaneId,
@@ -30,14 +30,14 @@ pub fn balance_pointer<E: RuntimeEnvironment + Clone>(
     ptr
 }
 
-pub fn alkane_inventory_pointer<E: RuntimeEnvironment + Clone>(who: &AlkaneId) -> IndexPointer<E> {
+pub fn alkane_inventory_pointer<E: RuntimeAdapter + Clone>(who: &AlkaneId) -> IndexPointer<E> {
     let who_bytes: Vec<u8> = who.clone().into();
     let ptr = IndexPointer::<E>::from_keyword("/alkanes/")
         .select(&who_bytes)
         .keyword("/inventory/");
     ptr
 }
-pub fn alkane_id_to_outpoint<E: RuntimeEnvironment + Clone>(
+pub fn alkane_id_to_outpoint<E: RuntimeAdapter + Clone>(
     alkane_id: &AlkaneId,
     env: &mut E,
 ) -> Result<OutPoint, anyhow::Error> {
@@ -56,7 +56,7 @@ pub fn alkane_id_to_outpoint<E: RuntimeEnvironment + Clone>(
     Ok(outpoint)
 }
 
-pub fn credit_balances<E: RuntimeEnvironment + Clone>(
+pub fn credit_balances<E: RuntimeAdapter + Clone>(
     atomic: &mut AtomicPointer<E>,
     who: &AlkaneId,
     runes: &Vec<RuneTransfer>,
@@ -96,7 +96,7 @@ pub fn credit_balances<E: RuntimeEnvironment + Clone>(
     Ok(this_balance - transfer.value)
 }
 
-pub fn debit_balances<E: RuntimeEnvironment + Clone>(
+pub fn debit_balances<E: RuntimeAdapter + Clone>(
     atomic: &mut AtomicPointer<E>,
     who: &AlkaneId,
     runes: &AlkaneTransferParcel,
@@ -109,7 +109,7 @@ pub fn debit_balances<E: RuntimeEnvironment + Clone>(
     }
     Ok(())
 }
-pub fn transfer_from<E: RuntimeEnvironment + Clone>(
+pub fn transfer_from<E: RuntimeAdapter + Clone>(
     runes: &AlkaneTransferParcel,
     atomic: &mut AtomicPointer<E>,
     from: &AlkaneId,
@@ -133,7 +133,7 @@ pub fn transfer_from<E: RuntimeEnvironment + Clone>(
     }
     Ok(())
 }
-pub fn pipe_storagemap_to<E: RuntimeEnvironment + Clone>(
+pub fn pipe_storagemap_to<E: RuntimeAdapter + Clone>(
     from: &StorageMap,
     to: &mut AtomicPointer<E>,
     env: &mut E,
