@@ -94,6 +94,15 @@ pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
         .collect::<Vec<Vec<u8>>>()
 }
 
+// the first semicolon separates the block from the value
+fn len_after_semicolon(data: &Arc<Vec<u8>>) -> usize {
+    if let Some(pos) = data.iter().position(|&b| b == 0x3A) {
+        data.len().saturating_sub(pos + 1)
+    } else {
+        data.len()
+    }
+}
+
 pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
     let last_block = std::cmp::max(
         fr_btc_storage_pointer()
@@ -107,7 +116,10 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for mut payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
-                if OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get().len() == 0 {
+                let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
+                println!("spendable_by: {:?}", spendable_by);
+                // 0 is possible if the outpoint is never set. 1 is possible if it was set then mullified
+                if len_after_semicolon(&spendable_by) <= 1 {
                     payment.fulfilled = true;
                 }
                 if !payment.fulfilled {
@@ -144,7 +156,7 @@ pub fn update_last_block(height: u128) -> Result<()> {
             for payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
                 let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-                if spendable_by.len() > 1 {
+                if len_after_semicolon(&spendable_by) > 1 {
                     all_fulfilled = false;
                     break;
                 }
