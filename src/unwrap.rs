@@ -138,7 +138,7 @@ pub fn update_last_block(height: u128) -> Result<()> {
         let mut all_fulfilled = true;
         let all_payment_list_bytes = fr_btc_payments_at_block(i);
         if all_payment_list_bytes.len() == 0 {
-            last_block = i;
+            last_block = i + 1;
             continue;
         }
         for payment_list_bytes in all_payment_list_bytes {
@@ -146,7 +146,6 @@ pub fn update_last_block(height: u128) -> Result<()> {
             for payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
                 let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-                println!("spendable_by in update_last_block: {:?}", spendable_by);
                 if spendable_by.len() > 1 {
                     all_fulfilled = false;
                     break;
@@ -157,7 +156,7 @@ pub fn update_last_block(height: u128) -> Result<()> {
             }
         }
         if all_fulfilled {
-            last_block = i;
+            last_block = i + 1;
         } else {
             break;
         }
