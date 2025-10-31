@@ -9,9 +9,9 @@ use wasmi::*;
 
 pub struct AlkanesExportsImpl(());
 impl AlkanesExportsImpl {
-    pub fn _get_export<E: RuntimeEnvironment + Clone + Default>(vm: &mut AlkanesInstance<E>, name: &str) -> Result<Func> {
+    pub fn _get_export(vm: &mut AlkanesInstance, name: &str) -> Result<Func> {
         let instance: &mut Instance = &mut vm.instance;
-        let store: &mut Store<AlkanesState<E>> = &mut vm.store;
+        let store: &mut Store<AlkanesState> = &mut vm.store;
         Ok(instance.get_func(store, name).ok_or("").map_err(|_| {
             anyhow!(format!(
                 "{} not found -- is this WASM built with the ALKANES SDK?",

@@ -72,10 +72,9 @@ impl<'a, E: RuntimeAdapter + 'static + Clone + Default> AlkanesInstance<'a, E> {
             .rollback();
     }
     pub fn from_alkane(
-        context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
+        context: Arc<Mutex<AlkanesRuntimeContext>>,
         binary: Arc<Vec<u8>>,
         start_fuel: u64,
-        env: &'a mut E,
     ) -> Result<Self> {
         /*
         let binary = context
