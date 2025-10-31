@@ -117,9 +117,8 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
             for mut payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
                 let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-                println!("spendable_by: {:?}", spendable_by);
-                // 0 is possible if the outpoint is never set. 1 is possible if it was set then mullified
-                if len_after_semicolon(&spendable_by) <= 1 {
+                // 0 is possible if the outpoint is never set. 1 is possible if it was set then nullified
+                if spendable_by.len() <= 1 {
                     payment.fulfilled = true;
                 }
                 if !payment.fulfilled {
