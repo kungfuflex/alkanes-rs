@@ -94,15 +94,6 @@ pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
         .collect::<Vec<Vec<u8>>>()
 }
 
-// the first semicolon separates the block from the value
-fn len_after_semicolon(data: &Arc<Vec<u8>>) -> usize {
-    if let Some(pos) = data.iter().position(|&b| b == 0x3A) {
-        data.len().saturating_sub(pos + 1)
-    } else {
-        data.len()
-    }
-}
-
 pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
     let last_block = std::cmp::max(
         fr_btc_storage_pointer()
@@ -155,7 +146,8 @@ pub fn update_last_block(height: u128) -> Result<()> {
             for payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
                 let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-                if len_after_semicolon(&spendable_by) > 1 {
+                println!("spendable_by in update_last_block: {:?}", spendable_by);
+                if spendable_by.len() > 1 {
                     all_fulfilled = false;
                     break;
                 }
