@@ -6,7 +6,6 @@ use alkanes_support::{
     response::ExtendedCallResponse,
 };
 use anyhow::{anyhow, Result};
-use metashrew_support::environment::RuntimeEnvironment;
 use hex;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
@@ -65,7 +64,7 @@ impl<'a, E: RuntimeAdapter + 'static + Clone + Default> AlkanesInstance<'a, E> {
                 .clone()
         };
         let env = &mut self.store.data_mut().env;
-        atomic.commit(env);
+        atomic.commit();
     }
     pub fn rollback(&mut self) {
         (&mut self.store.data_mut().context.lock().unwrap().message)

@@ -199,16 +199,16 @@ pub fn get_view_mode() -> bool {
     unsafe { _VIEW }
 }
 
-pub fn is_genesis<E: RuntimeEnvironment + Clone + Default>(env: &mut E, height: u64) -> bool {
-    let mut init_ptr = IndexPointer::<E>::from_keyword("/seen-genesis");
-    let has_not_seen_genesis = init_ptr.get(env).len() == 0;
+pub fn is_genesis(height: u64) -> bool {
+    let mut init_ptr: IndexPointer = IndexPointer::from_keyword("/seen-genesis");
+    let has_not_seen_genesis = init_ptr.get().len() == 0;
     let is_genesis = if has_not_seen_genesis {
         get_view_mode() || height >= genesis::GENESIS_BLOCK
     } else {
         false
     };
     if is_genesis {
-        init_ptr.set_value(env, 0x01_u8);
+        init_ptr.set_value(0x01_u8);
     }
     is_genesis
 }

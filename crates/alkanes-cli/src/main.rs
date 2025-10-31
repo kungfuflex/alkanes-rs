@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
 
     // Create a new SystemDeezel instance
     let common_args: alkanes_cli_common::commands::Args = (&args).into();
-    let mut system = alkanes_cli_sys::SystemAlkanesCli::new(&common_args).await?;
+    let mut system = alkanes_cli_sys::SystemDeezel::new(&common_args).await?;
 
     // Execute the command
     execute_command(&mut system, args.command).await
@@ -52,7 +52,7 @@ async fn execute_command<T: System + UtxoProvider>(system: &mut T, command: Comm
     }
 }
 
-async fn execute_metashrew_command(provider: &dyn AlkanesProvider, command: MetashrewCommands) -> Result<()> {
+async fn execute_metashrew_command(provider: &dyn DeezelProvider, command: MetashrewCommands) -> Result<()> {
     match command {
         MetashrewCommands::Height => {
             let height = provider.get_height().await?;
@@ -340,7 +340,7 @@ async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone
 
 
 async fn execute_esplora_command(
-    provider: &dyn AlkanesProvider,
+    provider: &dyn DeezelProvider,
     command: alkanes_cli_common::commands::EsploraCommands,
 ) -> anyhow::Result<()> {
     match command {
@@ -579,7 +579,7 @@ async fn execute_esplora_command(
 }
 
 async fn execute_ord_command(
-    provider: &dyn AlkanesProvider,
+    provider: &dyn DeezelProvider,
     command: alkanes_cli_common::commands::OrdCommands,
 ) -> anyhow::Result<()> {
     match command {
@@ -766,7 +766,7 @@ async fn execute_ord_command(
 }
 
 async fn execute_protorunes_command(
-    provider: &dyn AlkanesProvider,
+    provider: &dyn DeezelProvider,
     command: Protorunes,
 ) -> anyhow::Result<()> {
     match command {

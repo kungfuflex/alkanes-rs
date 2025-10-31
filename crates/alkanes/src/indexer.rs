@@ -1,6 +1,4 @@
-use alkanes_support::logging;
 use metashrew_support::{
-    environment::RuntimeEnvironment,
     index_pointer::{IndexPointer, KeyValuePointer},
 };
 use protorune::{
@@ -18,6 +16,61 @@ use anyhow::Result;
 use bitcoin::blockdata::block::Block;
 use protorune::Protorune;
 
+#[cfg(all(
+    not(feature = "mainnet"),
+    not(feature = "testnet"),
+    not(feature = "luckycoin"),
+    not(feature = "dogecoin"),
+    not(feature = "bellscoin")
+))]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("bcrt"),
+        p2pkh_prefix: 0x64,
+        p2sh_prefix: 0xc4,
+    });
+}
+#[cfg(feature = "mainnet")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("bc"),
+        p2sh_prefix: 0x05,
+        p2pkh_prefix: 0x00,
+    });
+}
+#[cfg(feature = "testnet")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("tb"),
+        p2pkh_prefix: 0x6f,
+        p2sh_prefix: 0xc4,
+    });
+}
+#[cfg(feature = "luckycoin")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("lky"),
+        p2pkh_prefix: 0x2f,
+        p2sh_prefix: 0x05,
+    });
+}
+
+#[cfg(feature = "dogecoin")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("dc"),
+        p2pkh_prefix: 0x1e,
+        p2sh_prefix: 0x16,
+    });
+}
+#[cfg(feature = "bellscoin")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("bel"),
+        p2pkh_hash: 0x19,
+        p2sh_hash: 0x1e,
+    });
+}
 
 #[cfg(feature = "cache")]
 use crate::view::protorunes_by_address;
@@ -33,16 +86,14 @@ use protorune_support::proto::protorune::ProtorunesWalletRequest;
 use std::sync::Arc;
 
 
-pub fn index_block<E: RuntimeEnvironment + Clone + Default + 'static>(
-    env: &mut E,
+pub fn index_block(
     block: &Block,
     height: u32,
     network: bitcoin::Network,
 ) -> Result<()> {
-    logging::init_block_stats();
-    logging::record_transactions(block.txdata.len() as u32);
+    configure_network();
     clear_diesel_mints_cache();
-    let really_is_genesis = is_genesis(env, height.into());
+    let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
         genesis(env).unwrap();
         let genesis_balance_sheet = setup_diesel(env, block)?;

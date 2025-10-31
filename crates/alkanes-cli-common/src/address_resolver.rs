@@ -944,7 +944,7 @@ impl AlkanesProvider for StandaloneAddressResolver {
         ))
     }
 
-    async fn simulate(&self, _contract_id: &str, _context: &crate::proto::alkanes::MessageContextParcel) -> Result<crate::JsonValue> {
+    async fn simulate(&self, _contract_id: &str, _context: &crate::alkanes_pb::MessageContextParcel) -> Result<crate::JsonValue> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
@@ -952,11 +952,11 @@ impl AlkanesProvider for StandaloneAddressResolver {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn trace(&self, _outpoint: &str) -> Result<crate::proto::alkanes::Trace> {
+    async fn trace(&self, _outpoint: &str) -> Result<crate::alkanes_pb::Trace> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn get_block(&self, _height: u64) -> Result<crate::proto::alkanes::BlockResponse> {
+    async fn get_block(&self, _height: u64) -> Result<crate::alkanes_pb::BlockResponse> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
@@ -968,7 +968,7 @@ impl AlkanesProvider for StandaloneAddressResolver {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::Trace> {
+    async fn trace_block(&self, _height: u64) -> Result<crate::alkanes_pb::Trace> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
@@ -983,21 +983,6 @@ impl AlkanesProvider for StandaloneAddressResolver {
     async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Clone for StandaloneAddressResolver {
-    fn clone(&self) -> Self {
-        Self {
-            addresses: self.addresses.clone(),
-            network: self.network,
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait]
-impl AlkanesProvider for StandaloneAddressResolver {
     fn get_bitcoin_rpc_url(&self) -> Option<String> {
         None
     }
@@ -1034,6 +1019,17 @@ impl AlkanesProvider for StandaloneAddressResolver {
 
     async fn unwrap(&mut self, _amount: u64, _address: Option<String>) -> Result<String> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support unwrap".to_string()))
+    }
+
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Clone for StandaloneAddressResolver {
+    fn clone(&self) -> Self {
+        Self {
+            addresses: self.addresses.clone(),
+            network: self.network,
+        }
     }
 }
 

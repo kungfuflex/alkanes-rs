@@ -6,8 +6,6 @@
 use cfg_if::cfg_if;
 use std::pin::Pin;
 use std::future::Future;
-use std::pin::Pin;
-use std::future::Future;
 use crate::{
     alkanes::types::{
         EnhancedExecuteParams, EnhancedExecuteResult, AlkanesInspectConfig, AlkanesInspectResult,
@@ -18,6 +16,7 @@ use crate::{
 };
 use std::path::PathBuf;
 use protobuf::Message;
+use prost::Message as ProstMessage;
 use crate::wallet;
 
 use serde_json::json;
@@ -237,55 +236,54 @@ impl ConcreteProvider {
 
 
 
-
+#[async_trait]
 impl JsonRpcProvider for ConcreteProvider {
-    fn call<'a>(&'a self, url: &'a str, method: &'a str, params: JsonValue, id: u64) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>> {
-        Box::pin(async move {
-            let payload = json!({
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params,
-                "id": id,
-            });
+    async fn call(&self, url: &str, method: &str, params: JsonValue, id: u64) -> Result<JsonValue> {
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": id,
+        });
 
-            log::debug!("[JsonRpcProvider] Making call to {}: {}", url, payload);
+        log::debug!("[JsonRpcProvider] Making call to {}: {}", url, payload);
 
-            #[cfg(feature = "native-deps")]
-            {
-                let response = self
-                    .http_client
-                    .post(url)
-                    .json(&payload)
-                    .send()
-                    .await
-                    .map_err(|e| AlkanesError::Network(e.to_string()))?;
+        #[cfg(feature = "native-deps")]
+        {
+            let response = self
+                .http_client
+                .post(url)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| AlkanesError::Network(e.to_string()))?;
 
-                let response_text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
-                log::debug!("[JsonRpcProvider] Response from {}: {}", url, response_text);
+            let response_text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            log::debug!("[JsonRpcProvider] Response from {}: {}", url, response_text);
 
-                let json_response: JsonValue = serde_json::from_str(&response_text)
-                    .map_err(|e| AlkanesError::RpcError(format!("Failed to parse JSON response: {}", e)))?;
+            let json_response: JsonValue = serde_json::from_str(&response_text)
+                .map_err(|e| AlkanesError::RpcError(format!("Failed to parse JSON response: {}", e)))?;
 
-                if let Some(error) = json_response.get("error") {
-                    if !error.is_null() {
-                        return Err(AlkanesError::RpcError(error.to_string()));
-                    }
-                }
-
-                if let Some(result) = json_response.get("result") {
-                    Ok(result.clone())
-                } else {
-                    Err(AlkanesError::RpcError("RPC response did not contain a 'result' field".to_string()))
+            if let Some(error) = json_response.get("error") {
+                if !error.is_null() {
+                    return Err(AlkanesError::RpcError(error.to_string()));
                 }
             }
 
-            #[cfg(not(feature = "native-deps"))]
-            {
-                let _ = (url, method, params, id);
-                Err(AlkanesError::NotImplemented("JsonRpcProvider::call is not implemented without 'native-deps' feature".to_string()))
+            if let Some(result) = json_response.get("result") {
+                Ok(result.clone())
+            } else {
+                Err(AlkanesError::RpcError("RPC response did not contain a 'result' field".to_string()))
             }
-        })
+        }
+
+        #[cfg(not(feature = "native-deps"))]
+        {
+            let _ = (url, method, params, id);
+            Err(AlkanesError::NotImplemented("JsonRpcProvider::call is not implemented without 'native-deps' feature".to_string()))
+        }
     }
+
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -2004,8 +2002,8 @@ impl AlkanesProvider for ConcreteProvider {
 
     
 
-    async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
-        let mut request = protorune_pb::protorune::WalletRequest::default();
+    async fn spendables_by_address(&self, _address: &str) -> Result<JsonValue> {
+        let request = protorune_pb::protorune::WalletRequest::default();
         let hex_input = format!("0x{}", hex::encode(request.write_to_bytes().unwrap()));        let response_bytes = self
             .metashrew_view_call("spendablesbyaddress", &hex_input, "latest")
             .await?;

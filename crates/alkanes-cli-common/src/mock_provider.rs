@@ -1,8 +1,5 @@
 use async_trait::async_trait;
 use crate::traits::{self, *};
-use crate::wallet::{self, *};
-use crate::monitor::{self, *};
-use crate::keystore::{self, *};
 use crate::{
     alkanes::protorunes::{ProtoruneOutpointResponse, ProtoruneWalletResponse},
     network::NetworkParams,
@@ -168,16 +165,16 @@ impl LogProvider for MockProvider {
 
 #[async_trait]
 impl WalletProvider for MockProvider {
-    async fn create_wallet(&mut self, _config: WalletConfig, _mnemonic: Option<String>, _passphrase: Option<String>) -> Result<WalletInfo> {
-        Ok(WalletInfo {
+    async fn create_wallet(&mut self, _config: traits::WalletConfig, _mnemonic: Option<String>, _passphrase: Option<String>) -> Result<traits::WalletInfo> {
+        Ok(traits::WalletInfo {
             address: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string(),
             network: self.network,
             mnemonic: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
         })
     }
     
-    async fn load_wallet(&mut self, _config: WalletConfig, _passphrase: Option<String>) -> Result<WalletInfo> {
-        self.create_wallet(WalletConfig {
+    async fn load_wallet(&mut self, _config: traits::WalletConfig, _passphrase: Option<String>) -> Result<traits::WalletInfo> {
+        self.create_wallet(traits::WalletConfig {
             wallet_path: "test".to_string(),
             network: self.network,
             bitcoin_rpc_url: "http://localhost:8332".to_string(),
@@ -198,10 +195,10 @@ impl WalletProvider for MockProvider {
         Ok(address.to_string())
     }
     
-    async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>> {
+    async fn get_addresses(&self, count: u32) -> Result<Vec<traits::AddressInfo>> {
         let mut addresses = Vec::new();
         for i in 0..count {
-            addresses.push(AddressInfo {
+            addresses.push(traits::AddressInfo {
                 address: format!("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t{i}"),
                 script_type: "p2wpkh".to_string(),
                 derivation_path: format!("m/84'/0'/0'/0/{i}"),
@@ -212,18 +209,18 @@ impl WalletProvider for MockProvider {
         Ok(addresses)
     }
     
-    async fn send(&mut self, _params: SendParams) -> Result<String> {
+    async fn send(&mut self, _params: traits::SendParams) -> Result<String> {
         Ok("mock_txid".to_string())
     }
     
-    async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
+    async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, traits::UtxoInfo)>> {
         let utxos = self.utxos.lock().unwrap();
-        let mut utxo_infos: Vec<(OutPoint, UtxoInfo)> = utxos.iter().map(|(outpoint, tx_out)| {
+        let mut utxo_infos: Vec<(OutPoint, traits::UtxoInfo)> = utxos.iter().map(|(outpoint, tx_out)| {
             let address = Address::from_script(&tx_out.script_pubkey, self.network)
                 .map(|addr| addr.to_string())
                 .unwrap_or_else(|_| "unknown_script".to_string()); // Handle unrecognized scripts
 
-            let info = UtxoInfo {
+            let info = traits::UtxoInfo {
                 txid: outpoint.txid.to_string(),
                 vout: outpoint.vout,
                 amount: tx_out.value.to_sat(),
@@ -250,8 +247,8 @@ impl WalletProvider for MockProvider {
         Ok(utxo_infos)
     }
     
-    async fn get_history(&self, _count: u32, _address: Option<String>) -> Result<Vec<TransactionInfo>> {
-        Ok(vec![TransactionInfo {
+    async fn get_history(&self, _count: u32, _address: Option<String>) -> Result<Vec<traits::TransactionInfo>> {
+        Ok(vec![traits::TransactionInfo {
             txid: "mock_txid".to_string(),
             block_height: Some(800000),
             block_time: Some(1640995200),
@@ -274,7 +271,7 @@ impl WalletProvider for MockProvider {
         Ok(())
     }
     
-    async fn create_transaction(&self, _params: SendParams) -> Result<String> {
+    async fn create_transaction(&self, _params: traits::SendParams) -> Result<String> {
         Ok("mock_tx_hex".to_string())
     }
     
@@ -297,15 +294,15 @@ impl WalletProvider for MockProvider {
         Ok(txid.to_string())
     }
     
-    async fn estimate_fee(&self, _target: u32) -> Result<FeeEstimate> {
-        Ok(FeeEstimate {
+    async fn estimate_fee(&self, _target: u32) -> Result<traits::FeeEstimate> {
+        Ok(traits::FeeEstimate {
             fee_rate: 10.0,
             target_blocks: 6,
         })
     }
     
-    async fn get_fee_rates(&self) -> Result<FeeRates> {
-        Ok(FeeRates {
+    async fn get_fee_rates(&self) -> Result<traits::FeeRates> {
+        Ok(traits::FeeRates {
             fast: 20.0,
             medium: 10.0,
             slow: 5.0,
@@ -769,16 +766,16 @@ impl AlkanesProvider for MockProvider {
             "protorunes_by_outpoint".to_string(),
         ))
     }
-    async fn simulate(&self, _contract_id: &str, _context: &crate::proto::alkanes::MessageContextParcel) -> Result<JsonValue> {
+    async fn simulate(&self, _contract_id: &str, _context: &crate::alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
         todo!()
     }
     async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<JsonValue> {
         todo!()
     }
-    async fn trace(&self, _outpoint: &str) -> Result<crate::proto::alkanes::Trace> {
+    async fn trace(&self, _outpoint: &str) -> Result<crate::alkanes_pb::Trace> {
         Err(AlkanesError::NotImplemented("trace".to_string()))
     }
-    async fn get_block(&self, _height: u64) -> Result<crate::proto::alkanes::BlockResponse> {
+    async fn get_block(&self, _height: u64) -> Result<crate::alkanes_pb::BlockResponse> {
         Err(AlkanesError::NotImplemented("get_block".to_string()))
     }
     async fn sequence(&self) -> Result<JsonValue> {
@@ -787,7 +784,7 @@ impl AlkanesProvider for MockProvider {
     async fn spendables_by_address(&self, _address: &str) -> Result<JsonValue> {
         todo!()
     }
-    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::Trace> {
+    async fn trace_block(&self, _height: u64) -> Result<crate::alkanes_pb::Trace> {
         Err(AlkanesError::NotImplemented("trace_block".to_string()))
     }
     async fn get_bytecode(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<String> {
@@ -915,8 +912,8 @@ impl MonitorProvider for MockProvider {
         Ok(())
     }
     
-    async fn get_block_events(&self, _height: u64) -> Result<Vec<BlockEvent>> {
-        Ok(vec![BlockEvent {
+    async fn get_block_events(&self, _height: u64) -> Result<Vec<traits::BlockEvent>> {
+        Ok(vec![traits::BlockEvent {
             event_type: "transaction".to_string(),
             block_height: 800000,
             txid: "mock_txid".to_string(),

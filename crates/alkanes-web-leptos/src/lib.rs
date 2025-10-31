@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 // deezel-leptos/src/lib.rs
 // Chadson v69.69: Crate root for deezel-leptos.
 // This file defines the public API of the deezel-leptos crate,

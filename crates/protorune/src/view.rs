@@ -154,6 +154,7 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
     o.height = height as u32;
     o.txindex = txindex as u32;
     Ok(o)
+
 }
 
 pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
@@ -257,6 +258,7 @@ pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     Ok(result)
 }
 
+
 pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::new();
     if let Ok(req) = Message::parse_from_bytes(&input[..]) {
@@ -274,6 +276,7 @@ pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
     }
     Ok(result)
 }
+
 
 pub fn runes_by_height(input: &Vec<u8>) -> Result<RunesResponse> {
     let mut result: RunesResponse = RunesResponse::new();

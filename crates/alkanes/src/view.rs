@@ -22,7 +22,6 @@ use alkanes_support::proto::alkanes::{
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::transaction::Version;
-use metashrew_core::traits::RuntimeAdapter;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::Hash;
@@ -213,7 +212,7 @@ pub fn to_alkanes_balances<E: RuntimeAdapter + Clone + 'static + Default>(
     clone
 }
 
-pub fn to_alkanes_from_runes<E: MessageContext<E> + Clone + Default + RuntimeAdapter>(
+pub fn to_alkanes_from_runes<E: MessageContext + Clone + Default + RuntimeAdapter>(
   context: &mut E,
   runes: Vec<protorune_support::proto::protorune::Rune>,
 ) -> Vec<protorune_support::proto::protorune::Rune> {
@@ -448,9 +447,8 @@ pub fn meta_safe<E: RuntimeAdapter + Clone + 'static + Default>(env: &mut E, par
     Ok(abi_bytes)
 }
 
-pub fn simulate_parcel<E: RuntimeAdapter + Clone + 'static + Default>(
-    env: &mut E,
-    parcel: &MessageContextParcel<E>,
+pub fn simulate_parcel(
+    parcel: &MessageContextParcel,
     fuel: u64,
 ) -> Result<(ExtendedCallResponse, u64)> {
     let list = decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?;
@@ -483,25 +481,23 @@ pub fn simulate_parcel<E: RuntimeAdapter + Clone + 'static + Default>(
     Ok((response, gas_used))
 }
 
-pub fn multi_simulate<E: RuntimeAdapter + Clone + 'static + Default>(
-    env: &mut E,
-    parcels: &[MessageContextParcel<E>],
+pub fn multi_simulate(
+    parcels: &[MessageContextParcel],
     fuel: u64,
 ) -> Vec<Result<(ExtendedCallResponse, u64)>> {
     let mut responses: Vec<Result<(ExtendedCallResponse, u64)>> = vec![];
     for parcel in parcels {
-        responses.push(simulate_parcel(env, parcel, fuel));
+        responses.push(simulate_parcel(parcel, fuel));
     }
     responses
 }
 
-pub fn multi_simulate_safe<E: RuntimeAdapter + Clone + 'static + Default>(
-    env: &mut E,
-    parcels: &[MessageContextParcel<E>],
+pub fn multi_simulate_safe(
+    parcels: &[MessageContextParcel],
     fuel: u64,
 ) -> Vec<Result<(ExtendedCallResponse, u64)>> {
     set_view_mode();
-    multi_simulate(env, parcels, fuel)
+    multi_simulate(parcels, fuel)
 }
 
 pub fn getbytecode<E: RuntimeAdapter + Clone>(env: &mut E, input: &Vec<u8>) -> Result<Vec<u8>> {

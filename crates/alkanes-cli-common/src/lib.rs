@@ -1,4 +1,4 @@
-#![feature(let_chains)]
+// #![feature(let_chains)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 //! Alkanes Common Library
@@ -77,6 +77,7 @@ pub mod ord;
 pub mod metashrew;
 pub mod index_pointer;
 pub mod byte_view;
+pub mod proto;
 
 
 #[cfg(any(test, feature = "test-utils"))]

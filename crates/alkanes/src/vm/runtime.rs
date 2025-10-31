@@ -1,43 +1,23 @@
 use std::fmt;
-use metashrew_support::environment::RuntimeEnvironment;
 
 use alkanes_support::{
     cellpack::Cellpack, context::Context, id::AlkaneId, parcel::AlkaneTransferParcel, trace::Trace,
 };
-
-
 use protorune::message::MessageContextParcel;
 
-use std::marker::PhantomData;
 
-#[derive(Clone)]
-E: RuntimeEnvironment + Clone
+#[derive(Default, Clone)]
+pub struct AlkanesRuntimeContext {
     pub myself: AlkaneId,
     pub caller: AlkaneId,
     pub incoming_alkanes: AlkaneTransferParcel,
     pub returndata: Vec<u8>,
     pub inputs: Vec<u128>,
-    pub message: Box<MessageContextParcel<E>>,
+    pub message: Box<MessageContextParcel>,
     pub trace: Trace,
-    _phantom: PhantomData<E>,
 }
 
-impl<E: RuntimeAdapter + Clone> Default for AlkanesRuntimeContext<E> {
-    fn default() -> Self {
-        Self {
-            myself: AlkaneId::default(),
-            caller: AlkaneId::default(),
-            incoming_alkanes: AlkaneTransferParcel::default(),
-            returndata: vec![],
-            inputs: vec![],
-            message: Box::new(MessageContextParcel::default()),
-            trace: Trace::default(),
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<E: RuntimeAdapter + Clone> fmt::Debug for AlkanesRuntimeContext<E> {
+impl fmt::Debug for AlkanesRuntimeContext{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AlkanesRuntimeContext")
             .field("myself", &self.myself)
@@ -48,11 +28,11 @@ impl<E: RuntimeAdapter + Clone> fmt::Debug for AlkanesRuntimeContext<E> {
     }
 }
 
-impl<E: RuntimeAdapter + Clone> AlkanesRuntimeContext<E> {
+impl AlkanesRuntimeContext {
     pub fn from_parcel_and_cellpack(
-        message: &MessageContextParcel<E>,
+        message: &MessageContextParcel,
         cellpack: &Cellpack,
-    ) -> AlkanesRuntimeContext<E> {
+    ) -> AlkanesRuntimeContext{
         let cloned = cellpack.clone();
         let message_copy = message.clone();
         let incoming_alkanes = message_copy.runes.clone().into();
@@ -64,7 +44,6 @@ impl<E: RuntimeAdapter + Clone> AlkanesRuntimeContext<E> {
             caller: AlkaneId::default(),
             trace: Trace::default(),
             inputs: cloned.inputs,
-            _phantom: PhantomData,
         }
     }
     pub fn flatten(&self) -> Vec<u128> {

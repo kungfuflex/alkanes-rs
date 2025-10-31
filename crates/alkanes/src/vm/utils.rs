@@ -9,12 +9,10 @@ use alkanes_support::{
 };
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
-use metashrew_support::environment::RuntimeEnvironment;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 
 use metashrew_core::index_pointer::KeyValuePointer;
 use protorune_support::utils::consensus_encode;
-use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
 
@@ -35,22 +33,20 @@ pub fn read_arraybuffer(data: &[u8], data_start: i32) -> Result<Vec<u8>> {
         .to_vec())
 }
 
-pub E: RuntimeEnvironment + Clone(caller: &mut Caller<'_, AlkanesState<'a, E>>) -> Result<Memory> {
+pub fn get_memory<'a>(caller: &mut Caller<'_, AlkanesState>) -> Result<Memory> {
     caller
         .get_export("memory")
         .ok_or(anyhow!("export was not memory region"))?
         .into_memory()
         .ok_or(anyhow!("export was not memory region"))
 }
-
-pub fn sequence_pointer<E: RuntimeAdapter + Clone>(ptr: &AtomicPointer<E>) -> AtomicPointer<E> {
+pub fn sequence_pointer(ptr: &AtomicPointer) -> AtomicPointer {
     ptr.derive(&IndexPointer::from_keyword("/alkanes/sequence"))
 }
 
-fn set_alkane_id_to_tx_id<E: RuntimeAdapter + Clone>(
-    context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
+fn set_alkane_id_to_tx_id(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
     alkane_id: &AlkaneId,
-    env: &mut E,
 ) -> Result<()> {
     // Acquire the mutex once and keep the guard for the duration of the function
     let context_guard = context.lock().unwrap();
@@ -66,15 +62,14 @@ fn set_alkane_id_to_tx_id<E: RuntimeAdapter + Clone>(
         .atomic
         .keyword("/alkanes_id_to_outpoint/")
         .select(&alkane_id.clone().into())
-        .set(env, Arc::new(outpoint_bytes));
+        .set( Arc::new(outpoint_bytes));
 
     Ok(())
 }
 
-pub fn get_alkane_binary<E: RuntimeAdapter + Clone>(
-    context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
+pub fn get_alkane_binary(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
     alkane_id: &AlkaneId,
-    env: &mut E,
 ) -> Result<Arc<Vec<u8>>> {
     let wasm_payload_arc = context
         .lock()
@@ -83,27 +78,26 @@ pub fn get_alkane_binary<E: RuntimeAdapter + Clone>(
         .atomic
         .keyword("/alkanes/")
         .select(&alkane_id.clone().into())
-        .get(env);
+        .get();
     let wasm_payload = wasm_payload_arc.as_ref();
     if wasm_payload.len() == 32 {
         let factory_id = wasm_payload.to_vec().try_into()?;
-        return get_alkane_binary(context, &factory_id, env);
+        return get_alkane_binary(context, &factory_id);
     }
     Ok(Arc::new(decompress(wasm_payload.clone())?))
 }
 
-pub fn run_special_cellpacks<E: RuntimeAdapter + Clone>(
-    context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
+pub fn run_special_cellpacks(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
     cellpack: &Cellpack,
-    env: &mut E,
 ) -> Result<(AlkaneId, AlkaneId, Arc<Vec<u8>>)> {
     let mut payload = cellpack.clone();
     let mut binary = Arc::<Vec<u8>>::new(vec![]);
     let mut next_sequence_pointer = sequence_pointer(&mut context.lock().unwrap().message.atomic);
-    let next_sequence = next_sequence_pointer.get_value::<u128>(env);
+    let next_sequence = next_sequence_pointer.get_value::<u128>();
     let original_target = cellpack.target.clone();
     if cellpack.target.is_created(next_sequence) {
-        binary = get_alkane_binary(context.clone(), &payload.target, env)?;
+        binary = get_alkane_binary(context.clone(), &payload.target)?;
     } else if cellpack.target.is_create() {
         // contract not created, create it by first loading the wasm from the witness
         // then storing it in the index.
@@ -123,11 +117,11 @@ pub fn run_special_cellpacks<E: RuntimeAdapter + Clone>(
             .atomic
             .keyword("/alkanes/")
             .select(&payload.target.clone().into());
-        pointer.set(env, wasm_payload.clone());
+        pointer.set(wasm_payload.clone());
         binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
-        next_sequence_pointer.set_value(env, next_sequence + 1);
+        next_sequence_pointer.set_value(next_sequence + 1);
 
-        set_alkane_id_to_tx_id(context.clone(), &payload.target, env)?;
+        set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
     } else if let Some(number) = cellpack.target.reserved() {
         // we have already reserved an alkane id, find the binary and
         // set it in the index
@@ -149,9 +143,9 @@ pub fn run_special_cellpacks<E: RuntimeAdapter + Clone>(
             .atomic
             .keyword("/alkanes/")
             .select(&payload.target.clone().into());
-        if ptr.get(env).as_ref().len() == 0 {
-            ptr.set(env, wasm_payload.clone());
-            set_alkane_id_to_tx_id(context.clone(), &payload.target, env)?;
+        if ptr.get().as_ref().len() == 0 {
+            ptr.set( wasm_payload.clone());
+            set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
         } else {
             return Err(anyhow!(format!(
                 "used CREATERESERVED cellpack but {} already holds a binary",
@@ -162,7 +156,7 @@ pub fn run_special_cellpacks<E: RuntimeAdapter + Clone>(
     } else if let Some(factory) = cellpack.target.factory() {
         // we find the factory alkane wasm and set the current alkane to the factory wasm
         payload.target = AlkaneId::new(2, next_sequence);
-        next_sequence_pointer.set_value(env, next_sequence + 1);
+        next_sequence_pointer.set_value(next_sequence + 1);
         let factory_payload: Vec<u8> = factory.into();
         context
             .lock()
@@ -171,9 +165,9 @@ pub fn run_special_cellpacks<E: RuntimeAdapter + Clone>(
             .atomic
             .keyword("/alkanes/")
             .select(&payload.target.clone().into())
-            .set(env, Arc::new(factory_payload));
-        set_alkane_id_to_tx_id(context.clone(), &payload.target, env)?;
-        binary = get_alkane_binary(context.clone(), &factory, env)?;
+            .set(Arc::new(factory_payload));
+        set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
+        binary = get_alkane_binary(context.clone(), &factory)?;
     }
     if &original_target != &payload.target {
         context
@@ -189,26 +183,14 @@ pub fn run_special_cellpacks<E: RuntimeAdapter + Clone>(
     ))
 }
 
-#[derive(Clone, Debug)]
-pub struct SaveableExtendedCallResponse<E: RuntimeAdapter + Clone> {
+#[derive(Clone, Debug, Default)]
+pub struct SaveableExtendedCallResponse {
     pub result: ExtendedCallResponse,
     pub _from: AlkaneId,
     pub _to: AlkaneId,
-    _phantom: PhantomData<E>,
 }
 
-impl<E: RuntimeAdapter + Clone> Default for SaveableExtendedCallResponse<E> {
-    fn default() -> Self {
-        Self {
-            result: ExtendedCallResponse::default(),
-            _from: AlkaneId::default(),
-            _to: AlkaneId::default(),
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<E: RuntimeAdapter + Clone> From<ExtendedCallResponse> for SaveableExtendedCallResponse<E> {
+impl From<ExtendedCallResponse> for SaveableExtendedCallResponse {
     fn from(v: ExtendedCallResponse) -> Self {
         let mut response = Self::default();
         response.result = v;
@@ -216,14 +198,14 @@ impl<E: RuntimeAdapter + Clone> From<ExtendedCallResponse> for SaveableExtendedC
     }
 }
 
-impl<E: RuntimeAdapter + Clone> SaveableExtendedCallResponse<E> {
-    pub(super) fn associate(&mut self, context: &AlkanesRuntimeContext<E>) {
+impl SaveableExtendedCallResponse {
+    pub(super) fn associate(&mut self, context: &AlkanesRuntimeContext) {
         self._from = context.myself.clone();
         self._to = context.caller.clone();
     }
 }
 
-impl<E: RuntimeAdapter + Clone> Saveable<E> for SaveableExtendedCallResponse<E> {
+impl Saveable for SaveableExtendedCallResponse {
     fn from(&self) -> AlkaneId {
         self._from.clone()
     }
@@ -238,22 +220,20 @@ impl<E: RuntimeAdapter + Clone> Saveable<E> for SaveableExtendedCallResponse<E> 
     }
 }
 
-pub trait Saveable<E: RuntimeAdapter + Clone> {
+pub trait Saveable {
     fn from(&self) -> AlkaneId;
     fn to(&self) -> AlkaneId;
     fn storage_map(&self) -> StorageMap;
     fn alkanes(&self) -> AlkaneTransferParcel;
     fn save(
         &self,
-        atomic: &mut AtomicPointer<E>,
+        atomic: &mut AtomicPointer,
         is_delegate: bool,
-        env: &mut E,
     ) -> Result<()> {
         pipe_storagemap_to(
             &self.storage_map(),
             &mut atomic
                 .derive(&IndexPointer::from_keyword("/alkanes/").select(&self.from().into())),
-            env,
         );
         if !is_delegate {
             // delegate call retains caller and myself, so no alkanes are transferred from the subcontext to myself
@@ -262,18 +242,16 @@ pub trait Saveable<E: RuntimeAdapter + Clone> {
                 &mut atomic.derive(&IndexPointer::default()),
                 &self.from().into(),
                 &self.to().into(),
-                env,
             )?;
         }
         Ok(())
     }
 }
 
-pub fn run_after_special<'a, E: RuntimeAdapter + Clone + 'static + Default>(
-    context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
+pub fn run_after_special(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
     binary: Arc<Vec<u8>>,
     start_fuel: u64,
-    env: &'a mut E,
 ) -> Result<(ExtendedCallResponse, u64)> {
     #[cfg(feature = "debug-log")]
     {
@@ -284,7 +262,7 @@ pub fn run_after_special<'a, E: RuntimeAdapter + Clone + 'static + Default>(
         );
     }
 
-    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel, env)?;
+    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
     let response = instance.execute()?;
 
     let remaining_fuel = instance.store.get_fuel()?;
@@ -326,8 +304,8 @@ pub fn run_after_special<'a, E: RuntimeAdapter + Clone + 'static + Default>(
 
     Ok((response, fuel_used))
 }
-pub fn prepare_context<E: RuntimeAdapter + Clone>(
-    context: Arc<Mutex<AlkanesRuntimeContext<E>>>,
+pub fn prepare_context(
+    context: Arc<Mutex<AlkanesRuntimeContext>>,
     caller: &AlkaneId,
     myself: &AlkaneId,
     delegate: bool,
@@ -339,8 +317,8 @@ pub fn prepare_context<E: RuntimeAdapter + Clone>(
     }
 }
 
-pub fn send_to_arraybuffer<'a, E: RuntimeAdapter + Clone>(
-    caller: &mut Caller<'_, AlkanesState<'a, E>>,
+pub fn send_to_arraybuffer<'a>(
+    caller: &mut Caller<'_, AlkanesState>,
     ptr: usize,
     v: &Vec<u8>,
 ) -> Result<i32> {

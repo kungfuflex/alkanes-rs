@@ -1,11 +1,12 @@
-use anyhow::Result;
-
-fn main() -> Result<()> {
+use protobuf_codegen;
+use protoc_bin_vendored;
+fn main() {
     protobuf_codegen::Codegen::new()
-        .pure()
-        .cargo_out_dir("protos")
-        .input("./proto/protorune.proto")
-        .include("./proto")
-        .run_from_script();
-    Ok(())
+        .protoc()
+        .protoc_path(&protoc_bin_vendored::protoc_bin_path().unwrap())
+        .out_dir("src/proto")
+        .inputs(&["proto/protorune.proto"])
+        .include("proto")
+        .run()
+        .expect("running protoc failed");
 }

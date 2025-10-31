@@ -4,7 +4,7 @@ use bitcoin::consensus::encode::deserialize as consensus_decode;
 
 #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
 use coinaux::auxpow::AuxpowBlock;
-use metashrew_core::MetashrewEnvironment;
+use crate::indexer::configure_network;
 use metashrew_core::export_bytes;
 use metashrew_support::utils::{consume_sized_int, consume_to_end};
 use metashrew_support::environment::RuntimeEnvironment;
@@ -49,14 +49,16 @@ Thus, going to add not(test) to all these functions
 #[cfg(not(test))]
 #[no_mangle]
 pub fn multisimluate() -> i32 {
-    let mut env = MetashrewEnvironment::default();
-    let data = env.load_input().unwrap().data;
+    use metashrew_core::input;
+
+
+    configure_network();
+    let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
     let mut result: proto::alkanes::MultiSimulateResponse =
         proto::alkanes::MultiSimulateResponse::default();
     let responses = view::multi_simulate_safe(
-        &mut env,
     	&view::parcels_from_protobuf(
     		proto::alkanes::MultiSimulateRequest::decode(reader).unwrap(),
     	),
