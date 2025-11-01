@@ -10,14 +10,10 @@ use alkanes_support::{
     cellpack::Cellpack,
     response::ExtendedCallResponse,
     trace::{TraceContext, TraceEvent, TraceResponse},
-    virtual_fuel::VirtualFuelBytes,
 };
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
-use metashrew_core::MetashrewEnvironment;
-
-use metashrew_core::traits::RuntimeAdapter;
 
 
 use metashrew_core::index_pointer::KeyValuePointer;
@@ -34,41 +30,37 @@ use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
 
 #[derive(Clone, Default, Debug)]
-pub struct AlkaneMessageContext<E: RuntimeEnvironment + Clone>(PhantomData<E>) where E: std::default::Default;
-
-
-
+pub struct AlkaneMessageContext(());
 
 // TODO: import MessageContextParcel
 
-pub fn handle_message<E: RuntimeEnvironment + Clone + 'static + Default>(
-    parcel: &MessageContextParcel<E>,
-    env: &mut E,
-) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)> {
+pub fn handle_message(
+    parcel: &MessageContextParcel,
+) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
     let cellpack: Cellpack =
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
     
     #[cfg(feature = "debug-log")]
     {
         // Log cellpack information at the beginning of transaction processing
-        env.log("=== TRANSACTION CELLPACK INFO ===");
-        env.log(&format!(
+        println!("=== TRANSACTION CELLPACK INFO ===");
+        println!(&format!(
             "Transaction index: {}, Transaction height: {}, vout: {}, txid: {}",
             parcel.txindex,
             parcel.height,
             parcel.vout,
             parcel.transaction.compute_txid()
         ));
-        env.log(&format!(
+        println!(
             "Target contract: [block={}, tx={}]",
             cellpack.target.block, cellpack.target.tx
-        ));
-        env.log(&format!("Input count: {}", cellpack.inputs.len()));
+        );
+        println!("Input count: {}", cellpack.inputs.len());
         if !cellpack.inputs.is_empty() {
-            env.log(&format!("First opcode: {}", cellpack.inputs[0]));
+            println!("First opcode: {}", cellpack.inputs[0]);
 
             // Print all inputs for detailed debugging
-            env.log(&format!("All inputs: {:?}", cellpack.inputs));
+            println!("All inputs: {:?}", cellpack.inputs);
         }
         env.log("=================================");
     }
@@ -78,22 +70,22 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + 'static + Default>(
         parcel, &cellpack,
     )));
     let mut atomic = parcel.atomic.derive(&IndexPointer::default());
-    let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack, env)?;
+    let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
 
     #[cfg(feature = "debug-log")]
     {
         // Log the resolved contract addresses
-        env.log(&format!("Caller: [block={}, tx={}]", caller.block, caller.tx));
-        env.log(&format!(
+        println!("Caller: [block={}, tx={}]", caller.block, caller.tx);
+        println!(
             "Target resolved to: [block={}, tx={}]",
             myself.block, myself.tx
-        ));
-        env.log(&format!("Parcel runes: {:?}", parcel.runes));
+        );
+        println!("Parcel runes: {:?}", parcel.runes);
     }
 
-    credit_balances(&mut atomic, &myself, &parcel.runes, env)?;
+    credit_balances(&mut atomic, &myself, &parcel.runes)?;
     prepare_context(context.clone(), &caller, &myself, false);
-    let txsize = AlkanesTransaction::<E>(&parcel.transaction, PhantomData).vfsize() as u64;
+    let txsize = parcel.transaction.vfsize() as u32;
     if FuelTank::is_top() {
         FuelTank::fuel_transaction(txsize, parcel.txindex, parcel.height as u32);
     } else if FuelTank::should_advance(parcel.txindex) {
@@ -113,7 +105,7 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + 'static + Default>(
         target,
         fuel,
     }));
-    run_after_special(context.clone(), binary, fuel, env)
+    run_after_special(context.clone(), binary, fuel)
         .and_then(|(response, gas_used)| {
             FuelTank::consume_fuel(gas_used)?;
             pipe_storagemap_to(
@@ -121,19 +113,18 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + 'static + Default>(
                 &mut atomic.derive(
                     &IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into()),
                 ),
-                env,
             );
-            let mut combined = BalanceSheet::<E, AtomicPointer<E>>::new_ptr_backed(AtomicPointer::default());
-            (*parcel.runtime_balances).pipe(&mut combined, env)?;
-            <BalanceSheet<E, AtomicPointer<E>> as TryFrom<Vec<RuneTransfer>>>::try_from(
+            let mut combined = BalanceSheet::<AtomicPointer>::new_ptr_backed(AtomicPointer::default());
+            (*parcel.runtime_balances).pipe(&mut combined)?;
+            <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 parcel.runes.clone(),
             )?
-            .pipe(&mut combined, env)?;
-            let sheet = <BalanceSheet<E, AtomicPointer<E>> as TryFrom<Vec<RuneTransfer>>>::try_from(
+            .pipe(&mut combined)?;
+            let sheet = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 response.alkanes.clone().into(),
             )?;
-            combined.debit(&sheet, env)?;
-            debit_balances(&mut atomic, &myself, &response.alkanes, env)?;
+            combined.debit(&sheet)?;
+            debit_balances(&mut atomic, &myself, &response.alkanes)?;
             let cloned = context.clone().lock().unwrap().trace.clone();
             let response_alkanes = response.alkanes.clone();
             cloned.clock(TraceEvent::ReturnContext(TraceResponse {
@@ -147,7 +138,6 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + 'static + Default>(
                 },
                 parcel.height,
                 trace.clone(),
-                env.as_any_mut().downcast_mut::<MetashrewEnvironment>().unwrap(),
             )?;
 
             Ok((response_alkanes.into(), combined))
@@ -156,22 +146,22 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + 'static + Default>(
             #[cfg(feature = "debug-log")]
             {
                 // Log detailed error information
-                env.log("=== TRANSACTION ERROR ===");
-                env.log(&format!("Transaction index: {}", parcel.txindex));
-                env.log(&format!(
+                println!("=== TRANSACTION ERROR ===");
+                println!("Transaction index: {}", parcel.txindex);
+                println!(
                     "Target contract: [block={}, tx={}]",
                     cellpack.target.block, cellpack.target.tx
-                ));
-                env.log(&format!(
+                );
+                println!(
                     "Resolved target: [block={}, tx={}]",
                     myself.block, myself.tx
-                ));
-                env.log(&format!("Error: {}", e));
+                );
+                println!("Error: {}", e);
 
                 // If it's a fuel-related error, provide more context
                 if e.to_string().contains("fuel") || e.to_string().contains("gas") {
-                    env.log("This appears to be a fuel-related error.");
-                    env.log(&format!(
+                    println!("This appears to be a fuel-related error.");
+                    println!(
                         "Contract at [block={}, tx={}] with opcode {} consumed too much fuel.",
                         myself.block,
                         myself.tx,
@@ -180,9 +170,9 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + 'static + Default>(
                         } else {
                             "unknown".to_string()
                         }
-                    ));
+                    );
                 }
-                env.log("========================");
+                println!("========================");
             }
 
             FuelTank::drain_fuel();
@@ -202,25 +192,23 @@ pub fn handle_message<E: RuntimeEnvironment + Clone + 'static + Default>(
                 },
                 parcel.height,
                 cloned,
-                env.as_any_mut().downcast_mut::<MetashrewEnvironment>().unwrap(),
             )?;
             Err(e)
         })
 }
 
-impl<E: RuntimeEnvironment + Clone + 'static + Default> MessageContext<E> for AlkaneMessageContext<E> {
+impl MessageContext for AlkaneMessageContext {
     fn protocol_tag() -> u128 {
         1
     }
     fn handle(
-        parcel: &MessageContextParcel<E>,
-        env: &mut E,
-    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<E, AtomicPointer<E>>)> {
+        parcel: &MessageContextParcel,
+    ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
         if is_active(parcel.height) {
-            match handle_message(parcel, env) {
+            match handle_message(parcel) {
                 Ok((outgoing, runtime)) => Ok((outgoing, runtime)),
                 Err(e) => {
-                    env.log(&format!("{:?}", e));
+                    println!("{:?}", e);
                     Err(e) // Print the error
                 }
             }

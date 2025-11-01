@@ -407,7 +407,7 @@ pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result
             let state = caller.data_mut();
             let env = &mut state.env;
             let atomic = &mut state.context.lock().unwrap().message.atomic;
-            balance_pointer(atomic, &who.into(), &what.into(), env)
+            balance_pointer(atomic, &who.into(), &what.into())
                 .get()
                 .as_ref()
                 .clone()
@@ -435,7 +435,7 @@ pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result
         e: anyhow::Error,
         should_rollback: bool,
     ) -> i32 {
-        env.log(&format!("[[handle_extcall]] Error during extcall: {:?}", e));
+        println!("[[handle_extcall]] Error during extcall: {:?}", e);
         let mut data: Vec<u8> = vec![0x08, 0xc3, 0x79, 0xa0];
         data.extend(e.to_string().as_bytes());
 
@@ -451,7 +451,7 @@ pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result
 
         // Handle revert state in a separate scope so context_guard is dropped
         {
-            let mut context_guard = state.context.lock().unwrap();
+            let mut context_guard = caller.context.lock().unwrap();
             context_guard
                 .trace
                 .clock(TraceEvent::RevertContext(revert_context));
@@ -467,7 +467,7 @@ pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result
         result
     }
     fn _prepare_extcall_before_checkpoint<'a, T: Extcall>(
-        caller: &mut Caller<'_, AlkanesState<E>>,
+        caller: &mut Caller<'_, AlkanesState>,
         cellpack_ptr: i32,
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
@@ -660,8 +660,8 @@ pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result
         *DIESEL_MINTS_CACHE.write().unwrap() = Some(response.data.clone());
         Ok(response)
     }
-    fn _handle_special_extcall<E: RuntimeAdapter + Clone>(
-        caller: &mut Caller<'_, AlkanesState<E>>,
+    fn _handle_special_extcall(
+        caller: &mut Caller<'_, AlkanesState>,
         cellpack: Cellpack,
     ) -> Result<i32> {
         let _env = &mut caller.data_mut().env;
@@ -702,8 +702,8 @@ pub(super) fn fuel(caller: &mut Caller<'_, AlkanesState>, output: i32) -> Result
 
         Ok(serialized.len() as i32)
     }
-pub(super) fn extcall<'a, E: RuntimeAdapter + Clone + 'static + Default, T: Extcall<E>>(
-        caller: &mut Caller<'_, AlkanesState<E>>,
+pub(super) fn extcall<'a, T: Extcall>(
+        caller: &mut Caller<'_, AlkanesState>,
         cellpack: Cellpack,
         incoming_alkanes: AlkaneTransferParcel,
         storage_map: StorageMap,
@@ -716,23 +716,19 @@ pub(super) fn extcall<'a, E: RuntimeAdapter + Clone + 'static + Default, T: Extc
         }
 
         let (subcontext, binary_rc, height) = {
-            let state = caller.data_mut();
-            let env = &mut state.env;
-            let (myself, caller_id) = {
-                let mut context_guard = state.context.lock().unwrap();
-                context_guard.message.atomic.checkpoint();
-                (context_guard.myself.clone(), context_guard.caller.clone())
-            };
+            let mut context_guard = caller.data_mut().context.lock().unwrap();
+            context_guard.message.atomic.checkpoint();
+            let myself = context_guard.myself.clone();
+            let caller_id = context_guard.caller.clone();
             pipe_storagemap_to(
                 &storage_map,
-                &mut state.context.lock().unwrap().message.atomic.derive(
+                &mut context_guard.message.atomic.derive(
                     &IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into()),
                 ),
-                env,
             );
-
+            std::mem::drop(context_guard); // Release lock before calling run_special_cellpacks
             let (_subcaller, submyself, binary) =
-                run_special_cellpacks(state.context.clone(), &cellpack, env)?;
+                run_special_cellpacks(caller.data_mut().context.clone(), &cellpack)?;
 
             //logging::record_alkane_creation(
             //     AlkaneCreation {
@@ -742,7 +738,7 @@ pub(super) fn extcall<'a, E: RuntimeAdapter + Clone + 'static + Default, T: Extc
             //     }
             // );
 
-            let context_guard = state.context.lock().unwrap();
+            let context_guard = caller.data_mut().context.lock().unwrap();
 
             if !T::isdelegate() {
                 // delegate call retains caller and myself, so no alkanes are transferred to the subcontext
@@ -754,7 +750,6 @@ pub(super) fn extcall<'a, E: RuntimeAdapter + Clone + 'static + Default, T: Extc
                         .derive(&IndexPointer::default()),
                     &myself,
                     &submyself,
-                    env,
                 )?;
             }
             // Create subcontext

@@ -1,7 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::set_view_mode;
 use crate::tables;
-use crate::{unwrap as unwrap_view};
+use crate::unwrap as unwrap_view;
 use crate::utils::{
     alkane_id_to_outpoint, alkane_inventory_pointer, balance_pointer, credit_balances,
     debit_balances, pipe_storagemap_to,
@@ -9,7 +9,7 @@ use crate::utils::{
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
 use crate::vm::utils::{
-    get_alkane_binary, prepare_context, run_after_special, run_special_cellpacks, sequence_pointer,
+    prepare_context, run_after_special, run_special_cellpacks, sequence_pointer,
 };
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
@@ -29,8 +29,8 @@ use bitcoin::{
     blockdata::block::Header, Block, BlockHash, CompactTarget, OutPoint, Transaction, TxMerkleNode,
 };
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
-
-use metashrew_core::{index_pointer::KeyValuePointer, utils::consensus_encode};
+use metashrew_support::utils::consensus_encode;
+use metashrew_core::index_pointer::KeyValuePointer;
 use prost::Message;
 
 use protorune::message::{MessageContext, MessageContextParcel};
@@ -46,13 +46,12 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::io::Cursor;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::marker::PhantomData;
 
-pub fn parcels_from_protobuf<E: RuntimeAdapter + Clone>(v: proto::alkanes::MultiSimulateRequest) -> Vec<MessageContextParcel<E>> {
+pub fn parcels_from_protobuf(v: proto::alkanes::MultiSimulateRequest) -> Vec<MessageContextParcel> {
     v.parcels.into_iter().map(parcel_from_protobuf).collect()
 }
 
-pub fn parcel_from_protobuf<E: RuntimeAdapter + Clone>(v: proto::alkanes::MessageContextParcel) -> MessageContextParcel<E> {
+pub fn parcel_from_protobuf(v: proto::alkanes::MessageContextParcel) -> MessageContextParcel {
     let mut result = MessageContextParcel::default();
     result.height = v.height;
     result.block = if v.block.len() > 0 {
@@ -74,7 +73,6 @@ pub fn parcel_from_protobuf<E: RuntimeAdapter + Clone>(v: proto::alkanes::Messag
         .collect::<Vec<RuneTransfer>>();
     result.pointer = v.pointer;
     result.refund_pointer = v.refund_pointer;
-    result._phantom = PhantomData;
     result
 }
 
@@ -101,19 +99,17 @@ fn default_block() -> Block {
     }
 }
 
-pub fn plain_parcel_from_cellpack<E: RuntimeAdapter + Clone>(cellpack: Cellpack) -> MessageContextParcel<E> {
+pub fn plain_parcel_from_cellpack(cellpack: Cellpack) -> MessageContextParcel {
     let mut result = MessageContextParcel::default();
     result.block = default_block();
     result.transaction = default_transaction();
     result.calldata = cellpack.encipher();
-    result._phantom = PhantomData;
     result
 }
 
-pub fn call_view<E: RuntimeAdapter + Clone + 'static + Default>(env: &mut E, id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>> {
+pub fn call_view(id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>> {
     let (response, _gas_used) = simulate_parcel(
-        env,
-        &plain_parcel_from_cellpack::<E>(Cellpack {
+        &plain_parcel_from_cellpack(Cellpack {
             target: id.clone(),
             inputs: inputs.clone(),
         }),
@@ -122,23 +118,23 @@ pub fn call_view<E: RuntimeAdapter + Clone + 'static + Default>(env: &mut E, id:
     Ok(response.data)
 }
 
-pub fn unwrap<E: RuntimeAdapter + Clone>(env: &mut E, height: u128) -> Result<Vec<u8>> {
-    Ok(unwrap_view::view::<E>(env, height).unwrap().encode_to_vec())
+pub fn unwrap(height: u128) -> Result<Vec<u8>> {
+    Ok(unwrap_view::view(height).unwrap().encode_to_vec())
 }
 
-pub fn call_multiview<E: RuntimeAdapter + Clone + 'static + Default>(env: &mut E, ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> Result<Vec<u8>> {
+pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> Result<Vec<u8>> {
     let calldata: Vec<_> = ids
         .into_iter()
         .enumerate()
         .map(|(i, id)| {
-            plain_parcel_from_cellpack::<E>(Cellpack {
+            plain_parcel_from_cellpack(Cellpack {
                 target: id.clone(),
                 inputs: inputs[i].clone(),
             })
         })
         .collect();
 
-    let results = multi_simulate::<E>(env, &calldata, fuel);
+    let results = multi_simulate(&calldata, fuel);
     let mut response: Vec<u8> = vec![];
 
     for result in results {
@@ -158,7 +154,7 @@ pub const SYMBOL_OPCODE: u128 = 100;
 static STATICS_CACHE: LazyLock<Mutex<BTreeMap<AlkaneId, (String, String)>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
-pub fn get_statics<E: RuntimeAdapter + Clone + 'static + Default>(env: &mut E, id: &AlkaneId) -> (String, String) {
+pub fn get_statics(id: &AlkaneId) -> (String, String) {
     // Try to get from cache first
     if let Ok(cache) = STATICS_CACHE.lock() {
         if let Some(cached_values) = cache.get(id) {
@@ -167,11 +163,11 @@ pub fn get_statics<E: RuntimeAdapter + Clone + 'static + Default>(env: &mut E, i
     }
 
     // If not in cache, fetch the values
-    let name = call_view::<E>(env, id, &vec![NAME_OPCODE], STATIC_FUEL)
+    let name = call_view(id, &vec![NAME_OPCODE], STATIC_FUEL)
         .and_then(|v| Ok(String::from_utf8(v)))
         .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
         .unwrap();
-    let symbol = call_view::<E>(env, id, &vec![SYMBOL_OPCODE], STATIC_FUEL)
+    let symbol = call_view(id, &vec![SYMBOL_OPCODE], STATIC_FUEL)
         .and_then(|v| Ok(String::from_utf8(v)))
         .unwrap_or_else(|_| Ok(String::from("{REVERT}")))
         .unwrap();
@@ -184,8 +180,7 @@ pub fn get_statics<E: RuntimeAdapter + Clone + 'static + Default>(env: &mut E, i
     (name, symbol)
 }
 
-pub fn to_alkanes_balances<E: RuntimeAdapter + Clone + 'static + Default>(
-    env: &mut E,
+pub fn to_alkanes_balances(
     balances: protorune_support::proto::protorune::BalanceSheet,
 ) -> protorune_support::proto::protorune::BalanceSheet {
     let mut clone = balances.clone();
@@ -205,15 +200,14 @@ pub fn to_alkanes_balances<E: RuntimeAdapter + Clone + 'static + Default>(
             (
                 entry.rune.as_mut().unwrap().name,
                 entry.rune.as_mut().unwrap().symbol,
-            ) = get_statics::<E>(env, &alkanes_support::id::AlkaneId::from(entry.rune.clone().unwrap().rune_id.unwrap()));
+            ) = get_statics(&alkanes_support::id::AlkaneId::from(entry.rune.clone().unwrap().rune_id.unwrap()));
             entry.rune.as_mut().unwrap().spacers = 0;
         }
     }
     clone
 }
 
-pub fn to_alkanes_from_runes<E: MessageContext + Clone + Default + RuntimeAdapter>(
-  context: &mut E,
+pub fn to_alkanes_from_runes(
   runes: Vec<protorune_support::proto::protorune::Rune>,
 ) -> Vec<protorune_support::proto::protorune::Rune> {
     runes
@@ -221,7 +215,7 @@ pub fn to_alkanes_from_runes<E: MessageContext + Clone + Default + RuntimeAdapte
         .map(|mut v| {
             let block: u128 = v.clone().rune_id.as_ref().unwrap().height.clone().unwrap().into();
             if block == 2 || block == 4 || block == 32 {
-                (v.name, v.symbol) = get_statics::<E>(context, &alkanes_support::id::AlkaneId::from(v.rune_id.clone().unwrap()));
+                (v.name, v.symbol) = get_statics(&alkanes_support::id::AlkaneId::from(v.rune_id.clone().unwrap()));
                 v.spacers = 0;
             }
             v
@@ -229,18 +223,17 @@ pub fn to_alkanes_from_runes<E: MessageContext + Clone + Default + RuntimeAdapte
         .collect::<Vec<protorune_support::proto::protorune::Rune>>()
 }
 
-pub fn protorunes_by_outpoint<'a, E: RuntimeAdapter + Clone + 'a + 'static + std::default::Default>(
-    env: &mut E,
-    input: &'a Vec<u8>,
+pub fn protorunes_by_outpoint(
+    input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::OutpointResponse> {
     let request =
         protorune_support::proto::protorune::OutpointWithProtocol::decode(&**input)?;
-    protorune_view::protorunes_by_outpoint::<E>(input, env).and_then(|mut response| {
-        if request.protocol.map_or(1, |v| v.into()) == (AlkaneMessageContext::<E>::protocol_tag())
+    protorune_view::protorunes_by_outpoint(input).and_then(|mut response| {
+        if request.protocol.map_or(1, |v| v.into()) == (AlkaneMessageContext::protocol_tag())
         {
             response.balances =
                 Some(
-                    to_alkanes_balances::<E>(env, response.balances.unwrap_or_default())
+                    to_alkanes_balances(response.balances.unwrap_or_default())
                     .clone(),
                 );
         }
@@ -248,15 +241,13 @@ pub fn protorunes_by_outpoint<'a, E: RuntimeAdapter + Clone + 'a + 'static + std
     })
 }
 
-pub fn to_alkanes_outpoints<E: RuntimeAdapter + Clone + 'static + std::default::Default>(
-    env: &mut E,
+pub fn to_alkanes_outpoints(
     v: Vec<protorune_support::proto::protorune::OutpointResponse>,
 ) -> Vec<protorune_support::proto::protorune::OutpointResponse> {
     let mut cloned = v.clone();
     for item in &mut cloned {
         item.balances = Some(
-            to_alkanes_balances::<E>(
-                env,
+            to_alkanes_balances(
                 item.balances
                     .clone()
                     .unwrap_or_default(),
@@ -267,30 +258,28 @@ pub fn to_alkanes_outpoints<E: RuntimeAdapter + Clone + 'static + std::default::
     cloned
 }
 
-pub fn sequence<E: RuntimeAdapter + Clone>(env: &mut E) -> Result<Vec<u8>> {
-    Ok(sequence_pointer(&AtomicPointer::<E>::default())
-        .get_value::<u128>(env)
+pub fn sequence() -> Result<Vec<u8>> {
+    Ok(sequence_pointer(&AtomicPointer::default())
+        .get_value::<u128>()
         .to_le_bytes()
         .to_vec())
 }
 
-pub fn protorunes_by_address<'a, E: RuntimeAdapter + Clone + 'a + 'static + std::default::Default>(
-    env: &mut E,
-    input: &'a Vec<u8>,
+pub fn protorunes_by_address(
+    input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
     let request =
         protorune_support::proto::protorune::ProtorunesWalletRequest::decode(&**input)?;
-    protorune_view::protorunes_by_address::<E>(input, env).and_then(|mut response| {
-        if request.protocol_tag.map_or(1, |v| v.into()) == (AlkaneMessageContext::<E>::protocol_tag())        {
-            response.outpoints = to_alkanes_outpoints::<E>(env, response.outpoints.clone());
+    protorune_view::protorunes_by_address(input).and_then(|mut response| {
+        if request.protocol_tag.map_or(1, |v| v.into()) == (AlkaneMessageContext::protocol_tag())        {
+            response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
         }
         Ok(response)
     })
 }
 
-pub fn protorunes_by_address2<'a, E: RuntimeAdapter + Clone + 'a + 'static + std::default::Default>(
-    env: &mut E,
-    input: &'a Vec<u8>,
+pub fn protorunes_by_address2(
+    input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
     let request =
         protorune_support::proto::protorune::ProtorunesWalletRequest::decode(&**input)?;
@@ -311,7 +300,7 @@ pub fn protorunes_by_address2<'a, E: RuntimeAdapter + Clone + 'a + 'static + std
                     return Ok(response);
                 }
                 Err(e) => {
-                    E::log(&format!("Error parsing cached wallet response: {:?}", e));
+                    println!(&format!("Error parsing cached wallet response: {:?}", e));
                     // Fall back to computing the response if parsing fails
                 }
             }
@@ -319,31 +308,39 @@ pub fn protorunes_by_address2<'a, E: RuntimeAdapter + Clone + 'a + 'static + std
     }
 
     // If no cached response or parsing failed, compute it
-    protorune_view::protorunes_by_address2::<E>(input, env).and_then(|mut response| {
-        if request.protocol_tag.map_or(1, |v| v.into()) == (AlkaneMessageContext::<E>::protocol_tag())
+    protorune_view::protorunes_by_address2(input).and_then(|mut response| {
+        if request.protocol_tag.map_or(1, |v| v.into()) == (AlkaneMessageContext::protocol_tag())
         {
-            response.outpoints = to_alkanes_outpoints::<E>(env, response.outpoints.clone());
+            response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
         }
         Ok(response)
     })
 }
 
-pub fn protorunes_by_height<E: RuntimeAdapter + std::default::Default + Clone>(
-    env: &mut E,
-    height: &u32,
-) -> Result<Vec<u8>> {
-    let req = protorune_support::proto::protorune::RunesByHeightRequest {
-        height: *height as u64,
-    };
-    let mut input = vec![];
-    req.encode(&mut input)?;
-    protorune_view::protorunes_by_height(&input, env).map(|v| v.encode_to_vec())
+fn into_u128(v: protorune_support::proto::protorune::Uint128) -> u128 {
+    v.into()
 }
 
-pub fn alkanes_id_to_outpoint<E: RuntimeAdapter + Clone>(env: &mut E, input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {
+pub fn protorunes_by_height(
+    input: &Vec<u8>,
+) -> Result<protorune_support::proto::protorune::RunesResponse> {
+    let request =
+        protorune_support::proto::protorune::ProtorunesByHeightRequest::parse_from_bytes(&input[..])?;
+    protorune::view::protorunes_by_height(input).and_then(|mut response| {
+        if into_u128(request.protocol_tag.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
+        {
+            response.runes = to_alkanes_from_runes(response.runes.clone());
+        }
+        Ok(response)
+    })
+}
+
+pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {
     let request = AlkaneIdToOutpointRequest::decode(&**input)?;
     let mut response = AlkaneIdToOutpointResponse::default();
-    let outpoint = alkane_id_to_outpoint::<E>(&request.id.unwrap().into(), env)?;
+    let outpoint = alkane_id_to_outpoint(&request.id.unwrap().into())?;
     // get the human readable txid (LE byte order), but comes out as a string
     let hex_string = outpoint.txid.to_string();
     // convert the hex string to a byte array
@@ -352,11 +349,11 @@ pub fn alkanes_id_to_outpoint<E: RuntimeAdapter + Clone>(env: &mut E, input: &Ve
     return Ok(response);
 }
 
-pub fn getinventory<E: RuntimeAdapter + Clone>(env: &mut E, req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
+pub fn getinventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
     let mut result: AlkaneInventoryResponse = AlkaneInventoryResponse::default();
-    let alkane_inventory = alkane_inventory_pointer::<E>(&req.id.clone().unwrap().into());
+    let alkane_inventory = alkane_inventory_pointer(&req.id.clone().unwrap().into());
     result.alkanes = alkane_inventory
-        .get_list(env)
+        .get_list()
         .into_iter()
         .map(|alkane_held| -> proto::alkanes::AlkaneTransfer {
             let id = alkanes_support::id::AlkaneId::parse(&mut Cursor::new(
@@ -364,12 +361,11 @@ pub fn getinventory<E: RuntimeAdapter + Clone>(env: &mut E, req: &AlkaneInventor
             ))
             .unwrap();
             let balance_pointer = balance_pointer(
-                &mut AtomicPointer::<E>::default(),
+                &mut AtomicPointer::default(),
                 &req.id.clone().unwrap().into(),
                 &id,
-                env,
             );
-            let balance = balance_pointer.get_value::<u128>(env);
+            let balance = balance_pointer.get_value::<u128>();
             (AlkaneTransfer {
                 id: id,
                 value: balance,
@@ -380,69 +376,71 @@ pub fn getinventory<E: RuntimeAdapter + Clone>(env: &mut E, req: &AlkaneInventor
     Ok(result)
 }
 
-pub fn getstorageat<E: RuntimeAdapter + Clone>(env: &mut E, req: &AlkaneStorageRequest) -> Result<AlkaneStorageResponse> {
+pub fn getstorageat(req: &AlkaneStorageRequest) -> Result<AlkaneStorageResponse> {
     let mut result: AlkaneStorageResponse = AlkaneStorageResponse::default();
-    let alkane_storage_pointer = IndexPointer::<E>::from_keyword("/alkanes/")
+    let alkane_storage_pointer = IndexPointer::from_keyword("/alkanes/")
         .select(&Into::<Vec<u8>>::into(AlkaneId::from(req.id.clone().unwrap())))
         .keyword("/storage/")
         .select(&req.path);
-    result.value = alkane_storage_pointer.get(env).to_vec();
+    result.value = alkane_storage_pointer.get().to_vec();
     Ok(result)
 }
 
-pub fn traceblock<E: RuntimeAdapter + Clone>(env: &mut E, height: u32) -> Result<Vec<u8>> {
+pub fn traceblock(height: u32) -> Result<Vec<u8>> {
     let mut block_events: Vec<proto::alkanes::AlkanesBlockEvent> = vec![];
-    for outpoint in tables::traces_by_height::<E>().select_value(height as u64).get_list(env) {
+    for outpoint in tables::traces_by_height().select_value(height as u64).get_list() {
         let op = outpoint.clone().to_vec();
         let outpoint_decoded = consensus_decode::<OutPoint>(&mut Cursor::new(op))?;
         let txid = outpoint_decoded.txid.as_byte_array().to_vec();
-        let txindex: u32 = RuneTable::<E>::new().TXID_TO_TXINDEX.select(&txid).get_value(env);
-        let trace = tables::traces::<E>().select(outpoint.as_ref()).get(env);
+        let txindex: u32 = RuneTable::new().TXID_TO_TXINDEX.select(&txid).get_value();
+        let trace = tables::traces().select(outpoint.as_ref()).get();
         let trace = proto::alkanes::AlkanesTrace::decode(trace.as_slice())?;
         let block_event = proto::alkanes::AlkanesBlockEvent {
             txindex: txindex as u64,
             outpoint: Some(proto::alkanes::Outpoint {
                 txid,
                 vout: outpoint_decoded.vout,
+                ..Default::default()
             }),
             traces: Some(trace),
+            ..Default::default()
         };
         block_events.push(block_event);
     }
 
     let result = proto::alkanes::AlkanesBlockTraceEvent {
         events: block_events,
+        ..Default::default()
     };
 
     Ok(result.encode_to_vec())
 }
 
-pub fn trace<E: RuntimeAdapter>(env: &mut E, outpoint: &OutPoint) -> Result<Vec<u8>> {
-    Ok(tables::traces::<E>()
+pub fn trace(outpoint: &OutPoint) -> Result<Vec<u8>> {
+    Ok(tables::traces()
         .select(&consensus_encode::<OutPoint>(&outpoint)?)
-        .get(env)
+        .get()
         .as_ref()
         .clone())
 }
 
-pub fn simulate_safe<E: RuntimeAdapter + Clone + 'static + Default>(
-    env: &mut E,
-    parcel: &MessageContextParcel<E>,
+pub fn simulate_safe(
+    parcel: &MessageContextParcel,
     fuel: u64,
 ) -> Result<(ExtendedCallResponse, u64)> {
     set_view_mode();
-    simulate_parcel(env, parcel, fuel)
+    simulate_parcel(parcel, fuel)
 }
 
-pub fn meta_safe<E: RuntimeAdapter + Clone + 'static + Default>(env: &mut E, parcel: &MessageContextParcel<E>) -> Result<Vec<u8>> {
+pub fn meta_safe(parcel: &MessageContextParcel) -> Result<Vec<u8>> {
     set_view_mode();
     let list = decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?;
     let cellpack: Cellpack = list.clone().try_into()?;
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
         parcel, &cellpack,
     )));
-    let (_caller, _myself, binary) = run_special_cellpacks(context.clone(), &cellpack, env)?;
-    let mut instance = AlkanesInstance::from_alkane(context, binary, 100000000, env)?;
+    let (_caller, _myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
+    let mut instance = AlkanesInstance::from_alkane(context, binary, 100000000)?;
     let abi_bytes: Vec<u8> = instance.call_meta()?;
     Ok(abi_bytes)
 }
@@ -453,30 +451,29 @@ pub fn simulate_parcel(
 ) -> Result<(ExtendedCallResponse, u64)> {
     let list = decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?;
     let cellpack: Cellpack = list.clone().try_into()?;
-    env.log(&format!("{:?}, {:?}", list, cellpack));
+    println!("{:?}, {:?}", list, cellpack);
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
         parcel, &cellpack,
     )));
-    let mut atomic = parcel.atomic.derive(&IndexPointer::<E>::default());
-    let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack, env)?;
-    credit_balances(&mut atomic, &myself, &parcel.runes, env)?;
+    let mut atomic = parcel.atomic.derive(&IndexPointer::default());
+    let (caller, myself, binary) = run_special_cellpacks(context.clone(), &cellpack)?;
+    credit_balances(&mut atomic, &myself, &parcel.runes)?;
     prepare_context(context.clone(), &caller, &myself, false);
-    let (mut response, gas_used) = run_after_special(context.clone(), binary, fuel, env)?;
-    env.log(&format!("simulate_parcel response: {:?}", response));
+    let (mut response, gas_used) = run_after_special(context.clone(), binary, fuel)?;
+    println!("simulate_parcel response: {:?}", response);
     pipe_storagemap_to(
         &response.storage,
-        &mut atomic.derive(&IndexPointer::<E>::from_keyword("/alkanes/").select(&myself.clone().into())),
-        env,
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
     );
-    let mut combined = BalanceSheet::<E, AtomicPointer<E>>::new_ptr_backed(AtomicPointer::default());
-    (*parcel.runtime_balances).pipe(&mut combined, env)?;
-    let sheet = <BalanceSheet<E, AtomicPointer<E>> as TryFrom<Vec<RuneTransfer>>>::try_from(
+    let mut combined = BalanceSheet::AtomicPointer::new_ptr_backed(AtomicPointer::default());
+    (*parcel.runtime_balances).pipe(&mut combined)?;
+    let sheet = <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
         response.alkanes.clone().into(),
     )?;
-    combined.debit(&sheet, env)?;
-    debit_balances(&mut atomic, &myself, &response.alkanes, env)?;
+    combined.debit(&sheet)?;
+    debit_balances(&mut atomic, &myself, &response.alkanes)?;
     response.alkanes =
-        <Vec<RuneTransfer> as TryFrom<BalanceSheet<E, AtomicPointer<E>>>>::try_from(combined)?
+        <Vec<RuneTransfer> as TryFrom<BalanceSheet<AtomicPointer>>>::try_from(combined)?
             .into();
     Ok((response, gas_used))
 }
@@ -500,15 +497,15 @@ pub fn multi_simulate_safe(
     multi_simulate(parcels, fuel)
 }
 
-pub fn getbytecode<E: RuntimeAdapter + Clone>(env: &mut E, input: &Vec<u8>) -> Result<Vec<u8>> {
+pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
     let request = alkanes_support::proto::alkanes::BytecodeRequest::decode(&**input)?;
     let alkane_id = request.id.unwrap();
     let alkane_id: AlkaneId = alkane_id.into();
 
     // Get the bytecode from the storage
-    let bytecode = metashrew_support::index_pointer::IndexPointer::<E>::from_keyword("/alkanes/")
+    let bytecode = metashrew_core::index_pointer::IndexPointer::from_keyword("/alkanes/")
         .select(&Into::<Vec<u8>>::into(<[u8; 32]>::from(alkane_id)))
-        .get(env);
+        .get();
 
     // Return the uncompressed bytecode. Note that gzip bomb is not possible since these bytecodes are upper bound by the size of the Witness
     if bytecode.len() > 0 {
@@ -518,7 +515,7 @@ pub fn getbytecode<E: RuntimeAdapter + Clone>(env: &mut E, input: &Vec<u8>) -> R
     }
 }
 
-pub fn getblock<E: RuntimeAdapter + Clone>(env: &mut E, input: &Vec<u8>) -> Result<Vec<u8>> {
+pub fn getblock(input: &Vec<u8>) -> Result<Vec<u8>> {
     use crate::etl;
     use alkanes_support::proto::alkanes::{BlockRequest, BlockResponse};
 
@@ -526,13 +523,12 @@ pub fn getblock<E: RuntimeAdapter + Clone>(env: &mut E, input: &Vec<u8>) -> Resu
     let height = request.height;
 
     // Get the block from the etl module
-    let block = etl::get_block(env, height)?;
+    let block = etl::get_block(height)?;
 
     // Create a response with the block data
-    let response = BlockResponse {
-        block: serialize(&block),
-        height: height,
-    };
+    let mut response = BlockResponse::new();
+    response.block = serialize(&block);
+    response.height = height;
 
     // Serialize the response
     Ok(response.encode_to_vec())

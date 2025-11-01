@@ -35,7 +35,7 @@ use crate::alkanes_pb;
 use crate::network::NetworkParams;
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::{vec::Vec, boxed::Box, string::String, pin::Pin, future::Future};
+use std::{vec::Vec, boxed::Box, string::String};
 #[cfg(target_arch = "wasm32")]
 use alloc::{vec::Vec, boxed::Box, string::String, pin::Pin, future::Future};
 

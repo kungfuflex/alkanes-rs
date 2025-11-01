@@ -13,7 +13,6 @@ use crate::{WalletConfig, WalletInfo, WalletBalance, AddressInfo, SendParams, Ut
 use crate::{BlockEvent, KeystoreAddress, KeystoreInfo};
 use crate::network::NetworkParams;
 use crate::wallet::AddressType;
-use alkanes_support::proto::alkanes;
 use bitcoin::Network;
 use regex::Regex;
 #[cfg(not(target_arch = "wasm32"))]

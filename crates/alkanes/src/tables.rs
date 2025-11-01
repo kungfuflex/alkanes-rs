@@ -1,11 +1,9 @@
 use metashrew_core::index_pointer::IndexPointer;
 use metashrew_core::index_pointer::KeyValuePointer;
 
-use metashrew_core::environment::RuntimeEnvironment;
-
-pub fn traces<E: RuntimeEnvironment>() -> IndexPointer<E> {
+pub fn traces() -> IndexPointer {
     IndexPointer::from_keyword("/trace/")
 }
-pub fn traces_by_height<E: RuntimeEnvironment>() -> IndexPointer<E> {
+pub fn traces_by_height() -> IndexPointer {
     IndexPointer::from_keyword("/trace/")
 }

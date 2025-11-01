@@ -4,8 +4,6 @@
 //! using deezel-rpgp for PGP operations and other concrete implementations.
 
 use cfg_if::cfg_if;
-use std::pin::Pin;
-use std::future::Future;
 use crate::{
     alkanes::types::{
         EnhancedExecuteParams, EnhancedExecuteResult, AlkanesInspectConfig, AlkanesInspectResult,
@@ -16,7 +14,6 @@ use crate::{
 };
 use std::path::PathBuf;
 use protobuf::Message;
-use prost::Message as ProstMessage;
 use crate::wallet;
 
 use serde_json::json;

@@ -72,7 +72,6 @@ pub fn get_rpc_url(config: &crate::network::RpcConfig, command: &Commands) -> Re
 
 
 use protobuf::Message;
-use prost::Message as ProstMessage;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{vec, string::String};

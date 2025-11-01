@@ -1,5 +1,3 @@
-use crate::message::AlkaneMessageContext;
-use crate::precompiled::fr_btc_build_v1_1_0;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -19,20 +17,17 @@ use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransferParcel;
 use anyhow::Result;
 use bitcoin::{Block, OutPoint, Transaction};
-use metashrew_support::environment::RuntimeEnvironment;
 
 pub const DIESEL_ID: AlkaneId = AlkaneId { block: 2, tx: 0 };
 pub const FRBTC_ID: AlkaneId = AlkaneId { block: 32, tx: 0 };
 pub const FRSIGIL_ID: AlkaneId = AlkaneId { block: 32, tx: 1 };
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer, KeyValuePointer};
 
-use protorune::balance_sheet::PersistentRecord;
 use protorune::message::{MessageContext, MessageContextParcel};
 #[allow(unused_imports)]
-use protorune::tables::{RuneTable};
+use protorune::tables::RuneTable;
 use protorune_support::balance_sheet::BalanceSheet;
 use protorune_support::utils::{outpoint_encode, tx_hex_to_txid};
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 
@@ -213,14 +208,13 @@ pub fn is_genesis(height: u64) -> bool {
     is_genesis
 }
 
-pub fn setup_frsigil<E: RuntimeEnvironment + Clone + Default + 'static>(
-    env: &mut E,
+pub fn setup_frsigil(
     block: &Block,
-) -> Result<BalanceSheet<E, AtomicPointer<E>>> {
-    let mut atomic: AtomicPointer<E> = AtomicPointer::default();
+) -> Result<BalanceSheet<AtomicPointer>> {
+    let mut atomic: AtomicPointer = AtomicPointer::default();
     let fr_sigil = FRSIGIL_ID;
 
-    let parcel3 = MessageContextParcel::<E> {
+    let parcel3 = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
         transaction: Transaction {
@@ -238,16 +232,15 @@ pub fn setup_frsigil<E: RuntimeEnvironment + Clone + Default + 'static>(
             inputs: vec![0, 1],
         })
         .encipher(),
-        sheets: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
         txindex: 0,
         vout: 0,
-        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
-        _phantom: PhantomData,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
     };
-    let (response2, _gas_used2) = (match simulate_parcel(env, &parcel3, u64::MAX) {
+    let (response2, _gas_used2) = (match simulate_parcel(&parcel3, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
-            env.log(&format!("{:?}", e));
+            println!("{:?}", e);
             Err(e)
         }
     })?;
@@ -255,23 +248,21 @@ pub fn setup_frsigil<E: RuntimeEnvironment + Clone + Default + 'static>(
         &response2.storage,
         &mut atomic
             .derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_sigil.clone().into())),
-        env,
     );
-    atomic.commit(env);
-    let result = <AlkaneTransferParcel as TryInto<BalanceSheet<E, AtomicPointer<E>>>>::try_into(
+    atomic.commit();
+    let result = <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
         response2.alkanes.into(),
     );
-    env.log(&format!("setup_frsigil result: {:?}", result));
+    println!("setup_frsigil result: {:?}", result);
     result
 }
 
-pub fn setup_frbtc<E: RuntimeEnvironment + Clone + Default + 'static>(
-    env: &mut E,
+pub fn setup_frbtc(
     block: &Block,
-) -> Result<BalanceSheet<E, AtomicPointer<E>>> {
-    let mut atomic: AtomicPointer<E> = AtomicPointer::default();
+) -> Result<BalanceSheet<AtomicPointer>> {
+    let mut atomic: AtomicPointer = AtomicPointer::default();
     let fr_btc = FRBTC_ID;
-    let parcel2 = MessageContextParcel::<E> {
+    let parcel2 = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
         transaction: Transaction {
@@ -289,55 +280,51 @@ pub fn setup_frbtc<E: RuntimeEnvironment + Clone + Default + 'static>(
             inputs: vec![0],
         })
         .encipher(),
-        sheets: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
         txindex: 0,
         vout: 0,
-        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
-        _phantom: PhantomData,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
     };
-    let (response3, _gas_used3) = (match simulate_parcel(env, &parcel2, u64::MAX) {
+    let (response3, _gas_used3) = (match simulate_parcel( &parcel2, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
-            env.log(&format!("{:?}", e));
+            println!("{:?}", e);
             Err(e)
         }
     })?;
     pipe_storagemap_to(
         &response3.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
-        env,
     );
-    atomic.commit(env);
-    let result = <AlkaneTransferParcel as TryInto<BalanceSheet<E, AtomicPointer<E>>>>::try_into(
+    atomic.commit();
+    let result = <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
         response3.alkanes.into(),
     );
-    env.log(&format!("setup_frbtc result: {:?}", result));
+    println!("setup_frbtc result: {:?}", result);
     result
 }
 
-pub fn check_and_upgrade_diesel<E: RuntimeEnvironment + Clone + Default + 'static>(
-    env: &mut E,
+pub fn check_and_upgrade_diesel(
     height: u32,
 ) -> Result<()> {
     if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
-        let mut upgrade_ptr = IndexPointer::<E>::from_keyword("/genesis-upgraded");
-        if upgrade_ptr.get(env).len() == 0 {
-            upgrade_ptr.set_value(env, 0x01_u8);
-            IndexPointer::<E>::from_keyword("/alkanes/")
+        let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
+        if upgrade_ptr.get().len() == 0 {
+            upgrade_ptr.set_value(0x01_u8);
+            IndexPointer::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
-                .set(env, Arc::new(compress(genesis_alkane_upgrade_bytes())?));
+                .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
         }
     }
     Ok(())
 }
 
-pub fn setup_diesel<E: RuntimeEnvironment + Clone + Default + 'static>(
-    env: &mut E,
+pub fn setup_diesel(
     block: &Block,
-) -> Result<BalanceSheet<E, AtomicPointer<E>>> {
-    let mut atomic: AtomicPointer<E> = AtomicPointer::default();
+) -> Result<BalanceSheet<AtomicPointer>> {
+    let mut atomic: AtomicPointer = AtomicPointer::default();
     let myself = DIESEL_ID;
-    let parcel = MessageContextParcel::<E> {
+    let parcel = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
         transaction: Transaction {
@@ -355,59 +342,56 @@ pub fn setup_diesel<E: RuntimeEnvironment + Clone + Default + 'static>(
             inputs: vec![0],
         })
         .encipher(),
-        sheets: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
         txindex: 0,
         vout: 0,
-        runtime_balances: Box::<BalanceSheet<E, AtomicPointer<E>>>::new(BalanceSheet::default()),
-        _phantom: PhantomData,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
     };
-    let (response, _gas_used) = (match simulate_parcel(env, &parcel, u64::MAX) {
+    let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
         Err(e) => {
-            env.log(&format!("{:?}", e));
+            println!("{:?}", e);
             Err(e)
         }
     })?;
     pipe_storagemap_to(
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
-        env,
     );
-    atomic.commit(env);
-    let result = <AlkaneTransferParcel as TryInto<BalanceSheet<E, AtomicPointer<E>>>>::try_into(
+    atomic.commit();
+    let result = <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
         response.alkanes.into(),
     );
-    env.log(&format!("setup_diesel result: {:?}", result));
+    println!("setup_diesel result: {:?}", result);
     result
 }
 
-pub fn genesis<E: RuntimeEnvironment + Clone + Default + 'static>(env: &mut E) -> Result<()> {
-    let mut atomic: AtomicPointer<E> = AtomicPointer::default();
-    sequence_pointer(&atomic).set_value(env, 1_u128);
-    IndexPointer::<E>::from_keyword("/alkanes/")
+pub fn genesis() -> Result<()> {
+    let mut atomic: AtomicPointer = AtomicPointer::default();
+    sequence_pointer(&atomic).set_value(1_u128);
+    IndexPointer::from_keyword("/alkanes/")
         .select(&DIESEL_ID.into())
-        .set(env, Arc::new(compress(genesis_alkane_bytes())?));
-    IndexPointer::<E>::from_keyword("/alkanes/")
+        .set(Arc::new(compress(genesis_alkane_bytes())?));
+    IndexPointer::from_keyword("/alkanes/")
         .select(&FRBTC_ID.into())
-        .set(env, Arc::new(compress(fr_btc_bytes())?));
-    IndexPointer::<E>::from_keyword("/alkanes/")
+        .set(Arc::new(compress(fr_btc_bytes())?));
+    IndexPointer::from_keyword("/alkanes/")
         .select(&FRSIGIL_ID.into())
-        .set(env, Arc::new(compress(fr_sigil_bytes())?));
+        .set(Arc::new(compress(fr_sigil_bytes())?));
     let outpoint_bytes = outpoint_encode(&OutPoint {
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
     })?;
     atomic
-        .derive(&RuneTable::<E>::new().OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
-        .set_value(env, genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT);
+        .derive(&RuneTable::new().OUTPOINT_TO_HEIGHT.select(&outpoint_bytes))
+        .set_value(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT);
     atomic
         .derive(
-            &RuneTable::<E>::new()
+            &RuneTable::new()
                 .HEIGHT_TO_TRANSACTION_IDS
                 .select_value::<u64>(genesis::GENESIS_OUTPOINT_BLOCK_HEIGHT),
         )
         .append(
-            env,
             Arc::new(
                 hex::decode(genesis::GENESIS_OUTPOINT)?
                     .iter()
@@ -416,6 +400,6 @@ pub fn genesis<E: RuntimeEnvironment + Clone + Default + 'static>(env: &mut E) -
                     .collect::<Vec<u8>>(),
             ),
         );
-    atomic.commit(env);
+    atomic.commit();
     Ok(())
 }

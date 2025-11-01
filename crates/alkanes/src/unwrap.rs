@@ -1,6 +1,5 @@
 use alkanes_support::proto::alkanes::{self as pb, Payment as ProtoPayment, PendingUnwrapsResponse};
 use anyhow::Result;
-use metashrew_support::environment::RuntimeEnvironment;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, TxOut};
 use metashrew_core::index_pointer::IndexPointer;
@@ -14,16 +13,16 @@ use std::io::Cursor;
 
 use crate::network::genesis;
 
-pub fn fr_btc_storage_pointer<E: RuntimeEnvironment>() -> IndexPointer<E> {
+pub fn fr_btc_storage_pointer() -> IndexPointer {
     IndexPointer::from_keyword("/fr_btc/storage/")
 }
 
-pub fn fr_btc_fulfilled_pointer<E: RuntimeEnvironment>() -> IndexPointer<E> {
+pub fn fr_btc_fulfilled_pointer() -> IndexPointer {
     IndexPointer::from_keyword("/fr_btc/fulfilled/")
 }
 
-pub fn fr_btc_premium<E: RuntimeEnvironment>(env: &mut E) -> u128 {
-    let bytes = fr_btc_storage_pointer::<E>().keyword("/premium").get(env);
+pub fn fr_btc_premium() -> u128 {
+    let bytes = fr_btc_storage_pointer().keyword("/premium").get();
     if bytes.is_empty() {
         0
     } else {
@@ -69,9 +68,11 @@ impl From<Payment> for ProtoPayment {
             spendable: Some(pb::Outpoint {
                 txid: payment.spendable.txid.as_byte_array().to_vec(),
                 vout: payment.spendable.vout,
+                ..Default::default()
             }),
             output: consensus_encode::<TxOut>(&payment.output).unwrap(),
             fulfilled: payment.fulfilled,
+            ..Default::default()
         }
     }
 }
@@ -93,39 +94,37 @@ pub fn deserialize_payments(v: &Vec<u8>) -> Result<Vec<Payment>> {
     Ok(payments)
 }
 
-pub fn fr_btc_payments_at_block<E: RuntimeEnvironment>(
-    env: &mut E,
+pub fn fr_btc_payments_at_block(
     v: u128,
 ) -> Vec<Vec<u8>> {
-    fr_btc_storage_pointer::<E>()
+    fr_btc_storage_pointer()
         .keyword("/payments/byheight/")
         .select_value::<u64>(v as u64)
-        .get_list(env)
+        .get_list()
         .into_iter()
         .map(|v| v.as_ref().clone())
         .collect::<Vec<Vec<u8>>>()
 }
 
-pub fn view<E: RuntimeEnvironment>(
-    env: &mut E,
+pub fn view(
     height: u128,
 ) -> Result<PendingUnwrapsResponse> {
     let last_block = std::cmp::max(
-        fr_btc_storage_pointer::<E>()
+        fr_btc_storage_pointer()
             .keyword("/last_block")
-            .get_value(env),
+            .get_value(),
         genesis::GENESIS_BLOCK as u128,
     );
     let mut response = PendingUnwrapsResponse::default();
     for i in last_block..=height {
-        for payment_list_bytes in fr_btc_payments_at_block::<E>(env, i) {
+        for payment_list_bytes in fr_btc_payments_at_block(i) {
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for mut payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
-                if RuneTable::<E>::new()
+                if RuneTable::new()
                     .OUTPOINT_SPENDABLE_BY
                     .select(&spendable_bytes)
-                    .get(env)
+                    .get()
                     .len()
                     == 0
                 {
@@ -136,9 +135,11 @@ pub fn view<E: RuntimeEnvironment>(
                         spendable: Some(pb::Outpoint {
                             txid: payment.spendable.txid.as_byte_array().to_vec(),
                             vout: payment.spendable.vout,
+                            ..Default::default()
                         }),
                         output: consensus_encode::<TxOut>(&payment.output)?,
                         fulfilled: payment.fulfilled,
+                        ..Default::default()
                     });
                 }
             }
@@ -147,15 +148,14 @@ pub fn view<E: RuntimeEnvironment>(
     Ok(response)
 }
 
-pub fn update_last_block<E: RuntimeEnvironment>(
-    env: &mut E,
+pub fn update_last_block(
     height: u128,
 ) -> Result<()> {
-    let mut last_block_key = fr_btc_storage_pointer::<E>().keyword("/last_block");
-    let mut last_block = std::cmp::max(last_block_key.get_value(env), genesis::GENESIS_BLOCK as u128);
+    let mut last_block_key = fr_btc_storage_pointer().keyword("/last_block");
+    let mut last_block = std::cmp::max(last_block_key.get_value(), genesis::GENESIS_BLOCK as u128);
     for i in last_block..=height {
         let mut all_fulfilled = true;
-        let all_payment_list_bytes = fr_btc_payments_at_block::<E>(env, i);
+        let all_payment_list_bytes = fr_btc_payments_at_block(i);
         if all_payment_list_bytes.len() == 0 {
             last_block = i;
             continue;
@@ -164,10 +164,10 @@ pub fn update_last_block<E: RuntimeEnvironment>(
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
-                let spendable_by = RuneTable::<E>::new()
+                let spendable_by = RuneTable::new()
                     .OUTPOINT_SPENDABLE_BY
                     .select(&spendable_bytes)
-                    .get(env);
+                    .get();
                 if spendable_by.len() > 1 {
                     all_fulfilled = false;
                     break;
@@ -183,6 +183,6 @@ pub fn update_last_block<E: RuntimeEnvironment>(
             break;
         }
     }
-    last_block_key.set_value(env, last_block);
+    last_block_key.set_value(last_block);
     Ok(())
 }

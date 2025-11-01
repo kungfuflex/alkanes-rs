@@ -3,7 +3,6 @@ use alkanes_support::{
     parcel::AlkaneTransferParcel, response::ExtendedCallResponse, storage::StorageMap,
 };
 use anyhow::{anyhow, Result};
-use metashrew_core::environment::RuntimeEnvironment;
 use metashrew_support::utils::{consume_exact, consume_sized_int, consume_to_end};
 use wasmi::*;
 
@@ -19,7 +18,7 @@ impl AlkanesExportsImpl {
             ))
         })?)
     }
-    pub fn _get_result<E: RuntimeEnvironment + Clone + Default + 'static>(vm: &mut AlkanesInstance<E>, result: &[Val; 1]) -> Result<Vec<u8>> {
+    pub fn _get_result(vm: &mut AlkanesInstance, result: &[Val; 1]) -> Result<Vec<u8>> {
         vm.read_from_memory(
             result[0]
                 .i32()
@@ -51,8 +50,8 @@ impl AlkanesExportsImpl {
             data,
         })
     }
-    pub fn execute<E: RuntimeEnvironment + Clone + Default + 'static>(
-        vm: &mut AlkanesInstance<E>,
+    pub fn execute(
+        vm: &mut AlkanesInstance,
     ) -> Result<ExtendedCallResponse> {
         let mut result = [Val::I32(0)];
         let func = Self::_get_export(vm, "__execute")?;
@@ -64,7 +63,7 @@ impl AlkanesExportsImpl {
         Ok(response)
     }
 
-    pub fn call_meta<E: RuntimeEnvironment + Clone + Default + 'static>(vm: &mut AlkanesInstance<E>) -> Result<Vec<u8>> {
+    pub fn call_meta(vm: &mut AlkanesInstance) -> Result<Vec<u8>> {
         let mut result = [Val::I32(0)];
         let func = Self::_get_export(vm, "__meta")?;
         func.call(&mut vm.store, &[], &mut result)?;
