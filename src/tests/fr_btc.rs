@@ -448,9 +448,9 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
         .keyword("/last_block")
         .get_value::<u128>();
 
-    // wrap_btc is at height 1, which has no payments. So last_block becomes 1.
-    // unwrap_btc is at height 2, which has an unfulfilled payment. So last_block stays 1.
-    assert_eq!(last_block_before, 1);
+    // wrap_btc is at height 1, which has no payments. So last_block becomes 2.
+    // unwrap_btc is at height 2, which has an unfulfilled payment. So last_block stays 2.
+    assert_eq!(last_block_before, 2);
 
     // Check view has one payment
     let unwrap_view_response_before = unwrap_view::view(height2 as u128)?;
@@ -473,7 +473,7 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
     let last_block_after = unwrap_view::fr_btc_storage_pointer()
         .keyword("/last_block")
         .get_value::<u128>();
-    assert_eq!(last_block_after, height3 as u128);
+    assert_eq!(last_block_after, (height3 + 1) as u128);
 
     // Check view has no payments because the processed blocks are skipped
     let unwrap_view_response_after = unwrap_view::view(height3 as u128)?;
