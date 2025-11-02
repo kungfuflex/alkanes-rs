@@ -517,12 +517,32 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
 /// storage_variable!(ticket_price: u128);
 /// storage_variable!(token: AlkaneId);
 /// storage_variable!(name: String);
+/// storage_variable!(root: Vec<u8>);
 /// storage_variable!(pool_info: PoolInfo);
 /// ```
 /// 
-/// This generates three functions:
+/// This generates functions based on the type:
+/// 
+/// For `u128` type, generates:
 /// - `{name}_pointer()` - returns StoragePointer
 /// - `{name}()` - gets the value
+/// - `set_{name}(value)` - sets the value
+/// - `increase_{name}(amount)` - increases the value by amount
+/// - `decrease_{name}(amount)` - decreases the value by amount (saturating)
+/// 
+/// For `AlkaneId` and `String` types, generates:
+/// - `{name}_pointer()` - returns StoragePointer
+/// - `{name}()` - gets the value (returns Result)
+/// - `set_{name}(value)` - sets the value
+/// 
+/// For `Vec<u8>` type, generates:
+/// - `{name}_pointer()` - returns StoragePointer
+/// - `{name}()` - gets the value (returns Vec<u8>)
+/// - `set_{name}(value: Vec<u8>)` - sets the value
+/// 
+/// For struct types, generates:
+/// - `{name}_pointer()` - returns StoragePointer
+/// - `{name}()` - gets the value (returns Result)
 /// - `set_{name}(value)` - sets the value
 /// 
 /// For struct types, it requires the struct to implement:
@@ -543,6 +563,9 @@ pub fn storage_variable(input: TokenStream) -> TokenStream {
     // Generate code based on type
     let expanded = match &parsed.ty {
         StorageVariableType::U128 => {
+            let increase_name = format_ident!("increase_{}", name);
+            let decrease_name = format_ident!("decrease_{}", name);
+            
             quote! {
                 fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
                     alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
@@ -554,6 +577,16 @@ pub fn storage_variable(input: TokenStream) -> TokenStream {
                 
                 fn #set_name(&self, value: u128) {
                     self.#pointer_name().set_value::<u128>(value);
+                }
+                
+                fn #increase_name(&self, amount: u128) {
+                    let current = self.#name();
+                    self.#set_name(current + amount);
+                }
+                
+                fn #decrease_name(&self, amount: u128) {
+                    let current = self.#name();
+                    self.#set_name(current.saturating_sub(amount));
                 }
             }
         }
@@ -616,6 +649,21 @@ pub fn storage_variable(input: TokenStream) -> TokenStream {
                 }
             }
         }
+        StorageVariableType::VecU8 => {
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> Vec<u8> {
+                    self.#pointer_name().get().as_ref().clone()
+                }
+                
+                fn #set_name(&self, v: Vec<u8>) {
+                    self.#pointer_name().set(std::sync::Arc::new(v));
+                }
+            }
+        }
         StorageVariableType::Struct(struct_name) => {
             quote! {
                 fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
@@ -642,6 +690,7 @@ enum StorageVariableType {
     U128,
     AlkaneId,
     String,
+    VecU8,
     Struct(Ident),
 }
 
@@ -655,16 +704,45 @@ impl syn::parse::Parse for StorageVariableInput {
         let name: Ident = input.parse()?;
         input.parse::<syn::Token![:]>()?;
         
-        let ty = if input.peek(syn::Ident) {
-            let ident: Ident = input.parse()?;
-            match ident.to_string().as_str() {
-                "u128" => StorageVariableType::U128,
-                "AlkaneId" => StorageVariableType::AlkaneId,
-                "String" => StorageVariableType::String,
-                _ => StorageVariableType::Struct(ident),
+        // Try to parse as a Type (handles both simple types and generic types like Vec<u8>)
+        let ty_type: Type = input.parse()?;
+        
+        let ty = match &ty_type {
+            Type::Path(type_path) => {
+                if let Some(segment) = type_path.path.segments.last() {
+                    let seg_name = segment.ident.to_string();
+                    
+                    // Check for Vec<u8>
+                    if seg_name == "Vec" {
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(inner_type)) = args.args.first() {
+                                if let Type::Path(inner_path) = inner_type {
+                                    if let Some(inner_seg) = inner_path.path.segments.last() {
+                                        if inner_seg.ident == "u8" {
+                                            return Ok(StorageVariableInput {
+                                                name,
+                                                ty: StorageVariableType::VecU8,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Err(input.error("Only Vec<u8> is supported for Vec types"));
+                    }
+                    
+                    // Check for simple types
+                    match seg_name.as_str() {
+                        "u128" => StorageVariableType::U128,
+                        "AlkaneId" => StorageVariableType::AlkaneId,
+                        "String" => StorageVariableType::String,
+                        _ => StorageVariableType::Struct(segment.ident.clone()),
+                    }
+                } else {
+                    return Err(input.error("Invalid type"));
+                }
             }
-        } else {
-            return Err(input.error("Expected type identifier"));
+            _ => return Err(input.error("Expected type identifier or generic type")),
         };
         
         Ok(StorageVariableInput { name, ty })
