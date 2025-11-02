@@ -67,11 +67,14 @@ pub fn parcel_from_protobuf(v: proto::alkanes::MessageContextParcel) -> MessageC
     result.vout = v.vout;
     result.calldata = v.calldata;
     result.runes = v
-        .alkanes
-        .into_iter()
-        .map(|v| v.into())
-        .collect::<Vec<RuneTransfer>>();
-    result.pointer = v.pointer;
+    .alkanes
+    .into_iter()
+    .map(|v| RuneTransfer {
+        id: v.id.unwrap().clone().into(),
+        value: v.value.unwrap().into(),
+    })
+    .collect::<Vec<RuneTransfer>>();
+result.pointer = v.pointer;
     result.refund_pointer = v.refund_pointer;
     result
 }
@@ -119,7 +122,7 @@ pub fn call_view(id: &AlkaneId, inputs: &Vec<u128>, fuel: u64) -> Result<Vec<u8>
 }
 
 pub fn unwrap(height: u128) -> Result<Vec<u8>> {
-    Ok(unwrap_view::view(height).unwrap().encode_to_vec())
+    Ok(unwrap_view::view(height).unwrap().write_to_bytes().unwrap())
 }
 
 pub fn call_multiview(ids: &[AlkaneId], inputs: &Vec<Vec<u128>>, fuel: u64) -> Result<Vec<u8>> {
@@ -189,7 +192,7 @@ pub fn to_alkanes_balances(
             .rune
             .clone()
             .unwrap()
-            .rune_id
+            .runeId
             .as_ref()
             .unwrap()
             .height
@@ -213,7 +216,7 @@ pub fn to_alkanes_from_runes(
     runes
         .into_iter()
         .map(|mut v| {
-            let block: u128 = v.clone().rune_id.as_ref().unwrap().height.clone().unwrap().into();
+            let block: u128 = v.clone().runeId.as_ref().unwrap().height.clone().unwrap().into();
             if block == 2 || block == 4 || block == 32 {
                 (v.name, v.symbol) = get_statics(&alkanes_support::id::AlkaneId::from(v.rune_id.clone().unwrap()));
                 v.spacers = 0;
@@ -235,7 +238,7 @@ pub fn protorunes_by_outpoint(
                 Some(
                     to_alkanes_balances(response.balances.unwrap_or_default())
                     .clone(),
-                );
+                ).into();
         }
         Ok(response)
     })
@@ -253,7 +256,7 @@ pub fn to_alkanes_outpoints(
                     .unwrap_or_default(),
             )
             .clone(),
-        );
+        ).into();
     }
     cloned
 }
@@ -335,6 +338,33 @@ pub fn protorunes_by_height(
         }
         Ok(response)
     })
+}
+
+pub fn alkane_inventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
+    let mut result: AlkaneInventoryResponse = AlkaneInventoryResponse::default();
+    let alkane_inventory = alkane_inventory_pointer(&req.id.as_ref().unwrap().clone().into());
+    result.alkanes = alkane_inventory
+        .get_list()
+        .into_iter()
+        .map(|alkane_held| -> proto::alkanes::AlkaneTransfer {
+            let id = alkanes_support::id::AlkaneId::parse(&mut Cursor::new(
+                alkane_held.as_ref().clone(),
+            ))
+            .unwrap();
+            let balance_pointer = balance_pointer(
+                &mut AtomicPointer::default(),
+                &req.id.as_ref().unwrap().clone().into(),
+                &id,
+            );
+            let balance = balance_pointer.get_value::<u128>();
+            (AlkaneTransfer {
+                id: id,
+                value: balance,
+            })
+            .into()
+        })
+        .collect::<Vec<proto::alkanes::AlkaneTransfer>>();
+    Ok(result)
 }
 
 pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {

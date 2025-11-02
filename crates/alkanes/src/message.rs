@@ -2,7 +2,7 @@ use crate::network::{genesis::GENESIS_BLOCK, is_active};
 use crate::trace::save_trace;
 use crate::utils::{credit_balances, debit_balances, pipe_storagemap_to};
 use crate::vm::{
-    fuel::{AlkanesTransaction, FuelTank},
+    fuel::FuelTank,
     runtime::AlkanesRuntimeContext,
     utils::{prepare_context, run_after_special, run_special_cellpacks},
 };

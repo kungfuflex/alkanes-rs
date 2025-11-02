@@ -125,7 +125,7 @@ impl ConcreteProvider {
         Self {
             rpc_config,
             command,
-            wallet_path: None,
+            _wallet_path: None,
             passphrase: None,
             wallet_state: WalletState::None,
             #[cfg(feature = "native-deps")]

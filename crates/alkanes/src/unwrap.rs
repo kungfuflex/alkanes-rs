@@ -69,7 +69,7 @@ impl From<Payment> for ProtoPayment {
                 txid: payment.spendable.txid.as_byte_array().to_vec(),
                 vout: payment.spendable.vout,
                 ..Default::default()
-            }),
+            }).into(),
             output: consensus_encode::<TxOut>(&payment.output).unwrap(),
             fulfilled: payment.fulfilled,
             ..Default::default()

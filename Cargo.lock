@@ -290,6 +290,7 @@ dependencies = [
  "once_cell",
  "ordinals 1.2.3",
  "prost 0.13.5",
+ "protobuf 3.7.2",
  "protorune",
  "protorune-support",
  "ruint",

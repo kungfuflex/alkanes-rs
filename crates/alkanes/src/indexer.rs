@@ -1,13 +1,13 @@
-use metashrew_support::{
-    index_pointer::{IndexPointer, KeyValuePointer},
-};
+use metashrew_support::index_pointer::KeyValuePointer;
+use metashrew_core::index_pointer::{IndexPointer, AtomicPointer};
 use protorune::{
-    balance_sheet::{BalanceSheetOperations, PersistentRecord},
+    balance_sheet::{PersistentRecord},
     message::MessageContext,
 };
+use protorune_support::network::{set_network, NetworkParams};
 use crate::message::AlkaneMessageContext;
 use crate::network::{
-    check_and_upgrade_diesel, genesis, is_genesis, setup_diesel, setup_frbtc, setup_frsigil,
+    check_and_upgrade_diesel, genesis, is_genesis, setup_diesel, setup_frbtc, setup_frsigil, 
 };
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
@@ -24,6 +24,7 @@ use protorune::Protorune;
     not(feature = "bellscoin")
 ))]
 pub fn configure_network() {
+
     set_network(NetworkParams {
         bech32_prefix: String::from("bcrt"),
         p2pkh_prefix: 0x64,
@@ -95,40 +96,39 @@ pub fn index_block(
     clear_diesel_mints_cache();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
-        genesis(env).unwrap();
-        let genesis_balance_sheet = setup_diesel(env, block)?;
-        env.log(&format!("genesis_balance_sheet: {:?}", genesis_balance_sheet));
-        let frbtc_balance_sheet = setup_frbtc(env, block)?;
-        env.log(&format!("frbtc_balance_sheet: {:?}", frbtc_balance_sheet));
-        let frsigil_balance_sheet = setup_frsigil(env, block)?;
-        env.log(&format!("frsigil_balance_sheet: {:?}", frsigil_balance_sheet));
+        genesis().unwrap();
+        let genesis_balance_sheet = setup_diesel(block)?;
+        println!("genesis_balance_sheet: {:?}", genesis_balance_sheet);
+        let frbtc_balance_sheet = setup_frbtc(block)?;
+        println!("frbtc_balance_sheet: {:?}", frbtc_balance_sheet);
+        let frsigil_balance_sheet = setup_frsigil(block)?;
+        println!("frsigil_balance_sheet: {:?}", frsigil_balance_sheet);
         let mut merged_sheet = genesis_balance_sheet;
-        merged_sheet.merge_sheets(&frbtc_balance_sheet, &frsigil_balance_sheet, env)?;
-        env.log(&format!("merged genesis_balance_sheet: {:?}", merged_sheet));
+        merged_sheet.merge_sheets(&frbtc_balance_sheet, &frsigil_balance_sheet)?;
+        println!("merged genesis_balance_sheet: {:?}", merged_sheet);
         let outpoint_bytes = protorune_support::utils::outpoint_encode(&bitcoin::OutPoint {
             txid: protorune_support::utils::tx_hex_to_txid(crate::network::genesis::GENESIS_OUTPOINT)?,
             vout: 0,
         })?;
-        let mut atomic = metashrew_support::index_pointer::AtomicPointer::default();
+        let mut atomic = AtomicPointer::default();
         merged_sheet.save(
             &mut atomic.derive(
                 &protorune::tables::RuneTable::for_protocol(
-                    AlkaneMessageContext::<E>::protocol_tag(),
+                    AlkaneMessageContext::protocol_tag(),
                 )
                 .OUTPOINT_TO_RUNES
                 .select(&outpoint_bytes),
             ),
             false,
-            env,
         );
-        atomic.commit(env);
+        atomic.commit();
     }
-    check_and_upgrade_diesel(env, height)?;
-    FuelTank::initialize::<E>(&block, height);
+    check_and_upgrade_diesel(height)?;
+    FuelTank::initialize(&block, height);
     // Get the set of updated addresses from the indexing process
-    let _updated_addresses = Protorune::index_block::<AlkaneMessageContext<E>>(env, block.clone(), height.into(), network)?;
+        let _updated_addresses = Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 
-    let _ = unwrap::update_last_block(env, height as u128)?;
+    let _ = unwrap::update_last_block(height as u128)?;
 
     #[cfg(feature = "cache")]
     {
@@ -181,6 +181,5 @@ pub fn index_block(
         }
     }
 
-    logging::log_block_summary(env, block, height, block.total_size());
     Ok(())
 }
