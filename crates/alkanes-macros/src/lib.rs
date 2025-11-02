@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Fields, FieldsNamed, Ident, Lit, LitInt, Meta,
+    parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, Lit, Meta,
     NestedMeta, Type, TypePath,
 };
 
@@ -508,4 +508,165 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// Macro to define storage variable helpers
+/// 
+/// Usage examples:
+/// ```ignore
+/// storage_variable!(ticket_price: u128);
+/// storage_variable!(token: AlkaneId);
+/// storage_variable!(name: String);
+/// storage_variable!(pool_info: PoolInfo);
+/// ```
+/// 
+/// This generates three functions:
+/// - `{name}_pointer()` - returns StoragePointer
+/// - `{name}()` - gets the value
+/// - `set_{name}(value)` - sets the value
+/// 
+/// For struct types, it requires the struct to implement:
+/// - `from_vec(bytes: &[u8]) -> Result<Self>`
+/// - `try_to_vec(&self) -> Vec<u8>`
+#[proc_macro]
+pub fn storage_variable(input: TokenStream) -> TokenStream {
+    // Parse the input: name: type
+    let parsed = syn::parse_macro_input!(input as StorageVariableInput);
+    
+    let name = &parsed.name;
+    let name_str = name.to_string();
+    let pointer_name = format_ident!("{}_pointer", name);
+    let set_name = format_ident!("set_{}", name);
+    
+    let keyword_path = format!("/{}", name_str);
+    
+    // Generate code based on type
+    let expanded = match &parsed.ty {
+        StorageVariableType::U128 => {
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> u128 {
+                    self.#pointer_name().get_value::<u128>()
+                }
+                
+                fn #set_name(&self, value: u128) {
+                    self.#pointer_name().set_value::<u128>(value);
+                }
+            }
+        }
+        StorageVariableType::AlkaneId => {
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> anyhow::Result<alkanes_support::id::AlkaneId> {
+                    use std::io::Read;
+                    let ptr = self.#pointer_name().get().as_ref().clone();
+                    let mut cursor = std::io::Cursor::<Vec<u8>>::new(ptr);
+                    let mut buf = [0u8; 16];
+                    cursor.read_exact(&mut buf)?;
+                    let block = u128::from_le_bytes(buf);
+                    cursor.read_exact(&mut buf)?;
+                    let tx = u128::from_le_bytes(buf);
+                    Ok(alkanes_support::id::AlkaneId::new(block, tx))
+                }
+                
+                fn #set_name(&self, token_id: alkanes_support::id::AlkaneId) {
+                    let mut ptr = self.#pointer_name();
+                    ptr.set(std::sync::Arc::new(token_id.into()));
+                }
+            }
+        }
+        StorageVariableType::String => {
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> anyhow::Result<String> {
+                    let bytes = self.#pointer_name().get().as_ref().clone();
+                    if bytes.is_empty() {
+                        return Ok(String::new());
+                    }
+                    
+                    if bytes.len() < 4 {
+                        return Err(anyhow::anyhow!("Invalid bytes length for String"));
+                    }
+                    
+                    let name_length = u32::from_le_bytes(bytes[0..4].try_into()?) as usize;
+                    if bytes.len() < 4 + name_length {
+                        return Err(anyhow::anyhow!("Invalid bytes length for String content"));
+                    }
+                    
+                    Ok(String::from_utf8(bytes[4..4 + name_length].to_vec())?)
+                }
+                
+                fn #set_name(&self, value: String) {
+                    let mut bytes = Vec::new();
+                    let name_bytes = value.as_bytes();
+                    bytes.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+                    bytes.extend_from_slice(name_bytes);
+                    
+                    let mut ptr = self.#pointer_name();
+                    ptr.set(std::sync::Arc::new(bytes));
+                }
+            }
+        }
+        StorageVariableType::Struct(struct_name) => {
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> anyhow::Result<#struct_name> {
+                    let bytes = self.#pointer_name().get().as_ref().clone();
+                    #struct_name::from_vec(&bytes)
+                }
+                
+                fn #set_name(&self, value: #struct_name) {
+                    let mut ptr = self.#pointer_name();
+                    ptr.set(std::sync::Arc::new(value.try_to_vec()));
+                }
+            }
+        }
+    };
+    
+    TokenStream::from(expanded)
+}
+
+enum StorageVariableType {
+    U128,
+    AlkaneId,
+    String,
+    Struct(Ident),
+}
+
+struct StorageVariableInput {
+    name: Ident,
+    ty: StorageVariableType,
+}
+
+impl syn::parse::Parse for StorageVariableInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let name: Ident = input.parse()?;
+        input.parse::<syn::Token![:]>()?;
+        
+        let ty = if input.peek(syn::Ident) {
+            let ident: Ident = input.parse()?;
+            match ident.to_string().as_str() {
+                "u128" => StorageVariableType::U128,
+                "AlkaneId" => StorageVariableType::AlkaneId,
+                "String" => StorageVariableType::String,
+                _ => StorageVariableType::Struct(ident),
+            }
+        } else {
+            return Err(input.error("Expected type identifier"));
+        };
+        
+        Ok(StorageVariableInput { name, ty })
+    }
 }
