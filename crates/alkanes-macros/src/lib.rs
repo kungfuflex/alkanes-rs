@@ -912,6 +912,51 @@ fn generate_mapping_functions(
     }
 }
 
+enum ParsedType {
+    U128,
+    AlkaneId,
+    String,
+    VecU8,
+    Struct(Ident),
+}
+
+fn parse_type(ty_type: &Type) -> syn::Result<ParsedType> {
+    match ty_type {
+        Type::Path(type_path) => {
+            if let Some(segment) = type_path.path.segments.last() {
+                let seg_name = segment.ident.to_string();
+                
+                // Check for Vec<u8>
+                if seg_name == "Vec" {
+                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(syn::GenericArgument::Type(inner_type)) = args.args.first() {
+                            if let Type::Path(inner_path) = inner_type {
+                                if let Some(inner_seg) = inner_path.path.segments.last() {
+                                    if inner_seg.ident == "u8" {
+                                        return Ok(ParsedType::VecU8);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return Err(syn::Error::new_spanned(ty_type, "Only Vec<u8> is supported for Vec types"));
+                }
+                
+                // Check for simple types
+                Ok(match seg_name.as_str() {
+                    "u128" => ParsedType::U128,
+                    "AlkaneId" => ParsedType::AlkaneId,
+                    "String" => ParsedType::String,
+                    _ => ParsedType::Struct(segment.ident.clone()),
+                })
+            } else {
+                Err(syn::Error::new_spanned(ty_type, "Invalid type"))
+            }
+        }
+        _ => Err(syn::Error::new_spanned(ty_type, "Expected type identifier or generic type")),
+    }
+}
+
 enum StorageVariableType {
     U128,
     AlkaneId,
@@ -930,45 +975,15 @@ impl syn::parse::Parse for StorageVariableInput {
         let name: Ident = input.parse()?;
         input.parse::<syn::Token![:]>()?;
         
-        // Try to parse as a Type (handles both simple types and generic types like Vec<u8>)
         let ty_type: Type = input.parse()?;
+        let parsed = parse_type(&ty_type)?;
         
-        let ty = match &ty_type {
-            Type::Path(type_path) => {
-                if let Some(segment) = type_path.path.segments.last() {
-                    let seg_name = segment.ident.to_string();
-                    
-                    // Check for Vec<u8>
-                    if seg_name == "Vec" {
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(inner_type)) = args.args.first() {
-                                if let Type::Path(inner_path) = inner_type {
-                                    if let Some(inner_seg) = inner_path.path.segments.last() {
-                                        if inner_seg.ident == "u8" {
-                                            return Ok(StorageVariableInput {
-                                                name,
-                                                ty: StorageVariableType::VecU8,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        return Err(input.error("Only Vec<u8> is supported for Vec types"));
-                    }
-                    
-                    // Check for simple types
-                    match seg_name.as_str() {
-                        "u128" => StorageVariableType::U128,
-                        "AlkaneId" => StorageVariableType::AlkaneId,
-                        "String" => StorageVariableType::String,
-                        _ => StorageVariableType::Struct(segment.ident.clone()),
-                    }
-                } else {
-                    return Err(input.error("Invalid type"));
-                }
-            }
-            _ => return Err(input.error("Expected type identifier or generic type")),
+        let ty = match parsed {
+            ParsedType::U128 => StorageVariableType::U128,
+            ParsedType::AlkaneId => StorageVariableType::AlkaneId,
+            ParsedType::String => StorageVariableType::String,
+            ParsedType::VecU8 => StorageVariableType::VecU8,
+            ParsedType::Struct(ident) => StorageVariableType::Struct(ident),
         };
         
         Ok(StorageVariableInput { name, ty })
@@ -1005,128 +1020,29 @@ impl syn::parse::Parse for MappingVariableInput {
         let key_name: Ident = input.parse()?;
         input.parse::<syn::Token![,]>()?;
         
-        // Parse key type
+        // Parse key type (only u128, AlkaneId, String, Vec<u8> are supported as keys)
         let key_type_type: Type = input.parse()?;
-        let key_type = match &key_type_type {
-            Type::Path(type_path) => {
-                if let Some(segment) = type_path.path.segments.last() {
-                    let seg_name = segment.ident.to_string();
-                    match seg_name.as_str() {
-                        "u128" => MappingKeyType::U128,
-                        "AlkaneId" => MappingKeyType::AlkaneId,
-                        "String" => MappingKeyType::String,
-                        "Vec" => {
-                            // Check for Vec<u8>
-                            if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                                if let Some(syn::GenericArgument::Type(inner_type)) = args.args.first() {
-                                    if let Type::Path(inner_path) = inner_type {
-                                        if let Some(inner_seg) = inner_path.path.segments.last() {
-                                            if inner_seg.ident == "u8" {
-                                                // Parse value type before returning
-                                                input.parse::<syn::Token![,]>()?;
-                                                let value_type_type: Type = input.parse()?;
-                                                let value_type = match &value_type_type {
-                                                    Type::Path(type_path) => {
-                                                        if let Some(segment) = type_path.path.segments.last() {
-                                                            let seg_name = segment.ident.to_string();
-                                                            if seg_name == "Vec" {
-                                                                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                                                                    if let Some(syn::GenericArgument::Type(inner_type)) = args.args.first() {
-                                                                        if let Type::Path(inner_path) = inner_type {
-                                                                            if let Some(inner_seg) = inner_path.path.segments.last() {
-                                                                                if inner_seg.ident == "u8" {
-                                                                                    return Ok(MappingVariableInput {
-                                                                                        map_name,
-                                                                                        key_name,
-                                                                                        key_type: MappingKeyType::VecU8,
-                                                                                        value_type: MappingValueType::VecU8,
-                                                                                    });
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                                return Err(input.error("Only Vec<u8> is supported for Vec value types"));
-                                                            }
-                                                            match seg_name.as_str() {
-                                                                "u128" => MappingValueType::U128,
-                                                                "AlkaneId" => MappingValueType::AlkaneId,
-                                                                "String" => MappingValueType::String,
-                                                                _ => MappingValueType::Struct(segment.ident.clone()),
-                                                            }
-                                                        } else {
-                                                            return Err(input.error("Invalid value type"));
-                                                        }
-                                                    }
-                                                    _ => return Err(input.error("Expected value type identifier or generic type")),
-                                                };
-                                                return Ok(MappingVariableInput {
-                                                    map_name,
-                                                    key_name,
-                                                    key_type: MappingKeyType::VecU8,
-                                                    value_type,
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            return Err(input.error("Only Vec<u8> is supported for Vec key types"));
-                        }
-                        _ => return Err(input.error("Unsupported key type. Supported: u128, AlkaneId, String, Vec<u8>")),
-                    }
-                } else {
-                    return Err(input.error("Invalid key type"));
-                }
-            }
-            _ => return Err(input.error("Expected key type identifier or generic type")),
+        let key_parsed = parse_type(&key_type_type)?;
+        
+        let key_type = match key_parsed {
+            ParsedType::U128 => MappingKeyType::U128,
+            ParsedType::AlkaneId => MappingKeyType::AlkaneId,
+            ParsedType::String => MappingKeyType::String,
+            ParsedType::VecU8 => MappingKeyType::VecU8,
+            ParsedType::Struct(_) => return Err(syn::Error::new_spanned(&key_type_type, "Unsupported key type. Supported: u128, AlkaneId, String, Vec<u8>")),
         };
         
         // Parse value type
         input.parse::<syn::Token![,]>()?;
         let value_type_type: Type = input.parse()?;
-        let value_type = match &value_type_type {
-            Type::Path(type_path) => {
-                if let Some(segment) = type_path.path.segments.last() {
-                    let seg_name = segment.ident.to_string();
-                    
-                    // Check for Vec<u8>
-                    if seg_name == "Vec" {
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(inner_type)) = args.args.first() {
-                                if let Type::Path(inner_path) = inner_type {
-                                    if let Some(inner_seg) = inner_path.path.segments.last() {
-                                        if inner_seg.ident == "u8" {
-                                            return Ok(MappingVariableInput {
-                                                map_name,
-                                                key_name,
-                                                key_type: match key_type {
-                                                    MappingKeyType::U128 => MappingKeyType::U128,
-                                                    MappingKeyType::AlkaneId => MappingKeyType::AlkaneId,
-                                                    MappingKeyType::String => MappingKeyType::String,
-                                                    MappingKeyType::VecU8 => MappingKeyType::VecU8,
-                                                },
-                                                value_type: MappingValueType::VecU8,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        return Err(input.error("Only Vec<u8> is supported for Vec value types"));
-                    }
-                    
-                    match seg_name.as_str() {
-                        "u128" => MappingValueType::U128,
-                        "AlkaneId" => MappingValueType::AlkaneId,
-                        "String" => MappingValueType::String,
-                        _ => MappingValueType::Struct(segment.ident.clone()),
-                    }
-                } else {
-                    return Err(input.error("Invalid value type"));
-                }
-            }
-            _ => return Err(input.error("Expected value type identifier or generic type")),
+        let value_parsed = parse_type(&value_type_type)?;
+        
+        let value_type = match value_parsed {
+            ParsedType::U128 => MappingValueType::U128,
+            ParsedType::AlkaneId => MappingValueType::AlkaneId,
+            ParsedType::String => MappingValueType::String,
+            ParsedType::VecU8 => MappingValueType::VecU8,
+            ParsedType::Struct(ident) => MappingValueType::Struct(ident),
         };
         
         Ok(MappingVariableInput {
