@@ -11,6 +11,12 @@ const RUNTIME_STORAGE: StorageHandle = StorageHandle(());
 #[derive(Debug, Clone, Default)]
 pub struct StoragePointer(pub Arc<Vec<u8>>);
 
+impl StoragePointer {
+    pub fn from_keyword(keyword: &str) -> Self {
+        StoragePointer(Arc::new(keyword.as_bytes().to_vec()))
+    }
+}
+
 #[allow(dead_code)]
 impl KeyValuePointer for StoragePointer {
     fn wrap(word: &Vec<u8>) -> StoragePointer {
