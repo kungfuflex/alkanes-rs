@@ -33,6 +33,8 @@ pub mod unwrap;
 pub mod utils;
 pub mod view;
 pub mod vm;
+#[cfg(feature = "zcash")]
+pub mod zcash;
 use crate::indexer::index_block;
 
 /*

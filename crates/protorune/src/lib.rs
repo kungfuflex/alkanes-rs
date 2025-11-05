@@ -203,6 +203,28 @@ impl Protorune {
             .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
         let mut balance_sheet = BalanceSheet::concat(sheets)?;
         let mut balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
+        
+        #[cfg(feature = "zcash")]
+        let unallocated_to = {
+            // For Zcash: use fallback chain to handle z-addresses
+            // TODO: Extract refund_pointer from runestone when field is added
+            let refund_pointer = None; // runestone.refund_pointer
+            
+            match crate::zcash::resolve_pointer_with_fallback(tx, runestone.pointer, refund_pointer) {
+                Some(resolved) => resolved,
+                None => {
+                    // No t-address found - skip transaction to prevent burn
+                    println!(
+                        "[ZCASH] ERROR: Transaction {} has no transparent address outputs. \
+                         Skipping to prevent fund burn.",
+                        tx.compute_txid()
+                    );
+                    return Ok(());
+                }
+            }
+        };
+        
+        #[cfg(not(feature = "zcash"))]
         let unallocated_to = match runestone.pointer {
             Some(v) => v,
             None => default_output(tx),
@@ -914,6 +936,24 @@ impl Protorune {
                     if !proto_balances_by_output.contains_key(&shadow_vout) {
                         proto_balances_by_output.insert(shadow_vout, BalanceSheet::default());
                     }
+                    #[cfg(feature = "zcash")]
+                    let protostone_unallocated_to = {
+                        // For Zcash: use fallback chain for protostone pointer too
+                        let refund_pointer = None; // TODO: stone.refund_pointer when available
+                        
+                        match crate::zcash::resolve_pointer_with_fallback(tx, stone.pointer, refund_pointer) {
+                            Some(resolved) => resolved,
+                            None => {
+                                println!(
+                                    "[ZCASH] WARNING: Protostone pointer has no t-address. \
+                                     Using default output."
+                                );
+                                default_output(tx) // Fallback to default if all else fails
+                            }
+                        }
+                    };
+                    
+                    #[cfg(not(feature = "zcash"))]
                     let protostone_unallocated_to = match stone.pointer {
                         Some(v) => v,
                         None => default_output(tx),

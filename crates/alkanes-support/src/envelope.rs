@@ -22,7 +22,11 @@ use {
     std::iter::Peekable,
 };
 
+#[cfg(not(feature = "zcash"))]
 pub(crate) const PROTOCOL_ID: [u8; 3] = *b"BIN";
+#[cfg(feature = "zcash")]
+pub(crate) const PROTOCOL_ID: [u8; 3] = *b"ZAK"; // Zcash Alkanes
+
 pub(crate) const BODY_TAG: [u8; 0] = [];
 
 pub type Result<T> = std::result::Result<T, script::Error>;
@@ -54,6 +58,7 @@ impl From<Vec<u8>> for RawEnvelope {
 }
 
 impl RawEnvelope {
+    #[cfg(not(feature = "zcash"))]
     pub fn from_transaction(transaction: &Transaction) -> Vec<Self> {
         let mut envelopes = Vec::new();
 
@@ -66,6 +71,41 @@ impl RawEnvelope {
         }
 
         envelopes
+    }
+    
+    #[cfg(feature = "zcash")]
+    pub fn from_transaction(transaction: &Transaction) -> Vec<Self> {
+        let mut envelopes = Vec::new();
+
+        // For Zcash: extract from scriptSig instead of witness (ord-dogecoin style)
+        for (i, input) in transaction.input.iter().enumerate() {
+            if let Ok(input_envelopes) = Self::from_scriptsig(&input.script_sig, i) {
+                envelopes.extend(input_envelopes);
+            }
+        }
+
+        envelopes
+    }
+    
+    #[cfg(feature = "zcash")]
+    fn from_scriptsig(scriptsig: &Script, input: usize) -> Result<Vec<Self>> {
+        let mut envelopes = Vec::new();
+        let mut instructions = scriptsig.instructions().peekable();
+        let mut stuttered = false;
+        
+        while let Some(instruction) = instructions.next().transpose()? {
+            if instruction == PushBytes((&[]).into()) {
+                let (stutter, envelope) = 
+                    Self::from_instructions(&mut instructions, input, envelopes.len(), stuttered)?;
+                if let Some(envelope) = envelope {
+                    envelopes.push(envelope);
+                } else {
+                    stuttered = stutter;
+                }
+            }
+        }
+        
+        Ok(envelopes)
     }
 
     fn from_tapscript(tapscript: &Script, input: usize) -> Result<Vec<Self>> {

@@ -27,7 +27,8 @@ use std::sync::Arc;
     not(feature = "testnet"),
     not(feature = "luckycoin"),
     not(feature = "dogecoin"),
-    not(feature = "bellscoin")
+    not(feature = "bellscoin"),
+    not(feature = "zcash")
 ))]
 pub fn configure_network() {
     set_network(NetworkParams {
@@ -75,6 +76,15 @@ pub fn configure_network() {
         bech32_prefix: String::from("bel"),
         p2pkh_hash: 0x19,
         p2sh_hash: 0x1e,
+    });
+}
+
+#[cfg(feature = "zcash")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("zs"), // Sapling addresses (not used by alkanes)
+        p2pkh_prefix: 0x1c, // t1 addresses (transparent)
+        p2sh_prefix: 0x1d,  // t3 addresses (transparent)
     });
 }
 
