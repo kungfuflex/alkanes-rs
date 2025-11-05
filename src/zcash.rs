@@ -4,14 +4,122 @@
 //! - Transparent address (t-address) detection
 //! - Z-address handling with automatic fallback
 //! - Pointer resolution for transparent-only operations
+//! - Zcash block parsing (pre-Sapling and post-Sapling)
 
 use anyhow::{anyhow, Result};
-use bitcoin::{Script, Transaction};
+use bitcoin::hashes::Hash as HashTrait;
+use bitcoin::{Block, Script, Transaction};
+use std::io::Read;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
+
+/// Zcash block structure that can parse both pre-Sapling and post-Sapling blocks
+pub struct ZcashBlock {
+    /// The parsed bitcoin-compatible block
+    pub block: Block,
+    /// Block version (used to determine Sapling vs pre-Sapling)
+    pub version: i32,
+}
+
+impl ZcashBlock {
+    /// Parse a Zcash block from raw bytes
+    ///
+    /// Zcash block formats:
+    /// - Version 1-3 (pre-Sapling): Similar to Bitcoin but with different header fields
+    /// - Version 4+ (Sapling): Additional fields including solution size and Equihash solution
+    ///
+    /// Block header structure:
+    /// - Version (4 bytes)
+    /// - Previous block hash (32 bytes)
+    /// - Merkle root (32 bytes)
+    /// - [Zcash-specific] Final Sapling root / Reserved (32 bytes)
+    /// - Time (4 bytes)
+    /// - nBits (4 bytes)
+    /// - Nonce (32 bytes) - Note: Zcash uses 32 bytes, not 4 like Bitcoin
+    /// - Solution size (compact size)
+    /// - Solution (Equihash solution, variable length)
+    /// - Transaction count (compact size)
+    /// - Transactions...
+    pub fn parse(cursor: &mut std::io::Cursor<Vec<u8>>) -> Result<Self> {
+        use metashrew_support::utils::{consume_varint, consensus_decode};
+        
+        // Read version (4 bytes)
+        let mut version_bytes = [0u8; 4];
+        cursor.read_exact(&mut version_bytes)?;
+        let version = i32::from_le_bytes(version_bytes);
+        
+        // Read previous block hash (32 bytes)
+        let mut prev_blockhash = [0u8; 32];
+        cursor.read_exact(&mut prev_blockhash)?;
+        
+        // Read merkle root (32 bytes)
+        let mut merkle_root = [0u8; 32];
+        cursor.read_exact(&mut merkle_root)?;
+        
+        // Read reserved/final sapling root (32 bytes) - Zcash-specific, we'll skip
+        let mut _reserved = [0u8; 32];
+        cursor.read_exact(&mut _reserved)?;
+        
+        // Read time (4 bytes)
+        let mut time_bytes = [0u8; 4];
+        cursor.read_exact(&mut time_bytes)?;
+        let time = u32::from_le_bytes(time_bytes);
+        
+        // Read nBits (4 bytes)
+        let mut bits_bytes = [0u8; 4];
+        cursor.read_exact(&mut bits_bytes)?;
+        let bits = u32::from_le_bytes(bits_bytes);
+        
+        // Read nonce (32 bytes) - Zcash uses 32 bytes
+        let mut nonce_bytes = [0u8; 32];
+        cursor.read_exact(&mut nonce_bytes)?;
+        // Convert to u32 for Bitcoin compatibility (take first 4 bytes)
+        let nonce = u32::from_le_bytes([nonce_bytes[0], nonce_bytes[1], nonce_bytes[2], nonce_bytes[3]]);
+        
+        // Read solution size (compact size / varint)
+        let solution_size = consume_varint(cursor)? as usize;
+        
+        // Read and skip solution (Equihash proof)
+        let mut solution = vec![0u8; solution_size];
+        cursor.read_exact(&mut solution)?;
+        
+        // Now read transactions - this is standard Bitcoin format
+        let tx_count = consume_varint(cursor)? as usize;
+        let mut transactions = Vec::with_capacity(tx_count);
+        
+        for _ in 0..tx_count {
+            let tx: Transaction = consensus_decode(cursor)?;
+            transactions.push(tx);
+        }
+        
+        // Build a Bitcoin-compatible header
+        let header = bitcoin::block::Header {
+            version: bitcoin::block::Version::from_consensus(version),
+            prev_blockhash: bitcoin::BlockHash::from_slice(&prev_blockhash)?,
+            merkle_root: bitcoin::TxMerkleNode::from_slice(&merkle_root)?,
+            time,
+            bits: bitcoin::CompactTarget::from_consensus(bits),
+            nonce,
+        };
+        
+        Ok(ZcashBlock {
+            block: Block {
+                header,
+                txdata: transactions,
+            },
+            version,
+        })
+    }
+}
+
+impl From<ZcashBlock> for Block {
+    fn from(zblock: ZcashBlock) -> Self {
+        zblock.block
+    }
+}
 
 /// Check if a script_pubkey represents a transparent address (P2PKH or P2SH)
 ///
