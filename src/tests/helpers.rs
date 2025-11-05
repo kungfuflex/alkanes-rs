@@ -38,13 +38,22 @@ use crate::tests::std::alkanes_std_test_build;
     not(feature = "dogecoin"),
     not(feature = "bellscoin"),
     not(feature = "fractal"),
-    not(feature = "luckycoin")
+    not(feature = "luckycoin"),
+    not(feature = "zcash")
 ))]
 pub fn configure_network() {
     set_network(NetworkParams {
         bech32_prefix: String::from("bcrt"),
         p2pkh_prefix: 0x64,
         p2sh_prefix: 0xc4,
+    });
+}
+#[cfg(feature = "zcash")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("zs"), // Sapling (not used by alkanes)
+        p2pkh_prefix: 0x1c, // t1 addresses
+        p2sh_prefix: 0x1d,  // t3 addresses
     });
 }
 #[cfg(feature = "mainnet")]

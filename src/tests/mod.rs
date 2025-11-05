@@ -1,5 +1,9 @@
 #[cfg(any(feature = "test-utils", test))]
 pub mod helpers;
+#[cfg(all(test, feature = "zcash"))]
+pub mod zcash_helpers;
+#[cfg(all(test, feature = "zcash"))]
+pub mod zcash;
 #[cfg(test)]
 pub mod std;
 #[cfg(test)]
@@ -27,6 +31,8 @@ pub mod factory;
 pub mod forge;
 #[cfg(test)]
 pub mod fr_btc;
+#[cfg(all(test, feature = "zcash"))]
+pub mod fr_zec;
 #[cfg(test)]
 pub mod fuel;
 #[cfg(test)]
