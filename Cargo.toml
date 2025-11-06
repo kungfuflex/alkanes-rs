@@ -24,8 +24,16 @@ repository = "https://github.com/kungfuflex/alkanes-rs"
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
+metashrew-core = { path = "./crates/metashrew-core" }
+metashrew-support = { path = "./crates/metashrew-support" }
+metashrew-runtime = { path = "./crates/metashrew-runtime" }
+metashrew-sync = { path = "./crates/metashrew-sync" }
+memshrew-runtime = { path = "./crates/memshrew-runtime" }
+memshrew-p2p = { path = "./crates/memshrew-p2p" }
+rockshrew-runtime = { path = "./crates/rockshrew-runtime" }
+rockshrew-mono = { path = "./crates/rockshrew-mono" }
+rockshrew-diff = { path = "./crates/rockshrew-diff" }
+metashrew-minimal = { path = "./crates/metashrew-minimal" }
 ordinals = { path = "./crates/ordinals" }
 protorune = { path = "./crates/protorune" }
 protorune-support = { path = "./crates/protorune-support" }
@@ -45,6 +53,10 @@ prost = "0.12.6"
 prost-types = "0.12.6"
 prost-build = "0.12.6"
 bytes = "1.6.1"
+sha2 = "0.10.9"
+tokio = { version = "1.43.0", features = ["full"] }
+futures = "0.3.30"
+log = "0.4.22"
 wasm-bindgen-futures = "0.4.45"
 web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
@@ -124,7 +136,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
+metashrew-core = { workspace = true, features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]

@@ -1,0 +1,32 @@
+[package]
+name = "metashrew-core"
+version = "9.0.1"
+description = "metashrew indexer bindings"
+repository = "https://github.com/sandshrewmetaprotocols/metashrew"
+license = "MIT"
+edition = "2021"
+resolver = "2"
+
+
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bitcoin = "0.31.2"
+bytes = "1.6.0"
+cfg-if = "1.0.0"
+wasm-bindgen = "0.2.100"
+ordinals = "0.0.8"
+prost.workspace = true
+anyhow = "1.0.89"
+wasm-bindgen-test = "0.3.49"
+hex = "0.4.3"
+metashrew-support = { path = "../metashrew-support" }
+
+[build-dependencies]
+prost-build.workspace = true
+
+[features]
+test-utils = []
+panic-hook = []

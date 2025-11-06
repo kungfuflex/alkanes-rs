@@ -1,0 +1,23 @@
+FROM ubuntu:20.04
+
+# Install SSH and netcat
+RUN apt-get update && apt-get install -y openssh-server python3
+
+# Create a test user
+RUN useradd -m -s /bin/bash testuser && echo "testuser:testpassword" | chpasswd
+
+# Configure SSH
+RUN mkdir /var/run/sshd
+RUN echo 'PermitRootLogin no' >> /etc/ssh/sshd_config
+RUN echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
+RUN echo 'PermitEmptyPasswords no' >> /etc/ssh/sshd_config
+
+# Expose SSH port
+EXPOSE 22
+
+# Copy mock daemon script
+COPY mock_server.py /usr/local/bin/mock_server.py
+RUN chmod +x /usr/local/bin/mock_server.py
+
+# Start SSH server
+CMD ["/usr/sbin/sshd", "-D"]
