@@ -82,46 +82,56 @@ A sample command may look like:
 
 ### Testing
 
-To run all tests in the monorepo
+#### Prerequisites
 
-```
-# this might be necessary if running into: could not execute process `wasm-bindgen-test-runner...
+If you encounter issues with `wasm-bindgen-test-runner`, install the correct version:
+
+```sh
 cargo install -f wasm-bindgen-cli --version 0.2.100
 ```
 
-```
-cargo test --all
+#### Running ALKANES Tests
+
+The alkanes crate tests run in WebAssembly using `wasm-bindgen-test`. There are two ways to run them:
+
+**Option 1: From the alkanes package directory (recommended)**
+
+```sh
+cd crates/alkanes
+cargo test --lib
 ```
 
-To test the alkanes indexer end-to-end, it is only required to run:
+The package-level `.cargo/config.toml` automatically sets the target to `wasm32-unknown-unknown`.
 
-```
-cargo test
+**Option 2: From the workspace root with explicit target**
+
+```sh
+cargo test -p alkanes --target wasm32-unknown-unknown --lib
 ```
 
-To run tests for a specific crate
+#### Running Other Tests
 
-```
+To test a specific crate (non-WASM tests):
+
+```sh
 cargo test -p [CRATE]
 ```
 
-example:
+Example:
 
-```
+```sh
 cargo test --features test-utils -p protorune
 ```
 
-This will provide a stub environment to test a METASHREW indexer program, and it will test the alkanes standard library smart contracts in simulated blocks.
+#### Unit Testing (Native Rust)
 
-### Unit testing
+Some crates have unit tests that run on native Rust (not WASM). For these, you may need to specify your target architecture:
 
-- These are written inside the library rust code
-- Do not compile to wasm, instead unit test the native rust. Therefore, you need to find the correct target for your local machine to properly run these tests. Below are some common targets for some architectures:
-  - Macbook intel x86: x86_64-apple-darwin
-  - Macbook Apple silicon: aarch64-apple-darwin
-  - Ubuntu 20.04 LTS: x86_64-unknown-linux-gnu
+- Macbook Intel x86: `x86_64-apple-darwin`
+- Macbook Apple Silicon: `aarch64-apple-darwin`
+- Ubuntu 20.04 LTS: `x86_64-unknown-linux-gnu`
 
-```
+```sh
 cargo test -p protorune --target TARGET
 ```
 
