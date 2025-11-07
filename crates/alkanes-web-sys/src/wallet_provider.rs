@@ -1272,6 +1272,38 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
     async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<JsonValue> {
         self.web_provider.trace_transaction(txid, vout, block, tx).await
     }
+
+    async fn get_blockchain_info(&self) -> Result<JsonValue> {
+        self.web_provider.get_blockchain_info().await
+    }
+
+    async fn get_network_info(&self) -> Result<JsonValue> {
+        self.web_provider.get_network_info().await
+    }
+
+    async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<JsonValue> {
+        self.web_provider.get_raw_transaction(txid, block_hash).await
+    }
+
+    async fn get_block_header(&self, hash: &str) -> Result<JsonValue> {
+        alkanes_cli_common::BitcoinRpcProvider::get_block_header(&self.web_provider, hash).await
+    }
+
+    async fn get_block_stats(&self, hash: &str) -> Result<JsonValue> {
+        self.web_provider.get_block_stats(hash).await
+    }
+
+    async fn get_chain_tips(&self) -> Result<JsonValue> {
+        self.web_provider.get_chain_tips().await
+    }
+
+    async fn get_raw_mempool(&self) -> Result<JsonValue> {
+        self.web_provider.get_raw_mempool().await
+    }
+
+    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
+        self.web_provider.get_tx_out(txid, vout, include_mempool).await
+    }
 }
 
 #[async_trait(?Send)]
@@ -1299,6 +1331,10 @@ impl MetashrewRpcProvider for BrowserWalletProvider {
     async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse> {
         self.web_provider.get_protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
     }
+
+    async fn get_state_root(&self, height: JsonValue) -> Result<String> {
+        alkanes_cli_common::MetashrewRpcProvider::get_state_root(&self.web_provider, height).await
+    }
 }
 
 #[async_trait(?Send)]
@@ -1310,7 +1346,7 @@ impl MetashrewProvider for BrowserWalletProvider {
         alkanes_cli_common::MetashrewProvider::get_block_hash(&self.web_provider, height).await
     }
     async fn get_state_root(&self, height: JsonValue) -> Result<String> {
-        self.web_provider.get_state_root(height).await
+        alkanes_cli_common::MetashrewProvider::get_state_root(&self.web_provider, height).await
     }
 }
 
@@ -1556,27 +1592,27 @@ impl AlkanesProvider for BrowserWalletProvider {
         self.web_provider.view(contract_id, view_fn, params).await
     }
 
-    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
+    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::proto::alkanes::MessageContextParcel) -> Result<JsonValue> {
         self.web_provider.simulate(contract_id, context).await
     }
 
-    async fn trace(&self, outpoint: &str) -> Result<alkanes_support::proto::alkanes::Trace> {
+    async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         self.web_provider.trace(outpoint).await
     }
 
-    async fn get_block(&self, height: u64) -> Result<alkanes_support::proto::alkanes::BlockResponse> {
+    async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::BlockResponse> {
         AlkanesProvider::get_block(&self.web_provider, height).await
     }
 
-    async fn sequence(&self, txid: &str, vout: u32) -> Result<JsonValue> {
-        self.web_provider.sequence(txid, vout).await
+    async fn sequence(&self) -> Result<JsonValue> {
+        self.web_provider.sequence().await
     }
 
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
         self.web_provider.spendables_by_address(address).await
     }
 
-    async fn trace_block(&self, height: u64) -> Result<alkanes_support::proto::alkanes::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         self.web_provider.trace_block(height).await
     }
 

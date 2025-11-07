@@ -14,7 +14,7 @@ use alkanes_cli_common::{AlkanesError, CryptoProvider, traits::KeystoreProvider,
 use alkanes_asc;
 use alloc::{vec::Vec, string::{String, ToString}, format, collections::BTreeMap};
 use async_trait::async_trait;
-use bip39::{Mnemonic, Seed};
+use bip39::Mnemonic;
 use bitcoin::{
     network::Network,
     bip32::{DerivationPath, Xpriv, Xpub},
@@ -47,7 +47,7 @@ pub struct Keystore {
     pub hd_paths: BTreeMap<String, String>,
     #[serde(skip, default)]
     #[wasm_bindgen(skip)]
-    pub seed: Option<Seed>,
+    pub seed: Option<Vec<u8>>,
 }
 
 /// Parameters for the PBKDF2/S2K key derivation function.
@@ -148,7 +148,7 @@ impl KeystoreProvider for Keystore {
         todo!()
     }
 
-    async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &protorune_support::network::NetworkParams) -> Result<Vec<KeystoreAddress>, AlkanesError> {
+    async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &alkanes_cli_common::network::NetworkParams) -> Result<Vec<KeystoreAddress>, AlkanesError> {
         todo!()
     }
 
@@ -164,7 +164,7 @@ impl KeystoreProvider for Keystore {
         todo!()
     }
 
-    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &protorune_support::network::NetworkParams) -> Result<KeystoreAddress, AlkanesError> {
+    async fn derive_address_from_path(&self, master_public_key: &str, path: &DerivationPath, script_type: &str, network_params: &alkanes_cli_common::network::NetworkParams) -> Result<KeystoreAddress, AlkanesError> {
         let address = alkanes_cli_common::keystore::derive_address_from_public_key(
             master_public_key,
             path,
@@ -232,10 +232,10 @@ pub fn encrypt_mnemonic(mnemonic: &str, passphrase: &str) -> Promise {
                 true,
             ).map_err(|e| AlkanesError::Armor(e.to_string()))?;
 
-            let mnemonic = Mnemonic::from_phrase(mnemonic_str, bip39::Language::English)?;
-            let seed = Seed::new(&mnemonic, "");
+            let mnemonic = Mnemonic::parse_in(bip39::Language::English, mnemonic_str)?;
+            let seed = mnemonic.to_seed("");
             let secp = Secp256k1::<All>::new();
-            let root = Xpriv::new_master(Network::Regtest, seed.as_bytes())?;
+            let root = Xpriv::new_master(Network::Regtest, &seed)?;
             let primary_path = DerivationPath::from_str("m/86'/0'/0'")?;
             let xpub = Xpub::from_priv(&secp, &root.derive_priv(&secp, &primary_path)?);
 
@@ -258,7 +258,7 @@ pub fn encrypt_mnemonic(mnemonic: &str, passphrase: &str) -> Promise {
                 },
                 account_xpub: xpub.to_string(),
                 hd_paths,
-                seed: Some(seed),
+                seed: Some(seed.to_vec()),
             };
             Ok(keystore)
         }

@@ -742,6 +742,7 @@ dependencies = [
  "hex",
  "js-sys",
  "pbkdf2",
+ "prost",
  "protobuf",
  "rand 0.8.5",
  "serde",

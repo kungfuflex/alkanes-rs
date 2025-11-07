@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use alkanes_cli_common::{*};
-use bip39::{Mnemonic, Seed};
+use bip39::Mnemonic;
 use bitcoin::{
     network::Network,
     bip32::{DerivationPath, Xpriv},
@@ -44,10 +44,10 @@ impl WalletBackend for KeystoreWallet {
         let promise = self.keystore.decrypt_mnemonic(self.password.as_deref().unwrap_or(""));
         let mnemonic_val = JsFuture::from(promise).await.map_err(|e| AlkanesError::Wallet(format!("Failed to decrypt mnemonic: {:?}", e)))?;
         let mnemonic = mnemonic_val.as_string().ok_or_else(|| AlkanesError::Wallet("Failed to get mnemonic string".to_string()))?;
-        let mnemonic = Mnemonic::from_phrase(&mnemonic, bip39::Language::English).map_err(|e| AlkanesError::Wallet(e.to_string()))?;
-        let seed = Seed::new(&mnemonic, self.password.as_deref().unwrap_or(""));
+        let mnemonic = Mnemonic::parse_in(bip39::Language::English, &mnemonic).map_err(|e| AlkanesError::Wallet(e.to_string()))?;
+        let seed = mnemonic.to_seed(self.password.as_deref().unwrap_or(""));
         let secp = Secp256k1::new();
-        let master_key = Xpriv::new_master(Network::Regtest, seed.as_bytes()).map_err(|e| AlkanesError::Wallet(e.to_string()))?;
+        let master_key = Xpriv::new_master(Network::Regtest, &seed).map_err(|e| AlkanesError::Wallet(e.to_string()))?;
         let path = DerivationPath::from_str("m/84'/1'/0'/0/0").map_err(|e| AlkanesError::Wallet(e.to_string()))?;
         let child_key = master_key.derive_priv(&secp, &path).map_err(|e| AlkanesError::Wallet(e.to_string()))?;
         let public_key = child_key.private_key.public_key(&secp);

@@ -58,7 +58,7 @@
 use async_trait::async_trait;
 use bitcoin::Network;
 use alkanes_cli_common::{*, provider::{AllBalances, AssetBalance, EnrichedUtxo}};
-use protobuf::Message;
+use alkanes_cli_common::alkanes::balance_sheet::BalanceSheetOperations;
 use serde_json::Value as JsonValue;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -103,15 +103,12 @@ use alkanes_cli_common::{
     esplora,
 };
 use alkanes_support::proto::alkanes as alkanes_pb;
-use protorune_support::proto::protorune::{OutpointWithProtocol, OutpointResponse as ProtoruneOutpointResponsePb};
+use alkanes_cli_common::proto::protorune::{OutpointWithProtocol, OutpointResponse as ProtoruneOutpointResponsePb, Uint128};
 use alkanes_cli_common::alkanes::execute::EnhancedAlkanesExecutor;
 use alkanes_cli_common::index_pointer::StubPointer;
-use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations};
+use alkanes_cli_common::alkanes::balance_sheet::BalanceSheet;
 use core::str::FromStr;
 use bitcoin::hashes::hex::FromHex;
-
-
-use protorune_support::proto::protorune::Uint128;
 
 
 /// Web-compatible provider implementation for browser environments
@@ -772,9 +769,12 @@ impl EsploraProvider for WebProvider {
 impl WalletProvider for WebProvider {
     async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
         let mnemonic = if let Some(m) = mnemonic {
-            bip39::Mnemonic::from_phrase(&m, bip39::Language::English).map_err(|e| AlkanesError::Wallet(format!("Invalid mnemonic: {e}")))?
+            bip39::Mnemonic::parse_in(bip39::Language::English, &m).map_err(|e| AlkanesError::Wallet(format!("Invalid mnemonic: {e}")))?
         } else {
-            bip39::Mnemonic::new(bip39::MnemonicType::Words24, bip39::Language::English)
+            let mut entropy = [0u8; 32];
+            use rand::RngCore;
+            rand::thread_rng().fill_bytes(&mut entropy);
+            bip39::Mnemonic::from_entropy_in(bip39::Language::English, &entropy).map_err(|e| AlkanesError::Wallet(format!("Failed to generate mnemonic: {e}")))?
         };
 
         let pass = passphrase.clone().unwrap_or_default();
@@ -1241,11 +1241,11 @@ impl WalletProvider for WebProvider {
         let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let pass = self.passphrase.as_deref().unwrap_or_default();
         let mnemonic_str = keystore.decrypt_mnemonic(pass)?;
-        let mnemonic = Mnemonic::from_phrase(&mnemonic_str, bip39::Language::English)?;
+        let mnemonic = Mnemonic::parse_in(bip39::Language::English, &mnemonic_str)?;
         
         let secp = Secp256k1::new();
-        let seed = bip39::Seed::new(&mnemonic, pass);
-        let root = Xpriv::new_master(self.network, seed.as_bytes())?;
+        let seed = mnemonic.to_seed(pass);
+        let root = Xpriv::new_master(self.network, &seed)?;
         
         // Assuming default derivation path for now
         let path_str = format!("m/86'/{}/0'/0/0", if self.network == Network::Bitcoin { "0" } else { "1" });
@@ -1347,6 +1347,46 @@ impl BitcoinRpcProvider for WebProvider {
         let params = serde_json::json!([txid, vout, block, tx]);
         self.call(&self.sandshrew_rpc_url, "trace_transaction", params, 1).await
     }
+
+    async fn get_blockchain_info(&self) -> Result<JsonValue> {
+        self.call(&self.sandshrew_rpc_url, "getblockchaininfo", serde_json::json!([]), 1).await
+    }
+
+    async fn get_network_info(&self) -> Result<JsonValue> {
+        self.call(&self.sandshrew_rpc_url, "getnetworkinfo", serde_json::json!([]), 1).await
+    }
+
+    async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<JsonValue> {
+        let params = if let Some(hash) = block_hash {
+            serde_json::json!([txid, true, hash])
+        } else {
+            serde_json::json!([txid, true])
+        };
+        self.call(&self.sandshrew_rpc_url, "getrawtransaction", params, 1).await
+    }
+
+    async fn get_block_header(&self, hash: &str) -> Result<JsonValue> {
+        let params = serde_json::json!([hash, true]);
+        self.call(&self.sandshrew_rpc_url, "getblockheader", params, 1).await
+    }
+
+    async fn get_block_stats(&self, hash: &str) -> Result<JsonValue> {
+        let params = serde_json::json!([hash]);
+        self.call(&self.sandshrew_rpc_url, "getblockstats", params, 1).await
+    }
+
+    async fn get_chain_tips(&self) -> Result<JsonValue> {
+        self.call(&self.sandshrew_rpc_url, "getchaintips", serde_json::json!([]), 1).await
+    }
+
+    async fn get_raw_mempool(&self) -> Result<JsonValue> {
+        self.call(&self.sandshrew_rpc_url, "getrawmempool", serde_json::json!([]), 1).await
+    }
+
+    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
+        let params = serde_json::json!([txid, vout, include_mempool]);
+        self.call(&self.sandshrew_rpc_url, "gettxout", params, 1).await
+    }
 }
 
 #[async_trait(?Send)]
@@ -1392,7 +1432,8 @@ impl MetashrewRpcProvider for WebProvider {
             ..Default::default()
         }).into();
 
-        let hex_input = hex::encode(outpoint_pb.write_to_bytes()?);
+        use prost::Message;
+        let hex_input = hex::encode(outpoint_pb.encode_to_vec());
         let params = serde_json::json!(["protorunesbyoutpoint", format!("0x{}", hex_input), "latest"]);
 
         let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", params, 1).await?;
@@ -1400,7 +1441,7 @@ impl MetashrewRpcProvider for WebProvider {
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid protorune response: not a string".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
 
-        let response_pb = ProtoruneOutpointResponsePb::parse_from_bytes(&bytes[..])?;
+        let response_pb = ProtoruneOutpointResponsePb::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
         // self.logger.info(&format!("Received protorune response: {:?}", response_pb));
 
         // Convert from the protobuf-generated `BalanceSheet` to the `protorune_support` `BalanceSheet`
@@ -1412,6 +1453,12 @@ impl MetashrewRpcProvider for WebProvider {
             // The other fields are not present in the protobuf response, so they remain default.
             ..Default::default()
         })
+    }
+
+    async fn get_state_root(&self, height: JsonValue) -> Result<String> {
+        let params = serde_json::json!(["getStateRoot", "0x", height]);
+        let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", params, 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid state root response".to_string()))
     }
 }
 
@@ -1571,17 +1618,19 @@ impl AlkanesProvider for WebProvider {
         Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
     }
 
-    async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
+    async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
+        use prost::Message;
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_trace", serde_json::json!([outpoint]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
-        alkanes_pb::Trace::parse_from_bytes(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
+        alkanes_cli_common::proto::alkanes::Trace::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse> {
+    async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::BlockResponse> {
+        use prost::Message;
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_get_block", serde_json::json!([height]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
-        alkanes_pb::BlockResponse::parse_from_bytes(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
+        alkanes_cli_common::proto::alkanes::BlockResponse::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn sequence(&self) -> Result<JsonValue> {
         self.call(&self.sandshrew_rpc_url, "alkanes_sequence", serde_json::json!(["0x"]), 1).await
@@ -1589,14 +1638,16 @@ impl AlkanesProvider for WebProvider {
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
         self.call(&self.sandshrew_rpc_url, "alkanes_spendables_by_address", serde_json::json!([address]), 1).await
     }
-    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
+        use prost::Message;
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_trace_block", serde_json::json!([height]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
-        alkanes_pb::Trace::parse_from_bytes(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
+        alkanes_cli_common::proto::alkanes::Trace::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
-        use alkanes_support::proto::alkanes::BytecodeRequest;
+        use alkanes_cli_common::proto::alkanes::{BytecodeRequest, AlkaneId, Uint128};
+        use prost::Message;
         let parts: Vec<&str> = alkane_id.split(':').collect();
         if parts.len() != 2 {
             return Err(AlkanesError::InvalidParameters("Invalid alkane_id format".to_string()));
@@ -1604,16 +1655,19 @@ impl AlkanesProvider for WebProvider {
         let block = parts[0].parse::<u64>()?;
         let tx = parts[1].parse::<u32>()?;
 
-        let mut request = BytecodeRequest::new();
-        let mut id = alkanes_pb::AlkaneId::new();
-        let mut block_uint = alkanes_pb::Uint128::new();
-        block_uint.lo = block;
-        id.block = Some(block_uint).into();
-        let mut tx_uint = alkanes_pb::Uint128::new();
-        tx_uint.lo = tx as u64;
-        id.tx = Some(tx_uint).into();
-        request.id = Some(id).into();
-        let hex_input = hex::encode(request.write_to_bytes()?);
+        let request = BytecodeRequest {
+            id: Some(AlkaneId {
+                block: Some(Uint128 {
+                    lo: block,
+                    hi: 0,
+                }),
+                tx: Some(Uint128 {
+                    lo: tx as u64,
+                    hi: 0,
+                }),
+            }),
+        };
+        let hex_input = hex::encode(request.encode_to_vec());
 
         let params = serde_json::json!(["getbytecode", format!("0x{}", hex_input), block_tag.as_deref().unwrap_or("latest")]);
         let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", params, 1).await?;
