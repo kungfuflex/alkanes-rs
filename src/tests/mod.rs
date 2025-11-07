@@ -6,6 +6,8 @@ pub mod zcash_helpers;
 pub mod zcash;
 #[cfg(all(test, feature = "zcash"))]
 pub mod zcash_parse;
+#[cfg(all(test, feature = "zcash"))]
+pub mod block_407_parse;
 #[cfg(test)]
 pub mod std;
 #[cfg(test)]
