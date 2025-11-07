@@ -5,6 +5,7 @@ use crate::tests::helpers::{
     create_multiple_cellpack_with_witness_and_in, get_last_outpoint_sheet, get_sheet_for_outpoint,
     init_with_multiple_cellpacks_with_tx,
 };
+use crate::tests::std::alkanes_std_merkle_distributor_build;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
@@ -166,10 +167,7 @@ fn helper_test_merkle_distributor(
         inputs: vec![77],
     };
 
-    let merkle_testnet_build = include_bytes!(
-        "../../target/alkanes/wasm32-unknown-unknown/release/alkanes_std_merkle_distributor_regtest.wasm"
-    )
-    .to_vec();
+    let merkle_testnet_build = alkanes_std_merkle_distributor_build::get_bytes();
 
     let test_block = init_with_multiple_cellpacks_with_tx(
         vec![[].into(), merkle_testnet_build.clone()],
