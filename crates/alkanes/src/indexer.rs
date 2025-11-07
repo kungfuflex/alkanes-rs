@@ -100,6 +100,7 @@ use protorune_support::proto::protorune::ProtorunesWalletRequest;
 use std::sync::Arc;
 
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
+    #[cfg(not(test))]
     configure_network();
     clear_diesel_mints_cache();
     let really_is_genesis = is_genesis(height.into());
