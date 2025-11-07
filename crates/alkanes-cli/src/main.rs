@@ -159,11 +159,17 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 state = match state {
                     alkanes::types::ExecutionState::ReadyToSign(s) => {
                         let result = executor.resume_execution(s, &params).await?;
-                        println!("✅ Alkanes execution completed successfully!");
+                        println!("\n✅ Alkanes execution completed successfully!");
                         println!("🔗 Reveal TXID: {}", result.reveal_txid);
                         println!("💰 Reveal Fee: {} sats", result.reveal_fee);
                         if let Some(traces) = result.traces {
-                            println!("🔍 Traces: {}", serde_json::to_string_pretty(&traces)?);
+                            if !traces.is_empty() {
+                                println!("\n🔍 Execution Traces:");
+                                for (i, trace) in traces.iter().enumerate() {
+                                    println!("\n📊 Protostone #{} trace:", i + 1);
+                                    println!("{}", serde_json::to_string_pretty(&trace)?);
+                                }
+                            }
                         }
                         break;
                     },
@@ -172,7 +178,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                     },
                     alkanes::types::ExecutionState::ReadyToSignReveal(s) => {
                         let result = executor.resume_reveal_execution(s).await?;
-                        println!("✅ Alkanes execution completed successfully!");
+                        println!("\n✅ Alkanes execution completed successfully!");
                         if let Some(commit_txid) = result.commit_txid {
                             println!("🔗 Commit TXID: {commit_txid}");
                         }
@@ -182,12 +188,18 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                         }
                         println!("💰 Reveal Fee: {} sats", result.reveal_fee);
                         if let Some(traces) = result.traces {
-                            println!("🔍 Traces: {}", serde_json::to_string_pretty(&traces)?);
+                            if !traces.is_empty() {
+                                println!("\n🔍 Execution Traces:");
+                                for (i, trace) in traces.iter().enumerate() {
+                                    println!("\n📊 Protostone #{} trace:", i + 1);
+                                    println!("{}", serde_json::to_string_pretty(&trace)?);
+                                }
+                            }
                         }
                         break;
                     },
                     alkanes::types::ExecutionState::Complete(result) => {
-                        println!("✅ Alkanes execution completed successfully!");
+                        println!("\n✅ Alkanes execution completed successfully!");
                         if let Some(commit_txid) = result.commit_txid {
                             println!("🔗 Commit TXID: {commit_txid}");
                         }
@@ -197,7 +209,13 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                         }
                         println!("💰 Reveal Fee: {} sats", result.reveal_fee);
                         if let Some(traces) = result.traces {
-                            println!("🔍 Traces: {}", serde_json::to_string_pretty(&traces)?);
+                            if !traces.is_empty() {
+                                println!("\n🔍 Execution Traces:");
+                                for (i, trace) in traces.iter().enumerate() {
+                                    println!("\n📊 Protostone #{} trace:", i + 1);
+                                    println!("{}", serde_json::to_string_pretty(&trace)?);
+                                }
+                            }
                         }
                         break;
                     }
@@ -225,9 +243,20 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
         Alkanes::Trace { outpoint, raw } => {
             let result = system.provider().trace(&outpoint).await;
             match result {
-                Ok(trace_val) => {
-                    // Print the protobuf trace
-                    println!("{:?}", trace_val);
+                Ok(trace_pb) => {
+                    // Convert protobuf trace to alkanes_support::trace::Trace for pretty printing
+                    if let Some(alkanes_trace) = trace_pb.trace {
+                        let trace: alkanes_support::trace::Trace = alkanes_trace.into();
+                        if raw {
+                            let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
+                            println!("{}", serde_json::to_string_pretty(&json)?);
+                        } else {
+                            let pretty = alkanes_cli_common::alkanes::trace::format_trace_pretty(&trace);
+                            println!("{}", pretty);
+                        }
+                    } else {
+                        println!("No trace data found for outpoint: {}", outpoint);
+                    }
                 }
                 Err(e) => {
                     println!("Error: {e}");
@@ -270,10 +299,18 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
         },
         Alkanes::TraceBlock { height, raw } => {
             let result = system.provider().trace_block(height).await?;
-            if raw {
-                println!("{:?}", result);
+            // The result is a proto::alkanes::Trace which contains the trace
+            if let Some(alkanes_trace) = result.trace {
+                let trace: alkanes_support::trace::Trace = alkanes_trace.into();
+                if raw {
+                    let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
+                    println!("{}", serde_json::to_string_pretty(&json)?);
+                } else {
+                    let pretty = alkanes_cli_common::alkanes::trace::format_trace_pretty(&trace);
+                    println!("{}", pretty);
+                }
             } else {
-                println!("Trace: {:?}", result);
+                println!("No trace data found for block: {}", height);
             }
             Ok(())
         },
