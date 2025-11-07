@@ -1,5 +1,5 @@
 [package]
-name = "alkanes"
+name = "alkanes-rs"
 version.workspace = true
 edition.workspace = true
 description.workspace = true
@@ -8,10 +8,10 @@ repository.workspace = true
 resolver = "2"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [workspace]
-members = [".", "crates/*", "alkanes/*"]
+members = ["crates/*", "alkanes/*"]
 
 [workspace.package]
 version = "1.2.3"
@@ -24,6 +24,7 @@ repository = "https://github.com/kungfuflex/alkanes-rs"
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
+alkanes = { path = "./crates/alkanes" }
 metashrew-core = { path = "./crates/metashrew-core" }
 metashrew-support = { path = "./crates/metashrew-support" }
 metashrew-runtime = { path = "./crates/metashrew-runtime" }
@@ -106,83 +107,5 @@ env_logger = "0.11"
 protobuf-json-mapping = "3.4"
 pbkdf2 = "0.12"
 
-[features]
-test-utils = []
-testnet = []
-dogecoin = []
-luckycoin = []
-bellscoin = []
-fractal = []
-mainnet = ["protorune/mainnet"]
-proxy = []
-owned_token = []
-auth_token = []
-genesis_alkane = []
-regtest = []
-genesis_protorune = []
-amm_pool = ["auth_token"]
-amm_factory = ["auth_token"]
-amm = ["amm_pool", "amm_factory"]
-orbital = []
-cache = ["protorune/cache"]
-all = []
-minimal = [
-    "refunder",
-    "merkle_distributor",
-    "free_mint",
-    "upgradeable",
-    "proxy",
-]
-refunder = []
-merkle_distributor = []
-free_mint = []
-upgradeable = []
-debug-log = []
-
-
 [dependencies]
-anyhow = { workspace = true }
-num = { workspace = true }
-bitcoin = { workspace = true }
-metashrew-core = { workspace = true }
-metashrew-support = { workspace = true }
-ordinals = { workspace = true }
-protorune = { workspace = true }
-protorune-support = { workspace = true }
-alkanes-support = { workspace = true }
-ruint = { workspace = true }
-wasm-bindgen = { workspace = true }
-byteorder = { workspace = true }
-wasm-bindgen-test = { workspace = true }
-wasmi = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-hex = { workspace = true }
-prost = { workspace = true }
-prost-types = { workspace = true }
-bytes = { workspace = true }
-wasm-bindgen-futures = { workspace = true }
-web-sys = { workspace = true }
-js-sys = { workspace = true }
-hex_lit = { workspace = true }
-once_cell = { workspace = true }
-borsh = { version = "1.5.7", features = ["derive"] }
-sha2 = "0.10.9"
-
-[dev-dependencies]
-
-alkanes = { path = ".", features = [
-    "genesis_alkane",
-    "genesis_protorune",
-    "amm",
-    "orbital",
-    "auth_token",
-    "minimal",
-] }
-metashrew-core = { workspace = true, features = ["test-utils"] }
-protorune = { path = "crates/protorune", features = ["test-utils"] }
-
-[build-dependencies]
-anyhow = { workspace = true }
-flate2 = "1.0.34"
-hex = { workspace = true }
+alkanes = { workspace = true }
