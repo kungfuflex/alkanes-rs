@@ -119,6 +119,76 @@ pub struct ConcreteProvider {
 
 
 impl ConcreteProvider {
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn new(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        sandshrew_rpc_url: Option<String>,
+        esplora_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        let rpc_config = RpcConfig {
+            provider,
+            bitcoin_rpc_url,
+            sandshrew_rpc_url,
+            esplora_url,
+            ord_url: None,
+            metashrew_rpc_url: Some(metashrew_rpc_url),
+            timeout_seconds: 600,
+        };
+        
+        Ok(Self {
+            rpc_config,
+            command: Commands::Wallet {
+                command: crate::commands::WalletCommands::Info,
+            },
+            wallet_path,
+            passphrase: None,
+            wallet_state: WalletState::None,
+            #[cfg(feature = "native-deps")]
+            http_client: reqwest::Client::new(),
+            secp: Secp256k1::new(),
+        })
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(target_arch = "wasm32")]
+    pub async fn new(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        sandshrew_rpc_url: Option<String>,
+        esplora_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        let rpc_config = RpcConfig {
+            provider,
+            bitcoin_rpc_url,
+            sandshrew_rpc_url,
+            esplora_url,
+            ord_url: None,
+            metashrew_rpc_url: Some(metashrew_rpc_url),
+            timeout_seconds: 600,
+        };
+        
+        let wallet_path_str = wallet_path.and_then(|p| p.to_str().map(|s| s.to_string()));
+        
+        Ok(Self {
+            rpc_config,
+            command: Commands::Wallet {
+                command: crate::commands::WalletCommands::Info,
+            },
+            wallet_path: wallet_path_str,
+            passphrase: None,
+            wallet_state: WalletState::None,
+            #[cfg(feature = "native-deps")]
+            http_client: reqwest::Client::new(),
+            secp: Secp256k1::new(),
+        })
+    }
+
     #[cfg(test)]
     pub fn new_for_test(rpc_config: RpcConfig, command: Commands) -> Self {
         Self {
@@ -146,6 +216,73 @@ impl ConcreteProvider {
             WalletState::Unlocked { keystore, .. } => Ok(keystore),
             _ => Err(AlkanesError::Wallet("Wallet is not unlocked".to_string())),
         }
+    }
+
+    #[cfg(feature = "std")]
+    pub fn set_passphrase(&mut self, passphrase: Option<String>) {
+        self.passphrase = passphrase;
+    }
+
+    #[cfg(feature = "std")]
+    pub async fn initialize(&mut self) -> Result<()> {
+        // Load wallet if path is set
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(wallet_path) = &self.wallet_path {
+            if wallet_path.exists() {
+                if let Some(passphrase) = &self.passphrase {
+                    self.unlock_wallet(passphrase).await?;
+                } else {
+                    // Load as locked
+                    let keystore_bytes = std::fs::read(wallet_path)
+                        .map_err(|e| AlkanesError::Storage(format!("Failed to read wallet: {}", e)))?;
+                    self.wallet_state = WalletState::Locked(keystore_bytes);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "std")]
+    pub fn get_wallet_state(&self) -> &WalletState {
+        &self.wallet_state
+    }
+
+    #[cfg(feature = "std")]
+    pub async fn unlock_wallet(&mut self, passphrase: &str) -> Result<()> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(wallet_path) = &self.wallet_path {
+            if !wallet_path.exists() {
+                return Err(AlkanesError::Wallet("Wallet file does not exist".to_string()));
+            }
+            
+            let keystore_bytes = std::fs::read(wallet_path)
+                .map_err(|e| AlkanesError::Storage(format!("Failed to read wallet: {}", e)))?;
+            
+            let keystore = crate::keystore::Keystore::decrypt(&keystore_bytes, passphrase)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to decrypt wallet: {}", e)))?;
+            
+            self.wallet_state = WalletState::Unlocked {
+                keystore,
+                passphrase: passphrase.to_string(),
+            };
+            self.passphrase = Some(passphrase.to_string());
+            
+            return Ok(());
+        }
+        
+        Err(AlkanesError::Wallet("No wallet path set".to_string()))
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_wallet_path(&self) -> Option<&std::path::PathBuf> {
+        self.wallet_path.as_ref()
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_wallet_path(&self) -> Option<&String> {
+        self.wallet_path.as_ref()
     }
 
     /// A helper function to select coins for a transaction.
@@ -2262,9 +2399,7 @@ impl MonitorProvider for ConcreteProvider {
 
     async fn get_block_events(&self, _height: u64) -> Result<Vec<BlockEvent>> {
         Err(AlkanesError::NotImplemented("MonitorProvider get_block_events not yet implemented".to_string()))
-
-#[async_trait(?Send)]
-}
+    }
 }
 #[async_trait(?Send)]
 impl BitcoinRpcProvider for ConcreteProvider {
@@ -2288,21 +2423,25 @@ impl BitcoinRpcProvider for ConcreteProvider {
     async fn get_raw_mempool(&self) -> Result<JsonValue> { unimplemented!() }
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> { unimplemented!() }
 }
-    async fn get_block_stats(&self, hash: &str) -> Result<JsonValue> {
-        unimplemented!()
-    }
-    async fn get_chain_tips(&self) -> Result<JsonValue> {
-        unimplemented!()
-    }
-    async fn get_raw_mempool(&self) -> Result<JsonValue> {
-        unimplemented!()
-    }
-    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
-        unimplemented!()
-    }
 
 #[async_trait(?Send)]
 impl OrdProvider for ConcreteProvider {
+    async fn get_inscription(&self, _inscription_id: &str) -> Result<crate::ord::Inscription> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_inscription not yet implemented".to_string()))
+    }
+    
+    async fn get_inscriptions_in_block(&self, _block_hash: &str) -> Result<crate::ord::Inscriptions> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_inscriptions_in_block not yet implemented".to_string()))
+    }
+    
+    async fn get_ord_address_info(&self, _address: &str) -> Result<crate::ord::AddressInfo> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_ord_address_info not yet implemented".to_string()))
+    }
+    
+    async fn get_block_info(&self, _query: &str) -> Result<crate::ord::Block> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_block_info not yet implemented".to_string()))
+    }
+    
     async fn get_ord_block_count(&self) -> Result<u64> {
         let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
         let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCK_COUNT, crate::esplora::params::empty(), 1).await?;
@@ -2313,6 +2452,46 @@ impl OrdProvider for ConcreteProvider {
             return count_str.parse::<u64>().map_err(|_| AlkanesError::RpcError("Invalid block count string response".to_string()));
         }
         Err(AlkanesError::RpcError("Invalid block count response: not a u64 or string".to_string()))
+    }
+    
+    async fn get_ord_blocks(&self) -> Result<crate::ord::Blocks> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_ord_blocks not yet implemented".to_string()))
+    }
+    
+    async fn get_children(&self, _inscription_id: &str, _page: Option<u32>) -> Result<crate::ord::Children> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_children not yet implemented".to_string()))
+    }
+    
+    async fn get_content(&self, _inscription_id: &str) -> Result<Vec<u8>> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_content not yet implemented".to_string()))
+    }
+    
+    async fn get_inscriptions(&self, _page: Option<u32>) -> Result<crate::ord::Inscriptions> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_inscriptions not yet implemented".to_string()))
+    }
+    
+    async fn get_output(&self, _output: &str) -> Result<crate::ord::Output> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_output not yet implemented".to_string()))
+    }
+    
+    async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<crate::ord::ParentInscriptions> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_parents not yet implemented".to_string()))
+    }
+    
+    async fn get_rune(&self, _rune: &str) -> Result<crate::ord::RuneInfo> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_rune not yet implemented".to_string()))
+    }
+    
+    async fn get_runes(&self, _page: Option<u32>) -> Result<crate::ord::Runes> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_runes not yet implemented".to_string()))
+    }
+    
+    async fn get_sat(&self, _sat: u64) -> Result<crate::ord::SatResponse> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_sat not yet implemented".to_string()))
+    }
+    
+    async fn get_tx_info(&self, _txid: &str) -> Result<crate::ord::TxInfo> {
+        Err(AlkanesError::NotImplemented("OrdProvider get_tx_info not yet implemented".to_string()))
     }
 }
 

@@ -97,17 +97,20 @@ impl SystemAlkanes {
 
         // Determine the correct RPC URLs, prioritizing command-line args over network defaults.
         let bitcoin_rpc_url = args
+            .rpc_config
             .bitcoin_rpc_url
             .clone()
             .or_else(|| Some(network_params.bitcoin_rpc_url.clone()));
 
         let metashrew_rpc_url = args
+            .rpc_config
             .metashrew_rpc_url
             .clone()
             .or_else(|| args.rpc_config.sandshrew_rpc_url.clone())
             .unwrap_or_else(|| network_params.metashrew_rpc_url.clone());
 
         let esplora_url = args
+            .rpc_config
             .esplora_url
             .clone()
             .or_else(|| network_params.esplora_url.clone());
@@ -829,10 +832,16 @@ impl SystemWallet for SystemAlkanes {
                let (keystore, mnemonic_phrase) = self.keystore_manager.create_keystore(keystore_params).await?;
                
                // FIXED: Use the wallet file path from provider (which respects --wallet-file argument)
+               #[cfg(not(target_arch = "wasm32"))]
                let wallet_file = provider.get_wallet_path()
                    .ok_or_else(|| anyhow!("No wallet file path configured"))?
                    .to_string_lossy()
                    .to_string();
+               
+               #[cfg(target_arch = "wasm32")]
+               let wallet_file = provider.get_wallet_path()
+                   .ok_or_else(|| anyhow!("No wallet file path configured"))?
+                   .clone();
                
                // Save keystore to file
                self.keystore_manager.save_keystore(&keystore, &wallet_file).await?;
@@ -888,10 +897,16 @@ impl SystemWallet for SystemAlkanes {
                 let (keystore, mnemonic_phrase) = self.keystore_manager.create_keystore(keystore_params).await?;
                 
                 // Use the wallet file path from provider (which respects --wallet-file argument)
+                #[cfg(not(target_arch = "wasm32"))]
                 let wallet_file = provider.get_wallet_path()
                     .ok_or_else(|| anyhow!("No wallet file path configured"))?
                     .to_string_lossy()
                     .to_string();
+                
+                #[cfg(target_arch = "wasm32")]
+                let wallet_file = provider.get_wallet_path()
+                    .ok_or_else(|| anyhow!("No wallet file path configured"))?
+                    .clone();
                 
                 // Save keystore to file
                 self.keystore_manager.save_keystore(&keystore, &wallet_file).await?;
@@ -933,11 +948,18 @@ impl SystemWallet for SystemAlkanes {
             },
            WalletCommands::Info => {
                 // Use the wallet file path from provider
+                #[cfg(not(target_arch = "wasm32"))]
                 let wallet_file = provider.get_wallet_path()
                     .ok_or_else(|| anyhow!("No wallet file path configured"))?
                     .to_string_lossy()
                     .to_string();
+                
+                #[cfg(target_arch = "wasm32")]
+                let wallet_file = provider.get_wallet_path()
+                    .ok_or_else(|| anyhow!("No wallet file path configured"))?
+                    .clone();
 
+                #[cfg(not(target_arch = "wasm32"))]
                 if !std::path::Path::new(&wallet_file).exists() {
                     println!("❌ No keystore found. Please create a wallet first using 'deezel wallet create'");
                     return Ok(());
@@ -1000,12 +1022,19 @@ impl SystemWallet for SystemAlkanes {
            },
            WalletCommands::Addresses { ranges, hd_path, network, all_networks, magic, raw } => {
                 // FIXED: Use the wallet file path from provider (which respects --wallet-file argument)
+                #[cfg(not(target_arch = "wasm32"))]
                 let wallet_file = provider.get_wallet_path()
                     .ok_or_else(|| anyhow!("No wallet file path configured"))?
                     .to_string_lossy()
                     .to_string();
                 
+                #[cfg(target_arch = "wasm32")]
+                let wallet_file = provider.get_wallet_path()
+                    .ok_or_else(|| anyhow!("No wallet file path configured"))?
+                    .clone();
+                
                 // Check if keystore exists
+                #[cfg(not(target_arch = "wasm32"))]
                 if !std::path::Path::new(&wallet_file).exists() {
                     println!("❌ No keystore found. Please create a wallet first using 'deezel wallet create'");
                     return Ok(());
@@ -1549,7 +1578,7 @@ async fn resolve_addresses(
     provider: &ConcreteProvider,
 ) -> anyhow::Result<Vec<String>> {
     let mut resolved_addresses = Vec::new();
-    let keystore = provider.get_keystore().ok_or_else(|| anyhow!("Keystore not loaded"))?;
+    let keystore = provider.get_keystore()?;
 
     for part in addr_str.split(',') {
         let trimmed_part = part.trim();
@@ -1978,7 +2007,11 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 raw,
             } => {
                 let context = alkanes_cli_common::alkanes::simulation::simulate_cellpack(&[]);
-                let result = provider.simulate(&contract_id, &context).await?;
+                // Encode the context using prost
+                use prost::Message;
+                let mut buf = Vec::new();
+                context.encode(&mut buf)?;
+                let result = provider.view(&contract_id, "simulate", Some(&buf)).await?;
 
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&result)?);

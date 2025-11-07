@@ -442,6 +442,7 @@ dependencies = [
  "chrono",
  "hex",
  "log",
+ "prost",
  "psbt-v2",
  "rand 0.8.5",
  "reqwest",

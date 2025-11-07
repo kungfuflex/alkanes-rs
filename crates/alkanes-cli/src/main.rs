@@ -31,8 +31,11 @@ async fn main() -> Result<()> {
 
     // Handle keystore logic
 
+    // Convert DeezelCommands to Args
+    let alkanes_args = alkanes_cli_common::commands::Args::from(&args);
+
     // Create a new SystemAlkanes instance
-    let mut system = SystemAlkanes::new(&args).await?;
+    let mut system = SystemAlkanes::new(&alkanes_args).await?;
 
     // Execute the command
     execute_command(&mut system, args.command).await
@@ -223,12 +226,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             let result = system.provider().trace(&outpoint).await;
             match result {
                 Ok(trace_val) => {
-                    let trace: alkanes_cli_common::alkanes::trace::Trace = trace_val.into();
-                    if raw {
-                        println!("{:?}", trace);
-                    } else {
-                        println!("{trace}");
-                    }
+                    // Print the protobuf trace
+                    println!("{:?}", trace_val);
                 }
                 Err(e) => {
                     println!("Error: {e}");
@@ -237,10 +236,11 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             Ok(())
         },
         Alkanes::Simulate { contract_id, params, raw } => {
-            let context = if let Some(p) = params {
-                parse_from_str(&p)?
+            let context: alkanes_cli_common::proto::alkanes::MessageContextParcel = if let Some(_p) = params {
+                // TODO: Parse params - for now use default
+                Default::default()
             } else {
-                alkanes_pb::MessageContextParcel::new()
+                Default::default()
             };
             let result = system.provider().simulate(&contract_id, &context).await?;
             if raw {

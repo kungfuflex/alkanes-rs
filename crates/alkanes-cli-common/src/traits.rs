@@ -1467,7 +1467,7 @@ impl<T: DeezelProvider + ?Sized> DeezelProvider for Box<T> {
 }
 
 /// Trait for system-level wallet operations, corresponding to CLI commands
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 #[async_trait(?Send)]
 pub trait SystemWallet {
    /// Execute a wallet command
@@ -1477,7 +1477,7 @@ pub trait SystemWallet {
 }
 
 /// Trait for system-level Bitcoin Core RPC operations
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 #[async_trait(?Send)]
 pub trait SystemBitcoind {
    /// Execute a bitcoind command
@@ -1485,7 +1485,7 @@ pub trait SystemBitcoind {
 }
 
 /// Trait for system-level Metashrew RPC operations
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 #[async_trait(?Send)]
 pub trait SystemMetashrew {
    /// Execute a metashrew command
@@ -1493,7 +1493,7 @@ pub trait SystemMetashrew {
 }
 
 /// Trait for system-level Alkanes operations
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 #[async_trait(?Send)]
 pub trait SystemAlkanes {
    /// Execute an alkanes command
@@ -1501,7 +1501,7 @@ pub trait SystemAlkanes {
 }
 
 /// Trait for system-level Runestone operations
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 #[async_trait(?Send)]
 pub trait SystemRunestone {
    /// Execute a runestone command
@@ -1509,7 +1509,7 @@ pub trait SystemRunestone {
 }
 
 /// Trait for system-level Protorunes operations
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 #[async_trait(?Send)]
 pub trait SystemProtorunes {
    /// Execute a protorunes command
@@ -1517,7 +1517,7 @@ pub trait SystemProtorunes {
 }
 
 /// Trait for system-level monitoring operations
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 #[async_trait(?Send)]
 pub trait SystemMonitor {
    /// Execute a monitor command
@@ -1525,7 +1525,7 @@ pub trait SystemMonitor {
 }
 
 /// Trait for system-level Esplora operations
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 #[async_trait(?Send)]
 pub trait SystemEsplora {
    /// Execute an esplora command
@@ -1533,10 +1533,10 @@ pub trait SystemEsplora {
 }
 
 /// Trait for system-level PGP operations
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 
 /// Combined system trait that includes all system-level functionality
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "std")]
 #[async_trait(?Send)]
 pub trait System:
    SystemWallet +
