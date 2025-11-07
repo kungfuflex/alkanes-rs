@@ -47,3 +47,5 @@ pub mod upgradeable;
 pub mod vec_input_test;
 #[cfg(test)]
 pub mod view;
+#[cfg(all(test, feature = "zcash"))]
+pub mod zcash_parse;

@@ -33,6 +33,8 @@ pub mod unwrap;
 pub mod utils;
 pub mod view;
 pub mod vm;
+#[cfg(feature = "zcash")]
+pub mod zcash;
 use crate::indexer::index_block;
 
 /*
@@ -342,11 +344,15 @@ pub fn _start() {
     let data = input();
     let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
-    #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
+    #[cfg(feature = "zcash")]
+    let block: Block = crate::zcash::ZcashBlock::parse(&mut Cursor::<Vec<u8>>::new(reader.to_vec()))
+        .unwrap()
+        .block;
+    #[cfg(all(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"), not(feature = "zcash")))]
     let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(reader.to_vec()))
         .unwrap()
         .to_consensus();
-    #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin")))]
+    #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin", feature = "zcash")))]
     let block: Block =
         consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
 
