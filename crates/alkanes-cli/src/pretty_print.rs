@@ -122,6 +122,7 @@ pub fn print_blocks(blocks: &Blocks) {
     println!("{}", serde_json::to_string_pretty(blocks).unwrap());
 }
 
+#[allow(dead_code)]
 pub fn print_runes(runes: &Runes) {
     println!("{}", serde_json::to_string_pretty(runes).unwrap());
 }

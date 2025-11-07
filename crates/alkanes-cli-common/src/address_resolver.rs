@@ -8,6 +8,7 @@
 
 use crate::{Result, AlkanesError};
 use crate::traits::DeezelProvider;
+#[allow(unused_imports)]
 use crate::NetworkProvider;
 use crate::wallet::AddressType;
 use bitcoin::Network;

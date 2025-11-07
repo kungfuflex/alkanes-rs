@@ -247,7 +247,7 @@ impl ConcreteProvider {
     }
 
     #[cfg(feature = "std")]
-    pub async fn unlock_wallet(&mut self, passphrase: &str) -> Result<()> {
+    pub async fn unlock_wallet(&mut self, _passphrase: &str) -> Result<()> {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(wallet_path) = &self.wallet_path {
             if !wallet_path.exists() {
@@ -1067,7 +1067,7 @@ impl WalletProvider for ConcreteProvider {
             _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to get internal key".to_string())),
         };
 
-        let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+        let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
         let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
         let network = self.get_network();
         let root_key = Xpriv::new_master(network, &seed)?;
@@ -1198,7 +1198,7 @@ impl WalletProvider for ConcreteProvider {
     async fn get_keypair(&self) -> Result<bitcoin::secp256k1::Keypair> {
         let mnemonic = self.get_mnemonic().await?
             .ok_or_else(|| AlkanesError::Wallet("Wallet must be unlocked to get keypair".to_string()))?;
-        let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+        let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
         let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
         let network = self.get_network();
         let xpriv = bitcoin::bip32::Xpriv::new_master(network, &seed)?;
@@ -1483,7 +1483,7 @@ impl MetashrewRpcProvider for ConcreteProvider {
 #[async_trait(?Send)]
 impl EsploraProvider for ConcreteProvider {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
+        let _rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
         let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
@@ -2306,7 +2306,7 @@ impl DeezelProvider for ConcreteProvider {
             WalletState::Unlocked { mnemonic, .. } => mnemonic,
             _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign".to_string())),
         };
-        let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+        let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
         let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
         let network = self.get_network();
         let root_key = Xpriv::new_master(network, &seed)?;
@@ -2401,6 +2401,7 @@ impl MonitorProvider for ConcreteProvider {
     }
 }
 #[async_trait(?Send)]
+#[allow(unused_variables)]
 impl BitcoinRpcProvider for ConcreteProvider {
     async fn get_block_count(&self) -> Result<u64> { unimplemented!() }
     async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue> { unimplemented!() }
