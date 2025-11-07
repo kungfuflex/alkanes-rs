@@ -690,9 +690,9 @@ pub fn storage_variable(input: TokenStream) -> TokenStream {
 /// 
 /// Usage examples:
 /// ```ignore
-/// mapping_variable!(balances, alkane_id, AlkaneId, u128);
-/// mapping_variable!(names, id, u128, String);
-/// mapping_variable!(data, key, String, Vec<u8>);
+/// mapping_variable!(balances: (AlkaneId, u128));
+/// mapping_variable!(names: (u128, String));
+/// mapping_variable!(data: (String, Vec<u8>));
 /// ```
 /// 
 /// This generates functions for key-value mappings:
@@ -747,7 +747,7 @@ fn generate_keyword_path(key_type: &MappingKeyType, map_name_str: &str) -> proc_
         MappingKeyType::VecU8 => {
             quote! {
                 let key_bytes: Vec<u8> = key.clone();
-                let keyword_path = format!("/{}", #map_name_str);
+                let keyword_path = format!("/{}/", #map_name_str);
             }
         }
     }
@@ -1007,8 +1007,6 @@ enum MappingValueType {
 
 struct MappingVariableInput {
     map_name: Ident,
-    #[allow(dead_code)]
-    key_name: Ident, // Used for documentation/clarity in macro call
     key_type: MappingKeyType,
     value_type: MappingValueType,
 }
@@ -1016,12 +1014,13 @@ struct MappingVariableInput {
 impl syn::parse::Parse for MappingVariableInput {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let map_name: Ident = input.parse()?;
-        input.parse::<syn::Token![,]>()?;
-        let key_name: Ident = input.parse()?;
-        input.parse::<syn::Token![,]>()?;
+        input.parse::<syn::Token![:]>()?;
+        
+        let content;
+        syn::parenthesized!(content in input);
         
         // Parse key type (only u128, AlkaneId, String, Vec<u8> are supported as keys)
-        let key_type_type: Type = input.parse()?;
+        let key_type_type: Type = content.parse()?;
         let key_parsed = parse_type(&key_type_type)?;
         
         let key_type = match key_parsed {
@@ -1032,9 +1031,11 @@ impl syn::parse::Parse for MappingVariableInput {
             ParsedType::Struct(_) => return Err(syn::Error::new_spanned(&key_type_type, "Unsupported key type. Supported: u128, AlkaneId, String, Vec<u8>")),
         };
         
+        // Parse comma separator
+        content.parse::<syn::Token![,]>()?;
+        
         // Parse value type
-        input.parse::<syn::Token![,]>()?;
-        let value_type_type: Type = input.parse()?;
+        let value_type_type: Type = content.parse()?;
         let value_parsed = parse_type(&value_type_type)?;
         
         let value_type = match value_parsed {
@@ -1047,7 +1048,6 @@ impl syn::parse::Parse for MappingVariableInput {
         
         Ok(MappingVariableInput {
             map_name,
-            key_name,
             key_type,
             value_type,
         })
