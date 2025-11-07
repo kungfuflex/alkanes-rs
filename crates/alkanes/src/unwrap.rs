@@ -138,7 +138,7 @@ pub fn update_last_block(height: u128) -> Result<()> {
         let mut all_fulfilled = true;
         let all_payment_list_bytes = fr_btc_payments_at_block(i);
         if all_payment_list_bytes.len() == 0 {
-            last_block = i + 1;
+            last_block = i;
             continue;
         }
         for payment_list_bytes in all_payment_list_bytes {
@@ -156,7 +156,7 @@ pub fn update_last_block(height: u128) -> Result<()> {
             }
         }
         if all_fulfilled {
-            last_block = i + 1;
+            last_block = i;
         } else {
             break;
         }

@@ -40,19 +40,33 @@ In this way, all crates with a `-support` suffix can be imported into any Rust p
 
 This design is permissive enough for this monorepo to host `alkanes-runtime`, which is a complete set of bindings for building alkane smart contracts to a WASM format, suitable for deployment within the witness envelope of a Bitcoin transaction.
 
-Boilerplate for various alkanes are included and prefixed with `alkanes-std-` and placed in the `crates/` directory. The build system is designed such that the WASM builds of each crate with this prefix is made available to the test suite as a Rust source file.
+Boilerplate for various alkanes are included and prefixed with `alkanes-std-` and placed in the `alkanes/` directory. Pre-built WASM files for all alkanes are committed to the repository in `crates/alkanes/src/tests/std/wasm/` and are used by the test suite.
 
 ## Building
 
-ALKANES is built with the command:
+ALKANES indexer is built with the command:
 
 ```sh
-cargo build --release --features mainnet
+cargo build --release
 ```
 
-Replace `mainnet` with your network of choice. Constants are defined for luckycoin, regtest, mainnet, dogecoin, bellscoin, and fractal. For other networks or test networks, use the regtest feature.
+This will build the `alkanes.wasm` indexer binary at `target/wasm32-unknown-unknown/release/alkanes.wasm`.
 
-An `alkanes.wasm` file will be built, as well as a WASM for every crate prefixed with `alkanes-std-`, which will be built to `target/alkanes/wasm32-unknown-unknown/release`
+### Building Standard Alkanes
+
+The standard alkanes (prefixed with `alkanes-std-`) have pre-built WASM files committed to the repository. To rebuild them (only needed if you modify the alkane source code), run:
+
+```sh
+./scripts/build-std.sh
+```
+
+This script will:
+- Build all alkanes in `alkanes/` to WASM
+- Generate network-specific builds (bellscoin, luckycoin, mainnet, fractal, regtest, testnet) for alkanes that require them
+- Place the WASM files in `crates/alkanes/src/tests/std/wasm/`
+- Regenerate `crates/alkanes/src/tests/std/mod.rs` with the appropriate module declarations
+
+The WASM files are platform-independent and are committed to the repository so developers don't need to rebuild them unless modifying the alkane source code
 
 ## Indexing
 
@@ -68,48 +82,56 @@ A sample command may look like:
 
 ### Testing
 
-To run all tests in the monorepo
+#### Prerequisites
 
-```
-# this might be necessary if running into: could not execute process `wasm-bindgen-test-runner...
+If you encounter issues with `wasm-bindgen-test-runner`, install the correct version:
+
+```sh
 cargo install -f wasm-bindgen-cli --version 0.2.100
 ```
 
-```
-cargo test --all
+#### Running ALKANES Tests
+
+The alkanes crate tests run in WebAssembly using `wasm-bindgen-test`. There are two ways to run them:
+
+**Option 1: From the alkanes package directory (recommended)**
+
+```sh
+cd crates/alkanes
+cargo test --lib
 ```
 
-To test the alkanes indexer end-to-end, it is only required to run:
+The package-level `.cargo/config.toml` automatically sets the target to `wasm32-unknown-unknown`.
 
-```
-cargo test
+**Option 2: From the workspace root with explicit target**
+
+```sh
+cargo test -p alkanes --target wasm32-unknown-unknown --lib
 ```
 
-To run tests for a specific crate
+#### Running Other Tests
 
-```
+To test a specific crate (non-WASM tests):
+
+```sh
 cargo test -p [CRATE]
 ```
 
-example:
+Example:
 
-```
+```sh
 cargo test --features test-utils -p protorune
 ```
 
-This will provide a stub environment to test a METASHREW indexer program, and it will test the alkanes standard library smart contracts in simulated blocks.
+#### Unit Testing (Native Rust)
 
-Features are provided within the Cargo.toml at the root of the monorepo to declare alkanes which should be built with `cargo build` or `cargo test`.
+Some crates have unit tests that run on native Rust (not WASM). For these, you may need to specify your target architecture:
 
-### Unit testing
+- Macbook Intel x86: `x86_64-apple-darwin`
+- Macbook Apple Silicon: `aarch64-apple-darwin`
+- Ubuntu 20.04 LTS: `x86_64-unknown-linux-gnu`
 
-- These are written inside the library rust code
-- Do not compile to wasm, instead unit test the native rust. Therefore, you need to find the correct target for your local machine to properly run these tests. Below are some common targets for some architectures:
-  - Macbook intel x86: x86_64-apple-darwin
-  - Macbook Apple silicon: aarch64-apple-darwin
-  - Ubuntu 20.04 LTS: x86_64-unknown-linux-gnu
-
-```
+```sh
 cargo test -p protorune --target TARGET
 ```
 

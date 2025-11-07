@@ -1,0 +1,5 @@
+# Workspace-level Cargo configuration
+
+# Default configuration for wasm32-unknown-unknown target
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"

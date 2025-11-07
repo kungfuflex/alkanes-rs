@@ -282,7 +282,6 @@ dependencies = [
  "borsh",
  "byteorder",
  "bytes",
- "flate2",
  "hex",
  "hex_lit",
  "js-sys",

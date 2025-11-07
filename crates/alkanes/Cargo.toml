@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 test-utils = []
+<<<<<<< HEAD
 testnet = []
 dogecoin = []
 luckycoin = []
@@ -28,19 +29,10 @@ amm_pool = ["auth_token"]
 amm_factory = ["auth_token"]
 amm = ["amm_pool", "amm_factory"]
 orbital = []
+=======
+zcash = ["ordinals/zcash", "protorune/zcash"]
+>>>>>>> 64b3488c046eb8d830bf70e191ebc42df04eb5e0
 cache = ["protorune/cache"]
-all = []
-minimal = [
-    "refunder",
-    "merkle_distributor",
-    "free_mint",
-    "upgradeable",
-    "proxy",
-]
-refunder = []
-merkle_distributor = []
-free_mint = []
-upgradeable = []
 debug-log = []
 
 [dependencies]
@@ -73,18 +65,6 @@ borsh = { version = "1.5.7", features = ["derive"] }
 sha2 = "0.10.9"
 
 [dev-dependencies]
-alkanes = { path = ".", features = [
-    "genesis_alkane",
-    "genesis_protorune",
-    "amm",
-    "orbital",
-    "auth_token",
-    "minimal",
-] }
+alkanes = { path = "." }
 metashrew-core = { workspace = true, features = ["test-utils"] }
 protorune = { workspace = true, features = ["test-utils"] }
-
-[build-dependencies]
-anyhow = { workspace = true }
-flate2 = "1.0.34"
-hex = { workspace = true }
