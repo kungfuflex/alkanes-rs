@@ -10,12 +10,13 @@ use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::gz::compress;
 use anyhow::Result;
 use bitcoin::blockdata::transaction::Version;
-use bitcoin::script::Builder;
+use bitcoin::script::{Builder, PushBytesBuf};
 use bitcoin::{opcodes, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness};
 use bitcoin::{Block, Transaction};
 use metashrew_support::utils::consensus_encode;
 use ordinals::{Runestone, Etching, Rune};
 use protorune::test_helpers::create_block_with_coinbase_tx;
+use protorune::protostone::Protostones;
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
 use std::str::FromStr;
 
@@ -25,7 +26,7 @@ pub fn create_zcash_p2pkh_output(value: u64) -> TxOut {
     let script = Builder::new()
         .push_opcode(opcodes::all::OP_DUP)
         .push_opcode(opcodes::all::OP_HASH160)
-        .push_slice(&[0x1c; 20]) // Mock pubkey hash with Zcash prefix byte
+        .push_slice([0x1c; 20]) // Mock pubkey hash with Zcash prefix byte
         .push_opcode(opcodes::all::OP_EQUALVERIFY)
         .push_opcode(opcodes::all::OP_CHECKSIG)
         .into_script();
@@ -40,7 +41,7 @@ pub fn create_zcash_p2pkh_output(value: u64) -> TxOut {
 pub fn create_zcash_p2sh_output(value: u64) -> TxOut {
     let script = Builder::new()
         .push_opcode(opcodes::all::OP_HASH160)
-        .push_slice(&[0x1d; 20]) // Mock script hash with Zcash prefix byte
+        .push_slice([0x1d; 20]) // Mock script hash with Zcash prefix byte
         .push_opcode(opcodes::all::OP_EQUAL)
         .into_script();
     
@@ -66,9 +67,10 @@ pub fn create_zcash_nonstandard_output(value: u64) -> TxOut {
 
 /// Create OP_RETURN output
 pub fn create_op_return(data: &[u8]) -> TxOut {
+    let push_bytes = PushBytesBuf::try_from(data.to_vec()).expect("data too large for push");
     let script = Builder::new()
         .push_opcode(opcodes::all::OP_RETURN)
-        .push_slice(data)
+        .push_slice(push_bytes)
         .into_script();
     
     TxOut {
@@ -83,13 +85,14 @@ pub fn create_op_return(data: &[u8]) -> TxOut {
 /// following the ord-dogecoin pattern instead of witness-based inscriptions.
 pub fn create_zcash_scriptsig_envelope(bytecode: Vec<u8>) -> Result<ScriptBuf> {
     let compressed_bytecode = compress(bytecode)?;
+    let push_bytes = PushBytesBuf::try_from(compressed_bytecode).expect("bytecode too large for push");
     
     // Create ZAK envelope in scriptSig
     let envelope = Builder::new()
         .push_opcode(opcodes::OP_FALSE)
         .push_opcode(opcodes::all::OP_IF)
         .push_slice(b"ZAK") // Zcash Alkanes protocol identifier
-        .push_slice(&compressed_bytecode)
+        .push_slice(push_bytes)
         .push_opcode(opcodes::all::OP_ENDIF)
         .into_script();
     
@@ -199,13 +202,64 @@ pub fn create_zcash_tx_with_fallback(
     }
 }
 
+/// Create a Zcash coinbase transaction
+fn create_zcash_coinbase_tx(height: u32) -> Transaction {
+    let script_pubkey = create_zcash_p2pkh_output(10_00_000_000).script_pubkey;
+    
+    let coinbase_input = TxIn {
+        previous_output: Default::default(),
+        script_sig: ScriptBuf::new(),
+        sequence: Sequence::MAX,
+        witness: Witness::new(),
+    };
+    
+    let coinbase_output = TxOut {
+        value: Amount::from_sat(10_00_000_000),
+        script_pubkey,
+    };
+    
+    let locktime = bitcoin::absolute::LockTime::from_height(height).unwrap();
+    
+    Transaction {
+        version: Version::TWO,
+        lock_time: locktime,
+        input: vec![coinbase_input],
+        output: vec![
+            coinbase_output.clone(),
+            coinbase_output.clone(),
+            coinbase_output,
+        ],
+    }
+}
+
+/// Create a Zcash block with coinbase
+fn create_zcash_block_with_coinbase(height: u32) -> Block {
+    use bitcoin::block::Header;
+    use bitcoin::CompactTarget;
+    use bitcoin::hashes::Hash;
+    
+    let coinbase_tx = create_zcash_coinbase_tx(height);
+    
+    Block {
+        header: Header {
+            version: bitcoin::block::Version::ONE,
+            prev_blockhash: bitcoin::BlockHash::from_byte_array([0; 32]),
+            merkle_root: bitcoin::TxMerkleNode::from_byte_array([0; 32]),
+            time: 0,
+            bits: CompactTarget::from_consensus(0),
+            nonce: 0,
+        },
+        txdata: vec![coinbase_tx],
+    }
+}
+
 /// Initialize a test block with Zcash-specific characteristics
 pub fn init_zcash_test_block(
     bytecode: Vec<u8>,
     cellpacks: Vec<Cellpack>,
     test_z_fallback: bool,
 ) -> Result<Block> {
-    let mut block = create_block_with_coinbase_tx(0);
+    let mut block = create_zcash_block_with_coinbase(0);
     
     // First transaction: Deploy alkane with scriptSig inscription
     let deployment_tx = create_zcash_deployment_tx(
