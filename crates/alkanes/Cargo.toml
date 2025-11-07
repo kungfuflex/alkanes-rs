@@ -11,27 +11,13 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 test-utils = []
-<<<<<<< HEAD
 testnet = []
 dogecoin = []
 luckycoin = []
 bellscoin = []
 fractal = []
-zcash = ["ordinals/zcash", "protorune/zcash", "alkanes-support/zcash"]
-mainnet = ["protorune/mainnet"]
-proxy = []
-owned_token = []
-auth_token = []
-genesis_alkane = []
-regtest = []
-genesis_protorune = []
-amm_pool = ["auth_token"]
-amm_factory = ["auth_token"]
-amm = ["amm_pool", "amm_factory"]
-orbital = []
-=======
 zcash = ["ordinals/zcash", "protorune/zcash"]
->>>>>>> 64b3488c046eb8d830bf70e191ebc42df04eb5e0
+mainnet = ["protorune/mainnet"]
 cache = ["protorune/cache"]
 debug-log = []
 
