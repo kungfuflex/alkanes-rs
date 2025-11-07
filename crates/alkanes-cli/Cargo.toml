@@ -1,0 +1,64 @@
+[package]
+name = "alkanes-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Alkanes Team"]
+description = "Bitcoin alkanes inspector and wallet CLI"
+license = "MIT"
+
+[[bin]]
+name = "alkanes-cli"
+path = "src/main.rs"
+
+[dependencies]
+alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
+alkanes-cli-sys = { path = "../alkanes-cli-sys" }
+clap = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+bitcoin = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+futures = { workspace = true }
+rpassword = "7.3"
+tempfile = "3.10.1"
+alkanes-support = { workspace = true }
+prost = { workspace = true }
+termtree = "0.4.1"
+colored = "2.1.0"
+protobuf-json-mapping = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["full"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
+clap = { version = "4.0", features = ["derive"] }
+anyhow = "1.0"
+serde_json = "1.0"
+bitcoin = { workspace = true }
+async-trait = "0.1"
+reqwest = { workspace = true }
+dirs = "5.0"
+log = "0.4"
+env_logger = "0.11"
+rand = "0.8"
+sha2 = "0.10"
+sha3 = "0.10"
+hex = "0.4"
+regex = "1.0"
+
+[dev-dependencies]
+tempfile = "3.0"
+assert_cmd = "2.0"
+predicates = "3.0"
+serde_json = "1.0"
+bitcoind = "0.36.0"
+
+
+[[test]]
+name = "alkanes_execute_mock"
+path = "../../tests/alkanes_execute_mock.rs"
+harness = true
+

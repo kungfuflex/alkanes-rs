@@ -1,0 +1,13 @@
+{
+  "name": "deezel-web-nodejs-example",
+  "version": "1.0.0",
+  "description": "A NodeJS example for the deezel-web crate.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "deezel-web": "file:../../pkg"
+  }
+}

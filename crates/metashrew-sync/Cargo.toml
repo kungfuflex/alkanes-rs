@@ -1,0 +1,22 @@
+[package]
+name = "metashrew-sync"
+version = "9.0.1"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.95"
+tokio = { version = "1.43.0", features = ["full"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.136"
+log = "0.4.25"
+hex = "0.4.3"
+async-trait = "0.1.83"
+thiserror = "1.0.69"
+num_cpus = "1.16.0"
+bitcoin = "0.32.4"
+rocksdb = "0.21.0"
+metashrew-runtime = { path = "../metashrew-runtime" }
+
+[features]
+default = []
+test-utils = []
