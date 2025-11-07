@@ -7,11 +7,8 @@
 //! - Raw Bitcoin addresses
 
 use crate::{Result, AlkanesError};
-use crate::traits::{DeezelProvider, KeystoreProvider};
-use crate::{JsonRpcProvider, StorageProvider, NetworkProvider, CryptoProvider, TimeProvider, LogProvider, WalletProvider, BitcoinRpcProvider, MetashrewRpcProvider, EsploraProvider, RunestoneProvider, OrdProvider, MonitorProvider, AlkanesProvider, MetashrewProvider};
-use crate::{WalletConfig, WalletInfo, WalletBalance, AddressInfo, SendParams, UtxoInfo, TransactionInfo, FeeEstimate, FeeRates};
-use crate::{BlockEvent, KeystoreAddress, KeystoreInfo};
-use crate::network::NetworkParams;
+use crate::traits::DeezelProvider;
+use crate::NetworkProvider;
 use crate::wallet::AddressType;
 use bitcoin::Network;
 use regex::Regex;

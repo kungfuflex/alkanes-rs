@@ -9,7 +9,6 @@ use crate::{
     AlkanesError, JsonValue, Result,
 };
 use serde_json::json;
-use crate::ord;
 use crate::alkanes::execute::EnhancedAlkanesExecutor;
 #[cfg(feature = "wasm-inspection")]
 use crate::alkanes::inspector::{AlkaneInspector, InspectionConfig};
@@ -2049,7 +2048,7 @@ impl AlkanesProvider for ConcreteProvider {
     }
 
     async fn simulate(&self, contract_id: &str, context: &alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
-        let mut buf = Vec::new();
+        let buf = Vec::new();
         context.encode(&mut Vec::new())?;
         let params_hex = format!("0x{}", hex::encode(buf));
         let rpc_params = serde_json::json!([contract_id, params_hex]);

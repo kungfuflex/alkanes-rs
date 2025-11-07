@@ -9,8 +9,6 @@ use clap::Parser;
 use alkanes_cli_sys::{SystemAlkanes, SystemOrd};
 use alkanes_cli_common::traits::*;
 use futures::future::join_all;
-use alkanes_cli_common::alkanes_pb;
-use protobuf_json_mapping::parse_from_str;
 use serde_json::json;
 
 mod commands;
@@ -246,7 +244,11 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 Ok(trace_pb) => {
                     // Convert protobuf trace to alkanes_support::trace::Trace for pretty printing
                     if let Some(alkanes_trace) = trace_pb.trace {
-                        let trace: alkanes_support::trace::Trace = alkanes_trace.into();
+                        // The alkanes_trace is of type alkanes_support::proto::alkanes::AlkanesTrace
+                        // which implements Into<alkanes_support::trace::Trace>
+                        let trace = alkanes_support::trace::Trace::try_from(
+                            prost::Message::encode_to_vec(&alkanes_trace)
+                        )?;
                         if raw {
                             let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
                             println!("{}", serde_json::to_string_pretty(&json)?);
@@ -301,7 +303,10 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             let result = system.provider().trace_block(height).await?;
             // The result is a proto::alkanes::Trace which contains the trace
             if let Some(alkanes_trace) = result.trace {
-                let trace: alkanes_support::trace::Trace = alkanes_trace.into();
+                // Convert via protobuf encoding/decoding
+                let trace = alkanes_support::trace::Trace::try_from(
+                    prost::Message::encode_to_vec(&alkanes_trace)
+                )?;
                 if raw {
                     let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
                     println!("{}", serde_json::to_string_pretty(&json)?);

@@ -24,6 +24,7 @@ futures = { workspace = true }
 rpassword = "7.3"
 tempfile = "3.10.1"
 alkanes-support = { workspace = true }
+prost = { workspace = true }
 termtree = "0.4.1"
 colored = "2.1.0"
 protobuf-json-mapping = { workspace = true }

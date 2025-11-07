@@ -345,6 +345,7 @@ dependencies = [
  "hex",
  "log",
  "predicates",
+ "prost",
  "protobuf-json-mapping",
  "rand 0.8.5",
  "regex",
