@@ -41,6 +41,13 @@ alkanes-support = { path = "./crates/alkanes-support" }
 alkanes-runtime = { path = "./crates/alkanes-runtime" }
 alkanes-macros = { path = "./crates/alkanes-macros" }
 alkanes-std-factory-support = { path = "./crates/alkanes-std-factory-support" }
+alkanes-cli-common = { path = "./crates/alkanes-cli-common" }
+alkanes-cli-sys = { path = "./crates/alkanes-cli-sys" }
+alkanes-cli = { path = "./crates/alkanes-cli" }
+alkanes-asc = { path = "./crates/alkanes-asc" }
+alkanes-web-sys = { path = "./crates/alkanes-web-sys" }
+alkanes-web-leptos = { path = "./crates/alkanes-web-leptos" }
+alkanes-pretty-print-macro = { path = "./crates/alkanes-pretty-print-macro" }
 ruint = "1.12.3"
 wasm-bindgen = "0.2.100"
 byteorder = "1.5"
@@ -54,6 +61,7 @@ prost-types = "0.12.6"
 prost-build = "0.12.6"
 bytes = "1.6.1"
 sha2 = "0.10.9"
+sha3 = "0.10"
 tokio = { version = "1.43.0", features = ["full"] }
 futures = "0.3.30"
 log = "0.4.22"
@@ -62,6 +70,41 @@ web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
 hex_lit = "0.1.1"
 once_cell = "1.20.1"
+async-trait = "0.1"
+thiserror = "1.0"
+bitcoin_hashes = "0.14"
+secp256k1 = "0.28"
+bip39 = "2.0"
+aes-gcm = "0.10"
+rand = "0.8"
+rand_core = "0.6"
+base64 = "0.22"
+lazy_static = "1.4"
+regex = "1.0"
+chrono = "0.4"
+smallvec = "1.13"
+protobuf = "3.4"
+wasmprinter = "0.2"
+wat = "1.0"
+spin = "0.9"
+wasmparser = "0.121"
+dirs = "5.0"
+tempfile = "3.8"
+flate2 = "1.0"
+reqwest = { version = "0.12", default-features = false }
+clap = "4.5"
+bitcoincore-rpc = "0.19"
+bech32 = "0.11"
+mockall = "0.12"
+tabled = "0.15"
+psbt-v2 = "0.1.0"
+url = "2.5"
+leptos = "0.6"
+leptos_router = "0.6"
+getrandom = "0.2"
+env_logger = "0.11"
+protobuf-json-mapping = "3.4"
+pbkdf2 = "0.12"
 
 [features]
 test-utils = []

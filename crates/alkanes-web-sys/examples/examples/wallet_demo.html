@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deezel Browser Wallet Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .wallet-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .wallet-button {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: #333;
+        }
+        
+        .wallet-button:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .wallet-button.connected {
+            border-color: #27ae60;
+            background: #f8fff8;
+        }
+        
+        .wallet-button.unavailable {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .wallet-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+        }
+        
+        .status-section {
+            margin: 30px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .info-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .info-card h3 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+        }
+        
+        .info-card p {
+            margin: 5px 0;
+            color: #666;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5a6fd8;
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .log-output {
+            background: #1e1e1e;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin: 20px 0;
+        }
+        
+        .log-entry {
+            margin: 5px 0;
+            padding: 2px 0;
+        }
+        
+        .log-success { color: #50fa7b; }
+        .log-error { color: #ff5555; }
+        .log-warning { color: #f1fa8c; }
+        .log-info { color: #8be9fd; }
+        
+        .feature-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            margin: 2px;
+        }
+        
+        .badge-supported {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-unsupported {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Deezel Browser Wallet Demo</h1>
+        
+        <div class="status-section">
+            <h2>🔍 Wallet Detection</h2>
+            <p>This demo shows how deezel-web integrates with browser wallet extensions while leveraging our sandshrew RPC infrastructure.</p>
+            
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="detectWallets()">
+                    <span id="detect-loading" style="display: none;" class="loading"></span>
+                    Detect Wallets
+                </button>
+                <button class="btn btn-secondary" onclick="clearLog()">Clear Log</button>
+            </div>
+            
+            <div id="wallet-list" class="wallet-grid">
+                <!-- Wallets will be populated here -->
+            </div>
+        </div>
+        
+        <div class="status-section">
+            <h2>📊 Connection Status</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>Connected Wallet</h3>
+                    <p id="connected-wallet">None</p>
+                    <p id="wallet-address">-</p>
+                </div>
+                <div class="info-card">
+                    <h3>Network</h3>
+                    <p id="network-info">Not connected</p>
+                </div>
+                <div class="info-card">
+                    <h3>Balance</h3>
+                    <p id="balance-info">-</p>
+                </div>
+                <div class="info-card">
+                    <h3>Provider Type</h3>
+                    <p>Browser Wallet + Sandshrew RPC</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="status-section">
+            <h2>🧪 Demo Actions</h2>
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="runFullDemo()" id="demo-btn">
+                    Run Full Demo
+                </button>
+                <button class="btn btn-secondary" onclick="testWalletSwitching()">
+                    Test Wallet Switching
+                </button>
+                <button class="btn btn-secondary" onclick="demonstrateAlkanes()">
+                    Alkanes Demo
+                </button>
+                <button class="btn btn-secondary" onclick="testPsbtSigning()">
+                    PSBT Demo
+                </button>
+            </div>
+        </div>
+        
+        <div class="status-section">
+            <h2>📝 Console Output</h2>
+            <div id="log-output" class="log-output">
+                <div class="log-entry log-info">🚀 Deezel Browser Wallet Demo initialized</div>
+                <div class="log-entry log-info">💡 Click "Detect Wallets" to start</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { 
+            run_browser_wallet_example,
+            demonstrate_wallet_switching,
+            demonstrate_alkanes_execution,
+            demonstrate_psbt_signing
+        } from './pkg/deezel_web.js';
+
+        let wasmModule = null;
+        
+        // Initialize WASM module
+        async function initWasm() {
+            try {
+                wasmModule = await init();
+                logMessage('✅ WASM module loaded successfully', 'success');
+                return true;
+            } catch (error) {
+                logMessage(`❌ Failed to load WASM module: ${error}`, 'error');
+                return false;
+            }
+        }
+        
+        // Log message to console output
+        function logMessage(message, type = 'info') {
+            const logOutput = document.getElementById('log-output');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+            logOutput.appendChild(entry);
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+        
+        // Clear log output
+        window.clearLog = function() {
+            document.getElementById('log-output').innerHTML = '';
+            logMessage('🧹 Log cleared', 'info');
+        };
+        
+        // Detect available wallets
+        window.detectWallets = async function() {
+            const loading = document.getElementById('detect-loading');
+            loading.style.display = 'inline-block';
+            
+            logMessage('🔍 Detecting available wallets...', 'info');
+            
+            // Simulate wallet detection (in real implementation, this would use the WASM module)
+            const mockWallets = [
+                { id: 'unisat', name: 'Unisat Wallet', available: !!window.unisat, psbt: true, taproot: true, ordinals: true, mobile: false },
+                { id: 'xverse', name: 'Xverse Wallet', available: !!window.XverseProviders, psbt: true, taproot: true, ordinals: true, mobile: true },
+                { id: 'phantom', name: 'Phantom Wallet', available: !!window.phantom, psbt: true, taproot: true, ordinals: false, mobile: true },
+                { id: 'okx', name: 'OKX Wallet', available: !!window.okxwallet, psbt: true, taproot: true, ordinals: true, mobile: true },
+                { id: 'leather', name: 'Leather Wallet', available: !!window.LeatherProvider, psbt: true, taproot: true, ordinals: true, mobile: false },
+                { id: 'magiceden', name: 'Magic Eden Wallet', available: !!window.magicEden, psbt: true, taproot: true, ordinals: true, mobile: true },
+            ];
+            
+            const walletList = document.getElementById('wallet-list');
+            walletList.innerHTML = '';
+            
+            let availableCount = 0;
+            
+            mockWallets.forEach(wallet => {
+                const walletElement = document.createElement('div');
+                walletElement.className = `wallet-button ${wallet.available ? 'available' : 'unavailable'}`;
+                
+                if (wallet.available) {
+                    availableCount++;
+                    walletElement.onclick = () => connectWallet(wallet);
+                }
+                
+                walletElement.innerHTML = `
+                    <div class="wallet-icon" style="background: ${wallet.available ? '#27ae60' : '#e74c3c'}; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold;">
+                        ${wallet.name.charAt(0)}
+                    </div>
+                    <div>
+                        <div style="font-weight: 500;">${wallet.name}</div>
+                        <div style="font-size: 12px; color: #666;">
+                            ${wallet.available ? 'Available' : 'Not installed'}
+                        </div>
+                        <div style="margin-top: 5px;">
+                            <span class="feature-badge ${wallet.psbt ? 'badge-supported' : 'badge-unsupported'}">PSBT</span>
+                            <span class="feature-badge ${wallet.taproot ? 'badge-supported' : 'badge-unsupported'}">Taproot</span>
+                            <span class="feature-badge ${wallet.ordinals ? 'badge-supported' : 'badge-unsupported'}">Ordinals</span>
+                            <span class="feature-badge ${wallet.mobile ? 'badge-supported' : 'badge-unsupported'}">Mobile</span>
+                        </div>
+                    </div>
+                `;
+                
+                walletList.appendChild(walletElement);
+            });
+            
+            loading.style.display = 'none';
+            logMessage(`✅ Found ${availableCount} available wallet(s)`, 'success');
+            
+            if (availableCount === 0) {
+                logMessage('💡 Install a Bitcoin wallet extension to test the integration', 'warning');
+            }
+        };
+        
+        // Connect to a specific wallet
+        window.connectWallet = async function(wallet) {
+            logMessage(`🔗 Connecting to ${wallet.name}...`, 'info');
+            
+            // Update UI
+            document.getElementById('connected-wallet').textContent = wallet.name;
+            document.getElementById('wallet-address').textContent = 'bc1q...example...';
+            document.getElementById('network-info').textContent = 'Regtest (Demo)';
+            document.getElementById('balance-info').textContent = '1.00000000 BTC';
+            
+            // Mark wallet as connected
+            document.querySelectorAll('.wallet-button').forEach(btn => {
+                btn.classList.remove('connected');
+            });
+            event.target.closest('.wallet-button').classList.add('connected');
+            
+            logMessage(`✅ Connected to ${wallet.name}`, 'success');
+            logMessage('🔧 Provider initialized with sandshrew RPC integration', 'info');
+        };
+        
+        // Run full demo
+        window.runFullDemo = async function() {
+            if (!wasmModule) {
+                logMessage('⚠️  WASM module not loaded, running mock demo', 'warning');
+                runMockDemo();
+                return;
+            }
+            
+            try {
+                logMessage('🚀 Running full browser wallet demo...', 'info');
+                await run_browser_wallet_example();
+                logMessage('✅ Full demo completed successfully!', 'success');
+            } catch (error) {
+                logMessage(`❌ Demo failed: ${error}`, 'error');
+                runMockDemo();
+            }
+        };
+        
+        // Mock demo for when WASM isn't available
+        function runMockDemo() {
+            logMessage('🎭 Running mock demo (WASM not available)', 'info');
+            logMessage('🔍 Detecting wallets...', 'info');
+            logMessage('✅ Found 2 wallet(s): Unisat, Xverse', 'success');
+            logMessage('🔗 Connecting to Unisat...', 'info');
+            logMessage('✅ Wallet connected successfully!', 'success');
+            logMessage('📍 Wallet address: bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', 'info');
+            logMessage('💰 Balance: 100000000 sats confirmed, 0 pending', 'info');
+            logMessage('📦 Found 1 UTXOs', 'info');
+            logMessage('🪙 Alkanes tokens: 1', 'info');
+            logMessage('💸 Fee rates - Fast: 20 sat/vB, Medium: 10 sat/vB, Slow: 5 sat/vB', 'info');
+            logMessage('✅ Transaction created: 125 bytes', 'success');
+            logMessage('🎉 Browser wallet example completed successfully!', 'success');
+        }
+        
+        // Test wallet switching
+        window.testWalletSwitching = async function() {
+            if (!wasmModule) {
+                logMessage('🔄 Mock wallet switching demo', 'info');
+                logMessage('🔗 Switching to Xverse...', 'info');
+                logMessage('📍 Xverse address: bc1q...different...', 'info');
+                logMessage('✅ Wallet switching demonstration completed!', 'success');
+                return;
+            }
+            
+            try {
+                await demonstrate_wallet_switching();
+            } catch (error) {
+                logMessage(`❌ Wallet switching demo failed: ${error}`, 'error');
+            }
+        };
+        
+        // Demonstrate alkanes
+        window.demonstrateAlkanes = async function() {
+            if (!wasmModule) {
+                logMessage('🧪 Mock alkanes execution demo', 'info');
+                logMessage('🚀 Executing alkanes contract...', 'info');
+                logMessage('✅ Alkanes execution completed!', 'success');
+                logMessage('📋 Reveal TXID: abc123...', 'info');
+                return;
+            }
+            
+            try {
+                await demonstrate_alkanes_execution();
+            } catch (error) {
+                logMessage(`❌ Alkanes demo failed: ${error}`, 'error');
+            }
+        };
+        
+        // Test PSBT signing
+        window.testPsbtSigning = async function() {
+            if (!wasmModule) {
+                logMessage('✍️  Mock PSBT signing demo', 'info');
+                logMessage('📝 Creating mock PSBT...', 'info');
+                logMessage('✅ Browser wallet can sign PSBTs while we handle blockchain operations', 'success');
+                return;
+            }
+            
+            try {
+                await demonstrate_psbt_signing();
+            } catch (error) {
+                logMessage(`❌ PSBT demo failed: ${error}`, 'error');
+            }
+        };
+        
+        // Initialize on page load
+        window.addEventListener('load', async () => {
+            logMessage('🔧 Initializing deezel-web demo...', 'info');
+            
+            const wasmLoaded = await initWasm();
+            if (!wasmLoaded) {
+                logMessage('⚠️  Running in mock mode - install from source for full functionality', 'warning');
+            }
+            
+            // Auto-detect wallets
+            setTimeout(detectWallets, 1000);
+        });
+    </script>
+</body>
+</html>
