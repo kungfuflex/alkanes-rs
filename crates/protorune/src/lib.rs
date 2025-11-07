@@ -45,6 +45,8 @@ pub mod protoburn;
 pub mod protorune_init;
 pub mod protostone;
 pub mod tables;
+#[cfg(feature = "zcash")]
+pub mod zcash;
 #[cfg(feature = "test-utils")]
 pub mod test_helpers;
 #[cfg(test)]

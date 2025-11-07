@@ -479,13 +479,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alkanes-rs"
-version = "1.2.3"
-dependencies = [
- "alkanes",
-]
-
-[[package]]
 name = "alkanes-runtime"
 version = "1.2.3"
 dependencies = [

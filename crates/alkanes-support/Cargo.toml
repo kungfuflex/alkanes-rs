@@ -10,6 +10,9 @@ resolver = "2"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+zcash = []
+
 [dependencies]
 anyhow = { workspace = true }
 protorune-support = { workspace = true }
