@@ -11,7 +11,7 @@ resolver = "2"
 crate-type = ["cdylib", "rlib"]
 
 [workspace]
-members = [".", "crates/*"]
+members = [".", "crates/*", "alkanes/*"]
 
 [workspace.package]
 version = "1.2.3"
@@ -40,7 +40,7 @@ protorune-support = { path = "./crates/protorune-support" }
 alkanes-support = { path = "./crates/alkanes-support" }
 alkanes-runtime = { path = "./crates/alkanes-runtime" }
 alkanes-macros = { path = "./crates/alkanes-macros" }
-alkanes-std-factory-support = { path = "./crates/alkanes-std-factory-support" }
+alkanes-std-factory-support = { path = "./alkanes/alkanes-std-factory-support" }
 alkanes-cli-common = { path = "./crates/alkanes-cli-common" }
 alkanes-cli-sys = { path = "./crates/alkanes-cli-sys" }
 alkanes-cli = { path = "./crates/alkanes-cli" }

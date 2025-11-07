@@ -1,7 +1,6 @@
 use anyhow::Result;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use hex;
 use std::env;
 use std::fs;
 use std::io::prelude::*;
@@ -41,7 +40,7 @@ fn build_alkane(wasm_str: &str, features: Vec<&'static str>) -> Result<()> {
 }
 
 fn main() {
-    println!("cargo:rerun-if-changed=crates/");
+    println!("cargo:rerun-if-changed=alkanes/");
     let env_var = env::var_os("OUT_DIR").unwrap();
     let base_dir = Path::new(&env_var)
         .parent()
@@ -67,19 +66,21 @@ fn main() {
         .join("tests");
 
     fs::create_dir_all(&write_dir.join("std")).unwrap();
-    let crates_dir = out_dir
+    
+    // Changed from crates_dir to alkanes_dir
+    let alkanes_dir = out_dir
         .parent()
         .unwrap()
         .parent()
         .unwrap()
         .parent()
         .unwrap()
-        .join("crates");
-    match std::env::set_current_dir(&crates_dir) {
+        .join("alkanes");
+    match std::env::set_current_dir(&alkanes_dir) {
         Err(_) => return,
         _ => {}
     };
-    let mods = fs::read_dir(&crates_dir)
+    let mods = fs::read_dir(&alkanes_dir)
         .unwrap()
         .filter_map(|v| {
             let name = v.ok()?.file_name().into_string().ok()?;
@@ -115,7 +116,7 @@ fn main() {
     files
         .into_iter()
         .map(|v| -> Result<String> {
-            std::env::set_current_dir(&crates_dir.clone().join(v.clone()))?;
+            std::env::set_current_dir(&alkanes_dir.clone().join(v.clone()))?;
             if v == "alkanes-std-genesis-alkane"
                 || v == "alkanes-std-genesis-alkane-upgraded"
                 || v == "alkanes-std-genesis-alkane-upgraded-eoa"
@@ -172,7 +173,7 @@ fn main() {
                 build_alkane(wasm_str, vec![])?;
             }
 
-            std::env::set_current_dir(&crates_dir)?;
+            std::env::set_current_dir(&alkanes_dir)?;
             let subbed = v.clone().replace("-", "_");
             eprintln!(
                 "write: {}",
