@@ -172,7 +172,7 @@ impl<P: DeezelProvider> RpcClient<P> {
     
     /// Make a Bitcoin Core RPC call
     pub async fn bitcoin_call(&self, method: &str, params: JsonValue) -> Result<JsonValue> {
-        let url = get_rpc_url(&self.config, &Commands::Bitcoind { command: crate::commands::BitcoindCommands::Getblockcount })?;
+        let url = get_rpc_url(&self.config, &Commands::Bitcoind { command: crate::commands::BitcoindCommands::Getblockcount { raw: false } })?;
         self.call(&url, method, params).await
     }
     

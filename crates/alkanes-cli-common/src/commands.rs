@@ -305,13 +305,18 @@ impl WalletCommands {
 #[serde(rename_all = "camelCase")]
 pub enum BitcoindCommands {
     /// Get current block count
-    Getblockcount,
+    Getblockcount {
+        #[arg(long)]
+        raw: bool,
+    },
     /// Generate blocks to an address (regtest only)
     Generatetoaddress {
         /// Number of blocks to generate
         nblocks: u32,
         /// Address to generate to
         address: String,
+        #[arg(long)]
+        raw: bool,
     },
     Getblockchaininfo {
         #[arg(long)]
@@ -335,6 +340,8 @@ pub enum BitcoindCommands {
     },
     Getblockhash {
         height: u64,
+        #[arg(long)]
+        raw: bool,
     },
     Getblockheader {
         hash: String,
@@ -368,6 +375,8 @@ pub enum BitcoindCommands {
     },
     Sendrawtransaction {
         tx_hex: String,
+        #[arg(long)]
+        raw: bool,
     },
 }
 

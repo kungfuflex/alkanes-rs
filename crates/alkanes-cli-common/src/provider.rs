@@ -2410,7 +2410,7 @@ impl MonitorProvider for ConcreteProvider {
 impl BitcoinRpcProvider for ConcreteProvider {
     async fn get_block_count(&self) -> Result<u64> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let json = self.call(&rpc_url, "getblockcount", json!([]), 1).await?;
         if let Some(count) = json.as_u64() {
@@ -2426,7 +2426,7 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([nblocks, address]);
         self.call(&rpc_url, "generatetoaddress", params, 1).await
@@ -2434,21 +2434,21 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn get_blockchain_info(&self) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         self.call(&rpc_url, "getblockchaininfo", json!([]), 1).await
     }
 
     async fn get_new_address(&self) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         self.call(&rpc_url, "getnewaddress", json!([]), 1).await
     }
 
     async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([txid, false]);
         let result = self.call(&rpc_url, "getrawtransaction", params, 1).await?;
@@ -2459,7 +2459,7 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let verbosity = if raw { 0 } else { 1 };
         let params = json!([hash, verbosity]);
@@ -2468,7 +2468,7 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn get_block_hash(&self, height: u64) -> Result<String> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([height]);
         let result = self.call(&rpc_url, "getblockhash", params, 1).await?;
@@ -2479,7 +2479,7 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([tx_hex]);
         let result = self.call(&rpc_url, "sendrawtransaction", params, 1).await?;
@@ -2490,14 +2490,14 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn get_mempool_info(&self) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         self.call(&rpc_url, "getmempoolinfo", json!([]), 1).await
     }
 
     async fn estimate_smart_fee(&self, target: u32) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([target]);
         self.call(&rpc_url, "estimatesmartfee", params, 1).await
@@ -2516,14 +2516,14 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn get_network_info(&self) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         self.call(&rpc_url, "getnetworkinfo", json!([]), 1).await
     }
 
     async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = if let Some(hash) = block_hash {
             json!([txid, true, hash])
@@ -2535,7 +2535,7 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn get_block_header(&self, hash: &str) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([hash, true]);
         self.call(&rpc_url, "getblockheader", params, 1).await
@@ -2543,7 +2543,7 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn get_block_stats(&self, hash: &str) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([hash]);
         self.call(&rpc_url, "getblockstats", params, 1).await
@@ -2551,21 +2551,21 @@ impl BitcoinRpcProvider for ConcreteProvider {
 
     async fn get_chain_tips(&self) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         self.call(&rpc_url, "getchaintips", json!([]), 1).await
     }
 
     async fn get_raw_mempool(&self) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         self.call(&rpc_url, "getrawmempool", json!([]), 1).await
     }
 
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
-            command: crate::commands::BitcoindCommands::Getblockcount 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([txid, vout, include_mempool]);
         self.call(&rpc_url, "gettxout", params, 1).await
