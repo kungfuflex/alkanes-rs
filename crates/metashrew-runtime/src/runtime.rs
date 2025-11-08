@@ -940,6 +940,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
     /// - Host function failures occur during execution
     pub async fn run(&self) -> Result<(), anyhow::Error> {
         self.context.lock().await.state = 0;
+        log::debug!("[run] Starting WASM execution, calling _start");
         let execution_result = {
             let mut instance_guard = self.instance.lock().await;
             let WasmInstance { ref mut store, instance } = &mut *instance_guard;
@@ -947,6 +948,8 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                 .get_typed_func::<(), ()>(&mut *store, "_start")
                 .context("Failed to get _start function")?;
 
+            log::debug!("[run] Got _start function, about to call it");
+            
             // Note: Chain reorganization detection is now handled at the sync framework level
             // using proper block hash comparison, not at the runtime level
 
@@ -961,7 +964,12 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                         Ok(())
                     }
                 }
-                Err(e) => Err(e).context("Error calling _start function"),
+                Err(e) => {
+                    log::error!("WASM _start function failed: {:?}", e);
+                    log::error!("WASM error source: {:?}", e.source());
+                    log::error!("WASM error chain: {:#}", e);
+                    Err(e).context("Error calling _start function")
+                },
             }
         };
 
@@ -1027,7 +1035,11 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                     let context_ref_len = context_ref_len.clone();
                     Box::new(async move {
                         let ctx = context_ref_len.lock().await;
-                        ctx.block.len() as i32 + 4
+                        let block_len = ctx.block.len();
+                        let height = ctx.height;
+                        let result = block_len as i32 + 4;
+                        log::debug!("[__host_len] height={}, block.len()={}, returning {}", height, block_len, result);
+                        result
                     })
                 },
             )
@@ -1040,15 +1052,19 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                 move |mut caller: Caller<'_, State>, data_start: i32| {
                     let context_ref_input = context_ref_input.clone();
                     Box::new(async move {
+                        log::debug!("[__load_input] Called with data_start={}", data_start);
+                        
                         let mem = match caller.get_export("memory") {
                             Some(export) => match export.into_memory() {
                                 Some(memory) => memory,
                                 None => {
+                                    log::error!("[__load_input] Failed to get memory export");
                                     caller.data_mut().had_failure = true;
                                     return;
                                 }
                             },
                             None => {
+                                log::error!("[__load_input] No memory export found");
                                 caller.data_mut().had_failure = true;
                                 return;
                             }
@@ -1059,25 +1075,47 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                             (ctx.block.clone(), ctx.height)
                         };
 
+                        log::debug!("[__load_input] Got from context: height={}, block.len()={}", height, input.len());
+
                         let input_clone = match try_into_vec(height.to_le_bytes()) {
                             Ok(mut v) => {
                                 v.extend(input);
                                 v
                             }
                             Err(_) => {
+                                log::error!("[__load_input] Failed to create input_clone");
                                 caller.data_mut().had_failure = true;
                                 return;
                             }
                         };
 
+                        log::debug!("[__load_input] input_clone created: {} bytes (4 height + {} block)", 
+                                   input_clone.len(), input_clone.len() - 4);
+
                         let sz = to_usize_or_trap(&mut caller, data_start);
                         if sz == usize::MAX {
+                            log::error!("[__load_input] Invalid data_start pointer");
                             caller.data_mut().had_failure = true;
                             return;
                         }
 
-                        if let Err(_) = mem.write(&mut caller, sz, input_clone.as_slice()) {
+                        log::debug!("[__load_input] Writing {} bytes to memory offset {}", input_clone.len(), sz);
+                        
+                        let mem_size = mem.data_size(&caller);
+                        log::debug!("[__load_input] Memory size: {} bytes", mem_size);
+
+                        if sz + input_clone.len() > mem_size {
+                            log::error!("[__load_input] Not enough memory! Need to write {} bytes at offset {}, but memory size is only {}", 
+                                       input_clone.len(), sz, mem_size);
                             caller.data_mut().had_failure = true;
+                            return;
+                        }
+
+                        if let Err(e) = mem.write(&mut caller, sz, input_clone.as_slice()) {
+                            log::error!("[__load_input] Failed to write to memory: {:?}", e);
+                            caller.data_mut().had_failure = true;
+                        } else {
+                            log::debug!("[__load_input] Successfully wrote data to memory");
                         }
                     })
                 },
@@ -2137,14 +2175,19 @@ pub async fn setup_linker_view(
 
     /// Process a block normally (non-atomic)
     pub async fn process_block(&self, height: u32, block_data: &[u8]) -> Result<()> {
+        log::debug!("[process_block] Called with height={}, block_data.len()={}", height, block_data.len());
+        
         // Set the block data and height in context
         {
             let mut guard = self.context.lock().await;
             guard.block = block_data.to_vec();
             guard.height = height;
             guard.state = 0;
+            log::debug!("[process_block] Set context: height={}, block.len()={}", guard.height, guard.block.len());
         }
 
+        log::debug!("[process_block] About to call run()");
+        
         // Execute the block processing - run() now handles memory refresh automatically
         self.run().await
     }

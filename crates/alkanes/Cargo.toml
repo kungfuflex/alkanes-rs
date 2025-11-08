@@ -54,3 +54,7 @@ sha2 = "0.10.9"
 alkanes = { path = "." }
 metashrew-core = { workspace = true, features = ["test-utils"] }
 protorune = { workspace = true, features = ["test-utils"] }
+metashrew-runtime = { path = "../metashrew-runtime" }
+tokio = { version = "1.42", features = ["full"] }
+async-trait = "0.1"
+hex = { workspace = true }

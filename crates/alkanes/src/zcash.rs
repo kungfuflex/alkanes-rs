@@ -10,11 +10,8 @@ use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash as HashTrait;
 use bitcoin::{Block, Script, Transaction};
 use std::io::Read;
-#[allow(unused_imports)]
-use metashrew_core::{
-    println,
-    stdio::{stdout, Write},
-};
+use metashrew_core::{println, stdio::stdout};
+use std::fmt::Write;
 
 /// Parse a Zcash transaction, skipping Zcash-specific fields
 ///
