@@ -12,7 +12,7 @@
 
 [package]
 name = "alkanes-cli-common"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Core alkanes CLI library for Bitcoin wallet operations, alkanes smart contracts, and blockchain interaction"
 authors = ["Alkanes Team"]

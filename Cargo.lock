@@ -273,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes"
-version = "1.2.3"
+version = "10.0.0"
 dependencies = [
  "alkanes",
  "alkanes-support",
@@ -289,7 +289,7 @@ dependencies = [
  "metashrew-support",
  "num",
  "once_cell",
- "ordinals 1.2.3",
+ "ordinals 10.0.0",
  "prost",
  "prost-types",
  "protorune",
@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-asc"
-version = "0.1.0"
+version = "10.0.0"
 dependencies = [
  "base64 0.22.1",
  "crc24",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-build"
-version = "1.2.3"
+version = "10.0.0"
 dependencies = [
  "clap",
  "hex",
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-cli"
-version = "0.1.0"
+version = "10.0.0"
 dependencies = [
  "alkanes-cli-common",
  "alkanes-cli-sys",
@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-cli-common"
-version = "0.1.0"
+version = "10.0.0"
 dependencies = [
  "aes-gcm",
  "alkanes-asc",
@@ -397,7 +397,7 @@ dependencies = [
  "log",
  "metashrew-support",
  "mockall",
- "ordinals 1.2.3",
+ "ordinals 10.0.0",
  "pbkdf2",
  "prost",
  "prost-build",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-cli-sys"
-version = "0.1.0"
+version = "10.0.0"
 dependencies = [
  "alkanes-asc",
  "alkanes-cli-common",
@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-jsonrpc"
-version = "0.1.0"
+version = "10.0.0"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-macros"
-version = "1.2.3"
+version = "10.0.0"
 dependencies = [
  "ciborium",
  "proc-macro2",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-pretty-print-macro"
-version = "0.1.0"
+version = "10.0.0"
 dependencies = [
  "quote",
  "serde_json",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-runtime"
-version = "1.2.3"
+version = "10.0.0"
 dependencies = [
  "alkanes-macros",
  "alkanes-support",
@@ -517,202 +517,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "alkanes-std-auth-token"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-std-factory-support",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-beacon-proxy"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-factory-support"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "metashrew-support",
- "ordinals 1.2.3",
-]
-
-[[package]]
-name = "alkanes-std-genesis-alkane"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "hex",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-genesis-alkane-upgraded"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "hex",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-genesis-alkane-upgraded-eoa"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "hex",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-genesis-protorune"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "hex",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-merkle-distributor"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "borsh",
- "metashrew-support",
- "num",
- "ordinals 1.2.3",
- "protorune-support",
- "ruint",
- "sha2",
-]
-
-[[package]]
-name = "alkanes-std-orbital"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "hex",
- "hex_lit",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-owned-token"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-std-factory-support",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "metashrew-support",
- "ordinals 1.2.3",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-proxy"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-test"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "hex",
- "metashrew-support",
- "sha2",
-]
-
-[[package]]
-name = "alkanes-std-test-2"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "hex",
- "metashrew-support",
- "sha2",
-]
-
-[[package]]
-name = "alkanes-std-upgradeable"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
-name = "alkanes-std-upgradeable-beacon"
-version = "1.2.3"
-dependencies = [
- "alkanes-runtime",
- "alkanes-support",
- "anyhow",
- "bitcoin 0.32.7",
- "metashrew-support",
- "protorune-support",
-]
-
-[[package]]
 name = "alkanes-support"
-version = "1.2.3"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
@@ -728,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-web-leptos"
-version = "0.1.0"
+version = "10.0.0"
 dependencies = [
  "alkanes-cli-common",
  "alkanes-web-sys",
@@ -752,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-web-sys"
-version = "0.1.0"
+version = "10.0.0"
 dependencies = [
  "aes-gcm",
  "alkanes-asc",
@@ -4583,7 +4389,7 @@ dependencies = [
 
 [[package]]
 name = "memshrew-p2p"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -4604,7 +4410,7 @@ dependencies = [
 
 [[package]]
 name = "memshrew-runtime"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4616,7 +4422,7 @@ dependencies = [
 
 [[package]]
 name = "metashrew-core"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bitcoin 0.31.2",
@@ -4633,7 +4439,7 @@ dependencies = [
 
 [[package]]
 name = "metashrew-minimal"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
@@ -4644,7 +4450,7 @@ dependencies = [
 
 [[package]]
 name = "metashrew-runtime"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "hex",
@@ -4659,7 +4465,7 @@ dependencies = [
 
 [[package]]
 name = "metashrew-support"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
@@ -4671,7 +4477,7 @@ dependencies = [
 
 [[package]]
 name = "metashrew-sync"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5071,7 +4877,7 @@ dependencies = [
 
 [[package]]
 name = "ordinals"
-version = "1.2.3"
+version = "10.0.0"
 dependencies = [
  "bitcoin 0.32.7",
  "derive_more 1.0.0",
@@ -5719,7 +5525,7 @@ dependencies = [
 
 [[package]]
 name = "protorune"
-version = "1.2.3"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
@@ -5729,7 +5535,7 @@ dependencies = [
  "metashrew-core",
  "metashrew-support",
  "once_cell",
- "ordinals 1.2.3",
+ "ordinals 10.0.0",
  "prost",
  "prost-types",
  "protorune",
@@ -5744,14 +5550,14 @@ dependencies = [
 
 [[package]]
 name = "protorune-support"
-version = "1.2.3"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
  "bitcoin 0.32.7",
  "hex",
  "metashrew-support",
- "ordinals 1.2.3",
+ "ordinals 10.0.0",
  "prost",
  "prost-build",
  "prost-types",
@@ -6147,7 +5953,7 @@ dependencies = [
 
 [[package]]
 name = "rockshrew-diff"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -6156,7 +5962,7 @@ dependencies = [
 
 [[package]]
 name = "rockshrew-mono"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -6199,7 +6005,7 @@ dependencies = [
 
 [[package]]
 name = "rockshrew-runtime"
-version = "9.0.1"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
