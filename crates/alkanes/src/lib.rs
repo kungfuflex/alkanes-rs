@@ -344,6 +344,7 @@ pub fn getstorageat() -> i32 {
 pub fn _start() {
     let data = input();
     let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
+    println!("[WASM]: height is {}", height);
     let reader = &data[4..];
     #[cfg(feature = "zcash")]
     let block: Block = crate::zcash::ZcashBlock::parse(&mut Cursor::<Vec<u8>>::new(reader.to_vec()))
