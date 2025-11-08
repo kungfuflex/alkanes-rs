@@ -4,3 +4,6 @@
 //! The main alkanes indexer implementation is in the `alkanes` crate.
 
 pub use alkanes;
+
+#[cfg(test)]
+mod tests;
