@@ -4,7 +4,10 @@ volumes:
   metashrew-data:
 services:
   bitcoind:
-    image: bitcoin/bitcoin:28.0
+    build:
+      dockerfile: Dockerfile
+      context: ./docker/bitcoind
+    image: bitcoind:alkanes
     volumes:
       - bitcoin-data:/root/.bitcoin
     command:
@@ -18,8 +21,6 @@ services:
         "-rpcpassword=bitcoinrpc",
         "-fallbackfee=0.00001"
       ]
-    ports:
-      - "18443:18443"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "bitcoin-cli", "-regtest", "-rpcuser=bitcoinrpc", "-rpcpassword=bitcoinrpc", "getblockchaininfo"]
@@ -29,8 +30,8 @@ services:
 
   metashrew:
     build:
-      dockerfile: Dockerfile
-      context: ./reference/alkanes/docker/metashrew
+      dockerfile: docker/metashrew/Dockerfile
+      context: .
     image: rockshrew:alkanes
     depends_on:
       bitcoind:
@@ -44,14 +45,12 @@ services:
       LOG_FILTERS: none,rockshrew=debug
       HOST: 0.0.0.0
       PORT: 8080
-    ports:
-      - "8080:8080"
     restart: unless-stopped
 
   memshrew:
     build:
-      dockerfile: Dockerfile
-      context: ./reference/alkanes/docker/memshrew
+      dockerfile: docker/memshrew/Dockerfile
+      context: .
     image: memshrew:alkanes
     depends_on:
       bitcoind:
@@ -63,14 +62,12 @@ services:
       LOG_FILTERS: none,memshrew=debug
       HOST: 0.0.0.0
       PORT: 8081
-    ports:
-      - "8081:8081"
     restart: unless-stopped
 
   ord:
     build:
       dockerfile: Dockerfile
-      context: ./reference/alkanes/docker/ord
+      context: ./docker/ord
     image: ord:alkanes
     depends_on:
       bitcoind:
@@ -81,14 +78,12 @@ services:
       RPCPASSWORD: bitcoinrpc
       PORT: 8090
       DAEMON_RPC_ADDR: bitcoind:18443
-    ports:
-      - "8090:8090"
     restart: unless-stopped
 
   esplora:
     build:
       dockerfile: Dockerfile
-      context: ./reference/alkanes/docker/electrs
+      context: ./docker/electrs
     image: esplora:alkanes
     depends_on:
       bitcoind:
@@ -103,9 +98,6 @@ services:
       ELECTRS_ELECTRUM_RPC_ADDR: 0.0.0.0:50001
       ELECTRS_DB_DIR: /data/electrs
       ELECTRS_DAEMON_DIR: /data/bitcoin
-    ports:
-      - "50010:50010"
-      - "50001:50001"
     restart: unless-stopped
 
   jsonrpc:
