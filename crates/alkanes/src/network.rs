@@ -228,28 +228,19 @@ pub fn is_genesis(height: u64) -> bool {
 }
 
 pub fn setup_frsigil(block: &Block) -> Result<()> {
-    println!("🔧 setup_frsigil CALLED");
     // Zcash uses [42, 1] for frSIGIL, Bitcoin uses [32, 1]
     #[cfg(not(feature = "zcash"))]
     let fr_sigil_id = AlkaneId { block: 32, tx: 1 };
     #[cfg(feature = "zcash")]
     let fr_sigil_id = AlkaneId { block: 42, tx: 1 };
-    println!("🔧 Using fr_sigil_id: [{}, {}]", fr_sigil_id.block, fr_sigil_id.tx);
     
     let mut ptr =
         IndexPointer::from_keyword("/alkanes/").select(&fr_sigil_id.into());
     if ptr.get().len() == 0 {
-        println!("🔧 frSIGIL not found, setting up...");
         let sigil_bytes = fr_sigil_bytes();
-        println!("🔧 frSIGIL raw WASM size: {} bytes", sigil_bytes.len());
         let compressed = compress(sigil_bytes)?;
-        println!("🔧 frSIGIL compressed size: {} bytes", compressed.len());
         ptr.set(Arc::new(compressed));
-        println!("🔧 frSIGIL stored, verifying...");
-        let stored = ptr.get();
-        println!("🔧 frSIGIL retrieved size: {} bytes", stored.len());
     } else {
-        println!("🔧 frSIGIL already exists, returning early");
         return Ok(());
     }
     let mut atomic: AtomicPointer = AtomicPointer::default();
@@ -278,18 +269,7 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
     };
-    println!("🔧 About to simulate_parcel for frSIGIL");
-    let (response2, _gas_used2) = (match simulate_parcel(&parcel3, u64::MAX) {
-        Ok((a, b)) => {
-            println!("🔧 frSIGIL simulate_parcel SUCCESS");
-            Ok((a, b))
-        },
-        Err(e) => {
-            println!("🔧 frSIGIL simulate_parcel FAILED: {:?}", e);
-            Err(e)
-        }
-    })?;
-    println!("🔧 setup_frsigil completed successfully");
+    let (response2, _gas_used2) = simulate_parcel(&parcel3, u64::MAX)?;
     let outpoint_bytes = outpoint_encode(&OutPoint {
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
@@ -315,26 +295,20 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
 }
 
 pub fn setup_frbtc(block: &Block) -> Result<()> {
-    println!("🔧 setup_frbtc CALLED");
     // Zcash uses different alkane IDs: [42, 0] for frZEC, [42, 1] for frSIGIL
     // Bitcoin uses: [32, 0] for frBTC, [32, 1] for frSIGIL
     #[cfg(not(feature = "zcash"))]
     let fr_coin_id = AlkaneId { block: 32, tx: 0 };
     #[cfg(feature = "zcash")]
     let fr_coin_id = AlkaneId { block: 42, tx: 0 };
-    println!("🔧 Using fr_coin_id: [{}, {}]", fr_coin_id.block, fr_coin_id.tx);
     
     let mut ptr =
         IndexPointer::from_keyword("/alkanes/").select(&fr_coin_id.into());
     if ptr.get().len() == 0 {
         ptr.set(Arc::new(compress(fr_btc_bytes())?));
     } else {
-        println!("{:?}", hex::encode(ptr.unwrap().as_ref().clone()));
-        println!("{:?}", hex::encode(ptr.get().as_ref().clone()));
         return Ok(());
     }
-        println!("{:?}", hex::encode(ptr.unwrap().as_ref().clone()));
-        println!("{:?}", hex::encode(ptr.get().as_ref().clone()));
     let mut atomic: AtomicPointer = AtomicPointer::default();
     let fr_btc = fr_coin_id;
     let parcel2 = MessageContextParcel {
