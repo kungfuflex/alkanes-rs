@@ -368,6 +368,15 @@ mod tests {
 mod standalone_impls {
     use super::*;
     use async_trait::async_trait;
+    use crate::traits::{
+        JsonRpcProvider, StorageProvider, CryptoProvider, TimeProvider, LogProvider,
+        WalletProvider, BitcoinRpcProvider, MetashrewRpcProvider, MetashrewProvider,
+        EsploraProvider, RunestoneProvider, AlkanesProvider, MonitorProvider, 
+        KeystoreProvider, OrdProvider, SendParams, UtxoInfo, TransactionInfo,
+        FeeEstimate, FeeRates, WalletBalance, WalletConfig, WalletInfo, AddressInfo,
+        BlockEvent, KeystoreAddress, KeystoreInfo,
+    };
+    use crate::network::NetworkParams;
     use crate::ord::{
         AddressInfo as OrdAddressInfo, Block as OrdBlock, Blocks as OrdBlocks,
         Children as OrdChildren, Inscription as OrdInscription, Inscriptions as OrdInscriptions,

@@ -458,6 +458,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-jsonrpc"
+version = "0.1.0"
+dependencies = [
+ "actix-cors",
+ "actix-web",
+ "alkanes-cli-common",
+ "alkanes-support",
+ "anyhow",
+ "base64 0.22.1",
+ "bitcoin 0.32.7",
+ "bytes",
+ "env_logger 0.11.8",
+ "futures",
+ "hex",
+ "log",
+ "prost",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "alkanes-macros"
 version = "1.2.3"
 dependencies = [

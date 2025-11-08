@@ -228,13 +228,15 @@ impl ConcreteProvider {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(wallet_path) = &self.wallet_path {
             if wallet_path.exists() {
-                if let Some(passphrase) = &self.passphrase {
-                    self.unlock_wallet(passphrase).await?;
+                if let Some(passphrase) = self.passphrase.clone() {
+                    self.unlock_wallet(&passphrase).await?;
                 } else {
                     // Load as locked
                     let keystore_bytes = std::fs::read(wallet_path)
                         .map_err(|e| AlkanesError::Storage(format!("Failed to read wallet: {}", e)))?;
-                    self.wallet_state = WalletState::Locked(keystore_bytes);
+                    let keystore: crate::keystore::Keystore = serde_json::from_slice(&keystore_bytes)
+                        .map_err(|e| AlkanesError::Storage(format!("Failed to parse keystore: {}", e)))?;
+                    self.wallet_state = WalletState::Locked(keystore);
                 }
             }
         }
@@ -247,7 +249,7 @@ impl ConcreteProvider {
     }
 
     #[cfg(feature = "std")]
-    pub async fn unlock_wallet(&mut self, _passphrase: &str) -> Result<()> {
+    pub async fn unlock_wallet(&mut self, passphrase: &str) -> Result<()> {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(wallet_path) = &self.wallet_path {
             if !wallet_path.exists() {
@@ -257,12 +259,15 @@ impl ConcreteProvider {
             let keystore_bytes = std::fs::read(wallet_path)
                 .map_err(|e| AlkanesError::Storage(format!("Failed to read wallet: {}", e)))?;
             
-            let keystore = crate::keystore::Keystore::decrypt(&keystore_bytes, passphrase)
+            let keystore: crate::keystore::Keystore = serde_json::from_slice(&keystore_bytes)
+                .map_err(|e| AlkanesError::Storage(format!("Failed to parse keystore: {}", e)))?;
+            
+            let mnemonic = keystore.decrypt_mnemonic(passphrase)
                 .map_err(|e| AlkanesError::Wallet(format!("Failed to decrypt wallet: {}", e)))?;
             
             self.wallet_state = WalletState::Unlocked {
                 keystore,
-                passphrase: passphrase.to_string(),
+                mnemonic,
             };
             self.passphrase = Some(passphrase.to_string());
             
@@ -2403,25 +2408,168 @@ impl MonitorProvider for ConcreteProvider {
 #[async_trait(?Send)]
 #[allow(unused_variables)]
 impl BitcoinRpcProvider for ConcreteProvider {
-    async fn get_block_count(&self) -> Result<u64> { unimplemented!() }
-    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue> { unimplemented!() }
-    async fn get_blockchain_info(&self) -> Result<JsonValue> { unimplemented!() }
-    async fn get_new_address(&self) -> Result<JsonValue> { unimplemented!() }
-    async fn get_transaction_hex(&self, txid: &str) -> Result<String> { unimplemented!() }
-    async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue> { unimplemented!() }
-    async fn get_block_hash(&self, height: u64) -> Result<String> { unimplemented!() }
-    async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> { unimplemented!() }
-    async fn get_mempool_info(&self) -> Result<JsonValue> { unimplemented!() }
-    async fn estimate_smart_fee(&self, target: u32) -> Result<JsonValue> { unimplemented!() }
-    async fn get_esplora_blocks_tip_height(&self) -> Result<u64> { unimplemented!() }
-    async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<serde_json::Value> { unimplemented!() }
-    async fn get_network_info(&self) -> Result<JsonValue> { unimplemented!() }
-    async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<JsonValue> { unimplemented!() }
-    async fn get_block_header(&self, hash: &str) -> Result<JsonValue> { unimplemented!() }
-    async fn get_block_stats(&self, hash: &str) -> Result<JsonValue> { unimplemented!() }
-    async fn get_chain_tips(&self) -> Result<JsonValue> { unimplemented!() }
-    async fn get_raw_mempool(&self) -> Result<JsonValue> { unimplemented!() }
-    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> { unimplemented!() }
+    async fn get_block_count(&self) -> Result<u64> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let json = self.call(&rpc_url, "getblockcount", json!([]), 1).await?;
+        if let Some(count) = json.as_u64() {
+            return Ok(count);
+        }
+        if let Some(count_str) = json.as_str() {
+            if let Ok(val) = count_str.parse::<u64>() {
+                return Ok(val);
+            }
+        }
+        Err(AlkanesError::RpcError(format!("Invalid block count response: {}", json)))
+    }
+
+    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let params = json!([nblocks, address]);
+        self.call(&rpc_url, "generatetoaddress", params, 1).await
+    }
+
+    async fn get_blockchain_info(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        self.call(&rpc_url, "getblockchaininfo", json!([]), 1).await
+    }
+
+    async fn get_new_address(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        self.call(&rpc_url, "getnewaddress", json!([]), 1).await
+    }
+
+    async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let params = json!([txid, false]);
+        let result = self.call(&rpc_url, "getrawtransaction", params, 1).await?;
+        result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("Invalid transaction hex response".to_string()))
+            .map(|s| s.to_string())
+    }
+
+    async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let verbosity = if raw { 0 } else { 1 };
+        let params = json!([hash, verbosity]);
+        self.call(&rpc_url, "getblock", params, 1).await
+    }
+
+    async fn get_block_hash(&self, height: u64) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let params = json!([height]);
+        let result = self.call(&rpc_url, "getblockhash", params, 1).await?;
+        result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
+            .map(|s| s.to_string())
+    }
+
+    async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let params = json!([tx_hex]);
+        let result = self.call(&rpc_url, "sendrawtransaction", params, 1).await?;
+        result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransaction response".to_string()))
+            .map(|s| s.to_string())
+    }
+
+    async fn get_mempool_info(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        self.call(&rpc_url, "getmempoolinfo", json!([]), 1).await
+    }
+
+    async fn estimate_smart_fee(&self, target: u32) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let params = json!([target]);
+        self.call(&rpc_url, "estimatesmartfee", params, 1).await
+    }
+
+    async fn get_esplora_blocks_tip_height(&self) -> Result<u64> {
+        // This is actually an Esplora method, but it's in the BitcoinRpcProvider trait
+        // Call the EsploraProvider implementation
+        <Self as EsploraProvider>::get_blocks_tip_height(self).await
+    }
+
+    async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<serde_json::Value> {
+        // This uses the MetashrewRpcProvider's trace_outpoint
+        <Self as MetashrewRpcProvider>::trace_outpoint(self, txid, vout).await
+    }
+
+    async fn get_network_info(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        self.call(&rpc_url, "getnetworkinfo", json!([]), 1).await
+    }
+
+    async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let params = if let Some(hash) = block_hash {
+            json!([txid, true, hash])
+        } else {
+            json!([txid, true])
+        };
+        self.call(&rpc_url, "getrawtransaction", params, 1).await
+    }
+
+    async fn get_block_header(&self, hash: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let params = json!([hash, true]);
+        self.call(&rpc_url, "getblockheader", params, 1).await
+    }
+
+    async fn get_block_stats(&self, hash: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let params = json!([hash]);
+        self.call(&rpc_url, "getblockstats", params, 1).await
+    }
+
+    async fn get_chain_tips(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        self.call(&rpc_url, "getchaintips", json!([]), 1).await
+    }
+
+    async fn get_raw_mempool(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        self.call(&rpc_url, "getrawmempool", json!([]), 1).await
+    }
+
+    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount 
+        })?;
+        let params = json!([txid, vout, include_mempool]);
+        self.call(&rpc_url, "gettxout", params, 1).await
+    }
 }
 
 #[async_trait(?Send)]

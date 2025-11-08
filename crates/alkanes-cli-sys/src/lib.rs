@@ -96,11 +96,18 @@ impl SystemAlkanes {
         }
 
         // Determine the correct RPC URLs, prioritizing command-line args over network defaults.
+        // Only use the network default bitcoin_rpc_url if sandshrew_rpc_url is not provided
         let bitcoin_rpc_url = args
             .rpc_config
             .bitcoin_rpc_url
             .clone()
-            .or_else(|| Some(network_params.bitcoin_rpc_url.clone()));
+            .or_else(|| {
+                if args.rpc_config.sandshrew_rpc_url.is_none() {
+                    Some(network_params.bitcoin_rpc_url.clone())
+                } else {
+                    None
+                }
+            });
 
         let metashrew_rpc_url = args
             .rpc_config
@@ -1600,22 +1607,30 @@ impl SystemBitcoind for SystemAlkanes {
    async fn execute_bitcoind_command(&self, command: BitcoindCommands) -> alkanes_cli_common::Result<()> {
        let provider = &self.provider;
        let res: anyhow::Result<()> = match command {
-            BitcoindCommands::Getblockcount => {
+            BitcoindCommands::Getblockcount { raw } => {
                 let count = <ConcreteProvider as BitcoinRpcProvider>::get_block_count(provider).await?;
-                println!("{count}");
+                if raw {
+                    println!("{count}");
+                } else {
+                    println!("{count}");
+                }
                 Ok(())
             },
-            BitcoindCommands::Generatetoaddress { nblocks, address } => {
+            BitcoindCommands::Generatetoaddress { nblocks, address, raw } => {
               // Resolve address identifiers if needed
               let resolved_address = provider.resolve_all_identifiers(&address).await?;
               
               let result = <ConcreteProvider as BitcoinRpcProvider>::generate_to_address(provider, nblocks, &resolved_address).await?;
-              println!("Generated {nblocks} blocks to address {resolved_address}");
-              if let Some(block_hashes) = result.as_array() {
-                  println!("Block hashes:");
-                  for (i, hash) in block_hashes.iter().enumerate() {
-                      if let Some(hash_str) = hash.as_str() {
-                          println!("  {}: {}", i + 1, hash_str);
+              if raw {
+                  println!("{}", serde_json::to_string_pretty(&result)?);
+              } else {
+                  println!("Generated {nblocks} blocks to address {resolved_address}");
+                  if let Some(block_hashes) = result.as_array() {
+                      println!("Block hashes:");
+                      for (i, hash) in block_hashes.iter().enumerate() {
+                          if let Some(hash_str) = hash.as_str() {
+                              println!("  {}: {}", i + 1, hash_str);
+                          }
                       }
                   }
               }
@@ -1657,9 +1672,13 @@ impl SystemBitcoind for SystemAlkanes {
                 }
                 Ok(())
             },
-            BitcoindCommands::Getblockhash { height } => {
+            BitcoindCommands::Getblockhash { height, raw } => {
                 let result = <ConcreteProvider as BitcoinRpcProvider>::get_block_hash(provider, height).await?;
-                println!("{result}");
+                if raw {
+                    println!("{result}");
+                } else {
+                    println!("{result}");
+                }
                 Ok(())
             },
             BitcoindCommands::Getblockheader { hash, raw } => {
@@ -1716,9 +1735,13 @@ impl SystemBitcoind for SystemAlkanes {
                 }
                 Ok(())
             },
-            BitcoindCommands::Sendrawtransaction { tx_hex } => {
+            BitcoindCommands::Sendrawtransaction { tx_hex, raw } => {
                 let result = <ConcreteProvider as BitcoinRpcProvider>::send_raw_transaction(provider, &tx_hex).await?;
-                println!("{result}");
+                if raw {
+                    println!("{result}");
+                } else {
+                    println!("{result}");
+                }
                 Ok(())
             },
        };
