@@ -35,11 +35,26 @@ use {
     std::fmt::Write,
 };
 
+#[cfg(not(feature = "zcash"))]
 pub fn fr_btc_bytes() -> Vec<u8> {
     fr_btc_build::get_bytes()
 }
 
+#[cfg(feature = "zcash")]
+pub fn fr_btc_bytes() -> Vec<u8> {
+    // For Zcash, use fr_zec instead of fr_btc
+    use crate::precompiled::fr_zec_build;
+    fr_zec_build::get_bytes()
+}
+
+#[cfg(not(feature = "zcash"))]
 pub fn fr_sigil_bytes() -> Vec<u8> {
+    fr_sigil_build::get_bytes()
+}
+
+#[cfg(feature = "zcash")]
+pub fn fr_sigil_bytes() -> Vec<u8> {
+    // Zcash also uses frSIGIL
     fr_sigil_build::get_bytes()
 }
 
@@ -213,15 +228,21 @@ pub fn is_genesis(height: u64) -> bool {
 }
 
 pub fn setup_frsigil(block: &Block) -> Result<()> {
+    // Zcash uses [42, 1] for frSIGIL, Bitcoin uses [32, 1]
+    #[cfg(not(feature = "zcash"))]
+    let fr_sigil_id = AlkaneId { block: 32, tx: 1 };
+    #[cfg(feature = "zcash")]
+    let fr_sigil_id = AlkaneId { block: 42, tx: 1 };
+    
     let mut ptr =
-        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 1 }).into());
+        IndexPointer::from_keyword("/alkanes/").select(&fr_sigil_id.into());
     if ptr.get().len() == 0 {
         ptr.set(Arc::new(compress(fr_sigil_bytes())?));
     } else {
         return Ok(());
     }
     let mut atomic: AtomicPointer = AtomicPointer::default();
-    let fr_sigil = AlkaneId { block: 32, tx: 1 };
+    let fr_sigil = fr_sigil_id;
 
     let parcel3 = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
@@ -278,15 +299,22 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
 }
 
 pub fn setup_frbtc(block: &Block) -> Result<()> {
+    // Zcash uses different alkane IDs: [42, 0] for frZEC, [42, 1] for frSIGIL
+    // Bitcoin uses: [32, 0] for frBTC, [32, 1] for frSIGIL
+    #[cfg(not(feature = "zcash"))]
+    let fr_coin_id = AlkaneId { block: 32, tx: 0 };
+    #[cfg(feature = "zcash")]
+    let fr_coin_id = AlkaneId { block: 42, tx: 0 };
+    
     let mut ptr =
-        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 0 }).into());
+        IndexPointer::from_keyword("/alkanes/").select(&fr_coin_id.into());
     if ptr.get().len() == 0 {
         ptr.set(Arc::new(compress(fr_btc_bytes())?));
     } else {
         return Ok(());
     }
     let mut atomic: AtomicPointer = AtomicPointer::default();
-    let fr_btc = AlkaneId { block: 32, tx: 0 };
+    let fr_btc = fr_coin_id;
     let parcel2 = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
@@ -342,8 +370,13 @@ pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes_eoa())?));
+            #[cfg(not(feature = "zcash"))]
+            let fr_coin_upgrade_id = AlkaneId { block: 32, tx: 0 };
+            #[cfg(feature = "zcash")]
+            let fr_coin_upgrade_id = AlkaneId { block: 42, tx: 0 };
+            
             IndexPointer::from_keyword("/alkanes/")
-                .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                .select(&fr_coin_upgrade_id.into())
                 .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
         }
     }

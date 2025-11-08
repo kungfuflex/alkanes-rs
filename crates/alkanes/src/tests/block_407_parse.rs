@@ -84,6 +84,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn test_parse_block_407_with_indexing() {
+        use crate::tests::helpers as alkane_helpers;
+        alkane_helpers::clear(); // Initialize network params
+        
         println!("\n=== Testing Block 407 with Full Indexing ===");
         
         let block_bytes = hex::decode(BLOCK_407_HEX.trim())

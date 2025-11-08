@@ -108,8 +108,8 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         genesis().unwrap();
     }
     setup_diesel(block)?;
+    setup_frsigil(block)?;  // Must be before setup_frbtc since frBTC/frZEC uses frSIGIL as auth token
     setup_frbtc(block)?;
-    setup_frsigil(block)?;
     check_and_upgrade_precompiled(height)?;
     FuelTank::initialize(&block, height);
     // Get the set of updated addresses from the indexing process

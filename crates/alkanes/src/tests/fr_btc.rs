@@ -1,3 +1,9 @@
+// fr_btc tests - these test Bitcoin-specific fractionalized BTC functionality
+// For Zcash, equivalent tests would use fr_zec at alkane ID [42, 0]
+// These tests are disabled when zcash feature is enabled
+
+#![cfg(not(feature = "zcash"))]
+
 use crate::message::AlkaneMessageContext;
 use crate::precompiled::{alkanes_std_auth_token_build, fr_btc_build};
 use crate::unwrap as unwrap_view;

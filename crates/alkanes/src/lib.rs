@@ -1,3 +1,4 @@
+#[cfg(not(test))]
 use crate::indexer::configure_network;
 use crate::unwrap::{
     deserialize_payments, fr_btc_payments_at_block, fr_btc_storage_pointer, update_last_block,
