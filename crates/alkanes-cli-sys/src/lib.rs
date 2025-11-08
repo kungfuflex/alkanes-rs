@@ -1759,6 +1759,15 @@ impl SystemMetashrew for SystemAlkanes {
                 println!("{height}");
                 Ok(())
             },
+            MetashrewCommands::Getstateroot { height, raw } => {
+                let state_root = <ConcreteProvider as alkanes_cli_common::MetashrewRpcProvider>::get_state_root(provider, serde_json::json!(height)).await?;
+                if raw {
+                    println!("{}", serde_json::json!(state_root));
+                } else {
+                    println!("{state_root}");
+                }
+                Ok(())
+            },
        };
        res.map_err(|e| AlkanesError::Wallet(e.to_string()))
    }
@@ -1992,7 +2001,7 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 }
                 Ok(())
             }
-            AlkanesCommands::GetBytecode { alkane_id, raw, block_tag } => {
+            AlkanesCommands::Getbytecode { alkane_id, raw, block_tag } => {
                 let bytecode = AlkanesProvider::get_bytecode(&provider, &alkane_id, block_tag).await?;
 
                 if raw {
@@ -2026,23 +2035,112 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
             }
             AlkanesCommands::Simulate {
                 contract_id,
-                params: _,
+                params,
+                block_hex,
+                transaction_hex,
                 raw,
             } => {
-                let context = alkanes_cli_common::alkanes::simulation::simulate_cellpack(&[]);
-                // Encode the context using prost
                 use prost::Message;
-                let mut buf = Vec::new();
-                context.encode(&mut buf)?;
-                let result = provider.view(&contract_id, "simulate", Some(&buf)).await?;
-
+                use alkanes_cli_common::params_parser::{parse_params, parse_alkane_id};
+                use alkanes_cli_common::proto::alkanes as alkanes_pb;
+                
+                // Get current height from metashrew
+                let height = provider.get_metashrew_height().await?;
+                
+                // Parse contract_id (format: block:tx)
+                let alkane_id = parse_alkane_id(&contract_id)?;
+                
+                // Build MessageContextParcel
+                let mut parcel = alkanes_pb::MessageContextParcel {
+                    height,
+                    vout: 2,
+                    pointer: 0,
+                    refund_pointer: 0,
+                    txindex: 0,
+                    transaction: vec![],
+                    block: vec![],
+                    calldata: vec![],
+                    alkanes: vec![],
+                };
+                
+                // Set block_hex if provided
+                if let Some(ref hex) = block_hex {
+                    parcel.block = hex::decode(hex.trim_start_matches("0x"))?;
+                }
+                
+                // Set transaction_hex if provided
+                if let Some(ref hex) = transaction_hex {
+                    parcel.transaction = hex::decode(hex.trim_start_matches("0x"))?;
+                }
+                
+                // Parse params if provided (format: [block,tx,inputs...]:[block:tx:value]:[block:tx:value])
+                if let Some(ref params_str) = params {
+                    let (cellpack, alkane_parcel) = parse_params(params_str)?;
+                    
+                    // Encode calldata using Cellpack::encipher
+                    parcel.calldata = cellpack.encipher();
+                    
+                    // Convert AlkaneTransferParcel to protobuf format
+                    for transfer in alkane_parcel.0 {
+                        let mut transfer_pb = alkanes_pb::AlkaneTransfer::default();
+                        
+                        let mut id_pb = alkanes_pb::AlkaneId::default();
+                        let mut block_uint128 = alkanes_pb::Uint128::default();
+                        block_uint128.lo = transfer.id.block as u64;
+                        block_uint128.hi = (transfer.id.block >> 64) as u64;
+                        id_pb.block = Some(block_uint128).into();
+                        
+                        let mut tx_uint128 = alkanes_pb::Uint128::default();
+                        tx_uint128.lo = transfer.id.tx as u64;
+                        tx_uint128.hi = (transfer.id.tx >> 64) as u64;
+                        id_pb.tx = Some(tx_uint128).into();
+                        
+                        transfer_pb.id = Some(id_pb).into();
+                        
+                        let mut value_uint128 = alkanes_pb::Uint128::default();
+                        value_uint128.lo = transfer.value as u64;
+                        value_uint128.hi = (transfer.value >> 64) as u64;
+                        transfer_pb.value = Some(value_uint128).into();
+                        
+                        parcel.alkanes.push(transfer_pb);
+                    }
+                }
+                
+                // Encode the parcel
+                let hex_input = format!("0x{}", hex::encode(parcel.encode_to_vec()));
+                
+                // Build the view function path: "block:tx/simulate"
+                let view_fn = format!("{}:{}/simulate", alkane_id.block, alkane_id.tx);
+                
+                // Call metashrew_view
+                let response_bytes = provider.metashrew_view_call(&view_fn, &hex_input, "latest").await?;
+                
+                // Decode response as SimulateResponse
+                let simulate_response = alkanes_pb::SimulateResponse::decode(response_bytes.as_slice())?;
+                
                 if raw {
-                    println!("{}", serde_json::to_string_pretty(&result)?);
+                    println!("{:#?}", simulate_response);
                 } else {
                     println!("🧪 Alkanes Contract Simulation");
                     println!("═══════════════════════════");
                     println!("🔗 Contract ID: {contract_id}");
-                    println!("📊 Result: {}", serde_json::to_string_pretty(&result)?);
+                    println!("⛽ Gas Used: {}", simulate_response.gas_used);
+                    if !simulate_response.error.is_empty() {
+                        println!("❌ Error: {}", simulate_response.error);
+                    }
+                    if let Some(ref execution) = simulate_response.execution {
+                        println!("📊 Execution Result:");
+                        println!("   Return data: 0x{}", hex::encode(&execution.data));
+                        println!("   Alkanes transferred: {}", execution.alkanes.len());
+                        for (i, alkane) in execution.alkanes.iter().enumerate() {
+                            if let Some(ref id) = alkane.id {
+                                let block = id.block.as_ref().map(|b| b.lo).unwrap_or(0);
+                                let tx = id.tx.as_ref().map(|t| t.lo).unwrap_or(0);
+                                let value = alkane.value.as_ref().map(|v| v.lo).unwrap_or(0);
+                                println!("   {}. Alkane {}:{} -> {} units", i + 1, block, tx, value);
+                            }
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -2083,6 +2181,78 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 } else {
                     println!("📊 Trace for block {height}:
 {result:#?}");
+                }
+                Ok(())
+            }
+            AlkanesCommands::Getstorage { alkane_id, path, block_tag, raw } => {
+                use prost::Message;
+                use alkanes_cli_common::params_parser::parse_alkane_id;
+                use alkanes_cli_common::proto::alkanes as alkanes_pb;
+                
+                // Parse alkane_id (format: block:tx)
+                let id = parse_alkane_id(&alkane_id)?;
+                
+                // Build AlkaneStorageRequest
+                let mut request = alkanes_pb::AlkaneStorageRequest::default();
+                let mut id_pb = alkanes_pb::AlkaneId::default();
+                
+                let mut block_uint128 = alkanes_pb::Uint128::default();
+                block_uint128.lo = id.block as u64;
+                block_uint128.hi = (id.block >> 64) as u64;
+                id_pb.block = Some(block_uint128).into();
+                
+                let mut tx_uint128 = alkanes_pb::Uint128::default();
+                tx_uint128.lo = id.tx as u64;
+                tx_uint128.hi = (id.tx >> 64) as u64;
+                id_pb.tx = Some(tx_uint128).into();
+                
+                request.id = Some(id_pb).into();
+                request.path = hex::decode(path.trim_start_matches("0x"))?;
+                
+                let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
+                let response_bytes = provider.metashrew_view_call("getstorage", &hex_input, block_tag.as_deref().unwrap_or("latest")).await?;
+                
+                let storage_response = alkanes_pb::AlkaneStorageResponse::decode(response_bytes.as_slice())?;
+                
+                if raw {
+                    println!("{{\"value\": \"0x{}\"}}", hex::encode(&storage_response.value));
+                } else {
+                    println!("🗄️  Storage Value for {alkane_id}:");
+                    println!("   Path: {path}");
+                    println!("   Value: 0x{}", hex::encode(&storage_response.value));
+                }
+                Ok(())
+            }
+            AlkanesCommands::Getinventory { outpoint, block_tag, raw } => {
+                use prost::Message;
+                use alkanes_cli_common::params_parser::parse_outpoint;
+                use alkanes_cli_common::proto::alkanes as alkanes_pb;
+                
+                // Parse outpoint (format: txid:vout)
+                let (txid, vout) = parse_outpoint(&outpoint)?;
+                
+                // Build AlkaneInventoryRequest (which uses Outpoint)
+                let mut request = alkanes_pb::Outpoint::default();
+                request.txid = hex::decode(&txid)?;
+                request.vout = vout;
+                
+                let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
+                let response_bytes = provider.metashrew_view_call("getinventory", &hex_input, block_tag.as_deref().unwrap_or("latest")).await?;
+                
+                let inventory_response = alkanes_pb::AlkaneInventoryResponse::decode(response_bytes.as_slice())?;
+                
+                if raw {
+                    println!("{:#?}", inventory_response);
+                } else {
+                    println!("📦 Alkane Inventory at {outpoint}:");
+                    for (i, alkane) in inventory_response.alkanes.iter().enumerate() {
+                        if let Some(ref id) = alkane.id {
+                            let block = id.block.as_ref().map(|b| b.lo).unwrap_or(0);
+                            let tx = id.tx.as_ref().map(|t| t.lo).unwrap_or(0);
+                            let value = alkane.value.as_ref().map(|v| v.lo).unwrap_or(0);
+                            println!("   {}. Alkane {}:{} -> {} units", i + 1, block, tx, value);
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -2149,7 +2319,7 @@ impl SystemProtorunes for SystemAlkanes {
    async fn execute_protorunes_command(&self, command: ProtorunesCommands) -> alkanes_cli_common::Result<()> {
        let provider = &self.provider;
        let res: anyhow::Result<()> = match command {
-            ProtorunesCommands::ByAddress { address, raw, block_tag, protocol_tag } => {
+            ProtorunesCommands::Byaddress { address, raw, block_tag, protocol_tag } => {
                 let result = provider.get_protorunes_by_address(&address, block_tag, protocol_tag).await?;
                 
                 if raw {
@@ -2161,7 +2331,7 @@ impl SystemProtorunes for SystemAlkanes {
                 }
                 Ok(())
             },
-           ProtorunesCommands::ByOutpoint { txid, vout, raw, block_tag, protocol_tag } => {
+           ProtorunesCommands::Byoutpoint { txid, vout, raw, block_tag, protocol_tag } => {
                let result = provider.get_protorunes_by_outpoint(&txid, vout, block_tag, protocol_tag).await?;
                
                if raw {

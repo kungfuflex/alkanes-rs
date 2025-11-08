@@ -206,7 +206,7 @@ impl ConcreteProvider {
         match self.rpc_config.provider.as_str() { "mainnet" => bitcoin::Network::Bitcoin, "testnet" => bitcoin::Network::Testnet, "signet" => bitcoin::Network::Signet, _ => bitcoin::Network::Regtest }
     }
 
-    async fn metashrew_view_call(&self, _method: &str, _params: &str, _height: &str) -> Result<Vec<u8>> {
+    pub async fn metashrew_view_call(&self, _method: &str, _params: &str, _height: &str) -> Result<Vec<u8>> {
         unimplemented!()
     }
 
@@ -1264,7 +1264,9 @@ impl WalletProvider for ConcreteProvider {
 #[async_trait(?Send)]
 impl MetashrewRpcProvider for ConcreteProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
-        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| AlkanesError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Metashrew { 
+            command: crate::commands::MetashrewCommands::Height
+        })?;
         let json = self.call(&rpc_url, "metashrew_height", json!([]), 1).await?;
         log::debug!("get_metashrew_height response: {:?}", json);
         if let Some(count) = json.as_u64() {
@@ -1291,7 +1293,9 @@ impl MetashrewRpcProvider for ConcreteProvider {
     }
 
     async fn get_state_root(&self, height: JsonValue) -> Result<String> {
-        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| AlkanesError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Metashrew { 
+            command: crate::commands::MetashrewCommands::Height
+        })?;
         let params = serde_json::json!([height]);
         let result = self.call(&rpc_url, "metashrew_stateroot", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid state root response".to_string()))
@@ -1488,11 +1492,11 @@ impl MetashrewRpcProvider for ConcreteProvider {
 #[async_trait(?Send)]
 impl EsploraProvider for ConcreteProvider {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
-        let _rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let _rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
-            let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
+            let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
             let url = format!("{}/blocks/tip/hash", rpc_url);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
             let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
@@ -1502,15 +1506,15 @@ impl EsploraProvider for ConcreteProvider {
         }
  
         log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH);
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
         let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH, crate::esplora::params::empty(), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tip hash response".to_string()))
     }
 
     async fn get_blocks_tip_height(&self) -> Result<u64> {
         log::info!("[EsploraProvider] Calling get_blocks_tip_height");
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/blocks/tip/height", rpc_url);
@@ -1528,8 +1532,8 @@ impl EsploraProvider for ConcreteProvider {
 
     async fn get_blocks(&self, start_height: Option<u64>) -> Result<serde_json::Value> {
         log::info!("[EsploraProvider] Calling get_blocks with start_height: {:?}", start_height);
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = if let Some(height) = start_height {
@@ -1550,8 +1554,8 @@ impl EsploraProvider for ConcreteProvider {
 
     async fn get_block_by_height(&self, height: u64) -> Result<String> {
         log::info!("[EsploraProvider] Calling get_block_by_height: {}", height);
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block-height/{}", rpc_url, height);
@@ -1568,8 +1572,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_block(&self, hash: &str) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}", rpc_url, hash);
@@ -1581,8 +1585,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_block_status(&self, hash: &str) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/status", rpc_url, hash);
@@ -1594,8 +1598,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_block_txids(&self, hash: &str) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/txids", rpc_url, hash);
@@ -1607,8 +1611,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_block_header(&self, hash: &str) -> Result<String> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/header", rpc_url, hash);
@@ -1621,8 +1625,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_block_raw(&self, hash: &str) -> Result<String> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/raw", rpc_url, hash);
@@ -1637,8 +1641,8 @@ impl EsploraProvider for ConcreteProvider {
 
     async fn get_block_txid(&self, hash: &str, index: u32) -> Result<String> {
         log::info!("[EsploraProvider] Calling get_block_txid for hash: {}, index: {}", hash, index);
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/txid/{}", rpc_url, hash, index);
@@ -1655,8 +1659,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = if let Some(index) = start_index {
@@ -1674,8 +1678,8 @@ impl EsploraProvider for ConcreteProvider {
 
    async fn get_address_info(&self, address: &str) -> Result<serde_json::Value> {
         log::info!("[EsploraProvider] Calling get_address_info for address: {}", address);
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
        #[cfg(feature = "native-deps")]
        if call_type == RpcCallType::Rest {
            let url = format!("{}/address/{}", rpc_url, address);
@@ -1690,8 +1694,8 @@ impl EsploraProvider for ConcreteProvider {
 
    async fn get_address_utxo(&self, address: &str) -> Result<serde_json::Value> {
         log::info!("[EsploraProvider] Calling get_address_utxo for address: {}", address);
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
        #[cfg(feature = "native-deps")]
        if call_type == RpcCallType::Rest {
            let url = format!("{}/address/{}/utxo", rpc_url, address);
@@ -1705,8 +1709,8 @@ impl EsploraProvider for ConcreteProvider {
    }
 
     async fn get_address_txs(&self, address: &str) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address/{}/txs", rpc_url, address);
@@ -1718,8 +1722,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_address_txs_chain(&self, address: &str, last_seen_txid: Option<&str>) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = if let Some(txid) = last_seen_txid {
@@ -1735,8 +1739,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_address_txs_mempool(&self, address: &str) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address/{}/txs/mempool", rpc_url, address);
@@ -1749,8 +1753,8 @@ impl EsploraProvider for ConcreteProvider {
 
 
     async fn get_address_prefix(&self, prefix: &str) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address-prefix/{}", rpc_url, prefix);
@@ -1763,8 +1767,8 @@ impl EsploraProvider for ConcreteProvider {
 
     async fn get_tx(&self, txid: &str) -> Result<serde_json::Value> {
         log::info!("[EsploraProvider] Calling get_tx for txid: {}", txid);
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}", rpc_url, txid);
@@ -1779,8 +1783,8 @@ impl EsploraProvider for ConcreteProvider {
 
     async fn get_tx_hex(&self, txid: &str) -> Result<String> {
         log::info!("[EsploraProvider] Calling get_tx_hex for txid: {}", txid);
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/hex", rpc_url, txid);
@@ -1797,8 +1801,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_tx_raw(&self, txid: &str) -> Result<String> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/raw", rpc_url, txid);
@@ -1812,8 +1816,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_tx_status(&self, txid: &str) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/status", rpc_url, txid);
@@ -1825,8 +1829,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_tx_merkle_proof(&self, txid: &str) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/merkle-proof", rpc_url, txid);
@@ -1838,8 +1842,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_tx_merkleblock_proof(&self, txid: &str) -> Result<String> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/merkleblock-proof", rpc_url, txid);
@@ -1852,8 +1856,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/outspend/{}", rpc_url, txid, index);
@@ -1865,8 +1869,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_tx_outspends(&self, txid: &str) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/outspends", rpc_url, txid);
@@ -1878,8 +1882,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn broadcast(&self, tx_hex: &str) -> Result<String> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx", rpc_url);
@@ -1892,8 +1896,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_mempool(&self) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/mempool", rpc_url);
@@ -1905,8 +1909,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_mempool_txids(&self) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/mempool/txids", rpc_url);
@@ -1918,8 +1922,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_mempool_recent(&self) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/mempool/recent", rpc_url);
@@ -1931,8 +1935,8 @@ impl EsploraProvider for ConcreteProvider {
     }
 
     async fn get_fee_estimates(&self) -> Result<serde_json::Value> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &self.command)?;
-        let call_type = determine_rpc_call_type(&self.rpc_config, &self.command);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/fee-estimates", rpc_url);
@@ -2573,26 +2577,81 @@ impl BitcoinRpcProvider for ConcreteProvider {
 }
 
 #[async_trait(?Send)]
+#[async_trait(?Send)]
 impl OrdProvider for ConcreteProvider {
-    async fn get_inscription(&self, _inscription_id: &str) -> Result<crate::ord::Inscription> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_inscription not yet implemented".to_string()))
+    async fn get_inscription(&self, inscription_id: &str) -> Result<crate::ord::Inscription> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/inscription/{}", rpc_url, inscription_id);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::INSCRIPTION, json!([inscription_id]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_inscriptions_in_block(&self, _block_hash: &str) -> Result<crate::ord::Inscriptions> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_inscriptions_in_block not yet implemented".to_string()))
+
+    async fn get_inscriptions_in_block(&self, block_hash: &str) -> Result<crate::ord::Inscriptions> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/inscriptions/block/{}", rpc_url, block_hash);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::INSCRIPTIONS_IN_BLOCK, json!([block_hash]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_ord_address_info(&self, _address: &str) -> Result<crate::ord::AddressInfo> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_ord_address_info not yet implemented".to_string()))
+
+    async fn get_ord_address_info(&self, address: &str) -> Result<crate::ord::AddressInfo> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/address/{}", rpc_url, address);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::ADDRESS, json!([address]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_block_info(&self, _query: &str) -> Result<crate::ord::Block> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_block_info not yet implemented".to_string()))
+
+    async fn get_block_info(&self, query: &str) -> Result<crate::ord::Block> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/block/{}", rpc_url, query);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCK, json!([query]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
+
     async fn get_ord_block_count(&self) -> Result<u64> {
-        let rpc_url = self.get_ord_server_url().ok_or_else(|| AlkanesError::RpcError("Ord server URL not configured".to_string()))?;
-        let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCK_COUNT, crate::esplora::params::empty(), 1).await?;
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/blockcount", rpc_url);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return text.parse::<u64>().map_err(|e| AlkanesError::RpcError(format!("Invalid block count: {}", e)));
+        }
+        
+        let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCK_COUNT, json!([]), 1).await?;
         if let Some(count) = json.as_u64() {
             return Ok(count);
         }
@@ -2601,48 +2660,197 @@ impl OrdProvider for ConcreteProvider {
         }
         Err(AlkanesError::RpcError("Invalid block count response: not a u64 or string".to_string()))
     }
-    
+
     async fn get_ord_blocks(&self) -> Result<crate::ord::Blocks> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_ord_blocks not yet implemented".to_string()))
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/blocks", rpc_url);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCKS, json!([]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_children(&self, _inscription_id: &str, _page: Option<u32>) -> Result<crate::ord::Children> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_children not yet implemented".to_string()))
+
+    async fn get_children(&self, inscription_id: &str, page: Option<u32>) -> Result<crate::ord::Children> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(p) = page {
+                format!("{}/inscription/{}/children/{}", rpc_url, inscription_id, p)
+            } else {
+                format!("{}/inscription/{}/children", rpc_url, inscription_id)
+            };
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let params = if let Some(p) = page {
+            json!([inscription_id, p])
+        } else {
+            json!([inscription_id])
+        };
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::CHILDREN, params, 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_content(&self, _inscription_id: &str) -> Result<Vec<u8>> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_content not yet implemented".to_string()))
+
+    async fn get_content(&self, inscription_id: &str) -> Result<Vec<u8>> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/content/{}", rpc_url, inscription_id);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return Ok(bytes.to_vec());
+        }
+        
+        // For JSON-RPC, content is returned as base64
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::CONTENT, json!([inscription_id]), 1).await?;
+        let base64_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Content response is not a string".to_string()))?;
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.decode(base64_str).map_err(|e| AlkanesError::Other(format!("Base64 decode error: {}", e)))
     }
-    
-    async fn get_inscriptions(&self, _page: Option<u32>) -> Result<crate::ord::Inscriptions> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_inscriptions not yet implemented".to_string()))
+
+    async fn get_inscriptions(&self, page: Option<u32>) -> Result<crate::ord::Inscriptions> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(p) = page {
+                format!("{}/inscriptions/{}", rpc_url, p)
+            } else {
+                format!("{}/inscriptions", rpc_url)
+            };
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let params = if let Some(p) = page {
+            json!([p])
+        } else {
+            json!([])
+        };
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::INSCRIPTIONS, params, 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_output(&self, _output: &str) -> Result<crate::ord::Output> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_output not yet implemented".to_string()))
+
+    async fn get_output(&self, output: &str) -> Result<crate::ord::Output> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/output/{}", rpc_url, output);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::OUTPUT, json!([output]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<crate::ord::ParentInscriptions> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_parents not yet implemented".to_string()))
+
+    async fn get_parents(&self, inscription_id: &str, page: Option<u32>) -> Result<crate::ord::ParentInscriptions> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(p) = page {
+                format!("{}/inscription/{}/parents/{}", rpc_url, inscription_id, p)
+            } else {
+                format!("{}/inscription/{}/parents", rpc_url, inscription_id)
+            };
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let params = if let Some(p) = page {
+            json!([inscription_id, p])
+        } else {
+            json!([inscription_id])
+        };
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::PARENTS, params, 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_rune(&self, _rune: &str) -> Result<crate::ord::RuneInfo> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_rune not yet implemented".to_string()))
+
+    async fn get_rune(&self, rune: &str) -> Result<crate::ord::RuneInfo> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/rune/{}", rpc_url, rune);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::RUNE, json!([rune]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_runes(&self, _page: Option<u32>) -> Result<crate::ord::Runes> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_runes not yet implemented".to_string()))
+
+    async fn get_runes(&self, page: Option<u32>) -> Result<crate::ord::Runes> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(p) = page {
+                format!("{}/runes/{}", rpc_url, p)
+            } else {
+                format!("{}/runes", rpc_url)
+            };
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let params = if let Some(p) = page {
+            json!([p])
+        } else {
+            json!([])
+        };
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::RUNES, params, 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_sat(&self, _sat: u64) -> Result<crate::ord::SatResponse> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_sat not yet implemented".to_string()))
+
+    async fn get_sat(&self, sat: u64) -> Result<crate::ord::SatResponse> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/sat/{}", rpc_url, sat);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::SAT, json!([sat]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_tx_info(&self, _txid: &str) -> Result<crate::ord::TxInfo> {
-        Err(AlkanesError::NotImplemented("OrdProvider get_tx_info not yet implemented".to_string()))
+
+    async fn get_tx_info(&self, txid: &str) -> Result<crate::ord::TxInfo> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}", rpc_url, txid);
+            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::TX, json!([txid]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 }
-
 #[async_trait(?Send)]
 impl KeystoreProvider for ConcreteProvider {
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {

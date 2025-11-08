@@ -385,13 +385,22 @@ pub enum BitcoindCommands {
 pub enum MetashrewCommands {
     /// Get Metashrew height
     Height,
+    /// Get state root at a given height
+    Getstateroot {
+        /// Block height
+        height: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// Alkanes smart contract subcommands
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
 pub enum AlkanesCommands {
-    /// Get bytecode for an alkanes contract
-    GetBytecode {
+    /// Get bytecode for an alkanes contract (maps to metashrew_view getbytecode)
+    #[command(name = "getbytecode")]
+    Getbytecode {
         /// Alkane ID (format: block:tx)
         alkane_id: String,
         /// Block tag to query (e.g., "latest" or a block height)
@@ -475,11 +484,18 @@ pub enum AlkanesCommands {
     },
     /// Simulate alkanes execution
     Simulate {
-        /// Contract ID (format: txid:vout)
+        /// Contract ID (format: block:tx)
         contract_id: String,
-        /// Simulation parameters
+        /// Calldata and alkanes in format: [block,tx,inputs...]:[block:tx:value]:[block:tx:value]
+        /// Example: [4,302206,101]:[2:0:4000000]:[2:1:400000]
         #[arg(long)]
         params: Option<String>,
+        /// Block hex (optional, defaults to empty)
+        #[arg(long)]
+        block_hex: Option<String>,
+        /// Transaction hex (optional, defaults to empty)
+        #[arg(long)]
+        transaction_hex: Option<String>,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,
@@ -510,6 +526,32 @@ pub enum AlkanesCommands {
     TraceBlock {
         /// Block height
         height: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get storage value for an alkane (maps to metashrew_view getstorage)
+    #[command(name = "getstorage")]
+    Getstorage {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Storage path (hex string)
+        path: String,
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get inventory (balance) of alkanes at an outpoint (maps to metashrew_view getinventory)
+    #[command(name = "getinventory")]
+    Getinventory {
+        /// Outpoint (format: txid:vout)
+        outpoint: String,
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,
@@ -547,8 +589,9 @@ pub enum RunestoneCommands {
 /// Protorunes subcommands
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
 pub enum ProtorunesCommands {
-    /// Get protorunes by address
-    ByAddress {
+    /// Get protorunes by address (maps to metashrew_view protorunesbyaddress)
+    #[command(name = "byaddress")]
+    Byaddress {
         /// Address to query
         address: String,
         /// Show raw JSON output
@@ -561,8 +604,9 @@ pub enum ProtorunesCommands {
         #[arg(long, default_value = "1")]
         protocol_tag: u128,
     },
-    /// Get protorunes by outpoint
-    ByOutpoint {
+    /// Get protorunes by outpoint (maps to metashrew_view protorunesbyoutpoint)
+    #[command(name = "byoutpoint")]
+    Byoutpoint {
         /// Transaction ID
         txid: String,
         /// Output index
