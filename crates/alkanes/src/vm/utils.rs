@@ -3,7 +3,7 @@ use crate::utils::{pipe_storagemap_to, transfer_from};
 use crate::vm::fuel::fuel_per_store_byte;
 use alkanes_support::trace::TraceEvent;
 use alkanes_support::{
-    cellpack::Cellpack, gz::decompress, id::AlkaneId, parcel::AlkaneTransferParcel,
+    cellpack::Cellpack, gz::{compress, decompress}, id::AlkaneId, parcel::AlkaneTransferParcel,
     response::ExtendedCallResponse, storage::StorageMap, utils::overflow_error,
     witness::find_witness_payload,
 };
@@ -104,11 +104,14 @@ pub fn run_special_cellpacks(
     } else if cellpack.target.is_create() {
         // contract not created, create it by first loading the wasm from the witness
         // then storing it in the index.
-        let wasm_payload = Arc::new(
-            find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
-                .ok_or("finding witness payload failed for creation of alkane")
-                .map_err(|_| anyhow!("used CREATE cellpack but no binary found in witness"))?,
-        );
+        let wasm_payload_raw = find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
+            .ok_or("finding witness payload failed for creation of alkane")
+            .map_err(|_| anyhow!("used CREATE cellpack but no binary found in witness"))?;
+        
+        // Compress the WASM before storing
+        let compressed_wasm = compress(&wasm_payload_raw)?;
+        let wasm_payload = Arc::new(compressed_wasm);
+        
         payload.target = AlkaneId {
             block: 2,
             tx: next_sequence,
@@ -121,20 +124,24 @@ pub fn run_special_cellpacks(
             .keyword("/alkanes/")
             .select(&payload.target.clone().into());
         pointer.set(wasm_payload.clone());
-        binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
+        // Use the raw uncompressed binary for execution
+        binary = Arc::new(wasm_payload_raw);
         next_sequence_pointer.set_value(next_sequence + 1);
 
         set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
     } else if let Some(number) = cellpack.target.reserved() {
         // we have already reserved an alkane id, find the binary and
         // set it in the index
-        let wasm_payload = Arc::new(
-            find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
-                .ok_or("finding witness payload failed for creation of alkane")
-                .map_err(|_| {
-                    anyhow!("used CREATERESERVED cellpack but no binary found in witness")
-                })?,
-        );
+        let wasm_payload_raw = find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
+            .ok_or("finding witness payload failed for creation of alkane")
+            .map_err(|_| {
+                anyhow!("used CREATERESERVED cellpack but no binary found in witness")
+            })?;
+        
+        // Compress the WASM before storing
+        let compressed_wasm = compress(&wasm_payload_raw)?;
+        let wasm_payload = Arc::new(compressed_wasm);
+        
         payload.target = AlkaneId {
             block: 4,
             tx: number,
@@ -155,7 +162,8 @@ pub fn run_special_cellpacks(
                 number
             )));
         }
-        binary = Arc::new(decompress(wasm_payload.clone().as_ref().clone())?);
+        // Use the raw uncompressed binary for execution
+        binary = Arc::new(wasm_payload_raw);
     } else if let Some(factory) = cellpack.target.factory() {
         // we find the factory alkane wasm and set the current alkane to the factory wasm
         payload.target = AlkaneId::new(2, next_sequence);

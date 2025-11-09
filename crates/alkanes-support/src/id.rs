@@ -57,7 +57,7 @@ impl AlkaneId {
     pub fn is_created(&self, next_sequence: u128) -> bool {
         self.block == 2 && self.tx < next_sequence 
             || self.block == 4 
-            || self.block == 31  // ftrBTC block for futures
+            || self.block == 31  // ftrBTC block for futures - allows [31, n] for any n
             || self.block == 32  // frBTC block for Bitcoin
             || self.block == 42  // frZEC block for Zcash
     }
