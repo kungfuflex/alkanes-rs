@@ -171,6 +171,48 @@ pub fn run_special_cellpacks(
             .set(Arc::new(factory_payload));
         set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
         binary = get_alkane_binary_from_context(context.clone(), &factory)?;
+    } else if cellpack.target.is_precompiled() {
+        // Handle precompiled operations
+        use alkanes_support::id::PrecompiledOp;
+        match cellpack.target.precompiled_op() {
+            Some(PrecompiledOp::CloneFuture) => {
+                // CLONE_FUTURE: Clone [31, 0] to [31, current_height]
+                // Only callable by [32, 0] (frBTC contract)
+                let caller = context.lock().unwrap().myself.clone();
+                if caller.block != 32 || caller.tx != 0 {
+                    return Err(anyhow!(
+                        "CLONE_FUTURE precompile can only be called by frBTC contract [32, 0]"
+                    ));
+                }
+                
+                // Clone [31, 0] template to [31, current_height]
+                let current_height = context.lock().unwrap().message.height;
+                payload.target = AlkaneId {
+                    block: 31,
+                    tx: current_height as u128,
+                };
+                
+                // Get the template binary from [31, 0]
+                let template_id = AlkaneId { block: 31, tx: 0 };
+                binary = get_alkane_binary_from_context(context.clone(), &template_id)?;
+                
+                // Store reference to template (32 bytes, not full binary) to save space
+                let template_ref: Vec<u8> = template_id.into();
+                context
+                    .lock()
+                    .unwrap()
+                    .message
+                    .atomic
+                    .keyword("/alkanes/")
+                    .select(&payload.target.clone().into())
+                    .set(Arc::new(template_ref));
+                    
+                set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
+            }
+            None => {
+                return Err(anyhow!("unknown precompiled operation"));
+            }
+        }
     }
     if &original_target != &payload.target {
         context
