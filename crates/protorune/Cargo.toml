@@ -17,6 +17,7 @@ cache = []
 zcash = []
 
 [dependencies]
+alkanes-support = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
 metashrew-core = { workspace = true }

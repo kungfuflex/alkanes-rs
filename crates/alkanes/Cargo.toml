@@ -9,6 +9,10 @@ repository.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[example]]
+name = "test_block_286639"
+required-features = ["zcash"]
+
 [features]
 test-utils = []
 testnet = []
@@ -16,7 +20,7 @@ dogecoin = []
 luckycoin = []
 bellscoin = []
 fractal = []
-zcash = ["ordinals/zcash", "protorune/zcash"]
+zcash = ["ordinals/zcash", "protorune/zcash", "alkanes-support/zcash"]
 mainnet = ["protorune/mainnet"]
 cache = ["protorune/cache"]
 debug-log = []

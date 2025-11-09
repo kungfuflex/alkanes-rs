@@ -6,6 +6,7 @@ use crate::network::{
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
 use crate::vm::host_functions::clear_diesel_mints_cache;
+use alkanes_support::block_traits::BlockLike;
 use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
@@ -99,7 +100,8 @@ use protorune_support::proto::protorune::ProtorunesWalletRequest;
 #[cfg(feature = "cache")]
 use std::sync::Arc;
 
-pub fn index_block(block: &Block, height: u32) -> Result<()> {
+/// Index a block (generic over BlockLike trait)
+pub fn index_block<B: BlockLike>(block: &B, height: u32) -> Result<()> {
     #[cfg(not(test))]
     configure_network();
     clear_diesel_mints_cache();
@@ -107,14 +109,26 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     if really_is_genesis {
         genesis().unwrap();
     }
-    setup_diesel(block)?;
-    setup_frsigil(block)?;  // Must be before setup_frbtc since frBTC/frZEC uses frSIGIL as auth token
-    setup_frbtc(block)?;
+    
+    // Create a minimal Bitcoin block for legacy setup functions
+    // These only need header info, not full transaction data
+    let header = block.header();
+    let bitcoin_block = Block {
+        header,
+        txdata: vec![], // Empty - not used by setup functions
+    };
+    
+    setup_diesel(&bitcoin_block)?;
+    setup_frsigil(&bitcoin_block)?;  // Must be before setup_frbtc since frBTC/frZEC uses frSIGIL as auth token
+    setup_frbtc(&bitcoin_block)?;
     check_and_upgrade_precompiled(height)?;
-    FuelTank::initialize(&block, height);
-    // Get the set of updated addresses from the indexing process
+    
+    // Use the header for FuelTank initialization
+    FuelTank::initialize(&bitcoin_block, height);
+    
+    // Index using generic block (works with Bitcoin, Zcash, etc.)
     let _updated_addresses =
-        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
+        Protorune::index_block::<B, AlkaneMessageContext>(block, height.into())?;
 
     unwrap::update_last_block(height as u128)?;
 

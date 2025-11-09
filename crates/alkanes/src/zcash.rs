@@ -10,8 +10,18 @@ use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash as HashTrait;
 use bitcoin::{Block, Script, Transaction};
 use std::io::Read;
-use metashrew_core::{println, stdio::stdout};
 use std::fmt::Write;
+
+// In test mode, use standard println; in non-test mode, use metashrew_core println
+#[cfg(not(test))]
+use metashrew_core::{println, stdio::stdout};
+
+#[cfg(test)]
+macro_rules! println {
+    ($($arg:tt)*) => {
+        std::println!($($arg)*)
+    };
+}
 
 /// Parse a Zcash transaction, skipping Zcash-specific fields
 ///
