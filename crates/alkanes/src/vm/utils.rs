@@ -109,7 +109,7 @@ pub fn run_special_cellpacks(
             .map_err(|_| anyhow!("used CREATE cellpack but no binary found in witness"))?;
         
         // Compress the WASM before storing
-        let compressed_wasm = compress(&wasm_payload_raw)?;
+        let compressed_wasm = compress(wasm_payload_raw.clone())?;
         let wasm_payload = Arc::new(compressed_wasm);
         
         payload.target = AlkaneId {
@@ -139,7 +139,7 @@ pub fn run_special_cellpacks(
             })?;
         
         // Compress the WASM before storing
-        let compressed_wasm = compress(&wasm_payload_raw)?;
+        let compressed_wasm = compress(wasm_payload_raw.clone())?;
         let wasm_payload = Arc::new(compressed_wasm);
         
         payload.target = AlkaneId {
