@@ -2256,6 +2256,35 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 }
                 Ok(())
             }
+            AlkanesCommands::WrapBtc { amount, from, change, fee_rate, raw, trace, mine, yes } => {
+                use alkanes_cli_common::alkanes::wrap_btc::{WrapBtcExecutor, WrapBtcParams};
+                
+                let params = WrapBtcParams {
+                    amount,
+                    from_addresses: from,
+                    change_address: change,
+                    fee_rate,
+                    raw_output: raw,
+                    trace_enabled: trace,
+                    mine_enabled: mine,
+                    auto_confirm: yes,
+                };
+
+                let mut executor = WrapBtcExecutor::new(&mut provider);
+                let result = executor.wrap_btc(params).await?;
+
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("✅ BTC wrapped successfully!");
+                    println!("🔗 Commit TXID: {}", result.commit_txid.as_ref().unwrap_or(&"N/A".to_string()));
+                    println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                    println!("💰 Commit Fee: {} sats", result.commit_fee.unwrap_or(0));
+                    println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+                    println!("🎉 frBTC minted and locked in vault!");
+                }
+                Ok(())
+            }
         };
         res.map_err(|e| AlkanesError::Wallet(e.to_string()))
     }

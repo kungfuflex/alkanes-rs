@@ -79,6 +79,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: AlkanesCommands,
     },
+    /// BRC20-Prog contract operations
+    Brc20Prog {
+        #[command(subcommand)]
+        command: Brc20ProgCommands,
+    },
     /// Runestone analysis and decoding
     Runestone {
         #[command(subcommand)]
@@ -530,6 +535,32 @@ pub enum AlkanesCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Wrap BTC to frBTC and lock in vault
+    WrapBtc {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
     /// Get storage value for an alkane (maps to metashrew_view getstorage)
     #[command(name = "getstorage")]
     Getstorage {
@@ -561,7 +592,114 @@ pub enum AlkanesCommands {
 impl AlkanesCommands {
     /// Check if the command requires signing and thus a decrypted private key
     pub fn requires_signing(&self) -> bool {
-        matches!(self, AlkanesCommands::Execute { .. })
+        matches!(self, AlkanesCommands::Execute { .. } | AlkanesCommands::WrapBtc { .. })
+    }
+}
+
+/// BRC20-Prog contract subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum Brc20ProgCommands {
+    /// Deploy a BRC20-prog contract from Foundry build JSON
+    DeployContract {
+        /// Path to Foundry build JSON file
+        foundry_json_path: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Call a BRC20-prog contract function (transact)
+    Transact {
+        /// Contract address (0x prefixed hex)
+        #[arg(long)]
+        address: String,
+        /// Function signature (e.g., "transfer(address,uint256)")
+        #[arg(long)]
+        signature: String,
+        /// Calldata arguments as comma-separated values
+        /// (e.g., "0x1234...,1000" for transfer(address,uint256))
+        #[arg(long)]
+        calldata: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Wrap BTC to frBTC and execute in brc20-prog (wrapAndExecute2)
+    WrapBtc {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Target contract address for wrapAndExecute2
+        #[arg(long)]
+        target: String,
+        /// Function signature to call on target (e.g., "deposit()")
+        #[arg(long)]
+        signature: String,
+        /// Calldata arguments as comma-separated values
+        #[arg(long)]
+        calldata: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+impl Brc20ProgCommands {
+    /// Check if the command requires signing and thus a decrypted private key
+    pub fn requires_signing(&self) -> bool {
+        true // All BRC20-Prog commands require signing
     }
 }
 

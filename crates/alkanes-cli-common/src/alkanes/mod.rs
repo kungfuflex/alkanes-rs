@@ -20,5 +20,6 @@ pub mod byte_utils;
 
 pub mod rune_transfer;
 pub mod utils;
+pub mod wrap_btc;
 
 pub use types::*;

@@ -49,6 +49,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Ord(cmd) => execute_ord_command(system.provider(), cmd.into()).await,
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
+        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd).await,
     }
 }
 
@@ -334,6 +335,35 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 print_alkane_balances(&result);
+            }
+            Ok(())
+        }
+        Alkanes::WrapBtc { amount, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
+            use alkanes_cli_common::alkanes::wrap_btc::{WrapBtcExecutor, WrapBtcParams};
+            
+            let params = WrapBtcParams {
+                amount,
+                from_addresses: from,
+                change_address: change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm,
+            };
+
+            let mut executor = WrapBtcExecutor::new(system.provider_mut());
+            let result = executor.wrap_btc(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ BTC wrapped successfully!");
+                println!("🔗 Commit TXID: {}", result.commit_txid.as_ref().unwrap_or(&"N/A".to_string()));
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee.unwrap_or(0));
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+                println!("🎉 frBTC minted and locked in vault!");
             }
             Ok(())
         }
@@ -850,4 +880,117 @@ async fn execute_protorunes_command(
         }
     }
     Ok(())
+}
+
+
+async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog) -> Result<()> {
+    use commands::Brc20Prog;
+    use alkanes_cli_common::brc20_prog::{
+        Brc20ProgExecutor, Brc20ProgExecuteParams, Brc20ProgDeployInscription,
+        Brc20ProgCallInscription, parse_foundry_json, extract_deployment_bytecode,
+        encode_function_call,
+    };
+
+    let provider = system.provider_mut();
+
+    match command {
+        Brc20Prog::DeployContract { foundry_json_path, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
+            let contract_data = parse_foundry_json(&foundry_json_path)?;
+            let bytecode = extract_deployment_bytecode(&contract_data)?;
+
+            let inscription = Brc20ProgDeployInscription::new(bytecode);
+            let inscription_json = serde_json::to_string(&inscription)?;
+
+            let params = Brc20ProgExecuteParams {
+                inscription_content: inscription_json,
+                from_addresses: from,
+                change_address: change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm: auto_confirm,
+            };
+
+            let mut executor = Brc20ProgExecutor::new(provider);
+            let result = executor.execute(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ Contract deployed successfully!");
+                println!("🔗 Commit TXID: {}", result.commit_txid);
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee);
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+            }
+            Ok(())
+        }
+        Brc20Prog::Transact { address, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
+            let calldata_hex = encode_function_call(&signature, &calldata)?; // calldata.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>())?;
+
+            let inscription = Brc20ProgCallInscription::new(address, calldata_hex);
+            let inscription_json = serde_json::to_string(&inscription)?;
+
+            let params = Brc20ProgExecuteParams {
+                inscription_content: inscription_json,
+                from_addresses: from,
+                change_address: change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm: auto_confirm,
+            };
+
+            let mut executor = Brc20ProgExecutor::new(provider);
+            let result = executor.execute(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ Transaction executed successfully!");
+                println!("🔗 Commit TXID: {}", result.commit_txid);
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee);
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+            }
+            Ok(())
+        }
+        Brc20Prog::WrapBtc { amount, target, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
+            use alkanes_cli_common::brc20_prog::wrap_btc::{Brc20ProgWrapBtcExecutor, Brc20ProgWrapBtcParams};
+
+            
+            let calldata_hex = encode_function_call(&signature, &calldata)?;
+            let calldata_bytes = hex::decode(calldata_hex.trim_start_matches("0x"))?;
+
+            let params = Brc20ProgWrapBtcParams {
+                amount,
+                target_address: target,
+                calldata: calldata_bytes,
+                from_addresses: from,
+                change_address: change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm: auto_confirm,
+            };
+
+            let mut executor = Brc20ProgWrapBtcExecutor::new(provider);
+            let result = executor.wrap_btc(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ BTC wrapped and locked successfully!");
+                println!("🔗 Commit TXID: {}", result.commit_txid);
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee);
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+                println!("🎉 frBTC minted and locked in BRC20 vault!");
+            }
+            Ok(())
+        }
+    }
 }

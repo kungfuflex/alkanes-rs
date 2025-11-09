@@ -74,6 +74,9 @@ pub enum Commands {
     /// Alkanes subcommands
     #[command(subcommand)]
     Alkanes(Alkanes),
+    /// BRC20-Prog subcommands
+    #[command(subcommand)]
+    Brc20Prog(Brc20Prog),
     /// Runestone subcommands
     #[command(subcommand)]
     Runestone(Runestone),
@@ -446,6 +449,106 @@ pub enum OrdCommands {
     },
 }
 
+/// BRC20-Prog subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum Brc20Prog {
+    /// Deploy a BRC20-prog contract from Foundry build JSON
+    DeployContract {
+        /// Path to Foundry build JSON file
+        foundry_json_path: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(long, short = 'y')]
+        auto_confirm: bool,
+    },
+    /// Call a BRC20-prog contract function
+    Transact {
+        /// Contract address (0x prefixed hex)
+        #[arg(long)]
+        address: String,
+        /// Function signature (e.g., "transfer(address,uint256)")
+        #[arg(long)]
+        signature: String,
+        /// Calldata arguments as comma-separated values
+        /// (e.g., "0x1234...,1000" for transfer(address,uint256))
+        #[arg(long)]
+        calldata: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(long, short = 'y')]
+        auto_confirm: bool,
+    },
+    /// Wrap BTC to frBTC and execute in brc20-prog (wrapAndExecute2)
+    WrapBtc {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Target contract address for wrapAndExecute2
+        #[arg(long)]
+        target: String,
+        /// Function signature to call on target (e.g., "deposit()")
+        #[arg(long)]
+        signature: String,
+        /// Calldata arguments as comma-separated values
+        #[arg(long)]
+        calldata: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(long, short = 'y')]
+        auto_confirm: bool,
+    },
+}
+
 /// Alkanes subcommands
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
 pub enum Alkanes {
@@ -535,6 +638,33 @@ pub enum Alkanes {
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,
+    },
+    /// Wrap BTC to frBTC and lock in vault
+    #[command(name = "wrap-btc")]
+    WrapBtc {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(long, short = 'y')]
+        auto_confirm: bool,
     },
 }
 

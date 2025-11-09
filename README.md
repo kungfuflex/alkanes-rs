@@ -143,6 +143,84 @@ cargo test -p protorune --target TARGET
 - clothic
 - m3
 
+## Quick Usage Examples
+
+### Wallet Operations
+
+```bash
+# Create a new wallet
+alkanes wallet create
+
+# Get addresses
+alkanes wallet addresses
+
+# Check balance
+alkanes wallet balance
+
+# Send Bitcoin
+alkanes wallet send bc1p... 10000 --fee-rate 600 -y
+```
+
+### Alkanes Operations
+
+```bash
+# Wrap BTC to frBTC
+alkanes alkanes wrap-btc 100000 --from "p2tr:0" --mine -y
+
+# Execute an alkanes contract
+alkanes alkanes execute \
+  --inputs "B:10000" \
+  --to "bc1p..." \
+  --protostones "[32,0,77]" \
+  -y
+
+# Get balance
+alkanes alkanes getbalance --address "bc1p..."
+
+# Inspect a contract
+alkanes alkanes inspect <outpoint> --disasm
+```
+
+### BRC20-Prog Operations
+
+```bash
+# Deploy a smart contract
+alkanes brc20-prog deploy-contract ./out/MyContract.sol/MyContract.json \
+  --from "p2tr:0" --mine -y
+
+# Call a contract function
+alkanes brc20-prog transact \
+  --address 0x1234... \
+  --signature "transfer(address,uint256)" \
+  --calldata "0x5678...,1000" \
+  --from "p2tr:0" -y
+
+# Wrap BTC and execute
+alkanes brc20-prog wrap-btc 100000 \
+  --target 0xABCD... \
+  --signature "deposit()" \
+  --calldata "" \
+  --from "p2tr:0" -y
+```
+
+## Documentation
+
+Comprehensive documentation is available in the [`docs/`](./docs) directory:
+
+- **[Getting Started](./docs/quickstart.md)** - Quick start guide
+- **[CLI Usage](./docs/cli-usage.md)** - Complete CLI reference
+- **[BRC20-Prog Guide](./docs/cli/brc20-prog.md)** - BRC20 programmable contracts
+- **[Wrap-BTC Feature](./docs/features/wrap-btc.md)** - Wrapping BTC to frBTC
+- **[Architecture](./docs/architecture/overview.md)** - System design and components
+- **[Crates Reference](./docs/crates/)** - Detailed crate documentation
+- **[Developer Guide](./docs/dev/building-alkanes.md)** - Building alkane contracts
+- **[Examples](./docs/examples/)** - Usage examples and patterns
+
+For detailed API documentation and protocol specifications, see:
+- [Alkanes Wiki](https://github.com/kungfuflex/alkanes-rs/wiki) - Protocol specification
+- [Protorune Spec](https://github.com/kungfuflex/protorune/wiki) - Protorune protocol
+- [Metashrew](https://github.com/sandshrewmetaprotocols/metashrew) - Indexer stack
+
 ### License
 
 MIT
