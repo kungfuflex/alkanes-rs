@@ -63,8 +63,18 @@ impl RawEnvelope {
         let mut envelopes = Vec::new();
 
         for (i, input) in transaction.input.iter().enumerate() {
+            // First try tapscript (standard taproot)
             if let Some(tapscript) = input.witness.tapscript() {
                 if let Ok(input_envelopes) = Self::from_tapscript(tapscript, i) {
+                    envelopes.extend(input_envelopes);
+                    continue;
+                }
+            }
+            
+            // Fallback: try direct witness script (for test helpers and non-taproot)
+            if let Some(script_bytes) = input.witness.nth(0) {
+                let script = bitcoin::ScriptBuf::from_bytes(script_bytes.to_vec());
+                if let Ok(input_envelopes) = Self::from_tapscript(&script, i) {
                     envelopes.extend(input_envelopes);
                 }
             }
@@ -172,6 +182,12 @@ impl RawEnvelope {
         witness.push(script);
         witness.push([]);
         witness
+    }
+    
+    /// Create a scriptSig envelope (for Zcash/Dogecoin-style inscriptions)
+    pub fn to_scriptsig(&self, should_compress: bool) -> script::ScriptBuf {
+        let builder = script::Builder::new();
+        self.append_reveal_script(builder, should_compress)
     }
 
     fn from_instructions(

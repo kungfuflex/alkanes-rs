@@ -49,6 +49,15 @@ pub trait BlockLike {
     
     /// Get the block header (Bitcoin-compatible)
     fn header(&self) -> bitcoin::block::Header;
+    
+    /// Convert to a Bitcoin block for compatibility with code that needs Bitcoin::Block
+    /// This creates a new block with only the transparent transaction parts
+    fn to_bitcoin_block(&self) -> bitcoin::Block {
+        bitcoin::Block {
+            header: self.header(),
+            txdata: self.transactions().iter().map(|tx| tx.to_bitcoin_tx()).collect(),
+        }
+    }
 }
 
 // Implement for Bitcoin types

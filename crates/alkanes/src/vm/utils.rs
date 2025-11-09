@@ -104,13 +104,14 @@ pub fn run_special_cellpacks(
     } else if cellpack.target.is_create() {
         // contract not created, create it by first loading the wasm from the witness
         // then storing it in the index.
-        let wasm_payload_raw = find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
+        let tx = context.lock().unwrap().message.transaction.clone();
+        let wasm_payload_raw = find_witness_payload(&tx, 0)
             .ok_or("finding witness payload failed for creation of alkane")
             .map_err(|_| anyhow!("used CREATE cellpack but no binary found in witness"))?;
         
-        // Compress the WASM before storing
-        let compressed_wasm = compress(wasm_payload_raw.clone())?;
-        let wasm_payload = Arc::new(compressed_wasm);
+        // The payload extracted from witness/scriptSig is already compressed by to_witness/to_scriptsig
+        // So we use it directly without compressing again
+        let wasm_payload = Arc::new(wasm_payload_raw.clone());
         
         payload.target = AlkaneId {
             block: 2,
@@ -124,8 +125,8 @@ pub fn run_special_cellpacks(
             .keyword("/alkanes/")
             .select(&payload.target.clone().into());
         pointer.set(wasm_payload.clone());
-        // Use the raw uncompressed binary for execution
-        binary = Arc::new(wasm_payload_raw);
+        // Decompress the binary for execution (the wasm_payload_raw is compressed)
+        binary = Arc::new(decompress(wasm_payload_raw)?);
         next_sequence_pointer.set_value(next_sequence + 1);
 
         set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
@@ -138,9 +139,8 @@ pub fn run_special_cellpacks(
                 anyhow!("used CREATERESERVED cellpack but no binary found in witness")
             })?;
         
-        // Compress the WASM before storing
-        let compressed_wasm = compress(wasm_payload_raw.clone())?;
-        let wasm_payload = Arc::new(compressed_wasm);
+        // The payload extracted from witness/scriptSig is already compressed
+        let wasm_payload = Arc::new(wasm_payload_raw.clone());
         
         payload.target = AlkaneId {
             block: 4,
@@ -162,8 +162,9 @@ pub fn run_special_cellpacks(
                 number
             )));
         }
-        // Use the raw uncompressed binary for execution
-        binary = Arc::new(wasm_payload_raw);
+        // Decompress the binary for execution (the wasm_payload_raw is compressed)
+        binary = Arc::new(decompress(wasm_payload_raw)?);
+
     } else if let Some(factory) = cellpack.target.factory() {
         // we find the factory alkane wasm and set the current alkane to the factory wasm
         payload.target = AlkaneId::new(2, next_sequence);

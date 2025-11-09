@@ -176,14 +176,27 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
         .zip(cellpacks.into_iter())
         .map(|i| {
             let (binary, cellpack) = i;
-            let witness = if binary.len() == 0 {
-                Witness::new()
+            
+            // For Zcash/Dogecoin: use scriptSig (no taproot)
+            // For Bitcoin: use witness (taproot)
+            #[cfg(feature = "zcash")]
+            let (witness, script_sig) = if binary.len() == 0 {
+                (Witness::new(), ScriptBuf::new())
             } else {
-                RawEnvelope::from(binary).to_witness(true)
+                (Witness::new(), RawEnvelope::from(binary).to_scriptsig(true))
             };
+            
+            #[cfg(not(feature = "zcash"))]
+            let (witness, script_sig) = if binary.len() == 0 {
+                (Witness::new(), ScriptBuf::new())
+            } else {
+                (RawEnvelope::from(binary).to_witness(true), ScriptBuf::new())
+            };
+            
             if let Some(previous_output) = previous_out {
-                let tx = create_multiple_cellpack_with_witness_and_in(
+                let tx = create_multiple_cellpack_with_witness_and_scriptsig_and_in(
                     witness,
+                    script_sig,
                     [cellpack].into(),
                     previous_output,
                     false,
@@ -194,7 +207,12 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
                 });
                 tx
             } else {
-                let tx = create_multiple_cellpack_with_witness(witness, [cellpack].into(), false);
+                let tx = create_multiple_cellpack_with_witness_and_scriptsig(
+                    witness,
+                    script_sig,
+                    [cellpack].into(),
+                    false,
+                );
                 previous_out = Some(OutPoint {
                     txid: tx.compute_txid(),
                     vout: 0,
@@ -213,11 +231,20 @@ pub fn init_with_multiple_cellpacks(binary: Vec<u8>, cellpacks: Vec<Cellpack>) -
     let mut test_block = create_block_with_coinbase_tx(block_height);
 
     let raw_envelope = RawEnvelope::from(binary);
-    let witness = raw_envelope.to_witness(true);
+    
+    #[cfg(feature = "zcash")]
+    let (witness, script_sig) = (Witness::new(), raw_envelope.to_scriptsig(true));
+    
+    #[cfg(not(feature = "zcash"))]
+    let (witness, script_sig) = (raw_envelope.to_witness(true), ScriptBuf::new());
+    
     test_block
         .txdata
-        .push(create_multiple_cellpack_with_witness(
-            witness, cellpacks, false,
+        .push(create_multiple_cellpack_with_witness_and_scriptsig(
+            witness,
+            script_sig,
+            cellpacks,
+            false,
         ));
     test_block
 }
@@ -274,10 +301,25 @@ pub fn create_multiple_cellpack_with_witness_and_in(
     previous_output: OutPoint,
     etch: bool,
 ) -> Transaction {
-    let input_script = ScriptBuf::new();
+    create_multiple_cellpack_with_witness_and_scriptsig_and_in(
+        witness,
+        ScriptBuf::new(),
+        cellpacks,
+        previous_output,
+        etch,
+    )
+}
+
+pub fn create_multiple_cellpack_with_witness_and_scriptsig_and_in(
+    witness: Witness,
+    script_sig: ScriptBuf,
+    cellpacks: Vec<Cellpack>,
+    previous_output: OutPoint,
+    etch: bool,
+) -> Transaction {
     let txin = TxIn {
         previous_output,
-        script_sig: input_script,
+        script_sig,
         sequence: Sequence::MAX,
         witness,
     };
@@ -373,6 +415,15 @@ pub fn create_multiple_cellpack_with_witness(
     cellpacks: Vec<Cellpack>,
     etch: bool,
 ) -> Transaction {
+    create_multiple_cellpack_with_witness_and_scriptsig(witness, ScriptBuf::new(), cellpacks, etch)
+}
+
+pub fn create_multiple_cellpack_with_witness_and_scriptsig(
+    witness: Witness,
+    script_sig: ScriptBuf,
+    cellpacks: Vec<Cellpack>,
+    etch: bool,
+) -> Transaction {
     let previous_output = OutPoint {
         txid: bitcoin::Txid::from_str(
             "0000000000000000000000000000000000000000000000000000000000000000",
@@ -380,7 +431,13 @@ pub fn create_multiple_cellpack_with_witness(
         .unwrap(),
         vout: 0,
     };
-    create_multiple_cellpack_with_witness_and_in(witness, cellpacks, previous_output, etch)
+    create_multiple_cellpack_with_witness_and_scriptsig_and_in(
+        witness,
+        script_sig,
+        cellpacks,
+        previous_output,
+        etch,
+    )
 }
 
 pub fn assert_binary_deployed_to_id(token_id: AlkaneId, binary: Vec<u8>) -> Result<()> {

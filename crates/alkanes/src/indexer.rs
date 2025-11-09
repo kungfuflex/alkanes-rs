@@ -110,20 +110,16 @@ pub fn index_block<B: BlockLike>(block: &B, height: u32) -> Result<()> {
         genesis().unwrap();
     }
     
-    // Create a minimal Bitcoin block for legacy setup functions
-    // These only need header info, not full transaction data
-    let header = block.header();
-    let bitcoin_block = Block {
-        header,
-        txdata: vec![], // Empty - not used by setup functions
-    };
+    // Convert generic block to Bitcoin Block for setup functions
+    // These functions need the full block with transactions for fuel calculation
+    let bitcoin_block = block.to_bitcoin_block();
     
     setup_diesel(&bitcoin_block)?;
     setup_frsigil(&bitcoin_block)?;  // Must be before setup_frbtc since frBTC/frZEC uses frSIGIL as auth token
     setup_frbtc(&bitcoin_block)?;
     check_and_upgrade_precompiled(height)?;
     
-    // Use the header for FuelTank initialization
+    // Initialize fuel tank with the full block (needs vfsize of all transactions)
     FuelTank::initialize(&bitcoin_block, height);
     
     // Index using generic block (works with Bitcoin, Zcash, etc.)

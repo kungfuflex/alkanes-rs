@@ -23,6 +23,9 @@ flate2 = "1.0.34"
 prost = { workspace = true }
 prost-types = { workspace = true }
 
+[dev-dependencies]
+hex = { workspace = true }
+
 [build-dependencies]
 anyhow = { workspace = true }
 prost-build = { workspace = true }
