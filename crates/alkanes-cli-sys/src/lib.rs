@@ -141,11 +141,16 @@ impl SystemAlkanes {
         .await?;
 
         if let Some(passphrase) = &args.passphrase {
+            log::debug!("Setting passphrase for wallet");
             provider.set_passphrase(Some(passphrase.clone()));
+        } else {
+            log::debug!("No passphrase provided");
         }
 
-        // Initialize provider
-        provider.initialize().await?;
+        // Initialize provider (call mutable version explicitly)
+        log::debug!("Initializing provider...");
+        ConcreteProvider::initialize(&mut provider).await?;
+        log::debug!("Provider initialized");
 
         // Create PGP provider
 
