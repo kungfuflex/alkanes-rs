@@ -26,7 +26,7 @@ impl TestConfig {
 
     /// Create a new MetashrewRuntime for testing
     pub async fn create_runtime(&self, engine: wasmtime::Engine) -> Result<MetashrewRuntime<MemStoreAdapter>> {
-        MetashrewRuntime::new(self.wasm, MemStoreAdapter::new(), engine).await
+        MetashrewRuntime::new(self.wasm, MemStoreAdapter::new(), engine, None).await
     }
 
     pub async fn create_runtime_from_adapter<T: KeyValueStoreLike + Clone + Send + Sync + 'static>(
@@ -34,7 +34,7 @@ impl TestConfig {
         store: T,
         engine: wasmtime::Engine,
     ) -> Result<MetashrewRuntime<T>> where <T as KeyValueStoreLike>::Batch: Send {
-        MetashrewRuntime::new(self.wasm, store, engine).await
+        MetashrewRuntime::new(self.wasm, store, engine, None).await
     }
 }
 

@@ -105,7 +105,7 @@ impl InMemoryRuntime {
         let mut config = wasmtime::Config::default();
         config.async_support(true);
         let engine = Engine::new(&config).unwrap();
-        let runtime = MetashrewRuntime::new(wasm_bytes, store, engine).await.unwrap();
+        let runtime = MetashrewRuntime::new(wasm_bytes, store, engine, None).await.unwrap();
         Self { runtime }
     }
 
