@@ -41,6 +41,14 @@ pub struct Args {
     #[arg(long)]
     pub keystore: Option<String>,
 
+    /// Wallet address (for address-only operations without keystore)
+    #[arg(long)]
+    pub wallet_address: Option<String>,
+
+    /// Wallet private key file (for signing transactions externally)
+    #[arg(long)]
+    pub wallet_key_file: Option<String>,
+
     /// Log level
     #[arg(long, default_value = "info")]
     pub log_level: String,
@@ -187,6 +195,12 @@ pub enum WalletCommands {
         /// Change address (optional)
         #[arg(long)]
         change: Option<String>,
+        /// Use Rebar Shield for private transaction relay (adds payment output to tx)
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long, default_value = "1")]
+        rebar_tier: u8,
         /// Auto-confirm without user prompt
         #[arg(short = 'y', long)]
         yes: bool,
@@ -220,8 +234,36 @@ pub enum WalletCommands {
     },
     /// Sign a transaction
     SignTx {
-        /// Transaction hex to sign
-        tx_hex: String,
+        /// Transaction hex to sign (or use --from-file)
+        #[arg(required_unless_present = "from_file")]
+        tx_hex: Option<String>,
+        /// Read transaction hex from file
+        #[arg(long)]
+        from_file: Option<String>,
+        /// Truncate excess inputs if signed transaction exceeds consensus limit (1MB)
+        #[arg(long)]
+        truncate_excess_vsize: bool,
+    },
+    /// Sign a transaction with external key file
+    Sign {
+        /// Transaction hex to sign (or use --from-file)
+        #[arg(required_unless_present = "from_file")]
+        tx_hex: Option<String>,
+        /// Read transaction hex from file
+        #[arg(long)]
+        from_file: Option<String>,
+    },
+    /// Decode a transaction to view its details
+    DecodeTx {
+        /// Transaction hex to decode (or use --file to read from file)
+        #[arg(required_unless_present = "file")]
+        tx_hex: Option<String>,
+        /// Read transaction hex from file
+        #[arg(long)]
+        file: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
     },
     /// Broadcast a transaction
     BroadcastTx {
@@ -300,7 +342,8 @@ impl WalletCommands {
             WalletCommands::Send { .. } |
             WalletCommands::SendAll { .. } |
             WalletCommands::CreateTx { .. } |
-            WalletCommands::SignTx { .. }
+            WalletCommands::SignTx { .. } |
+            WalletCommands::Sign { .. }
         )
     }
 }
@@ -379,7 +422,18 @@ pub enum BitcoindCommands {
         raw: bool,
     },
     Sendrawtransaction {
-        tx_hex: String,
+        /// Transaction hex to broadcast (or use --from-file)
+        #[arg(required_unless_present = "from_file")]
+        tx_hex: Option<String>,
+        /// Read transaction hex from file
+        #[arg(long)]
+        from_file: Option<String>,
+        /// Use MARA Slipstream service for broadcasting (bypasses standard mempool, accepts large/non-standard txs)
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay (requires payment output in tx)
+        #[arg(long)]
+        use_rebar: bool,
         #[arg(long)]
         raw: bool,
     },

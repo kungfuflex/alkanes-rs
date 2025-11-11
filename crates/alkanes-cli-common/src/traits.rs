@@ -306,6 +306,8 @@ pub struct SendParams {
     pub from: Option<Vec<String>>,
     pub change_address: Option<String>,
     pub auto_confirm: bool,
+    pub use_rebar: bool,
+    pub rebar_tier: u8,
 }
 
 /// UTXO information

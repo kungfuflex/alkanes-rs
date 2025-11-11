@@ -94,6 +94,16 @@ pub enum WalletState {
         keystore: Keystore,
         mnemonic: String,
     },
+    /// Address-only mode (no keystore, only address for monitoring/building unsigned transactions)
+    AddressOnly {
+        address: String,
+        script_type: String,
+    },
+    /// External signing mode (private key loaded from file for signing)
+    ExternalKey {
+        private_key: String,
+        address: String,
+    },
     }
 
 
@@ -222,6 +232,38 @@ impl ConcreteProvider {
         self.passphrase = passphrase;
     }
 
+    /// Set wallet to address-only mode (no keystore required)
+    pub fn set_address_only_mode(&mut self, address: String, script_type: String) {
+        self.wallet_state = WalletState::AddressOnly { address, script_type };
+    }
+
+    /// Load external private key from file for signing
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_external_key(&mut self, key_file_path: &str) -> Result<()> {
+        let private_key = std::fs::read_to_string(key_file_path)
+            .map_err(|e| AlkanesError::Storage(format!("Failed to read key file: {}", e)))?
+            .trim()
+            .to_string();
+        
+        let network = self.get_network();
+        let secp = Secp256k1::new();
+        
+        let secret_key = bitcoin::secp256k1::SecretKey::from_str(&private_key)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid private key: {}", e)))?;
+        
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+        let (xonly_pk, _parity) = keypair.x_only_public_key();
+        let address = bitcoin::Address::p2tr(&secp, xonly_pk, None, network);
+        
+        self.wallet_state = WalletState::ExternalKey {
+            private_key,
+            address: address.to_string(),
+        };
+        
+        Ok(())
+    }
+
     #[cfg(feature = "std")]
     pub async fn initialize(&mut self) -> Result<()> {
         // Load wallet if path is set
@@ -312,13 +354,35 @@ impl ConcreteProvider {
     }
 
     /// A helper function to estimate the virtual size of a transaction.
+    /// 
+    /// For P2TR (Taproot) inputs, the witness discount significantly affects vSize:
+    /// - Non-witness data (full weight): 41 bytes × 4 = 164 WU
+    ///   * Outpoint (txid + vout): 36 bytes
+    ///   * Sequence: 4 bytes
+    ///   * Script length: 1 byte (0x00 for P2TR)
+    /// - Witness data (1x weight): ~65 bytes × 1 = 65 WU
+    ///   * Witness count: 1 byte
+    ///   * Signature: 64 bytes (Schnorr)
+    /// - Total weight per input: 164 + 65 = 229 WU
+    /// - vSize per input: 229 / 4 = 57.25 vbytes (rounds to 58)
     fn estimate_tx_vsize(&self, tx: &Transaction, num_inputs: usize) -> u64 {
-        // A simple estimation logic. This should be improved for accuracy.
-        // Base size + size per input + size per output
+        // Transaction overhead (version, locktime, counts)
         let base_vsize = 10;
-        let input_vsize = 68; // P2TR input vsize
-        let output_vsize = 43; // P2TR output vsize
-        base_vsize + (num_inputs as u64 * input_vsize) + (tx.output.len() as u64 * output_vsize)
+        
+        // P2TR input: 229 WU = 57.25 vbytes (we use 58 to be conservative)
+        let input_weight = 229;
+        let input_vsize = (input_weight + 3) / 4; // = 58 vbytes
+        
+        // P2TR output: 43 bytes (no witness discount for outputs)
+        let output_vsize = 43;
+        
+        // Witness flag overhead: 2 bytes for witness marker/flag = 0.5 vbytes
+        let witness_overhead = 1;
+        
+        base_vsize + 
+        (num_inputs as u64 * input_vsize) + 
+        (tx.output.len() as u64 * output_vsize) +
+        witness_overhead
     }
 
     /// A helper function to find address info from the keystore.
@@ -678,25 +742,59 @@ impl WalletProvider for ConcreteProvider {
     
     async fn get_address(&self) -> Result<String> {
         log::info!("[WalletProvider] Calling get_address");
-        let addresses = self.get_addresses(1).await?;
-        if let Some(address_info) = addresses.first() {
-            Ok(address_info.address.clone())
-        } else {
-            Err(AlkanesError::Wallet("No addresses found in wallet".to_string()))
+        match &self.wallet_state {
+            WalletState::AddressOnly { address, .. } => Ok(address.clone()),
+            WalletState::ExternalKey { address, .. } => Ok(address.clone()),
+            _ => {
+                let addresses = self.get_addresses(1).await?;
+                if let Some(address_info) = addresses.first() {
+                    Ok(address_info.address.clone())
+                } else {
+                    Err(AlkanesError::Wallet("No addresses found in wallet".to_string()))
+                }
+            }
         }
     }
     
     async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>> {
         log::info!("[WalletProvider] Calling get_addresses with count: {}", count);
-        let keystore = self.get_keystore()?;
-        let addresses = keystore.get_addresses(self.get_network(), "p2tr", 0, 0, count)?;
-        Ok(addresses)
+        match &self.wallet_state {
+            WalletState::AddressOnly { address, script_type } => {
+                Ok(vec![AddressInfo {
+                    address: address.clone(),
+                    index: 0,
+                    derivation_path: "external".to_string(),
+                    script_type: script_type.clone(),
+                    used: false,
+                }])
+            },
+            WalletState::ExternalKey { address, .. } => {
+                Ok(vec![AddressInfo {
+                    address: address.clone(),
+                    index: 0,
+                    derivation_path: "external".to_string(),
+                    script_type: "p2tr".to_string(),
+                    used: false,
+                }])
+            },
+            _ => {
+                let keystore = self.get_keystore()?;
+                let addresses = keystore.get_addresses(self.get_network(), "p2tr", 0, 0, count)?;
+                Ok(addresses)
+            }
+        }
     }
     
     async fn send(&mut self, params: SendParams) -> Result<String> {
         log::info!("[WalletProvider] Calling send with params: {:?}", params);
         // 1. Create the transaction
         let tx_hex = self.create_transaction(params).await?;
+
+        // In address-only mode, just return the unsigned transaction hex
+        if matches!(self.wallet_state, WalletState::AddressOnly { .. }) {
+            log::info!("[WalletProvider] Address-only mode: returning unsigned transaction hex");
+            return Ok(tx_hex);
+        }
 
         // 2. Sign the transaction
         let signed_tx_hex = self.sign_transaction(tx_hex).await?;
@@ -707,14 +805,23 @@ impl WalletProvider for ConcreteProvider {
     
     async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
         log::info!("[WalletProvider] Calling get_utxos for addresses: {:?}", addresses);
-        if addresses.is_none() || addresses.as_ref().unwrap().is_empty() {
-            return Ok(Vec::new());
-        }
+        
+        // If no addresses provided, use the address from AddressOnly or ExternalKey mode
+        let addresses_to_check = if addresses.is_none() || addresses.as_ref().unwrap().is_empty() {
+            match &self.wallet_state {
+                WalletState::AddressOnly { address, .. } | WalletState::ExternalKey { address, .. } => {
+                    vec![address.clone()]
+                }
+                _ => return Ok(Vec::new()),
+            }
+        } else {
+            addresses.unwrap()
+        };
 
         let mut all_utxos = Vec::new();
         let current_height = self.get_block_count().await.unwrap_or(0);
 
-        for address in addresses.unwrap_or_default() {
+        for address in addresses_to_check {
             log::debug!("Fetching UTXOs for address: {}", address);
             let utxos_json = self.get_address_utxo(&address).await?;
             if let Ok(esplora_utxos) = serde_json::from_value::<Vec<crate::esplora::EsploraUtxo>>(utxos_json) {
@@ -814,14 +921,39 @@ impl WalletProvider for ConcreteProvider {
         // 2. Get UTXOs for the specified addresses
         let utxos = self.get_utxos(false, Some(address_strings.clone())).await?;
 
-        // 3. Perform coin selection
-        let target_amount = Amount::from_sat(params.amount);
+        // 3. Filter out UTXOs with inscriptions/runes/alkanes
+        let clean_utxos: Vec<UtxoInfo> = utxos.into_iter()
+            .filter(|(_, info)| {
+                let is_clean = !info.has_inscriptions && !info.has_runes && !info.has_alkanes;
+                if !is_clean {
+                    log::info!("Filtering out UTXO {}:{} with inscriptions/runes/alkanes", info.txid, info.vout);
+                }
+                is_clean
+            })
+            .map(|(_, info)| info)
+            .collect();
+
+        if clean_utxos.is_empty() {
+            return Err(AlkanesError::Wallet("No clean UTXOs available (all have inscriptions/runes/alkanes)".to_string()));
+        }
+
+        log::info!("Found {} clean UTXOs for coin selection", clean_utxos.len());
+
+        // 4. Perform coin selection
         let fee_rate = params.fee_rate.unwrap_or(1.0); // Default to 1 sat/vbyte
+        
+        let (selected_utxos, total_input_amount) = if params.send_all {
+            // For --send-all, use ALL available clean UTXOs
+            log::info!("--send-all mode: selecting all {} clean UTXOs", clean_utxos.len());
+            let total: u64 = clean_utxos.iter().map(|u| u.amount).sum();
+            (clean_utxos, Amount::from_sat(total))
+        } else {
+            // Normal coin selection to meet target amount
+            let target_amount = Amount::from_sat(params.amount);
+            self.select_coins(clean_utxos, target_amount)?
+        };
 
-        let utxo_infos: Vec<UtxoInfo> = utxos.into_iter().map(|(_, info)| info).collect();
-        let (selected_utxos, total_input_amount) = self.select_coins(utxo_infos, target_amount)?;
-
-        // 4. Build the transaction skeleton
+        // 5. Build the transaction skeleton
         let mut tx = Transaction {
             version: bitcoin::transaction::Version(2),
             lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -845,37 +977,61 @@ impl WalletProvider for ConcreteProvider {
         // Add the recipient's output
         let network = self.get_network();
         let recipient_address = Address::from_str(&params.address)?.require_network(network)?;
-        tx.output.push(TxOut {
-            value: target_amount,
-            script_pubkey: recipient_address.script_pubkey(),
-        });
+        
+        // 6. Calculate fee and output amount
+        if params.send_all {
+            // For --send-all: calculate fee first, then output = input - fee (no change)
+            // Add a placeholder output to estimate size
+            tx.output.push(TxOut {
+                value: Amount::ZERO,
+                script_pubkey: recipient_address.script_pubkey(),
+            });
+            
+            let estimated_vsize = self.estimate_tx_vsize(&tx, selected_utxos.len());
+            let fee = Amount::from_sat((estimated_vsize as f32 * fee_rate).ceil() as u64);
+            
+            // Calculate output amount: total_input - fee
+            let output_amount = total_input_amount.checked_sub(fee)
+                .ok_or_else(|| AlkanesError::Wallet("Insufficient funds for fee".to_string()))?;
+            
+            // Update the output with the correct amount
+            tx.output[0].value = output_amount;
+            
+            log::info!("--send-all: input={} sats, fee={} sats, output={} sats", 
+                      total_input_amount.to_sat(), fee.to_sat(), output_amount.to_sat());
+        } else {
+            // Normal mode: use specified amount + change if needed
+            let target_amount = Amount::from_sat(params.amount);
+            tx.output.push(TxOut {
+                value: target_amount,
+                script_pubkey: recipient_address.script_pubkey(),
+            });
 
-        // 5. Calculate fee and add change output if necessary
-        // Start with an initial fee estimate. We add a placeholder change output to get a more
-        // accurate size, then calculate the fee, then the actual change.
-        let change_address = Address::from_str(&all_addresses[0].address)?.require_network(network)?;
-        let change_script = change_address.script_pubkey();
-        let placeholder_change = TxOut { value: Amount::ZERO, script_pubkey: change_script.clone() };
-        tx.output.push(placeholder_change);
+            // Calculate fee and add change output if necessary
+            let change_address = Address::from_str(&all_addresses[0].address)?.require_network(network)?;
+            let change_script = change_address.script_pubkey();
+            let placeholder_change = TxOut { value: Amount::ZERO, script_pubkey: change_script.clone() };
+            tx.output.push(placeholder_change);
 
-        let estimated_vsize = self.estimate_tx_vsize(&tx, selected_utxos.len());
-        let fee = Amount::from_sat((estimated_vsize as f32 * fee_rate).ceil() as u64);
+            let estimated_vsize = self.estimate_tx_vsize(&tx, selected_utxos.len());
+            let fee = Amount::from_sat((estimated_vsize as f32 * fee_rate).ceil() as u64);
 
-        // Now that we have a good fee estimate, remove the placeholder and calculate the real change.
-        tx.output.pop();
-        let change_amount = total_input_amount.checked_sub(target_amount).and_then(|a| a.checked_sub(fee));
+            // Now that we have a good fee estimate, remove the placeholder and calculate the real change.
+            tx.output.pop();
+            let change_amount = total_input_amount.checked_sub(target_amount).and_then(|a| a.checked_sub(fee));
 
-        if let Some(change) = change_amount {
-            if change > bitcoin::Amount::from_sat(546) { // Dust limit
-                tx.output.push(TxOut {
-                    value: change,
-                    script_pubkey: change_script,
-                });
+            if let Some(change) = change_amount {
+                if change > bitcoin::Amount::from_sat(546) { // Dust limit
+                    tx.output.push(TxOut {
+                        value: change,
+                        script_pubkey: change_script,
+                    });
+                }
+                // If change is dust, it's not added, effectively becoming part of the fee.
             }
-            // If change is dust, it's not added, effectively becoming part of the fee.
         }
 
-        // 6. Serialize the unsigned transaction to hex
+        // 7. Serialize the unsigned transaction to hex
         Ok(bitcoin::consensus::encode::serialize_hex(&tx))
     }
 
@@ -905,13 +1061,46 @@ impl WalletProvider for ConcreteProvider {
             prevouts.push(TxOut { value: Amount::from_sat(amount), script_pubkey });
         }
 
-        // 4. Get mutable access to the wallet state *after* all immutable borrows are done.
-        let (keystore, mnemonic) = match &mut self.wallet_state {
-            WalletState::Unlocked { keystore, mnemonic } => (keystore, mnemonic),
-            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign transactions".to_string())),
-        };
+        // 4. Get signing key based on wallet state
+        match &mut self.wallet_state {
+            WalletState::ExternalKey { private_key, .. } => {
+                // Sign with external private key
+                let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)?;
+                let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+                let untweaked_keypair = UntweakedKeypair::from(keypair);
+                let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
 
-        // 5. Sign each input
+                let mut sighash_cache = SighashCache::new(&mut tx);
+                for i in 0..prevouts.len() {
+                    let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
+                    
+                    let taproot_signature = taproot::Signature {
+                        signature,
+                        sighash_type: TapSighashType::Default,
+                    };
+
+                    sighash_cache.witness_mut(i).unwrap().clone_from(&Witness::p2tr_key_spend(&taproot_signature));
+                }
+
+                let signed_tx = sighash_cache.into_transaction();
+                return Ok(bitcoin::consensus::encode::serialize_hex(&signed_tx));
+            },
+            WalletState::Unlocked { keystore, mnemonic } => {
+                // Original signing logic with keystore
+                let keystore = keystore.clone();
+                let mnemonic = mnemonic.clone();
+
+                // 5. Sign each input
         let mut sighash_cache = SighashCache::new(&mut tx);
         for i in 0..prevouts.len() {
             let prev_txout = &prevouts[i];
@@ -921,11 +1110,11 @@ impl WalletProvider for ConcreteProvider {
                 .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {e}")))?;
             
             // This call now takes a mutable keystore and may cache the derived address info.
-            let addr_info = Self::find_address_info(keystore, &address, network)?;
+            let addr_info = Self::find_address_info(&keystore, &address, network)?;
             let path = DerivationPath::from_str(&addr_info.derivation_path)?;
 
             // Derive the private key for this input
-            let mnemonic_obj = Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+            let mnemonic_obj = Mnemonic::parse_in(bip39::Language::English, &mnemonic)?;
             let seed = mnemonic_obj.to_seed("");
             let root_key = Xpriv::new_master(network, &seed)?;
             let derived_xpriv = root_key.derive_priv(&secp, &path)?;
@@ -959,6 +1148,9 @@ impl WalletProvider for ConcreteProvider {
         // 6. Serialize the signed transaction
         let signed_tx = sighash_cache.into_transaction();
         Ok(bitcoin::consensus::encode::serialize_hex(&signed_tx))
+            },
+            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked or have external key to sign transactions".to_string())),
+        }
     }
     
     async fn broadcast_transaction(&self, tx_hex: String) -> Result<String> {
@@ -1057,6 +1249,9 @@ impl WalletProvider for ConcreteProvider {
         match &self.wallet_state {
             WalletState::Locked(keystore) | WalletState::Unlocked { keystore, .. } => {
                 Ok(Some(keystore.account_xpub.clone()))
+            }
+            WalletState::AddressOnly { .. } | WalletState::ExternalKey { .. } => {
+                Ok(None) // No keystore in these modes
             }
             WalletState::None => Ok(None),
         }
@@ -2897,5 +3092,156 @@ impl KeystoreProvider for ConcreteProvider {
             script_type: script_type.to_string(),
             network: Some(network_params.bech32_prefix.clone()),
         })
+    }
+}
+
+/// Rebar Shield integration for private transaction relay
+pub mod rebar {
+    use anyhow::{Context, Result};
+    use serde::{Deserialize, Serialize};
+
+    /// Rebar Shield API base URL
+    pub const REBAR_INFO_URL: &str = "https://shield.rebarlabs.io/v1/info";
+    pub const REBAR_RPC_URL: &str = "https://shield.rebarlabs.io/v1/rpc";
+
+    /// Rebar Shield fee tier information
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RebarFeeTier {
+        /// Estimated percentage of network hashrate (0.0-1.0)
+        pub estimated_hashrate: f64,
+        /// Fee rate in sat/vB
+        pub feerate: u64,
+    }
+
+    /// Rebar Shield payment information from /v1/info endpoint
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RebarInfo {
+        /// Current block height
+        pub height: u64,
+        /// Payment addresses by script type
+        pub payment: RebarPayment,
+        /// Available fee tiers
+        pub fees: Vec<RebarFeeTier>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RebarPayment {
+        /// P2WPKH payment address
+        pub p2wpkh: String,
+    }
+
+    /// Query Rebar Shield /v1/info endpoint for payment info and fee tiers
+    pub async fn query_info() -> Result<RebarInfo> {
+        let client = reqwest::Client::new();
+        let response = client
+            .get(REBAR_INFO_URL)
+            .send()
+            .await
+            .context("Failed to query Rebar Shield info endpoint")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("Rebar Shield API returned error: {}", response.status());
+        }
+
+        let info: RebarInfo = response
+            .json()
+            .await
+            .context("Failed to parse Rebar Shield info response")?;
+
+        Ok(info)
+    }
+
+    /// Calculate Rebar payment amount for a transaction
+    /// Payment = transaction_vsize × fee_tier_rate
+    pub fn calculate_payment(tx_vsize: usize, tier: &RebarFeeTier) -> u64 {
+        tx_vsize as u64 * tier.feerate
+    }
+
+    /// Get fee tier by index (1 or 2)
+    pub fn get_tier(info: &RebarInfo, tier_index: u8) -> Result<&RebarFeeTier> {
+        let index = (tier_index.saturating_sub(1)) as usize;
+        info.fees
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("Invalid Rebar tier: {}. Available tiers: 1-{}", tier_index, info.fees.len()))
+    }
+
+    /// Submit transaction via Rebar Shield JSON-RPC
+    pub async fn submit_transaction(tx_hex: &str) -> Result<String> {
+        let client = reqwest::Client::new();
+
+        #[derive(Serialize)]
+        struct RpcRequest<'a> {
+            jsonrpc: &'a str,
+            id: &'a str,
+            method: &'a str,
+            params: Vec<&'a str>,
+        }
+
+        #[derive(Deserialize)]
+        struct RpcResponse {
+            result: Option<String>,
+            error: Option<RpcError>,
+        }
+
+        #[derive(Deserialize)]
+        struct RpcError {
+            code: i32,
+            message: String,
+        }
+
+        let request = RpcRequest {
+            jsonrpc: "2.0",
+            id: "alkanes-cli",
+            method: "sendrawtransaction",
+            params: vec![tx_hex],
+        };
+
+        let response = client
+            .post(REBAR_RPC_URL)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to submit transaction to Rebar Shield")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("Rebar Shield returned HTTP error: {}", response.status());
+        }
+
+        let rpc_response: RpcResponse = response
+            .json()
+            .await
+            .context("Failed to parse Rebar Shield RPC response")?;
+
+        if let Some(error) = rpc_response.error {
+            anyhow::bail!(
+                "Rebar Shield RPC error (code {}): {}",
+                error.code,
+                error.message
+            );
+        }
+
+        rpc_response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("Rebar Shield returned no result"))
+    }
+
+    /// Print Rebar fee information for user
+    pub fn print_fee_info(info: &RebarInfo, tx_vsize: usize) {
+        println!("🔒 Rebar Shield - Private Transaction Relay");
+        println!("   Block height: {}", info.height);
+        println!("   Payment address: {}", info.payment.p2wpkh);
+        println!();
+        println!("   Available fee tiers:");
+        for (i, tier) in info.fees.iter().enumerate() {
+            let payment = calculate_payment(tx_vsize, tier);
+            println!(
+                "   [{}] {} sat/vB @ {:.0}% hashrate → {} sats payment",
+                i + 1,
+                tier.feerate,
+                tier.estimated_hashrate * 100.0,
+                payment
+            );
+        }
+        println!();
     }
 }

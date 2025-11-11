@@ -26,6 +26,9 @@ Welcome to the comprehensive documentation for alkanes-rs, a complete Bitcoin me
 - [AMM & DeFi](./features/amm.md) - Automated market maker functionality
 - [Protostones](./features/protostones.md) - Transaction composition
 - [Smart Contracts](./features/smart-contracts.md) - Alkane contract development
+- [External Signing](./features/external-signing.md) - Address-only mode and external key signing
+- [Transaction Broadcasting](./features/transaction-broadcasting.md) - All broadcast options (Slipstream, Rebar, etc.)
+- [Rebar Shield](./features/rebar-shield.md) - Private relay with MEV protection
 
 ### Crates Reference
 - [alkanes](./crates/alkanes.md) - Core indexer implementation

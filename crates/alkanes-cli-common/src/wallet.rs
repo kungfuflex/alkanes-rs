@@ -116,6 +116,8 @@ impl<P: DeezelProvider> Wallet<P> {
             from: params.from,
             change_address: params.change_address,
             auto_confirm: params.auto_confirm,
+            use_rebar: params.use_rebar,
+            rebar_tier: params.rebar_tier,
         };
         self.provider.send(trait_params).await
     }
@@ -234,6 +236,8 @@ impl<P: DeezelProvider> Wallet<P> {
             from: params.from,
             change_address: params.change_address,
             auto_confirm: params.auto_confirm,
+            use_rebar: params.use_rebar,
+            rebar_tier: params.rebar_tier,
         };
         self.provider.create_transaction(trait_params).await
     }
@@ -314,6 +318,8 @@ pub struct SendParams {
     pub from: Option<Vec<String>>,
     pub change_address: Option<String>,
     pub auto_confirm: bool,
+    pub use_rebar: bool,
+    pub rebar_tier: u8,
 }
 
 /// UTXO information

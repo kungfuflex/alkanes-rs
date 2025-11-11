@@ -92,7 +92,7 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
                 print_utxos(&utxos);
             }
         }
-        WalletCommands::Send { address, amount, fee_rate, send_all, from, change_address, auto_confirm } => {
+        WalletCommands::Send { address, amount, fee_rate, send_all, from, change_address, use_rebar, rebar_tier, auto_confirm } => {
             let params = alkanes_cli_common::traits::SendParams {
                 address,
                 amount,
@@ -101,6 +101,8 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
                 from,
                 change_address,
                 auto_confirm,
+                use_rebar,
+                rebar_tier,
             };
             let txid = system.provider_mut().send(params).await?;
             println!("Transaction sent: {txid}");

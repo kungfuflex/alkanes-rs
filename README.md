@@ -207,14 +207,24 @@ alkanes brc20-prog wrap-btc 100000 \
 
 Comprehensive documentation is available in the [`docs/`](./docs) directory:
 
+### Core Documentation
+- **[Documentation Index](./docs/README.md)** - Complete documentation structure
 - **[Getting Started](./docs/quickstart.md)** - Quick start guide
 - **[CLI Usage](./docs/cli-usage.md)** - Complete CLI reference
+
+### Protocol Features
 - **[BRC20-Prog Guide](./docs/cli/brc20-prog.md)** - BRC20 programmable contracts
 - **[Wrap-BTC Feature](./docs/features/wrap-btc.md)** - Wrapping BTC to frBTC
+- **[External Signing](./docs/features/external-signing.md)** - Address-only mode and external key signing
+- **[Transaction Broadcasting](./docs/features/transaction-broadcasting.md)** - All broadcast options (Slipstream, Rebar, etc.)
+- **[Rebar Shield](./docs/features/rebar-shield.md)** - Private relay with MEV protection
+
+### Development
 - **[Architecture](./docs/architecture/overview.md)** - System design and components
 - **[Crates Reference](./docs/crates/)** - Detailed crate documentation
 - **[Developer Guide](./docs/dev/building-alkanes.md)** - Building alkane contracts
 - **[Examples](./docs/examples/)** - Usage examples and patterns
+- **[Helper Scripts](./scripts/README.md)** - Transaction building and broadcasting scripts
 
 For detailed API documentation and protocol specifications, see:
 - [Alkanes Wiki](https://github.com/kungfuflex/alkanes-rs/wiki) - Protocol specification

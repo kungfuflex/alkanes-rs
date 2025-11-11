@@ -74,9 +74,12 @@ impl SystemAlkanes {
             }
         }
 
-        // FIXED: Use user-specified wallet file path or generate default
-        let wallet_file = if let Some(ref path) = args.wallet_file {
-            expand_tilde(path)?
+        // Handle wallet-address mode (no keystore needed)
+        let wallet_path_opt = if args.wallet_address.is_some() {
+            // In address-only mode, we don't need a wallet file
+            None
+        } else if let Some(ref path) = args.wallet_file {
+            Some(expand_tilde(path)?)
         } else {
             let network_name = match network_params.network {
                 bitcoin::Network::Bitcoin => "mainnet",
@@ -86,13 +89,15 @@ impl SystemAlkanes {
                 _ => "custom",
             };
             // Default to keystore.json extension (not .asc since we handle encryption internally)
-            expand_tilde(&format!("~/.deezel/{network_name}.keystore.json"))?
+            Some(expand_tilde(&format!("~/.deezel/{network_name}.keystore.json"))?)
         };
         
         // Create wallet directory if it doesn't exist
-        if let Some(parent) = std::path::Path::new(&wallet_file).parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create wallet directory")?;
+        if let Some(ref wallet_file) = wallet_path_opt {
+            if let Some(parent) = std::path::Path::new(wallet_file).parent() {
+                std::fs::create_dir_all(parent)
+                    .context("Failed to create wallet directory")?;
+            }
         }
 
         // Determine the correct RPC URLs, prioritizing command-line args over network defaults.
@@ -136,7 +141,7 @@ impl SystemAlkanes {
             args.rpc_config.sandshrew_rpc_url.clone(),
             esplora_url,
             args.rpc_config.provider.clone(),
-            Some(std::path::PathBuf::from(&wallet_file)),
+            wallet_path_opt.map(std::path::PathBuf::from),
         )
         .await?;
 
@@ -144,8 +149,19 @@ impl SystemAlkanes {
             provider.set_passphrase(Some(passphrase.clone()));
         }
 
-        // Initialize provider
-        provider.initialize().await?;
+        // Handle different wallet modes
+        if let Some(ref address) = args.wallet_address {
+            // Address-only mode: no keystore needed
+            log::info!("Using address-only mode with address: {}", address);
+            provider.set_address_only_mode(address.clone(), "p2wpkh".to_string());
+        } else if let Some(ref key_file) = args.wallet_key_file {
+            // External key mode: load private key from file
+            log::info!("Loading private key from file: {}", key_file);
+            provider.load_external_key(key_file)?;
+        } else {
+            // Normal keystore mode
+            provider.initialize().await?;
+        }
 
         // Create PGP provider
 
@@ -1230,7 +1246,7 @@ impl SystemWallet for SystemAlkanes {
                 }
                 Ok(())
             },
-           WalletCommands::Send { address, amount, fee_rate, send_all, from, change, yes } => {
+           WalletCommands::Send { address, amount, fee_rate, send_all, from, change, use_rebar, rebar_tier, yes } => {
                // Resolve address identifiers
                let resolved_address = provider.resolve_all_identifiers(&address).await?;
                let resolved_from = if let Some(from_addrs) = from {
@@ -1256,6 +1272,8 @@ impl SystemWallet for SystemAlkanes {
                    from: resolved_from,
                    change_address: resolved_change,
                    auto_confirm: yes,
+                   use_rebar,
+                   rebar_tier,
                };
                
                match provider.send(send_params).await {
@@ -1282,6 +1300,8 @@ impl SystemWallet for SystemAlkanes {
                    from: None,
                    change_address: None,
                    auto_confirm: yes,
+                   use_rebar: false,
+                   rebar_tier: 1,
                };
                
                match provider.send(send_params).await {
@@ -1308,6 +1328,8 @@ impl SystemWallet for SystemAlkanes {
                    from: None,
                    change_address: None,
                    auto_confirm: yes,
+                   use_rebar: false,
+                   rebar_tier: 1,
                };
                
                match provider.create_transaction(create_params).await {
@@ -1322,16 +1344,246 @@ impl SystemWallet for SystemAlkanes {
                }
                Ok(())
            },
-           WalletCommands::SignTx { tx_hex } => {
-               match provider.sign_transaction(tx_hex).await {
+           WalletCommands::SignTx { tx_hex, from_file, truncate_excess_vsize } => {
+               // Read hex from file or argument
+               let hex_string = if let Some(file_path) = from_file {
+                   std::fs::read_to_string(file_path)
+                       .map_err(|e| AlkanesError::Storage(format!("Failed to read file: {}", e)))?
+                       .trim()
+                       .to_string()
+               } else {
+                   tx_hex.ok_or_else(|| AlkanesError::InvalidParameters("No transaction hex or file provided".to_string()))?
+               };
+               
+               // Decode the unsigned transaction first
+               use bitcoin::consensus::Decodable;
+               let tx_bytes = hex::decode(&hex_string).map_err(|e| AlkanesError::InvalidParameters(format!("Invalid hex: {}", e)))?;
+               let unsigned_tx = bitcoin::Transaction::consensus_decode(&mut &tx_bytes[..])
+                   .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid transaction: {}", e)))?;
+               
+               const MAX_TX_SIZE: usize = 1_000_000; // Bitcoin consensus limit (1 MB)
+               const SAFETY_MARGIN: f64 = 0.98; // 2% safety margin
+               
+               let mut working_tx = unsigned_tx.clone();
+               let original_input_count = working_tx.input.len();
+               
+               // If truncate flag is set, estimate signed size and truncate if needed
+               if truncate_excess_vsize {
+                   // Detect fee rate from unsigned transaction by calculating:
+                   // original_fee_rate = (total_input - output) / unsigned_vsize
+                   // This works because for --send-all: output = input - fee
+                   let unsigned_vsize = hex_string.len() / 2; // Approximate unsigned size
+                   let original_output_amount = working_tx.output.get(0)
+                       .map(|o| o.value.to_sat())
+                       .unwrap_or(0);
+                   
+                   // Calculate total input (assume 1999 sats per UTXO - P2WPKH standard)
+                   let sats_per_input = 1999u64;
+                   let total_input = working_tx.input.len() as u64 * sats_per_input;
+                   let unsigned_fee = total_input.saturating_sub(original_output_amount);
+                   
+                   // Detect fee rate from unsigned transaction
+                   let detected_fee_rate = if unsigned_vsize > 0 {
+                       unsigned_fee as f64 / unsigned_vsize as f64
+                   } else {
+                       2.1 // Default fallback
+                   };
+                   
+                   eprintln!("📊 Detected fee rate from unsigned tx: {:.4} sat/vB", detected_fee_rate);
+                   
+                   // Estimate signed size: each input adds ~66 bytes of witness data
+                   let estimated_signed_size = unsigned_vsize + (working_tx.input.len() * 66);
+                   
+                   if estimated_signed_size > MAX_TX_SIZE {
+                       let target_size = (MAX_TX_SIZE as f64 * SAFETY_MARGIN) as usize;
+                       
+                       // Calculate max inputs: size = overhead + (inputs * 107 bytes)
+                       let overhead = 53; // Base tx + 1 P2TR output
+                       let bytes_per_signed_input = 107;
+                       let max_inputs = (target_size - overhead) / bytes_per_signed_input;
+                       
+                       if max_inputs < working_tx.input.len() {
+                           eprintln!("⚠️  Transaction will exceed consensus limit ({} MB)", MAX_TX_SIZE / 1_000_000);
+                           eprintln!("⚠️  Truncating inputs: {} → {} inputs", original_input_count, max_inputs);
+                           eprintln!("⚠️  Removed {} inputs", original_input_count - max_inputs);
+                           
+                           working_tx.input.truncate(max_inputs);
+                           
+                           // Recalculate output amount with detected fee rate
+                           let truncated_input = max_inputs as u64 * sats_per_input;
+                           
+                           // Calculate proper vSize for signed P2TR transaction
+                           // P2TR signed input: 229 WU / 4 = 57.25 vbytes (use 58)
+                           let base_vsize = 10u64;
+                           let input_vsize = 58u64; // P2TR with witness discount
+                           let output_vsize = 43u64;
+                           let witness_overhead = 1u64;
+                           let truncated_tx_vsize = base_vsize + 
+                               (max_inputs as u64 * input_vsize) + 
+                               (working_tx.output.len() as u64 * output_vsize) +
+                               witness_overhead;
+                           
+                           let truncated_fee = (truncated_tx_vsize as f64 * detected_fee_rate).ceil() as u64;
+                           let truncated_output = truncated_input.saturating_sub(truncated_fee);
+                           
+                           if let Some(output) = working_tx.output.get_mut(0) {
+                               output.value = bitcoin::Amount::from_sat(truncated_output);
+                           }
+                           
+                           let actual_fee_rate = truncated_fee as f64 / truncated_tx_vsize as f64;
+                           
+                           eprintln!("📊 Adjusted transaction:");
+                           eprintln!("   Inputs: {} UTXOs", max_inputs);
+                           eprintln!("   Input amount: {} sats", truncated_input);
+                           eprintln!("   Transaction vSize: {} vbytes", truncated_tx_vsize);
+                           eprintln!("   Fee: {} sats", truncated_fee);
+                           eprintln!("   Output amount: {} sats", truncated_output);
+                           eprintln!("   Fee rate: {:.4} sat/vB", actual_fee_rate);
+                           eprintln!("");
+                       }
+                   }
+               }
+               
+               // Serialize the (possibly truncated) transaction
+               use bitcoin::consensus::Encodable;
+               let mut truncated_bytes = Vec::new();
+               working_tx.consensus_encode(&mut truncated_bytes)
+                   .map_err(|e| AlkanesError::InvalidParameters(format!("Failed to encode transaction: {}", e)))?;
+               let truncated_hex = hex::encode(truncated_bytes);
+               
+               match provider.sign_transaction(truncated_hex).await {
                    Ok(signed_hex) => {
+                       let signed_bytes = hex::decode(&signed_hex).map_err(|e| AlkanesError::InvalidParameters(format!("Invalid signed hex: {}", e)))?;
+                       let signed_size = signed_bytes.len();
+                       
                        println!("✅ Transaction signed successfully!");
-                       println!("📄 Signed transaction hex: {signed_hex}");
+                       
+                       if truncate_excess_vsize && original_input_count != working_tx.input.len() {
+                           println!("⚠️  Transaction was truncated to fit consensus limit");
+                           println!("   Original inputs: {}", original_input_count);
+                           println!("   Final inputs: {}", working_tx.input.len());
+                           println!("   Removed inputs: {}", original_input_count - working_tx.input.len());
+                       }
+                       
+                       println!("📏 Signed transaction size: {} bytes ({:.2} KB)", signed_size, signed_size as f64 / 1024.0);
+                       
+                       if signed_size > MAX_TX_SIZE {
+                           eprintln!("❌ WARNING: Signed transaction still exceeds consensus limit!");
+                           eprintln!("   Size: {} bytes", signed_size);
+                           eprintln!("   Limit: {} bytes", MAX_TX_SIZE);
+                           eprintln!("   You may need to reduce inputs further");
+                       } else {
+                           println!("✅ Transaction size is within consensus limit");
+                       }
+                       
+                       println!("📄 Signed transaction hex:");
+                       println!("{signed_hex}");
                    },
                    Err(e) => {
                        println!("❌ Failed to sign transaction: {e}");
                        return Err(e);
                    }
+               }
+               Ok(())
+           },
+           WalletCommands::Sign { tx_hex, from_file } => {
+               // This command uses --wallet-key-file for signing
+               // Read hex from file or argument
+               let hex_string = if let Some(file_path) = from_file {
+                   std::fs::read_to_string(file_path)
+                       .map_err(|e| AlkanesError::Storage(format!("Failed to read file: {}", e)))?
+                       .trim()
+                       .to_string()
+               } else {
+                   tx_hex.ok_or_else(|| AlkanesError::InvalidParameters("No transaction hex or file provided".to_string()))?
+               };
+               
+               match provider.sign_transaction(hex_string).await {
+                   Ok(signed_hex) => {
+                       println!("✅ Transaction signed successfully!");
+                       println!("📄 Signed transaction hex:");
+                       println!("{signed_hex}");
+                   },
+                   Err(e) => {
+                       eprintln!("❌ Failed to sign transaction: {e}");
+                       return Err(e);
+                   }
+               }
+               Ok(())
+           },
+           WalletCommands::DecodeTx { tx_hex, file, raw } => {
+               use bitcoin::consensus::deserialize;
+               use bitcoin::Transaction;
+               
+               // Read hex from file or argument
+               let hex_string = if let Some(file_path) = file {
+                   std::fs::read_to_string(file_path)
+                       .map_err(|e| AlkanesError::Storage(format!("Failed to read file: {}", e)))?
+                       .trim()
+                       .to_string()
+               } else {
+                   tx_hex.ok_or_else(|| AlkanesError::InvalidParameters("No transaction hex or file provided".to_string()))?
+               };
+               
+               let tx_bytes = hex::decode(&hex_string)
+                   .map_err(|e| AlkanesError::Parse(format!("Invalid hex: {}", e)))?;
+               
+               let tx: Transaction = deserialize(&tx_bytes)
+                   .map_err(|e| AlkanesError::Parse(format!("Invalid transaction: {}", e)))?;
+               
+               if raw {
+                   // Output as JSON
+                   let tx_json = serde_json::json!({
+                       "txid": tx.compute_txid().to_string(),
+                       "version": tx.version.0,
+                       "locktime": tx.lock_time.to_consensus_u32(),
+                       "size": tx_bytes.len(),
+                       "vsize": tx.vsize(),
+                       "weight": tx.weight().to_wu(),
+                       "vin_count": tx.input.len(),
+                       "vout_count": tx.output.len(),
+                       "inputs": tx.input.iter().map(|input| {
+                           serde_json::json!({
+                               "txid": input.previous_output.txid.to_string(),
+                               "vout": input.previous_output.vout,
+                               "sequence": input.sequence.0,
+                               "witness_elements": input.witness.len(),
+                           })
+                       }).collect::<Vec<_>>(),
+                       "outputs": tx.output.iter().map(|output| {
+                           serde_json::json!({
+                               "value": output.value.to_sat(),
+                               "script_pubkey": hex::encode(output.script_pubkey.as_bytes()),
+                           })
+                       }).collect::<Vec<_>>(),
+                   });
+                   println!("{}", serde_json::to_string_pretty(&tx_json)?);
+               } else {
+                   // Pretty print
+                   println!("🔍 Transaction Details");
+                   println!("═══════════════════════════════════════════════════════════");
+                   println!("📋 TXID: {}", tx.compute_txid());
+                   println!("📦 Version: {}", tx.version.0);
+                   println!("🔒 Locktime: {}", tx.lock_time.to_consensus_u32());
+                   println!("");
+                   println!("📏 Size Information:");
+                   println!("   Raw Size: {} bytes", tx_bytes.len());
+                   println!("   Virtual Size: {} vbytes", tx.vsize());
+                   println!("   Weight: {} WU", tx.weight().to_wu());
+                   println!("");
+                   println!("📥 Inputs: {}", tx.input.len());
+                   for (i, input) in tx.input.iter().enumerate() {
+                       println!("   [{}] {}:{}", i, input.previous_output.txid, input.previous_output.vout);
+                       println!("       Sequence: {}", input.sequence.0);
+                       println!("       Witness elements: {}", input.witness.len());
+                   }
+                   println!("");
+                   println!("📤 Outputs: {}", tx.output.len());
+                   for (i, output) in tx.output.iter().enumerate() {
+                       println!("   [{}] {} sats", i, output.value.to_sat());
+                       println!("       Script: {}", hex::encode(output.script_pubkey.as_bytes()));
+                   }
+                   println!("═══════════════════════════════════════════════════════════");
                }
                Ok(())
            },
@@ -1735,12 +1987,81 @@ impl SystemBitcoind for SystemAlkanes {
                 }
                 Ok(())
             },
-            BitcoindCommands::Sendrawtransaction { tx_hex, raw } => {
-                let result = <ConcreteProvider as BitcoinRpcProvider>::send_raw_transaction(provider, &tx_hex).await?;
+            BitcoindCommands::Sendrawtransaction { tx_hex, from_file, use_slipstream, use_rebar, raw } => {
+                // Read hex from file or argument
+                let hex_string = if let Some(file_path) = from_file {
+                    std::fs::read_to_string(file_path)
+                        .map_err(|e| AlkanesError::Storage(format!("Failed to read file: {}", e)))?
+                        .trim()
+                        .to_string()
+                } else {
+                    tx_hex.ok_or_else(|| AlkanesError::InvalidParameters("No transaction hex or file provided".to_string()))?
+                };
+                
+                let result = if use_rebar {
+                    // Use Rebar Shield service
+                    eprintln!("🔒 Using Rebar Shield for private transaction broadcast...");
+                    eprintln!("   Endpoint: https://shield.rebarlabs.io/v1/rpc");
+                    eprintln!("   Note: Transaction must include Rebar payment output");
+                    eprintln!("");
+                    
+                    use alkanes_cli_common::provider::rebar;
+                    rebar::submit_transaction(&hex_string).await
+                        .map_err(|e| AlkanesError::Network(format!("Rebar Shield error: {}", e)))?
+                } else if use_slipstream {
+                    // Use MARA Slipstream service
+                    eprintln!("🚀 Using MARA Slipstream for transaction broadcast...");
+                    eprintln!("   Endpoint: https://slipstream.mara.com/rest-api/submit-tx");
+                    eprintln!("   Note: Minimum fee rate is 2 sats/vByte");
+                    eprintln!("");
+                    
+                    let client = reqwest::Client::new();
+                    let payload = serde_json::json!({
+                        "tx_hex": hex_string
+                    });
+                    
+                    let response = client
+                        .post("https://slipstream.mara.com/rest-api/submit-tx")
+                        .header("Content-Type", "application/json")
+                        .json(&payload)
+                        .send()
+                        .await
+                        .map_err(|e| AlkanesError::Network(format!("Slipstream request failed: {}", e)))?;
+                    
+                    let status = response.status();
+                    let response_text = response.text().await
+                        .map_err(|e| AlkanesError::Network(format!("Failed to read Slipstream response: {}", e)))?;
+                    
+                    if !status.is_success() {
+                        return Err(AlkanesError::Network(format!("Slipstream error ({}): {}", status, response_text)));
+                    }
+                    
+                    let response_json: serde_json::Value = serde_json::from_str(&response_text)
+                        .map_err(|e| AlkanesError::Network(format!("Failed to parse Slipstream response: {}", e)))?;
+                    
+                    // Extract txid from response (in "message" field according to API spec)
+                    if let Some(txid) = response_json.get("message").and_then(|v| v.as_str()) {
+                        txid.to_string()
+                    } else {
+                        // Return full response if no message found
+                        response_text
+                    }
+                } else {
+                    // Use standard Bitcoin RPC
+                    <ConcreteProvider as BitcoinRpcProvider>::send_raw_transaction(provider, &hex_string).await?
+                };
+                
                 if raw {
                     println!("{result}");
                 } else {
-                    println!("{result}");
+                    if use_slipstream {
+                        println!("✅ Transaction submitted to MARA Slipstream successfully!");
+                        println!("🔗 Transaction ID: {result}");
+                        println!("💡 Your transaction will be included in the next MARA-mined block");
+                    } else {
+                        println!("✅ Transaction broadcast successfully!");
+                        println!("🔗 Transaction ID: {result}");
+                    }
                 }
                 Ok(())
             },
