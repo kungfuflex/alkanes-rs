@@ -1404,7 +1404,7 @@ impl SystemWallet for SystemAlkanes {
                let unsigned_tx = bitcoin::Transaction::consensus_decode(&mut &tx_bytes[..])
                    .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid transaction: {}", e)))?;
                
-               const SAFETY_MARGIN: f64 = 0.98; // 2% safety margin
+               const SAFETY_MARGIN: f64 = 0.975; // 2.5% safety margin (accounts for varint variations)
                
                let mut working_tx = unsigned_tx.clone();
                let original_input_count = working_tx.input.len();
@@ -1434,11 +1434,11 @@ impl SystemWallet for SystemAlkanes {
                    eprintln!("📊 Detected fee rate from unsigned tx: {:.4} sat/vB", detected_fee_rate);
                    
                    // Estimate signed P2WPKH transaction size
-                   // Base: version(4) + marker(1) + flag(1) + input_count + inputs*(36+1+4) + output_count(1) + output(43) + locktime(4)
-                   // Witness: inputs * 107 bytes average (1+72 sig + 1+33 pubkey)
+                   // Base: version(4) + marker(1) + flag(1) + input_count + inputs*(txid(32)+vout(4)+scriptSig(1)+sequence(4)) + output_count(1) + output(43) + locktime(4)
+                   // Witness: per input: witness_item_count(1) + sig_len(1) + sig(72) + pubkey_len(1) + pubkey(33) = 108 bytes
                    let input_count_varint_size = if working_tx.input.len() < 253 { 1 } else if working_tx.input.len() < 65536 { 3 } else { 5 };
                    let base_size = 4 + 1 + 1 + input_count_varint_size + (working_tx.input.len() * 41) + 1 + 43 + 4;
-                   let witness_size = working_tx.input.len() * 107;
+                   let witness_size = working_tx.input.len() * 108; // 1 (count) + 1+72 (sig) + 1+33 (pubkey)
                    let estimated_signed_size = base_size + witness_size;
                    
                    eprintln!("📊 Size limit: {} bytes ({:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
@@ -1448,11 +1448,12 @@ impl SystemWallet for SystemAlkanes {
                        let target_size = (max_tx_size as f64 * SAFETY_MARGIN) as usize;
                        
                        // Calculate max inputs for P2WPKH (in raw bytes, not vBytes!)
-                       // P2WPKH input: 41 bytes base + 107 bytes witness = 148 bytes raw per input
+                       // P2WPKH input: 41 bytes base + 108 bytes witness = 149 bytes raw per input
+                       // Witness per input: 1 (witness_count) + 1+72 (sig) + 1+33 (pubkey) = 108 bytes
                        // Overhead: version(4) + marker(1) + flag(1) + input_count + output_count(1) + output(43) + locktime(4)
                        let input_count_varint = if working_tx.input.len() < 253 { 1 } else if working_tx.input.len() < 65536 { 3 } else { 5 };
                        let overhead_bytes = 4 + 1 + 1 + input_count_varint + 1 + 43 + 4; // ~55-59 bytes
-                       let bytes_per_input = 41 + 107; // 148 raw bytes per P2WPKH input
+                       let bytes_per_input = 41 + 108; // 149 raw bytes per P2WPKH input
                        
                        let available_for_inputs = target_size.saturating_sub(overhead_bytes);
                        let max_inputs = available_for_inputs / bytes_per_input;
@@ -1470,9 +1471,9 @@ impl SystemWallet for SystemAlkanes {
                            // Calculate proper vSize for signed P2WPKH transaction
                            // vSize = (base_weight + witness_weight) / 4
                            // Base weight: overhead + (inputs * 41) = (overhead + inputs*41) * 4
-                           // Witness weight: inputs * 107 (no multiplier for witness)
+                           // Witness weight: inputs * 108 (no multiplier for witness)
                            let truncated_base_size = overhead_bytes + (max_inputs * 41);
-                           let truncated_witness_size = max_inputs * 107;
+                           let truncated_witness_size = max_inputs * 108;
                            let truncated_weight = (truncated_base_size * 4) + truncated_witness_size;
                            let truncated_tx_vsize = (truncated_weight + 3) / 4; // Round up
                            
