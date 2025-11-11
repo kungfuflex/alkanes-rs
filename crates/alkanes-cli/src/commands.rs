@@ -167,6 +167,12 @@ pub enum BitcoindCommands {
         #[arg(long)]
         raw: bool,
     },
+    Decoderawtransaction {
+        /// Raw transaction hex
+        hex: String,
+        #[arg(long)]
+        raw: bool,
+    },
     Getchaintips {
         #[arg(long)]
         raw: bool,

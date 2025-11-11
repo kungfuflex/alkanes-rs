@@ -1316,8 +1316,12 @@ impl WalletProvider for ConcreteProvider {
         for (i, psbt_input) in psbt.inputs.iter_mut().enumerate() {
             let prev_txout = &prevouts[i];
 
+            log::info!("Signing input {}: tap_scripts.is_empty()={}, tap_scripts.len()={}", 
+                i, psbt_input.tap_scripts.is_empty(), psbt_input.tap_scripts.len());
+
             if !psbt_input.tap_scripts.is_empty() {
                 // Script-path spend
+                log::info!("Input {} is a script-path spend", i);
                 let (control_block, (script, leaf_version)) = psbt_input.tap_scripts.iter().next().unwrap();
                 let leaf_hash = taproot::TapLeafHash::from_script(script, *leaf_version);
                 let sighash = sighash_cache.taproot_script_spend_signature_hash(
@@ -1363,6 +1367,12 @@ impl WalletProvider for ConcreteProvider {
                 final_witness.push(taproot_signature.to_vec());
                 final_witness.push(script.as_bytes());
                 final_witness.push(control_block.serialize());
+                
+                log::info!("Created script-path witness with {} items:", final_witness.len());
+                log::info!("  Witness[0] (signature): {} bytes", taproot_signature.to_vec().len());
+                log::info!("  Witness[1] (script): {} bytes", script.as_bytes().len());
+                log::info!("  Witness[2] (control_block): {} bytes", control_block.serialize().len());
+                
                 psbt_input.final_script_witness = Some(final_witness);
 
             } else {

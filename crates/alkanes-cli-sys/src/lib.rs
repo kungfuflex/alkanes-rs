@@ -1954,6 +1954,67 @@ impl SystemBitcoind for SystemAlkanes {
                 }
                 Ok(())
             },
+            BitcoindCommands::Decoderawtransaction { hex, raw } => {
+                use bitcoin::consensus::deserialize;
+                use bitcoin::Transaction;
+                
+                let tx_bytes = hex::decode(&hex)?;
+                let tx: Transaction = deserialize(&tx_bytes)?;
+                
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "txid": tx.compute_txid().to_string(),
+                        "version": tx.version.0,
+                        "locktime": tx.lock_time.to_consensus_u32(),
+                        "size": tx_bytes.len(),
+                        "vsize": tx.vsize(),
+                        "weight": tx.weight().to_wu(),
+                        "inputs": tx.input.iter().enumerate().map(|(i, input)| {
+                            serde_json::json!({
+                                "index": i,
+                                "txid": input.previous_output.txid.to_string(),
+                                "vout": input.previous_output.vout,
+                                "sequence": input.sequence.0,
+                                "witness_count": input.witness.len(),
+                                "witness_sizes": input.witness.iter().map(|w| w.len()).collect::<Vec<_>>(),
+                            })
+                        }).collect::<Vec<_>>(),
+                        "outputs": tx.output.iter().enumerate().map(|(i, output)| {
+                            serde_json::json!({
+                                "index": i,
+                                "value": output.value.to_sat(),
+                                "script_pubkey_hex": hex::encode(output.script_pubkey.as_bytes()),
+                                "script_pubkey_asm": format!("{:?}", output.script_pubkey),
+                            })
+                        }).collect::<Vec<_>>(),
+                    }))?);
+                } else {
+                    println!("📄 Transaction Decoded");
+                    println!("═════════════════════");
+                    println!("🔗 TXID: {}", tx.compute_txid());
+                    println!("📏 Size: {} bytes", tx_bytes.len());
+                    println!("⚖️  vSize: {} vbytes", tx.vsize());
+                    println!("⚖️  Weight: {} WU", tx.weight().to_wu());
+                    println!("\n📥 Inputs ({}):", tx.input.len());
+                    for (i, input) in tx.input.iter().enumerate() {
+                        println!("  Input #{i}:");
+                        println!("    Prev TXID: {}", input.previous_output.txid);
+                        println!("    Prev Vout: {}", input.previous_output.vout);
+                        println!("    Sequence: {}", input.sequence.0);
+                        println!("    Witness items: {}", input.witness.len());
+                        for (j, item) in input.witness.iter().enumerate() {
+                            println!("      Witness[{j}]: {} bytes", item.len());
+                        }
+                    }
+                    println!("\n📤 Outputs ({}):", tx.output.len());
+                    for (i, output) in tx.output.iter().enumerate() {
+                        println!("  Output #{i}:");
+                        println!("    Value: {} sats", output.value.to_sat());
+                        println!("    Script: {} bytes", output.script_pubkey.len());
+                    }
+                }
+                Ok(())
+            },
             BitcoindCommands::Getchaintips { raw } => {
                 let result = <ConcreteProvider as BitcoinRpcProvider>::get_chain_tips(provider).await?;
                 if raw {

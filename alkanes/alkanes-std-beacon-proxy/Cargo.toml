@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 alkanes-runtime = { workspace = true }
 alkanes-support = { workspace = true }
+alkanes-macros = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
 metashrew-support = { workspace = true }

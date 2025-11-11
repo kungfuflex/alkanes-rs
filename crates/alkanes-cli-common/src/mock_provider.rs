@@ -357,12 +357,91 @@ impl WalletProvider for MockProvider {
     }
     
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
+        use bitcoin::sighash::{SighashCache, TapSighashType, Prevouts};
+        use bitcoin::taproot;
+        use bitcoin::Witness;
+        use bitcoin::key::TapTweak;
+        
         let secp = self.secp();
         let mut psbt = psbt.clone();
-        let mut keys = HashMap::new();
-        let private_key = PrivateKey::new(self.secret_key, self.network);
-        keys.insert(self.internal_key, private_key);
-        psbt.sign(&keys, secp).map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
+        let network = self.network;
+        
+        // Build prevouts for sighash calculation
+        let mut prevouts = Vec::new();
+        for input in &psbt.unsigned_tx.input {
+            let utxo = self.get_utxo(&input.previous_output).await?
+                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", input.previous_output)))?;
+            prevouts.push(utxo);
+        }
+        
+        let mut tx = psbt.unsigned_tx.clone();
+        let mut sighash_cache = SighashCache::new(&mut tx);
+        
+        for (i, psbt_input) in psbt.inputs.iter_mut().enumerate() {
+            let prev_txout = &prevouts[i];
+            
+            if !psbt_input.tap_scripts.is_empty() {
+                // Script-path spend
+                log::info!("MockProvider: Signing input {} as script-path spend", i);
+                
+                let (control_block, (script, leaf_version)) = psbt_input.tap_scripts.iter().next().unwrap();
+                let leaf_hash = taproot::TapLeafHash::from_script(script, *leaf_version);
+                
+                let sighash = sighash_cache.taproot_script_spend_signature_hash(
+                    i,
+                    &Prevouts::All(&prevouts),
+                    leaf_hash,
+                    TapSighashType::Default,
+                )?;
+                
+                let msg = bitcoin::secp256k1::Message::from(sighash);
+                let keypair = bitcoin::secp256k1::Keypair::from_secret_key(secp, &self.secret_key);
+                
+                #[cfg(not(target_arch = "wasm32"))]
+                let signature = secp.sign_schnorr_with_rng(&msg, &keypair, &mut rand::thread_rng());
+                #[cfg(target_arch = "wasm32")]
+                let signature = secp.sign_schnorr_with_rng(&msg, &keypair, &mut rand::OsRng);
+                
+                let taproot_signature = taproot::Signature { signature, sighash_type: TapSighashType::Default };
+                
+                let mut final_witness = Witness::new();
+                final_witness.push(taproot_signature.to_vec());
+                final_witness.push(script.as_bytes());
+                final_witness.push(control_block.serialize());
+                
+                log::info!("MockProvider: Created witness with {} items:", final_witness.len());
+                log::info!("  Witness[0] (signature): {} bytes", taproot_signature.to_vec().len());
+                log::info!("  Witness[1] (script): {} bytes", script.as_bytes().len());
+                log::info!("  Witness[2] (control_block): {} bytes", control_block.serialize().len());
+                
+                psbt_input.final_script_witness = Some(final_witness);
+                
+            } else {
+                // Key-path spend
+                log::info!("MockProvider: Signing input {} as key-path spend", i);
+                
+                let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                    i,
+                    &Prevouts::All(&prevouts),
+                    TapSighashType::Default,
+                )?;
+                
+                let msg = bitcoin::secp256k1::Message::from(sighash);
+                let keypair = bitcoin::secp256k1::Keypair::from_secret_key(secp, &self.secret_key);
+                let untweaked_keypair = bitcoin::key::UntweakedKeypair::from(keypair);
+                let tweaked_keypair = untweaked_keypair.tap_tweak(secp, None);
+                
+                #[cfg(not(target_arch = "wasm32"))]
+                let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut rand::thread_rng());
+                #[cfg(target_arch = "wasm32")]
+                let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut rand::OsRng);
+                
+                let taproot_signature = taproot::Signature { signature, sighash_type: TapSighashType::Default };
+                
+                psbt_input.tap_key_sig = Some(taproot_signature);
+            }
+        }
+        
         Ok(psbt)
     }
     

@@ -129,7 +129,7 @@ prost-build = { workspace = true }
 alkanes-cli-common = { path = ".", features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt", "time", "sync", "test-util"] }
 env_logger = "0.10"
-wiremock = "0.6.0"
+#wiremock = "0.6.0"  # Temporarily disabled due to compatibility issues
 mockall = { workspace = true }
 bech32 = { workspace = true }
 tempfile = { workspace = true }

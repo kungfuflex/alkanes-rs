@@ -1,3 +1,4 @@
+use alkanes_macros::storage_variable;
 use alkanes_runtime::auth::AuthenticatedResponder;
 use alkanes_runtime::declare_alkane;
 use alkanes_runtime::message::MessageDispatch;
@@ -32,20 +33,11 @@ impl BeaconProxy {
         let response = CallResponse::forward(&context.incoming_alkanes);
         Ok(response)
     }
-    pub fn beacon_pointer() -> StoragePointer {
-        StoragePointer::from_keyword("/beacon")
-    }
 
-    pub fn beacon() -> Result<AlkaneId> {
-        Ok(Self::beacon_pointer().get().as_ref().clone().try_into()?)
-    }
-
-    pub fn set_beacon(v: AlkaneId) {
-        Self::beacon_pointer().set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
-    }
+    storage_variable!(beacon: AlkaneId);
 
     pub fn get_logic_impl(&self) -> Result<AlkaneId> {
-        let beacon = Self::beacon_pointer().get().as_ref().clone().try_into()?;
+        let beacon = self.beacon()?;
         let response = self.staticcall(
             &Cellpack {
                 target: beacon,
@@ -61,7 +53,7 @@ impl BeaconProxy {
         self.observe_proxy_initialization()?;
         let context = self.context()?;
 
-        Self::set_beacon(implementation);
+        self.set_beacon(implementation);
         let response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
         Ok(response)
     }
