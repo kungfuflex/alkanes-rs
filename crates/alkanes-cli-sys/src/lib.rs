@@ -161,16 +161,18 @@ impl SystemAlkanes {
 
         // Create provider with the resolved URLs
         log::info!(
-            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, sandshrew_rpc: {:?}, esplora: {:?}",
+            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, sandshrew_rpc: {:?}, titan_api: {:?}, esplora: {:?}",
             &bitcoin_rpc_url,
             &metashrew_rpc_url,
             &args.rpc_config.sandshrew_rpc_url,
+            &args.rpc_config.titan_api_url,
             &esplora_url
         );
         let mut provider = ConcreteProvider::new(
             bitcoin_rpc_url,
             metashrew_rpc_url,
             args.rpc_config.sandshrew_rpc_url.clone(),
+            args.rpc_config.titan_api_url.clone(),
             esplora_url,
             args.rpc_config.provider.clone(),
             wallet_path_opt.map(std::path::PathBuf::from),
@@ -1431,8 +1433,13 @@ impl SystemWallet for SystemAlkanes {
                    
                    eprintln!("📊 Detected fee rate from unsigned tx: {:.4} sat/vB", detected_fee_rate);
                    
-                   // Estimate signed size: each input adds ~66 bytes of witness data
-                   let estimated_signed_size = unsigned_vsize + (working_tx.input.len() * 66);
+                   // Estimate signed P2WPKH transaction size
+                   // Base: version(4) + marker(1) + flag(1) + input_count + inputs*(36+1+4) + output_count(1) + output(43) + locktime(4)
+                   // Witness: inputs * 107 bytes average (1+72 sig + 1+33 pubkey)
+                   let input_count_varint_size = if working_tx.input.len() < 253 { 1 } else if working_tx.input.len() < 65536 { 3 } else { 5 };
+                   let base_size = 4 + 1 + 1 + input_count_varint_size + (working_tx.input.len() * 41) + 1 + 43 + 4;
+                   let witness_size = working_tx.input.len() * 107;
+                   let estimated_signed_size = base_size + witness_size;
                    
                    eprintln!("📊 Size limit: {} bytes ({:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
                    eprintln!("📊 Estimated signed size: {} bytes ({:.2} KB)", estimated_signed_size, estimated_signed_size as f64 / 1024.0);
@@ -1440,16 +1447,15 @@ impl SystemWallet for SystemAlkanes {
                    if estimated_signed_size > max_tx_size {
                        let target_size = (max_tx_size as f64 * SAFETY_MARGIN) as usize;
                        
-                       // Calculate max inputs for P2WPKH
-                       // P2WPKH input: 41 bytes base + 107 bytes witness = 148 bytes raw
-                       // Weight: (41 * 4) + 107 = 271 WU = 67.75 vBytes per input
-                       let overhead_vbytes = 11u64; // version(4) + marker(1) + flag(1) + input_count(1) + output_count(1) + locktime(4) = 11 bytes base × 4 = 44 WU = 11 vB
-                       let output_vbytes = 43u64; // P2TR output: 8 + 1 + 34 = 43 bytes
-                       let witness_overhead_vbytes = 1u64; // witness count varint
-                       let vbytes_per_input = 68u64; // P2WPKH: 271 WU / 4 = 67.75, round up to 68
+                       // Calculate max inputs for P2WPKH (in raw bytes, not vBytes!)
+                       // P2WPKH input: 41 bytes base + 107 bytes witness = 148 bytes raw per input
+                       // Overhead: version(4) + marker(1) + flag(1) + input_count + output_count(1) + output(43) + locktime(4)
+                       let input_count_varint = if working_tx.input.len() < 253 { 1 } else if working_tx.input.len() < 65536 { 3 } else { 5 };
+                       let overhead_bytes = 4 + 1 + 1 + input_count_varint + 1 + 43 + 4; // ~55-59 bytes
+                       let bytes_per_input = 41 + 107; // 148 raw bytes per P2WPKH input
                        
-                       let available_for_inputs = target_size.saturating_sub((overhead_vbytes + output_vbytes + witness_overhead_vbytes) as usize);
-                       let max_inputs = available_for_inputs / vbytes_per_input as usize;
+                       let available_for_inputs = target_size.saturating_sub(overhead_bytes);
+                       let max_inputs = available_for_inputs / bytes_per_input;
                        
                        if max_inputs < working_tx.input.len() {
                            eprintln!("⚠️  Transaction will exceed size limit ({} bytes / {:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
@@ -1462,11 +1468,13 @@ impl SystemWallet for SystemAlkanes {
                            let truncated_input = max_inputs as u64 * sats_per_input;
                            
                            // Calculate proper vSize for signed P2WPKH transaction
-                           // P2WPKH signed input: 271 WU / 4 = 67.75 vbytes (use 68)
-                           let truncated_tx_vsize = overhead_vbytes + 
-                               (max_inputs as u64 * vbytes_per_input) + 
-                               output_vbytes +
-                               witness_overhead_vbytes;
+                           // vSize = (base_weight + witness_weight) / 4
+                           // Base weight: overhead + (inputs * 41) = (overhead + inputs*41) * 4
+                           // Witness weight: inputs * 107 (no multiplier for witness)
+                           let truncated_base_size = overhead_bytes + (max_inputs * 41);
+                           let truncated_witness_size = max_inputs * 107;
+                           let truncated_weight = (truncated_base_size * 4) + truncated_witness_size;
+                           let truncated_tx_vsize = (truncated_weight + 3) / 4; // Round up
                            
                            let truncated_fee = (truncated_tx_vsize as f64 * detected_fee_rate).ceil() as u64;
                            let truncated_output = truncated_input.saturating_sub(truncated_fee);
