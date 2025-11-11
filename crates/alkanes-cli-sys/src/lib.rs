@@ -19,6 +19,35 @@ use alkanes_cli_common::alkanes::AlkanesInspectConfig;
 use utils::*;
 use keystore::{KeystoreManager, KeystoreCreateParams};
 
+/// Parse a size string with optional unit suffix (b/B, k/K, m/M)
+/// Examples: "100k" -> 102400, "1m" -> 1048576, "500K" -> 512000, "1000000" -> 1000000
+fn parse_size_string(size_str: &str) -> Result<usize> {
+    let size_str = size_str.trim();
+    
+    // Find where the numeric part ends and unit begins
+    let (num_part, unit_part) = if let Some(pos) = size_str.find(|c: char| c.is_alphabetic()) {
+        (&size_str[..pos], &size_str[pos..])
+    } else {
+        (size_str, "")
+    };
+    
+    // Parse the numeric part
+    let number: usize = num_part.parse()
+        .map_err(|_| AlkanesError::InvalidParameters(format!("Invalid number in size: '{}'", num_part)))?;
+    
+    // Apply multiplier based on unit
+    let multiplier = match unit_part.to_lowercase().as_str() {
+        "" | "b" => 1,
+        "k" => 1024,
+        "m" => 1024 * 1024,
+        _ => return Err(AlkanesError::InvalidParameters(format!(
+            "Invalid size unit: '{}'. Use b/B, k/K, or m/M", unit_part
+        ))),
+    };
+    
+    Ok(number * multiplier)
+}
+
 pub struct SystemAlkanes {
     provider: ConcreteProvider,
     keystore_manager: KeystoreManager,
@@ -1348,6 +1377,12 @@ impl SystemWallet for SystemAlkanes {
                Ok(())
            },
            WalletCommands::SignTx { tx_hex, from_file, truncate_excess_vsize } => {
+               // Parse the size limit if truncate is specified
+               let max_tx_size = if let Some(ref size_str) = truncate_excess_vsize {
+                   parse_size_string(size_str)?
+               } else {
+                   0 // No truncation
+               };
                // Read hex from file or argument
                let hex_string = if let Some(file_path) = from_file {
                    std::fs::read_to_string(file_path)
@@ -1364,14 +1399,13 @@ impl SystemWallet for SystemAlkanes {
                let unsigned_tx = bitcoin::Transaction::consensus_decode(&mut &tx_bytes[..])
                    .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid transaction: {}", e)))?;
                
-               const MAX_TX_SIZE: usize = 1_000_000; // Bitcoin consensus limit (1 MB)
                const SAFETY_MARGIN: f64 = 0.98; // 2% safety margin
                
                let mut working_tx = unsigned_tx.clone();
                let original_input_count = working_tx.input.len();
                
                // If truncate flag is set, estimate signed size and truncate if needed
-               if truncate_excess_vsize {
+               if max_tx_size > 0 {
                    // Detect fee rate from unsigned transaction by calculating:
                    // original_fee_rate = (total_input - output) / unsigned_vsize
                    // This works because for --send-all: output = input - fee
@@ -1397,8 +1431,11 @@ impl SystemWallet for SystemAlkanes {
                    // Estimate signed size: each input adds ~66 bytes of witness data
                    let estimated_signed_size = unsigned_vsize + (working_tx.input.len() * 66);
                    
-                   if estimated_signed_size > MAX_TX_SIZE {
-                       let target_size = (MAX_TX_SIZE as f64 * SAFETY_MARGIN) as usize;
+                   eprintln!("📊 Size limit: {} bytes ({:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
+                   eprintln!("📊 Estimated signed size: {} bytes ({:.2} KB)", estimated_signed_size, estimated_signed_size as f64 / 1024.0);
+                   
+                   if estimated_signed_size > max_tx_size {
+                       let target_size = (max_tx_size as f64 * SAFETY_MARGIN) as usize;
                        
                        // Calculate max inputs: size = overhead + (inputs * 107 bytes)
                        let overhead = 53; // Base tx + 1 P2TR output
@@ -1406,7 +1443,7 @@ impl SystemWallet for SystemAlkanes {
                        let max_inputs = (target_size - overhead) / bytes_per_signed_input;
                        
                        if max_inputs < working_tx.input.len() {
-                           eprintln!("⚠️  Transaction will exceed consensus limit ({} MB)", MAX_TX_SIZE / 1_000_000);
+                           eprintln!("⚠️  Transaction will exceed size limit ({} bytes / {:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
                            eprintln!("⚠️  Truncating inputs: {} → {} inputs", original_input_count, max_inputs);
                            eprintln!("⚠️  Removed {} inputs", original_input_count - max_inputs);
                            
@@ -1461,8 +1498,8 @@ impl SystemWallet for SystemAlkanes {
                        
                        println!("✅ Transaction signed successfully!");
                        
-                       if truncate_excess_vsize && original_input_count != working_tx.input.len() {
-                           println!("⚠️  Transaction was truncated to fit consensus limit");
+                       if max_tx_size > 0 && original_input_count != working_tx.input.len() {
+                           println!("⚠️  Transaction was truncated to fit size limit");
                            println!("   Original inputs: {}", original_input_count);
                            println!("   Final inputs: {}", working_tx.input.len());
                            println!("   Removed inputs: {}", original_input_count - working_tx.input.len());
@@ -1470,13 +1507,21 @@ impl SystemWallet for SystemAlkanes {
                        
                        println!("📏 Signed transaction size: {} bytes ({:.2} KB)", signed_size, signed_size as f64 / 1024.0);
                        
-                       if signed_size > MAX_TX_SIZE {
-                           eprintln!("❌ WARNING: Signed transaction still exceeds consensus limit!");
-                           eprintln!("   Size: {} bytes", signed_size);
-                           eprintln!("   Limit: {} bytes", MAX_TX_SIZE);
+                       if max_tx_size > 0 && signed_size > max_tx_size {
+                           eprintln!("❌ WARNING: Signed transaction still exceeds size limit!");
+                           eprintln!("   Size: {} bytes ({:.2} KB)", signed_size, signed_size as f64 / 1024.0);
+                           eprintln!("   Limit: {} bytes ({:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
                            eprintln!("   You may need to reduce inputs further");
+                       } else if max_tx_size > 0 {
+                           println!("✅ Transaction size is within specified limit");
                        } else {
-                           println!("✅ Transaction size is within consensus limit");
+                           // Check Bitcoin consensus limit (1MB)
+                           const BITCOIN_CONSENSUS_LIMIT: usize = 1_000_000;
+                           if signed_size > BITCOIN_CONSENSUS_LIMIT {
+                               eprintln!("❌ WARNING: Transaction exceeds Bitcoin consensus limit (1 MB)!");
+                           } else {
+                               println!("✅ Transaction size is within Bitcoin consensus limit");
+                           }
                        }
                        
                        println!("📄 Signed transaction hex:");

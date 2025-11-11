@@ -861,9 +861,12 @@ pub enum WalletCommands {
         /// Read transaction hex from file
         #[arg(long)]
         from_file: Option<String>,
-        /// Truncate excess inputs if signed transaction exceeds consensus limit (1MB)
-        #[arg(long)]
-        truncate_excess_vsize: bool,
+        /// Truncate excess inputs to fit within specified size limit
+        /// Format: number followed by unit (b/B, k/K, m/M)
+        /// Examples: 100k, 1m, 500K, 1000000b
+        /// If specified without value, defaults to Bitcoin consensus limit (1m)
+        #[arg(long, value_name = "SIZE")]
+        truncate_excess_vsize: Option<String>,
     },
     /// Decode a transaction to view its details
     DecodeTx {

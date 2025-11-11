@@ -296,6 +296,15 @@ pub struct MetashrewRuntime<T: KeyValueStoreLike> {
     /// Contains the loaded and linked WASM instance with all
     /// host functions bound and ready to execute.
     instance: Mutex<WasmInstance>,
+    
+    /// Optional logging interceptor callback
+    ///
+    /// When provided, this callback will be invoked instead of the default
+    /// print behavior for `__log` host function calls. This allows external
+    /// processes to customize logging output (e.g., prefix with [WASM], suppress logs, etc.).
+    ///
+    /// The callback receives the log message as a String and can process it as needed.
+    pub intercept_logging: Arc<Mutex<Option<Box<dyn FnMut(String) + Send>>>>,
 }
 
 struct WasmInstance {
@@ -424,7 +433,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
     ///     my_storage_backend
     /// )?;
     /// ```
-    pub async fn load(indexer: PathBuf, mut store: T, engine: wasmtime::Engine) -> Result<Self> where <T as KeyValueStoreLike>::Batch: Send {
+    pub async fn load(indexer: PathBuf, mut store: T, engine: wasmtime::Engine, intercept_logging: Option<Box<dyn FnMut(String) + Send>>) -> Result<Self> where <T as KeyValueStoreLike>::Batch: Send {
         // Configure the engine with settings for deterministic execution
         let mut config = wasmtime::Config::default();
         // Enable NaN canonicalization for deterministic floating point operations
@@ -460,11 +469,12 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
         >::new(
             MetashrewRuntimeContext::new(store, tip_height, vec![]),
         ));
+        let intercept_logging_arc = Arc::new(Mutex::new(intercept_logging));
         {
             wasmstore.limiter(|state| &mut state.limits)
         }
         {
-            Self::setup_linker(context.clone(), &mut linker).await
+            Self::setup_linker(context.clone(), &mut linker, intercept_logging_arc.clone()).await
                 .context("Failed to setup basic linker")?;
             Self::setup_linker_indexer(context.clone(), &mut linker).await
                 .context("Failed to setup indexer linker")?;
@@ -481,10 +491,11 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
             linker,
             context,
             instance: Mutex::new(WasmInstance { store: wasmstore, instance }),
+            intercept_logging: intercept_logging_arc,
         })
     }
 
-    pub async fn new(indexer: &[u8], mut store: T, engine: wasmtime::Engine) -> Result<Self> where <T as KeyValueStoreLike>::Batch: Send {
+    pub async fn new(indexer: &[u8], mut store: T, engine: wasmtime::Engine, intercept_logging: Option<Box<dyn FnMut(String) + Send>>) -> Result<Self> where <T as KeyValueStoreLike>::Batch: Send {
         // Configure the engine with settings for deterministic execution
         let mut config = wasmtime::Config::default();
         // Enable NaN canonicalization for deterministic floating point operations
@@ -520,11 +531,12 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
         >::new(
             MetashrewRuntimeContext::new(store, tip_height, vec![]),
         ));
+        let intercept_logging_arc = Arc::new(Mutex::new(intercept_logging));
         {
             wasmstore.limiter(|state| &mut state.limits)
         }
         {
-            Self::setup_linker(context.clone(), &mut linker).await
+            Self::setup_linker(context.clone(), &mut linker, intercept_logging_arc.clone()).await
                 .context("Failed to setup basic linker")?;
             Self::setup_linker_indexer(context.clone(), &mut linker).await
                 .context("Failed to setup indexer linker")?;
@@ -541,6 +553,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
             linker,
             context,
             instance: Mutex::new(WasmInstance { store: wasmstore, instance }),
+            intercept_logging: intercept_logging_arc,
         })
     }
 
@@ -665,10 +678,11 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                             let view_context = Arc::<Mutex<MetashrewRuntimeContext<T>>>::new(Mutex::new(
                                 MetashrewRuntimeContext::new(context.db.clone(), preview_height, vec![]),
                             ));
+                            let intercept_logging_arc = self.intercept_logging.clone();
                 
                             wasmstore.limiter(|state| &mut state.limits);
                 
-                            Self::setup_linker(view_context.clone(), &mut linker).await
+                            Self::setup_linker(view_context.clone(), &mut linker, intercept_logging_arc.clone()).await
                                 .context("Failed to setup basic linker for preview view")?;
                             Self::setup_linker_view(view_context.clone(), &mut linker).await
                                 .context("Failed to setup view linker for preview")?;
@@ -687,6 +701,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                                 linker,
                                 context: view_context,
                                 instance: Mutex::new(WasmInstance { store: wasmstore, instance }),
+                                intercept_logging: intercept_logging_arc,
                             }
                         };
                 
@@ -1023,6 +1038,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
     pub async fn setup_linker(
         context: Arc<Mutex<MetashrewRuntimeContext<T>>>,
         linker: &mut Linker<State>,
+        intercept_logging: Arc<Mutex<Option<Box<dyn FnMut(String) + Send>>>>,
     ) -> Result<()> {
         let context_ref_len = context.clone();
         let context_ref_input = context.clone();
@@ -1127,6 +1143,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                 "env",
                 "__log",
                 move |mut caller: Caller<'_, State>, data_start: i32| {
+                    let intercept_logging = intercept_logging.clone();
                     Box::new(async move {
                         let mem = match caller.get_export("memory") {
                             Some(export) => match export.into_memory() {
@@ -1143,7 +1160,13 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                         };
 
                         if let Ok(text) = std::str::from_utf8(&bytes) {
-                            print!("{}", text);
+                            // Use the intercept_logging callback if provided, otherwise use default print
+                            let mut guard = intercept_logging.lock().await;
+                            if let Some(ref mut callback) = *guard {
+                                callback(text.to_string());
+                            } else {
+                                print!("{}", text);
+                            }
                         }
                     })
                 },
@@ -1432,11 +1455,12 @@ pub async fn setup_linker_view(
         >::new(
             MetashrewRuntimeContext::new(db, height, vec![]),
         ));
+        let intercept_logging_arc = Arc::new(Mutex::new(None));
         {
             wasmstore.limiter(|state| &mut state.limits)
         }
         {
-            Self::setup_linker(context.clone(), &mut linker).await
+            Self::setup_linker(context.clone(), &mut linker, intercept_logging_arc.clone()).await
                 .context("Failed to setup basic linker")?;
             Self::setup_linker_preview(context.clone(), &mut linker).await
                 .context("Failed to setup preview linker")?;
@@ -1454,6 +1478,7 @@ pub async fn setup_linker_view(
             linker,
             context,
             instance: Mutex::new(WasmInstance { store: wasmstore, instance }),
+            intercept_logging: intercept_logging_arc,
         })
     }
 
@@ -1470,6 +1495,7 @@ pub async fn setup_linker_view(
         >::new(
             MetashrewRuntimeContext::new(db, height, vec![]),
         ));
+        let intercept_logging_arc = Arc::new(Mutex::new(None));
         {
             wasmstore.limiter(|state| &mut state.limits);
             // Set fuel for async execution if engine has fuel enabled
@@ -1478,7 +1504,7 @@ pub async fn setup_linker_view(
             let _ = wasmstore.set_fuel(u64::MAX);
         }
         {
-            Self::setup_linker(context.clone(), &mut linker).await
+            Self::setup_linker(context.clone(), &mut linker, intercept_logging_arc.clone()).await
                 .context("Failed to setup basic linker")?;
             Self::setup_linker_indexer(context.clone(), &mut linker).await
                 .context("Failed to setup indexer linker")?;
@@ -1496,6 +1522,7 @@ pub async fn setup_linker_view(
             linker,
             context,
             instance: Mutex::new(WasmInstance { store: wasmstore, instance }),
+            intercept_logging: intercept_logging_arc,
         })
     }
 
@@ -1512,11 +1539,12 @@ pub async fn setup_linker_view(
         >::new(
             MetashrewRuntimeContext::new(db, height, vec![]),
         ));
+        let intercept_logging_arc = Arc::new(Mutex::new(None));
         {
             wasmstore.limiter(|state| &mut state.limits)
         }
         {
-            Self::setup_linker(context.clone(), &mut linker).await
+            Self::setup_linker(context.clone(), &mut linker, intercept_logging_arc.clone()).await
                 .context("Failed to setup basic linker")?;
             Self::setup_linker_view(context.clone(), &mut linker).await
                 .context("Failed to setup view linker")?;
@@ -1534,6 +1562,7 @@ pub async fn setup_linker_view(
             linker,
             context,
             instance: Mutex::new(WasmInstance { store: wasmstore, instance }),
+            intercept_logging: intercept_logging_arc,
         })
     }
 
