@@ -266,13 +266,19 @@ impl ConcreteProvider {
 
     #[cfg(feature = "std")]
     pub async fn initialize(&mut self) -> Result<()> {
+        log::debug!("[ConcreteProvider] initialize() called");
         // Load wallet if path is set
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(wallet_path) = &self.wallet_path {
+            log::debug!("[ConcreteProvider] Initializing wallet from path: {:?}", wallet_path);
+            log::debug!("[ConcreteProvider] Passphrase is_some: {}", self.passphrase.is_some());
             if wallet_path.exists() {
                 if let Some(passphrase) = self.passphrase.clone() {
+                    log::debug!("[ConcreteProvider] Passphrase provided, unlocking wallet");
                     self.unlock_wallet(&passphrase).await?;
+                    log::debug!("[ConcreteProvider] Wallet unlocked successfully");
                 } else {
+                    log::debug!("[ConcreteProvider] No passphrase provided, loading wallet as locked");
                     // Load as locked
                     let keystore_bytes = std::fs::read(wallet_path)
                         .map_err(|e| AlkanesError::Storage(format!("Failed to read wallet: {}", e)))?;
@@ -280,7 +286,11 @@ impl ConcreteProvider {
                         .map_err(|e| AlkanesError::Storage(format!("Failed to parse keystore: {}", e)))?;
                     self.wallet_state = WalletState::Locked(keystore);
                 }
+            } else {
+                log::debug!("[ConcreteProvider] Wallet file does not exist: {:?}", wallet_path);
             }
+        } else {
+            log::debug!("[ConcreteProvider] No wallet path set");
         }
         Ok(())
     }

@@ -146,7 +146,10 @@ impl SystemAlkanes {
         .await?;
 
         if let Some(passphrase) = &args.passphrase {
+            log::debug!("Setting passphrase for wallet");
             provider.set_passphrase(Some(passphrase.clone()));
+        } else {
+            log::debug!("No passphrase provided");
         }
 
         // Handle different wallet modes
