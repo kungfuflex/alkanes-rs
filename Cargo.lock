@@ -113,6 +113,7 @@ dependencies = [
 name = "alkanes-std-beacon-proxy"
 version = "1.2.3"
 dependencies = [
+ "alkanes-macros",
  "alkanes-runtime",
  "alkanes-support",
  "anyhow",
