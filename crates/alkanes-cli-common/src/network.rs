@@ -105,6 +105,10 @@ pub struct RpcConfig {
     #[arg(long)]
     pub sandshrew_rpc_url: Option<String>,
 
+    /// Titan API URL (alternative to sandshrew_rpc_url, uses REST API)
+    #[arg(long)]
+    pub titan_api_url: Option<String>,
+
     /// Esplora API URL (overrides Sandshrew for Esplora calls, enables REST)
     #[arg(long)]
     pub esplora_url: Option<String>,
@@ -122,6 +126,23 @@ pub struct RpcConfig {
     pub timeout_seconds: u64,
 }
 
+impl RpcConfig {
+    /// Validate that only one backend is configured (sandshrew_rpc_url OR titan_api_url)
+    pub fn validate(&self) -> Result<(), AlkanesError> {
+        if self.sandshrew_rpc_url.is_some() && self.titan_api_url.is_some() {
+            return Err(AlkanesError::Configuration(
+                "Cannot specify both --sandshrew-rpc-url and --titan-api-url. Please choose one backend.".to_string()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Returns true if using Titan REST API as backend
+    pub fn using_titan_api(&self) -> bool {
+        self.titan_api_url.is_some()
+    }
+}
+
 
 
 impl Default for RpcConfig {
@@ -130,6 +151,7 @@ impl Default for RpcConfig {
             provider: "regtest".to_string(),
             bitcoin_rpc_url: None,
             sandshrew_rpc_url: Some("http://localhost:18443".to_string()),
+            titan_api_url: None,
             esplora_url: None,
             ord_url: None,
             metashrew_rpc_url: Some("http://localhost:18888".to_string()),

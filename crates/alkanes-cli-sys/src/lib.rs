@@ -56,6 +56,9 @@ pub struct SystemAlkanes {
 
 impl SystemAlkanes {
     pub async fn new(args: &Args) -> anyhow::Result<Self> {
+        // Validate RPC config (ensure only one backend is configured)
+        args.rpc_config.validate()?;
+        
         // Determine network parameters based on provider and magic flags
         let mut network_params = if let Some(magic_str) = args.magic.as_ref() {
             // Parse custom magic bytes
@@ -1437,10 +1440,16 @@ impl SystemWallet for SystemAlkanes {
                    if estimated_signed_size > max_tx_size {
                        let target_size = (max_tx_size as f64 * SAFETY_MARGIN) as usize;
                        
-                       // Calculate max inputs: size = overhead + (inputs * 107 bytes)
-                       let overhead = 53; // Base tx + 1 P2TR output
-                       let bytes_per_signed_input = 107;
-                       let max_inputs = (target_size - overhead) / bytes_per_signed_input;
+                       // Calculate max inputs for P2WPKH
+                       // P2WPKH input: 41 bytes base + 107 bytes witness = 148 bytes raw
+                       // Weight: (41 * 4) + 107 = 271 WU = 67.75 vBytes per input
+                       let overhead_vbytes = 11u64; // version(4) + marker(1) + flag(1) + input_count(1) + output_count(1) + locktime(4) = 11 bytes base × 4 = 44 WU = 11 vB
+                       let output_vbytes = 43u64; // P2TR output: 8 + 1 + 34 = 43 bytes
+                       let witness_overhead_vbytes = 1u64; // witness count varint
+                       let vbytes_per_input = 68u64; // P2WPKH: 271 WU / 4 = 67.75, round up to 68
+                       
+                       let available_for_inputs = target_size.saturating_sub((overhead_vbytes + output_vbytes + witness_overhead_vbytes) as usize);
+                       let max_inputs = available_for_inputs / vbytes_per_input as usize;
                        
                        if max_inputs < working_tx.input.len() {
                            eprintln!("⚠️  Transaction will exceed size limit ({} bytes / {:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
@@ -1452,16 +1461,12 @@ impl SystemWallet for SystemAlkanes {
                            // Recalculate output amount with detected fee rate
                            let truncated_input = max_inputs as u64 * sats_per_input;
                            
-                           // Calculate proper vSize for signed P2TR transaction
-                           // P2TR signed input: 229 WU / 4 = 57.25 vbytes (use 58)
-                           let base_vsize = 10u64;
-                           let input_vsize = 58u64; // P2TR with witness discount
-                           let output_vsize = 43u64;
-                           let witness_overhead = 1u64;
-                           let truncated_tx_vsize = base_vsize + 
-                               (max_inputs as u64 * input_vsize) + 
-                               (working_tx.output.len() as u64 * output_vsize) +
-                               witness_overhead;
+                           // Calculate proper vSize for signed P2WPKH transaction
+                           // P2WPKH signed input: 271 WU / 4 = 67.75 vbytes (use 68)
+                           let truncated_tx_vsize = overhead_vbytes + 
+                               (max_inputs as u64 * vbytes_per_input) + 
+                               output_vbytes +
+                               witness_overhead_vbytes;
                            
                            let truncated_fee = (truncated_tx_vsize as f64 * detected_fee_rate).ceil() as u64;
                            let truncated_output = truncated_input.saturating_sub(truncated_fee);

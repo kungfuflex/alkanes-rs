@@ -45,6 +45,9 @@ pub struct DeezelCommands {
     /// Sandshrew RPC URL
     #[arg(long)]
     pub sandshrew_rpc_url: Option<String>,
+    /// Titan API URL (alternative to sandshrew-rpc-url)
+    #[arg(long)]
+    pub titan_api_url: Option<String>,
     /// Bitcoin RPC URL
     #[arg(long)]
     pub bitcoin_rpc_url: Option<String>,
@@ -995,6 +998,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 provider: args.provider.clone(),
                 bitcoin_rpc_url: args.bitcoin_rpc_url.clone(),
                 sandshrew_rpc_url: args.sandshrew_rpc_url.clone(),
+                titan_api_url: args.titan_api_url.clone(),
                 esplora_url: args.esplora_api_url.clone(),
                 ord_url: args.ord_server_url.clone(),
                 metashrew_rpc_url: args.metashrew_server_url.clone(),

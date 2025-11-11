@@ -54,7 +54,7 @@ use bitcoin::{
     bip32::{DerivationPath, Fingerprint, Xpriv},
     key::{TapTweak, UntweakedKeypair},
     secp256k1::{All, Secp256k1},
-    sighash::{Prevouts, SighashCache, TapSighashType},
+    sighash::{EcdsaSighashType, Prevouts, SighashCache, TapSighashType},
     taproot,
 };
 use bitcoin_hashes::Hash;
@@ -142,6 +142,7 @@ impl ConcreteProvider {
             provider,
             bitcoin_rpc_url,
             sandshrew_rpc_url,
+            titan_api_url: None,
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
@@ -176,6 +177,7 @@ impl ConcreteProvider {
             provider,
             bitcoin_rpc_url,
             sandshrew_rpc_url,
+            titan_api_url: None,
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
@@ -412,7 +414,80 @@ impl ConcreteProvider {
         }
         Err(AlkanesError::Wallet(format!("Address {} not found in keystore", address)))
     }
+
+    /// Helper method to call Titan REST API
+    #[cfg(feature = "native-deps")]
+    async fn call_titan_rest_api(&self, path: &str) -> Result<serde_json::Value> {
+        if let Some(titan_url) = &self.rpc_config.titan_api_url {
+            let url = format!("{}{}", titan_url.trim_end_matches('/'), path);
+            log::debug!("Calling Titan REST API: {}", url);
+            
+            let response = self.http_client
+                .get(&url)
+                .timeout(std::time::Duration::from_secs(self.rpc_config.timeout_seconds))
+                .send()
+                .await
+                .map_err(|e| AlkanesError::Network(format!("Titan API request failed: {}", e)))?;
+            
+            if !response.status().is_success() {
+                return Err(AlkanesError::Network(format!(
+                    "Titan API returned error status: {}",
+                    response.status()
+                )));
+            }
+            
+            let json = response.json().await
+                .map_err(|e| AlkanesError::Serialization(format!("Failed to parse Titan API response: {}", e)))?;
+            
+            log::debug!("Titan REST API response: {:?}", json);
+            Ok(json)
+        } else {
+            Err(AlkanesError::Configuration("titan_api_url not configured".to_string()))
+        }
     }
+
+    #[cfg(not(feature = "native-deps"))]
+    async fn call_titan_rest_api(&self, _path: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("Titan API not available without native-deps".to_string()))
+    }
+
+    /// Helper method to POST to Titan REST API
+    #[cfg(feature = "native-deps")]
+    async fn post_titan_rest_api(&self, path: &str, body: serde_json::Value) -> Result<serde_json::Value> {
+        if let Some(titan_url) = &self.rpc_config.titan_api_url {
+            let url = format!("{}{}", titan_url.trim_end_matches('/'), path);
+            log::debug!("Calling Titan REST API (POST): {}", url);
+            
+            let response = self.http_client
+                .post(&url)
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(self.rpc_config.timeout_seconds))
+                .send()
+                .await
+                .map_err(|e| AlkanesError::Network(format!("Titan API request failed: {}", e)))?;
+            
+            if !response.status().is_success() {
+                return Err(AlkanesError::Network(format!(
+                    "Titan API returned error status: {}",
+                    response.status()
+                )));
+            }
+            
+            let json = response.json().await
+                .map_err(|e| AlkanesError::Serialization(format!("Failed to parse Titan API response: {}", e)))?;
+            
+            log::debug!("Titan REST API response: {:?}", json);
+            Ok(json)
+        } else {
+            Err(AlkanesError::Configuration("titan_api_url not configured".to_string()))
+        }
+    }
+
+    #[cfg(not(feature = "native-deps"))]
+    async fn post_titan_rest_api(&self, _path: &str, _body: serde_json::Value) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("Titan API not available without native-deps".to_string()))
+    }
+}
 
 #[async_trait(?Send)]
 
@@ -1077,29 +1152,70 @@ impl WalletProvider for ConcreteProvider {
                 // Sign with external private key
                 let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)?;
                 let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
-                let untweaked_keypair = UntweakedKeypair::from(keypair);
-                let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+                let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                    compressed: true,
+                    network: network.into(),
+                    inner: secret_key,
+                });
 
                 let mut sighash_cache = SighashCache::new(&mut tx);
+                
                 for i in 0..prevouts.len() {
-                    let sighash = sighash_cache.taproot_key_spend_signature_hash(
-                        i,
-                        &Prevouts::All(&prevouts),
-                        TapSighashType::Default,
-                    )?;
-
-                    let msg = bitcoin::secp256k1::Message::from(sighash);
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
-                    #[cfg(target_arch = "wasm32")]
-                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
+                    let prev_txout = &prevouts[i];
                     
-                    let taproot_signature = taproot::Signature {
-                        signature,
-                        sighash_type: TapSighashType::Default,
-                    };
+                    // Detect script type
+                    if prev_txout.script_pubkey.is_p2wpkh() {
+                        // P2WPKH: Use ECDSA signature with segwit v0 sighash
+                        let sighash = sighash_cache.p2wpkh_signature_hash(
+                            i,
+                            &prev_txout.script_pubkey,
+                            prev_txout.value,
+                            EcdsaSighashType::All,
+                        )?;
 
-                    sighash_cache.witness_mut(i).unwrap().clone_from(&Witness::p2tr_key_spend(&taproot_signature));
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        let signature = secp.sign_ecdsa(&msg, &secret_key);
+                        let ecdsa_signature = bitcoin::ecdsa::Signature {
+                            signature,
+                            sighash_type: EcdsaSighashType::All,
+                        };
+
+                        // P2WPKH witness: [signature, pubkey]
+                        let mut witness = Witness::new();
+                        witness.push(ecdsa_signature.serialize());
+                        witness.push(public_key.to_bytes());
+                        *sighash_cache.witness_mut(i).unwrap() = witness;
+                        
+                    } else if prev_txout.script_pubkey.is_p2tr() {
+                        // P2TR: Use Schnorr signature with taproot sighash
+                        let untweaked_keypair = UntweakedKeypair::from(keypair);
+                        let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+                        
+                        let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                            i,
+                            &Prevouts::All(&prevouts),
+                            TapSighashType::Default,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
+                        #[cfg(target_arch = "wasm32")]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
+                        
+                        let taproot_signature = taproot::Signature {
+                            signature,
+                            sighash_type: TapSighashType::Default,
+                        };
+
+                        *sighash_cache.witness_mut(i).unwrap() = Witness::p2tr_key_spend(&taproot_signature);
+                        
+                    } else {
+                        return Err(AlkanesError::Wallet(format!(
+                            "Unsupported script type for input {}: {}",
+                            i, prev_txout.script_pubkey
+                        )));
+                    }
                 }
 
                 let signed_tx = sighash_cache.into_transaction();
@@ -2238,7 +2354,17 @@ impl AlkanesProvider for ConcreteProvider {
         block_tag: Option<String>,
         protocol_tag: u128,
     ) -> Result<crate::alkanes::protorunes::ProtoruneWalletResponse> {
-        <Self as MetashrewRpcProvider>::get_protorunes_by_address(self, address, block_tag, protocol_tag).await
+        if self.rpc_config.using_titan_api() {
+            let path = if let Some(height) = block_tag {
+                format!("/alkanes/byaddress/{}/atheight/{}", address, height)
+            } else {
+                format!("/alkanes/byaddress/{}", address)
+            };
+            let json = self.call_titan_rest_api(&path).await?;
+            Ok(serde_json::from_value(json)?)
+        } else {
+            <Self as MetashrewRpcProvider>::get_protorunes_by_address(self, address, block_tag, protocol_tag).await
+        }
     }
 
     async fn protorunes_by_outpoint(
@@ -2248,7 +2374,18 @@ impl AlkanesProvider for ConcreteProvider {
         block_tag: Option<String>,
         protocol_tag: u128,
     ) -> Result<crate::alkanes::protorunes::ProtoruneOutpointResponse> {
-        <Self as MetashrewRpcProvider>::get_protorunes_by_outpoint(self, txid, vout, block_tag, protocol_tag).await
+        if self.rpc_config.using_titan_api() {
+            let outpoint = format!("{}:{}", txid, vout);
+            let path = if let Some(height) = block_tag {
+                format!("/alkanes/byoutpoint/{}/atheight/{}", outpoint, height)
+            } else {
+                format!("/alkanes/byoutpoint/{}", outpoint)
+            };
+            let json = self.call_titan_rest_api(&path).await?;
+            Ok(serde_json::from_value(json)?)
+        } else {
+            <Self as MetashrewRpcProvider>::get_protorunes_by_outpoint(self, txid, vout, block_tag, protocol_tag).await
+        }
     }
 
     async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue> {
@@ -2280,6 +2417,24 @@ impl AlkanesProvider for ConcreteProvider {
     }
 
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
+        if self.rpc_config.using_titan_api() {
+            let path = format!("/alkanes/trace/{}", outpoint);
+            let json = self.call_titan_rest_api(&path).await?;
+            // Titan returns JSON, convert to protobuf format
+            // The JSON response needs to be converted to alkanes_pb::Trace
+            // For now, we'll try to decode from the hex response if it's in that format
+            if let Some(hex_str) = json.as_str() {
+                let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+                let bytes = hex::decode(hex_data)
+                    .map_err(|e| AlkanesError::Serialization(format!("Failed to decode trace hex: {}", e)))?;
+                let trace = alkanes_pb::Trace::decode(bytes.as_slice())?;
+                return Ok(trace);
+            }
+            // If JSON format, try to deserialize directly
+            return serde_json::from_value(json)
+                .map_err(|e| AlkanesError::Serialization(format!("Failed to parse trace response: {}", e)));
+        }
+        
         let parts: Vec<&str> = outpoint.split(':').collect();
         if parts.len() != 2 {
             return Err(AlkanesError::InvalidParameters("Invalid outpoint format. Expected 'txid:vout'".to_string()));
@@ -2319,6 +2474,11 @@ impl AlkanesProvider for ConcreteProvider {
     }
 
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
+        if self.rpc_config.using_titan_api() {
+            let path = format!("/alkanes/byaddress/{}", address);
+            return self.call_titan_rest_api(&path).await;
+        }
+        
         let mut request = protorune_pb::WalletRequest::default();
         request.wallet = address.as_bytes().to_vec();
         let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
@@ -2363,6 +2523,20 @@ impl AlkanesProvider for ConcreteProvider {
     }
 
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
+        if self.rpc_config.using_titan_api() {
+            let path = if let Some(height) = block_tag {
+                format!("/alkanes/getbytecode/{}/atheight/{}", alkane_id, height)
+            } else {
+                format!("/alkanes/getbytecode/{}", alkane_id)
+            };
+            let json = self.call_titan_rest_api(&path).await?;
+            // Titan returns the bytecode as a string (likely hex-encoded)
+            if let Some(bytecode_str) = json.as_str() {
+                return Ok(bytecode_str.to_string());
+            }
+            return Ok(json.to_string());
+        }
+        
         let parts: Vec<&str> = alkane_id.split(':').collect();
         if parts.len() != 2 {
             return Err(AlkanesError::InvalidParameters("Invalid alkane_id format. Expected 'block:tx'".to_string()));

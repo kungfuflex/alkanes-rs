@@ -548,11 +548,11 @@ mod tests {
 
         // Test `determine_rpc_call_type`
         assert_eq!(determine_rpc_call_type(&config, &Commands::Esplora { command: crate::commands::EsploraCommands::Block { hash: "".to_string(), raw: false } }), RpcCallType::JsonRpc);
-        assert_eq!(determine_rpc_call_type(&config, &Commands::Bitcoind { command: crate::commands::BitcoindCommands::Getblockcount }), RpcCallType::JsonRpc);
+        assert_eq!(determine_rpc_call_type(&config, &Commands::Bitcoind { command: crate::commands::BitcoindCommands::Getblockcount { raw: false } }), RpcCallType::JsonRpc);
         assert_eq!(determine_rpc_call_type(&config, &Commands::Metashrew { command: crate::commands::MetashrewCommands::Height }), RpcCallType::JsonRpc);
 
         // Test `get_rpc_url`
-        assert_eq!(get_rpc_url(&config, &Commands::Bitcoind{ command: crate::commands::BitcoindCommands::Getblockcount }).unwrap(), "http://bitcoin");
+        assert_eq!(get_rpc_url(&config, &Commands::Bitcoind{ command: crate::commands::BitcoindCommands::Getblockcount { raw: false } }).unwrap(), "http://bitcoin");
         assert_eq!(get_rpc_url(&config, &Commands::Metashrew{ command: crate::commands::MetashrewCommands::Height }).unwrap(), "http://metashrew");
     }
 

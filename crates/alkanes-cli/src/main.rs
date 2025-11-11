@@ -32,6 +32,9 @@ async fn main() -> Result<()> {
     // Convert DeezelCommands to Args
     let alkanes_args = alkanes_cli_common::commands::Args::from(&args);
 
+    // Validate RPC config (ensure only one backend is configured)
+    alkanes_args.rpc_config.validate()?;
+
     // Create a new SystemAlkanes instance
     let mut system = SystemAlkanes::new(&alkanes_args).await?;
 

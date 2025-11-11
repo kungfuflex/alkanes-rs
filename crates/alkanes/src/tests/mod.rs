@@ -14,9 +14,8 @@ pub mod zcash_block_250;
 pub mod zcash_block_286639;
 #[cfg(all(test, feature = "zcash"))]
 pub mod block_407_parse;
-// Uncomment after fetching block 349330 with scripts/fetch-block-349330.sh
-// #[cfg(all(test, feature = "zcash"))]
-// pub mod zcash_block_349330;
+#[cfg(all(test, feature = "zcash"))]
+pub mod zcash_block_349330;
 #[cfg(test)]
 pub mod std;
 #[cfg(test)]
