@@ -308,6 +308,7 @@ pub struct SendParams {
     pub auto_confirm: bool,
     pub use_rebar: bool,
     pub rebar_tier: u8,
+    pub lock_alkanes: bool,
 }
 
 /// UTXO information

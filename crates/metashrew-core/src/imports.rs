@@ -17,11 +17,11 @@ pub fn __set_input(v: Vec<u8>) {
 #[link(wasm_import_module = "env")]
 extern "C" {
     pub fn __host_len() -> i32;
-    pub fn __flush(ptr: i32);
-    pub fn __get(ptr: i32, v: i32);
-    pub fn __get_len(ptr: i32) -> i32;
-    pub fn __load_input(ptr: i32);
-    pub fn __log(ptr: i32);
+    pub fn __flush(ptr: u32);
+    pub fn __get(ptr: u32, v: u32);
+    pub fn __get_len(ptr: u32) -> i32;
+    pub fn __load_input(ptr: u32);
+    pub fn __log(ptr: u32);
 }
 
 #[allow(static_mut_refs)]
@@ -37,7 +37,7 @@ pub fn __host_len() -> i32 {
 
 #[allow(static_mut_refs)]
 #[cfg(feature = "test-utils")]
-pub fn __load_input(ptr: i32) -> () {
+pub fn __load_input(ptr: u32) -> () {
     unsafe {
         match _INPUT.as_ref() {
             Some(v) => (&mut std::slice::from_raw_parts_mut(ptr as usize as *mut u8, v.len()))
@@ -48,15 +48,15 @@ pub fn __load_input(ptr: i32) -> () {
 }
 
 #[cfg(feature = "test-utils")]
-pub fn __get_len(_ptr: i32) -> i32 {
+pub fn __get_len(_ptr: u32) -> i32 {
     0
 }
 
 #[cfg(feature = "test-utils")]
-pub fn __flush(_ptr: i32) -> () {}
+pub fn __flush(_ptr: u32) -> () {}
 
 #[cfg(feature = "test-utils")]
-pub fn __get(_ptr: i32, _result: i32) -> () {}
+pub fn __get(_ptr: u32, _result: u32) -> () {}
 
 #[cfg(feature = "test-utils")]
 #[wasm_bindgen(js_namespace = Date)]
@@ -76,6 +76,6 @@ extern "C" {
 }
 
 #[cfg(feature = "test-utils")]
-pub fn __log(ptr: i32) -> () {
-    write(format!("{}", String::from_utf8(ptr_to_vec(ptr)).unwrap()).as_str());
+pub fn __log(ptr: u32) -> () {
+    write(format!("{}", String::from_utf8(ptr_to_vec(ptr as i32)).unwrap()).as_str());
 }

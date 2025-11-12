@@ -804,6 +804,9 @@ pub enum WalletCommands {
         /// The addresses to send from
         #[arg(long, num_args = 1..)]
         from: Option<Vec<String>>,
+        /// Skip UTXOs that have alkanes on them
+        #[arg(long)]
+        lock_alkanes: bool,
         /// The change address
         #[arg(long)]
         change_address: Option<String>,

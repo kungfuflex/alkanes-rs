@@ -1294,7 +1294,7 @@ impl SystemWallet for SystemAlkanes {
                 }
                 Ok(())
             },
-           WalletCommands::Send { address, amount, fee_rate, send_all, from, change, use_rebar, rebar_tier, yes } => {
+           WalletCommands::Send { address, amount, fee_rate, send_all, from, lock_alkanes, change, use_rebar, rebar_tier, yes } => {
                // Resolve address identifiers
                let resolved_address = provider.resolve_all_identifiers(&address).await?;
                let resolved_from = if let Some(from_addrs) = from {
@@ -1322,6 +1322,7 @@ impl SystemWallet for SystemAlkanes {
                    auto_confirm: yes,
                    use_rebar,
                    rebar_tier,
+                   lock_alkanes,
                };
                
                match provider.send(send_params).await {
@@ -1350,6 +1351,7 @@ impl SystemWallet for SystemAlkanes {
                    auto_confirm: yes,
                    use_rebar: false,
                    rebar_tier: 1,
+                   lock_alkanes: false,
                };
                
                match provider.send(send_params).await {
@@ -1378,6 +1380,7 @@ impl SystemWallet for SystemAlkanes {
                    auto_confirm: yes,
                    use_rebar: false,
                    rebar_tier: 1,
+                   lock_alkanes: false,
                };
                
                match provider.create_transaction(create_params).await {

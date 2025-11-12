@@ -192,6 +192,9 @@ pub enum WalletCommands {
         /// Source addresses (comma-separated)
         #[arg(long, value_delimiter = ',')]
         from: Option<Vec<String>>,
+        /// Skip UTXOs that have alkanes on them
+        #[arg(long)]
+        lock_alkanes: bool,
         /// Change address (optional)
         #[arg(long)]
         change: Option<String>,

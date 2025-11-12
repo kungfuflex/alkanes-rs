@@ -16,6 +16,8 @@ pub mod zcash_block_286639;
 pub mod block_407_parse;
 #[cfg(all(test, feature = "zcash"))]
 pub mod zcash_block_349330;
+#[cfg(all(test, feature = "zcash"))]
+pub mod zcash_block_349330_indexing;
 #[cfg(test)]
 pub mod std;
 #[cfg(test)]

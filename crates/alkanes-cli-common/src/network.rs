@@ -126,6 +126,20 @@ pub struct RpcConfig {
     pub timeout_seconds: u64,
 }
 
+/// Type of RPC backend to use
+#[derive(Debug, Clone, PartialEq)]
+pub enum RpcBackendType {
+    JsonRpc,
+    Rest,
+}
+
+/// RPC target for different service types
+#[derive(Debug, Clone)]
+pub struct RpcTarget {
+    pub url: String,
+    pub backend_type: RpcBackendType,
+}
+
 impl RpcConfig {
     /// Validate that only one backend is configured (sandshrew_rpc_url OR titan_api_url)
     pub fn validate(&self) -> Result<(), AlkanesError> {
@@ -140,6 +154,128 @@ impl RpcConfig {
     /// Returns true if using Titan REST API as backend
     pub fn using_titan_api(&self) -> bool {
         self.titan_api_url.is_some()
+    }
+    
+    /// Get default Sandshrew RPC URL for the network
+    fn get_default_sandshrew_url(&self) -> String {
+        match self.provider.as_str() {
+            "mainnet" => "https://mainnet.sandshrew.io/v2/lasereyes".to_string(),
+            "testnet" => "https://testnet.sandshrew.io/v2/lasereyes".to_string(),
+            "signet" => "https://signet.sandshrew.io/v2/lasereyes".to_string(),
+            _ => "http://localhost:18888".to_string(), // regtest
+        }
+    }
+    
+    /// Get the RPC target for Bitcoin Core operations
+    /// Priority: bitcoin_rpc_url > sandshrew_rpc_url (JSONRPC translation) > default
+    pub fn get_bitcoin_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.bitcoin_rpc_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        } else if let Some(ref url) = self.sandshrew_rpc_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        } else {
+            RpcTarget {
+                url: self.get_default_sandshrew_url(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        }
+    }
+    
+    /// Get the RPC target for Metashrew operations (alkanes.wasm view functions)
+    /// Priority: metashrew_rpc_url > sandshrew_rpc_url > default sandshrew
+    pub fn get_metashrew_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.metashrew_rpc_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        } else if let Some(ref url) = self.sandshrew_rpc_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        } else {
+            RpcTarget {
+                url: self.get_default_sandshrew_url(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        }
+    }
+    
+    /// Get the RPC target for Esplora operations
+    /// Priority: esplora_url (REST) > sandshrew_rpc_url (JSONRPC translation) > default sandshrew
+    pub fn get_esplora_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.esplora_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::Rest,
+            }
+        } else if let Some(ref url) = self.sandshrew_rpc_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        } else {
+            RpcTarget {
+                url: self.get_default_sandshrew_url(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        }
+    }
+    
+    /// Get the RPC target for Ord operations
+    /// Priority: ord_url (REST) > sandshrew_rpc_url (JSONRPC translation) > default sandshrew
+    pub fn get_ord_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.ord_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::Rest,
+            }
+        } else if let Some(ref url) = self.sandshrew_rpc_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        } else {
+            RpcTarget {
+                url: self.get_default_sandshrew_url(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        }
+    }
+    
+    /// Get the RPC target for Alkanes operations (view functions, protorunes, etc.)
+    /// Priority: titan_api_url (REST) > sandshrew_rpc_url (JSONRPC) > default sandshrew
+    pub fn get_alkanes_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.titan_api_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::Rest,
+            }
+        } else if let Some(ref url) = self.sandshrew_rpc_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        } else {
+            RpcTarget {
+                url: self.get_default_sandshrew_url(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        }
+    }
+    
+    /// Get the RPC target for Wallet operations (used by alkanes execute)
+    /// Priority: titan_api_url (REST) > sandshrew_rpc_url (JSONRPC) > default sandshrew
+    /// Note: Wallet operations like send use esplora/bitcoin backends separately
+    pub fn get_wallet_rpc_target(&self) -> RpcTarget {
+        self.get_alkanes_rpc_target()
     }
 }
 

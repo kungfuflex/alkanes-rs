@@ -380,7 +380,7 @@ pub fn initialize() -> () {
 /// let ptr = export_bytes(result_data);
 /// // Return ptr from your view function
 /// ```
-pub fn export_bytes(bytes: Vec<u8>) -> i32 {
+pub fn export_bytes(bytes: Vec<u8>) -> u32 {
     // Create a buffer with the length prefix
     let mut buffer = Vec::with_capacity(bytes.len() + 4);
     let len = bytes.len() as u32;

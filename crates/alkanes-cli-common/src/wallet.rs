@@ -118,6 +118,7 @@ impl<P: DeezelProvider> Wallet<P> {
             auto_confirm: params.auto_confirm,
             use_rebar: params.use_rebar,
             rebar_tier: params.rebar_tier,
+            lock_alkanes: params.lock_alkanes,
         };
         self.provider.send(trait_params).await
     }
@@ -238,6 +239,7 @@ impl<P: DeezelProvider> Wallet<P> {
             auto_confirm: params.auto_confirm,
             use_rebar: params.use_rebar,
             rebar_tier: params.rebar_tier,
+            lock_alkanes: params.lock_alkanes,
         };
         self.provider.create_transaction(trait_params).await
     }
@@ -320,6 +322,7 @@ pub struct SendParams {
     pub auto_confirm: bool,
     pub use_rebar: bool,
     pub rebar_tier: u8,
+    pub lock_alkanes: bool,
 }
 
 /// UTXO information

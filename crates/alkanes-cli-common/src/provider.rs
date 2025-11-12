@@ -10,6 +10,7 @@ use crate::{
 };
 use serde_json::json;
 use crate::alkanes::execute::EnhancedAlkanesExecutor;
+use crate::alkanes::balance_sheet::BalanceSheetOperations;
 #[cfg(feature = "wasm-inspection")]
 use crate::alkanes::inspector::{AlkaneInspector, InspectionConfig};
 use crate::alkanes::types::{
@@ -220,8 +221,26 @@ impl ConcreteProvider {
         match self.rpc_config.provider.as_str() { "mainnet" => bitcoin::Network::Bitcoin, "testnet" => bitcoin::Network::Testnet, "signet" => bitcoin::Network::Signet, _ => bitcoin::Network::Regtest }
     }
 
-    pub async fn metashrew_view_call(&self, _method: &str, _params: &str, _height: &str) -> Result<Vec<u8>> {
-        unimplemented!()
+    pub async fn metashrew_view_call(&self, method: &str, params: &str, height: &str) -> Result<Vec<u8>> {
+        // Use the centralized RPC target resolution
+        let target = self.rpc_config.get_metashrew_rpc_target();
+        
+        // metashrew_view always uses JSON-RPC (even when called through sandshrew)
+        let rpc_params = serde_json::json!([method, params, height]);
+        let result = self.call(&target.url, "metashrew_view", rpc_params, 1).await?;
+        
+        // The result should be a hex string starting with "0x"
+        let hex_str = result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("metashrew_view result is not a string".to_string()))?;
+        
+        // Remove "0x" prefix if present
+        let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+        
+        // Decode hex to bytes
+        let bytes = hex::decode(hex_str)
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode metashrew_view hex response: {}", e)))?;
+        
+        Ok(bytes)
     }
 
     pub fn get_keystore(&self) -> Result<&Keystore> {
@@ -1008,8 +1027,47 @@ impl WalletProvider for ConcreteProvider {
         // 2. Get UTXOs for the specified addresses
         let utxos = self.get_utxos(false, Some(address_strings.clone())).await?;
 
-        // 3. Filter out UTXOs with inscriptions/runes/alkanes
-        let clean_utxos: Vec<UtxoInfo> = utxos.into_iter()
+        // 3. If lock_alkanes is enabled, check each UTXO for alkanes using protorunesbyoutpoint
+        let mut utxos_with_alkanes_check = Vec::new();
+        if params.lock_alkanes {
+            log::info!("--lock-alkanes enabled: checking {} UTXOs for alkanes via protorunesbyoutpoint", utxos.len());
+            let mut failed_checks = 0;
+            let mut alkanes_found = 0;
+            
+            for (outpoint, mut info) in utxos {
+                // Query protorunesbyoutpoint to check if this UTXO has alkanes
+                match self.get_protorunes_by_outpoint(&info.txid, info.vout, None, 1).await {
+                    Ok(response) => {
+                        // If the response has any balances, this UTXO has alkanes
+                        let has_alkanes = !response.balance_sheet.balances().is_empty();
+                        if has_alkanes {
+                            alkanes_found += 1;
+                            log::info!("✓ UTXO {}:{} HAS {} alkane balance(s) - WILL BE LOCKED", 
+                                info.txid, info.vout, response.balance_sheet.balances().len());
+                        } else {
+                            log::debug!("✓ UTXO {}:{} has no alkanes - can be spent", info.txid, info.vout);
+                        }
+                        info.has_alkanes = has_alkanes;
+                    }
+                    Err(e) => {
+                        failed_checks += 1;
+                        // CONSERVATIVE: If we can't verify, assume it HAS alkanes to be safe
+                        log::warn!("⚠ Failed to check alkanes for UTXO {}:{}: {}. ASSUMING HAS ALKANES (will be locked).", 
+                            info.txid, info.vout, e);
+                        info.has_alkanes = true;
+                    }
+                }
+                utxos_with_alkanes_check.push((outpoint, info));
+            }
+            
+            log::info!("Alkanes check complete: {} UTXOs have alkanes (will be locked), {} checks failed (locked for safety)", 
+                alkanes_found, failed_checks);
+        } else {
+            utxos_with_alkanes_check = utxos;
+        }
+
+        // 4. Filter out UTXOs with inscriptions/runes/alkanes
+        let clean_utxos: Vec<UtxoInfo> = utxos_with_alkanes_check.into_iter()
             .filter(|(_, info)| {
                 let is_clean = !info.has_inscriptions && !info.has_runes && !info.has_alkanes;
                 if !is_clean {
@@ -1026,7 +1084,7 @@ impl WalletProvider for ConcreteProvider {
 
         log::info!("Found {} clean UTXOs for coin selection", clean_utxos.len());
 
-        // 4. Perform coin selection
+        // 5. Perform coin selection
         let fee_rate = params.fee_rate.unwrap_or(1.0); // Default to 1 sat/vbyte
         
         let (selected_utxos, total_input_amount) = if params.send_all {
@@ -1750,7 +1808,7 @@ impl MetashrewRpcProvider for ConcreteProvider {
         txid: &str,
         vout: u32,
         block_tag: Option<String>,
-        _protocol_tag: u128,
+        protocol_tag: u128,
     ) -> Result<crate::alkanes::protorunes::ProtoruneOutpointResponse> {
         let txid = bitcoin::Txid::from_str(txid)?;
         let outpoint = bitcoin::OutPoint { txid, vout };
@@ -1759,7 +1817,13 @@ impl MetashrewRpcProvider for ConcreteProvider {
         txid_bytes.reverse();
         request.txid = txid_bytes;
         request.vout = outpoint.vout;
-        // request.protocol = Some(crate::utils::to_uint128(protocol_tag));
+        
+        // Set the protocol field - required by the view function
+        let mut protocol = protorune_pb::Uint128::default();
+        protocol.lo = (protocol_tag & 0xFFFFFFFFFFFFFFFF) as u64;
+        protocol.hi = (protocol_tag >> 64) as u64;
+        request.protocol = Some(protocol);
+        
         let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
         let response_bytes = self
             .metashrew_view_call(

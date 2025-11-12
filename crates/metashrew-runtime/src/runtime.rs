@@ -331,7 +331,7 @@ pub fn u32_to_vec(v: u32) -> Result<Vec<u8>> {
     try_into_vec(v.to_le_bytes())
 }
 
-pub fn try_read_arraybuffer_as_vec(data: &[u8], data_start: i32) -> Result<Vec<u8>> {
+pub fn try_read_arraybuffer_as_vec(data: &[u8], data_start: u32) -> Result<Vec<u8>> {
     if data_start < 4 || (data_start as usize) > data.len() {
         return Err(anyhow!("memory error: invalid data_start"));
     }
@@ -351,7 +351,7 @@ pub fn try_read_arraybuffer_as_vec(data: &[u8], data_start: i32) -> Result<Vec<u
     return Ok(Vec::<u8>::from(&data[data_offset..end_offset]));
 }
 
-pub fn read_arraybuffer_as_vec(data: &[u8], data_start: i32) -> Vec<u8> {
+pub fn read_arraybuffer_as_vec(data: &[u8], data_start: u32) -> Vec<u8> {
     match try_read_arraybuffer_as_vec(data, data_start) {
         Ok(v) => v,
         Err(_) => Vec::<u8>::new(),
@@ -728,7 +728,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                             // Get the final result
                             read_arraybuffer_as_vec(
                                 memory.data(&*store),
-                                result,
+                                result as u32,
                             )
                         };
                         Ok(result)    }
@@ -859,7 +859,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
     
                 Ok(read_arraybuffer_as_vec(
                     memory.data(store),
-                    result,
+                    result as u32,
                 ))
             };
             result
@@ -1065,7 +1065,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
             .func_wrap1_async(
                 "env",
                 "__load_input",
-                move |mut caller: Caller<'_, State>, data_start: i32| {
+                move |mut caller: Caller<'_, State>, data_start: u32| {
                     let context_ref_input = context_ref_input.clone();
                     Box::new(async move {
                         log::debug!("[__load_input] Called with data_start={}", data_start);
@@ -1142,7 +1142,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
             .func_wrap1_async(
                 "env",
                 "__log",
-                move |mut caller: Caller<'_, State>, data_start: i32| {
+                move |mut caller: Caller<'_, State>, data_start: u32| {
                     let intercept_logging = intercept_logging.clone();
                     Box::new(async move {
                         let mem = match caller.get_export("memory") {
@@ -1218,7 +1218,7 @@ pub async fn setup_linker_view(
 
 
 
-                        move |_caller: Caller<'_, State>, _encoded: i32| {
+                        move |_caller: Caller<'_, State>, _encoded: u32| {
 
 
 
@@ -1252,7 +1252,7 @@ pub async fn setup_linker_view(
 
                 "__get",
 
-                move |mut caller: Caller<'_, State>, key: i32, value: i32| {
+                move |mut caller: Caller<'_, State>, key: u32, value: u32| {
                     let context_get = context_get.clone();
 
                     Box::new(async move {
@@ -1379,7 +1379,7 @@ pub async fn setup_linker_view(
 
                 "__get_len",
 
-                move |mut caller: Caller<'_, State>, key: i32| {
+                move |mut caller: Caller<'_, State>, key: u32| {
                     let context_get_len = context_get_len.clone();
 
                     Box::new(async move {
@@ -1582,7 +1582,7 @@ pub async fn setup_linker_view(
 
                         "__flush",
 
-                        move |mut caller: Caller<'_, State>, encoded: i32| {
+                        move |mut caller: Caller<'_, State>, encoded: u32| {
                             let context_ref = context_ref.clone();
 
                             Box::new(async move {
@@ -1671,7 +1671,7 @@ pub async fn setup_linker_view(
                                             .func_wrap2_async(
                                                 "env",
                                                 "__get",
-                                                move |mut caller: Caller<'_, State>, key: i32, value: i32| {
+                                                move |mut caller: Caller<'_, State>, key: u32, value: u32| {
                                                     let context_get = context_get.clone();
                                                     Box::new(async move {
                                                     let mem = match caller.get_export("memory") {
@@ -1732,7 +1732,7 @@ pub async fn setup_linker_view(
             .func_wrap1_async(
                 "env",
                 "__get_len",
-                move |mut caller: Caller<'_, State>, key: i32| {
+                move |mut caller: Caller<'_, State>, key: u32| {
                     let context_get_len = context_get_len.clone();
                     Box::new(async move {
                     let mem = match caller.get_export("memory") {
@@ -1777,7 +1777,7 @@ pub async fn setup_linker_view(
             .func_wrap1_async(
                 "env",
                 "__flush",
-                move |mut caller: Caller<'_, State>, encoded: i32| {
+                move |mut caller: Caller<'_, State>, encoded: u32| {
                     let context_ref = context_ref.clone();
                     Box::new(async move {
                         let height = context_ref.clone().lock().await.height;
@@ -1878,7 +1878,7 @@ pub async fn setup_linker_view(
             .func_wrap2_async(
                 "env",
                 "__get",
-                move |mut caller: Caller<'_, State>, key: i32, value: i32| {
+                move |mut caller: Caller<'_, State>, key: u32, value: u32| {
                     let context_get = context_get.clone();
                     let mem = match caller.get_export("memory") {
                         Some(export) => match export.into_memory() {
@@ -1961,7 +1961,7 @@ pub async fn setup_linker_view(
             .func_wrap1_async(
                 "env",
                 "__get_len",
-                move |mut caller: Caller<'_, State>, key: i32| -> Box<dyn std::future::Future<Output = i32> + Send> {
+                move |mut caller: Caller<'_, State>, key: u32| -> Box<dyn std::future::Future<Output = i32> + Send> {
                     let context_get_len = context_get_len.clone();
                     let mem = match caller.get_export("memory") {
                         Some(export) => match export.into_memory() {

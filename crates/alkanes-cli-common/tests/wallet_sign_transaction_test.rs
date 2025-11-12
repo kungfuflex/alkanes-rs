@@ -29,6 +29,7 @@ async fn test_wallet_send_and_sign_transaction() -> anyhow::Result<()> {
         auto_confirm: true,
         use_rebar: false,
         rebar_tier: 1,
+        lock_alkanes: false,
     };
     
     let unsigned_hex = provider.create_transaction(send_params).await?;
@@ -119,6 +120,7 @@ async fn test_wallet_send_all_and_sign() -> anyhow::Result<()> {
         auto_confirm: true,
         use_rebar: false,
         rebar_tier: 1,
+        lock_alkanes: false,
     };
     
     let unsigned_hex = provider.create_transaction(send_params).await?;
