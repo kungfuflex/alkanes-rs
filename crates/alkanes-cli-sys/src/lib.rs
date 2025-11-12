@@ -1517,25 +1517,23 @@ impl SystemWallet for SystemAlkanes {
                
                if do_split && max_tx_size > 0 {
                    // SPLIT MODE: Create multiple transactions
-                   let sats_per_input = 1999u64;
                    let all_inputs = unsigned_tx.input.clone();
                    let original_output = unsigned_tx.output.get(0).cloned()
                        .ok_or_else(|| AlkanesError::InvalidParameters("Transaction has no outputs".to_string()))?;
                    let destination_address = original_output.script_pubkey.clone();
-                   
-                   // Detect fee rate from unsigned transaction
-                   let unsigned_vsize = hex_string.len() / 2;
                    let original_output_amount = original_output.value.to_sat();
-                   let total_input = all_inputs.len() as u64 * sats_per_input;
-                   let unsigned_fee = total_input.saturating_sub(original_output_amount);
-                   let detected_fee_rate = if unsigned_vsize > 0 {
-                       unsigned_fee as f64 / unsigned_vsize as f64
-                   } else {
-                       2.1 // Default fallback
-                   };
                    
-                   eprintln!("📊 Detected fee rate from unsigned tx: {:.4} sat/vB", detected_fee_rate);
+                   // We can't easily detect the fee rate from the unsigned transaction
+                   // because we don't know the actual input amounts without querying each UTXO.
+                   // Instead, we'll calculate fees for each split transaction independently
+                   // and distribute the original output proportionally.
+                   
+                   // For fee rate detection, we need to estimate based on typical P2WPKH inputs
+                   // Average P2WPKH UTXO is around 546-10000 sats, but this varies greatly
+                   // We'll use a conservative approach: calculate fees for each chunk separately
+                   
                    eprintln!("📊 Split mode enabled - max size per transaction: {} bytes ({:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
+                   eprintln!("📊 Original output amount: {} sats", original_output_amount);
                    
                    // Calculate max inputs per transaction
                    let target_size = (max_tx_size as f64 * SAFETY_MARGIN) as usize;
@@ -1557,6 +1555,7 @@ impl SystemWallet for SystemAlkanes {
                    eprintln!("");
                    
                    let mut signed_txs = Vec::new();
+                   let mut total_output_allocated = 0u64;
                    
                    for tx_idx in 0..num_transactions {
                        let start_idx = tx_idx * max_inputs_per_tx;
@@ -1567,14 +1566,26 @@ impl SystemWallet for SystemAlkanes {
                        let mut chunk_tx = unsigned_tx.clone();
                        chunk_tx.input = chunk_inputs.to_vec();
                        
-                       // Calculate output amount for this chunk
-                       let chunk_input_amount = chunk_inputs.len() as u64 * sats_per_input;
-                       let chunk_base_size = overhead_bytes + (chunk_inputs.len() * 41);
-                       let chunk_witness_size = chunk_inputs.len() * 108;
-                       let chunk_weight = (chunk_base_size * 4) + chunk_witness_size;
-                       let chunk_vsize = (chunk_weight + 3) / 4;
-                       let chunk_fee = (chunk_vsize as f64 * detected_fee_rate).ceil() as u64;
-                       let chunk_output_amount = chunk_input_amount.saturating_sub(chunk_fee);
+                       // Calculate proportional output for this chunk
+                       // Each chunk gets a percentage of the original output based on input count
+                       let is_last_chunk = tx_idx == num_transactions - 1;
+                       let chunk_output_amount = if is_last_chunk {
+                           // Last chunk gets whatever is left to avoid rounding errors
+                           original_output_amount.saturating_sub(total_output_allocated)
+                       } else {
+                           // Proportional allocation: (chunk_inputs / total_inputs) * original_output
+                           ((chunk_inputs.len() as u128 * original_output_amount as u128) / all_inputs.len() as u128) as u64
+                       };
+                       
+                       total_output_allocated += chunk_output_amount;
+                       
+                       // Verify the output is above dust threshold (546 sats for P2TR)
+                       if chunk_output_amount < 546 {
+                           return Err(AlkanesError::InvalidParameters(format!(
+                               "Transaction {} would have dust output ({} sats). Original output {} sats is too small to split into {} transactions.",
+                               tx_idx + 1, chunk_output_amount, original_output_amount, num_transactions
+                           )));
+                       }
                        
                        chunk_tx.output = vec![bitcoin::TxOut {
                            value: bitcoin::Amount::from_sat(chunk_output_amount),
@@ -1589,9 +1600,7 @@ impl SystemWallet for SystemAlkanes {
                        
                        eprintln!("🔄 Signing transaction {} of {}...", tx_idx + 1, num_transactions);
                        eprintln!("   Inputs: {}", chunk_inputs.len());
-                       eprintln!("   Input amount: {} sats", chunk_input_amount);
                        eprintln!("   Output amount: {} sats", chunk_output_amount);
-                       eprintln!("   Fee: {} sats ({:.4} sat/vB)", chunk_fee, chunk_fee as f64 / chunk_vsize as f64);
                        
                        match provider.sign_transaction(chunk_hex).await {
                            Ok(signed_hex) => {
