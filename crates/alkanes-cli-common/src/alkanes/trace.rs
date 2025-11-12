@@ -7,6 +7,16 @@
 //! This module defines the structures for representing and displaying alkanes transaction traces.
 //! It provides a native Rust representation of the trace data returned by the indexer,
 //! along with implementations for serialization, deserialization, and pretty-printing.
+//!
+//! # Conversion Pattern
+//!
+//! This module implements `From` traits for converting between protobuf types
+//! and domain types. For a more general set of conversion utilities that can be
+//! used to avoid orphan rule violations, see the `conversion` module.
+//!
+//! The conversions here are specific to trace display formatting, while the
+//! `conversion` module provides utilities for working with alkanes-support types
+//! in a more general context.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;

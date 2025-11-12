@@ -47,6 +47,9 @@ pub use std::{
 
 pub mod vendored_ord;
 
+// Conversion utilities for protobuf types
+pub mod conversion;
+
 // Core modules
 pub mod address;
 #[cfg(feature = "std")]
