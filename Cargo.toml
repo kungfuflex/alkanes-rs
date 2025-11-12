@@ -35,6 +35,8 @@ alkanes-cli-common = { path = "./crates/alkanes-cli-common" }
 alkanes-cli-sys = { path = "./crates/alkanes-cli-sys" }
 alkanes-cli = { path = "./crates/alkanes-cli" }
 alkanes-asc = { path = "./crates/alkanes-asc" }
+alkanes-ffi = { path = "./crates/alkanes-ffi" }
+alkanes-jni = { path = "./crates/alkanes-jni" }
 alkanes-web-sys = { path = "./crates/alkanes-web-sys" }
 alkanes-web-leptos = { path = "./crates/alkanes-web-leptos" }
 alkanes-pretty-print-macro = { path = "./crates/alkanes-pretty-print-macro" }

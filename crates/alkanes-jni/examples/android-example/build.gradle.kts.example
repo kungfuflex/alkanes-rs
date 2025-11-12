@@ -1,0 +1,83 @@
+// Example Android build.gradle.kts configuration for using alkanes-jni
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    // Add the Rust Android Gradle plugin
+    id("org.mozilla.rust-android-gradle.rust-android") version "0.9.4"
+}
+
+android {
+    namespace = "com.example.alkanesapp"
+    compileSdk = 34
+    
+    defaultConfig {
+        applicationId = "com.example.alkanesapp"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+    
+    // Specify NDK version
+    ndkVersion = "26.1.10909125"
+    
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
+
+// Configure Cargo/Rust build
+cargo {
+    // Path to the alkanes-jni crate from your Android project
+    module = "../../../alkanes-rs/crates/alkanes-jni"
+    
+    // Library name (without lib prefix or .so extension)
+    libname = "alkanes_jni"
+    
+    // Target architectures for Android
+    targets = listOf("arm64", "x86_64")
+    
+    // Use release builds for better performance
+    profile = "release"
+    
+    // Optional: specify features
+    // features = listOf("some-feature")
+    
+    // Optional: verbose output
+    verbose = true
+}
+
+dependencies {
+    // JNA for native library loading
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    
+    // Standard Android dependencies
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    
+    // Coroutines for async operations
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    
+    // Testing
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+}

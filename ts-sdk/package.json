@@ -1,0 +1,73 @@
+{
+  "name": "@alkanes/ts-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Alkanes - Bitcoin smart contracts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.mjs",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run build:wasm && npm run build:ts",
+    "build:wasm": "cd ../crates/alkanes-web-sys && wasm-pack build --target bundler --out-dir ../../ts-sdk/wasm-pkg",
+    "build:ts": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "jest",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "alkanes",
+    "bitcoin",
+    "smart-contracts",
+    "wasm",
+    "typescript",
+    "sdk",
+    "wallet",
+    "keystore"
+  ],
+  "author": "Alkanes Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kungfuflex/alkanes-rs.git",
+    "directory": "ts-sdk"
+  },
+  "dependencies": {
+    "bitcoinjs-lib": "^6.1.7",
+    "bip32": "^4.0.0",
+    "bip39": "^3.1.0",
+    "ecpair": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.17.12",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.57.1",
+    "jest": "^29.7.0",
+    "prettier": "^3.3.3",
+    "ts-jest": "^29.2.5",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3"
+  },
+  "peerDependencies": {
+    "@oyl/sdk": "^1.18.0"
+  },
+  "peerDependenciesMeta": {
+    "@oyl/sdk": {
+      "optional": true
+    }
+  }
+}

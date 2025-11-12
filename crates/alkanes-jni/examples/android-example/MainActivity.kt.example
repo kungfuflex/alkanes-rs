@@ -1,0 +1,125 @@
+package com.example.alkanesapp
+
+import android.os.Bundle
+import android.widget.Button
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.alkanes.*
+
+class MainActivity : AppCompatActivity() {
+    
+    private lateinit var statusText: TextView
+    private lateinit var generateButton: Button
+    private lateinit var balanceButton: Button
+    
+    private var wallet: Wallet? = null
+    
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        
+        statusText = findViewById(R.id.statusText)
+        generateButton = findViewById(R.id.generateButton)
+        balanceButton = findViewById(R.id.balanceButton)
+        
+        // Display library version
+        try {
+            val version = version()
+            statusText.text = "Alkanes FFI v$version\n\n"
+        } catch (e: Exception) {
+            statusText.text = "Error loading library: ${e.message}\n\n"
+            return
+        }
+        
+        generateButton.setOnClickListener {
+            generateWallet()
+        }
+        
+        balanceButton.setOnClickListener {
+            checkBalance()
+        }
+    }
+    
+    private fun generateWallet() {
+        lifecycleScope.launch {
+            try {
+                statusText.append("Generating wallet...\n")
+                
+                val result = withContext(Dispatchers.IO) {
+                    // Generate mnemonic
+                    val mnemonic = generateMnemonic(WordCount.WORDS12)
+                    
+                    // Create wallet
+                    val walletPath = "${filesDir.absolutePath}/wallet.db"
+                    val config = WalletConfig(
+                        walletPath = walletPath,
+                        network = Network.REGTEST,
+                        passphrase = "test_password"
+                    )
+                    
+                    val newWallet = Wallet(config, mnemonic)
+                    wallet = newWallet
+                    
+                    // Get addresses
+                    val p2wpkhAddr = newWallet.getAddress(AddressType.P2WPKH, 0u)
+                    val p2trAddr = newWallet.getAddress(AddressType.P2TR, 0u)
+                    
+                    Pair(mnemonic, mapOf(
+                        "P2WPKH" to p2wpkhAddr,
+                        "P2TR" to p2trAddr
+                    ))
+                }
+                
+                statusText.append("✓ Wallet created!\n\n")
+                statusText.append("Mnemonic (save securely!):\n${result.first}\n\n")
+                statusText.append("Addresses:\n")
+                result.second.forEach { (type, addr) ->
+                    statusText.append("  $type: $addr\n")
+                }
+                statusText.append("\n")
+                
+                balanceButton.isEnabled = true
+                
+            } catch (e: AlkanesException) {
+                statusText.append("Error: ${e.message}\n\n")
+            }
+        }
+    }
+    
+    private fun checkBalance() {
+        lifecycleScope.launch {
+            try {
+                val currentWallet = wallet ?: run {
+                    statusText.append("No wallet loaded\n")
+                    return@launch
+                }
+                
+                statusText.append("Checking balance...\n")
+                
+                val balance = withContext(Dispatchers.IO) {
+                    // Sync wallet with blockchain
+                    currentWallet.sync()
+                    
+                    // Get balance
+                    currentWallet.getBalance()
+                }
+                
+                statusText.append("Balance:\n")
+                statusText.append("  Confirmed: ${balance.confirmed} sats\n")
+                statusText.append("  Pending: ${balance.pending} sats\n\n")
+                
+            } catch (e: AlkanesException) {
+                statusText.append("Error: ${e.message}\n\n")
+            }
+        }
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        wallet = null
+    }
+}

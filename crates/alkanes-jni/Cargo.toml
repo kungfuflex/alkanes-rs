@@ -1,0 +1,24 @@
+[package]
+name = "alkanes-jni"
+version.workspace = true
+edition.workspace = true
+description = "JVM/Android bindings for alkanes-rs - uses alkanes-ffi with additional Java tooling"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+name = "alkanes_jni"
+
+[dependencies]
+# Use the FFI crate as the foundation
+alkanes-ffi = { path = "../alkanes-ffi" }
+
+# UniFFI for Kotlin bindings
+uniffi = { version = "0.28" }
+
+[build-dependencies]
+uniffi = { version = "0.28", features = ["build"] }
+
+[features]
+default = []
