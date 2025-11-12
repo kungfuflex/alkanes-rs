@@ -133,13 +133,24 @@ impl SystemAlkanes {
         }
 
         // Determine the correct RPC URLs, prioritizing command-line args over network defaults.
+        
+        // Set default sandshrew_rpc_url based on provider network if not explicitly provided
+        let sandshrew_rpc_url = args.rpc_config.sandshrew_rpc_url.clone().or_else(|| {
+            match args.rpc_config.provider.as_str() {
+                "mainnet" => Some("https://mainnet.sandshrew.io/v2/lasereyes".to_string()),
+                "signet" => Some("https://signet.sandshrew.io/v2/lasereyes".to_string()),
+                "regtest" => Some("http://localhost:18888".to_string()),
+                _ => Some("http://localhost:18888".to_string()),
+            }
+        });
+        
         // Only use the network default bitcoin_rpc_url if sandshrew_rpc_url is not provided
         let bitcoin_rpc_url = args
             .rpc_config
             .bitcoin_rpc_url
             .clone()
             .or_else(|| {
-                if args.rpc_config.sandshrew_rpc_url.is_none() {
+                if sandshrew_rpc_url.is_none() {
                     Some(network_params.bitcoin_rpc_url.clone())
                 } else {
                     None
@@ -150,7 +161,7 @@ impl SystemAlkanes {
             .rpc_config
             .metashrew_rpc_url
             .clone()
-            .or_else(|| args.rpc_config.sandshrew_rpc_url.clone())
+            .or_else(|| sandshrew_rpc_url.clone())
             .unwrap_or_else(|| network_params.metashrew_rpc_url.clone());
 
         let esplora_url = args
@@ -164,14 +175,14 @@ impl SystemAlkanes {
             "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, sandshrew_rpc: {:?}, titan_api: {:?}, esplora: {:?}",
             &bitcoin_rpc_url,
             &metashrew_rpc_url,
-            &args.rpc_config.sandshrew_rpc_url,
+            &sandshrew_rpc_url,
             &args.rpc_config.titan_api_url,
             &esplora_url
         );
         let mut provider = ConcreteProvider::new(
             bitcoin_rpc_url,
             metashrew_rpc_url,
-            args.rpc_config.sandshrew_rpc_url.clone(),
+            sandshrew_rpc_url,
             args.rpc_config.titan_api_url.clone(),
             esplora_url,
             args.rpc_config.provider.clone(),
@@ -1381,15 +1392,18 @@ impl SystemWallet for SystemAlkanes {
                }
                Ok(())
            },
-           WalletCommands::SignTx { tx_hex, from_file, truncate_excess_vsize } => {
-               // Parse the size limit if truncate is specified
+           WalletCommands::SignTx { tx_hex, from_file, truncate_excess_vsize, split_max_vsize } => {
+               // Parse the size limit if truncate or split is specified
                let max_tx_size = if let Some(ref size_str) = truncate_excess_vsize {
                    parse_size_string(size_str)?
+               } else if let Some(ref size_str) = split_max_vsize {
+                   parse_size_string(size_str)?
                } else {
-                   0 // No truncation
+                   0 // No truncation or splitting
                };
+               let do_split = split_max_vsize.is_some();
                // Read hex from file or argument
-               let hex_string = if let Some(file_path) = from_file {
+               let hex_string = if let Some(ref file_path) = from_file {
                    std::fs::read_to_string(file_path)
                        .map_err(|e| AlkanesError::Storage(format!("Failed to read file: {}", e)))?
                        .trim()
@@ -1498,52 +1512,179 @@ impl SystemWallet for SystemAlkanes {
                    }
                }
                
-               // Serialize the (possibly truncated) transaction
+               // Now sign and process the transaction(s)
                use bitcoin::consensus::Encodable;
-               let mut truncated_bytes = Vec::new();
-               working_tx.consensus_encode(&mut truncated_bytes)
-                   .map_err(|e| AlkanesError::InvalidParameters(format!("Failed to encode transaction: {}", e)))?;
-               let truncated_hex = hex::encode(truncated_bytes);
                
-               match provider.sign_transaction(truncated_hex).await {
-                   Ok(signed_hex) => {
-                       let signed_bytes = hex::decode(&signed_hex).map_err(|e| AlkanesError::InvalidParameters(format!("Invalid signed hex: {}", e)))?;
-                       let signed_size = signed_bytes.len();
+               if do_split && max_tx_size > 0 {
+                   // SPLIT MODE: Create multiple transactions
+                   let sats_per_input = 1999u64;
+                   let all_inputs = unsigned_tx.input.clone();
+                   let original_output = unsigned_tx.output.get(0).cloned()
+                       .ok_or_else(|| AlkanesError::InvalidParameters("Transaction has no outputs".to_string()))?;
+                   let destination_address = original_output.script_pubkey.clone();
+                   
+                   // Detect fee rate from unsigned transaction
+                   let unsigned_vsize = hex_string.len() / 2;
+                   let original_output_amount = original_output.value.to_sat();
+                   let total_input = all_inputs.len() as u64 * sats_per_input;
+                   let unsigned_fee = total_input.saturating_sub(original_output_amount);
+                   let detected_fee_rate = if unsigned_vsize > 0 {
+                       unsigned_fee as f64 / unsigned_vsize as f64
+                   } else {
+                       2.1 // Default fallback
+                   };
+                   
+                   eprintln!("📊 Detected fee rate from unsigned tx: {:.4} sat/vB", detected_fee_rate);
+                   eprintln!("📊 Split mode enabled - max size per transaction: {} bytes ({:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
+                   
+                   // Calculate max inputs per transaction
+                   let target_size = (max_tx_size as f64 * SAFETY_MARGIN) as usize;
+                   let overhead_bytes = 4 + 1 + 1 + 1 + 1 + 43 + 4; // ~55 bytes
+                   let bytes_per_input = 41 + 108; // 149 raw bytes per P2WPKH input
+                   let available_for_inputs = target_size.saturating_sub(overhead_bytes);
+                   let max_inputs_per_tx = available_for_inputs / bytes_per_input;
+                   
+                   if max_inputs_per_tx == 0 {
+                       return Err(AlkanesError::InvalidParameters("Size limit too small to fit even one input".to_string()));
+                   }
+                   
+                   let num_transactions = (all_inputs.len() + max_inputs_per_tx - 1) / max_inputs_per_tx;
+                   
+                   eprintln!("📊 Splitting transaction:");
+                   eprintln!("   Total inputs: {}", all_inputs.len());
+                   eprintln!("   Max inputs per tx: {}", max_inputs_per_tx);
+                   eprintln!("   Number of transactions: {}", num_transactions);
+                   eprintln!("");
+                   
+                   let mut signed_txs = Vec::new();
+                   
+                   for tx_idx in 0..num_transactions {
+                       let start_idx = tx_idx * max_inputs_per_tx;
+                       let end_idx = std::cmp::min(start_idx + max_inputs_per_tx, all_inputs.len());
+                       let chunk_inputs = &all_inputs[start_idx..end_idx];
                        
-                       println!("✅ Transaction signed successfully!");
+                       // Create transaction for this chunk
+                       let mut chunk_tx = unsigned_tx.clone();
+                       chunk_tx.input = chunk_inputs.to_vec();
                        
-                       if max_tx_size > 0 && original_input_count != working_tx.input.len() {
-                           println!("⚠️  Transaction was truncated to fit size limit");
-                           println!("   Original inputs: {}", original_input_count);
-                           println!("   Final inputs: {}", working_tx.input.len());
-                           println!("   Removed inputs: {}", original_input_count - working_tx.input.len());
-                       }
+                       // Calculate output amount for this chunk
+                       let chunk_input_amount = chunk_inputs.len() as u64 * sats_per_input;
+                       let chunk_base_size = overhead_bytes + (chunk_inputs.len() * 41);
+                       let chunk_witness_size = chunk_inputs.len() * 108;
+                       let chunk_weight = (chunk_base_size * 4) + chunk_witness_size;
+                       let chunk_vsize = (chunk_weight + 3) / 4;
+                       let chunk_fee = (chunk_vsize as f64 * detected_fee_rate).ceil() as u64;
+                       let chunk_output_amount = chunk_input_amount.saturating_sub(chunk_fee);
                        
-                       println!("📏 Signed transaction size: {} bytes ({:.2} KB)", signed_size, signed_size as f64 / 1024.0);
+                       chunk_tx.output = vec![bitcoin::TxOut {
+                           value: bitcoin::Amount::from_sat(chunk_output_amount),
+                           script_pubkey: destination_address.clone(),
+                       }];
                        
-                       if max_tx_size > 0 && signed_size > max_tx_size {
-                           eprintln!("❌ WARNING: Signed transaction still exceeds size limit!");
-                           eprintln!("   Size: {} bytes ({:.2} KB)", signed_size, signed_size as f64 / 1024.0);
-                           eprintln!("   Limit: {} bytes ({:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
-                           eprintln!("   You may need to reduce inputs further");
-                       } else if max_tx_size > 0 {
-                           println!("✅ Transaction size is within specified limit");
-                       } else {
-                           // Check Bitcoin consensus limit (1MB)
-                           const BITCOIN_CONSENSUS_LIMIT: usize = 1_000_000;
-                           if signed_size > BITCOIN_CONSENSUS_LIMIT {
-                               eprintln!("❌ WARNING: Transaction exceeds Bitcoin consensus limit (1 MB)!");
-                           } else {
-                               println!("✅ Transaction size is within Bitcoin consensus limit");
+                       // Serialize and sign this chunk
+                       let mut chunk_bytes = Vec::new();
+                       chunk_tx.consensus_encode(&mut chunk_bytes)
+                           .map_err(|e| AlkanesError::InvalidParameters(format!("Failed to encode transaction {}: {}", tx_idx, e)))?;
+                       let chunk_hex = hex::encode(chunk_bytes);
+                       
+                       eprintln!("🔄 Signing transaction {} of {}...", tx_idx + 1, num_transactions);
+                       eprintln!("   Inputs: {}", chunk_inputs.len());
+                       eprintln!("   Input amount: {} sats", chunk_input_amount);
+                       eprintln!("   Output amount: {} sats", chunk_output_amount);
+                       eprintln!("   Fee: {} sats ({:.4} sat/vB)", chunk_fee, chunk_fee as f64 / chunk_vsize as f64);
+                       
+                       match provider.sign_transaction(chunk_hex).await {
+                           Ok(signed_hex) => {
+                               let signed_bytes = hex::decode(&signed_hex)
+                                   .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid signed hex for tx {}: {}", tx_idx, e)))?;
+                               let signed_size = signed_bytes.len();
+                               
+                               eprintln!("   ✅ Signed (size: {} bytes, {:.2} KB)", signed_size, signed_size as f64 / 1024.0);
+                               
+                               if signed_size > max_tx_size {
+                                   eprintln!("   ⚠️  WARNING: Transaction {} exceeds size limit!", tx_idx + 1);
+                               }
+                               
+                               signed_txs.push(signed_hex);
+                           },
+                           Err(e) => {
+                               eprintln!("❌ Failed to sign transaction {}: {}", tx_idx + 1, e);
+                               return Err(e);
                            }
                        }
+                   }
+                   
+                   eprintln!("");
+                   println!("✅ All {} transactions signed successfully!", num_transactions);
+                   println!("");
+                   
+                   // Output all signed transactions
+                   for (idx, signed_hex) in signed_txs.iter().enumerate() {
+                       println!("📄 Transaction {} of {}:", idx + 1, num_transactions);
+                       println!("{}", signed_hex);
+                       println!("");
+                   }
+                   
+                   // Also write to individual files if from_file was specified
+                   if let Some(ref input_file) = from_file {
+                       let base_path = std::path::Path::new(input_file);
+                       let parent = base_path.parent().unwrap_or(std::path::Path::new("."));
+                       let stem = base_path.file_stem().and_then(|s| s.to_str()).unwrap_or("tx");
                        
-                       println!("📄 Signed transaction hex:");
-                       println!("{signed_hex}");
-                   },
-                   Err(e) => {
-                       println!("❌ Failed to sign transaction: {e}");
-                       return Err(e);
+                       for (idx, signed_hex) in signed_txs.iter().enumerate() {
+                           let output_file = parent.join(format!("{}_signed_{}.hex", stem, idx));
+                           std::fs::write(&output_file, format!("{}\n", signed_hex))
+                               .map_err(|e| AlkanesError::Storage(format!("Failed to write file {}: {}", output_file.display(), e)))?;
+                           eprintln!("💾 Wrote transaction {} to: {}", idx + 1, output_file.display());
+                       }
+                   }
+               } else {
+                   // NORMAL OR TRUNCATE MODE: Single transaction
+                   let mut truncated_bytes = Vec::new();
+                   working_tx.consensus_encode(&mut truncated_bytes)
+                       .map_err(|e| AlkanesError::InvalidParameters(format!("Failed to encode transaction: {}", e)))?;
+                   let truncated_hex = hex::encode(truncated_bytes);
+                   
+                   match provider.sign_transaction(truncated_hex).await {
+                       Ok(signed_hex) => {
+                           let signed_bytes = hex::decode(&signed_hex).map_err(|e| AlkanesError::InvalidParameters(format!("Invalid signed hex: {}", e)))?;
+                           let signed_size = signed_bytes.len();
+                           
+                           println!("✅ Transaction signed successfully!");
+                           
+                           if max_tx_size > 0 && original_input_count != working_tx.input.len() {
+                               println!("⚠️  Transaction was truncated to fit size limit");
+                               println!("   Original inputs: {}", original_input_count);
+                               println!("   Final inputs: {}", working_tx.input.len());
+                               println!("   Removed inputs: {}", original_input_count - working_tx.input.len());
+                           }
+                           
+                           println!("📏 Signed transaction size: {} bytes ({:.2} KB)", signed_size, signed_size as f64 / 1024.0);
+                           
+                           if max_tx_size > 0 && signed_size > max_tx_size {
+                               eprintln!("❌ WARNING: Signed transaction still exceeds size limit!");
+                               eprintln!("   Size: {} bytes ({:.2} KB)", signed_size, signed_size as f64 / 1024.0);
+                               eprintln!("   Limit: {} bytes ({:.2} KB)", max_tx_size, max_tx_size as f64 / 1024.0);
+                               eprintln!("   You may need to reduce inputs further");
+                           } else if max_tx_size > 0 {
+                               println!("✅ Transaction size is within specified limit");
+                           } else {
+                               // Check Bitcoin consensus limit (1MB)
+                               const BITCOIN_CONSENSUS_LIMIT: usize = 1_000_000;
+                               if signed_size > BITCOIN_CONSENSUS_LIMIT {
+                                   eprintln!("❌ WARNING: Transaction exceeds Bitcoin consensus limit (1 MB)!");
+                               } else {
+                                   println!("✅ Transaction size is within Bitcoin consensus limit");
+                               }
+                           }
+                           
+                           println!("📄 Signed transaction hex:");
+                           println!("{signed_hex}");
+                       },
+                       Err(e) => {
+                           println!("❌ Failed to sign transaction: {e}");
+                           return Err(e);
+                       }
                    }
                }
                Ok(())

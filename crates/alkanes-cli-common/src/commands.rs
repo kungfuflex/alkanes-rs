@@ -246,6 +246,12 @@ pub enum WalletCommands {
         /// If specified without value, defaults to Bitcoin consensus limit (1m)
         #[arg(long, value_name = "SIZE")]
         truncate_excess_vsize: Option<String>,
+        /// Split transaction into multiple transactions with max vsize per transaction
+        /// Format: number followed by unit (b/B, k/K, m/M)
+        /// Examples: 100k, 1m, 500K, 1000000b
+        /// Creates multiple transactions that together achieve the same total effect
+        #[arg(long, value_name = "SIZE", conflicts_with = "truncate_excess_vsize")]
+        split_max_vsize: Option<String>,
     },
     /// Sign a transaction with external key file
     Sign {
