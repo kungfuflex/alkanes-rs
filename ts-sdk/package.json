@@ -10,10 +10,16 @@
       "import": "./dist/index.mjs",
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./wasm": {
+      "import": "./wasm-pkg/alkanes_web_sys.js",
+      "require": "./wasm-pkg/alkanes_web_sys.js",
+      "types": "./wasm-pkg/alkanes_web_sys.d.ts"
     }
   },
   "files": [
     "dist",
+    "wasm-pkg",
     "README.md",
     "LICENSE"
   ],
