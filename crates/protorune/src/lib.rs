@@ -5,6 +5,7 @@ use crate::protostone::{
     add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
 };
 use crate::tables::RuneTable;
+use alkanes_support::block_traits::{BlockLike, TransactionLike};
 use anyhow::{anyhow, Ok, Result};
 use balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
@@ -45,6 +46,8 @@ pub mod protoburn;
 pub mod protorune_init;
 pub mod protostone;
 pub mod tables;
+#[cfg(feature = "zcash")]
+pub mod zcash;
 #[cfg(feature = "test-utils")]
 pub mod test_helpers;
 #[cfg(test)]
@@ -575,8 +578,20 @@ impl Protorune {
         Err(anyhow!("did not find a output index"))
     }
 
-    pub fn index_unspendables<T: MessageContext>(block: &Block, height: u64) -> Result<()> {
-        for (index, tx) in block.txdata.iter().enumerate() {
+    pub fn index_unspendables<B: BlockLike, T: MessageContext>(block: &B, height: u64) -> Result<()> {
+        // Create a Bitcoin block for Runestone processing
+        // This is needed because Runestone::decipher expects bitcoin::Transaction
+        let header = block.header();
+        let bitcoin_txs: Vec<Transaction> = block.transactions()
+            .iter()
+            .map(|tx| tx.to_bitcoin_tx())
+            .collect();
+        let bitcoin_block = Block {
+            header,
+            txdata: bitcoin_txs.clone(),
+        };
+        
+        for (index, tx) in bitcoin_txs.iter().enumerate() {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
                 let mut atomic = AtomicPointer::default();
                 let runestone_output_index: u32 = Self::get_runestone_output_index(tx)?;
@@ -586,7 +601,7 @@ impl Protorune {
                     runestone,
                     height,
                     index as u32,
-                    block,
+                    &bitcoin_block,
                     runestone_output_index,
                 ) {
                     Err(e) => {
@@ -606,7 +621,7 @@ impl Protorune {
         }
         Ok(())
     }
-    pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_spendables<Tx: TransactionLike>(txdata: &[Tx]) -> Result<BTreeSet<Vec<u8>>> {
         // Track unique addresses that have their spendable outpoints updated
         #[cfg(feature = "cache")]
         let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
@@ -615,17 +630,17 @@ impl Protorune {
         let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
-            let tx_id = transaction.compute_txid();
+            let tx_id = transaction.txid();
             tables::RUNES
                 .TXID_TO_TXINDEX
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
-            for (_index, input) in transaction.input.iter().enumerate() {
+            for (_index, input) in transaction.inputs().iter().enumerate() {
                 tables::OUTPOINT_SPENDABLE_BY
                     .select(&consensus_encode(&input.previous_output)?)
                     .nullify();
             }
-            for (index, output) in transaction.output.iter().enumerate() {
+            for (index, output) in transaction.outputs().iter().enumerate() {
                 let outpoint = OutPoint {
                     txid: tx_id.clone(),
                     vout: index as u32,
@@ -731,22 +746,23 @@ impl Protorune {
         Ok(updated_addresses)
     }
 
-    pub fn index_transaction_ids(block: &Block, height: u64) -> Result<()> {
+    pub fn index_transaction_ids<B: BlockLike>(block: &B, height: u64) -> Result<()> {
         let ptr = tables::RUNES
             .HEIGHT_TO_TRANSACTION_IDS
             .select_value::<u64>(height);
-        for tx in &block.txdata {
-            ptr.append(Arc::new(tx.compute_txid().as_byte_array().to_vec()));
+        for tx in block.transactions() {
+            ptr.append(Arc::new(tx.txid().as_byte_array().to_vec()));
         }
         Ok(())
     }
-    pub fn index_outpoints(block: &Block, height: u64) -> Result<()> {
+    pub fn index_outpoints<B: BlockLike>(block: &B, height: u64) -> Result<()> {
         let mut atomic = AtomicPointer::default();
-        for tx in &block.txdata {
-            for i in 0..tx.output.len() {
+        for tx in block.transactions() {
+            let tx_outputs = tx.outputs();
+            for i in 0..tx_outputs.len() {
                 let outpoint_bytes = outpoint_encode(
                     &(OutPoint {
-                        txid: tx.compute_txid(),
+                        txid: tx.txid(),
                         vout: i as u32,
                     }),
                 )?;
@@ -757,8 +773,8 @@ impl Protorune {
                     .derive(&tables::OUTPOINT_TO_OUTPUT.select(&outpoint_bytes))
                     .set(Arc::new(
                         (proto::protorune::Output {
-                            script: tx.output[i].clone().script_pubkey.into_bytes(),
-                            value: tx.output[i].clone().value.to_sat(),
+                            script: tx_outputs[i].clone().script_pubkey.into_bytes(),
+                            value: tx_outputs[i].clone().value.to_sat(),
                         })
                         .encode_to_vec(),
                     ));
@@ -1005,28 +1021,30 @@ impl Protorune {
     #[cfg(not(feature = "mainnet"))]
     pub fn freeze_storage(height: u64) {}
 
-    pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_block<B: BlockLike, T: MessageContext>(block: &B, height: u64) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));
         init_result?;
         add_result?;
+        
+        let block_hash = block.block_hash();
         tables::RUNES
             .HEIGHT_TO_BLOCKHASH
             .select_value::<u64>(height)
-            .set(Arc::new(consensus_encode(&block.block_hash())?));
+            .set(Arc::new(consensus_encode(&block_hash)?));
         tables::RUNES
             .BLOCKHASH_TO_HEIGHT
-            .select(&consensus_encode(&block.block_hash())?)
+            .select(&consensus_encode(&block_hash)?)
             .set_value::<u64>(height);
-        Self::index_transaction_ids(&block, height)?;
-        Self::index_outpoints(&block, height)?;
+        Self::index_transaction_ids(block, height)?;
+        Self::index_outpoints(block, height)?;
 
         // Get the set of updated addresses
-        let updated_addresses = Self::index_spendables(&block.txdata)?;
+        let updated_addresses = Self::index_spendables(block.transactions())?;
 
         Self::freeze_storage(height);
-        Self::index_unspendables::<T>(&block, height)?;
+        Self::index_unspendables::<B, T>(block, height)?;
 
         // Return the set of updated addresses
         Ok(updated_addresses)

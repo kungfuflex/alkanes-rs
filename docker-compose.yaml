@@ -1,0 +1,125 @@
+
+volumes:
+  bitcoin-data:
+  metashrew-data:
+services:
+  bitcoind:
+    build:
+      dockerfile: Dockerfile
+      context: ./docker/bitcoind
+    image: bitcoind:alkanes
+    volumes:
+      - bitcoin-data:/root/.bitcoin
+    command:
+      [
+        "-txindex",
+        "-regtest=1",
+        "-printtoconsole",
+        "-rpcallowip=0.0.0.0/0",
+        "-rpcbind=0.0.0.0",
+        "-rpcuser=bitcoinrpc",
+        "-rpcpassword=bitcoinrpc",
+        "-fallbackfee=0.00001"
+      ]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-regtest", "-rpcuser=bitcoinrpc", "-rpcpassword=bitcoinrpc", "getblockchaininfo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  metashrew:
+    build:
+      dockerfile: docker/metashrew/Dockerfile
+      context: .
+    image: rockshrew:alkanes
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    volumes:
+      - metashrew-data:/data
+    environment:
+      DAEMON_RPC_ADDR: http://bitcoind:18443
+      AUTH: bitcoinrpc:bitcoinrpc
+      DB_PATH: /data
+      LOG_FILTERS: none,rockshrew=debug
+      HOST: 0.0.0.0
+      PORT: 8080
+    restart: unless-stopped
+
+  memshrew:
+    build:
+      dockerfile: docker/memshrew/Dockerfile
+      context: .
+    image: memshrew:alkanes
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    environment:
+      DAEMON_RPC_ADDR: http://bitcoind:18443
+      P2P_ADDR: bitcoind:18444
+      AUTH: bitcoinrpc:bitcoinrpc
+      LOG_FILTERS: none,memshrew=debug
+      HOST: 0.0.0.0
+      PORT: 8081
+    restart: unless-stopped
+
+  ord:
+    build:
+      dockerfile: Dockerfile
+      context: ./docker/ord
+    image: ord:alkanes
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    environment:
+      CHAIN: regtest
+      RPCUSER: bitcoinrpc
+      RPCPASSWORD: bitcoinrpc
+      PORT: 8090
+      DAEMON_RPC_ADDR: bitcoind:18443
+    restart: unless-stopped
+
+  esplora:
+    build:
+      dockerfile: Dockerfile
+      context: ./docker/electrs
+    image: esplora:alkanes
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    volumes:
+      - bitcoin-data:/data/bitcoin
+    environment:
+      ELECTRS_AUTH: bitcoinrpc:bitcoinrpc
+      ELECTRS_NETWORK: regtest
+      ELECTRS_DAEMON_RPC_ADDR: bitcoind:18443
+      ELECTRS_HTTP_ADDR: 0.0.0.0:50010
+      ELECTRS_ELECTRUM_RPC_ADDR: 0.0.0.0:50001
+      ELECTRS_DB_DIR: /data/electrs
+      ELECTRS_DAEMON_DIR: /data/bitcoin
+    restart: unless-stopped
+
+  jsonrpc:
+    build:
+      dockerfile: Dockerfile
+      context: .
+      args:
+        - PACKAGE=alkanes-jsonrpc
+    image: alkanes-jsonrpc:latest
+    depends_on:
+      - bitcoind
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 18888
+      BITCOIN_RPC_URL: http://bitcoind:18443
+      BITCOIN_RPC_USER: bitcoinrpc
+      BITCOIN_RPC_PASSWORD: bitcoinrpc
+      METASHREW_URL: http://metashrew:8080
+      MEMSHREW_URL: http://memshrew:8081
+      ORD_URL: http://ord:8090
+      ESPLORA_URL: http://esplora:50010
+      RUST_LOG: info
+    ports:
+      - "18888:18888"
+    restart: unless-stopped

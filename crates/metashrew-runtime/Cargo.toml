@@ -1,0 +1,19 @@
+[package]
+name = "metashrew-runtime"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.75"
+prost = "0.12.1"
+prost-build = "0.12.1"
+wasmtime = "18.0.4"
+itertools = "0.12.0"
+log = "0.4.20"
+hex = "0.4.3"
+tokio = { workspace = true, features = ["full"] }
+sha2 = { workspace = true }
+
+[build-dependencies]
+prost-build.workspace = true
+

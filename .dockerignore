@@ -1,0 +1,44 @@
+# Build artifacts
+target/
+**/target/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+*.md
+docs/
+reference/
+examples/
+memory-bank/
+
+# Scripts
+scripts/
+*.sh
+
+# Test files
+tests/
+**/tests/
+
+# Docker
+Dockerfile
+docker-compose.yaml
+.dockerignore
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Misc
+*.log
+*.tmp
+.DS_Store

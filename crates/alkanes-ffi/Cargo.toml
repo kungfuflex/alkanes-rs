@@ -1,0 +1,57 @@
+[package]
+name = "alkanes-ffi"
+version.workspace = true
+edition.workspace = true
+description = "Foreign Function Interface bindings for alkanes-rs using UniFFI"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+name = "alkanes_ffi"
+
+[dependencies]
+# Core alkanes dependencies
+alkanes-cli-common = { workspace = true }
+alkanes-support = { workspace = true }
+
+# Bitcoin dependencies
+bitcoin = { workspace = true }
+bitcoin_hashes = { workspace = true }
+secp256k1 = { workspace = true }
+bip39 = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
+
+# UniFFI for FFI generation
+uniffi = { version = "0.28", features = ["cli"] }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+hex = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Async
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+
+# Logging
+log = { workspace = true }
+
+[build-dependencies]
+uniffi = { version = "0.28", features = ["build"] }
+
+[dev-dependencies]
+uniffi = { version = "0.28", features = ["bindgen-tests"] }
+
+[features]
+default = []
+
+# Generate bindings for specific languages
+kotlin = []
+swift = []
+python = []

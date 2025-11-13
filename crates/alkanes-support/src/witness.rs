@@ -6,12 +6,13 @@ pub fn find_witness_payload(tx: &Transaction, i: usize) -> Option<Vec<u8>> {
     if envelopes.len() <= i {
         None
     } else {
+        // Don't skip any elements - the payload contains the actual binary data
+        // The skip(1) was for a different envelope format
         Some(
             envelopes[i]
                 .payload
                 .clone()
                 .into_iter()
-                .skip(1)
                 .flatten()
                 .collect(),
         )

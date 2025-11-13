@@ -1,0 +1,750 @@
+use crate::message::AlkaneMessageContext;
+use crate::view;
+use alkanes_support::cellpack::Cellpack;
+use alkanes_support::envelope::RawEnvelope;
+use alkanes_support::gz::compress;
+use alkanes_support::id::AlkaneId;
+use alkanes_support::trace::{Trace, TraceEvent, TraceResponse};
+use anyhow::Result;
+use bitcoin::blockdata::transaction::Version;
+use bitcoin::{
+    address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness,
+};
+use bitcoin::{Block, Network, Transaction};
+use metashrew_core::index_pointer::IndexPointer;
+#[allow(unused_imports)]
+use metashrew_core::{
+    clear as clear_base, println,
+    stdio::{stdout, Write},
+};
+use metashrew_support::index_pointer::KeyValuePointer;
+use metashrew_support::utils::consensus_encode;
+use ordinals::{Etching, Rune, Runestone};
+use protorune::balance_sheet::load_sheet;
+use protorune::message::MessageContext;
+use protorune::protostone::Protostones;
+use protorune::tables::RuneTable;
+use protorune::test_helpers::{create_block_with_coinbase_tx, get_address, ADDRESS1};
+use protorune_support::balance_sheet::BalanceSheet;
+use protorune_support::network::{set_network, NetworkParams};
+use protorune_support::protostone::{Protostone, ProtostoneEdict};
+use std::str::FromStr;
+
+#[cfg(test)]
+use crate::tests::std::alkanes_std_test_build;
+
+#[cfg(all(
+    not(feature = "mainnet"),
+    not(feature = "dogecoin"),
+    not(feature = "bellscoin"),
+    not(feature = "fractal"),
+    not(feature = "luckycoin")
+))]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("bcrt"),
+        p2pkh_prefix: 0x64,
+        p2sh_prefix: 0xc4,
+    });
+}
+#[cfg(feature = "mainnet")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("bc"),
+        p2sh_prefix: 0x05,
+        p2pkh_prefix: 0x00,
+    });
+}
+#[cfg(feature = "testnet")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("tb"),
+        p2pkh_hash: 0x6f,
+        p2sh_hash: 0xc4,
+    });
+}
+#[cfg(feature = "luckycoin")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("tb"),
+        p2pkh_hash: 0x6f,
+        p2sh_hash: 0xc4,
+    });
+}
+
+#[cfg(feature = "dogecoin")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("dc"),
+        p2pkh_hash: 0x6f,
+        p2sh_hash: 0xc4,
+    });
+}
+#[cfg(feature = "bellscoin")]
+pub fn configure_network() {
+    set_network(NetworkParams {
+        bech32_prefix: String::from("bel"),
+        p2pkh_hash: 0x6f,
+        p2sh_hash: 0xc4,
+    });
+}
+
+pub fn clear() {
+    clear_base();
+    configure_network();
+}
+
+#[cfg(test)]
+pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
+    let block_height = 0;
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+
+    let wasm_binary = alkanes_std_test_build::get_bytes();
+    let raw_envelope = RawEnvelope::from(wasm_binary);
+
+    let witness = raw_envelope.to_witness(true);
+
+    // Create a transaction input
+
+    test_block
+        .txdata
+        .push(create_cellpack_with_witness(witness, cellpack));
+    test_block
+}
+
+/// A struct that combines a binary and its corresponding cellpack for cleaner initialization
+#[derive(Debug, Clone)]
+pub struct BinaryAndCellpack {
+    pub binary: Vec<u8>,
+    pub cellpack: Cellpack,
+}
+
+impl BinaryAndCellpack {
+    pub fn new(binary: Vec<u8>, cellpack: Cellpack) -> Self {
+        Self { binary, cellpack }
+    }
+
+    /// Creates a BinaryAndCellpack with an empty binary (useful when only cellpack data is needed)
+    pub fn cellpack_only(cellpack: Cellpack) -> Self {
+        Self {
+            binary: Vec::new(),
+            cellpack,
+        }
+    }
+}
+
+/// Helper function that accepts a vector of BinaryAndCellpack structs and calls init_with_multiple_cellpacks_with_tx
+pub fn init_with_cellpack_pairs(cellpack_pairs: Vec<BinaryAndCellpack>) -> Block {
+    let (binaries, cellpacks): (Vec<Vec<u8>>, Vec<Cellpack>) = cellpack_pairs
+        .into_iter()
+        .map(|pair| (pair.binary, pair.cellpack))
+        .unzip();
+
+    init_with_multiple_cellpacks_with_tx(binaries, cellpacks)
+}
+
+/// Helper function that accepts a vector of BinaryAndCellpack structs and calls init_with_multiple_cellpacks_with_tx
+pub fn init_with_cellpack_pairs_w_input(
+    cellpack_pairs: Vec<BinaryAndCellpack>,
+    previous_outpoint: OutPoint,
+) -> Block {
+    let (binaries, cellpacks): (Vec<Vec<u8>>, Vec<Cellpack>) = cellpack_pairs
+        .into_iter()
+        .map(|pair| (pair.binary, pair.cellpack))
+        .unzip();
+
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, Some(previous_outpoint))
+}
+
+pub fn init_with_multiple_cellpacks_with_tx(
+    binaries: Vec<Vec<u8>>,
+    cellpacks: Vec<Cellpack>,
+) -> Block {
+    init_with_multiple_cellpacks_with_tx_w_input(binaries, cellpacks, None)
+}
+
+pub fn init_with_multiple_cellpacks_with_tx_w_input(
+    binaries: Vec<Vec<u8>>,
+    cellpacks: Vec<Cellpack>,
+    _previous_out: Option<OutPoint>,
+) -> Block {
+    let block_height = 880_000;
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+    let mut previous_out: Option<OutPoint> = _previous_out;
+    let mut txs = binaries
+        .into_iter()
+        .zip(cellpacks.into_iter())
+        .map(|i| {
+            let (binary, cellpack) = i;
+            
+            // For Zcash/Dogecoin: use scriptSig (no taproot)
+            // For Bitcoin: use witness (taproot)
+            #[cfg(feature = "zcash")]
+            let (witness, script_sig) = if binary.len() == 0 {
+                (Witness::new(), ScriptBuf::new())
+            } else {
+                (Witness::new(), RawEnvelope::from(binary).to_scriptsig(true))
+            };
+            
+            #[cfg(not(feature = "zcash"))]
+            let (witness, script_sig) = if binary.len() == 0 {
+                (Witness::new(), ScriptBuf::new())
+            } else {
+                (RawEnvelope::from(binary).to_witness(true), ScriptBuf::new())
+            };
+            
+            if let Some(previous_output) = previous_out {
+                let tx = create_multiple_cellpack_with_witness_and_scriptsig_and_in(
+                    witness,
+                    script_sig,
+                    [cellpack].into(),
+                    previous_output,
+                    false,
+                );
+                previous_out = Some(OutPoint {
+                    txid: tx.compute_txid(),
+                    vout: 0,
+                });
+                tx
+            } else {
+                let tx = create_multiple_cellpack_with_witness_and_scriptsig(
+                    witness,
+                    script_sig,
+                    [cellpack].into(),
+                    false,
+                );
+                previous_out = Some(OutPoint {
+                    txid: tx.compute_txid(),
+                    vout: 0,
+                });
+                tx
+            }
+        })
+        .collect::<Vec<Transaction>>();
+    test_block.txdata.append(&mut txs);
+    test_block
+}
+
+pub fn init_with_multiple_cellpacks(binary: Vec<u8>, cellpacks: Vec<Cellpack>) -> Block {
+    let block_height = 0;
+
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+
+    let raw_envelope = RawEnvelope::from(binary);
+    
+    #[cfg(feature = "zcash")]
+    let (witness, script_sig) = (Witness::new(), raw_envelope.to_scriptsig(true));
+    
+    #[cfg(not(feature = "zcash"))]
+    let (witness, script_sig) = (raw_envelope.to_witness(true), ScriptBuf::new());
+    
+    test_block
+        .txdata
+        .push(create_multiple_cellpack_with_witness_and_scriptsig(
+            witness,
+            script_sig,
+            cellpacks,
+            false,
+        ));
+    test_block
+}
+
+pub fn create_protostone_tx_with_inputs_and_default_pointer(
+    inputs: Vec<TxIn>,
+    outputs: Vec<TxOut>,
+    protostone: Protostone,
+    default_pointer: u32,
+) -> Transaction {
+    let runestone: ScriptBuf = (Runestone {
+        etching: None,
+        pointer: Some(default_pointer), // points to the OP_RETURN, so therefore targets the protoburn
+        edicts: Vec::new(),
+        mint: None,
+        protocol: vec![protostone].encipher().ok(),
+    })
+    .encipher();
+    let op_return = TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: runestone,
+    };
+
+    // op return must be less than 80 bytes or else miners will not accept it
+    assert!(
+        op_return.size() <= 80,
+        "op return ({}) > 80 bytes",
+        op_return.size()
+    );
+
+    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+    let _script_pubkey = address.script_pubkey();
+    let mut _outputs = outputs.clone();
+    _outputs.push(op_return);
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: inputs,
+        output: _outputs,
+    }
+}
+
+pub fn create_protostone_tx_with_inputs(
+    inputs: Vec<TxIn>,
+    outputs: Vec<TxOut>,
+    protostone: Protostone,
+) -> Transaction {
+    create_protostone_tx_with_inputs_and_default_pointer(inputs, outputs, protostone, 1)
+}
+
+pub fn create_multiple_cellpack_with_witness_and_in(
+    witness: Witness,
+    cellpacks: Vec<Cellpack>,
+    previous_output: OutPoint,
+    etch: bool,
+) -> Transaction {
+    create_multiple_cellpack_with_witness_and_scriptsig_and_in(
+        witness,
+        ScriptBuf::new(),
+        cellpacks,
+        previous_output,
+        etch,
+    )
+}
+
+pub fn create_multiple_cellpack_with_witness_and_scriptsig_and_in(
+    witness: Witness,
+    script_sig: ScriptBuf,
+    cellpacks: Vec<Cellpack>,
+    previous_output: OutPoint,
+    etch: bool,
+) -> Transaction {
+    let txin = TxIn {
+        previous_output,
+        script_sig,
+        sequence: Sequence::MAX,
+        witness,
+    };
+    create_multiple_cellpack_with_witness_and_txins_edicts(cellpacks, vec![txin], etch, vec![])
+}
+
+pub fn create_multiple_cellpack_with_witness_and_txins_edicts(
+    cellpacks: Vec<Cellpack>,
+    txins: Vec<TxIn>,
+    etch: bool,
+    edicts: Vec<ProtostoneEdict>,
+) -> Transaction {
+    let protocol_id = 1;
+    let protostones = [
+        match etch {
+            true => vec![Protostone {
+                burn: Some(protocol_id),
+                edicts: vec![],
+                pointer: Some(4),
+                refund: None,
+                from: None,
+                protocol_tag: 13, // this value must be 13 if protoburn
+                message: vec![],
+            }],
+            false => vec![],
+        },
+        cellpacks
+            .into_iter()
+            .map(|cellpack| Protostone {
+                message: cellpack.encipher(),
+                pointer: Some(0),
+                refund: Some(0),
+                edicts: edicts.clone(),
+                from: None,
+                burn: None,
+                protocol_tag: protocol_id as u128,
+            })
+            .collect(),
+    ]
+    .concat();
+    let etching = if etch {
+        Some(Etching {
+            divisibility: Some(2),
+            premine: Some(1000),
+            rune: Some(Rune::from_str("TESTTESTTESTTEST").unwrap()),
+            spacers: Some(0),
+            symbol: Some(char::from_str("A").unwrap()),
+            turbo: true,
+            terms: None,
+        })
+    } else {
+        None
+    };
+    let runestone: ScriptBuf = (Runestone {
+        etching,
+        pointer: match etch {
+            true => Some(1),
+            false => Some(0),
+        }, // points to the OP_RETURN, so therefore targets the protoburn
+        edicts: Vec::new(),
+        mint: None,
+        protocol: protostones.encipher().ok(),
+    })
+    .encipher();
+
+    //     // op return is at output 1
+    let op_return = TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: runestone,
+    };
+
+    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+
+    let script_pubkey = address.script_pubkey();
+    let txout = TxOut {
+        value: Amount::from_sat(100_000_000),
+        script_pubkey,
+    };
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: txins,
+        output: vec![txout, op_return],
+    }
+}
+
+pub fn create_cellpack_with_witness(witness: Witness, cellpack: Cellpack) -> Transaction {
+    create_multiple_cellpack_with_witness(witness, [cellpack].into(), false)
+}
+
+pub fn create_multiple_cellpack_with_witness(
+    witness: Witness,
+    cellpacks: Vec<Cellpack>,
+    etch: bool,
+) -> Transaction {
+    create_multiple_cellpack_with_witness_and_scriptsig(witness, ScriptBuf::new(), cellpacks, etch)
+}
+
+pub fn create_multiple_cellpack_with_witness_and_scriptsig(
+    witness: Witness,
+    script_sig: ScriptBuf,
+    cellpacks: Vec<Cellpack>,
+    etch: bool,
+) -> Transaction {
+    let previous_output = OutPoint {
+        txid: bitcoin::Txid::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap(),
+        vout: 0,
+    };
+    create_multiple_cellpack_with_witness_and_scriptsig_and_in(
+        witness,
+        script_sig,
+        cellpacks,
+        previous_output,
+        etch,
+    )
+}
+
+pub fn assert_binary_deployed_to_id(token_id: AlkaneId, binary: Vec<u8>) -> Result<()> {
+    let binary_1 = IndexPointer::from_keyword("/alkanes/")
+        .select(&token_id.into())
+        .get()
+        .as_ref()
+        .clone();
+    let binary_2: Vec<u8> = compress(binary)?;
+    assert_eq!(binary_1.len(), binary_2.len());
+    //    assert_eq!(binary_1, binary_2);
+    return Ok(());
+}
+
+pub fn assert_id_points_to_alkane_id(from_id: AlkaneId, to_id: AlkaneId) -> Result<()> {
+    let wasm_payload = IndexPointer::from_keyword("/alkanes/")
+        .select(&from_id.into())
+        .get()
+        .as_ref()
+        .clone();
+    let ptr: AlkaneId = wasm_payload.to_vec().try_into()?;
+    assert_eq!(ptr, to_id);
+    return Ok(());
+}
+
+pub fn assert_token_id_has_no_deployment(token_id: AlkaneId) -> Result<()> {
+    let binary = IndexPointer::from_keyword("/alkanes/")
+        .select(&token_id.into())
+        .get()
+        .as_ref()
+        .clone();
+    assert_eq!(binary.len(), 0);
+    return Ok(());
+}
+
+pub fn get_sheet_for_outpoint(
+    test_block: &Block,
+    tx_num: usize,
+    vout: u32,
+) -> Result<BalanceSheet<IndexPointer>> {
+    let outpoint = OutPoint {
+        txid: test_block.txdata[tx_num].compute_txid(),
+        vout,
+    };
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        .OUTPOINT_TO_RUNES
+        .select(&consensus_encode(&outpoint)?);
+    let sheet = load_sheet(&ptr);
+    println!(
+        "balances at outpoint tx {} vout {}: {:?}",
+        tx_num, vout, sheet
+    );
+    Ok(sheet)
+}
+
+pub fn get_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
+    let sheet = load_sheet(&ptr);
+    println!("runtime balances: {:?}", sheet);
+    sheet
+}
+
+pub fn get_lazy_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
+    let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
+    let sheet = BalanceSheet::new_ptr_backed(ptr);
+    sheet
+}
+
+pub fn get_last_outpoint_sheet(test_block: &Block) -> Result<BalanceSheet<IndexPointer>> {
+    let len = test_block.txdata.len();
+    get_sheet_for_outpoint(test_block, len - 1, 0)
+}
+
+fn get_trace_event_at_index(outpoint: &OutPoint, index: Option<isize>) -> Result<TraceEvent> {
+    let trace_data: Trace = view::trace(outpoint)?.try_into()?;
+    let trace_events = trace_data.0.lock().expect("Mutex poisoned");
+
+    if trace_events.is_empty() {
+        panic!("No trace events found");
+    }
+
+    // Determine which event to check
+    let event_index = match index {
+        Some(idx) if idx >= 0 => idx as usize,
+        Some(idx) => {
+            // Handle negative indices (counting from the end)
+            let abs_idx = idx.abs() as usize;
+            if abs_idx > trace_events.len() {
+                panic!(
+                    "Index out of bounds: requested event {} but only {} events available",
+                    idx,
+                    trace_events.len()
+                );
+            }
+            trace_events.len() - abs_idx
+        }
+        None => trace_events.len() - 1, // Default to last event
+    };
+
+    // Get the event at the calculated index
+    let event = trace_events
+        .get(event_index)
+        .cloned()
+        .unwrap_or_else(|| panic!("Failed to get trace event at index {}", event_index));
+    Ok(event)
+}
+
+pub fn assert_revert_context(outpoint: &OutPoint, expected_error_message: &str) -> Result<()> {
+    // This is a convenience wrapper around assert_revert_context_at_index that checks the last event
+    assert_revert_context_at_index(outpoint, expected_error_message, None)
+}
+
+pub fn assert_revert_context_at_index(
+    outpoint: &OutPoint,
+    expected_error_message: &str,
+    index: Option<isize>,
+) -> Result<()> {
+    let event = get_trace_event_at_index(outpoint, index)?;
+    match event {
+        TraceEvent::RevertContext(trace_response) => {
+            let data = String::from_utf8_lossy(&trace_response.inner.data);
+            assert!(
+                data.contains(expected_error_message),
+                "Expected error message '{}' not found in: '{}'",
+                expected_error_message,
+                data
+            );
+            Ok(())
+        }
+        _ => panic!(
+            "Expected RevertContext variant, but got a different variant: {:?}",
+            event
+        ),
+    }
+}
+
+pub fn assert_return_context<F, T>(outpoint: &OutPoint, check_function: F) -> Result<T>
+where
+    F: Fn(TraceResponse) -> Result<T>,
+{
+    assert_return_context_at_index(outpoint, check_function, None)
+}
+
+pub fn assert_return_context_at_index<F, T>(
+    outpoint: &OutPoint,
+    check_function: F,
+    index: Option<isize>,
+) -> Result<T>
+where
+    F: Fn(TraceResponse) -> Result<T>,
+{
+    let event = get_trace_event_at_index(outpoint, index)?;
+    match event {
+        TraceEvent::ReturnContext(trace_response) => check_function(trace_response),
+        _ => panic!(
+            "Expected ReturnContext variant, but got a different variant: {:?}",
+            event
+        ),
+    }
+}
+
+pub enum CellpackOrEdict {
+    Cellpack(Cellpack),
+    Edict(Vec<ProtostoneEdict>),
+}
+
+pub fn create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers(
+    witness: Witness,
+    cellpacks_or_edicts: Vec<CellpackOrEdict>,
+    previous_output: OutPoint,
+    etch: bool,
+    with_leftovers_to_separate: bool,
+) -> Transaction {
+    let protocol_id = 1;
+    let input_script = ScriptBuf::new();
+    let txin = TxIn {
+        previous_output,
+        script_sig: input_script,
+        sequence: Sequence::MAX,
+        witness,
+    };
+    let protostones = [
+        match etch {
+            true => vec![Protostone {
+                burn: Some(protocol_id),
+                edicts: vec![],
+                pointer: Some(5),
+                refund: None,
+                from: None,
+                protocol_tag: 13, // this value must be 13 if protoburn
+                message: vec![],
+            }],
+            false => vec![],
+        },
+        cellpacks_or_edicts
+            .into_iter()
+            .enumerate()
+            .map(|(i, cellpack_or_edict)| match cellpack_or_edict {
+                CellpackOrEdict::Cellpack(cellpack) => Protostone {
+                    message: cellpack.encipher(),
+                    pointer: Some(0),
+                    refund: Some(0),
+                    edicts: vec![],
+                    from: None,
+                    burn: None,
+                    protocol_tag: protocol_id as u128,
+                },
+                CellpackOrEdict::Edict(edicts) => Protostone {
+                    message: vec![],
+                    pointer: if with_leftovers_to_separate {
+                        Some(2)
+                    } else {
+                        Some(0)
+                    },
+                    refund: if with_leftovers_to_separate {
+                        Some(2)
+                    } else {
+                        Some(0)
+                    },
+                    //lazy way of mapping edicts onto next protomessage
+                    edicts: edicts
+                        .into_iter()
+                        .map(|edict| {
+                            let mut edict = edict;
+                            edict.output = if etch { 5 + i as u128 } else { 4 + i as u128 };
+                            if with_leftovers_to_separate {
+                                edict.output += 1;
+                            }
+                            edict
+                        })
+                        .collect(),
+                    from: None,
+                    burn: None,
+                    protocol_tag: protocol_id as u128,
+                },
+            })
+            .collect(),
+    ]
+    .concat();
+    let etching = if etch {
+        Some(Etching {
+            divisibility: Some(2),
+            premine: Some(1000),
+            rune: Some(Rune::from_str("TESTTESTTESTTEST").unwrap()),
+            spacers: Some(0),
+            symbol: Some(char::from_str("A").unwrap()),
+            turbo: true,
+            terms: None,
+        })
+    } else {
+        None
+    };
+    let runestone: ScriptBuf = (Runestone {
+        etching,
+        pointer: match etch {
+            true => Some(1),
+            false => Some(0),
+        }, // points to the OP_RETURN, so therefore targets the protoburn
+        edicts: Vec::new(),
+        mint: None,
+        protocol: protostones.encipher().ok(),
+    })
+    .encipher();
+
+    //     // op return is at output 1
+    let op_return = TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: runestone,
+    };
+    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+
+    let script_pubkey = address.script_pubkey();
+    let txout = TxOut {
+        value: Amount::from_sat(100_000_000),
+        script_pubkey: script_pubkey.clone(),
+    };
+    let outputs = if with_leftovers_to_separate {
+        vec![
+            txout,
+            op_return,
+            TxOut {
+                value: Amount::from_sat(546),
+                script_pubkey,
+            },
+        ]
+    } else {
+        vec![txout, op_return]
+    };
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![txin],
+        output: outputs,
+    }
+}
+
+pub fn create_multiple_cellpack_with_witness_and_in_with_edicts(
+    witness: Witness,
+    cellpacks_or_edicts: Vec<CellpackOrEdict>,
+    previous_output: OutPoint,
+    etch: bool,
+) -> Transaction {
+    create_multiple_cellpack_with_witness_and_in_with_edicts_and_leftovers(
+        witness,
+        cellpacks_or_edicts,
+        previous_output,
+        etch,
+        false,
+    )
+}

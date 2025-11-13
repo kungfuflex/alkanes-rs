@@ -1,0 +1,21 @@
+[package]
+name = "metashrew-support"
+version.workspace = true
+edition = "2021"
+description = "Support library for Metashrew indexers"
+license = "MIT"
+repository = "https://github.com/sandshrewmetaprotocols/metashrew"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1.0.90"
+bech32 = "0.11.0"
+bitcoin = "0.32.4"
+hex = "0.4.3"
+prost.workspace = true
+
+[build-dependencies]
+anyhow = "1.0.90"
+prost-build.workspace = true

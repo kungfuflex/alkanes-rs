@@ -22,7 +22,11 @@ use {
     std::iter::Peekable,
 };
 
+#[cfg(not(feature = "zcash"))]
 pub(crate) const PROTOCOL_ID: [u8; 3] = *b"BIN";
+#[cfg(feature = "zcash")]
+pub(crate) const PROTOCOL_ID: [u8; 3] = *b"ZAK"; // Zcash Alkanes
+
 pub(crate) const BODY_TAG: [u8; 0] = [];
 
 pub type Result<T> = std::result::Result<T, script::Error>;
@@ -54,18 +58,64 @@ impl From<Vec<u8>> for RawEnvelope {
 }
 
 impl RawEnvelope {
+    #[cfg(not(feature = "zcash"))]
     pub fn from_transaction(transaction: &Transaction) -> Vec<Self> {
         let mut envelopes = Vec::new();
 
         for (i, input) in transaction.input.iter().enumerate() {
+            // First try tapscript (standard taproot)
             if let Some(tapscript) = input.witness.tapscript() {
                 if let Ok(input_envelopes) = Self::from_tapscript(tapscript, i) {
+                    envelopes.extend(input_envelopes);
+                    continue;
+                }
+            }
+            
+            // Fallback: try direct witness script (for test helpers and non-taproot)
+            if let Some(script_bytes) = input.witness.nth(0) {
+                let script = bitcoin::ScriptBuf::from_bytes(script_bytes.to_vec());
+                if let Ok(input_envelopes) = Self::from_tapscript(&script, i) {
                     envelopes.extend(input_envelopes);
                 }
             }
         }
 
         envelopes
+    }
+    
+    #[cfg(feature = "zcash")]
+    pub fn from_transaction(transaction: &Transaction) -> Vec<Self> {
+        let mut envelopes = Vec::new();
+
+        // For Zcash: extract from scriptSig instead of witness (ord-dogecoin style)
+        for (i, input) in transaction.input.iter().enumerate() {
+            if let Ok(input_envelopes) = Self::from_scriptsig(&input.script_sig, i) {
+                envelopes.extend(input_envelopes);
+            }
+        }
+
+        envelopes
+    }
+    
+    #[cfg(feature = "zcash")]
+    fn from_scriptsig(scriptsig: &Script, input: usize) -> Result<Vec<Self>> {
+        let mut envelopes = Vec::new();
+        let mut instructions = scriptsig.instructions().peekable();
+        let mut stuttered = false;
+        
+        while let Some(instruction) = instructions.next().transpose()? {
+            if instruction == PushBytes((&[]).into()) {
+                let (stutter, envelope) = 
+                    Self::from_instructions(&mut instructions, input, envelopes.len(), stuttered)?;
+                if let Some(envelope) = envelope {
+                    envelopes.push(envelope);
+                } else {
+                    stuttered = stutter;
+                }
+            }
+        }
+        
+        Ok(envelopes)
     }
 
     fn from_tapscript(tapscript: &Script, input: usize) -> Result<Vec<Self>> {
@@ -132,6 +182,12 @@ impl RawEnvelope {
         witness.push(script);
         witness.push([]);
         witness
+    }
+    
+    /// Create a scriptSig envelope (for Zcash/Dogecoin-style inscriptions)
+    pub fn to_scriptsig(&self, should_compress: bool) -> script::ScriptBuf {
+        let builder = script::Builder::new();
+        self.append_reveal_script(builder, should_compress)
     }
 
     fn from_instructions(

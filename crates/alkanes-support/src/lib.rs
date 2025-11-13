@@ -1,3 +1,8 @@
+pub mod block_traits;
+#[cfg(test)]
+mod block_traits_tests;
+#[cfg(all(test, feature = "zcash"))]
+mod zcash_block_traits_tests;
 pub mod cellpack;
 pub mod constants;
 pub mod context;
@@ -9,8 +14,12 @@ pub mod proto;
 pub mod response;
 pub mod storage;
 pub mod trace;
+pub mod unified;
 pub mod utils;
 pub mod witness;
+
+#[cfg(feature = "zcash")]
+pub mod zcash;
 
 use crate::id::AlkaneId;
 use crate::parcel::{AlkaneTransfer, AlkaneTransferParcel};

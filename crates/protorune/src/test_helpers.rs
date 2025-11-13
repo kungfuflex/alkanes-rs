@@ -113,6 +113,9 @@ pub fn serialize_u32_little_endian(value: u32) -> Vec<u8> {
 }
 
 pub fn create_coinbase_transaction(height: u32) -> Transaction {
+    // Ensure Bitcoin network params are set (not Zcash or others)
+    init_network();
+    
     // Create the script for the coinbase transaction
     let script_pubkey = Address::from_str(ADDRESS1().as_str())
         .unwrap()

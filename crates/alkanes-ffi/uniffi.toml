@@ -1,0 +1,14 @@
+# UniFFI configuration for alkanes-ffi
+
+[bindings.kotlin]
+package_name = "org.alkanes"
+cdylib_name = "alkanes_ffi"
+generate_immutable_records = true
+
+[bindings.swift]
+module_name = "Alkanes"
+ffi_module_name = "AlkanesFFI"
+generate_immutable_records = true
+
+[bindings.python]
+# Python bindings configuration

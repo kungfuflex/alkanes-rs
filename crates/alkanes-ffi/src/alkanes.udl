@@ -1,0 +1,205 @@
+// UniFFI Definition Language file for Alkanes FFI
+// This file defines the public API that will be exposed to foreign languages
+
+namespace alkanes {
+  // Get the version of the alkanes library
+  string version();
+  
+  // Validate a Bitcoin address for a given network
+  [Throws=AlkanesError]
+  boolean validate_address(string address, Network network);
+  
+  // Generate a new mnemonic phrase
+  [Throws=AlkanesError]
+  string generate_mnemonic(WordCount word_count);
+  
+  // Parse a Bitcoin address
+  [Throws=AlkanesError]
+  ParsedAddress parse_address(string address);
+  
+  // Convert address to script pubkey
+  [Throws=AlkanesError]
+  string address_to_script_pubkey(string address, Network network);
+};
+
+// Network enumeration
+enum Network {
+  "Bitcoin",
+  "Testnet", 
+  "Signet",
+  "Regtest",
+};
+
+// Mnemonic word count options
+enum WordCount {
+  "Words12",
+  "Words15",
+  "Words18",
+  "Words21",
+  "Words24",
+};
+
+// Address types
+enum AddressType {
+  "P2PKH",
+  "P2SH",
+  "P2WPKH",
+  "P2WSH",
+  "P2TR",
+};
+
+// Error types that can be thrown across FFI boundary
+[Error]
+enum AlkanesError {
+  "InvalidAddress",
+  "InvalidMnemonic",
+  "InvalidNetwork",
+  "WalletError",
+  "RpcError",
+  "SerializationError",
+  "TransactionError",
+  "AlkanesExecutionError",
+  "Generic",
+};
+
+// Wallet configuration
+dictionary WalletConfig {
+  string? wallet_path;
+  Network network;
+  string? passphrase;
+};
+
+// Wallet interface for managing Bitcoin wallets
+interface Wallet {
+  // Create a new wallet with optional mnemonic
+  [Throws=AlkanesError]
+  constructor(WalletConfig config, string? mnemonic);
+  
+  // Get the wallet's receiving address
+  [Throws=AlkanesError]
+  string get_address(AddressType address_type, u32 index);
+  
+  // Get the wallet balance
+  [Throws=AlkanesError]
+  WalletBalance get_balance();
+  
+  // Get the mnemonic phrase (if available)
+  [Throws=AlkanesError]
+  string? get_mnemonic();
+  
+  // Sync the wallet with the blockchain
+  [Throws=AlkanesError]
+  void sync();
+};
+
+// Wallet balance information
+dictionary WalletBalance {
+  u64 confirmed;
+  i64 pending;
+};
+
+// Transaction information
+dictionary TransactionInfo {
+  string txid;
+  u64 timestamp;
+  i64 amount;
+  u64 fee;
+  boolean confirmed;
+  u32? block_height;
+};
+
+// Alkanes contract ID
+dictionary AlkaneId {
+  u64 block;
+  u64 tx;
+};
+
+// Alkanes balance information  
+dictionary AlkaneBalance {
+  AlkaneId id;
+  string amount;  // u128 as string to avoid FFI limitations
+  string? name;
+  string? symbol;
+  u8? decimals;
+};
+
+// RPC Client for interacting with Bitcoin/Alkanes nodes
+interface RpcClient {
+  // Create a new RPC client
+  [Throws=AlkanesError]
+  constructor(string url, Network network);
+  
+  // Get the current block height
+  [Throws=AlkanesError]
+  u64 get_block_count();
+  
+  // Get block hash at a specific height
+  [Throws=AlkanesError]
+  string get_block_hash(u64 height);
+  
+  // Get transaction by txid
+  [Throws=AlkanesError]
+  string get_transaction(string txid);
+  
+  // Broadcast a raw transaction
+  [Throws=AlkanesError]
+  string send_raw_transaction(string tx_hex);
+};
+
+// Alkanes client for interacting with alkanes contracts
+interface AlkanesClient {
+  // Create a new Alkanes client
+  [Throws=AlkanesError]
+  constructor(string metashrew_url, string? sandshrew_url, Network network);
+  
+  // Get alkanes balance for an address
+  [Throws=AlkanesError]
+  sequence<AlkaneBalance> get_balance(string address);
+  
+  // Get bytecode for an alkanes contract
+  [Throws=AlkanesError]
+  string get_bytecode(AlkaneId alkane_id);
+  
+  // Trace a transaction output
+  [Throws=AlkanesError]
+  string trace_outpoint(string txid, u32 vout);
+  
+  // Get the current metashrew height
+  [Throws=AlkanesError]
+  u64 get_height();
+};
+
+// Address utility functions moved to main namespace
+// parse_address() and address_to_script_pubkey() are defined above
+
+// Parsed address information
+dictionary ParsedAddress {
+  AddressType address_type;
+  Network network;
+  string script_pubkey_hex;
+  string? witness_program_hex;
+};
+
+// Transaction builder for creating Bitcoin transactions
+interface TransactionBuilder {
+  // Create a new transaction builder
+  constructor(Network network);
+  
+  // Add an input to the transaction
+  [Throws=AlkanesError]
+  void add_input(string txid, u32 vout, u64 amount);
+  
+  // Add an output to the transaction
+  [Throws=AlkanesError]
+  void add_output(string address, u64 amount);
+  
+  // Set the fee rate (satoshis per vbyte)
+  void set_fee_rate(f32 fee_rate);
+  
+  // Build and return the unsigned transaction hex
+  [Throws=AlkanesError]
+  string build();
+  
+  // Get estimated transaction size in vbytes
+  u64 estimate_size();
+};

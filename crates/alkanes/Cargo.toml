@@ -1,0 +1,66 @@
+[package]
+name = "alkanes"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[example]]
+name = "test_block_286639"
+required-features = ["zcash"]
+
+[features]
+test-utils = []
+testnet = []
+dogecoin = []
+luckycoin = []
+bellscoin = []
+fractal = []
+zcash = ["ordinals/zcash", "protorune/zcash", "alkanes-support/zcash"]
+mainnet = ["protorune/mainnet"]
+cache = ["protorune/cache"]
+debug-log = []
+
+[dependencies]
+anyhow = { workspace = true }
+num = { workspace = true }
+bitcoin = { workspace = true }
+metashrew-core = { workspace = true }
+metashrew-support = { workspace = true }
+ordinals = { workspace = true }
+protorune = { workspace = true }
+protorune-support = { workspace = true }
+alkanes-support = { workspace = true }
+ruint = { workspace = true }
+wasm-bindgen = { workspace = true }
+byteorder = { workspace = true }
+wasm-bindgen-test = { workspace = true }
+wasmi = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+bytes = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true }
+js-sys = { workspace = true }
+hex_lit = { workspace = true }
+once_cell = { workspace = true }
+borsh = { version = "1.5.7", features = ["derive"] }
+sha2 = "0.10.9"
+
+[dev-dependencies]
+alkanes = { path = "." }
+metashrew-core = { workspace = true, features = ["test-utils"] }
+protorune = { workspace = true, features = ["test-utils"] }
+async-trait = "0.1"
+hex = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+metashrew-runtime = { path = "../metashrew-runtime" }
+tokio = { version = "1.42", features = ["full"] }
