@@ -7,9 +7,11 @@
 
 import * as bitcoin from 'bitcoinjs-lib';
 import * as bip39 from 'bip39';
-import { BIP32Interface, fromSeed } from 'bip32';
+import BIP32Factory, { BIP32Interface } from 'bip32';
 import { ECPairFactory, ECPairInterface } from 'ecpair';
 import * as ecc from '@bitcoinerlab/secp256k1';
+
+const bip32 = BIP32Factory(ecc);
 import {
   Keystore,
   WalletConfig,
@@ -48,7 +50,7 @@ export class AlkanesWallet {
     
     // Derive root from mnemonic
     const seed = bip39.mnemonicToSeedSync(keystore.mnemonic);
-    this.root = fromSeed(seed, this.network);
+    this.root = bip32.fromSeed(seed, this.network);
     
     // Set up account node (using BIP84 by default)
     const accountPath = DERIVATION_PATHS.BIP84.replace(/\/\d+$/, ''); // Remove last index
@@ -310,7 +312,7 @@ export function createWalletFromMnemonic(
                      network === 'regtest' ? bitcoin.networks.regtest :
                      bitcoin.networks.testnet;
   
-  const root = fromSeed(seed, networkObj);
+  const root = bip32.fromSeed(seed, networkObj);
   const masterFingerprint = root.fingerprint.toString('hex');
   
   const accountPath = DERIVATION_PATHS.BIP84.replace(/\/\d+$/, '');
