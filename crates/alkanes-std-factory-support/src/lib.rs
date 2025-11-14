@@ -89,6 +89,9 @@ pub trait MintableToken {
             value,
         })
     }
+    fn burn(&self, v: u128) -> Result<()> {
+        self.decrease_total_supply(v)
+    }
     fn data_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/data")
     }

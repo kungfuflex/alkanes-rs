@@ -2,9 +2,7 @@ use crate::message::AlkaneMessageContext;
 use crate::precompiled::fr_btc_build_v1_1_0;
 #[allow(unused_imports)]
 use crate::precompiled::{
-    alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
-    alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
-    alkanes_std_genesis_alkane_regtest_build,
+    alkanes_std_genesis_alkane_mainnet_build, alkanes_std_genesis_alkane_regtest_build,
     alkanes_std_genesis_alkane_upgraded_eoa_mainnet_build,
     alkanes_std_genesis_alkane_upgraded_eoa_regtest_build,
     alkanes_std_genesis_alkane_upgraded_mainnet_build,
