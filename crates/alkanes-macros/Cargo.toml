@@ -12,3 +12,9 @@ quote = "1.0"
 proc-macro2 = "1.0"
 serde_json = "1.0"
 ciborium = "0.2"
+
+[dev-dependencies]
+alkanes-runtime = { workspace = true }
+alkanes-support = { workspace = true }
+metashrew-support = { workspace = true }
+anyhow = "1.0"

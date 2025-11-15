@@ -76,7 +76,11 @@ dependencies = [
 name = "alkanes-macros"
 version = "1.2.3"
 dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "anyhow",
  "ciborium",
+ "metashrew-support",
  "proc-macro2",
  "quote",
  "serde_json",
