@@ -761,6 +761,7 @@ pub trait AlkanesProvider {
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String>;
     async fn inspect(&self, target: &str, config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult>;
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>>;
+    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<crate::alkanes::PendingUnwrap>>;
 }
 
 /// Trait for monitoring operations
@@ -1389,6 +1390,9 @@ impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     }
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>> {
         AlkanesProvider::get_balance(&**self, address).await
+    }
+    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
+        AlkanesProvider::pending_unwraps(&**self, height).await
     }
 }
 

@@ -1689,6 +1689,10 @@ impl AlkanesProvider for WebProvider {
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_get_balance", serde_json::json!([addr]), 1).await?;
         serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
+    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
+        let result = self.call(&self.sandshrew_rpc_url, "alkanes_pending_unwraps", serde_json::json!([height]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
 }
 
 #[async_trait(?Send)]

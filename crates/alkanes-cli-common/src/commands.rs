@@ -659,6 +659,15 @@ pub enum AlkanesCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Get pending unwraps (maps to metashrew_view unwrap)
+    Unwrap {
+        /// Block height to query (defaults to current height)
+        #[arg(long)]
+        height: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl AlkanesCommands {

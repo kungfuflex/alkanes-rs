@@ -497,3 +497,13 @@ pub struct HostCall {
     pub result: String,
     pub timestamp_micros: u128,
 }
+
+/// Pending unwrap payment information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingUnwrap {
+    pub txid: String,
+    pub vout: u32,
+    pub amount: u64,
+    pub address: Option<String>,
+    pub fulfilled: bool,
+}

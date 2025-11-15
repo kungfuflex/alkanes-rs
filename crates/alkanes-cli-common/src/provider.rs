@@ -2712,7 +2712,64 @@ impl AlkanesProvider for ConcreteProvider {
 
         Ok(result)
     }
+
+    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
+        use bitcoin::consensus::Decodable;
+        use std::io::Cursor;
+        
+        // Get the current height if not provided
+        let query_height = match height {
+            Some(h) => h,
+            None => self.get_height().await?,
+        };
+        
+        // Call the view function
+        let height_bytes = (query_height as u128).to_le_bytes().to_vec();
+        let hex_input = format!("0x{}", hex::encode(height_bytes));
+        let response_bytes = self.metashrew_view_call("unwrap", &hex_input, "latest").await?;
+        
+        if response_bytes.is_empty() {
+            return Ok(vec![]);
+        }
+        
+        // Decode the protobuf response
+        let response = crate::proto::alkanes::PendingUnwrapsResponse::decode(response_bytes.as_slice())?;
+        
+        // Convert proto payments to PendingUnwrap structs
+        let mut result = Vec::new();
+        for payment in response.payments {
+            let spendable = payment.spendable.ok_or_else(|| {
+                AlkanesError::RpcError("Payment missing spendable field".to_string())
+            })?;
+            
+            let txid = hex::encode(&spendable.txid);
+            let vout = spendable.vout;
+            
+            // Decode the TxOut from the output bytes
+            let mut cursor = Cursor::new(payment.output);
+            let tx_out = bitcoin::TxOut::consensus_decode(&mut cursor)
+                .map_err(|e| AlkanesError::RpcError(format!("Failed to decode TxOut: {}", e)))?;
+            
+            let amount = tx_out.value.to_sat();
+            
+            // Try to extract address from script_pubkey
+            let address = bitcoin::Address::from_script(&tx_out.script_pubkey, self.get_network())
+                .ok()
+                .map(|a| a.to_string());
+            
+            result.push(crate::alkanes::PendingUnwrap {
+                txid,
+                vout,
+                amount,
+                address,
+                fulfilled: payment.fulfilled,
+            });
+        }
+        
+        Ok(result)
     }
+}
+
 #[async_trait(?Send)]
 impl DeezelProvider for ConcreteProvider {
     fn provider_name(&self) -> &str {

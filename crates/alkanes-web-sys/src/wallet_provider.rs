@@ -1627,6 +1627,9 @@ impl AlkanesProvider for BrowserWalletProvider {
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<AlkaneBalance>> {
         AlkanesProvider::get_balance(&self.web_provider, address).await
     }
+    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
+        AlkanesProvider::pending_unwraps(&self.web_provider, height).await
+    }
 }
 
 #[async_trait(?Send)]

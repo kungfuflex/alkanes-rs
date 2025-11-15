@@ -373,6 +373,31 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         }
+        Alkanes::Unwrap { height, raw } => {
+            let result = system.provider().pending_unwraps(height).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                if result.is_empty() {
+                    println!("✨ No pending unwraps found");
+                } else {
+                    println!("🔓 Pending Unwraps ({} total):", result.len());
+                    println!();
+                    for (i, unwrap) in result.iter().enumerate() {
+                        let status = if unwrap.fulfilled { "✅ Fulfilled" } else { "⏳ Pending" };
+                        println!("  {}. {}", i + 1, status);
+                        println!("     Outpoint: {}:{}", unwrap.txid, unwrap.vout);
+                        println!("     Amount:   {} sats", unwrap.amount);
+                        if let Some(ref addr) = unwrap.address {
+                            println!("     Address:  {}", addr);
+                        }
+                        println!();
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }
 

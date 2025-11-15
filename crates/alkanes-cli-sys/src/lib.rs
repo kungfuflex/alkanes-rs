@@ -753,6 +753,9 @@ impl AlkanesProvider for SystemAlkanes {
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<alkanes_cli_common::alkanes::AlkaneBalance>> {
         <ConcreteProvider as AlkanesProvider>::get_balance(&self.provider, address).await
     }
+    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
+        <ConcreteProvider as AlkanesProvider>::pending_unwraps(&self.provider, height).await
+    }
 }
 
 #[async_trait(?Send)]
@@ -2848,6 +2851,31 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                             let tx = id.tx.as_ref().map(|t| t.lo).unwrap_or(0);
                             let value = alkane.value.as_ref().map(|v| v.lo).unwrap_or(0);
                             println!("   {}. Alkane {}:{} -> {} units", i + 1, block, tx, value);
+                        }
+                    }
+                }
+                Ok(())
+            }
+            AlkanesCommands::Unwrap { height, raw } => {
+                let result = provider.pending_unwraps(height).await?;
+                
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    if result.is_empty() {
+                        println!("✨ No pending unwraps found");
+                    } else {
+                        println!("🔓 Pending Unwraps ({} total):", result.len());
+                        println!();
+                        for (i, unwrap) in result.iter().enumerate() {
+                            let status = if unwrap.fulfilled { "✅ Fulfilled" } else { "⏳ Pending" };
+                            println!("  {}. {}", i + 1, status);
+                            println!("     Outpoint: {}:{}", unwrap.txid, unwrap.vout);
+                            println!("     Amount:   {} sats", unwrap.amount);
+                            if let Some(ref addr) = unwrap.address {
+                                println!("     Address:  {}", addr);
+                            }
+                            println!();
                         }
                     }
                 }

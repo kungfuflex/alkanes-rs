@@ -118,6 +118,9 @@ impl AlkanesProvider for WebProvider {
     async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<AlkaneBalance>> {
         unimplemented!()
     }
+    async fn pending_unwraps(&self, _height: Option<u64>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
+        unimplemented!()
+    }
 }
 // MonitorProvider implementation
 #[async_trait(?Send)]
