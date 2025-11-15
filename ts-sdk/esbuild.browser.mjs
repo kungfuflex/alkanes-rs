@@ -20,6 +20,9 @@ await esbuild.build({
     'process.browser': 'true',
   },
   inject: ['./polyfills.js'],
+  keepNames: true,  // ← Prevent name mangling/aliasing
+  minify: false,    // ← Keep readable for debugging
+  treeShaking: false,  // ← Don't optimize away exports
   logLevel: 'info',
 });
 
