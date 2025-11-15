@@ -142,7 +142,7 @@ export async function initSDK(wasmModule?: any) {
   };
 }
 
-// Default export - use function to avoid bundling issues with symbol references
+// Default export - function that returns SDK object at call time (not module load time)
 export default function getAlkanesSDK() {
   return {
     KeystoreManager,
