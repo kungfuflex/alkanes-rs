@@ -57,9 +57,9 @@ pub struct DeezelCommands {
     /// Ord server URL
     #[arg(long)]
     pub ord_server_url: Option<String>,
-    /// Metashrew server URL
+    /// Metashrew RPC URL
     #[arg(long)]
-    pub metashrew_server_url: Option<String>,
+    pub metashrew_rpc_url: Option<String>,
     /// Network provider
     #[arg(short, long, default_value = "regtest")]
     pub provider: String,
@@ -1010,7 +1010,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 titan_api_url: args.titan_api_url.clone(),
                 esplora_url: args.esplora_api_url.clone(),
                 ord_url: args.ord_server_url.clone(),
-                metashrew_rpc_url: args.metashrew_server_url.clone(),
+                metashrew_rpc_url: args.metashrew_rpc_url.clone(),
                 timeout_seconds: 600,
             },
             magic: None,
