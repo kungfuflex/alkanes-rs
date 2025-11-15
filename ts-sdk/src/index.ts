@@ -142,16 +142,18 @@ export async function initSDK(wasmModule?: any) {
   };
 }
 
-// Default export
-export default {
-  KeystoreManager,
-  AlkanesWallet,
-  AlkanesProvider,
-  createKeystore,
-  unlockKeystore,
-  createWallet,
-  createWalletFromMnemonic,
-  createProvider,
-  initSDK,
-  VERSION,
-};
+// Default export - function that returns SDK object at call time (not module load time)
+export default function getAlkanesSDK() {
+  return {
+    KeystoreManager,
+    AlkanesWallet,
+    AlkanesProvider,
+    createKeystore,
+    unlockKeystore,
+    createWallet,
+    createWalletFromMnemonic,
+    createProvider,
+    initSDK,
+    VERSION,
+  };
+}

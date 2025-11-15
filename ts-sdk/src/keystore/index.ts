@@ -7,7 +7,10 @@
 
 import * as bip39 from 'bip39';
 import * as bitcoin from 'bitcoinjs-lib';
-import { BIP32Interface, fromSeed } from 'bip32';
+import BIP32Factory, { BIP32Interface } from 'bip32';
+import * as ecc from '@bitcoinerlab/secp256k1';
+
+const bip32 = BIP32Factory(ecc);
 import {
   Keystore,
   EncryptedKeystore,
@@ -91,7 +94,7 @@ export class KeystoreManager {
 
     const network = this.getNetwork(config.network);
     const seed = bip39.mnemonicToSeedSync(mnemonic);
-    const root = fromSeed(seed, network);
+    const root = bip32.fromSeed(seed, network);
     
     // Get master fingerprint
     const masterFingerprint = root.fingerprint.toString('hex');
@@ -442,15 +445,17 @@ export class KeystoreManager {
   }
 
   private async getCrypto(): Promise<SubtleCrypto & { getRandomValues: (arr: Uint8Array) => Uint8Array }> {
+    // Always use browser crypto API
     if (typeof window !== 'undefined' && window.crypto) {
       return window.crypto as any;
     }
-    if (typeof global !== 'undefined' && (global as any).crypto) {
-      return (global as any).crypto;
+    
+    // For Node.js/SSR, use global crypto (Node 19+)
+    if (typeof globalThis !== 'undefined' && (globalThis as any).crypto) {
+      return (globalThis as any).crypto as any;
     }
-    // Node.js
-    const nodeCrypto = await import('crypto');
-    return nodeCrypto.webcrypto.subtle as any;
+    
+    throw new Error('Web Crypto API not available. Please use a modern browser or Node.js 19+');
   }
 
   private bufferToHex(buffer: Uint8Array): string {
