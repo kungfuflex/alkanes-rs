@@ -11,6 +11,9 @@ import BIP32Factory, { BIP32Interface } from 'bip32';
 import { ECPairFactory, ECPairInterface } from 'ecpair';
 import * as ecc from '@bitcoinerlab/secp256k1';
 
+// Initialize ECC library for bitcoinjs-lib
+bitcoin.initEccLib(ecc);
+
 const bip32 = BIP32Factory(ecc);
 import {
   Keystore,

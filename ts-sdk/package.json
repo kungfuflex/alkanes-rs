@@ -7,14 +7,16 @@
   "module": "dist/index.mjs",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "default": "./dist/index.mjs"
     },
     "./wasm": {
+      "types": "./wasm-pkg/alkanes_web_sys.d.ts",
       "import": "./wasm-pkg/alkanes_web_sys.js",
       "require": "./wasm-pkg/alkanes_web_sys.js",
-      "types": "./wasm-pkg/alkanes_web_sys.d.ts"
+      "default": "./wasm-pkg/alkanes_web_sys.js"
     }
   },
   "files": [
