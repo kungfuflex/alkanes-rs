@@ -9,6 +9,7 @@ use crate::precompiled::{
     alkanes_std_genesis_alkane_upgraded_eoa_regtest_build,
     alkanes_std_genesis_alkane_upgraded_mainnet_build,
     alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_build, fr_sigil_build,
+    ftr_btc_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -344,6 +345,56 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
     pipe_storagemap_to(
         &response3.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
+    );
+    atomic.commit();
+    Ok(())
+}
+
+pub fn setup_ftrbtc(block: &Block) -> Result<()> {
+    // ftrBTC uses alkane ID [31, 0] - reserved for futures master contract
+    let ftr_btc_id = AlkaneId { block: 31, tx: 0 };
+    
+    let mut ptr =
+        IndexPointer::from_keyword("/alkanes/").select(&ftr_btc_id.into());
+    if ptr.get().len() == 0 {
+        ptr.set(Arc::new(compress(ftr_btc_build::get_bytes())?));
+    } else {
+        return Ok(());
+    }
+    let mut atomic: AtomicPointer = AtomicPointer::default();
+    let parcel = MessageContextParcel {
+        atomic: atomic.derive(&IndexPointer::default()),
+        runes: vec![],
+        transaction: Transaction {
+            version: bitcoin::blockdata::transaction::Version::ONE,
+            input: vec![],
+            output: vec![],
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+        },
+        block: block.clone(),
+        height: genesis::GENESIS_BLOCK,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: (Cellpack {
+            target: ftr_btc_id.clone(),
+            inputs: vec![0], // Initialize opcode
+        })
+        .encipher(),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+    };
+    let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
+        Ok((a, b)) => Ok((a, b)),
+        Err(e) => {
+            println!("[setup_ftrbtc] Error: {:?}", e);
+            Err(e)
+        }
+    })?;
+    pipe_storagemap_to(
+        &response.storage,
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&ftr_btc_id.into())),
     );
     atomic.commit();
     Ok(())

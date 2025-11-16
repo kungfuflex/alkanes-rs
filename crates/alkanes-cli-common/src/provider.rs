@@ -37,6 +37,11 @@ use crate::rpc::get_rpc_url;
 use url::Url;
 use crate::rpc::{determine_rpc_call_type, RpcCallType};
 
+#[cfg(feature = "native-deps")]
+fn url_encode(s: &str) -> String {
+    s.replace(":", "%3A")
+}
+
 // Import deezel-rpgp types for PGP functionality
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2442,10 +2447,11 @@ impl AlkanesProvider for ConcreteProvider {
     ) -> Result<crate::alkanes::protorunes::ProtoruneOutpointResponse> {
         if self.rpc_config.using_titan_api() {
             let outpoint = format!("{}:{}", txid, vout);
+            let encoded_outpoint = url_encode(&outpoint);
             let path = if let Some(height) = block_tag {
-                format!("/alkanes/byoutpoint/{}/atheight/{}", outpoint, height)
+                format!("/alkanes/byoutpoint/{}/atheight/{}", encoded_outpoint, height)
             } else {
-                format!("/alkanes/byoutpoint/{}", outpoint)
+                format!("/alkanes/byoutpoint/{}", encoded_outpoint)
             };
             let json = self.call_titan_rest_api(&path).await?;
             Ok(serde_json::from_value(json)?)
@@ -2484,7 +2490,8 @@ impl AlkanesProvider for ConcreteProvider {
 
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
         if self.rpc_config.using_titan_api() {
-            let path = format!("/alkanes/trace/{}", outpoint);
+            let encoded_outpoint = url_encode(outpoint);
+            let path = format!("/alkanes/trace/{}", encoded_outpoint);
             let json = self.call_titan_rest_api(&path).await?;
             // Titan returns JSON, convert to protobuf format
             // The JSON response needs to be converted to alkanes_pb::Trace
@@ -2590,10 +2597,11 @@ impl AlkanesProvider for ConcreteProvider {
 
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         if self.rpc_config.using_titan_api() {
+            let encoded_id = url_encode(alkane_id);
             let path = if let Some(height) = block_tag {
-                format!("/alkanes/getbytecode/{}/atheight/{}", alkane_id, height)
+                format!("/alkanes/getbytecode/{}/atheight/{}", encoded_id, height)
             } else {
-                format!("/alkanes/getbytecode/{}", alkane_id)
+                format!("/alkanes/getbytecode/{}", encoded_id)
             };
             let json = self.call_titan_rest_api(&path).await?;
             // Titan returns the bytecode as a string (likely hex-encoded)
