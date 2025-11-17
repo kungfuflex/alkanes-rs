@@ -27,20 +27,20 @@ pub struct DeezelCommands {
     /// Path to the wallet file
     #[arg(long)]
     pub wallet_file: Option<String>,
-    /// Passphrase for the wallet
+    /// Passphrase for the wallet (required to unlock keystore for signing)
     #[arg(long)]
     pub passphrase: Option<String>,
     /// HD path for the wallet
     #[arg(long)]
     pub hd_path: Option<String>,
-    /// Path to the keystore file
-    #[arg(long)]
-    pub keystore: Option<String>,
-    /// Wallet address (for address-only operations without keystore)
-    #[arg(long)]
+    /// Wallet address (for watch-only operations without keystore)
+    #[arg(long, conflicts_with_all = ["wallet_file", "wallet_key", "wallet_key_file"])]
     pub wallet_address: Option<String>,
-    /// Wallet private key file (for signing transactions externally)
-    #[arg(long)]
+    /// Wallet private key as hex string (for signing with a single key)
+    #[arg(long, conflicts_with_all = ["wallet_file", "wallet_address"])]
+    pub wallet_key: Option<String>,
+    /// Wallet private key file path (for signing with a single key)
+    #[arg(long, conflicts_with_all = ["wallet_file", "wallet_address", "wallet_key"])]
     pub wallet_key_file: Option<String>,
     /// Sandshrew RPC URL
     #[arg(long)]
@@ -1008,11 +1008,11 @@ impl From<Runestone> for alkanes_cli_common::commands::RunestoneCommands {
 impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
     fn from(args: &DeezelCommands) -> Self {
         alkanes_cli_common::commands::Args {
-            keystore: args.keystore.clone(),
             wallet_file: args.wallet_file.clone(),
             passphrase: args.passphrase.clone(),
             hd_path: args.hd_path.clone(),
             wallet_address: args.wallet_address.clone(),
+            wallet_key: args.wallet_key.clone(),
             wallet_key_file: args.wallet_key_file.clone(),
             rpc_config: alkanes_cli_common::network::RpcConfig {
                 provider: args.provider.clone(),

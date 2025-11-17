@@ -202,10 +202,14 @@ impl SystemAlkanes {
             // Address-only mode: no keystore needed
             log::info!("Using address-only mode with address: {}", address);
             provider.set_address_only_mode(address.clone(), "p2wpkh".to_string());
+        } else if let Some(ref key_hex) = args.wallet_key {
+            // Direct private key mode: use hex string
+            log::info!("Using private key from hex string");
+            provider.load_external_key_from_hex(key_hex)?;
         } else if let Some(ref key_file) = args.wallet_key_file {
-            // External key mode: load private key from file
+            // External key file mode: load private key from file
             log::info!("Loading private key from file: {}", key_file);
-            provider.load_external_key(key_file)?;
+            provider.load_external_key_from_file(key_file)?;
         } else {
             // Normal keystore mode - explicitly call the mutable initialize()
             log::info!("Normal keystore mode - calling initialize()");

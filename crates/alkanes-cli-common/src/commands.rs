@@ -37,15 +37,15 @@ pub struct Args {
     #[arg(long)]
     pub hd_path: Option<String>,
 
-    /// Keystore file path (alternative to wallet-file and passphrase)
-    #[arg(long)]
-    pub keystore: Option<String>,
-
-    /// Wallet address (for address-only operations without keystore)
+    /// Wallet address (for watch-only operations without keystore)
     #[arg(long)]
     pub wallet_address: Option<String>,
 
-    /// Wallet private key file (for signing transactions externally)
+    /// Private key as hex string (for single-key signing)
+    #[arg(long)]
+    pub wallet_key: Option<String>,
+
+    /// Private key file path (for single-key signing)
     #[arg(long)]
     pub wallet_key_file: Option<String>,
 

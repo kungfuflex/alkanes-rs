@@ -248,11 +248,18 @@ impl ConcreteProvider {
         Ok(bytes)
     }
 
+    /// Get keystore reference (works for both locked and unlocked keystores)
     pub fn get_keystore(&self) -> Result<&Keystore> {
         match &self.wallet_state {
             WalletState::Unlocked { keystore, .. } => Ok(keystore),
-            _ => Err(AlkanesError::Wallet("Wallet is not unlocked".to_string())),
+            WalletState::Locked(keystore) => Ok(keystore),
+            _ => Err(AlkanesError::Wallet("No keystore available - wallet is in address-only or external key mode".to_string())),
         }
+    }
+
+    /// Check if wallet is unlocked (can sign transactions)
+    pub fn is_unlocked(&self) -> bool {
+        matches!(self.wallet_state, WalletState::Unlocked { .. } | WalletState::ExternalKey { .. })
     }
 
     #[cfg(feature = "std")]
@@ -290,6 +297,38 @@ impl ConcreteProvider {
         };
         
         Ok(())
+    }
+
+    /// Load external private key from hex string for signing
+    pub fn load_external_key_from_hex(&mut self, key_hex: &str) -> Result<()> {
+        let private_key = key_hex.trim().to_string();
+        let network = self.get_network();
+        let secp = Secp256k1::new();
+        
+        let secret_key = bitcoin::secp256k1::SecretKey::from_str(&private_key)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid private key: {}", e)))?;
+        
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+        let (xonly_pk, _parity) = keypair.x_only_public_key();
+        let address = bitcoin::Address::p2tr(&secp, xonly_pk, None, network);
+        
+        self.wallet_state = WalletState::ExternalKey {
+            private_key,
+            address: address.to_string(),
+        };
+        
+        Ok(())
+    }
+
+    /// Load external private key from file for signing
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_external_key_from_file(&mut self, key_file_path: &str) -> Result<()> {
+        let private_key = std::fs::read_to_string(key_file_path)
+            .map_err(|e| AlkanesError::Storage(format!("Failed to read key file: {}", e)))?
+            .trim()
+            .to_string();
+        self.load_external_key_from_hex(&private_key)
     }
 
     #[cfg(feature = "std")]

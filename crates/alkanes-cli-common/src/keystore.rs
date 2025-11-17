@@ -24,10 +24,14 @@ pub struct Keystore {
     pub version: String,
     /// PBKDF2 parameters for key derivation from passphrase.
     pub pbkdf2_params: PbkdfParams,
-    /// Master extended public key (xpub) at root level (m/) for deriving any HD path without the private key.
-    /// This allows deriving addresses for all supported BIP standards (BIP44/49/84/86) from a single xpub.
+    /// Legacy field: Previously stored a single account xpub. Now deprecated in favor of account_xpubs map.
+    /// Kept for backward compatibility with old keystores.
     #[serde(default)]
     pub account_xpub: String,
+    /// Account-level extended public keys for each address type (e.g., "p2tr" -> xpub at m/86'/coin'/0')
+    /// This allows deriving addresses for all supported BIP standards without the private key.
+    #[serde(default)]
+    pub account_xpubs: BTreeMap<String, String>,
     /// Derivation paths for different address types.
     #[serde(default)]
     pub hd_paths: BTreeMap<String, String>,
@@ -77,21 +81,46 @@ impl Keystore {
             true,
         )?;
 
-        // 3. Derive master xpub and fingerprint
+        // 3. Derive account xpubs for each address type and BOTH coin types (mainnet=0, testnet=1)
         let seed = mnemonic.to_seed("");
         let secp = Secp256k1::new();
         let root = Xpriv::new_master(network, &seed)?;
         
-        // Store the master xpub at root level (m/) so any path can be derived
-        let master_xpub = Xpub::from_priv(&secp, &root);
+        // Derive account-level xpubs for each BIP standard and both coin types
+        // This allows the same keystore to work on any network
+        let mut account_xpubs = BTreeMap::new();
+        let bip_standards = [
+            ("p2tr", "86"),       // BIP-86: Taproot
+            ("p2wpkh", "84"),     // BIP-84: Native SegWit
+            ("p2sh-p2wpkh", "49"), // BIP-49: Nested SegWit
+            ("p2pkh", "44"),      // BIP-44: Legacy
+        ];
+        
+        for (address_type, bip_number) in &bip_standards {
+            // Mainnet (coin_type = 0)
+            let mainnet_path_str = format!("m/{}'/{}'/{}", bip_number, "0", "0'");
+            let mainnet_path = DerivationPath::from_str(&mainnet_path_str)?;
+            let mainnet_xpriv = root.derive_priv(&secp, &mainnet_path)?;
+            let mainnet_xpub = Xpub::from_priv(&secp, &mainnet_xpriv);
+            account_xpubs.insert(format!("{}:mainnet", address_type), mainnet_xpub.to_string());
+            
+            // Testnet (coin_type = 1) - used for testnet, signet, and regtest
+            let testnet_path_str = format!("m/{}'/{}'/{}", bip_number, "1", "0'");
+            let testnet_path = DerivationPath::from_str(&testnet_path_str)?;
+            let testnet_xpriv = root.derive_priv(&secp, &testnet_path)?;
+            let testnet_xpub = Xpub::from_priv(&secp, &testnet_xpriv);
+            account_xpubs.insert(format!("{}:testnet", address_type), testnet_xpub.to_string());
+        }
+        
+        // Default account_xpub for backward compatibility (use p2tr mainnet)
+        let default_account_xpub = account_xpubs.get("p2tr:mainnet").unwrap().clone();
 
-        // 4. Store standard HD path templates (will be used with indices at derivation time)
+        // 4. Store standard HD path templates (with placeholder for coin_type)
         let mut hd_paths = BTreeMap::new();
-        let coin_type = if network == Network::Bitcoin { "0" } else { "1" };
-        hd_paths.insert("p2tr".to_string(), format!("m/86'/{}'/{}", coin_type, "0'/0/0"));
-        hd_paths.insert("p2wpkh".to_string(), format!("m/84'/{}'/{}", coin_type, "0'/0/0"));
-        hd_paths.insert("p2sh-p2wpkh".to_string(), format!("m/49'/{}'/{}", coin_type, "0'/0/0"));
-        hd_paths.insert("p2pkh".to_string(), format!("m/44'/{}'/{}", coin_type, "0'/0/0"));
+        hd_paths.insert("p2tr".to_string(), "m/86'/COIN'/0'/0/0".to_string());
+        hd_paths.insert("p2wpkh".to_string(), "m/84'/COIN'/0'/0/0".to_string());
+        hd_paths.insert("p2sh-p2wpkh".to_string(), "m/49'/COIN'/0'/0/0".to_string());
+        hd_paths.insert("p2pkh".to_string(), "m/44'/COIN'/0'/0/0".to_string());
 
         Ok(Self {
             encrypted_mnemonic: String::from_utf8(armored_mnemonic)?,
@@ -105,7 +134,8 @@ impl Keystore {
                 iterations: 600_000,
                 algorithm: Some("aes-256-gcm".to_string()),
             },
-            account_xpub: master_xpub.to_string(),
+            account_xpub: default_account_xpub,
+            account_xpubs,
             hd_paths,
         })
     }
@@ -162,11 +192,22 @@ impl Keystore {
         count: u32,
     ) -> Result<Vec<crate::traits::AddressInfo>> {
         let secp = Secp256k1::new();
-        let master_xpub = Xpub::from_str(&self.account_xpub)?;
         
-        // Get the base HD path template for this address type
-        let base_path_template = self.hd_paths.get(address_type)
-            .ok_or_else(|| AlkanesError::Wallet(format!("Unknown address type: {}", address_type)))?;
+        // Determine the network suffix for xpub lookup
+        let network_suffix = if network == Network::Bitcoin { "mainnet" } else { "testnet" };
+        let xpub_key = format!("{}:{}", address_type, network_suffix);
+        
+        // Get the account xpub for this address type and network
+        // First try the new account_xpubs map with network suffix
+        // Then try without suffix (for old keystores created with single network)
+        // Finally fall back to legacy account_xpub field
+        let account_xpub_str = self.account_xpubs.get(&xpub_key)
+            .or_else(|| self.account_xpubs.get(address_type))
+            .map(|s| s.as_str())
+            .or(Some(self.account_xpub.as_str()))
+            .ok_or_else(|| AlkanesError::Wallet(format!("No xpub found for address type: {} on network: {}", address_type, network_suffix)))?;
+        
+        let account_xpub = Xpub::from_str(account_xpub_str)?;
         
         // Determine the coin type based on network
         let coin_type = match network {
@@ -187,12 +228,16 @@ impl Keystore {
         let mut addresses = Vec::new();
 
         for i in start_index..start_index + count {
-            // Build the full derivation path: m/purpose'/coin_type'/account'/change/index
+            // Build the full derivation path for display
             let full_path_str = format!("m/{}'/{}'/{}", bip_number, coin_type, format!("0'/{}/{}", chain, i));
-            let path = DerivationPath::from_str(&full_path_str)?;
             
-            // Derive from master xpub
-            let derived_xpub = master_xpub.derive_pub(&secp, &path)?;
+            // Derive from account xpub (which is at m/purpose'/coin_type'/account')
+            // We only need to derive the non-hardened part: m/change/index
+            let relative_path_str = format!("m/{}/{}", chain, i);
+            let path = DerivationPath::from_str(&relative_path_str)?;
+            
+            // Derive from account xpub
+            let derived_xpub = account_xpub.derive_pub(&secp, &path)?;
             let public_key = derived_xpub.public_key;
             
             // Create address based on type
