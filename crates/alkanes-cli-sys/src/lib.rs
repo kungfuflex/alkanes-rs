@@ -1318,6 +1318,9 @@ impl SystemWallet for SystemAlkanes {
                 Ok(())
             },
            WalletCommands::Send { address, amount, fee_rate, send_all, from, lock_alkanes, change, use_rebar, rebar_tier, yes } => {
+               // Parse BTC amount string and convert to satoshis
+               let amount_sats = crate::utils::parse_btc_amount(&amount)?;
+               
                // Resolve address identifiers
                let resolved_address = provider.resolve_all_identifiers(&address).await?;
                let resolved_from = if let Some(from_addrs) = from {
@@ -1337,7 +1340,7 @@ impl SystemWallet for SystemAlkanes {
                
                let send_params = SendParams {
                    address: resolved_address,
-                   amount,
+                   amount: amount_sats,
                    fee_rate,
                    send_all,
                    from: resolved_from,

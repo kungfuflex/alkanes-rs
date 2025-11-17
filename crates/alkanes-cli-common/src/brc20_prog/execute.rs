@@ -37,7 +37,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         let envelope = Brc20ProgEnvelope::new(params.inscription_content.as_bytes().to_vec());
 
         // Build and execute commit transaction
-        let (commit_txid, commit_fee, commit_outpoint, required_reveal_amount, internal_key) =
+        let (commit_txid, commit_fee, commit_outpoint, commit_output, internal_key) =
             self.build_and_broadcast_commit(&params, &envelope).await?;
 
         log::info!("✅ Commit transaction broadcast: {commit_txid}");
@@ -54,7 +54,7 @@ impl<'a> Brc20ProgExecutor<'a> {
                 &params,
                 &envelope,
                 commit_outpoint,
-                required_reveal_amount,
+                commit_output,
                 internal_key,
             )
             .await?;
@@ -82,7 +82,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         &mut self,
         params: &Brc20ProgExecuteParams,
         envelope: &Brc20ProgEnvelope,
-    ) -> Result<(Txid, u64, OutPoint, u64, XOnlyPublicKey)> {
+    ) -> Result<(Txid, u64, OutPoint, TxOut, XOnlyPublicKey)> {
         log::info!("Building commit transaction");
 
         let (internal_key, _) = self.provider.get_internal_key().await?;
@@ -109,7 +109,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         let (commit_psbt, commit_fee) = self
             .build_commit_psbt(
                 funding_utxos,
-                commit_output,
+                commit_output.clone(),
                 params.fee_rate,
                 &params.change_address,
             )
@@ -131,7 +131,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             commit_tx.compute_txid(),
             commit_fee,
             commit_outpoint,
-            required_reveal_amount,
+            commit_output,
             internal_key,
         ))
     }
@@ -142,7 +142,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         params: &Brc20ProgExecuteParams,
         envelope: &Brc20ProgEnvelope,
         commit_outpoint: OutPoint,
-        commit_output_value: u64,
+        commit_output: TxOut,
         commit_internal_key: XOnlyPublicKey,
     ) -> Result<(Txid, u64)> {
         log::info!("Building reveal transaction");
@@ -165,7 +165,7 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Calculate change amount (commit output value - reveal fee)
         let estimated_reveal_fee = 50_000u64;
-        let change_amount = commit_output_value.saturating_sub(estimated_reveal_fee);
+        let change_amount = commit_output.value.to_sat().saturating_sub(estimated_reveal_fee);
 
         let change_output = TxOut {
             value: bitcoin::Amount::from_sat(change_amount),
@@ -177,7 +177,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         // Build reveal PSBT with script-path spending
         let (mut reveal_psbt, reveal_fee) = self
             .build_reveal_psbt(
-                vec![commit_outpoint],
+                vec![(commit_outpoint, commit_output)],
                 outputs,
                 params.fee_rate,
                 Some(envelope),
@@ -378,7 +378,7 @@ impl<'a> Brc20ProgExecutor<'a> {
     /// Build reveal PSBT
     async fn build_reveal_psbt(
         &mut self,
-        utxos: Vec<OutPoint>,
+        utxos_with_txouts: Vec<(OutPoint, TxOut)>,
         mut outputs: Vec<TxOut>,
         fee_rate: Option<f32>,
         envelope: Option<&Brc20ProgEnvelope>,
@@ -388,14 +388,11 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         let mut total_input_value = 0;
         let mut input_txouts = Vec::new();
-        for outpoint in &utxos {
-            let utxo = self
-                .provider
-                .get_utxo(outpoint)
-                .await?
-                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {outpoint}")))?;
-            total_input_value += utxo.value.to_sat();
-            input_txouts.push(utxo);
+        let utxos: Vec<OutPoint> = utxos_with_txouts.iter().map(|(op, _)| *op).collect();
+        
+        for (_outpoint, txout) in &utxos_with_txouts {
+            total_input_value += txout.value.to_sat();
+            input_txouts.push(txout.clone());
         }
 
         let mut temp_tx = Transaction {
@@ -414,13 +411,24 @@ impl<'a> Brc20ProgExecutor<'a> {
         };
 
         for (i, input) in temp_tx.input.iter_mut().enumerate() {
-            if envelope.is_some() && i == 0 {
-                // Script-path spend - use larger placeholder
-                input.witness.push([0u8; 400]);
-            } else {
-                // Key-path spend
-                input.witness.push([0u8; 65]);
+            if let Some(env) = envelope {
+                if i == 0 {
+                    // Script-path spend - calculate actual witness size
+                    // Witness structure: [signature (65), script, control_block (33)]
+                    let reveal_script = env.build_reveal_script();
+                    let script_size = reveal_script.len();
+                    let control_block_size = 33; // Fixed size for control block
+                    let signature_size = 65; // Schnorr signature + sighash type
+                    
+                    // Create realistic witness placeholder
+                    input.witness.push(vec![0u8; signature_size]);
+                    input.witness.push(vec![0u8; script_size]);
+                    input.witness.push(vec![0u8; control_block_size]);
+                    continue;
+                }
             }
+            // Key-path spend
+            input.witness.push([0u8; 65]);
         }
 
         let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);

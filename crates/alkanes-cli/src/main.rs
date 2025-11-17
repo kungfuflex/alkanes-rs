@@ -17,6 +17,26 @@ use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewComma
 use alkanes_cli_common::alkanes;
 use pretty_print::*;
 
+/// Parse a BTC amount string and convert to satoshis
+/// Accepts formats like "0.0001", "1.5", "0.00000001", etc.
+fn parse_btc_amount(amount_str: &str) -> Result<u64> {
+    let amount_f64: f64 = amount_str.parse()
+        .map_err(|_| anyhow::anyhow!("Invalid amount format: '{}'. Expected decimal BTC amount (e.g., 0.0001)", amount_str))?;
+    
+    if amount_f64 < 0.0 {
+        return Err(anyhow::anyhow!("Amount cannot be negative"));
+    }
+    
+    // Convert BTC to satoshis (1 BTC = 100,000,000 satoshis)
+    let satoshis = (amount_f64 * 100_000_000.0).round() as u64;
+    
+    if satoshis == 0 && amount_f64 > 0.0 {
+        return Err(anyhow::anyhow!("Amount too small: minimum is 0.00000001 BTC (1 satoshi)"));
+    }
+    
+    Ok(satoshis)
+}
+
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -96,9 +116,12 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
             }
         }
         WalletCommands::Send { address, amount, fee_rate, send_all, from, lock_alkanes, change_address, use_rebar, rebar_tier, auto_confirm } => {
+            // Parse BTC amount string and convert to satoshis
+            let amount_sats = parse_btc_amount(&amount)?;
+            
             let params = alkanes_cli_common::traits::SendParams {
                 address,
-                amount,
+                amount: amount_sats,
                 fee_rate,
                 send_all,
                 from,
@@ -932,10 +955,27 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let inscription = Brc20ProgDeployInscription::new(bytecode);
             let inscription_json = serde_json::to_string(&inscription)?;
 
+            // Resolve address identifiers before creating params
+            let resolved_from = if let Some(from_addrs) = from {
+                let mut resolved = Vec::new();
+                for addr in from_addrs {
+                    resolved.push(provider.resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+            
+            let resolved_change = if let Some(change_addr) = change {
+                Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
             let params = Brc20ProgExecuteParams {
                 inscription_content: inscription_json,
-                from_addresses: from,
-                change_address: change,
+                from_addresses: resolved_from,
+                change_address: resolved_change,
                 fee_rate,
                 raw_output: raw,
                 trace_enabled: trace,
@@ -963,10 +1003,27 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let inscription = Brc20ProgCallInscription::new(address, calldata_hex);
             let inscription_json = serde_json::to_string(&inscription)?;
 
+            // Resolve address identifiers before creating params
+            let resolved_from = if let Some(from_addrs) = from {
+                let mut resolved = Vec::new();
+                for addr in from_addrs {
+                    resolved.push(provider.resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+            
+            let resolved_change = if let Some(change_addr) = change {
+                Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
             let params = Brc20ProgExecuteParams {
                 inscription_content: inscription_json,
-                from_addresses: from,
-                change_address: change,
+                from_addresses: resolved_from,
+                change_address: resolved_change,
                 fee_rate,
                 raw_output: raw,
                 trace_enabled: trace,
@@ -995,12 +1052,29 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let calldata_hex = encode_function_call(&signature, &calldata)?;
             let calldata_bytes = hex::decode(calldata_hex.trim_start_matches("0x"))?;
 
+            // Resolve address identifiers before creating params
+            let resolved_from = if let Some(from_addrs) = from {
+                let mut resolved = Vec::new();
+                for addr in from_addrs {
+                    resolved.push(provider.resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+            
+            let resolved_change = if let Some(change_addr) = change {
+                Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
             let params = Brc20ProgWrapBtcParams {
                 amount,
                 target_address: target,
                 calldata: calldata_bytes,
-                from_addresses: from,
-                change_address: change,
+                from_addresses: resolved_from,
+                change_address: resolved_change,
                 fee_rate,
                 raw_output: raw,
                 trace_enabled: trace,
@@ -1020,6 +1094,132 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 println!("💰 Commit Fee: {} sats", result.commit_fee);
                 println!("💰 Reveal Fee: {} sats", result.reveal_fee);
                 println!("🎉 frBTC minted and locked in BRC20 vault!");
+            }
+            Ok(())
+        }
+        Brc20Prog::GetContractDeploys { address, raw } => {
+            use alkanes_cli_common::traits::EsploraProvider;
+            
+            // Resolve address identifier
+            let resolved_address = provider.resolve_all_identifiers(&address).await?;
+            
+            // Get all transactions for this address
+            let txs_json = provider.get_address_txs(&resolved_address).await?;
+            let txs: Vec<serde_json::Value> = serde_json::from_value(txs_json)
+                .map_err(|e| anyhow::anyhow!("Failed to parse transactions: {}", e))?;
+            
+            let mut deployments = Vec::new();
+            
+            for tx in txs {
+                let txid = tx["txid"].as_str().unwrap_or("");
+                
+                // Try to get the transaction details to check for brc20-prog deploy
+                if let Ok(tx_details) = provider.get_tx(txid).await {
+                    // Check if any output contains brc20-prog deploy inscription
+                    if let Some(vout) = tx_details.get("vout").and_then(|v| v.as_array()) {
+                        for (vout_idx, output) in vout.iter().enumerate() {
+                            // Check scriptpubkey_type for taproot (where inscriptions are)
+                            if output.get("scriptpubkey_type").and_then(|v| v.as_str()) == Some("v1_p2tr") {
+                                // This could be an inscription - we'd need to check the witness data
+                                // For now, we'll flag any taproot output as a potential deployment
+                                deployments.push(serde_json::json!({
+                                    "txid": txid,
+                                    "vout": vout_idx,
+                                    "block_height": tx.get("status").and_then(|s| s.get("block_height")),
+                                    "confirmed": tx.get("status").and_then(|s| s.get("confirmed")),
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&deployments)?);
+            } else {
+                if deployments.is_empty() {
+                    println!("No contract deployments found for address: {}", resolved_address);
+                } else {
+                    println!("Found {} potential contract deployment(s) for {}:", deployments.len(), resolved_address);
+                    for (idx, deploy) in deployments.iter().enumerate() {
+                        println!("\n{}. TXID: {}", idx + 1, deploy["txid"].as_str().unwrap_or("unknown"));
+                        if let Some(height) = deploy.get("block_height") {
+                            println!("   Block: {}", height);
+                        }
+                        println!("   Vout: {}", deploy["vout"]);
+                    }
+                    println!("\n💡 Note: Use the BRC20-Prog RPC (--brc20-prog-rpc-url) to verify these are actual deployments");
+                }
+            }
+            Ok(())
+        }
+        Brc20Prog::GetCode { address, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            // Get BRC20-Prog RPC URL from system
+            let rpc_url = system.get_brc20_prog_rpc_url()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let code = client.eth_get_code(&address).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"code": code}))?);
+            } else {
+                if code == "0x" || code.is_empty() {
+                    println!("No code at address: {}", address);
+                } else {
+                    println!("Contract bytecode at {}:", address);
+                    println!("{}", code);
+                    println!("\nBytecode length: {} bytes", (code.len() - 2) / 2);
+                }
+            }
+            Ok(())
+        }
+        Brc20Prog::Call { to, data, from, block, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::{Brc20ProgRpcClient, EthCallParams};
+            
+            // Get BRC20-Prog RPC URL from system
+            let rpc_url = system.get_brc20_prog_rpc_url()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let params = EthCallParams { to, data, from };
+            let result = client.eth_call(params, block.as_deref()).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"result": result}))?);
+            } else {
+                println!("Call result: {}", result);
+            }
+            Ok(())
+        }
+        Brc20Prog::GetBalance { address, block, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            // Get BRC20-Prog RPC URL from system
+            let rpc_url = system.get_brc20_prog_rpc_url()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let balance = client.eth_get_balance(&address, &block).await?;
+            
+            // Parse the hex balance
+            let balance_hex = balance.trim_start_matches("0x");
+            let balance_wei = u128::from_str_radix(balance_hex, 16)
+                .unwrap_or(0);
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "balance": balance,
+                    "balance_wei": balance_wei.to_string(),
+                }))?);
+            } else {
+                // Convert wei to frBTC (assuming 18 decimals)
+                let balance_btc = balance_wei as f64 / 1e18;
+                println!("Address: {}", address);
+                println!("Balance: {} wei", balance_wei);
+                println!("Balance: {:.8} frBTC", balance_btc);
             }
             Ok(())
         }

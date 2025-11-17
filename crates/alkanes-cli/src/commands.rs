@@ -60,6 +60,9 @@ pub struct DeezelCommands {
     /// Metashrew RPC URL
     #[arg(long)]
     pub metashrew_rpc_url: Option<String>,
+    /// BRC20-Prog RPC URL (for querying brc20-programmable-module)
+    #[arg(long)]
+    pub brc20_prog_rpc_url: Option<String>,
     /// Network provider
     #[arg(short, long, default_value = "regtest")]
     pub provider: String,
@@ -573,6 +576,51 @@ pub enum Brc20Prog {
         #[arg(long, short = 'y')]
         auto_confirm: bool,
     },
+    /// Get contract deployments made by an address
+    GetContractDeploys {
+        /// Address or address identifier (e.g., "p2tr:0", "tb1p...")
+        address: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get contract bytecode (eth_getCode)
+    GetCode {
+        /// Contract address (0x prefixed hex)
+        address: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Call a contract function (eth_call)
+    Call {
+        /// Contract address (0x prefixed hex)
+        #[arg(long)]
+        to: String,
+        /// Calldata (0x prefixed hex)
+        #[arg(long)]
+        data: String,
+        /// From address (optional, 0x prefixed hex)
+        #[arg(long)]
+        from: Option<String>,
+        /// Block number or "latest" (optional)
+        #[arg(long)]
+        block: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get frBTC balance (eth_getBalance)
+    GetBalance {
+        /// Address (0x prefixed hex)
+        address: String,
+        /// Block number or "latest" (optional)
+        #[arg(long, default_value = "latest")]
+        block: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// Alkanes subcommands
@@ -804,8 +852,8 @@ pub enum WalletCommands {
     Send {
         /// The address to send to
         address: String,
-        /// The amount to send in satoshis
-        amount: u64,
+        /// The amount to send in BTC (e.g., 0.0001 for 10000 satoshis)
+        amount: String,
         /// The fee rate in sat/vB
         #[arg(long)]
         fee_rate: Option<f32>,

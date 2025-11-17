@@ -59,6 +59,8 @@ pub mod network;
 pub mod rpc;
 pub mod alkanes;
 pub mod brc20_prog;
+#[cfg(feature = "std")]
+pub mod brc20_prog_rpc;
 pub mod wallet;
 pub mod address_resolver;
 pub mod address_parser;

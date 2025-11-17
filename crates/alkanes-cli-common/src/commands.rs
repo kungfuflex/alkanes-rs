@@ -183,8 +183,8 @@ pub enum WalletCommands {
     Send {
         /// Recipient address or identifier
         address: String,
-        /// Amount in satoshis
-        amount: u64,
+        /// Amount in BTC (e.g., 0.0001 for 10000 satoshis)
+        amount: String,
         /// Fee rate in sat/vB
         #[arg(long)]
         fee_rate: Option<f32>,

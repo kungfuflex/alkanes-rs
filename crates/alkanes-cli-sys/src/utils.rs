@@ -1,9 +1,34 @@
-//! Utility functions for the deezel-sys library
+//! Utility functions for the alkanes-cli-sys library
 
 use anyhow::{anyhow, Result};
 use alkanes_cli_common::provider::ConcreteProvider;
 use alkanes_cli_common::traits::AddressResolver;
+use alkanes_cli_common::AlkanesError;
 use std::str::FromStr;
+
+/// Parse a BTC amount string and convert to satoshis
+/// Accepts formats like "0.0001", "1.5", "0.00000001", etc.
+pub fn parse_btc_amount(amount_str: &str) -> Result<u64> {
+    let amount_f64: f64 = amount_str.parse()
+        .map_err(|_| AlkanesError::InvalidParameters(
+            format!("Invalid amount format: '{}'. Expected decimal BTC amount (e.g., 0.0001)", amount_str)
+        ))?;
+    
+    if amount_f64 < 0.0 {
+        return Err(AlkanesError::InvalidParameters("Amount cannot be negative".to_string()).into());
+    }
+    
+    // Convert BTC to satoshis (1 BTC = 100,000,000 satoshis)
+    let satoshis = (amount_f64 * 100_000_000.0).round() as u64;
+    
+    if satoshis == 0 && amount_f64 > 0.0 {
+        return Err(AlkanesError::InvalidParameters(
+            "Amount too small: minimum is 0.00000001 BTC (1 satoshi)".to_string()
+        ).into());
+    }
+    
+    Ok(satoshis)
+}
 
 /// Resolve a single address identifier string (e.g., "p2tr:0" or a concrete address)
 pub async fn resolve_address_identifiers(input: &str, provider: &ConcreteProvider) -> Result<String> {
