@@ -41,6 +41,13 @@ pub struct AddressInfo {
     pub metashrew_height: u64,
 }
 
+/// Handle sandshrew-specific RPC methods
+/// 
+/// Supported methods:
+/// - `sandshrew_multicall`: Execute multiple RPC calls in a single request
+///   Expected params: [["method1", [params1]], ["method2", [params2]], ...]
+/// - `sandshrew_balances`: Get address balance information including UTXOs and assets
+///   Expected params: [{"address": "...", "protocolTag": "1", "assetAddress": "..."}]
 pub async fn handle_sandshrew_method(
     method: &str,
     params: &[Value],
@@ -63,6 +70,8 @@ async fn handle_multicall(
     request_id: &Value,
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
+    // params should directly be an array of [method, params] tuples
+    // e.g., [["btc_getblockcount", []], ["btc_getblockhash", [100]]]
     if params.is_empty() {
         return Ok(JsonRpcResponse::error(
             INVALID_PARAMS,
@@ -71,21 +80,9 @@ async fn handle_multicall(
         ));
     }
 
-    // params[0] should be an array of [method, params] tuples
-    let calls_array = match params[0].as_array() {
-        Some(arr) => arr,
-        None => {
-            return Ok(JsonRpcResponse::error(
-                INVALID_PARAMS,
-                "multicall params must be an array".to_string(),
-                request_id.clone(),
-            ));
-        }
-    };
-
     let mut results = Vec::new();
     
-    for call in calls_array {
+    for call in params {
         // Each call should be a 2-element array: [method, params]
         let call_tuple = match call.as_array() {
             Some(arr) if arr.len() == 2 => arr,
