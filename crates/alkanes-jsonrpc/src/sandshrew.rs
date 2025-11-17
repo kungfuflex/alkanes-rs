@@ -71,12 +71,13 @@ async fn handle_multicall(
         ));
     }
 
-    let calls: Vec<(String, Vec<Value>)> = match serde_json::from_value(params[0].clone()) {
-        Ok(c) => c,
-        Err(e) => {
+    // params[0] should be an array of [method, params] tuples
+    let calls_array = match params[0].as_array() {
+        Some(arr) => arr,
+        None => {
             return Ok(JsonRpcResponse::error(
                 INVALID_PARAMS,
-                format!("Invalid multicall params: {}", e),
+                "multicall params must be an array".to_string(),
                 request_id.clone(),
             ));
         }
@@ -84,7 +85,41 @@ async fn handle_multicall(
 
     let mut results = Vec::new();
     
-    for (method, call_params) in calls {
+    for call in calls_array {
+        // Each call should be a 2-element array: [method, params]
+        let call_tuple = match call.as_array() {
+            Some(arr) if arr.len() == 2 => arr,
+            _ => {
+                return Ok(JsonRpcResponse::error(
+                    INVALID_PARAMS,
+                    "Each multicall entry must be a tuple of [method, params]".to_string(),
+                    request_id.clone(),
+                ));
+            }
+        };
+
+        let method = match call_tuple[0].as_str() {
+            Some(m) => m.to_string(),
+            None => {
+                return Ok(JsonRpcResponse::error(
+                    INVALID_PARAMS,
+                    "Method name must be a string".to_string(),
+                    request_id.clone(),
+                ));
+            }
+        };
+
+        let call_params = match call_tuple[1].as_array() {
+            Some(p) => p.clone(),
+            None => {
+                return Ok(JsonRpcResponse::error(
+                    INVALID_PARAMS,
+                    "Method params must be an array".to_string(),
+                    request_id.clone(),
+                ));
+            }
+        };
+
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.clone(),
