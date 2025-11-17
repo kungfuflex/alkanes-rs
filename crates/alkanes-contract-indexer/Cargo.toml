@@ -1,0 +1,42 @@
+[package]
+name = "alkanes-contract-indexer"
+version = "0.1.0"
+edition = "2024"
+default-run = "alkanes-contract-indexer"
+
+[dependencies]
+anyhow = "1.0"
+dotenvy = "0.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.39", features = ["rt-multi-thread", "macros", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.8", features = ["v4", "fast-rng", "serde"] }
+time = { version = "0.3", features = ["serde", "macros"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "uuid", "time", "json", "chrono"] }
+reqwest = { version = "0.12", features = ["json"] }
+clap = { version = "4.5", features = ["derive"] }
+futures = "0.3"
+hex = "0.4"
+bitcoin = "0.32"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+once_cell = "1.19"
+fastrand = "2.1"
+redis = { version = "0.25", features = ["tokio-comp"] }
+
+# Deezel libraries (use git until crates are published)
+deezel-common = { git = "https://github.com/Sprimage/deezel", package = "deezel-common", features = ["native-deps"] }
+
+[[bin]]
+name = "dbctl"
+path = "src/bin/dbctl.rs"
+
+[[bin]]
+name = "swaps"
+path = "src/bin/swaps.rs"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3

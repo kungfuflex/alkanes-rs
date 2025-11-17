@@ -2,6 +2,7 @@
 volumes:
   bitcoin-data:
   metashrew-data:
+  postgres-data:
 services:
   bitcoind:
     build:
@@ -122,4 +123,52 @@ services:
       RUST_LOG: info
     ports:
       - "18888:18888"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: alkanes_user
+      POSTGRES_PASSWORD: alkanes_pass
+      POSTGRES_DB: alkanes_indexer
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alkanes_user -d alkanes_indexer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  alkanes-contract-indexer:
+    build:
+      dockerfile: Dockerfile
+      context: .
+      args:
+        - PACKAGE=alkanes-contract-indexer
+    image: alkanes-contract-indexer:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      jsonrpc:
+        condition: service_started
+    environment:
+      RUST_LOG: info
+      DATABASE_URL: postgres://alkanes_user:alkanes_pass@postgres:5432/alkanes_indexer
+      SANDSHREW_RPC_URL: http://jsonrpc:18888
+      NETWORK: regtest
+      POLL_INTERVAL_MS: 2000
+      # Factory constants matching deploy-oyl-amm.sh
+      # AMM_FACTORY_ID=65522 (0xfff2) from deploy-oyl-amm.sh
+      FACTORY_BLOCK_ID: 4
+      FACTORY_TX_ID: 65522
+      # RPC resiliency settings
+      RPC_MAX_CONCURRENCY: 64
+      RPC_MAX_RETRIES: 5
+      RPC_BASE_BACKOFF_MS: 200
+      RPC_MAX_BACKOFF_MS: 5000
+      RPC_TIMEOUT_MS: 20000
+      RPC_CIRCUIT_COOLDOWN_MS: 5000
     restart: unless-stopped
