@@ -1,7 +1,7 @@
-//! DEEZEL CLI - A thin wrapper around the deezel-sys library
+//! ALKANES CLI - A thin wrapper around the alkanes-cli-sys library
 //!
 //! This crate is responsible for parsing command-line arguments and delegating
-//! the actual work to the deezel-sys library. This keeps the CLI crate
+//! the actual work to the alkanes-cli-sys library. This keeps the CLI crate
 //! lightweight and focused on its primary role as a user interface.
 
 use anyhow::Result;

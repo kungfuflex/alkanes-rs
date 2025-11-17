@@ -135,9 +135,11 @@ impl Commands {
 pub enum WalletCommands {
     /// Create a new wallet
     Create {
-        /// Optional mnemonic phrase (if not provided, a new one will be generated)
-        #[arg(long)]
+        /// Optional mnemonic phrase to restore from (if not provided, generates a new one)
         mnemonic: Option<String>,
+        /// Output file path for the wallet (default: ~/.alkanes/wallet.json)
+        #[arg(short = 'o', long)]
+        output: Option<String>,
     },
     /// Restore wallet from mnemonic
     Restore {

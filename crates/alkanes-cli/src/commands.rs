@@ -1,6 +1,6 @@
-//! # CLI Commands for `deezel`
+//! # CLI Commands for `alkanes-cli`
 //!
-//! This module defines the `clap`-based command structure for the `deezel` CLI,
+//! This module defines the `clap`-based command structure for the `alkanes-cli` CLI,
 //! including subcommands for interacting with `bitcoind`. It also contains
 //! the logic for pretty-printing complex JSON responses.
 
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 // applied to other subcommands like `traceblock` and `getbalance` to keep
 // the naming consistent across the board.
 
-/// Deezel is a command-line tool for interacting with Bitcoin and Ordinals
+/// Alkanes CLI is a command-line tool for interacting with Bitcoin and Alkanes
 #[derive(Parser, Debug, Clone, Serialize, Deserialize)]
 #[command(author, version, about, long_about = None)]
 pub struct DeezelCommands {
@@ -754,9 +754,11 @@ pub enum Protorunes {
 pub enum WalletCommands {
     /// Create a new wallet
     Create {
-        /// The passphrase for the new wallet
-        passphrase: Option<String>,
+        /// Optional mnemonic phrase to restore from (if not provided, generates a new one)
         mnemonic: Option<String>,
+        /// Output file path for the wallet (default: ~/.alkanes/wallet.json)
+        #[arg(short = 'o', long)]
+        output: Option<String>,
     },
     /// Get an address from the wallet
     Addresses {

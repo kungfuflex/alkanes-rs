@@ -2805,6 +2805,9 @@ impl DeezelProvider for ConcreteProvider {
     }
 
     async fn initialize(&self) -> Result<()> {
+        // Note: The actual initialization logic is in the mutable initialize() method
+        // This trait method is a no-op because initialize requires &mut self
+        // Callers should use ConcreteProvider::initialize(&mut self) directly
         Ok(())
     }
 

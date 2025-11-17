@@ -1,7 +1,7 @@
-//! Deezel System Library
+//! Alkanes System Library
 //!
-//! This library provides the system-level implementation of the deezel CLI,
-//! acting as a bridge between the command-line interface and the deezel-common
+//! This library provides the system-level implementation of the alkanes CLI,
+//! acting as a bridge between the command-line interface and the alkanes-cli-common
 //! library. It is designed to be used as a library by system crates that
 //! utilize alkanes on the backend.
 
@@ -120,8 +120,8 @@ impl SystemAlkanes {
                 bitcoin::Network::Regtest => "regtest",
                 _ => "custom",
             };
-            // Default to keystore.json extension (not .asc since we handle encryption internally)
-            Some(expand_tilde(&format!("~/.deezel/{network_name}.keystore.json"))?)
+            // Default to wallet.json (not network-specific)
+            Some(expand_tilde("~/.alkanes/wallet.json")?)
         };
         
         // Create wallet directory if it doesn't exist
@@ -207,8 +207,10 @@ impl SystemAlkanes {
             log::info!("Loading private key from file: {}", key_file);
             provider.load_external_key(key_file)?;
         } else {
-            // Normal keystore mode
-            provider.initialize().await?;
+            // Normal keystore mode - explicitly call the mutable initialize()
+            log::info!("Normal keystore mode - calling initialize()");
+            ConcreteProvider::initialize(&mut provider).await?;
+            log::info!("Provider initialized successfully");
         }
 
         // Create PGP provider
@@ -879,9 +881,10 @@ impl SystemWallet for SystemAlkanes {
         }
 
        let res: anyhow::Result<()> = match command {
-           WalletCommands::Create { mnemonic } => {
+           WalletCommands::Create { mnemonic, output } => {
                println!("🔐 Creating encrypted keystore...");
 
+               // Get passphrase - either from --passphrase flag or prompt
                let final_passphrase = if let Some(pass) = self.args.passphrase.clone() {
                    pass
                } else {
@@ -893,7 +896,7 @@ impl SystemWallet for SystemAlkanes {
                    pass
                };
 
-               // Create keystore parameters, including the passphrase from CLI args
+               // Create keystore parameters
                let keystore_params = KeystoreCreateParams {
                    mnemonic: mnemonic.clone(),
                    passphrase: Some(final_passphrase),
@@ -905,17 +908,30 @@ impl SystemWallet for SystemAlkanes {
                // Create the keystore
                let (keystore, mnemonic_phrase) = self.keystore_manager.create_keystore(keystore_params).await?;
                
-               // FIXED: Use the wallet file path from provider (which respects --wallet-file argument)
+               // Determine output file path: -o flag > --wallet-file flag > default
                #[cfg(not(target_arch = "wasm32"))]
-               let wallet_file = provider.get_wallet_path()
-                   .ok_or_else(|| anyhow!("No wallet file path configured"))?
-                   .to_string_lossy()
-                   .to_string();
+               let wallet_file = if let Some(ref output_path) = output {
+                   expand_tilde(output_path)?
+               } else if let Some(path) = provider.get_wallet_path() {
+                   path.to_string_lossy().to_string()
+               } else {
+                   expand_tilde("~/.alkanes/wallet.json")?
+               };
                
                #[cfg(target_arch = "wasm32")]
-               let wallet_file = provider.get_wallet_path()
-                   .ok_or_else(|| anyhow!("No wallet file path configured"))?
-                   .clone();
+               let wallet_file = if let Some(ref output_path) = output {
+                   output_path.clone()
+               } else if let Some(path) = provider.get_wallet_path() {
+                   path.clone()
+               } else {
+                   "wallet.json".to_string()
+               };
+               
+               // Create parent directory if it doesn't exist
+               #[cfg(not(target_arch = "wasm32"))]
+               if let Some(parent) = std::path::Path::new(&wallet_file).parent() {
+                   std::fs::create_dir_all(parent)?;
+               }
                
                // Save keystore to file
                self.keystore_manager.save_keystore(&keystore, &wallet_file).await?;
@@ -950,8 +966,8 @@ impl SystemWallet for SystemAlkanes {
                 println!("🏷️  Version: {}", info.version);
                 
                 println!("
-💡 Use 'deezel wallet addresses' to see all address types");
-                println!("💡 Use 'deezel wallet addresses p2tr:0-10' for specific ranges");
+💡 Use 'alkanes-cli wallet addresses' to see all address types");
+                println!("💡 Use 'alkanes-cli wallet addresses p2tr:0-10' for specific ranges");
                 
                 Ok(())
             },
@@ -1015,8 +1031,8 @@ impl SystemWallet for SystemAlkanes {
                 println!("🏷️  Version: {}", info.version);
                 
                 println!("
-💡 Use 'deezel wallet addresses' to see all address types");
-                println!("💡 Use 'deezel wallet addresses p2tr:0-10' for specific ranges");
+💡 Use 'alkanes-cli wallet addresses' to see all address types");
+                println!("💡 Use 'alkanes-cli wallet addresses p2tr:0-10' for specific ranges");
                 
                 Ok(())
             },
@@ -1035,7 +1051,7 @@ impl SystemWallet for SystemAlkanes {
 
                 #[cfg(not(target_arch = "wasm32"))]
                 if !std::path::Path::new(&wallet_file).exists() {
-                    println!("❌ No keystore found. Please create a wallet first using 'deezel wallet create'");
+                    println!("❌ No keystore found. Please create a wallet first using 'alkanes-cli wallet create'");
                     return Ok(());
                 }
 
@@ -1110,7 +1126,7 @@ impl SystemWallet for SystemAlkanes {
                 // Check if keystore exists
                 #[cfg(not(target_arch = "wasm32"))]
                 if !std::path::Path::new(&wallet_file).exists() {
-                    println!("❌ No keystore found. Please create a wallet first using 'deezel wallet create'");
+                    println!("❌ No keystore found. Please create a wallet first using 'alkanes-cli wallet create'");
                     return Ok(());
                 }
                 
