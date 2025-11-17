@@ -621,6 +621,183 @@ pub enum Brc20Prog {
         #[arg(long)]
         raw: bool,
     },
+    /// Estimate gas for a transaction (eth_estimateGas)
+    EstimateGas {
+        /// Contract address (0x prefixed hex)
+        #[arg(long)]
+        to: String,
+        /// Calldata (0x prefixed hex)
+        #[arg(long)]
+        data: String,
+        /// From address (optional, 0x prefixed hex)
+        #[arg(long)]
+        from: Option<String>,
+        /// Block number or "latest" (optional)
+        #[arg(long)]
+        block: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get current block number (eth_blockNumber)
+    BlockNumber {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get block by number (eth_getBlockByNumber)
+    GetBlockByNumber {
+        /// Block number (hex or decimal) or "latest"
+        block: String,
+        /// Include full transaction details
+        #[arg(long)]
+        full: bool,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get block by hash (eth_getBlockByHash)
+    GetBlockByHash {
+        /// Block hash (0x prefixed hex)
+        hash: String,
+        /// Include full transaction details
+        #[arg(long)]
+        full: bool,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transaction count/nonce (eth_getTransactionCount)
+    GetTransactionCount {
+        /// Address (0x prefixed hex)
+        address: String,
+        /// Block number or "latest"
+        #[arg(long, default_value = "latest")]
+        block: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transaction by hash (eth_getTransactionByHash)
+    GetTransaction {
+        /// Transaction hash (0x prefixed hex)
+        hash: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transaction receipt (eth_getTransactionReceipt)
+    GetTransactionReceipt {
+        /// Transaction hash (0x prefixed hex)
+        hash: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get storage at a specific location (eth_getStorageAt)
+    GetStorageAt {
+        /// Contract address (0x prefixed hex)
+        #[arg(long)]
+        address: String,
+        /// Storage position (0x prefixed hex)
+        #[arg(long)]
+        position: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get logs (eth_getLogs)
+    GetLogs {
+        /// From block (hex or decimal)
+        #[arg(long)]
+        from_block: Option<String>,
+        /// To block (hex or decimal)
+        #[arg(long)]
+        to_block: Option<String>,
+        /// Filter by address (can be specified multiple times)
+        #[arg(long)]
+        address: Vec<String>,
+        /// Filter by topics (JSON array format)
+        #[arg(long)]
+        topics: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get chain ID (eth_chainId)
+    ChainId {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get gas price (eth_gasPrice)
+    GasPrice {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get BRC20-Prog version (brc20_version)
+    Version {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transaction receipt by inscription ID (brc20_getTxReceiptByInscriptionId)
+    GetReceiptByInscription {
+        /// Inscription ID (e.g., "txid:i0")
+        inscription_id: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get inscription ID by transaction hash (brc20_getInscriptionIdByTxHash)
+    GetInscriptionByTx {
+        /// Transaction hash (0x prefixed hex)
+        tx_hash: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get inscription ID by contract address (brc20_getInscriptionIdByContractAddress)
+    GetInscriptionByContract {
+        /// Contract address (0x prefixed hex)
+        address: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get BRC20 balance (brc20_balance)
+    Brc20Balance {
+        /// Bitcoin pkscript (hex)
+        #[arg(long)]
+        pkscript: String,
+        /// BRC20 ticker symbol
+        #[arg(long)]
+        ticker: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transaction trace (debug_traceTransaction)
+    TraceTransaction {
+        /// Transaction hash (0x prefixed hex)
+        hash: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get txpool content (txpool_content)
+    TxpoolContent {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get client version (web3_clientVersion)
+    ClientVersion {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// Alkanes subcommands
@@ -1062,6 +1239,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
             wallet_address: args.wallet_address.clone(),
             wallet_key: args.wallet_key.clone(),
             wallet_key_file: args.wallet_key_file.clone(),
+            brc20_prog_rpc_url: args.brc20_prog_rpc_url.clone(),
             rpc_config: alkanes_cli_common::network::RpcConfig {
                 provider: args.provider.clone(),
                 bitcoin_rpc_url: args.bitcoin_rpc_url.clone(),

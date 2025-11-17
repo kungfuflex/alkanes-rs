@@ -58,11 +58,20 @@ async fn main() -> Result<()> {
     // Create a new SystemAlkanes instance
     let mut system = SystemAlkanes::new(&alkanes_args).await?;
 
+    // Set default brc20-prog RPC URL for signet if not provided
+    let brc20_prog_rpc_url = alkanes_args.brc20_prog_rpc_url.clone().or_else(|| {
+        if &alkanes_args.rpc_config.provider == "signet" {
+            Some("https://signet-api.ordinalsbot.com/brc20/rpc".to_string())
+        } else {
+            None
+        }
+    });
+
     // Execute the command
-    execute_command(&mut system, args.command).await
+    execute_command(&mut system, args.command, brc20_prog_rpc_url).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands) -> Result<()> {
+async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
@@ -72,7 +81,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Ord(cmd) => execute_ord_command(system.provider(), cmd.into()).await,
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
-        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd).await,
+        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url).await,
     }
 }
 
@@ -937,7 +946,7 @@ async fn execute_protorunes_command(
 }
 
 
-async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog) -> Result<()> {
+async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog, brc20_prog_rpc_url: Option<String>) -> Result<()> {
     use commands::Brc20Prog;
     use alkanes_cli_common::brc20_prog::{
         Brc20ProgExecutor, Brc20ProgExecuteParams, Brc20ProgDeployInscription,
@@ -1099,6 +1108,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
         }
         Brc20Prog::GetContractDeploys { address, raw } => {
             use alkanes_cli_common::traits::EsploraProvider;
+            use alkanes_cli_common::brc20_prog::{pkscript_to_eth_address, compute_contract_address};
             
             // Resolve address identifier
             let resolved_address = provider.resolve_all_identifiers(&address).await?;
@@ -1115,21 +1125,58 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 
                 // Try to get the transaction details to check for brc20-prog deploy
                 if let Ok(tx_details) = provider.get_tx(txid).await {
-                    // Check if any output contains brc20-prog deploy inscription
+                    // Check if this is a reveal transaction (has OP_RETURN with BRC20PROG)
+                    let mut is_reveal = false;
                     if let Some(vout) = tx_details.get("vout").and_then(|v| v.as_array()) {
-                        for (vout_idx, output) in vout.iter().enumerate() {
-                            // Check scriptpubkey_type for taproot (where inscriptions are)
-                            if output.get("scriptpubkey_type").and_then(|v| v.as_str()) == Some("v1_p2tr") {
-                                // This could be an inscription - we'd need to check the witness data
-                                // For now, we'll flag any taproot output as a potential deployment
-                                deployments.push(serde_json::json!({
-                                    "txid": txid,
-                                    "vout": vout_idx,
-                                    "block_height": tx.get("status").and_then(|s| s.get("block_height")),
-                                    "confirmed": tx.get("status").and_then(|s| s.get("confirmed")),
-                                }));
+                        for output in vout.iter() {
+                            if output.get("scriptpubkey_type").and_then(|v| v.as_str()) == Some("op_return") {
+                                // Check if it contains "BRC20PROG" (hex: 425243323050524f47)
+                                if let Some(script_hex) = output.get("scriptpubkey").and_then(|v| v.as_str()) {
+                                    if script_hex.contains("425243323050524f47") {
+                                        is_reveal = true;
+                                        break;
+                                    }
+                                }
                             }
                         }
+                    }
+                    
+                    // If this is a reveal transaction, compute the contract address
+                    if is_reveal {
+                        // Get the input address (deployer) from vin[0]
+                        let deployer_eth_address = if let Some(vin) = tx_details.get("vin").and_then(|v| v.as_array()) {
+                            if let Some(input) = vin.get(0) {
+                                // Get prevout scriptpubkey
+                                if let Some(prevout) = input.get("prevout") {
+                                    if let Some(scriptpubkey) = prevout.get("scriptpubkey").and_then(|v| v.as_str()) {
+                                        pkscript_to_eth_address(scriptpubkey).ok()
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        
+                        // Compute contract address (nonce is typically 0 for first deployment)
+                        let contract_address = if let Some(ref deployer) = deployer_eth_address {
+                            compute_contract_address(deployer, 0).ok()
+                        } else {
+                            None
+                        };
+                        
+                        deployments.push(serde_json::json!({
+                            "txid": txid,
+                            "block_height": tx.get("status").and_then(|s| s.get("block_height")),
+                            "confirmed": tx.get("status").and_then(|s| s.get("confirmed")),
+                            "deployer_eth_address": deployer_eth_address,
+                            "contract_address": contract_address,
+                        }));
                     }
                 }
             }
@@ -1140,15 +1187,21 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 if deployments.is_empty() {
                     println!("No contract deployments found for address: {}", resolved_address);
                 } else {
-                    println!("Found {} potential contract deployment(s) for {}:", deployments.len(), resolved_address);
+                    println!("Found {} contract deployment(s) for {}:\n", deployments.len(), resolved_address);
                     for (idx, deploy) in deployments.iter().enumerate() {
-                        println!("\n{}. TXID: {}", idx + 1, deploy["txid"].as_str().unwrap_or("unknown"));
+                        println!("{}. Reveal TXID: {}", idx + 1, deploy["txid"].as_str().unwrap_or("unknown"));
                         if let Some(height) = deploy.get("block_height") {
-                            println!("   Block: {}", height);
+                            println!("   Block Height: {}", height);
                         }
-                        println!("   Vout: {}", deploy["vout"]);
+                        if let Some(deployer) = deploy.get("deployer_eth_address").and_then(|v| v.as_str()) {
+                            println!("   Deployer (ETH): {}", deployer);
+                        }
+                        if let Some(contract) = deploy.get("contract_address").and_then(|v| v.as_str()) {
+                            println!("   Contract Address: {}", contract);
+                        }
+                        println!();
                     }
-                    println!("\n💡 Note: Use the BRC20-Prog RPC (--brc20-prog-rpc-url) to verify these are actual deployments");
+                    println!("💡 Use --brc20-prog-rpc-url with 'get-code' to verify the deployment");
                 }
             }
             Ok(())
@@ -1156,8 +1209,8 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
         Brc20Prog::GetCode { address, raw } => {
             use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
             
-            // Get BRC20-Prog RPC URL from system
-            let rpc_url = system.get_brc20_prog_rpc_url()
+            // Get BRC20-Prog RPC URL from parameter
+            let rpc_url = brc20_prog_rpc_url
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
             let client = Brc20ProgRpcClient::new(rpc_url)?;
@@ -1177,14 +1230,15 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             Ok(())
         }
         Brc20Prog::Call { to, data, from, block, raw } => {
-            use alkanes_cli_common::brc20_prog_rpc::{Brc20ProgRpcClient, EthCallParams};
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            use alkanes_cli_common::brc20_prog_rpc_types::EthCallParams;
             
-            // Get BRC20-Prog RPC URL from system
-            let rpc_url = system.get_brc20_prog_rpc_url()
+            // Get BRC20-Prog RPC URL from parameter
+            let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
             let client = Brc20ProgRpcClient::new(rpc_url)?;
-            let params = EthCallParams { to, data, from };
+            let params = EthCallParams { to, data, from, gas: None, gas_price: None, value: None };
             let result = client.eth_call(params, block.as_deref()).await?;
             
             if raw {
@@ -1197,8 +1251,8 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
         Brc20Prog::GetBalance { address, block, raw } => {
             use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
             
-            // Get BRC20-Prog RPC URL from system
-            let rpc_url = system.get_brc20_prog_rpc_url()
+            // Get BRC20-Prog RPC URL from parameter
+            let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
             let client = Brc20ProgRpcClient::new(rpc_url)?;
@@ -1220,6 +1274,418 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 println!("Address: {}", address);
                 println!("Balance: {} wei", balance_wei);
                 println!("Balance: {:.8} frBTC", balance_btc);
+            }
+            Ok(())
+        }
+        Brc20Prog::EstimateGas { to, data, from, block, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::{Brc20ProgRpcClient};
+            use alkanes_cli_common::brc20_prog_rpc_types::EthCallParams;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let params = EthCallParams { to, data, from, gas: None, gas_price: None, value: None };
+            let gas = client.eth_estimate_gas(params, block.as_deref()).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"gas": gas}))?);
+            } else {
+                let gas_hex = gas.trim_start_matches("0x");
+                let gas_amount = u64::from_str_radix(gas_hex, 16).unwrap_or(0);
+                println!("Estimated gas: {} ({gas})", gas_amount);
+            }
+            Ok(())
+        }
+        Brc20Prog::BlockNumber { raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let block_num = client.eth_block_number().await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"blockNumber": block_num}))?);
+            } else {
+                let num_hex = block_num.trim_start_matches("0x");
+                let num = u64::from_str_radix(num_hex, 16).unwrap_or(0);
+                println!("Block number: {} ({block_num})", num);
+            }
+            Ok(())
+        }
+        Brc20Prog::GetBlockByNumber { block, full, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let block_info = client.eth_get_block_by_number(&block, full).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&block_info)?);
+            } else {
+                println!("Block #{}", block_info.number);
+                println!("  Hash: {}", block_info.hash);
+                println!("  Parent: {}", block_info.parent_hash);
+                println!("  Timestamp: {}", block_info.timestamp);
+                println!("  Gas Used: {}", block_info.gas_used);
+                println!("  Gas Limit: {}", block_info.gas_limit);
+                println!("  Transactions: {}", block_info.transactions.len());
+            }
+            Ok(())
+        }
+        Brc20Prog::GetBlockByHash { hash, full, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let block_info = client.eth_get_block_by_hash(&hash, full).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&block_info)?);
+            } else {
+                println!("Block #{}", block_info.number);
+                println!("  Hash: {}", block_info.hash);
+                println!("  Parent: {}", block_info.parent_hash);
+                println!("  Timestamp: {}", block_info.timestamp);
+                println!("  Gas Used: {}", block_info.gas_used);
+                println!("  Gas Limit: {}", block_info.gas_limit);
+                println!("  Transactions: {}", block_info.transactions.len());
+            }
+            Ok(())
+        }
+        Brc20Prog::GetTransactionCount { address, block, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let nonce = client.eth_get_transaction_count(&address, &block).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"nonce": nonce}))?);
+            } else {
+                let nonce_hex = nonce.trim_start_matches("0x");
+                let nonce_num = u64::from_str_radix(nonce_hex, 16).unwrap_or(0);
+                println!("Transaction count (nonce): {} ({nonce})", nonce_num);
+            }
+            Ok(())
+        }
+        Brc20Prog::GetTransaction { hash, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let tx = client.eth_get_transaction_by_hash(&hash).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&tx)?);
+            } else {
+                if let Some(tx) = tx {
+                    println!("Transaction {}", tx.hash);
+                    println!("  From: {}", tx.from);
+                    if let Some(to) = tx.to {
+                        println!("  To: {}", to);
+                    } else {
+                        println!("  To: (contract creation)");
+                    }
+                    println!("  Block: #{}", tx.block_number);
+                    println!("  Nonce: {}", tx.nonce);
+                    println!("  Gas: {}", tx.gas);
+                    println!("  Input: {}...", &tx.input[..tx.input.len().min(66)]);
+                } else {
+                    println!("Transaction not found");
+                }
+            }
+            Ok(())
+        }
+        Brc20Prog::GetTransactionReceipt { hash, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let receipt = client.eth_get_transaction_receipt(&hash).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&receipt)?);
+            } else {
+                if let Some(receipt) = receipt {
+                    println!("Transaction Receipt");
+                    println!("  TX Hash: {}", receipt.transaction_hash);
+                    println!("  Block: #{}", receipt.block_number);
+                    println!("  From: {}", receipt.from);
+                    if let Some(to) = receipt.to {
+                        println!("  To: {}", to);
+                    }
+                    if let Some(contract) = receipt.contract_address {
+                        println!("  Contract Address: {}", contract);
+                    }
+                    println!("  Status: {}", if receipt.status == "0x1" { "Success" } else { "Failed" });
+                    println!("  Gas Used: {}", receipt.gas_used);
+                    println!("  Logs: {}", receipt.logs.len());
+                } else {
+                    println!("Receipt not found");
+                }
+            }
+            Ok(())
+        }
+        Brc20Prog::GetStorageAt { address, position, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let value = client.eth_get_storage_at(&address, &position).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"value": value}))?);
+            } else {
+                println!("Storage at {} position {}:", address, position);
+                println!("{}", value);
+            }
+            Ok(())
+        }
+        Brc20Prog::GetLogs { from_block, to_block, address, topics, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            use alkanes_cli_common::brc20_prog_rpc_types::GetLogsFilter;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            
+            let topics_parsed = if let Some(topics_str) = topics {
+                Some(serde_json::from_str(&topics_str)?)
+            } else {
+                None
+            };
+            
+            let filter = GetLogsFilter {
+                from_block,
+                to_block,
+                address: if address.is_empty() { None } else { Some(address) },
+                topics: topics_parsed,
+                block_hash: None,
+            };
+            
+            let logs = client.eth_get_logs(filter).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&logs)?);
+            } else {
+                println!("Found {} log(s):", logs.len());
+                for (i, log) in logs.iter().enumerate() {
+                    println!("\n{}. Log", i + 1);
+                    println!("   Address: {}", log.address);
+                    println!("   Block: #{}", log.block_number);
+                    println!("   TX: {}", log.transaction_hash);
+                    println!("   Topics: {}", log.topics.len());
+                    for (j, topic) in log.topics.iter().enumerate() {
+                        println!("     [{}]: {}", j, topic);
+                    }
+                    println!("   Data: {}...", &log.data[..log.data.len().min(66)]);
+                }
+            }
+            Ok(())
+        }
+        Brc20Prog::ChainId { raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let chain_id = client.eth_chain_id().await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"chainId": chain_id}))?);
+            } else {
+                let id_hex = chain_id.trim_start_matches("0x");
+                let id_num = u64::from_str_radix(id_hex, 16).unwrap_or(0);
+                println!("Chain ID: {} ({chain_id})", id_num);
+            }
+            Ok(())
+        }
+        Brc20Prog::GasPrice { raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let gas_price = client.eth_gas_price().await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"gasPrice": gas_price}))?);
+            } else {
+                println!("Gas price: {} wei", gas_price);
+            }
+            Ok(())
+        }
+        Brc20Prog::Version { raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let version = client.brc20_version().await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"version": version}))?);
+            } else {
+                println!("BRC20-Prog version: {}", version);
+            }
+            Ok(())
+        }
+        Brc20Prog::GetReceiptByInscription { inscription_id, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let receipt = client.brc20_get_tx_receipt_by_inscription_id(&inscription_id).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&receipt)?);
+            } else {
+                if let Some(receipt) = receipt {
+                    println!("Transaction Receipt for inscription {}", inscription_id);
+                    println!("  TX Hash: {}", receipt.transaction_hash);
+                    println!("  Block: #{}", receipt.block_number);
+                    println!("  Status: {}", if receipt.status == "0x1" { "Success" } else { "Failed" });
+                    if let Some(contract) = receipt.contract_address {
+                        println!("  Contract Address: {}", contract);
+                    }
+                } else {
+                    println!("Receipt not found for inscription: {}", inscription_id);
+                }
+            }
+            Ok(())
+        }
+        Brc20Prog::GetInscriptionByTx { tx_hash, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let inscription_id = client.brc20_get_inscription_id_by_tx_hash(&tx_hash).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&inscription_id)?);
+            } else {
+                if let Some(id) = inscription_id {
+                    println!("Inscription ID: {}", id);
+                } else {
+                    println!("No inscription found for TX: {}", tx_hash);
+                }
+            }
+            Ok(())
+        }
+        Brc20Prog::GetInscriptionByContract { address, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let inscription_id = client.brc20_get_inscription_id_by_contract_address(&address).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&inscription_id)?);
+            } else {
+                if let Some(id) = inscription_id {
+                    println!("Inscription ID: {}", id);
+                } else {
+                    println!("No inscription found for contract: {}", address);
+                }
+            }
+            Ok(())
+        }
+        Brc20Prog::Brc20Balance { pkscript, ticker, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let balance = client.brc20_balance(&pkscript, &ticker).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"balance": balance}))?);
+            } else {
+                println!("BRC20 Balance for {} ({}): {}", ticker, pkscript, balance);
+            }
+            Ok(())
+        }
+        Brc20Prog::TraceTransaction { hash, raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let trace = client.debug_trace_transaction(&hash).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&trace)?);
+            } else {
+                if let Some(trace) = trace {
+                    println!("Transaction Trace for {}", hash);
+                    println!("  Gas: {}", trace.gas);
+                    println!("  Failed: {}", trace.failed);
+                    println!("  Return Value: {}...", &trace.return_value[..trace.return_value.len().min(66)]);
+                    println!("  Struct Logs: {} steps", trace.struct_logs.len());
+                } else {
+                    println!("Trace not found");
+                }
+            }
+            Ok(())
+        }
+        Brc20Prog::TxpoolContent { raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let content = client.txpool_content().await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&content)?);
+            } else {
+                println!("Transaction Pool Content:");
+                println!("  Pending: {}", serde_json::to_string_pretty(&content.pending)?);
+                println!("  Queued: {}", serde_json::to_string_pretty(&content.queued)?);
+            }
+            Ok(())
+        }
+        Brc20Prog::ClientVersion { raw } => {
+            use alkanes_cli_common::brc20_prog_rpc::Brc20ProgRpcClient;
+            
+            let rpc_url = brc20_prog_rpc_url.clone()
+                .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
+            
+            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let version = client.web3_client_version().await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"version": version}))?);
+            } else {
+                println!("Client version: {}", version);
             }
             Ok(())
         }

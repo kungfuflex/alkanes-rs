@@ -54,13 +54,15 @@ impl<'a> Brc20ProgWrapBtcExecutor<'a> {
     }
 
     /// Execute brc20-prog wrap-btc operation
-    /// This creates a dual-protocol transaction:
-    /// 1. Alkanes OP_RETURN with two protostones (wrap frBTC + lock in vault)
-    /// 2. BRC20-prog inscription calling wrapAndExecute2(address,bytes)
+    /// This creates a brc20-prog transaction that calls wrapAndExecute2(address,bytes)
+    /// on the FrBTC contract, which:
+    /// 1. Wraps BTC sent to the FrBTC signer address into frBTC tokens
+    /// 2. Mints frBTC to the FrBTC contract itself
+    /// 3. Approves the target contract to spend the minted frBTC
+    /// 4. Calls execute(msg.sender, amount, data) on the target contract
+    /// 5. Returns any leftover frBTC to msg.sender
     ///
-    /// The result is frBTC that exists in both:
-    /// - Alkanes protocol (locked in vault {4, 3032615708})
-    /// - BRC20-prog protocol (via wrapAndExecute2)
+    /// This is a pure brc20-prog transaction - no alkanes protostones needed
     pub async fn wrap_btc(&mut self, params: Brc20ProgWrapBtcParams) -> Result<Brc20ProgExecuteResult> {
         log::info!("Starting brc20-prog wrap-btc operation for {} sats", params.amount);
         log::info!("Target contract: {}", params.target_address);
@@ -93,12 +95,7 @@ impl<'a> Brc20ProgWrapBtcExecutor<'a> {
         log::info!("✅ BRC20-prog wrap-btc transaction completed");
         log::info!("Commit TXID: {}", result.commit_txid);
         log::info!("Reveal TXID: {}", result.reveal_txid);
-
-        // TODO: Extend the reveal transaction to include alkanes protostones
-        // This requires modifying the Brc20ProgExecutor to support dual-protocol transactions
-        log::warn!("Note: Alkanes protostone integration not yet implemented");
-        log::warn!("This transaction only creates the brc20-prog side");
-        log::warn!("Full dual-protocol support requires additional development");
+        log::info!("frBTC will be minted to {} and forwarded to target contract", params.target_address);
 
         Ok(result)
     }

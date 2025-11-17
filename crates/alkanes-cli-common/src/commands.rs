@@ -49,6 +49,10 @@ pub struct Args {
     #[arg(long)]
     pub wallet_key_file: Option<String>,
 
+    /// BRC20-Prog RPC URL (for querying brc20-programmable-module)
+    #[arg(long)]
+    pub brc20_prog_rpc_url: Option<String>,
+
     /// Log level
     #[arg(long, default_value = "info")]
     pub log_level: String,

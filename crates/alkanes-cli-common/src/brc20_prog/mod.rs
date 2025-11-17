@@ -3,6 +3,7 @@
 // using the standard ord inscription envelope with JSON payloads
 
 pub mod calldata;
+pub mod contract_address;
 pub mod envelope;
 pub mod execute;
 pub mod foundry;
@@ -10,6 +11,7 @@ pub mod types;
 pub mod wrap_btc;
 
 pub use calldata::encode_function_call;
+pub use contract_address::{compute_contract_address, pkscript_to_eth_address};
 pub use envelope::Brc20ProgEnvelope;
 pub use execute::Brc20ProgExecutor;
 pub use foundry::{parse_foundry_json, extract_deployment_bytecode};
