@@ -149,10 +149,23 @@ async fn handle_alkanes_method(
     request_id: &Value,
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
+    // The alkanes namespace methods should be forwarded to metashrew_view
+    // following the same pattern as the TypeScript implementation:
+    // metashrew_view(method_name, input, block_tag)
+    
+    let input = params.get(0).cloned().unwrap_or(Value::Null);
+    let block_tag = params.get(1)
+        .and_then(|v| v.as_str())
+        .unwrap_or("latest");
+    
     let modified_request = JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
-        method: format!("alkanes_{}", method),
-        params: params.to_vec(),
+        method: "metashrew_view".to_string(),
+        params: vec![
+            Value::String(method.to_string()),
+            input,
+            Value::String(block_tag.to_string()),
+        ],
         id: request_id.clone(),
     };
 
