@@ -24,7 +24,8 @@ pub struct Keystore {
     pub version: String,
     /// PBKDF2 parameters for key derivation from passphrase.
     pub pbkdf2_params: PbkdfParams,
-    /// Account-level extended public key (xpub) for deriving addresses without the private key.
+    /// Master extended public key (xpub) at root level (m/) for deriving any HD path without the private key.
+    /// This allows deriving addresses for all supported BIP standards (BIP44/49/84/86) from a single xpub.
     #[serde(default)]
     pub account_xpub: String,
     /// Derivation paths for different address types.
@@ -60,7 +61,7 @@ impl Keystore {
         mnemonic: &Mnemonic,
         network: Network,
         passphrase: &str,
-        hd_path: Option<&str>,
+        _hd_path: Option<&str>,
     ) -> Result<Self> {
         // 1. Encrypt the mnemonic phrase
         let (encrypted_mnemonic_bytes, salt, nonce) =
@@ -76,22 +77,21 @@ impl Keystore {
             true,
         )?;
 
-        // 3. Derive keys and fingerprint
+        // 3. Derive master xpub and fingerprint
         let seed = mnemonic.to_seed("");
         let secp = Secp256k1::new();
         let root = Xpriv::new_master(network, &seed)?;
+        
+        // Store the master xpub at root level (m/) so any path can be derived
+        let master_xpub = Xpub::from_priv(&secp, &root);
 
-        // Use provided HD path or default to BIP-86 for the main account xpub
-        let primary_path_str = hd_path.unwrap_or("m/86'/0'/0'");
-        let primary_path = DerivationPath::from_str(primary_path_str)?;
-        let xpub = Xpub::from_priv(&secp, &root.derive_priv(&secp, &primary_path)?);
-
-        // 4. Populate standard HD paths
+        // 4. Store standard HD path templates (will be used with indices at derivation time)
         let mut hd_paths = BTreeMap::new();
-        hd_paths.insert("p2tr".to_string(), "m/86'/0'/0'".to_string());
-        hd_paths.insert("p2wpkh".to_string(), "m/84'/0'/0'".to_string());
-        hd_paths.insert("p2sh-p2wpkh".to_string(), "m/49'/0'/0'".to_string());
-        hd_paths.insert("p2pkh".to_string(), "m/44'/0'/0'".to_string());
+        let coin_type = if network == Network::Bitcoin { "0" } else { "1" };
+        hd_paths.insert("p2tr".to_string(), format!("m/86'/{}'/{}", coin_type, "0'/0/0"));
+        hd_paths.insert("p2wpkh".to_string(), format!("m/84'/{}'/{}", coin_type, "0'/0/0"));
+        hd_paths.insert("p2sh-p2wpkh".to_string(), format!("m/49'/{}'/{}", coin_type, "0'/0/0"));
+        hd_paths.insert("p2pkh".to_string(), format!("m/44'/{}'/{}", coin_type, "0'/0/0"));
 
         Ok(Self {
             encrypted_mnemonic: String::from_utf8(armored_mnemonic)?,
@@ -105,7 +105,7 @@ impl Keystore {
                 iterations: 600_000,
                 algorithm: Some("aes-256-gcm".to_string()),
             },
-            account_xpub: xpub.to_string(),
+            account_xpub: master_xpub.to_string(),
             hd_paths,
         })
     }
@@ -162,22 +162,65 @@ impl Keystore {
         count: u32,
     ) -> Result<Vec<crate::traits::AddressInfo>> {
         let secp = Secp256k1::new();
-        let xpub = Xpub::from_str(&self.account_xpub)?;
+        let master_xpub = Xpub::from_str(&self.account_xpub)?;
+        
+        // Get the base HD path template for this address type
+        let base_path_template = self.hd_paths.get(address_type)
+            .ok_or_else(|| AlkanesError::Wallet(format!("Unknown address type: {}", address_type)))?;
+        
+        // Determine the coin type based on network
+        let coin_type = match network {
+            Network::Bitcoin => "0",
+            Network::Testnet | Network::Signet | Network::Regtest => "1",
+            _ => "1",
+        };
+        
+        // Determine the BIP number from address type
+        let bip_number = match address_type {
+            "p2tr" => "86",
+            "p2wpkh" => "84",
+            "p2sh-p2wpkh" => "49",
+            "p2pkh" => "44",
+            _ => return Err(AlkanesError::Wallet(format!("Unsupported address type: {}", address_type))),
+        };
+        
         let mut addresses = Vec::new();
 
         for i in start_index..start_index + count {
-            let path_str = format!("m/{chain}/{i}");
-            let path = DerivationPath::from_str(&path_str)?;
-            let derived_xpub = xpub.derive_pub(&secp, &path)?;
-            let (internal_key, _) = derived_xpub.public_key.x_only_public_key();
-            let address = Address::p2tr(&secp, internal_key, None, network);
+            // Build the full derivation path: m/purpose'/coin_type'/account'/change/index
+            let full_path_str = format!("m/{}'/{}'/{}", bip_number, coin_type, format!("0'/{}/{}", chain, i));
+            let path = DerivationPath::from_str(&full_path_str)?;
             
-            // Construct the full path for display, assuming a BIP-86 structure.
-            let coin_type = match network {
-                Network::Bitcoin => "0",
-                _ => "1",
+            // Derive from master xpub
+            let derived_xpub = master_xpub.derive_pub(&secp, &path)?;
+            let public_key = derived_xpub.public_key;
+            
+            // Create address based on type
+            let address = match address_type {
+                "p2tr" => {
+                    let (internal_key, _) = public_key.x_only_public_key();
+                    Address::p2tr(&secp, internal_key, None, network)
+                }
+                "p2wpkh" => {
+                    use bitcoin::key::CompressedPublicKey;
+                    let pk = bitcoin::PublicKey::new(public_key);
+                    let compressed = CompressedPublicKey::try_from(pk)
+                        .map_err(|e| AlkanesError::Wallet(format!("Failed to compress public key: {}", e)))?;
+                    Address::p2wpkh(&compressed, network)
+                }
+                "p2sh-p2wpkh" => {
+                    use bitcoin::key::CompressedPublicKey;
+                    let pk = bitcoin::PublicKey::new(public_key);
+                    let compressed = CompressedPublicKey::try_from(pk)
+                        .map_err(|e| AlkanesError::Wallet(format!("Failed to compress public key: {}", e)))?;
+                    Address::p2shwpkh(&compressed, network)
+                }
+                "p2pkh" => {
+                    let pk = bitcoin::PublicKey::new(public_key);
+                    Address::p2pkh(&pk, network)
+                }
+                _ => return Err(AlkanesError::Wallet(format!("Unsupported address type: {}", address_type))),
             };
-            let full_path_str = format!("m/86'/{}'/0'/{}", coin_type, path_str.strip_prefix("m/").unwrap());
 
             addresses.push(crate::traits::AddressInfo {
                 derivation_path: full_path_str,
