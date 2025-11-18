@@ -82,6 +82,7 @@ pub mod metashrew;
 pub mod index_pointer;
 pub mod byte_view;
 pub mod proto;
+pub mod subfrost;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock_provider;

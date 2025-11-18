@@ -2133,18 +2133,41 @@ impl SystemBitcoind for SystemAlkanes {
               Ok(())
             },
             BitcoindCommands::Generatefuture => {
-              // For now, just use a default address. 
-              // TODO: Derive from frBTC signer contract once we have proper simulate access
-              log::warn!("Using default P2TR address for generatefuture. TODO: Derive from contract state.");
+              // Derive the address from frBTC signer contract [32:0] by calling GET_SIGNER (opcode 103)
+              log::info!("Deriving address from frBTC signer contract [32:0] using simulate");
               
-              // Use a simple P2TR address for now
-              let address = "bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6";
+              // Use the subfrost module to build the exact request matching the TypeScript reference
+              let hex_input = alkanes_cli_common::subfrost::encode_get_signer_request();
               
-              // Call the generatefuture RPC method
-              let result = <ConcreteProvider as BitcoinRpcProvider>::generate_future(provider, address).await?;
+              log::debug!("Calling metashrew_view simulate with hex_input: {}", hex_input);
+              
+              // Call metashrew_view with ["simulate", hex_encoded_parcel, "latest"]
+              let sandshrew_url = "http://localhost:18888";
+              let params = serde_json::json!(["simulate", hex_input, "latest"]);
+              
+              let simulate_result = provider.call(
+                  sandshrew_url,
+                  "metashrew_view",
+                  params,
+                  1
+              ).await?;
+              
+              // Parse the signer pubkey from the response
+              let pubkey_bytes = alkanes_cli_common::subfrost::parse_signer_pubkey(&simulate_result)?;
+              
+              log::info!("Got signer pubkey: 0x{}", hex::encode(&pubkey_bytes));
+              
+              // Compute P2TR address from the internal pubkey
+              let network = provider.get_network();
+              let address = alkanes_cli_common::subfrost::compute_address(&pubkey_bytes, network)?;
+              
+              log::info!("Derived address from frBTC signer: {}", address);
+              
+              // Call the generatefuture RPC method with the derived address
+              let result = <ConcreteProvider as BitcoinRpcProvider>::generate_future(provider, &address.to_string()).await?;
               
               println!("Generated block with future-claiming protostone");
-              println!("Coinbase pays to address: {}", address);
+              println!("Coinbase pays to derived address: {}", address);
               if let Some(block_hash) = result.as_str() {
                   println!("Block hash: {}", block_hash);
               } else {
