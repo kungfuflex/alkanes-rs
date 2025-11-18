@@ -465,6 +465,9 @@ pub trait BitcoinRpcProvider {
     /// Generate blocks to address (regtest only)
     async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue>;
 
+    /// Generate a single block with future-claiming protostone (regtest only)
+    async fn generate_future(&self, address: &str) -> Result<JsonValue>;
+
     // Get the state info
     async fn get_blockchain_info(&self) -> Result<JsonValue>;
 
@@ -1052,6 +1055,9 @@ impl<T: DeezelProvider + ?Sized> BitcoinRpcProvider for Box<T> {
    }
    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<serde_json::Value> {
        (**self).generate_to_address(nblocks, address).await
+   }
+   async fn generate_future(&self, address: &str) -> Result<serde_json::Value> {
+       (**self).generate_future(address).await
    }
    async fn get_blockchain_info(&self) -> Result<serde_json::Value> {
         <T as BitcoinRpcProvider>::get_blockchain_info(self).await

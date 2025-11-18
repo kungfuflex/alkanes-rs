@@ -498,6 +498,10 @@ impl BitcoinRpcProvider for MockProvider {
         Ok(serde_json::json!(["mock_block_hash"]))
     }
     
+    async fn generate_future(&self, _address: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!("mock_future_block_hash"))
+    }
+    
     async fn get_new_address(&self) -> Result<JsonValue> {
         Ok(serde_json::json!("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"))
     }

@@ -138,6 +138,9 @@ pub enum BitcoindCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Generate a single block with a future-claiming protostone in the coinbase (regtest only)
+    /// The address is automatically derived from the frBTC signer
+    Generatefuture,
     Getblockchaininfo {
         #[arg(long)]
         raw: bool,

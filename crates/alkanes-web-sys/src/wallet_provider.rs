@@ -1237,6 +1237,10 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
         <WebProvider as BitcoinRpcProvider>::generate_to_address(&self.web_provider, nblocks, address).await
     }
     
+    async fn generate_future(&self, address: &str) -> Result<JsonValue> {
+        <WebProvider as BitcoinRpcProvider>::generate_future(&self.web_provider, address).await
+    }
+    
     async fn get_new_address(&self) -> Result<JsonValue> {
         self.web_provider.get_new_address().await
     }
@@ -1725,6 +1729,8 @@ impl DeezelProvider for BrowserWalletProvider {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 1]).unwrap()), // wrap frBTC
                 edicts: vec![],
                 bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
+                pointer: None,
+                refund: None,
             }],
             envelope_data: None,
             raw_output: false,
@@ -1760,6 +1766,8 @@ impl DeezelProvider for BrowserWalletProvider {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 2]).unwrap()), // unwrap frBTC
                 edicts: vec![],
                 bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
+                pointer: None,
+                refund: None,
             }],
             envelope_data: None,
             raw_output: false,

@@ -7,8 +7,8 @@ volumes:
 services:
   bitcoind:
     build:
-      dockerfile: Dockerfile
-      context: ./docker/bitcoind
+      dockerfile: docker/bitcoind/Dockerfile
+      context: .
     image: bitcoind:alkanes
     volumes:
       - bitcoin-data:/root/.bitcoin

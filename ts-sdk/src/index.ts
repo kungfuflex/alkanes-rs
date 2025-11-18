@@ -129,6 +129,11 @@ export const VERSION = '0.1.0';
  * ```
  */
 export async function initSDK(wasmModule?: any) {
+  // Import dynamically to avoid circular dependencies
+  const { KeystoreManager, createKeystore, unlockKeystore } = await import('./keystore');
+  const { AlkanesWallet, createWallet, createWalletFromMnemonic } = await import('./wallet');
+  const { AlkanesProvider, createProvider } = await import('./provider');
+  
   return {
     KeystoreManager,
     AlkanesWallet,
@@ -143,7 +148,11 @@ export async function initSDK(wasmModule?: any) {
 }
 
 // Default export - function that returns SDK object at call time (not module load time)
-export default function getAlkanesSDK() {
+export default async function getAlkanesSDK() {
+  const { KeystoreManager, createKeystore, unlockKeystore } = await import('./keystore');
+  const { AlkanesWallet, createWallet, createWalletFromMnemonic } = await import('./wallet');
+  const { AlkanesProvider, createProvider } = await import('./provider');
+  
   return {
     KeystoreManager,
     AlkanesWallet,

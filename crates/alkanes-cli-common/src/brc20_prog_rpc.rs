@@ -22,8 +22,14 @@ pub struct Brc20ProgRpcClient {
 impl Brc20ProgRpcClient {
     /// Create a new BRC20-Prog RPC client
     pub fn new(url: String) -> Result<Self> {
+        #[cfg(not(target_arch = "wasm32"))]
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| AlkanesError::Network(e.to_string()))?;
+        
+        #[cfg(target_arch = "wasm32")]
+        let client = reqwest::Client::builder()
             .build()
             .map_err(|e| AlkanesError::Network(e.to_string()))?;
         

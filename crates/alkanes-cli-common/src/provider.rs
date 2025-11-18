@@ -37,7 +37,6 @@ use crate::rpc::get_rpc_url;
 use url::Url;
 use crate::rpc::{determine_rpc_call_type, RpcCallType};
 
-#[cfg(feature = "native-deps")]
 fn url_encode(s: &str) -> String {
     s.replace(":", "%3A")
 }
@@ -3060,6 +3059,14 @@ impl BitcoinRpcProvider for ConcreteProvider {
         })?;
         let params = json!([nblocks, address]);
         self.call(&rpc_url, "generatetoaddress", params, 1).await
+    }
+
+    async fn generate_future(&self, address: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([address]);
+        self.call(&rpc_url, "generatefuture", params, 1).await
     }
 
     async fn get_blockchain_info(&self) -> Result<JsonValue> {

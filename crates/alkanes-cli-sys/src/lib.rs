@@ -503,6 +503,9 @@ impl BitcoinRpcProvider for SystemAlkanes {
     async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.generate_to_address(nblocks, address).await
     }
+    async fn generate_future(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.generate_future(address).await
+    }
     async fn get_blockchain_info(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_blockchain_info().await
     }
@@ -2126,6 +2129,26 @@ impl SystemBitcoind for SystemAlkanes {
                           }
                       }
                   }
+              }
+              Ok(())
+            },
+            BitcoindCommands::Generatefuture => {
+              // For now, just use a default address. 
+              // TODO: Derive from frBTC signer contract once we have proper simulate access
+              log::warn!("Using default P2TR address for generatefuture. TODO: Derive from contract state.");
+              
+              // Use a simple P2TR address for now
+              let address = "bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6";
+              
+              // Call the generatefuture RPC method
+              let result = <ConcreteProvider as BitcoinRpcProvider>::generate_future(provider, address).await?;
+              
+              println!("Generated block with future-claiming protostone");
+              println!("Coinbase pays to address: {}", address);
+              if let Some(block_hash) = result.as_str() {
+                  println!("Block hash: {}", block_hash);
+              } else {
+                  println!("{}", serde_json::to_string_pretty(&result)?);
               }
               Ok(())
             },

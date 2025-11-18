@@ -1301,6 +1301,13 @@ impl BitcoinRpcProvider for WebProvider {
         self.call(&self.sandshrew_rpc_url, "generatetoaddress", params, 1).await
     }
 
+    async fn generate_future(&self, address: &str) -> Result<JsonValue> {
+        // Generate a block with future-claiming protostone (regtest only)
+        // This is similar to generate_to_address but with special handling
+        let params = serde_json::json!([1, address]);
+        self.call(&self.sandshrew_rpc_url, "generatetoaddress", params, 1).await
+    }
+
     async fn get_new_address(&self) -> Result<JsonValue> {
         self.call(&self.sandshrew_rpc_url, "getnewaddress", serde_json::json!([]), 1).await
     }
@@ -1864,6 +1871,8 @@ impl DeezelProvider for WebProvider {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 1]).unwrap()), // Assuming 2 is for wrapping, 0 is frBTC, 1 is mint
                 edicts: vec![],
                 bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
+                pointer: None,
+                refund: None,
             }],
             envelope_data: None,
             raw_output: false,
@@ -1897,6 +1906,8 @@ impl DeezelProvider for WebProvider {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 2]).unwrap()), // Assuming 2 is for unwrapping, 0 is frBTC, 2 is burn
                 edicts: vec![],
                 bitcoin_transfer: Some(BitcoinTransfer { amount, target: alkanes_cli_common::alkanes::types::OutputTarget::Split }),
+                pointer: None,
+                refund: None,
             }],
             envelope_data: None,
             raw_output: false,

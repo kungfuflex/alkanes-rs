@@ -663,6 +663,9 @@ impl BitcoinRpcProvider for StandaloneAddressResolver {
     async fn generate_to_address(&self, _nblocks: u32, _address: &str) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }
+    async fn generate_future(&self, _address: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
+    }
     async fn get_blockchain_info(&self) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }
