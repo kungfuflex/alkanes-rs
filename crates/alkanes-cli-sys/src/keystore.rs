@@ -176,10 +176,13 @@ impl KeystoreManager {
         let derived_key = master_xpub.derive_pub(secp, &relative_path)
             .with_context(|| format!("Failed to derive public key for path: {relative_path}"))?;
 
+        // Normalize the script type to handle both forms (p2sh_p2wpkh and p2sh-p2wpkh)
+        let normalized_script_type = script_type.replace('_', "-");
+        
         // The full derivation path for display depends on the script type's standard.
         // Since our account_xpub is for BIP-86, we'll show that path for p2tr.
         // For other types, we'll show a non-standard path to indicate what's happening.
-        let (derivation_path, address) = match script_type {
+        let (derivation_path, address) = match normalized_script_type.as_str() {
             "p2tr" => {
                 let full_path = format!("m/86'/{coin_type}'/0'/{chain}/{index}");
                 let internal_key = bitcoin::key::UntweakedPublicKey::from(derived_key.public_key);
@@ -194,7 +197,7 @@ impl KeystoreManager {
                 let address = Address::p2wpkh(&compressed_pubkey, network);
                 (full_path, address.to_string())
             }
-            "p2sh" => {
+            "p2sh" | "p2sh-p2wpkh" => {
                 let full_path = format!("m/49'/{coin_type}'/0'/{chain}/{index}");
                 let bitcoin_pubkey = PublicKey::new(derived_key.public_key);
                 let compressed_pubkey = CompressedPublicKey::try_from(bitcoin_pubkey)
@@ -212,7 +215,7 @@ impl KeystoreManager {
                 let address = Address::p2pkh(compressed_pubkey, network);
                 (full_path, address.to_string())
             }
-            "p2wsh" => {
+            "p2wsh" | "p2sh-p2wsh" => {
                 let full_path = format!("m/86'/{coin_type}'/0'/{chain}/{index} (p2wsh from p2tr account)");
                 let bitcoin_pubkey = PublicKey::new(derived_key.public_key);
                 let compressed_pubkey = CompressedPublicKey::try_from(bitcoin_pubkey)

@@ -2911,13 +2911,71 @@ impl AddressResolver for ConcreteProvider {
     }
 
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
-        if address_type != "p2tr" {
-            return Err(AlkanesError::Wallet("Only p2tr addresses are supported".to_string()));
-        }
-        let addresses = WalletProvider::get_addresses(self, index + 1).await?;
-        addresses.get(index as usize)
+        // Normalize address type (handle both "p2sh-p2wpkh" and "p2sh_p2wpkh")
+        let normalized_type = address_type.replace('-', "_");
+        
+        // Map address identifiers to script types used by keystore
+        let script_type = match normalized_type.to_lowercase().as_str() {
+            "p2pk" => "p2pkh",  // P2PK addresses use similar derivation to P2PKH
+            "p2pkh" => "p2pkh",
+            "p2sh" => "p2sh",
+            "p2wpkh" => "p2wpkh",
+            "p2wsh" => "p2wsh",
+            "p2sh_p2wpkh" => "p2sh-p2wpkh",  // Nested SegWit
+            "p2sh_p2wsh" => "p2sh-p2wsh",  // P2SH-wrapped P2WSH (not commonly used, fall back to p2wsh)
+            "p2tr" => "p2tr",
+            _ => return Err(AlkanesError::Wallet(format!("Unsupported address type: {}", address_type))),
+        };
+        
+        // Get the keystore
+        let keystore = self.get_keystore()?;
+        
+        // Get network params from the current network
+        let network = self.get_network();
+        let network_str = match network {
+            bitcoin::Network::Bitcoin => "mainnet",
+            bitcoin::Network::Testnet => "testnet",
+            bitcoin::Network::Signet => "signet",
+            bitcoin::Network::Regtest => "regtest",
+            _ => "regtest",
+        };
+        let network_params = crate::network::NetworkParams::from_network_str(network_str)?;
+        
+        // Determine network suffix for xpub lookup
+        let network_suffix = if network == bitcoin::Network::Bitcoin { "mainnet" } else { "testnet" };
+        let xpub_key = format!("{}:{}", script_type, network_suffix);
+        
+        // Get the account xpub for this address type and network
+        let account_xpub = keystore.account_xpubs.get(&xpub_key)
+            .or_else(|| {
+                // Fall back to account_xpub for backward compatibility with old keystores
+                // Note: old keystores only have one xpub (typically for p2tr), so this will only work
+                // for the address type that was originally stored
+                if !keystore.account_xpub.is_empty() && script_type == "p2tr" {
+                    Some(&keystore.account_xpub)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| AlkanesError::Wallet(format!(
+                "No account xpub found for {} on {}. This keystore may be in an older format. \
+                 To derive addresses for all address types, please recreate your wallet using 'wallet create' with your mnemonic.",
+                script_type, network_suffix
+            )))?;
+        
+        // Map script_type back to the internal representation for derive_addresses
+        let derive_script_type = match script_type {
+            "p2sh-p2wpkh" => "p2sh",
+            "p2sh-p2wsh" => "p2wsh",
+            other => other,
+        };
+        
+        // Derive the address using keystore
+        let addresses = self.derive_addresses(account_xpub, &network_params, &[derive_script_type], index, 1).await?;
+        
+        addresses.first()
             .map(|a| a.address.clone())
-            .ok_or_else(|| AlkanesError::Wallet(format!("Address with index {index} not found")))
+            .ok_or_else(|| AlkanesError::Wallet(format!("Failed to derive address for type {} at index {}", address_type, index)))
     }
 
     async fn list_identifiers(&self) -> Result<Vec<String>> {
@@ -3419,8 +3477,107 @@ impl KeystoreProvider for ConcreteProvider {
         <Self as AddressResolver>::get_address(self, address_type, index).await
     }
     
-    async fn derive_addresses(&self, _master_public_key: &str, _network_params: &NetworkParams, _script_types: &[&str], _start_index: u32, _count: u32) -> Result<Vec<KeystoreAddress>> {
-        Err(AlkanesError::NotImplemented("KeystoreProvider derive_addresses not yet implemented".to_string()))
+    async fn derive_addresses(&self, master_public_key: &str, network_params: &NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
+        use bitcoin::bip32::{DerivationPath, Xpub};
+        use bitcoin::secp256k1::Secp256k1;
+        use bitcoin::{Address, PublicKey, CompressedPublicKey, ScriptBuf};
+        use core::str::FromStr;
+        
+        let secp = Secp256k1::new();
+        let account_xpub = Xpub::from_str(master_public_key)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid master public key: {}", e)))?;
+        
+        let mut addresses = Vec::new();
+        
+        // Get coin type based on network for display purposes
+        let coin_type = match network_params.network {
+            bitcoin::Network::Bitcoin => "0",
+            _ => "1",  // testnet, signet, regtest
+        };
+        
+        for script_type in script_types {
+            // Normalize the script type to handle both forms
+            let normalized_script_type = script_type.replace('_', "-");
+            
+            // Determine BIP purpose for the full path display
+            let purpose = match normalized_script_type.as_str() {
+                "p2pkh" => 44,
+                "p2sh" | "p2sh-p2wpkh" => 49,  // BIP49 for nested segwit
+                "p2wpkh" => 84,
+                "p2wsh" | "p2sh-p2wsh" => 84,
+                "p2tr" => 86,
+                _ => return Err(AlkanesError::Wallet(format!("Unsupported script type: {}", script_type))),
+            };
+            
+            for i in 0..count {
+                let index = start_index + i;
+                
+                // Derive using RELATIVE path from account xpub (m/0/index)
+                // The account_xpub is already at m/purpose'/coin'/0'
+                let relative_path_str = format!("m/0/{}", index);
+                let relative_path = DerivationPath::from_str(&relative_path_str)
+                    .map_err(|e| AlkanesError::Wallet(format!("Invalid derivation path: {}", e)))?;
+                
+                let derived_key = account_xpub.derive_pub(&secp, &relative_path)
+                    .map_err(|e| AlkanesError::Wallet(format!("Failed to derive public key: {}", e)))?;
+                
+                // Build the address based on script type
+                let (full_path, address_str) = match normalized_script_type.as_str() {
+                    "p2tr" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let internal_key = bitcoin::key::UntweakedPublicKey::from(derived_key.public_key);
+                        let address = Address::p2tr(&secp, internal_key, None, network_params.network);
+                        (full_path, address.to_string())
+                    }
+                    "p2wpkh" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let pk = PublicKey::new(derived_key.public_key);
+                        let compressed = CompressedPublicKey::try_from(pk)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        let address = Address::p2wpkh(&compressed, network_params.network);
+                        (full_path, address.to_string())
+                    }
+                    "p2sh" | "p2sh-p2wpkh" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let pk = PublicKey::new(derived_key.public_key);
+                        let compressed = CompressedPublicKey::try_from(pk)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        let wpkh_script = ScriptBuf::new_p2wpkh(&compressed.wpubkey_hash());
+                        let address = Address::p2sh(&wpkh_script, network_params.network)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        (full_path, address.to_string())
+                    }
+                    "p2pkh" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let pk = PublicKey::new(derived_key.public_key);
+                        let compressed = CompressedPublicKey::try_from(pk)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        let address = Address::p2pkh(compressed, network_params.network);
+                        (full_path, address.to_string())
+                    }
+                    "p2wsh" | "p2sh-p2wsh" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let pk = PublicKey::new(derived_key.public_key);
+                        let compressed = CompressedPublicKey::try_from(pk)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        let script = ScriptBuf::new_p2wpkh(&compressed.wpubkey_hash());
+                        let address = Address::p2wsh(&script, network_params.network);
+                        (full_path, address.to_string())
+                    }
+                    _ => return Err(AlkanesError::Wallet(format!("Unsupported script type: {}", script_type))),
+                };
+                
+                addresses.push(KeystoreAddress {
+                    address: address_str,
+                    derivation_path: full_path,
+                    index,
+                    script_type: normalized_script_type.clone(),
+                    network: Some(network_params.bech32_prefix.clone()),
+                });
+            }
+        }
+        
+        Ok(addresses)
     }
 
     async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &NetworkParams) -> Result<Vec<KeystoreAddress>> {

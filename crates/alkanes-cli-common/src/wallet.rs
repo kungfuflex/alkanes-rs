@@ -434,10 +434,13 @@ pub struct WalletStats {
 /// Address type enumeration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AddressType {
+    P2PK,
     P2PKH,
     P2SH,
     P2WPKH,
     P2WSH,
+    P2SHP2WPKH,  // Nested SegWit (P2SH-wrapped P2WPKH)
+    P2SHP2WSH,   // Nested SegWit (P2SH-wrapped P2WSH)
     P2TR,
 }
 
@@ -445,14 +448,16 @@ impl AddressType {
     /// Get string representation
     pub fn as_str(&self) -> &'static str {
         match self {
+            AddressType::P2PK => "p2pk",
             AddressType::P2PKH => "p2pkh",
             AddressType::P2SH => "p2sh",
             AddressType::P2WPKH => "p2wpkh",
             AddressType::P2WSH => "p2wsh",
+            AddressType::P2SHP2WPKH => "p2sh-p2wpkh",
+            AddressType::P2SHP2WSH => "p2sh-p2wsh",
             AddressType::P2TR => "p2tr",
         }
     }
-    
 }
 
 impl core::str::FromStr for AddressType {
@@ -460,12 +465,15 @@ impl core::str::FromStr for AddressType {
 
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
+            "p2pk" => Ok(AddressType::P2PK),
             "p2pkh" => Ok(AddressType::P2PKH),
             "p2sh" => Ok(AddressType::P2SH),
             "p2wpkh" => Ok(AddressType::P2WPKH),
             "p2wsh" => Ok(AddressType::P2WSH),
+            "p2sh-p2wpkh" => Ok(AddressType::P2SHP2WPKH),
+            "p2sh-p2wsh" => Ok(AddressType::P2SHP2WSH),
             "p2tr" => Ok(AddressType::P2TR),
-            _ => Err(AlkanesError::Parse(format!("Unknown address type: {s}"))),
+            _ => Err(AlkanesError::Parse(format!("Unknown address type: {}", s))),
         }
     }
 }
@@ -482,11 +490,14 @@ pub mod derivation {
         };
         
         let purpose = match address_type {
-            AddressType::P2PKH => 44,
-            AddressType::P2SH => 49,
-            AddressType::P2WPKH => 84,
-            AddressType::P2WSH => 84,
-            AddressType::P2TR => 86,
+            AddressType::P2PK => 44,         // P2PK uses BIP44 path
+            AddressType::P2PKH => 44,        // BIP44
+            AddressType::P2SH => 49,         // BIP49 (but can also be used for P2SH directly)
+            AddressType::P2WPKH => 84,       // BIP84 - Native SegWit
+            AddressType::P2WSH => 84,        // BIP84 - Native SegWit
+            AddressType::P2SHP2WPKH => 49,   // BIP49 - Nested SegWit (P2SH-wrapped P2WPKH)
+            AddressType::P2SHP2WSH => 49,    // BIP49 - Nested SegWit (P2SH-wrapped P2WSH)
+            AddressType::P2TR => 86,         // BIP86 - Taproot
         };
         
         format!("m/{purpose}'/{coin_type}'/{account}'/{change}/{index}")

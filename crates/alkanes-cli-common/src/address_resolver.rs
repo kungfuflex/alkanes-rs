@@ -91,14 +91,25 @@ impl<P: DeezelProvider> AddressResolver<P> {
         
         // Check if first part is a valid address type
         let address_type = parts[0].to_lowercase();
-        let valid_types = ["p2tr", "p2pkh", "p2sh", "p2wpkh", "p2wsh"];
+        let valid_types = ["p2pk", "p2tr", "p2pkh", "p2sh", "p2wpkh", "p2wsh", "p2sh-p2wpkh", "p2sh-p2wsh"];
         
         if !valid_types.contains(&address_type.as_str()) {
             return false;
         }
         
-        // If there's a second part, it should be a valid index
-        if parts.len() == 2 && parts[1].parse::<u32>().is_err() {
+        // If there's a second part, it should be a valid index or range
+        if parts.len() == 2 {
+            // Check if it's a single index
+            if parts[1].parse::<u32>().is_ok() {
+                return true;
+            }
+            // Check if it's a range (e.g., "0-50")
+            if parts[1].contains('-') {
+                let range_parts: Vec<&str> = parts[1].split('-').collect();
+                if range_parts.len() == 2 {
+                    return range_parts[0].parse::<u32>().is_ok() && range_parts[1].parse::<u32>().is_ok();
+                }
+            }
             return false;
         }
         
@@ -158,7 +169,7 @@ impl<P: DeezelProvider> AddressResolver<P> {
     
     /// Check if string is a valid address type
     fn is_valid_address_type(&self, s: &str) -> bool {
-        matches!(s.to_lowercase().as_str(), "p2tr" | "p2pkh" | "p2sh" | "p2wpkh" | "p2wsh")
+        matches!(s.to_lowercase().as_str(), "p2pk" | "p2tr" | "p2pkh" | "p2sh" | "p2wpkh" | "p2wsh" | "p2sh-p2wpkh" | "p2sh-p2wsh")
     }
     
     /// Resolve a single identifier to an address
@@ -188,6 +199,42 @@ impl<P: DeezelProvider> AddressResolver<P> {
         Ok(address)
     }
     
+    /// Parse address range specification (e.g., "p2tr:0-1000", "p2sh:0-500", "p2tr:50")
+    pub fn parse_address_range(&self, range_spec: &str) -> Result<(String, u32, u32)> {
+        let parts: Vec<&str> = range_spec.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::Parse(format!("Invalid range specification. Expected format: address_type:start-end or address_type:index, got: {}", range_spec)));
+        }
+        
+        let address_type = parts[0].to_string();
+        let range_str = parts[1];
+
+        if range_str.contains('-') {
+            // Handle range format: start-end
+            let range_parts: Vec<&str> = range_str.split('-').collect();
+            if range_parts.len() != 2 {
+                return Err(AlkanesError::Parse(format!("Invalid range format. Expected start-end, got: {}", range_str)));
+            }
+            
+            let start_index = range_parts[0].parse::<u32>()
+                .map_err(|_| AlkanesError::Parse(format!("Invalid start index: {}", range_parts[0])))?;
+            let end_index = range_parts[1].parse::<u32>()
+                .map_err(|_| AlkanesError::Parse(format!("Invalid end index: {}", range_parts[1])))?;
+            
+            if end_index <= start_index {
+                return Err(AlkanesError::Parse(format!("End index must be greater than start index: {}-{}", start_index, end_index)));
+            }
+            
+            let count = end_index - start_index;
+            Ok((address_type, start_index, count))
+        } else {
+            // Handle single index format: just the index
+            let index = range_str.parse::<u32>()
+                .map_err(|_| AlkanesError::Parse(format!("Invalid index: {}", range_str)))?;
+            Ok((address_type, index, 1))
+        }
+    }
+
     /// Resolve all identifiers in a string
     pub async fn resolve_all_identifiers(&mut self, input: &str) -> Result<String> {
         let identifiers = self.find_identifiers(input);
@@ -198,14 +245,45 @@ impl<P: DeezelProvider> AddressResolver<P> {
             return Ok(input.to_string());
         }
         
-        let mut result = input.to_string();
+        let mut result = Vec::new();
         
         for identifier in identifiers {
-            let address = self.resolve_identifier(&identifier).await?;
-            result = result.replace(&identifier, &address);
+            // Check if this is a range identifier
+            let clean_id = identifier.trim_start_matches('[').trim_end_matches(']');
+            
+            if clean_id.contains(':') && self.is_shorthand_identifier(clean_id) {
+                // Try to parse as a range
+                match self.parse_address_range(clean_id) {
+                    Ok((address_type, start_index, count)) => {
+                        // Resolve all addresses in the range
+                        for i in 0..count {
+                            let index = start_index + i;
+                            let address = crate::traits::AddressResolver::get_address(&self.provider, &address_type, index).await?;
+                            result.push(address);
+                        }
+                    }
+                    Err(_) => {
+                        // Fall back to single address resolution
+                        let address = self.resolve_identifier(&identifier).await?;
+                        result.push(address);
+                    }
+                }
+            } else {
+                let address = self.resolve_identifier(&identifier).await?;
+                result.push(address);
+            }
         }
         
-        Ok(result)
+        // If we resolved multiple addresses, return them comma-separated
+        // If we resolved one address, return it as is
+        // This maintains backwards compatibility
+        if result.len() == 1 {
+            Ok(result[0].clone())
+        } else if result.is_empty() {
+            Ok(input.to_string())
+        } else {
+            Ok(result.join(","))
+        }
     }
     
     /// Get address for specific type and index
