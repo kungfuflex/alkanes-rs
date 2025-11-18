@@ -1497,8 +1497,8 @@ impl WalletProvider for ConcreteProvider {
             _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to get internal key".to_string())),
         };
 
-        let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
-        let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
+        let mnemonic_obj = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+        let seed = mnemonic_obj.to_seed("");
         let network = self.get_network();
         let root_key = Xpriv::new_master(network, &seed)?;
         

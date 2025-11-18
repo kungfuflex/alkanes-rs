@@ -31,7 +31,7 @@ pub use super::types::{
 use super::envelope::AlkanesEnvelope;
 use anyhow::anyhow;
 use ordinals::Runestone;
-use crate::alkanes::protostone::{Protostone, ProtostoneEdict};
+use protorune_support::protostone::{Protostones, Protostone, ProtostoneEdict};
 
 const MAX_FEE_SATS: u64 = 100_000; // 0.001 BTC. Cap to avoid "absurdly high fee rate" errors.
 const DUST_LIMIT: u64 = 546;
@@ -314,7 +314,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
         let selected_utxos = self.select_utxos(&final_requirements, &params.from_addresses).await?;
         let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len())?;
-        let (psbt, fee) = self.build_psbt_and_fee(selected_utxos.clone(), outputs, Some(runestone_script), params.fee_rate, None).await?;
+        let (psbt, fee) = self.build_psbt_and_fee(selected_utxos.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
 
         let unsigned_tx = &psbt.unsigned_tx;
         let analysis = crate::transaction::analysis::analyze_transaction(unsigned_tx);
@@ -473,11 +473,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Ok(outputs)
     }
 
-    fn convert_protostone_specs(&self, specs: &[ProtostoneSpec]) -> Result<Vec<Protostone>> {
+    fn convert_protostone_specs(&self, specs: &[ProtostoneSpec]) -> Result<Vec<protorune_support::protostone::Protostone>> {
         specs.iter().map(|spec| {
             let edicts = spec.edicts.iter().map(|e| {
                 Ok(ProtostoneEdict {
-                    id: crate::alkanes::balance_sheet::ProtoruneRuneId {
+                    id: protorune_support::balance_sheet::ProtoruneRuneId {
                         block: e.alkane_id.block as u128,
                         tx: e.alkane_id.tx as u128,
                     },
@@ -489,8 +489,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 })
             }).collect::<Result<Vec<_>>>()?;
 
+            let message = spec.cellpack.as_ref().map(|c| c.encipher()).unwrap_or_default();
+            log::info!("Converting protostone spec: cellpack present={}, message_len={}", spec.cellpack.is_some(), message.len());
+            
             Ok(Protostone {
-                protocol_tag: 2, // ALKANE protocol tag
+                protocol_tag: 1, // ALKANE protocol tag
                 burn: None,
                 refund: None,
                 pointer: spec.bitcoin_transfer.as_ref().map(|t| match t.target {
@@ -498,7 +501,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     _ => 0,
                 }),
                 from: None,
-                message: spec.cellpack.as_ref().map(|c| c.encipher()).unwrap_or_default(),
+                message,
                 edicts,
             })
         }).collect()
@@ -509,16 +512,17 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         
         let converted_protostones = self.convert_protostone_specs(protostones)?;
 
+        // Debug logging
+        for (i, p) in converted_protostones.iter().enumerate() {
+            log::info!("Protostone #{}: protocol_tag={}, message_len={} bytes", i, p.protocol_tag, p.message.len());
+        }
+
+        // Use the Protostones trait to properly encode the protocol field
+        let protocol_values = converted_protostones.encipher()?;
+        log::info!("Encoded protocol values: {} u128 values", protocol_values.len());
+
         let runestone = Runestone {
-            protocol: Some(
-                converted_protostones
-                    .iter()
-                    .map(|p| p.to_integers().map_err(|e| AlkanesError::Other(e.to_string())))
-                    .collect::<Result<Vec<_>>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<u128>>(),
-            ),
+            protocol: Some(protocol_values),
             ..Default::default()
         };
 
@@ -532,6 +536,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         runestone_script: Option<ScriptBuf>,
         fee_rate: Option<f32>,
         envelope: Option<&AlkanesEnvelope>,
+        first_input_txout: Option<TxOut>,
     ) -> Result<(Psbt, u64)> {
         use bitcoin::transaction::Version;
     
@@ -546,9 +551,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     
         let mut total_input_value = 0;
         let mut input_txouts = Vec::new();
-        for outpoint in &utxos {
-            let utxo = self.provider.get_utxo(outpoint).await?
-                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {outpoint}")))?;
+        for (i, outpoint) in utxos.iter().enumerate() {
+            let utxo = if i == 0 && first_input_txout.is_some() {
+                // Use the pre-known first input (commit output) if provided
+                first_input_txout.clone().unwrap()
+            } else {
+                // Fetch from provider for other inputs
+                self.provider.get_utxo(outpoint).await?
+                    .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {outpoint}")))?
+            };
             total_input_value += utxo.value.to_sat();
             input_txouts.push(utxo);
         }
@@ -746,7 +757,14 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let outputs = self.create_outputs(&params.to_addresses, &params.change_address, &params.input_requirements).await?;
         let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len())?;
         
-        let (mut psbt, fee) = self.build_psbt_and_fee(selected_utxos, outputs, Some(runestone_script), params.fee_rate, Some(envelope)).await?;
+        // Create the commit output TxOut (it may not be indexed yet if still in mempool)
+        let commit_address = self.create_commit_address_for_envelope(envelope, commit_internal_key).await?;
+        let commit_txout = TxOut {
+            value: bitcoin::Amount::from_sat(commit_output_value),
+            script_pubkey: commit_address.script_pubkey(),
+        };
+        
+        let (mut psbt, fee) = self.build_psbt_and_fee(selected_utxos, outputs, Some(runestone_script), params.fee_rate, Some(envelope), Some(commit_txout)).await?;
         
         let reveal_script = envelope.build_reveal_script();
         let (spend_info, _) = self.create_taproot_spend_info_for_envelope(envelope, commit_internal_key).await?;

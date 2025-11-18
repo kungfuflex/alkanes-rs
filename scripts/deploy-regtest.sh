@@ -158,7 +158,7 @@ deploy_contract() {
     
     # Deploy using alkanes-cli with envelope and protostone
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
-    timeout 180 "$ALKANES_CLI" -p regtest \
+    "$ALKANES_CLI" -p regtest \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
@@ -171,14 +171,33 @@ deploy_contract() {
     if [ $? -eq 0 ]; then
         log_success "$CONTRACT_NAME deployed to [4, $TARGET_TX]"
         
+        # Wait for metashrew to index the deployment
+        log_info "Waiting for metashrew to index (5 seconds)..."
+        sleep 5
+        
         # Verify deployment by checking bytecode
-        log_info "Verifying $CONTRACT_NAME deployment..."
-        BYTECODE=$("$ALKANES_CLI" -p regtest alkanes getbytecode "4:$TARGET_TX" 2>/dev/null)
-        if [ -n "$BYTECODE" ]; then
+        log_info "Verifying $CONTRACT_NAME deployment at [4, $TARGET_TX]..."
+        
+        # Try up to 3 times with 2 second delays
+        BYTECODE=""
+        for i in 1 2 3; do
+            BYTECODE=$("$ALKANES_CLI" -p regtest alkanes getbytecode "4:$TARGET_TX" 2>/dev/null)
+            if [ -n "$BYTECODE" ] && [ "$BYTECODE" != "null" ] && [ "$BYTECODE" != '""' ]; then
+                break
+            fi
+            if [ $i -lt 3 ]; then
+                log_info "Bytecode not found yet, waiting 2 seconds..."
+                sleep 2
+            fi
+        done
+        
+        if [ -n "$BYTECODE" ] && [ "$BYTECODE" != "null" ] && [ "$BYTECODE" != '""' ]; then
             BYTECODE_SIZE=$(echo "$BYTECODE" | wc -c)
-            log_success "✓ Bytecode verified (${BYTECODE_SIZE} bytes)"
+            log_success "✓ Bytecode verified at [4, $TARGET_TX] (${BYTECODE_SIZE} bytes)"
         else
-            log_warn "⚠ Could not verify bytecode (may need more time to index)"
+            log_error "✗ Bytecode verification failed for $CONTRACT_NAME at [4, $TARGET_TX]"
+            log_error "Deployment failed - contract bytecode not found in metashrew"
+            exit 1
         fi
     else
         log_error "Failed to deploy $CONTRACT_NAME"
@@ -299,149 +318,149 @@ main() {
     # Note: We'll initialize it separately after deploying dependencies
     deploy_contract "dxBTC" "$WASM_DIR/dx_btc.wasm" $((0x1f00)) "0,32,0,4,$((0x1f01)),4,$((0x1f22)),4,$((0x1f14))"
     
-    # Deploy yv-fr-btc-vault at [4, 0x1f01] (YV_FR_BTC_VAULT_ID)
-    # Args: opcode(0), yv_fr_btc, yv_boost_id, fr_btc_diesel_lp_id, gauge_contract_id
-    # TODO: Need to deploy yv_boost and gauge_contract first
-    deploy_contract "yv-fr-btc Vault" "$WASM_DIR/yv_fr_btc_vault.wasm" $((0x1f01)) "0,4,$((0x1f01)),2,1,2,2,2,3"
+    # # Deploy yv-fr-btc-vault at [4, 0x1f01] (YV_FR_BTC_VAULT_ID)
+    # # Args: opcode(0), yv_fr_btc, yv_boost_id, fr_btc_diesel_lp_id, gauge_contract_id
+    # # TODO: Need to deploy yv_boost and gauge_contract first
+    # deploy_contract "yv-fr-btc Vault" "$WASM_DIR/yv_fr_btc_vault.wasm" $((0x1f01)) "0,4,$((0x1f01)),2,1,2,2,2,3"
     
-    log_info "=========================================="
-    log_info "Phase 2: LBTC Yield System"
-    log_info "=========================================="
+    # log_info "=========================================="
+    # log_info "Phase 2: LBTC Yield System"
+    # log_info "=========================================="
     
-    # Deploy lbtc-yield-splitter at [4, 0x1f10] (LBTC_YIELD_SPLITTER_ID)
-    # Args: opcode(0), lbtc_id, btc_pt_id, btc_yt_id, maturity_block
-    deploy_contract "LBTC Yield Splitter" "$WASM_DIR/lbtc_yield_splitter.wasm" $((0x1f10)) "0,4,$((0x1f17)),4,$((0x1f11)),4,$((0x1f12)),1000000"
+    # # Deploy lbtc-yield-splitter at [4, 0x1f10] (LBTC_YIELD_SPLITTER_ID)
+    # # Args: opcode(0), lbtc_id, btc_pt_id, btc_yt_id, maturity_block
+    # deploy_contract "LBTC Yield Splitter" "$WASM_DIR/lbtc_yield_splitter.wasm" $((0x1f10)) "0,4,$((0x1f17)),4,$((0x1f11)),4,$((0x1f12)),1000000"
     
-    # Deploy p-lbtc at [4, 0x1f11] (PLBTC_ID)
-    # Args: opcode(0), splitter_id
-    deploy_contract "pLBTC (Principal LBTC)" "$WASM_DIR/p_lbtc.wasm" $((0x1f11)) "0,4,$((0x1f10))"
+    # # Deploy p-lbtc at [4, 0x1f11] (PLBTC_ID)
+    # # Args: opcode(0), splitter_id
+    # deploy_contract "pLBTC (Principal LBTC)" "$WASM_DIR/p_lbtc.wasm" $((0x1f11)) "0,4,$((0x1f10))"
     
-    # Deploy yx-lbtc at [4, 0x1f12] (YXLBTC_ID)
-    # Args: opcode(0), splitter_id
-    deploy_contract "yxLBTC (Yield LBTC)" "$WASM_DIR/yx_lbtc.wasm" $((0x1f12)) "0,4,$((0x1f10))"
+    # # Deploy yx-lbtc at [4, 0x1f12] (YXLBTC_ID)
+    # # Args: opcode(0), splitter_id
+    # deploy_contract "yxLBTC (Yield LBTC)" "$WASM_DIR/yx_lbtc.wasm" $((0x1f12)) "0,4,$((0x1f10))"
     
-    # Deploy frost-token at [4, 0x1f13] (FROST_TOKEN_ID)
-    # Args: opcode(0), total_supply, treasury
-    deploy_contract "FROST Token" "$WASM_DIR/frost_token.wasm" $((0x1f13)) "0,1000000000000000000,4,$((0x1f00))"
+    # # Deploy frost-token at [4, 0x1f13] (FROST_TOKEN_ID)
+    # # Args: opcode(0), total_supply, treasury
+    # deploy_contract "FROST Token" "$WASM_DIR/frost_token.wasm" $((0x1f13)) "0,1000000000000000000,4,$((0x1f00))"
     
-    # Deploy vx-frost-gauge at [4, 0x1f14] (VX_FROST_GAUGE_ID)
-    # NOTE: vxFROST is deployed directly (not instantiated) because dx-btc needs to reference it at init time
-    # Args: opcode(0), frost_token
-    deploy_contract "vxFROST Gauge" "$WASM_DIR/vx_frost_gauge.wasm" $((0x1f14)) "0,4,$((0x1f13))"
+    # # Deploy vx-frost-gauge at [4, 0x1f14] (VX_FROST_GAUGE_ID)
+    # # NOTE: vxFROST is deployed directly (not instantiated) because dx-btc needs to reference it at init time
+    # # Args: opcode(0), frost_token
+    # deploy_contract "vxFROST Gauge" "$WASM_DIR/vx_frost_gauge.wasm" $((0x1f14)) "0,4,$((0x1f13))"
     
-    # Deploy synth-pool at [4, 0x1f15] (SYNTH_POOL_ID)
-    # Synth pool may not need initialization args or may need different pattern
-    deploy_contract "Synth Pool (pLBTC/frBTC)" "$WASM_DIR/synth_pool.wasm" $((0x1f15)) "0"
+    # # Deploy synth-pool at [4, 0x1f15] (SYNTH_POOL_ID)
+    # # Synth pool may not need initialization args or may need different pattern
+    # deploy_contract "Synth Pool (pLBTC/frBTC)" "$WASM_DIR/synth_pool.wasm" $((0x1f15)) "0"
     
-    log_info "=========================================="
-    log_info "Phase 3: LBTC Oracle System"
-    log_info "=========================================="
+    # log_info "=========================================="
+    # log_info "Phase 3: LBTC Oracle System"
+    # log_info "=========================================="
     
-    # Deploy lbtc-oracle (unit alkane) at [4, 0x1f16] (LBTC_ORACLE_ID)
-    # Args: opcode(0), amount
-    deploy_contract "LBTC Oracle" "$WASM_DIR/unit.wasm" $((0x1f16)) "0,1000000000000"
+    # # Deploy lbtc-oracle (unit alkane) at [4, 0x1f16] (LBTC_ORACLE_ID)
+    # # Args: opcode(0), amount
+    # deploy_contract "LBTC Oracle" "$WASM_DIR/unit.wasm" $((0x1f16)) "0,1000000000000"
     
-    # Deploy lbtc token at [4, 0x1f17] (LBTC_ID)
-    # Args: opcode(0), oracle_id
-    deploy_contract "LBTC Token" "$WASM_DIR/lbtc.wasm" $((0x1f17)) "0,4,$((0x1f16))"
+    # # Deploy lbtc token at [4, 0x1f17] (LBTC_ID)
+    # # Args: opcode(0), oracle_id
+    # deploy_contract "LBTC Token" "$WASM_DIR/lbtc.wasm" $((0x1f17)) "0,4,$((0x1f16))"
     
-    log_info "=========================================="
-    log_info "Phase 4: Template Contracts"
-    log_info "=========================================="
+    # log_info "=========================================="
+    # log_info "Phase 4: Template Contracts"
+    # log_info "=========================================="
     
-    # Deploy unit template at [4, 0x1f20] (UNIT_TEMPLATE_ID)
-    # Args: opcode(0), amount
-    deploy_contract "Unit Template" "$WASM_DIR/unit.wasm" $((0x1f20)) "0,0"
+    # # Deploy unit template at [4, 0x1f20] (UNIT_TEMPLATE_ID)
+    # # Args: opcode(0), amount
+    # deploy_contract "Unit Template" "$WASM_DIR/unit.wasm" $((0x1f20)) "0,0"
     
-    # Deploy ve-token-vault-template at [4, 0x1f21] (VE_TOKEN_VAULT_TEMPLATE_ID)
-    # Templates don't need initialization when deployed - they're initialized when cloned
-    deploy_contract "VE Token Vault Template" "$WASM_DIR/ve_token_vault_template.wasm" $((0x1f21)) "0"
+    # # Deploy ve-token-vault-template at [4, 0x1f21] (VE_TOKEN_VAULT_TEMPLATE_ID)
+    # # Templates don't need initialization when deployed - they're initialized when cloned
+    # deploy_contract "VE Token Vault Template" "$WASM_DIR/ve_token_vault_template.wasm" $((0x1f21)) "0"
     
-    # Deploy yve-token-nft-template at [4, 0x1f22] (YVE_TOKEN_NFT_TEMPLATE_ID)
-    # Templates don't need initialization when deployed - they're initialized when cloned
-    deploy_contract "YVE Token NFT Template" "$WASM_DIR/yve_token_nft_template.wasm" $((0x1f22)) "0"
+    # # Deploy yve-token-nft-template at [4, 0x1f22] (YVE_TOKEN_NFT_TEMPLATE_ID)
+    # # Templates don't need initialization when deployed - they're initialized when cloned
+    # deploy_contract "YVE Token NFT Template" "$WASM_DIR/yve_token_nft_template.wasm" $((0x1f22)) "0"
     
-    # Deploy vx-token-gauge-template at [4, 0x1f23] (VX_TOKEN_GAUGE_TEMPLATE_ID)
-    # Templates don't need initialization when deployed - they're initialized when cloned
-    deploy_contract "VX Token Gauge Template" "$WASM_DIR/vx_token_gauge_template.wasm" $((0x1f23)) "0"
+    # # Deploy vx-token-gauge-template at [4, 0x1f23] (VX_TOKEN_GAUGE_TEMPLATE_ID)
+    # # Templates don't need initialization when deployed - they're initialized when cloned
+    # deploy_contract "VX Token Gauge Template" "$WASM_DIR/vx_token_gauge_template.wasm" $((0x1f23)) "0"
     
-    log_info "=========================================="
-    log_info "Phase 5: DIESEL Governance System (Instantiated from Templates)"
-    log_info "=========================================="
+    # log_info "=========================================="
+    # log_info "Phase 5: DIESEL Governance System (Instantiated from Templates)"
+    # log_info "=========================================="
     
-    # Instantiate veDIESEL from ve-token-vault-template at [4, 0x1f21]
-    # Using [6, 0x1f21] cellpack creates instance at next available [2, n]
-    # Args: opcode(0), asset_id(DIESEL), yve_token_nft_id, vx_token_gauge_id, fr_sigil_id
-    log_info "Instantiating veDIESEL from template [4, 0x1f21]..."
-    # We need to instantiate yveDIESEL and vxDIESEL first, so this needs proper IDs
-    # Using placeholder IDs for now - this should be adjusted based on actual deployment
-    PROTOSTONE="[6,$((0x1f21)),0,2,0,2,2,2,3,32,1]"  # [6, template_tx, opcode, asset_id, yve_nft_id, vx_gauge_id, fr_sigil_id]
-    log_info "  Protostone: $PROTOSTONE (creates at [2, n])"
+    # # Instantiate veDIESEL from ve-token-vault-template at [4, 0x1f21]
+    # # Using [6, 0x1f21] cellpack creates instance at next available [2, n]
+    # # Args: opcode(0), asset_id(DIESEL), yve_token_nft_id, vx_token_gauge_id, fr_sigil_id
+    # log_info "Instantiating veDIESEL from template [4, 0x1f21]..."
+    # # We need to instantiate yveDIESEL and vxDIESEL first, so this needs proper IDs
+    # # Using placeholder IDs for now - this should be adjusted based on actual deployment
+    # PROTOSTONE="[6,$((0x1f21)),0,2,0,2,2,2,3,32,1]"  # [6, template_tx, opcode, asset_id, yve_nft_id, vx_gauge_id, fr_sigil_id]
+    # log_info "  Protostone: $PROTOSTONE (creates at [2, n])"
     
-    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
-    "$ALKANES_CLI" -p regtest \
-        --wallet-file "$WALLET_FILE" \
-        --passphrase "$DEPLOY_PASSWORD" \
-        alkanes execute "$PROTOSTONE" \
-        --from p2tr:0 \
-        --fee-rate 1 \
-        -y
+    # DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    # "$ALKANES_CLI" -p regtest \
+    #     --wallet-file "$WALLET_FILE" \
+    #     --passphrase "$DEPLOY_PASSWORD" \
+    #     alkanes execute "$PROTOSTONE" \
+    #     --from p2tr:0 \
+    #     --fee-rate 1 \
+    #     -y
     
-    if [ $? -eq 0 ]; then
-        log_success "veDIESEL instantiated at [2, n]"
-    else
-        log_warn "Failed to instantiate veDIESEL"
-    fi
+    # if [ $? -eq 0 ]; then
+    #     log_success "veDIESEL instantiated at [2, n]"
+    # else
+    #     log_warn "Failed to instantiate veDIESEL"
+    # fi
     
-    echo ""
+    # echo ""
     
-    # Instantiate yveDIESEL from yve-token-nft-template at [4, 0x1f22]
-    # Using [6, 0x1f22] cellpack creates instance at next available [2, n]
-    # Args: opcode(0), ve_token_vault_id, vx_token_gauge_id, unit_template_id, fr_sigil_id
-    log_info "Instantiating yveDIESEL from template [4, 0x1f22]..."
-    PROTOSTONE="[6,$((0x1f22)),0,2,1,2,3,4,$((0x1f20)),32,1]"  # [6, template_tx, opcode, ve_vault_id, vx_gauge_id, unit_template_id, fr_sigil_id]
-    log_info "  Protostone: $PROTOSTONE (creates at [2, n])"
+    # # Instantiate yveDIESEL from yve-token-nft-template at [4, 0x1f22]
+    # # Using [6, 0x1f22] cellpack creates instance at next available [2, n]
+    # # Args: opcode(0), ve_token_vault_id, vx_token_gauge_id, unit_template_id, fr_sigil_id
+    # log_info "Instantiating yveDIESEL from template [4, 0x1f22]..."
+    # PROTOSTONE="[6,$((0x1f22)),0,2,1,2,3,4,$((0x1f20)),32,1]"  # [6, template_tx, opcode, ve_vault_id, vx_gauge_id, unit_template_id, fr_sigil_id]
+    # log_info "  Protostone: $PROTOSTONE (creates at [2, n])"
     
-    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
-    "$ALKANES_CLI" -p regtest \
-        --wallet-file "$WALLET_FILE" \
-        --passphrase "$DEPLOY_PASSWORD" \
-        alkanes execute "$PROTOSTONE" \
-        --from p2tr:0 \
-        --fee-rate 1 \
-        -y
+    # DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    # "$ALKANES_CLI" -p regtest \
+    #     --wallet-file "$WALLET_FILE" \
+    #     --passphrase "$DEPLOY_PASSWORD" \
+    #     alkanes execute "$PROTOSTONE" \
+    #     --from p2tr:0 \
+    #     --fee-rate 1 \
+    #     -y
     
-    if [ $? -eq 0 ]; then
-        log_success "yveDIESEL instantiated at [2, n]"
-    else
-        log_warn "Failed to instantiate yveDIESEL"
-    fi
+    # if [ $? -eq 0 ]; then
+    #     log_success "yveDIESEL instantiated at [2, n]"
+    # else
+    #     log_warn "Failed to instantiate yveDIESEL"
+    # fi
     
-    echo ""
+    # echo ""
     
-    # Instantiate vxDIESEL gauge from vx-token-gauge-template at [4, 0x1f23]
-    # Using [6, 0x1f23] cellpack creates instance at next available [2, n]
-    # Args: opcode(0), lp_token, reward_token, yve_token_nft_id, reward_rate, fr_sigil_id
-    log_info "Instantiating vxDIESEL Gauge from template [4, 0x1f23]..."
-    # LP token needs to be created first (frBTC/DIESEL pool from OYL AMM)
-    # Using DIESEL as reward token for now
-    PROTOSTONE="[6,$((0x1f23)),0,2,4,2,0,2,2,1000000000,32,1]"  # [6, template_tx, opcode, lp_token, reward_token, yve_nft_id, reward_rate, fr_sigil_id]
-    log_info "  Protostone: $PROTOSTONE (creates at [2, n])"
+    # # Instantiate vxDIESEL gauge from vx-token-gauge-template at [4, 0x1f23]
+    # # Using [6, 0x1f23] cellpack creates instance at next available [2, n]
+    # # Args: opcode(0), lp_token, reward_token, yve_token_nft_id, reward_rate, fr_sigil_id
+    # log_info "Instantiating vxDIESEL Gauge from template [4, 0x1f23]..."
+    # # LP token needs to be created first (frBTC/DIESEL pool from OYL AMM)
+    # # Using DIESEL as reward token for now
+    # PROTOSTONE="[6,$((0x1f23)),0,2,4,2,0,2,2,1000000000,32,1]"  # [6, template_tx, opcode, lp_token, reward_token, yve_nft_id, reward_rate, fr_sigil_id]
+    # log_info "  Protostone: $PROTOSTONE (creates at [2, n])"
     
-    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
-    "$ALKANES_CLI" -p regtest \
-        --wallet-file "$WALLET_FILE" \
-        --passphrase "$DEPLOY_PASSWORD" \
-        alkanes execute "$PROTOSTONE" \
-        --from p2tr:0 \
-        --fee-rate 1 \
-        -y
+    # DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    # "$ALKANES_CLI" -p regtest \
+    #     --wallet-file "$WALLET_FILE" \
+    #     --passphrase "$DEPLOY_PASSWORD" \
+    #     alkanes execute "$PROTOSTONE" \
+    #     --from p2tr:0 \
+    #     --fee-rate 1 \
+    #     -y
     
-    if [ $? -eq 0 ]; then
-        log_success "vxDIESEL Gauge instantiated at [2, n]"
-    else
-        log_warn "Failed to instantiate vxDIESEL Gauge"
-    fi
+    # if [ $? -eq 0 ]; then
+    #     log_success "vxDIESEL Gauge instantiated at [2, n]"
+    # else
+    #     log_warn "Failed to instantiate vxDIESEL Gauge"
+    # fi
     
     # NOTE: ftr-btc at [31, 0] is deployed automatically in alkanes-rs genesis (setup_ftrbtc)
     # NOTE: dx-btc and yv-fr-btc-vault are now deployed above in the reserved range
