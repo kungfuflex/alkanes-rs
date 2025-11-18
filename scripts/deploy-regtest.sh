@@ -119,27 +119,35 @@ fund_wallet() {
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
     
     # Note: Skipping sync as it waits for ord which may not be fully synced in regtest
-    # The balance command will work without explicit sync
+    # Query UTXOs directly from p2tr:0 address to check balance
     
-    # Get balance (format: "Confirmed: <number>")
-    BALANCE=$("$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet balance 2>/dev/null | grep "Confirmed:" | grep -oP '\d+' || echo "0")
+    # Get UTXO count for p2tr:0 to verify funding
+    UTXO_COUNT=$("$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet utxos p2tr:0 2>/dev/null | grep -c "Outpoint:")
+    # Sanitize: remove any non-numeric characters
+    UTXO_COUNT=$(echo "$UTXO_COUNT" | tr -d -c '0-9')
+    # Default to 0 if empty
+    UTXO_COUNT=${UTXO_COUNT:-0}
     
-    if [ "$BALANCE" -lt "1000000000" ]; then # Less than 10 BTC
-        log_info "Wallet balance low ($BALANCE sats), mining blocks to fund wallet..."
+    if [ "$UTXO_COUNT" -lt "1" ]; then # No UTXOs found
+        log_info "No UTXOs found, mining blocks to fund wallet..."
         
         # Mine 201 blocks to the wallet address (100 blocks for maturity + 101 for spending)
         log_info "Mining blocks to $WALLET_ADDRESS..."
         "$ALKANES_CLI" -p regtest bitcoind generatetoaddress 201 "p2tr:0" 2>&1 | tail -5
         
-        # Wait for the blockchain to update and wallet to scan
-        log_info "Waiting for wallet to scan new blocks..."
-        sleep 5
+        # Wait for sandshrew to index the blocks (needs ~10 seconds)
+        log_info "Waiting for sandshrew to index blocks (10 seconds)..."
+        sleep 10
         
-        # Get balance (format: "Confirmed: <number>")
-        BALANCE=$("$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet balance 2>/dev/null | grep "Confirmed:" | grep -oP '\d+' || echo "0")
-        log_success "Wallet funded! Balance: $BALANCE sats"
+        # Get UTXO count for p2tr:0 to verify funding  
+        UTXO_COUNT=$("$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet utxos p2tr:0 2>/dev/null | grep -c "Outpoint:")
+        # Sanitize: remove any non-numeric characters
+        UTXO_COUNT=$(echo "$UTXO_COUNT" | tr -d -c '0-9')
+        # Default to 0 if empty
+        UTXO_COUNT=${UTXO_COUNT:-0}
+        log_success "Wallet funded! Found $UTXO_COUNT UTXOs"
     else
-        log_success "Wallet balance: $BALANCE sats"
+        log_success "Wallet already funded with $UTXO_COUNT UTXOs"
     fi
 }
 
@@ -581,6 +589,8 @@ main() {
     echo "  - OYL Upgradeable Beacon: [4, $POOL_UPGRADEABLE_BEACON_TX]"
     echo "  - OYL Factory Proxy:      [4, $AMM_FACTORY_PROXY_TX]"
     echo ""
+    
+
     
     log_info "Example commands:"
     echo ""
