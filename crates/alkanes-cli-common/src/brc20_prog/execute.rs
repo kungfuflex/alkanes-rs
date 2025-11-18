@@ -33,6 +33,10 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("Starting BRC20-prog execution");
         log::info!("Inscription content: {}", params.inscription_content);
 
+        // Determine if this is a deploy operation
+        let is_deploy = params.inscription_content.contains("\"op\":\"deploy\"") || 
+                       params.inscription_content.contains("\"op\":\"d\"");
+
         // Create the envelope with the JSON payload
         let envelope = Brc20ProgEnvelope::new(params.inscription_content.as_bytes().to_vec());
 
@@ -49,13 +53,14 @@ impl<'a> Brc20ProgExecutor<'a> {
         }
 
         // Build and execute reveal transaction
-        let (reveal_txid, reveal_fee) = self
+        let (reveal_txid, reveal_fee, reveal_inscription_outpoint) = self
             .build_and_broadcast_reveal(
                 &params,
                 &envelope,
                 commit_outpoint,
                 commit_output,
                 internal_key,
+                is_deploy,
             )
             .await?;
 
@@ -66,11 +71,33 @@ impl<'a> Brc20ProgExecutor<'a> {
             self.provider.sync().await?;
         }
 
+        // For deploy operations, execute activation transaction
+        let (activation_txid, activation_fee) = if is_deploy {
+            log::info!("Deploy operation detected - executing activation transaction");
+            
+            let (act_txid, act_fee) = self
+                .build_and_broadcast_activation(&params, reveal_inscription_outpoint)
+                .await?;
+            
+            log::info!("✅ Activation transaction broadcast: {act_txid}");
+            
+            if params.mine_enabled {
+                self.mine_blocks_if_regtest(&params).await?;
+                self.provider.sync().await?;
+            }
+            
+            (Some(act_txid.to_string()), Some(act_fee))
+        } else {
+            (None, None)
+        };
+
         Ok(Brc20ProgExecuteResult {
             commit_txid: commit_txid.to_string(),
             reveal_txid: reveal_txid.to_string(),
+            activation_txid,
             commit_fee,
             reveal_fee,
+            activation_fee,
             inputs_used: vec![],
             outputs_created: vec![],
             traces: None,
@@ -144,15 +171,9 @@ impl<'a> Brc20ProgExecutor<'a> {
         commit_outpoint: OutPoint,
         commit_output: TxOut,
         commit_internal_key: XOnlyPublicKey,
-    ) -> Result<(Txid, u64)> {
+        is_deploy: bool,
+    ) -> Result<(Txid, u64, OutPoint)> {
         log::info!("Building reveal transaction");
-
-        // Create reveal transaction with OP_RETURN output for BRC20PROG
-        let op_return_script = self.create_brc20prog_op_return();
-        let reveal_output = TxOut {
-            value: bitcoin::Amount::ZERO,
-            script_pubkey: op_return_script,
-        };
 
         // Get change address
         let change_address_str = if let Some(ref addr) = params.change_address {
@@ -163,16 +184,50 @@ impl<'a> Brc20ProgExecutor<'a> {
         let change_address = Address::from_str(&change_address_str)?
             .require_network(self.provider.get_network())?;
 
-        // Calculate change amount (commit output value - reveal fee)
-        let estimated_reveal_fee = 50_000u64;
-        let change_amount = commit_output.value.to_sat().saturating_sub(estimated_reveal_fee);
+        // For deploy operations: send inscription to wallet address with 1 sat (first sat)
+        // For call operations: send to OP_RETURN
+        let outputs = if is_deploy {
+            log::info!("Deploy operation: Creating inscription output to wallet address with 1 sat");
+            
+            // First output: inscription at first sat (1 sat)
+            let inscription_output = TxOut {
+                value: bitcoin::Amount::from_sat(1),
+                script_pubkey: change_address.script_pubkey(),
+            };
+            
+            // Calculate change amount
+            let estimated_reveal_fee = 50_000u64;
+            let change_amount = commit_output.value.to_sat()
+                .saturating_sub(1)  // inscription output
+                .saturating_sub(estimated_reveal_fee);
+            
+            let change_output = TxOut {
+                value: bitcoin::Amount::from_sat(change_amount),
+                script_pubkey: change_address.script_pubkey(),
+            };
+            
+            vec![inscription_output, change_output]
+        } else {
+            log::info!("Call operation: Creating OP_RETURN output");
+            
+            // Create reveal transaction with OP_RETURN output for BRC20PROG
+            let op_return_script = self.create_brc20prog_op_return();
+            let reveal_output = TxOut {
+                value: bitcoin::Amount::ZERO,
+                script_pubkey: op_return_script,
+            };
 
-        let change_output = TxOut {
-            value: bitcoin::Amount::from_sat(change_amount),
-            script_pubkey: change_address.script_pubkey(),
+            // Calculate change amount (commit output value - reveal fee)
+            let estimated_reveal_fee = 50_000u64;
+            let change_amount = commit_output.value.to_sat().saturating_sub(estimated_reveal_fee);
+
+            let change_output = TxOut {
+                value: bitcoin::Amount::from_sat(change_amount),
+                script_pubkey: change_address.script_pubkey(),
+            };
+
+            vec![reveal_output, change_output]
         };
-
-        let outputs = vec![reveal_output, change_output];
 
         // Build reveal PSBT with script-path spending
         let (mut reveal_psbt, reveal_fee) = self
@@ -197,7 +252,171 @@ impl<'a> Brc20ProgExecutor<'a> {
             .broadcast_transaction(bitcoin::consensus::encode::serialize_hex(&reveal_tx))
             .await?;
 
-        Ok((reveal_tx.compute_txid(), reveal_fee))
+        let reveal_txid = reveal_tx.compute_txid();
+        
+        // For deploy operations, the inscription is at vout 0 (first output)
+        let inscription_outpoint = OutPoint {
+            txid: reveal_txid,
+            vout: 0,
+        };
+
+        Ok((reveal_txid, reveal_fee, inscription_outpoint))
+    }
+
+    /// Build and broadcast the activation transaction (for deploy operations)
+    /// This sends the 1-sat inscription to OP_RETURN to activate the deployment
+    async fn build_and_broadcast_activation(
+        &mut self,
+        params: &Brc20ProgExecuteParams,
+        inscription_outpoint: OutPoint,
+    ) -> Result<(Txid, u64)> {
+        log::info!("Building activation transaction");
+        log::info!("Inscription outpoint: {}:{}", inscription_outpoint.txid, inscription_outpoint.vout);
+
+        // Get the 1-sat inscription UTXO
+        let inscription_utxo = self
+            .provider
+            .get_utxo(&inscription_outpoint)
+            .await?
+            .ok_or_else(|| AlkanesError::Wallet(format!("Inscription UTXO not found: {inscription_outpoint}")))?;
+
+        if inscription_utxo.value.to_sat() != 1 {
+            return Err(AlkanesError::Wallet(format!(
+                "Expected 1-sat inscription, but found {} sats at {}",
+                inscription_utxo.value.to_sat(),
+                inscription_outpoint
+            )));
+        }
+
+        // Create OP_RETURN output with 1 sat to capture the inscription
+        let op_return_script = self.create_brc20prog_op_return();
+        let op_return_output = TxOut {
+            value: bitcoin::Amount::from_sat(1),
+            script_pubkey: op_return_script,
+        };
+
+        // Get change address
+        let change_address_str = if let Some(ref addr) = params.change_address {
+            addr.clone()
+        } else {
+            WalletProvider::get_address(self.provider).await?
+        };
+        let change_address = Address::from_str(&change_address_str)?
+            .require_network(self.provider.get_network())?;
+
+        // We need additional UTXOs to pay for the transaction fee
+        let estimated_activation_fee = 10_000u64; // Generous estimate
+        let funding_utxos = self.select_utxos_for_amount(
+            estimated_activation_fee,
+            &params.from_addresses,
+        ).await?;
+
+        // Build the activation transaction
+        let mut total_input_value = inscription_utxo.value.to_sat(); // 1 sat from inscription
+        let mut all_inputs = vec![inscription_outpoint];
+        let mut input_txouts = vec![inscription_utxo];
+
+        for outpoint in &funding_utxos {
+            let utxo = self
+                .provider
+                .get_utxo(outpoint)
+                .await?
+                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {outpoint}")))?;
+            total_input_value += utxo.value.to_sat();
+            all_inputs.push(*outpoint);
+            input_txouts.push(utxo);
+        }
+
+        // Build a temporary transaction to estimate size
+        let temp_outputs = vec![
+            op_return_output.clone(),
+            TxOut {
+                value: bitcoin::Amount::from_sat(0),
+                script_pubkey: change_address.script_pubkey(),
+            },
+        ];
+
+        let mut temp_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: all_inputs
+                .iter()
+                .map(|outpoint| bitcoin::TxIn {
+                    previous_output: *outpoint,
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: bitcoin::Witness::new(),
+                })
+                .collect(),
+            output: temp_outputs,
+        };
+
+        // Add dummy witness for size estimation
+        for input in &mut temp_tx.input {
+            input.witness.push([0u8; 65]);
+        }
+
+        let fee_rate_sat_vb = params.fee_rate.unwrap_or(600.0);
+        let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
+
+        // Calculate change
+        let change_value = total_input_value
+            .saturating_sub(1)  // OP_RETURN output
+            .saturating_sub(fee);
+
+        if change_value < 546 {
+            return Err(AlkanesError::Wallet(
+                "Not enough funds for activation transaction".to_string(),
+            ));
+        }
+
+        let change_output = TxOut {
+            value: bitcoin::Amount::from_sat(change_value),
+            script_pubkey: change_address.script_pubkey(),
+        };
+
+        let final_outputs = vec![op_return_output, change_output];
+
+        // Build the final PSBT
+        let unsigned_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: all_inputs
+                .iter()
+                .map(|outpoint| bitcoin::TxIn {
+                    previous_output: *outpoint,
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: bitcoin::Witness::new(),
+                })
+                .collect(),
+            output: final_outputs,
+        };
+
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
+
+        // Add witness UTXOs and tap info
+        for (i, utxo) in input_txouts.iter().enumerate() {
+            psbt.inputs[i].witness_utxo = Some(utxo.clone());
+            if utxo.script_pubkey.is_p2tr() {
+                let (internal_key, (fingerprint, path)) = self.provider.get_internal_key().await?;
+                psbt.inputs[i].tap_internal_key = Some(internal_key);
+                psbt.inputs[i]
+                    .tap_key_origins
+                    .insert(internal_key, (vec![], (fingerprint, path)));
+            }
+        }
+
+        // Sign and finalize
+        let activation_tx = self.sign_and_finalize_psbt(psbt).await?;
+
+        // Broadcast
+        let activation_txid_string = self
+            .provider
+            .broadcast_transaction(bitcoin::consensus::encode::serialize_hex(&activation_tx))
+            .await?;
+
+        Ok((activation_tx.compute_txid(), fee))
     }
 
     /// Create a taproot address for the commit transaction

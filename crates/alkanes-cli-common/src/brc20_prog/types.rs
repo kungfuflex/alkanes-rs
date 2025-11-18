@@ -80,10 +80,16 @@ pub struct Brc20ProgExecuteResult {
     pub commit_txid: String,
     /// Reveal transaction ID
     pub reveal_txid: String,
+    /// Activation transaction ID (for deploy operations)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation_txid: Option<String>,
     /// Commit transaction fee
     pub commit_fee: u64,
     /// Reveal transaction fee
     pub reveal_fee: u64,
+    /// Activation transaction fee (for deploy operations)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation_fee: Option<u64>,
     /// Inputs used in the transactions
     pub inputs_used: Vec<String>,
     /// Outputs created in the transactions

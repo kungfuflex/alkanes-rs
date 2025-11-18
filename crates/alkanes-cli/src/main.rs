@@ -1001,8 +1001,14 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 println!("✅ Contract deployed successfully!");
                 println!("🔗 Commit TXID: {}", result.commit_txid);
                 println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                if let Some(ref activation_txid) = result.activation_txid {
+                    println!("🔗 Activation TXID: {}", activation_txid);
+                }
                 println!("💰 Commit Fee: {} sats", result.commit_fee);
                 println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+                if let Some(activation_fee) = result.activation_fee {
+                    println!("💰 Activation Fee: {} sats", activation_fee);
+                }
             }
             Ok(())
         }
