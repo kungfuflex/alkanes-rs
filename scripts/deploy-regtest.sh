@@ -124,9 +124,9 @@ fund_wallet() {
         log_success "Wallet already funded with $UTXO_CHECK UTXOs at p2tr:0"
     else
         log_info "No UTXOs found, mining blocks to fund wallet..."
-        # Mine 201 blocks to the wallet's p2tr:0 address
-        log_info "Mining 201 blocks to $WALLET_ADDRESS (p2tr:0)..."
-        "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 201 "p2tr:0" > /dev/null 2>&1
+        # Mine 400 blocks to the wallet's p2tr:0 address (increased from 201 for more mature coins)
+        log_info "Mining 400 blocks to $WALLET_ADDRESS (p2tr:0)..."
+        "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 400 "p2tr:0" > /dev/null 2>&1
         
         # Wait for sandshrew to index the blocks
         log_info "Waiting for sandshrew to index blocks (15 seconds)..."
