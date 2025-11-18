@@ -66,35 +66,44 @@ async fn handle_ord_method(
         ));
     }
 
+    // Split method on ':' to handle dynamic paths like "block::hash" -> "/block/{param}/hash"
     let path_parts: Vec<&str> = method.split(':').collect();
-    let mut path = String::from("/");
+    let mut path_components: Vec<String> = vec![];
     let mut param_index = 0;
 
     for part in path_parts {
         if part.is_empty() {
+            // Empty part means we need a parameter from params array
             if param_index < params.len() {
                 if let Some(param_str) = params[param_index].as_str() {
-                    path.push_str(param_str);
+                    path_components.push(param_str.to_string());
                 } else {
-                    path.push_str(&params[param_index].to_string());
+                    path_components.push(params[param_index].to_string());
                 }
                 param_index += 1;
             }
         } else {
-            path.push_str(part);
+            // Non-empty part is a literal path component
+            path_components.push(part.to_string());
         }
-        path.push('/');
     }
 
+    // Add any remaining params as path components
     while param_index < params.len() {
         if let Some(param_str) = params[param_index].as_str() {
-            path.push_str(param_str);
+            path_components.push(param_str.to_string());
         } else {
-            path.push_str(&params[param_index].to_string());
+            path_components.push(params[param_index].to_string());
         }
-        path.push('/');
         param_index += 1;
     }
+
+    // Build path: "/component1/component2/..."
+    let path = if path_components.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", path_components.join("/"))
+    };
 
     let result = proxy.fetch_ord_endpoint(&path).await?;
     Ok(JsonRpcResponse::success(result, request_id.clone()))

@@ -17,7 +17,8 @@ NC='\033[0m' # No Color
 ALKANES_DIR="../alkanes-rs"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WASM_DIR="$SCRIPT_DIR/../prod_wasms"
-WALLET_FILE="$HOME/.alkanes/regtest-wallet.json"
+WALLET_FILE="${WALLET_FILE:-$HOME/.alkanes/wallet.json}"
+DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-testtesttest}"
 RPC_URL="http://localhost:18888"
 
 # OYL AMM Constants (matching oyl-protocol deployment)
@@ -114,40 +115,24 @@ setup_wallet() {
 
 # Fund wallet with regtest coins
 fund_wallet() {
-    log_info "Checking wallet balance..."
+    log_info "Checking if wallet needs funding..."
     
-    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    # Check if wallet has any UTXOs
+    UTXO_CHECK=$("$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet utxos p2tr:0 2>&1 | grep -c "Outpoint:" || echo "0")
     
-    # Note: Skipping sync as it waits for ord which may not be fully synced in regtest
-    # Query UTXOs directly from p2tr:0 address to check balance
-    
-    # Get UTXO count for p2tr:0 to verify funding
-    UTXO_COUNT=$("$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet utxos p2tr:0 2>/dev/null | grep -c "Outpoint:")
-    # Sanitize: remove any non-numeric characters
-    UTXO_COUNT=$(echo "$UTXO_COUNT" | tr -d -c '0-9')
-    # Default to 0 if empty
-    UTXO_COUNT=${UTXO_COUNT:-0}
-    
-    if [ "$UTXO_COUNT" -lt "1" ]; then # No UTXOs found
-        log_info "No UTXOs found, mining blocks to fund wallet..."
-        
-        # Mine 201 blocks to the wallet address (100 blocks for maturity + 101 for spending)
-        log_info "Mining blocks to $WALLET_ADDRESS..."
-        "$ALKANES_CLI" -p regtest bitcoind generatetoaddress 201 "p2tr:0" 2>&1 | tail -5
-        
-        # Wait for sandshrew to index the blocks (needs ~10 seconds)
-        log_info "Waiting for sandshrew to index blocks (10 seconds)..."
-        sleep 10
-        
-        # Get UTXO count for p2tr:0 to verify funding  
-        UTXO_COUNT=$("$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet utxos p2tr:0 2>/dev/null | grep -c "Outpoint:")
-        # Sanitize: remove any non-numeric characters
-        UTXO_COUNT=$(echo "$UTXO_COUNT" | tr -d -c '0-9')
-        # Default to 0 if empty
-        UTXO_COUNT=${UTXO_COUNT:-0}
-        log_success "Wallet funded! Found $UTXO_COUNT UTXOs"
+    if [ "$UTXO_CHECK" -gt "0" ]; then
+        log_success "Wallet already funded with $UTXO_CHECK UTXOs at p2tr:0"
     else
-        log_success "Wallet already funded with $UTXO_COUNT UTXOs"
+        log_info "No UTXOs found, mining blocks to fund wallet..."
+        # Mine 201 blocks to the wallet's p2tr:0 address
+        log_info "Mining 201 blocks to $WALLET_ADDRESS (p2tr:0)..."
+        "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 201 "p2tr:0" > /dev/null 2>&1
+        
+        # Wait for sandshrew to index the blocks
+        log_info "Waiting for sandshrew to index blocks (15 seconds)..."
+        sleep 15
+        
+        log_success "Wallet funded! Ready for deployments"
     fi
 }
 
@@ -173,18 +158,28 @@ deploy_contract() {
     
     # Deploy using alkanes-cli with envelope and protostone
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
-    "$ALKANES_CLI" -p regtest \
+    timeout 180 "$ALKANES_CLI" -p regtest \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
         --envelope "$WASM_FILE" \
+        --from p2tr:0 \
         --fee-rate 1 \
         --mine \
-        --trace \
         -y
     
     if [ $? -eq 0 ]; then
         log_success "$CONTRACT_NAME deployed to [4, $TARGET_TX]"
+        
+        # Verify deployment by checking bytecode
+        log_info "Verifying $CONTRACT_NAME deployment..."
+        BYTECODE=$("$ALKANES_CLI" -p regtest alkanes getbytecode "4:$TARGET_TX" 2>/dev/null)
+        if [ -n "$BYTECODE" ]; then
+            BYTECODE_SIZE=$(echo "$BYTECODE" | wc -c)
+            log_success "✓ Bytecode verified (${BYTECODE_SIZE} bytes)"
+        else
+            log_warn "⚠ Could not verify bytecode (may need more time to index)"
+        fi
     else
         log_error "Failed to deploy $CONTRACT_NAME"
         return 1
@@ -208,9 +203,8 @@ initialize_contract() {
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
+        --from p2tr:0 \
         --fee-rate 1 \
-        --mine \
-        --trace \
         -y \
         > /dev/null 2>&1
     
@@ -389,9 +383,8 @@ main() {
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
+        --from p2tr:0 \
         --fee-rate 1 \
-        --mine \
-        --trace \
         -y
     
     if [ $? -eq 0 ]; then
@@ -414,9 +407,8 @@ main() {
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
+        --from p2tr:0 \
         --fee-rate 1 \
-        --mine \
-        --trace \
         -y
     
     if [ $? -eq 0 ]; then
@@ -441,9 +433,8 @@ main() {
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
+        --from p2tr:0 \
         --fee-rate 1 \
-        --mine \
-        --trace \
         -y
     
     if [ $? -eq 0 ]; then
