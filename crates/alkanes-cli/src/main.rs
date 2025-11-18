@@ -581,15 +581,22 @@ async fn execute_esplora_command(
                 println!("🏠 Address {}:\n{}", params, serde_json::to_string_pretty(&result)?);
             }
         }
-        alkanes_cli_common::commands::EsploraCommands::AddressTxs { params, raw } => {
+        alkanes_cli_common::commands::EsploraCommands::AddressTxs { params, raw, exclude_coinbase } => {
             let resolved_address = provider.resolve_all_identifiers(&params).await?;
             let result = provider.get_address_txs(&resolved_address).await?;
+            
+            // Parse JSON result into EsploraTransaction structs
+            let mut txs: Vec<alkanes_cli_common::esplora::EsploraTransaction> = serde_json::from_value(result)
+                .map_err(|e| anyhow::anyhow!("Failed to parse transactions: {}", e))?;
+            
+            // Filter out coinbase transactions if requested
+            if exclude_coinbase {
+                txs.retain(|tx| !tx.vin.iter().any(|vin| vin.is_coinbase));
+            }
+            
             if raw {
-                println!("{}", serde_json::to_string_pretty(&result)?);
+                println!("{}", serde_json::to_string_pretty(&txs)?);
             } else {
-                // Parse JSON result into EsploraTransaction structs for pretty printing
-                let txs: Vec<alkanes_cli_common::esplora::EsploraTransaction> = serde_json::from_value(result)
-                    .map_err(|e| anyhow::anyhow!("Failed to parse transactions: {}", e))?;
                 println!("📄 Transactions for address {}:", params);
                 pretty_print::print_esplora_transactions(&txs);
             }

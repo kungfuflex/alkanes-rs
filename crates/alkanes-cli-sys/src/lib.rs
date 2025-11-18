@@ -3190,18 +3190,23 @@ impl SystemEsplora for SystemAlkanes {
                 }
                 Ok(())
             },
-            EsploraCommands::AddressTxs { params, raw } => {
+            EsploraCommands::AddressTxs { params, raw, exclude_coinbase } => {
                 let resolved_params = provider.resolve_all_identifiers(&params).await?;
                 let result = provider.get_address_txs(&resolved_params).await?;
+                
+                // Parse and optionally filter transactions
+                let mut txs: Vec<alkanes_cli_common::esplora::EsploraTransaction> = serde_json::from_value(result)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse transactions: {}", e))?;
+                
+                if exclude_coinbase {
+                    txs.retain(|tx| !tx.vin.iter().any(|vin| vin.is_coinbase));
+                }
+                
                 if raw {
-                    if let Some(s) = result.as_str() {
-                        println!("{}", s.trim_matches('"'));
-                    } else {
-                        println!("{result}");
-                    }
+                    println!("{}", serde_json::to_string_pretty(&txs)?);
                 } else {
                     println!("📄 Transactions for address {}:
-{}", params, serde_json::to_string_pretty(&result)?);
+{}", params, serde_json::to_string_pretty(&txs)?);
                 }
                 Ok(())
             },

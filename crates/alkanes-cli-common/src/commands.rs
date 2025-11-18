@@ -955,6 +955,9 @@ pub enum EsploraCommands {
         params: String,
         #[arg(long)]
         raw: bool,
+        /// Exclude coinbase transactions from results
+        #[arg(long)]
+        exclude_coinbase: bool,
     },
     /// Get address chain transactions
     AddressTxsChain {

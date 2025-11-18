@@ -284,6 +284,8 @@ pub enum EsploraCommands {
         params: String,
         #[arg(long)]
         raw: bool,
+        #[arg(long)]
+        exclude_coinbase: bool,
     },
     AddressTxsChain {
         params: String,
