@@ -384,8 +384,28 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let utxos = self.provider.get_utxos(true, from_addresses.clone()).await?;
         log::debug!("Found {} total wallet UTXOs from specified sources", utxos.len());
 
+        // Bitcoin requires coinbase outputs to have 100 confirmations before spending
+        const COINBASE_MATURITY: u32 = 100;
+
         let spendable_utxos: Vec<(OutPoint, UtxoInfo)> = utxos.into_iter()
-            .filter(|(_, info)| !info.frozen)
+            .filter(|(_, info)| {
+                // Filter out frozen UTXOs
+                if info.frozen {
+                    log::debug!("Skipping frozen UTXO: {}:{}", info.txid, info.vout);
+                    return false;
+                }
+                
+                // Filter out immature coinbase outputs
+                if info.is_coinbase && info.confirmations < COINBASE_MATURITY {
+                    log::debug!(
+                        "Skipping immature coinbase UTXO: {}:{} (confirmations: {}, required: {})",
+                        info.txid, info.vout, info.confirmations, COINBASE_MATURITY
+                    );
+                    return false;
+                }
+                
+                true
+            })
             .collect();
         
         log::info!("Found {} spendable (non-frozen) wallet UTXOs", spendable_utxos.len());
