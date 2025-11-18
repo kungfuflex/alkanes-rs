@@ -201,27 +201,29 @@ where
     'lua: 'scope,
 {
     // Esplora methods
+    // Pattern: "path::" means /path/{param}, "path::subpath" means /path/{param}/subpath
     rpc_table.set("esplora_addressutxo", create_rpc_function(lua, scope, "esplora_address::utxo", rpc_context.clone())?)?;
     rpc_table.set("esplora_addresstxs", create_rpc_function(lua, scope, "esplora_address::txs", rpc_context.clone())?)?;
     rpc_table.set("esplora_addresstxschain", create_rpc_function(lua, scope, "esplora_address::txs:chain", rpc_context.clone())?)?;
     rpc_table.set("esplora_addresstxsmempool", create_rpc_function(lua, scope, "esplora_address::txs:mempool", rpc_context.clone())?)?;
-    rpc_table.set("esplora_address", create_rpc_function(lua, scope, "esplora_address::", rpc_context.clone())?)?;
-    rpc_table.set("esplora_tx", create_rpc_function(lua, scope, "esplora_tx::", rpc_context.clone())?)?;
-    rpc_table.set("esplora_txstatus", create_rpc_function(lua, scope, "esplora_tx::::status", rpc_context.clone())?)?;
-    rpc_table.set("esplora_txhex", create_rpc_function(lua, scope, "esplora_tx::::hex", rpc_context.clone())?)?;
-    rpc_table.set("esplora_txraw", create_rpc_function(lua, scope, "esplora_tx::::raw", rpc_context.clone())?)?;
-    rpc_table.set("esplora_txoutspends", create_rpc_function(lua, scope, "esplora_tx::::outspends", rpc_context.clone())?)?;
-    rpc_table.set("esplora_block", create_rpc_function(lua, scope, "esplora_block::", rpc_context.clone())?)?;
-    rpc_table.set("esplora_blockstatus", create_rpc_function(lua, scope, "esplora_block::::status", rpc_context.clone())?)?;
-    rpc_table.set("esplora_blocktxs", create_rpc_function(lua, scope, "esplora_block::::txs", rpc_context.clone())?)?;
-    rpc_table.set("esplora_blocktxids", create_rpc_function(lua, scope, "esplora_block::::txids", rpc_context.clone())?)?;
-    rpc_table.set("esplora_blockheight", create_rpc_function(lua, scope, "esplora_block-height::", rpc_context.clone())?)?;
+    rpc_table.set("esplora_address", create_rpc_function(lua, scope, "esplora_address", rpc_context.clone())?)?;
+    rpc_table.set("esplora_tx", create_rpc_function(lua, scope, "esplora_tx", rpc_context.clone())?)?;
+    rpc_table.set("esplora_txstatus", create_rpc_function(lua, scope, "esplora_tx::status", rpc_context.clone())?)?;
+    rpc_table.set("esplora_txhex", create_rpc_function(lua, scope, "esplora_tx::hex", rpc_context.clone())?)?;
+    rpc_table.set("esplora_txraw", create_rpc_function(lua, scope, "esplora_tx::raw", rpc_context.clone())?)?;
+    rpc_table.set("esplora_txoutspends", create_rpc_function(lua, scope, "esplora_tx::outspends", rpc_context.clone())?)?;
+    rpc_table.set("esplora_block", create_rpc_function(lua, scope, "esplora_block", rpc_context.clone())?)?;
+    rpc_table.set("esplora_blockstatus", create_rpc_function(lua, scope, "esplora_block::status", rpc_context.clone())?)?;
+    rpc_table.set("esplora_blocktxs", create_rpc_function(lua, scope, "esplora_block::txs", rpc_context.clone())?)?;
+    rpc_table.set("esplora_blocktxids", create_rpc_function(lua, scope, "esplora_block::txids", rpc_context.clone())?)?;
+    rpc_table.set("esplora_blockheight", create_rpc_function(lua, scope, "esplora_block-height", rpc_context.clone())?)?;
     rpc_table.set("esplora_mempool", create_rpc_function(lua, scope, "esplora_mempool", rpc_context.clone())?)?;
     rpc_table.set("esplora_mempooltxids", create_rpc_function(lua, scope, "esplora_mempool:txids", rpc_context.clone())?)?;
     rpc_table.set("esplora_mempoolrecent", create_rpc_function(lua, scope, "esplora_mempool:recent", rpc_context.clone())?)?;
     rpc_table.set("esplora_feeestimates", create_rpc_function(lua, scope, "esplora_fee-estimates", rpc_context.clone())?)?;
     
-    // Ord methods
+    // Ord methods  
+    // Pattern: "method" means /method, "method::" means /method/{param}
     rpc_table.set("ord_content", create_rpc_function(lua, scope, "ord_content", rpc_context.clone())?)?;
     rpc_table.set("ord_blockheight", create_rpc_function(lua, scope, "ord_blockheight", rpc_context.clone())?)?;
     rpc_table.set("ord_blockcount", create_rpc_function(lua, scope, "ord_blockcount", rpc_context.clone())?)?;
@@ -229,15 +231,15 @@ where
     rpc_table.set("ord_blocktime", create_rpc_function(lua, scope, "ord_blocktime", rpc_context.clone())?)?;
     rpc_table.set("ord_blocks", create_rpc_function(lua, scope, "ord_blocks", rpc_context.clone())?)?;
     rpc_table.set("ord_outputs", create_rpc_function(lua, scope, "ord_outputs", rpc_context.clone())?)?;
-    rpc_table.set("ord_inscription", create_rpc_function(lua, scope, "ord_inscription::", rpc_context.clone())?)?;
+    rpc_table.set("ord_inscription", create_rpc_function(lua, scope, "ord_inscription", rpc_context.clone())?)?;
     rpc_table.set("ord_inscriptions", create_rpc_function(lua, scope, "ord_inscriptions", rpc_context.clone())?)?;
-    rpc_table.set("ord_block", create_rpc_function(lua, scope, "ord_block::", rpc_context.clone())?)?;
-    rpc_table.set("ord_output", create_rpc_function(lua, scope, "ord_output::", rpc_context.clone())?)?;
-    rpc_table.set("ord_rune", create_rpc_function(lua, scope, "ord_rune::", rpc_context.clone())?)?;
+    rpc_table.set("ord_block", create_rpc_function(lua, scope, "ord_block", rpc_context.clone())?)?;
+    rpc_table.set("ord_output", create_rpc_function(lua, scope, "ord_output", rpc_context.clone())?)?;
+    rpc_table.set("ord_rune", create_rpc_function(lua, scope, "ord_rune", rpc_context.clone())?)?;
     rpc_table.set("ord_runes", create_rpc_function(lua, scope, "ord_runes", rpc_context.clone())?)?;
-    rpc_table.set("ord_sat", create_rpc_function(lua, scope, "ord_sat::", rpc_context.clone())?)?;
-    rpc_table.set("ord_children", create_rpc_function(lua, scope, "ord_children::", rpc_context.clone())?)?;
-    rpc_table.set("ord_decode", create_rpc_function(lua, scope, "ord_decode::", rpc_context.clone())?)?;
+    rpc_table.set("ord_sat", create_rpc_function(lua, scope, "ord_sat", rpc_context.clone())?)?;
+    rpc_table.set("ord_children", create_rpc_function(lua, scope, "ord_children", rpc_context.clone())?)?;
+    rpc_table.set("ord_decode", create_rpc_function(lua, scope, "ord_decode", rpc_context.clone())?)?;
     
     // Bitcoin Core RPC methods
     rpc_table.set("btc_getblockcount", create_rpc_function(lua, scope, "btc_getblockcount", rpc_context.clone())?)?;
