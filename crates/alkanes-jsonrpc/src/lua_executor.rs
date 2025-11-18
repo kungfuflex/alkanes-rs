@@ -1,0 +1,359 @@
+use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
+use crate::proxy::ProxyClient;
+use anyhow::{anyhow, Result};
+use mlua::prelude::*;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::Mutex;
+
+/// Script storage for saved Lua scripts
+#[derive(Clone)]
+pub struct ScriptStorage {
+    scripts: Arc<Mutex<HashMap<String, String>>>,
+}
+
+impl ScriptStorage {
+    pub fn new() -> Self {
+        Self {
+            scripts: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub async fn save(&self, script: String) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(script.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        
+        let mut scripts = self.scripts.lock().await;
+        scripts.insert(hash.clone(), script);
+        hash
+    }
+
+    pub async fn get(&self, hash: &str) -> Option<String> {
+        let scripts = self.scripts.lock().await;
+        scripts.get(hash).cloned()
+    }
+}
+
+impl Default for ScriptStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Result of Lua script execution
+#[derive(Debug, serde::Serialize)]
+pub struct LuaExecutionResult {
+    pub calls: usize,
+    pub returns: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<LuaError>,
+    pub runtime: u64, // milliseconds
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct LuaError {
+    pub code: i32,
+    pub message: String,
+}
+
+/// Context for RPC calls made from Lua
+#[derive(Clone)]
+struct RpcContext {
+    proxy: Arc<ProxyClient>,
+    call_count: Arc<Mutex<usize>>,
+}
+
+impl RpcContext {
+    fn new(proxy: Arc<ProxyClient>) -> Self {
+        Self {
+            proxy,
+            call_count: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    async fn increment_calls(&self) {
+        let mut count = self.call_count.lock().await;
+        *count += 1;
+    }
+
+    async fn get_call_count(&self) -> usize {
+        *self.call_count.lock().await
+    }
+
+    async fn call_rpc(&self, method: &str, params: Vec<Value>) -> Result<Value> {
+        self.increment_calls().await;
+        
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: method.to_string(),
+            params,
+            id: serde_json::Value::Number(1.into()),
+        };
+
+        let response = crate::handler::handle_request(&request, &self.proxy).await?;
+        
+        match response {
+            JsonRpcResponse::Success { result, .. } => Ok(result),
+            JsonRpcResponse::Error { error, .. } => {
+                Err(anyhow!("RPC error {}: {}", error.code, error.message))
+            }
+        }
+    }
+}
+
+/// Execute a Lua script with RPC access
+pub async fn execute_lua_script(
+    script: &str,
+    args: Vec<Value>,
+    proxy: &ProxyClient,
+) -> Result<LuaExecutionResult> {
+    let start = Instant::now();
+    let rpc_context = RpcContext::new(Arc::new(proxy.clone()));
+
+    let lua = Lua::new();
+    
+    let _result = lua.scope(|scope| {
+        // Create flat _RPC table with all methods
+        let rpc_table = lua.create_table()?;
+        
+        // Add all RPC methods to the flat table
+        add_all_rpc_methods(&lua, scope, &rpc_table, rpc_context.clone())?;
+        
+        // Set _RPC as global
+        lua.globals().set("_RPC", rpc_table)?;
+        
+        // Set args as global table
+        let args_table = lua.create_table()?;
+        for (i, arg) in args.iter().enumerate() {
+            let lua_value = json_to_lua(&lua, arg)?;
+            args_table.set(i + 1, lua_value)?;
+        }
+        lua.globals().set("args", args_table)?;
+        
+        Ok(())
+    })?;
+    
+    // Execute the script (async)
+    let result_value: LuaValue = lua.load(script).eval_async().await?;
+    
+    // Convert result to JSON
+    let result = lua_to_json(&result_value, &lua)?;
+
+    let runtime = start.elapsed().as_millis() as u64;
+    let calls = rpc_context.get_call_count().await;
+
+    Ok(LuaExecutionResult {
+        calls,
+        returns: result,
+        error: None,
+        runtime,
+    })
+}
+
+/// Create a Lua function that calls an RPC method
+/// Note: We use tokio::runtime::Handle to block on async calls within sync Lua context
+fn create_rpc_function<'lua, 'scope>(
+    _lua: &'lua Lua,
+    scope: &mlua::Scope<'lua, 'scope>,
+    method: &str,
+    rpc_context: RpcContext,
+) -> LuaResult<LuaFunction<'lua>>
+where
+    'lua: 'scope,
+{
+    let method = method.to_string();
+    scope.create_function(move |lua, args: LuaMultiValue| {
+        let method = method.clone();
+        let rpc_context = rpc_context.clone();
+        
+        // Convert Lua args to JSON values
+        let mut json_params = Vec::new();
+        for arg in args {
+            let json_val = lua_to_json(&arg, lua)?;
+            json_params.push(json_val);
+        }
+        
+        // Make the RPC call using tokio runtime
+        let result = tokio::runtime::Handle::current()
+            .block_on(async {
+                rpc_context.call_rpc(&method, json_params).await
+            })
+            .map_err(|e| mlua::Error::RuntimeError(e.to_string()))?;
+        
+        // Convert result back to Lua
+        json_to_lua(lua, &result)
+    })
+}
+
+/// Add all RPC methods to a flat _RPC table
+/// Methods follow the pattern: namespace_methodname (e.g., esplora_addresstxs, ord_blockcount)
+fn add_all_rpc_methods<'lua, 'scope>(
+    lua: &'lua Lua,
+    scope: &mlua::Scope<'lua, 'scope>,
+    rpc_table: &LuaTable<'lua>,
+    rpc_context: RpcContext,
+) -> LuaResult<()>
+where
+    'lua: 'scope,
+{
+    // Esplora methods
+    rpc_table.set("esplora_addressutxo", create_rpc_function(lua, scope, "esplora_address::utxo", rpc_context.clone())?)?;
+    rpc_table.set("esplora_addresstxs", create_rpc_function(lua, scope, "esplora_address::txs", rpc_context.clone())?)?;
+    rpc_table.set("esplora_addresstxschain", create_rpc_function(lua, scope, "esplora_address::txs:chain", rpc_context.clone())?)?;
+    rpc_table.set("esplora_addresstxsmempool", create_rpc_function(lua, scope, "esplora_address::txs:mempool", rpc_context.clone())?)?;
+    rpc_table.set("esplora_address", create_rpc_function(lua, scope, "esplora_address::", rpc_context.clone())?)?;
+    rpc_table.set("esplora_tx", create_rpc_function(lua, scope, "esplora_tx::", rpc_context.clone())?)?;
+    rpc_table.set("esplora_txstatus", create_rpc_function(lua, scope, "esplora_tx::::status", rpc_context.clone())?)?;
+    rpc_table.set("esplora_txhex", create_rpc_function(lua, scope, "esplora_tx::::hex", rpc_context.clone())?)?;
+    rpc_table.set("esplora_txraw", create_rpc_function(lua, scope, "esplora_tx::::raw", rpc_context.clone())?)?;
+    rpc_table.set("esplora_txoutspends", create_rpc_function(lua, scope, "esplora_tx::::outspends", rpc_context.clone())?)?;
+    rpc_table.set("esplora_block", create_rpc_function(lua, scope, "esplora_block::", rpc_context.clone())?)?;
+    rpc_table.set("esplora_blockstatus", create_rpc_function(lua, scope, "esplora_block::::status", rpc_context.clone())?)?;
+    rpc_table.set("esplora_blocktxs", create_rpc_function(lua, scope, "esplora_block::::txs", rpc_context.clone())?)?;
+    rpc_table.set("esplora_blocktxids", create_rpc_function(lua, scope, "esplora_block::::txids", rpc_context.clone())?)?;
+    rpc_table.set("esplora_blockheight", create_rpc_function(lua, scope, "esplora_block-height::", rpc_context.clone())?)?;
+    rpc_table.set("esplora_mempool", create_rpc_function(lua, scope, "esplora_mempool", rpc_context.clone())?)?;
+    rpc_table.set("esplora_mempooltxids", create_rpc_function(lua, scope, "esplora_mempool:txids", rpc_context.clone())?)?;
+    rpc_table.set("esplora_mempoolrecent", create_rpc_function(lua, scope, "esplora_mempool:recent", rpc_context.clone())?)?;
+    rpc_table.set("esplora_feeestimates", create_rpc_function(lua, scope, "esplora_fee-estimates", rpc_context.clone())?)?;
+    
+    // Ord methods
+    rpc_table.set("ord_content", create_rpc_function(lua, scope, "ord_content", rpc_context.clone())?)?;
+    rpc_table.set("ord_blockheight", create_rpc_function(lua, scope, "ord_blockheight", rpc_context.clone())?)?;
+    rpc_table.set("ord_blockcount", create_rpc_function(lua, scope, "ord_blockcount", rpc_context.clone())?)?;
+    rpc_table.set("ord_blockhash", create_rpc_function(lua, scope, "ord_blockhash", rpc_context.clone())?)?;
+    rpc_table.set("ord_blocktime", create_rpc_function(lua, scope, "ord_blocktime", rpc_context.clone())?)?;
+    rpc_table.set("ord_blocks", create_rpc_function(lua, scope, "ord_blocks", rpc_context.clone())?)?;
+    rpc_table.set("ord_outputs", create_rpc_function(lua, scope, "ord_outputs", rpc_context.clone())?)?;
+    rpc_table.set("ord_inscription", create_rpc_function(lua, scope, "ord_inscription::", rpc_context.clone())?)?;
+    rpc_table.set("ord_inscriptions", create_rpc_function(lua, scope, "ord_inscriptions", rpc_context.clone())?)?;
+    rpc_table.set("ord_block", create_rpc_function(lua, scope, "ord_block::", rpc_context.clone())?)?;
+    rpc_table.set("ord_output", create_rpc_function(lua, scope, "ord_output::", rpc_context.clone())?)?;
+    rpc_table.set("ord_rune", create_rpc_function(lua, scope, "ord_rune::", rpc_context.clone())?)?;
+    rpc_table.set("ord_runes", create_rpc_function(lua, scope, "ord_runes", rpc_context.clone())?)?;
+    rpc_table.set("ord_sat", create_rpc_function(lua, scope, "ord_sat::", rpc_context.clone())?)?;
+    rpc_table.set("ord_children", create_rpc_function(lua, scope, "ord_children::", rpc_context.clone())?)?;
+    rpc_table.set("ord_decode", create_rpc_function(lua, scope, "ord_decode::", rpc_context.clone())?)?;
+    
+    // Bitcoin Core RPC methods
+    rpc_table.set("btc_getblockcount", create_rpc_function(lua, scope, "btc_getblockcount", rpc_context.clone())?)?;
+    rpc_table.set("btc_getblockhash", create_rpc_function(lua, scope, "btc_getblockhash", rpc_context.clone())?)?;
+    rpc_table.set("btc_getblock", create_rpc_function(lua, scope, "btc_getblock", rpc_context.clone())?)?;
+    rpc_table.set("btc_getblockheader", create_rpc_function(lua, scope, "btc_getblockheader", rpc_context.clone())?)?;
+    rpc_table.set("btc_getbestblockhash", create_rpc_function(lua, scope, "btc_getbestblockhash", rpc_context.clone())?)?;
+    rpc_table.set("btc_getblockchaininfo", create_rpc_function(lua, scope, "btc_getblockchaininfo", rpc_context.clone())?)?;
+    rpc_table.set("btc_getrawtransaction", create_rpc_function(lua, scope, "btc_getrawtransaction", rpc_context.clone())?)?;
+    rpc_table.set("btc_sendrawtransaction", create_rpc_function(lua, scope, "btc_sendrawtransaction", rpc_context.clone())?)?;
+    rpc_table.set("btc_getmempoolinfo", create_rpc_function(lua, scope, "btc_getmempoolinfo", rpc_context.clone())?)?;
+    rpc_table.set("btc_getrawmempool", create_rpc_function(lua, scope, "btc_getrawmempool", rpc_context.clone())?)?;
+    rpc_table.set("btc_getmempoolentry", create_rpc_function(lua, scope, "btc_getmempoolentry", rpc_context.clone())?)?;
+    rpc_table.set("btc_getnetworkinfo", create_rpc_function(lua, scope, "btc_getnetworkinfo", rpc_context.clone())?)?;
+    rpc_table.set("btc_gettxout", create_rpc_function(lua, scope, "btc_gettxout", rpc_context.clone())?)?;
+    rpc_table.set("btc_decoderawtransaction", create_rpc_function(lua, scope, "btc_decoderawtransaction", rpc_context.clone())?)?;
+    
+    // Alkanes methods  
+    rpc_table.set("alkanes_getbytecode", create_rpc_function(lua, scope, "alkanes_getbytecode", rpc_context.clone())?)?;
+    rpc_table.set("alkanes_protorunesbyaddress", create_rpc_function(lua, scope, "alkanes_protorunesbyaddress", rpc_context.clone())?)?;
+    
+    // Metashrew methods
+    rpc_table.set("metashrew_view", create_rpc_function(lua, scope, "metashrew_view", rpc_context.clone())?)?;
+    rpc_table.set("metashrew_height", create_rpc_function(lua, scope, "metashrew_height", rpc_context.clone())?)?;
+    
+    // Sandshrew methods
+    rpc_table.set("sandshrew_multicall", create_rpc_function(lua, scope, "sandshrew_multicall", rpc_context.clone())?)?;
+    rpc_table.set("sandshrew_balances", create_rpc_function(lua, scope, "sandshrew_balances", rpc_context.clone())?)?;
+    
+    Ok(())
+}
+
+/// Convert JSON Value to Lua Value
+fn json_to_lua<'lua>(lua: &'lua Lua, value: &Value) -> LuaResult<LuaValue<'lua>> {
+    match value {
+        Value::Null => Ok(LuaValue::Nil),
+        Value::Bool(b) => Ok(LuaValue::Boolean(*b)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(LuaValue::Integer(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(LuaValue::Number(f))
+            } else {
+                Ok(LuaValue::Nil)
+            }
+        }
+        Value::String(s) => Ok(LuaValue::String(lua.create_string(s)?)),
+        Value::Array(arr) => {
+            let table = lua.create_table()?;
+            for (i, v) in arr.iter().enumerate() {
+                table.set(i + 1, json_to_lua(lua, v)?)?;
+            }
+            Ok(LuaValue::Table(table))
+        }
+        Value::Object(obj) => {
+            let table = lua.create_table()?;
+            for (k, v) in obj.iter() {
+                table.set(k.as_str(), json_to_lua(lua, v)?)?;
+            }
+            Ok(LuaValue::Table(table))
+        }
+    }
+}
+
+/// Convert Lua Value to JSON Value
+fn lua_to_json(value: &LuaValue, lua: &Lua) -> LuaResult<Value> {
+    match value {
+        LuaValue::Nil => Ok(Value::Null),
+        LuaValue::Boolean(b) => Ok(Value::Bool(*b)),
+        LuaValue::Integer(i) => Ok(Value::Number((*i).into())),
+        LuaValue::Number(n) => {
+            serde_json::Number::from_f64(*n)
+                .map(Value::Number)
+                .ok_or_else(|| mlua::Error::RuntimeError("Invalid number conversion".to_string()))
+        }
+        LuaValue::String(s) => {
+            let string = s.to_str()?.to_string();
+            Ok(Value::String(string))
+        }
+        LuaValue::Table(table) => {
+            // Check if it's an array (consecutive integer keys starting from 1)
+            let len = table.len()?;
+            if len > 0 {
+                // Try to build as array
+                let mut arr = Vec::new();
+                let mut is_array = true;
+                
+                for i in 1..=len {
+                    match table.get::<_, LuaValue>(i) {
+                        Ok(val) => arr.push(lua_to_json(&val, lua)?),
+                        Err(_) => {
+                            is_array = false;
+                            break;
+                        }
+                    }
+                }
+                
+                if is_array {
+                    return Ok(Value::Array(arr));
+                }
+            }
+            
+            // Build as object
+            let mut obj = serde_json::Map::new();
+            for pair in table.clone().pairs::<LuaValue, LuaValue>() {
+                let (k, v) = pair?;
+                let key = match k {
+                    LuaValue::String(s) => s.to_str()?.to_string(),
+                    LuaValue::Integer(i) => i.to_string(),
+                    LuaValue::Number(n) => n.to_string(),
+                    _ => continue,
+                };
+                obj.insert(key, lua_to_json(&v, lua)?);
+            }
+            Ok(Value::Object(obj))
+        }
+        _ => Ok(Value::Null),
+    }
+}

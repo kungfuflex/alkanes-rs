@@ -674,6 +674,14 @@ pub enum AlkanesCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Backtest a transaction by simulating it in a block and getting the trace
+    Backtest {
+        /// Transaction ID to backtest
+        txid: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl AlkanesCommands {

@@ -1,6 +1,7 @@
 mod config;
 mod handler;
 mod jsonrpc;
+mod lua_executor;
 mod proxy;
 mod sandshrew;
 
@@ -13,6 +14,7 @@ use std::sync::Arc;
 
 struct AppState {
     proxy: Arc<ProxyClient>,
+    script_storage: lua_executor::ScriptStorage,
 }
 
 async fn handle_jsonrpc(
@@ -28,7 +30,7 @@ async fn handle_jsonrpc(
 
     log::info!("{}|{}", ip, serde_json::to_string(&body.0).unwrap_or_default());
 
-    match handler::handle_request(&body.0, &state.proxy).await {
+    match handler::handle_request_with_storage(&body.0, &state.proxy, Some(&state.script_storage)).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             log::error!("Error handling request: {:?}", e);
@@ -72,6 +74,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(AppState {
                 proxy: proxy.clone(),
+                script_storage: lua_executor::ScriptStorage::new(),
             }))
             .app_data(web::JsonConfig::default().limit(100 * 1024 * 1024))
             .wrap(cors)

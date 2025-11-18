@@ -868,7 +868,15 @@ impl Protorune {
             }
         }
 
-        let protostones = Protostone::from_runestone(runestone)?;
+        let protostones = match Protostone::from_runestone(runestone) {
+            std::result::Result::Ok(ps) => ps,
+            std::result::Result::Err(e) => {
+                let tx_id = tx.compute_txid();
+                println!("[CRITICAL] Failed to decode protostones from runestone in tx {}: {:?}", tx_id, e);
+                println!("[CRITICAL] Runestone: {:?}", runestone);
+                panic!("Protostone::from_runestone failed for tx {}: {:?}", tx_id, e);
+            }
+        };
 
         if protostones.len() != 0 {
             let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();

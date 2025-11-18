@@ -436,6 +436,236 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         }
+        Alkanes::Backtest { txid, raw } => {
+            backtest_transaction(system, &txid, raw).await
+        }
+    }
+}
+
+async fn backtest_transaction<T: System>(system: &mut T, txid: &str, raw: bool) -> Result<()> {
+    use bitcoin::consensus::{Decodable, Encodable};
+    use bitcoin::Block;
+    use bitcoin::hashes::Hash;
+    use std::io::Cursor;
+    use std::str::FromStr;
+    use alkanes_cli_common::traits::BitcoinRpcProvider;
+    
+    // Step 1: Fetch the transaction hex
+    println!("📥 Fetching transaction {}...", txid);
+    let tx_hex = system.provider().get_tx_hex(txid).await?;
+    
+    // Decode the transaction to get details
+    let tx_bytes = hex::decode(&tx_hex)?;
+    let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
+    
+    // Step 2: Get the current block height to determine which block to query before
+    let current_height = system.provider().get_block_count().await?;
+    let block_tag_before = if current_height > 0 {
+        (current_height - 1).to_string()
+    } else {
+        "0".to_string()
+    };
+    
+    println!("📊 Creating simulated block...");
+    println!("   Current height: {}", current_height);
+    println!("   Querying state at height: {}", block_tag_before);
+    
+    // Step 3: Build a dummy block with a coinbase and our transaction
+    // Get the previous block hash
+    let prev_block_hash = if current_height > 0 {
+        let prev_hash_str = BitcoinRpcProvider::get_block_hash(system.provider(), current_height - 1).await?;
+        bitcoin::BlockHash::from_str(&prev_hash_str)?
+    } else {
+        bitcoin::BlockHash::from_byte_array([0u8; 32])
+    };
+    
+    // Create a simple coinbase transaction
+    let coinbase_tx = bitcoin::Transaction {
+        version: bitcoin::transaction::Version::TWO,
+        lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+        input: vec![bitcoin::TxIn {
+            previous_output: bitcoin::OutPoint::null(),
+            script_sig: bitcoin::ScriptBuf::new(),
+            sequence: bitcoin::Sequence::MAX,
+            witness: bitcoin::Witness::from_slice(&[vec![0u8; 32]]),
+        }],
+        output: vec![bitcoin::TxOut {
+            value: bitcoin::Amount::from_sat(50_00000000),
+            script_pubkey: bitcoin::ScriptBuf::new(),
+        }],
+    };
+    
+    // Create the block with coinbase and our transaction
+    let simulated_block = Block {
+        header: bitcoin::block::Header {
+            version: bitcoin::block::Version::TWO,
+            prev_blockhash: prev_block_hash,
+            merkle_root: bitcoin::TxMerkleNode::from_byte_array([0u8; 32]),
+            time: (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as u32),
+            bits: bitcoin::CompactTarget::from_consensus(0x1d00ffff),
+            nonce: 0,
+        },
+        txdata: vec![coinbase_tx, tx.clone()],
+    };
+    
+    // Encode the block to hex
+    let mut block_bytes = Vec::new();
+    simulated_block.consensus_encode(&mut block_bytes)?;
+    let block_hex = hex::encode(&block_bytes);
+    
+    println!("✅ Simulated block created ({} bytes)", block_bytes.len());
+    println!("   Transactions: coinbase + {}", txid);
+    
+    // Step 4: Build the trace input data
+    // The trace view function expects:
+    // 1. Height (u32) - 4 bytes
+    // 2. Protobuf-encoded Outpoint message (txid + vout)
+    println!("🔍 Preparing trace input data...");
+    let txid_bytes = hex::decode(txid)
+        .map_err(|e| anyhow::anyhow!("Invalid txid hex: {}", e))?;
+    
+    if txid_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("TXID must be 32 bytes, got {}", txid_bytes.len()));
+    }
+    
+    let vout: u32 = 0; // Trace the first output
+    
+    // Create protobuf Outpoint message
+    use protorune_support::proto::protorune::Outpoint;
+    use prost::Message;
+    
+    let outpoint = Outpoint {
+        txid: txid_bytes.clone(),
+        vout,
+    };
+    
+    let outpoint_bytes = outpoint.encode_to_vec();
+    
+    // Input data format: height (4 bytes) + protobuf outpoint
+    let height_u32: u32 = block_tag_before.parse()
+        .map_err(|e| anyhow::anyhow!("Invalid height: {}", e))?;
+    
+    let mut input_data = Vec::new();
+    input_data.extend_from_slice(&height_u32.to_le_bytes());  // Height as u32 LE
+    input_data.extend_from_slice(&outpoint_bytes);
+    
+    let input_data_hex = hex::encode(&input_data);
+    println!("   Height: {}", height_u32);
+    println!("   Outpoint: {}:{}", txid, vout);
+    println!("   Input data: {} bytes (height + protobuf outpoint)", input_data.len());
+    
+    // Step 5: Call metashrew_preview
+    println!("🔍 Calling metashrew_preview...");
+    
+    let params = serde_json::json!([
+        block_hex,
+        "trace",
+        input_data_hex,
+        block_tag_before
+    ]);
+    
+    use alkanes_cli_common::traits::JsonRpcProvider;
+    let metashrew_url = system.provider().get_metashrew_rpc_url()
+        .ok_or_else(|| anyhow::anyhow!("Metashrew RPC URL not configured"))?;
+    let result = system.provider().call(
+        &metashrew_url,
+        "metashrew_preview",
+        params,
+        1
+    ).await?;
+    
+    if raw {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
+    
+    // Step 6: Pretty print the transaction analysis
+    println!("\n{} Transaction Analysis {}\n", "═".repeat(30), "═".repeat(30));
+    pretty_print_transaction_analysis(&tx);
+    
+    // Step 7: Parse and print the trace
+    println!("\n{} Execution Trace {}\n", "═".repeat(30), "═".repeat(30));
+    
+    if let Some(trace_data) = result.get("trace") {
+        // Try to parse as protobuf trace
+        if let Some(trace_hex) = trace_data.as_str() {
+            let trace_hex = trace_hex.strip_prefix("0x").unwrap_or(trace_hex);
+            if let Ok(trace_bytes) = hex::decode(trace_hex) {
+                // Try to decode as alkanes trace
+                if let Ok(trace) = alkanes_support::trace::Trace::try_from(trace_bytes) {
+                    let trace_json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
+                    println!("{}", serde_json::to_string_pretty(&trace_json)?);
+                } else {
+                    println!("⚠️  Could not decode trace protobuf");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        } else {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+    } else {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    }
+    
+    Ok(())
+}
+
+fn pretty_print_transaction_analysis(tx: &bitcoin::Transaction) {
+    use colored::Colorize;
+    
+    println!("📋 {} {}", "Transaction ID:".bold(), tx.txid().to_string().bright_cyan());
+    println!("📏 {} {} bytes", "Size:".bold(), tx.total_size());
+    println!("⚖️  {} {} WU", "Weight:".bold(), tx.weight().to_wu());
+    println!("🔢 {} {}", "Version:".bold(), tx.version.0);
+    println!("🔒 {} {}", "Locktime:".bold(), tx.lock_time);
+    
+    println!("\n{} {} inputs", "Inputs:".bold().bright_blue(), tx.input.len());
+    for (i, input) in tx.input.iter().enumerate() {
+        if input.previous_output.is_null() {
+            println!("  {} {} {}", format!("{}.", i).dimmed(), "⛏️".bold(), "Coinbase".bright_green());
+        } else {
+            println!("  {} {}:{}", 
+                format!("{}.", i).dimmed(),
+                &input.previous_output.txid.to_string()[..16],
+                input.previous_output.vout
+            );
+            if !input.witness.is_empty() {
+                let witness_size: usize = input.witness.iter().map(|w| w.len()).sum();
+                println!("     {} {} items, {} bytes", 
+                    "Witness:".dimmed(),
+                    input.witness.len(),
+                    witness_size.to_string().bright_yellow()
+                );
+            }
+        }
+    }
+    
+    println!("\n{} {} outputs", "Outputs:".bold().bright_blue(), tx.output.len());
+    for (i, output) in tx.output.iter().enumerate() {
+        let output_icon = if output.script_pubkey.is_op_return() {
+            "📝"
+        } else if output.script_pubkey.is_p2tr() {
+            "🔑"
+        } else if output.script_pubkey.is_witness_program() {
+            "⚡"
+        } else {
+            "📤"
+        };
+        
+        println!("  {} {} {} sats",
+            format!("{}.", i).dimmed(),
+            output_icon,
+            output.value.to_sat().to_string().bright_yellow()
+        );
+        
+        if output.script_pubkey.is_op_return() {
+            println!("     {} OP_RETURN data", "📝".dimmed());
+        }
     }
 }
 

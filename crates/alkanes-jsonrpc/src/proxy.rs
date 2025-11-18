@@ -4,6 +4,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::Value;
 
+#[derive(Clone)]
 pub struct ProxyClient {
     client: Client,
     config: Config,

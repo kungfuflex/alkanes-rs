@@ -928,6 +928,14 @@ pub enum Alkanes {
         #[arg(long)]
         raw: bool,
     },
+    /// Backtest a transaction by simulating it in a block
+    Backtest {
+        /// Transaction ID to backtest
+        txid: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// Runestone subcommands

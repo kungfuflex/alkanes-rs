@@ -2933,6 +2933,11 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 }
                 Ok(())
             }
+            AlkanesCommands::Backtest { txid, raw } => {
+                // Backtest command is not implemented in alkanes-cli-sys
+                // It requires access to the full CLI environment
+                Err(anyhow::anyhow!("Backtest command is only available in alkanes-cli, not alkanes-cli-sys"))
+            }
         };
         res.map_err(|e| AlkanesError::Wallet(e.to_string()))
     }

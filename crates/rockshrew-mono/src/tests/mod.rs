@@ -5,6 +5,7 @@ pub mod concurrent_view_test;
 pub mod historical_view_test;
 pub mod integration_tests;
 pub mod preview_e2e_test;
+pub mod alkanes_backtest_test;
 pub mod reorg_focused_test;
 pub mod rocksdb_optimization_test;
 pub mod snapshot_sync_test;

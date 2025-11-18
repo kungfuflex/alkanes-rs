@@ -40,7 +40,9 @@ services:
         condition: service_healthy
     volumes:
       - metashrew-data:/data
+      - ./target/wasm32-unknown-unknown/release/alkanes.wasm:/metashrew/indexer.wasm:ro
     environment:
+      RUST_LOG: none
       DAEMON_RPC_ADDR: http://bitcoind:18443
       AUTH: bitcoinrpc:bitcoinrpc
       DB_PATH: /data

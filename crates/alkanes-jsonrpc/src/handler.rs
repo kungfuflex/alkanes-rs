@@ -8,6 +8,14 @@ pub async fn handle_request(
     request: &JsonRpcRequest,
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
+    handle_request_with_storage(request, proxy, None).await
+}
+
+pub async fn handle_request_with_storage(
+    request: &JsonRpcRequest,
+    proxy: &ProxyClient,
+    script_storage: Option<&crate::lua_executor::ScriptStorage>,
+) -> Result<JsonRpcResponse> {
     let method_parts: Vec<&str> = request.method.split('_').collect();
     
     if method_parts.is_empty() {
@@ -31,7 +39,7 @@ pub async fn handle_request(
         "alkanes" => handle_alkanes_method(&method_name, &request.params, &request.id, proxy).await,
         "metashrew" => handle_metashrew_method(request, proxy).await,
         "memshrew" => handle_memshrew_method(request, proxy).await,
-        "sandshrew" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy).await,
+        "sandshrew" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage).await,
         "btc" => handle_bitcoind_method(request, proxy).await,
         _ => handle_bitcoind_method(request, proxy).await,
     }

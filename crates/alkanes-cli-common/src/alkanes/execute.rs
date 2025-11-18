@@ -495,11 +495,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             Ok(Protostone {
                 protocol_tag: 1, // ALKANE protocol tag
                 burn: None,
-                refund: None,
+                refund: Some(0),  // Default refund to output 0
                 pointer: spec.bitcoin_transfer.as_ref().map(|t| match t.target {
                     OutputTarget::Output(v) => v,
                     _ => 0,
-                }),
+                }).or(Some(0)),  // Default pointer to output 0 if no bitcoin_transfer
                 from: None,
                 message,
                 edicts,
@@ -523,6 +523,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let runestone = Runestone {
             protocol: Some(protocol_values),
+            pointer: Some(0),  // Point to output 0 (the alkanes target output)
             ..Default::default()
         };
 
