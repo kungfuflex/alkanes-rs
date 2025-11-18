@@ -318,71 +318,71 @@ main() {
     # Note: We'll initialize it separately after deploying dependencies
     deploy_contract "dxBTC" "$WASM_DIR/dx_btc.wasm" $((0x1f00)) "0,32,0,4,$((0x1f01)),4,$((0x1f22)),4,$((0x1f14))"
     
-    # # Deploy yv-fr-btc-vault at [4, 0x1f01] (YV_FR_BTC_VAULT_ID)
-    # # Args: opcode(0), yv_fr_btc, yv_boost_id, fr_btc_diesel_lp_id, gauge_contract_id
-    # # TODO: Need to deploy yv_boost and gauge_contract first
-    # deploy_contract "yv-fr-btc Vault" "$WASM_DIR/yv_fr_btc_vault.wasm" $((0x1f01)) "0,4,$((0x1f01)),2,1,2,2,2,3"
+    # Deploy yv-fr-btc-vault at [4, 0x1f01] (YV_FR_BTC_VAULT_ID)
+    # Args: opcode(0), yv_fr_btc, yv_boost_id, fr_btc_diesel_lp_id, gauge_contract_id
+    # TODO: Need to deploy yv_boost and gauge_contract first
+    deploy_contract "yv-fr-btc Vault" "$WASM_DIR/yv_fr_btc_vault.wasm" $((0x1f01)) "0,4,$((0x1f01)),2,1,2,2,2,3"
     
-    # log_info "=========================================="
-    # log_info "Phase 2: LBTC Yield System"
-    # log_info "=========================================="
+    log_info "=========================================="
+    log_info "Phase 2: LBTC Yield System"
+    log_info "=========================================="
     
-    # # Deploy lbtc-yield-splitter at [4, 0x1f10] (LBTC_YIELD_SPLITTER_ID)
-    # # Args: opcode(0), lbtc_id, btc_pt_id, btc_yt_id, maturity_block
-    # deploy_contract "LBTC Yield Splitter" "$WASM_DIR/lbtc_yield_splitter.wasm" $((0x1f10)) "0,4,$((0x1f17)),4,$((0x1f11)),4,$((0x1f12)),1000000"
+    # Deploy lbtc-yield-splitter at [4, 0x1f10] (LBTC_YIELD_SPLITTER_ID)
+    # Args: opcode(0), lbtc_id, btc_pt_id, btc_yt_id, maturity_block
+    deploy_contract "LBTC Yield Splitter" "$WASM_DIR/lbtc_yield_splitter.wasm" $((0x1f10)) "0,4,$((0x1f17)),4,$((0x1f11)),4,$((0x1f12)),1000000"
     
-    # # Deploy p-lbtc at [4, 0x1f11] (PLBTC_ID)
-    # # Args: opcode(0), splitter_id
-    # deploy_contract "pLBTC (Principal LBTC)" "$WASM_DIR/p_lbtc.wasm" $((0x1f11)) "0,4,$((0x1f10))"
+    # Deploy p-lbtc at [4, 0x1f11] (PLBTC_ID)
+    # Args: opcode(0), splitter_id
+    deploy_contract "pLBTC (Principal LBTC)" "$WASM_DIR/p_lbtc.wasm" $((0x1f11)) "0,4,$((0x1f10))"
     
-    # # Deploy yx-lbtc at [4, 0x1f12] (YXLBTC_ID)
-    # # Args: opcode(0), splitter_id
-    # deploy_contract "yxLBTC (Yield LBTC)" "$WASM_DIR/yx_lbtc.wasm" $((0x1f12)) "0,4,$((0x1f10))"
+    # Deploy yx-lbtc at [4, 0x1f12] (YXLBTC_ID)
+    # Args: opcode(0), splitter_id
+    deploy_contract "yxLBTC (Yield LBTC)" "$WASM_DIR/yx_lbtc.wasm" $((0x1f12)) "0,4,$((0x1f10))"
     
-    # # Deploy frost-token at [4, 0x1f13] (FROST_TOKEN_ID)
-    # # Args: opcode(0), total_supply, treasury
-    # deploy_contract "FROST Token" "$WASM_DIR/frost_token.wasm" $((0x1f13)) "0,1000000000000000000,4,$((0x1f00))"
+    # Deploy frost-token at [4, 0x1f13] (FROST_TOKEN_ID)
+    # Args: opcode(0), total_supply, treasury
+    deploy_contract "FROST Token" "$WASM_DIR/frost_token.wasm" $((0x1f13)) "0,1000000000000000000,4,$((0x1f00))"
     
-    # # Deploy vx-frost-gauge at [4, 0x1f14] (VX_FROST_GAUGE_ID)
-    # # NOTE: vxFROST is deployed directly (not instantiated) because dx-btc needs to reference it at init time
-    # # Args: opcode(0), frost_token
-    # deploy_contract "vxFROST Gauge" "$WASM_DIR/vx_frost_gauge.wasm" $((0x1f14)) "0,4,$((0x1f13))"
+    # Deploy vx-frost-gauge at [4, 0x1f14] (VX_FROST_GAUGE_ID)
+    # NOTE: vxFROST is deployed directly (not instantiated) because dx-btc needs to reference it at init time
+    # Args: opcode(0), frost_token
+    deploy_contract "vxFROST Gauge" "$WASM_DIR/vx_frost_gauge.wasm" $((0x1f14)) "0,4,$((0x1f13))"
     
-    # # Deploy synth-pool at [4, 0x1f15] (SYNTH_POOL_ID)
-    # # Synth pool may not need initialization args or may need different pattern
-    # deploy_contract "Synth Pool (pLBTC/frBTC)" "$WASM_DIR/synth_pool.wasm" $((0x1f15)) "0"
+    # Deploy synth-pool at [4, 0x1f15] (SYNTH_POOL_ID)
+    # Synth pool may not need initialization args or may need different pattern
+    deploy_contract "Synth Pool (pLBTC/frBTC)" "$WASM_DIR/synth_pool.wasm" $((0x1f15)) "0"
     
-    # log_info "=========================================="
-    # log_info "Phase 3: LBTC Oracle System"
-    # log_info "=========================================="
+    log_info "=========================================="
+    log_info "Phase 3: LBTC Oracle System"
+    log_info "=========================================="
     
-    # # Deploy lbtc-oracle (unit alkane) at [4, 0x1f16] (LBTC_ORACLE_ID)
-    # # Args: opcode(0), amount
-    # deploy_contract "LBTC Oracle" "$WASM_DIR/unit.wasm" $((0x1f16)) "0,1000000000000"
+    # Deploy lbtc-oracle (unit alkane) at [4, 0x1f16] (LBTC_ORACLE_ID)
+    # Args: opcode(0), amount
+    deploy_contract "LBTC Oracle" "$WASM_DIR/unit.wasm" $((0x1f16)) "0,1000000000000"
     
-    # # Deploy lbtc token at [4, 0x1f17] (LBTC_ID)
-    # # Args: opcode(0), oracle_id
-    # deploy_contract "LBTC Token" "$WASM_DIR/lbtc.wasm" $((0x1f17)) "0,4,$((0x1f16))"
+    # Deploy lbtc token at [4, 0x1f17] (LBTC_ID)
+    # Args: opcode(0), oracle_id
+    deploy_contract "LBTC Token" "$WASM_DIR/lbtc.wasm" $((0x1f17)) "0,4,$((0x1f16))"
     
-    # log_info "=========================================="
-    # log_info "Phase 4: Template Contracts"
-    # log_info "=========================================="
+    log_info "=========================================="
+    log_info "Phase 4: Template Contracts"
+    log_info "=========================================="
     
-    # # Deploy unit template at [4, 0x1f20] (UNIT_TEMPLATE_ID)
-    # # Args: opcode(0), amount
-    # deploy_contract "Unit Template" "$WASM_DIR/unit.wasm" $((0x1f20)) "0,0"
+    # Deploy unit template at [4, 0x1f20] (UNIT_TEMPLATE_ID)
+    # Args: opcode(0), amount
+    deploy_contract "Unit Template" "$WASM_DIR/unit.wasm" $((0x1f20)) "0,0"
     
-    # # Deploy ve-token-vault-template at [4, 0x1f21] (VE_TOKEN_VAULT_TEMPLATE_ID)
-    # # Templates don't need initialization when deployed - they're initialized when cloned
-    # deploy_contract "VE Token Vault Template" "$WASM_DIR/ve_token_vault_template.wasm" $((0x1f21)) "0"
+    # Deploy ve-token-vault-template at [4, 0x1f21] (VE_TOKEN_VAULT_TEMPLATE_ID)
+    # Templates don't need initialization when deployed - they're initialized when cloned
+    deploy_contract "VE Token Vault Template" "$WASM_DIR/ve_token_vault_template.wasm" $((0x1f21)) "0"
     
-    # # Deploy yve-token-nft-template at [4, 0x1f22] (YVE_TOKEN_NFT_TEMPLATE_ID)
-    # # Templates don't need initialization when deployed - they're initialized when cloned
-    # deploy_contract "YVE Token NFT Template" "$WASM_DIR/yve_token_nft_template.wasm" $((0x1f22)) "0"
+    # Deploy yve-token-nft-template at [4, 0x1f22] (YVE_TOKEN_NFT_TEMPLATE_ID)
+    # Templates don't need initialization when deployed - they're initialized when cloned
+    deploy_contract "YVE Token NFT Template" "$WASM_DIR/yve_token_nft_template.wasm" $((0x1f22)) "0"
     
-    # # Deploy vx-token-gauge-template at [4, 0x1f23] (VX_TOKEN_GAUGE_TEMPLATE_ID)
-    # # Templates don't need initialization when deployed - they're initialized when cloned
-    # deploy_contract "VX Token Gauge Template" "$WASM_DIR/vx_token_gauge_template.wasm" $((0x1f23)) "0"
+    # Deploy vx-token-gauge-template at [4, 0x1f23] (VX_TOKEN_GAUGE_TEMPLATE_ID)
+    # Templates don't need initialization when deployed - they're initialized when cloned
+    deploy_contract "VX Token Gauge Template" "$WASM_DIR/vx_token_gauge_template.wasm" $((0x1f23)) "0"
     
     # log_info "=========================================="
     # log_info "Phase 5: DIESEL Governance System (Instantiated from Templates)"
