@@ -24,7 +24,7 @@ pub fn _start() {
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
-pub extern "C" fn getblock() -> i32 {
+pub extern "C" fn getblock() -> u32 {
     let mut height_bytes = Cursor::new(input());
     let height = metashrew_support::utils::consume_sized_int::<u32>(&mut height_bytes).unwrap();
     let key = format!("/blocks/{}", height).into_bytes();
@@ -35,7 +35,7 @@ pub extern "C" fn getblock() -> i32 {
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
-pub fn blocktracker() -> i32 {
+pub fn blocktracker() -> u32 {
     export_bytes(
         IndexPointer::from_keyword("/blocktracker")
             .get()
