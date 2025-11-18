@@ -577,12 +577,22 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         };
     
         for (i, input) in temp_tx.input.iter_mut().enumerate() {
-            if envelope.is_some() && i == 0 {
-                // This is the commit input, which will be a script-path spend.
-                // The witness will be: <signature> <script> <control_block>
-                // We use a larger placeholder to get a more accurate fee estimation.
-                // A value of 400 bytes should be sufficient for most contract sizes.
-                input.witness.push([0u8; 400]);
+            if let Some(env) = envelope {
+                if i == 0 {
+                    // This is the commit input with envelope, which will be a script-path spend.
+                    // The witness will be: <signature> <script> <control_block>
+                    // Build the actual reveal script to get accurate size
+                    let reveal_script = env.build_reveal_script();
+                    
+                    // Estimate witness sizes:
+                    // - Signature: 64 bytes (Schnorr signature)
+                    // - Script: actual reveal script size
+                    // - Control block: ~33 bytes (1 byte version + 32 byte internal key)
+                    let estimated_witness_size = 64 + reveal_script.len() + 33;
+                    input.witness.push(vec![0u8; estimated_witness_size]);
+                } else {
+                    input.witness.push([0u8; 65]);
+                }
             } else {
                 // Regular p2tr key-path spend or other witness types.
                 // A 65-byte witness is a good estimate for a P2TR key-path spend.
@@ -592,8 +602,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     
         let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
         let estimated_fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
-        let capped_fee = estimated_fee.min(MAX_FEE_SATS);
-        log::info!("Estimated fee: {estimated_fee}, Capped fee: {capped_fee}");
+        // Add a small buffer (1%) to account for any size differences between temp tx and final signed tx
+        let estimated_fee_with_buffer = (estimated_fee as f64 * 1.01).ceil() as u64;
+        let capped_fee = estimated_fee_with_buffer.min(MAX_FEE_SATS);
+        log::info!("Estimated fee: {estimated_fee}, With buffer: {estimated_fee_with_buffer}, Capped fee: {capped_fee}");
     
         let total_output_value_sans_change: u64 = outputs.iter()
             .filter(|o| o.value.to_sat() > 0)

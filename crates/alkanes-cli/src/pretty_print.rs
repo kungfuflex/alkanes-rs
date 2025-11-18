@@ -188,3 +188,112 @@ pub fn print_inspection_result(result: &alkanes_cli_common::alkanes::types::Alka
     }
     println!("{}", root);
 }
+
+pub fn print_esplora_transactions(txs: &[alkanes_cli_common::esplora::EsploraTransaction]) {
+    if txs.is_empty() {
+        println!("📭 No transactions found");
+        return;
+    }
+
+    let mut trees = Vec::new();
+    for tx in txs {
+        let status_icon = if tx.status.as_ref().map_or(false, |s| s.confirmed) {
+            "✅"
+        } else {
+            "⏳"
+        };
+        
+        let mut tx_tree = Tree::new(format!("{} {} {}", status_icon, "TXID:".bold(), tx.txid.bright_cyan()));
+        
+        // Status info
+        if let Some(status) = &tx.status {
+            let mut status_tree = Tree::new(format!("{}", "Status:".bold()));
+            if status.confirmed {
+                status_tree.push(Tree::new(format!("✅ {}", "Confirmed".green())));
+                if let Some(height) = status.block_height {
+                    status_tree.push(Tree::new(format!("{} {}", "Block Height:".bold(), height)));
+                }
+                if let Some(hash) = &status.block_hash {
+                    status_tree.push(Tree::new(format!("{} {}...", "Block Hash:".bold(), &hash[..16])));
+                }
+                if let Some(time) = status.block_time {
+                    status_tree.push(Tree::new(format!("{} {}", "Block Time:".bold(), time)));
+                }
+            } else {
+                status_tree.push(Tree::new(format!("⏳ {}", "Mempool".yellow())));
+            }
+            tx_tree.push(status_tree);
+        }
+        
+        // Basic tx info
+        tx_tree.push(Tree::new(format!("{} {} sats", "Fee:".bold(), tx.fee.to_string().bright_yellow())));
+        tx_tree.push(Tree::new(format!("{} {}", "Size:".bold(), tx.size)));
+        tx_tree.push(Tree::new(format!("{} {}", "Weight:".bold(), tx.weight)));
+        tx_tree.push(Tree::new(format!("{} {}", "Version:".bold(), tx.version)));
+        tx_tree.push(Tree::new(format!("{} {}", "Locktime:".bold(), tx.locktime)));
+        
+        // Inputs
+        let mut inputs_tree = Tree::new(format!("{} {} inputs", "Inputs:".bold(), tx.vin.len().to_string().bright_blue()));
+        for (i, vin) in tx.vin.iter().enumerate() {
+            if vin.is_coinbase {
+                inputs_tree.push(Tree::new(format!("{} {} {}", i.to_string().dimmed(), "⛏️".bold(), "Coinbase".bright_green())));
+            } else {
+                let mut input_tree = Tree::new(format!("{} {}:{}", i.to_string().dimmed(), &vin.txid[..16], vin.vout));
+                if let Some(prevout) = &vin.prevout {
+                    input_tree.push(Tree::new(format!("{} {} sats", "Value:".bold(), prevout.value.to_string().bright_yellow())));
+                    if let Some(addr) = &prevout.scriptpubkey_address {
+                        input_tree.push(Tree::new(format!("{} {}", "Address:".bold(), addr)));
+                    }
+                    input_tree.push(Tree::new(format!("{} {}", "Type:".bold(), prevout.scriptpubkey_type)));
+                }
+                if let Some(witness) = &vin.witness {
+                    if !witness.is_empty() {
+                        let witness_str = if witness.len() > 1 {
+                            format!("{} items", witness.len())
+                        } else {
+                            "1 item".to_string()
+                        };
+                        input_tree.push(Tree::new(format!("{} {}", "Witness:".bold(), witness_str.dimmed())));
+                    }
+                }
+                inputs_tree.push(input_tree);
+            }
+        }
+        tx_tree.push(inputs_tree);
+        
+        // Outputs
+        let mut outputs_tree = Tree::new(format!("{} {} outputs", "Outputs:".bold(), tx.vout.len().to_string().bright_blue()));
+        for (i, vout) in tx.vout.iter().enumerate() {
+            let output_icon = match vout.scriptpubkey_type.as_str() {
+                "op_return" => "📝",
+                "v1_p2tr" => "🔑",
+                "v0_p2wpkh" | "v0_p2wsh" => "⚡",
+                _ => "📤",
+            };
+            
+            let mut output_tree = Tree::new(format!("{} {} {} sats", 
+                i.to_string().dimmed(), 
+                output_icon, 
+                vout.value.to_string().bright_yellow()
+            ));
+            
+            if let Some(addr) = &vout.scriptpubkey_address {
+                output_tree.push(Tree::new(format!("{} {}", "Address:".bold(), addr)));
+            }
+            output_tree.push(Tree::new(format!("{} {}", "Type:".bold(), vout.scriptpubkey_type)));
+            
+            if vout.scriptpubkey_type == "op_return" {
+                output_tree.push(Tree::new(format!("{} {}", "Data:".bold(), &vout.scriptpubkey_asm.dimmed())));
+            }
+            
+            outputs_tree.push(output_tree);
+        }
+        tx_tree.push(outputs_tree);
+        
+        trees.push(tx_tree);
+    }
+    
+    let root = Tree::new(format!("📄 {} transaction{}", txs.len(), if txs.len() == 1 { "" } else { "s" }))
+        .with_leaves(trees);
+    println!("{}", root);
+}

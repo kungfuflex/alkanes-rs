@@ -330,7 +330,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             Ok(())
         },
         Alkanes::Spendables { address, raw } => {
-            let result = system.provider().spendables_by_address(&address).await?;
+            let resolved_address = system.provider().resolve_all_identifiers(&address).await?;
+            let result = system.provider().spendables_by_address(&resolved_address).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -368,7 +369,12 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             Ok(())
         },
         Alkanes::GetBalance { address, raw } => {
-            let result = AlkanesProvider::get_balance(system.provider(), address.as_deref()).await?;
+            let resolved_address = if let Some(addr) = &address {
+                Some(system.provider().resolve_all_identifiers(addr).await?)
+            } else {
+                None
+            };
+            let result = AlkanesProvider::get_balance(system.provider(), resolved_address.as_deref()).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -567,7 +573,8 @@ async fn execute_esplora_command(
             }
         }
         alkanes_cli_common::commands::EsploraCommands::Address { params, raw } => {
-            let result = provider.get_address_info(&params).await?;
+            let resolved_address = provider.resolve_all_identifiers(&params).await?;
+            let result = provider.get_address_info(&resolved_address).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -575,15 +582,21 @@ async fn execute_esplora_command(
             }
         }
         alkanes_cli_common::commands::EsploraCommands::AddressTxs { params, raw } => {
-            let result = provider.get_address_txs(&params).await?;
+            let resolved_address = provider.resolve_all_identifiers(&params).await?;
+            let result = provider.get_address_txs(&resolved_address).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!("📄 Transactions for address {}:\n{}", params, serde_json::to_string_pretty(&result)?);
+                // Parse JSON result into EsploraTransaction structs for pretty printing
+                let txs: Vec<alkanes_cli_common::esplora::EsploraTransaction> = serde_json::from_value(result)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse transactions: {}", e))?;
+                println!("📄 Transactions for address {}:", params);
+                pretty_print::print_esplora_transactions(&txs);
             }
         }
         alkanes_cli_common::commands::EsploraCommands::AddressTxsChain { params, raw } => {
-            let result = provider.get_address_txs_chain(&params, None).await?;
+            let resolved_address = provider.resolve_all_identifiers(&params).await?;
+            let result = provider.get_address_txs_chain(&resolved_address, None).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -591,7 +604,8 @@ async fn execute_esplora_command(
             }
         }
         alkanes_cli_common::commands::EsploraCommands::AddressTxsMempool { address, raw } => {
-            let result = provider.get_address_txs_mempool(&address).await?;
+            let resolved_address = provider.resolve_all_identifiers(&address).await?;
+            let result = provider.get_address_txs_mempool(&resolved_address).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -599,7 +613,8 @@ async fn execute_esplora_command(
             }
         }
         alkanes_cli_common::commands::EsploraCommands::AddressUtxo { address, raw } => {
-            let result = provider.get_address_utxo(&address).await?;
+            let resolved_address = provider.resolve_all_identifiers(&address).await?;
+            let result = provider.get_address_utxo(&resolved_address).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -752,8 +767,9 @@ async fn execute_ord_command(
             }
         }
         alkanes_cli_common::commands::OrdCommands::AddressInfo { address, raw } => {
+            let resolved_address = provider.resolve_all_identifiers(&address).await?;
             if raw {
-                let info = provider.get_ord_address_info(&address).await?;
+                let info = provider.get_ord_address_info(&resolved_address).await?;
                 let json_value = serde_json::to_value(&info)?;
                 if let Some(s) = json_value.as_str() {
                     println!("{s}");
@@ -761,7 +777,7 @@ async fn execute_ord_command(
                     println!("{json_value}");
                 }
             } else {
-                let info = provider.get_ord_address_info(&address).await?;
+                let info = provider.get_ord_address_info(&resolved_address).await?;
                 print_address_info(&info);
             }
         }
@@ -911,8 +927,9 @@ async fn execute_protorunes_command(
             block_tag,
             protocol_tag,
         } => {
+            let resolved_address = provider.resolve_all_identifiers(&address).await?;
             let result = provider
-                .protorunes_by_address(&address, block_tag, protocol_tag)
+                .protorunes_by_address(&resolved_address, block_tag, protocol_tag)
                 .await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
