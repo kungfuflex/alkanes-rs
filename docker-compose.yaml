@@ -3,6 +3,7 @@ volumes:
   bitcoin-data:
   metashrew-data:
   postgres-data:
+  redis-data:
 services:
   bitcoind:
     build:
@@ -142,6 +143,19 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   alkanes-contract-indexer:
     build:
       dockerfile: Dockerfile
@@ -152,11 +166,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       jsonrpc:
         condition: service_started
     environment:
       RUST_LOG: info
       DATABASE_URL: postgres://alkanes_user:alkanes_pass@postgres:5432/alkanes_indexer
+      REDIS_URL: redis://redis:6379/
       SANDSHREW_RPC_URL: http://jsonrpc:18888
       NETWORK: regtest
       POLL_INTERVAL_MS: 2000
