@@ -474,7 +474,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     }
 
     fn convert_protostone_specs(&self, specs: &[ProtostoneSpec]) -> Result<Vec<protorune_support::protostone::Protostone>> {
-        specs.iter().map(|spec| {
+        // We need to know how many physical outputs there are to calculate protostone shadow outputs
+        // For now, we'll need to pass this information. Let's use a helper closure.
+        self.convert_protostone_specs_with_output_count(specs, 0) // Will be updated with actual count
+    }
+
+    fn convert_protostone_specs_with_output_count(&self, specs: &[ProtostoneSpec], num_physical_outputs: u32) -> Result<Vec<protorune_support::protostone::Protostone>> {
+        specs.iter().enumerate().map(|(i, spec)| {
             let edicts = spec.edicts.iter().map(|e| {
                 Ok(ProtostoneEdict {
                     id: protorune_support::balance_sheet::ProtoruneRuneId {
@@ -484,22 +490,62 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     amount: e.amount as u128,
                     output: match e.target {
                         OutputTarget::Output(v) => v as u128,
-                        _ => 0, // Other targets not directly representable in ProtostoneEdict
+                        OutputTarget::Protostone(p) => (num_physical_outputs + p) as u128,
+                        OutputTarget::Split => 0, // Split not supported in ProtostoneEdict
                     },
                 })
             }).collect::<Result<Vec<_>>>()?;
 
             let message = spec.cellpack.as_ref().map(|c| c.encipher()).unwrap_or_default();
-            log::info!("Converting protostone spec: cellpack present={}, message_len={}", spec.cellpack.is_some(), message.len());
+            log::info!("Converting protostone #{}: cellpack present={}, message_len={}", i, spec.cellpack.is_some(), message.len());
+            
+            // Convert pointer: v{N} -> N, p{N} -> num_physical_outputs + N
+            let pointer = match &spec.pointer {
+                Some(OutputTarget::Output(v)) => {
+                    log::info!("  Pointer: v{} (physical output {})", v, v);
+                    Some(*v)
+                }
+                Some(OutputTarget::Protostone(p)) => {
+                    let calculated = num_physical_outputs + p;
+                    log::info!("  Pointer: p{} (shadow output = {} + {} = {})", p, num_physical_outputs, p, calculated);
+                    Some(calculated)
+                }
+                Some(OutputTarget::Split) => {
+                    log::warn!("  Pointer: Split not supported for protostones, defaulting to 0");
+                    Some(0)
+                }
+                None => {
+                    log::info!("  Pointer: None, defaulting to 0");
+                    Some(0)
+                }
+            };
+
+            // Convert refund: v{N} -> N, p{N} -> num_physical_outputs + N
+            let refund = match &spec.refund {
+                Some(OutputTarget::Output(v)) => {
+                    log::info!("  Refund: v{} (physical output {})", v, v);
+                    Some(*v)
+                }
+                Some(OutputTarget::Protostone(p)) => {
+                    let calculated = num_physical_outputs + p;
+                    log::info!("  Refund: p{} (shadow output = {} + {} = {})", p, num_physical_outputs, p, calculated);
+                    Some(calculated)
+                }
+                Some(OutputTarget::Split) => {
+                    log::warn!("  Refund: Split not supported for protostones, defaulting to 0");
+                    Some(0)
+                }
+                None => {
+                    log::info!("  Refund: None, defaulting to 0");
+                    Some(0)
+                }
+            };
             
             Ok(Protostone {
                 protocol_tag: 1, // ALKANE protocol tag
                 burn: None,
-                refund: Some(0),  // Default refund to output 0
-                pointer: spec.bitcoin_transfer.as_ref().map(|t| match t.target {
-                    OutputTarget::Output(v) => v,
-                    _ => 0,
-                }).or(Some(0)),  // Default pointer to output 0 if no bitcoin_transfer
+                refund,
+                pointer,
                 from: None,
                 message,
                 edicts,
@@ -507,10 +553,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }).collect()
     }
 
-    fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], _num_outputs: usize) -> Result<ScriptBuf> {
-        log::info!("Constructing runestone with {} protostones", protostones.len());
+    fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize) -> Result<ScriptBuf> {
+        log::info!("Constructing runestone with {} protostones and {} physical outputs", protostones.len(), num_outputs);
         
-        let converted_protostones = self.convert_protostone_specs(protostones)?;
+        let converted_protostones = self.convert_protostone_specs_with_output_count(protostones, num_outputs as u32)?;
 
         // Debug logging
         for (i, p) in converted_protostones.iter().enumerate() {

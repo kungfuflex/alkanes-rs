@@ -102,9 +102,7 @@ fn parse_single_protostone(spec_str: &str) -> Result<ProtostoneSpec> {
         current_part = part_iter.next();
     }
 
-    // The pointer and refund_pointer are parsed but not used in the current struct.
-    // This is fine as per the user's instructions.
-    // We can log them for debugging.
+    // Log the parsed pointer and refund_pointer
     log::debug!("Parsed pointer: {pointer:?}");
     log::debug!("Parsed refund_pointer: {refund_pointer:?}");
 
@@ -112,6 +110,8 @@ fn parse_single_protostone(spec_str: &str) -> Result<ProtostoneSpec> {
         cellpack,
         edicts,
         bitcoin_transfer,
+        pointer,
+        refund: refund_pointer,
     })
 }
 

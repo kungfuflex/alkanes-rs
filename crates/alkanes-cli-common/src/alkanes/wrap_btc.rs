@@ -186,7 +186,7 @@ impl<'a> WrapBtcExecutor<'a> {
         use alkanes_support::id::AlkaneId as SupportAlkaneId;
         
         // First protostone: Call frBTC {32, 0} opcode 77 (Wrap)
-        // The pointer will be managed by the protostone message itself
+        // Pointer to second protostone (p0) to send minted frBTC there
         let first_protostone = ProtostoneSpec {
             cellpack: Some(alkanes_support::cellpack::Cellpack {
                 target: SupportAlkaneId {
@@ -200,6 +200,8 @@ impl<'a> WrapBtcExecutor<'a> {
                 amount: 0, // Will be filled by executor
                 target: OutputTarget::Output(0), // Send BTC to subfrost address
             }),
+            pointer: Some(OutputTarget::Protostone(0)),  // Point to second protostone
+            refund: Some(OutputTarget::Output(0)),  // Refund to output 0
         };
 
         // Second protostone: Call vault {4, 3032615708} opcode 1 (Lock)
@@ -213,6 +215,8 @@ impl<'a> WrapBtcExecutor<'a> {
             }),
             edicts: vec![], // No edicts, receives frBTC from first protostone's pointer
             bitcoin_transfer: None,
+            pointer: Some(OutputTarget::Output(0)),  // Result goes to output 0
+            refund: Some(OutputTarget::Output(0)),  // Refund to output 0
         };
 
         Ok(vec![first_protostone, second_protostone])

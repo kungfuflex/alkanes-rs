@@ -64,6 +64,12 @@ pub struct ProtostoneSpec {
     pub edicts: Vec<ProtostoneEdict>,
     /// Bitcoin transfer specification (for B: transfers)
     pub bitcoin_transfer: Option<BitcoinTransfer>,
+    /// Pointer target (where the protostone result should go)
+    /// Can be v{N} for physical output N or p{N} for shadow protostone output N
+    pub pointer: Option<OutputTarget>,
+    /// Refund pointer target (where refunds should go)
+    /// Can be v{N} for physical output N or p{N} for shadow protostone output N
+    pub refund: Option<OutputTarget>,
 }
 
 /// Bitcoin transfer specification
