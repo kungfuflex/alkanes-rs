@@ -377,7 +377,7 @@ pub fn setup_ftrbtc(block: &Block) -> Result<()> {
         refund_pointer: 0,
         calldata: (Cellpack {
             target: ftr_btc_id.clone(),
-            inputs: vec![0], // Initialize opcode
+            inputs: vec![0, 0, 4, 7936], // Initialize opcode
         })
         .encipher(),
         sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
