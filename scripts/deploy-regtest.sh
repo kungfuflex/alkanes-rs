@@ -548,6 +548,10 @@ main() {
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$INIT_PROTOSTONE" \
+        --inputs B:10000 \
+        --to p2tr:1 \
+        --change p2tr:2 \
+        --from p2tr:0 \
         --fee-rate 1 \
         --mine \
         --trace \
