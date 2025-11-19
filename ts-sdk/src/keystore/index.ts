@@ -23,6 +23,7 @@ import {
 } from '../types';
 
 // Re-export the WASM keystore functions
+// @ts-ignore - WASM types are available at runtime
 import type * as AlkanesWasm from '../../build/wasm/alkanes_web_sys';
 
 /**

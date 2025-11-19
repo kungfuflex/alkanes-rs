@@ -81,7 +81,7 @@
     "typescript": "^5.6.3"
   },
   "peerDependencies": {
-    "@oyl/sdk": "^1.18.0"
+    "@oyl/sdk": "*"
   },
   "peerDependenciesMeta": {
     "@oyl/sdk": {
