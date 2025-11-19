@@ -985,6 +985,20 @@ impl WalletProvider for ConcreteProvider {
                     } else {
                         0
                     };
+                    
+                    // Check if this UTXO is from a coinbase transaction
+                    let is_coinbase = match self.get_tx(&utxo.txid).await {
+                        Ok(tx_json) => {
+                            if let Ok(tx) = serde_json::from_value::<crate::esplora::EsploraTransaction>(tx_json) {
+                                // A transaction is coinbase if it has exactly 1 input with a null previous output
+                                tx.vin.len() == 1 && tx.vin[0].is_coinbase
+                            } else {
+                                false
+                            }
+                        }
+                        Err(_) => false, // If we can't fetch the tx, assume it's not coinbase
+                    };
+                    
                     let utxo_info = UtxoInfo {
                         txid: utxo.txid,
                         vout: utxo.vout,
@@ -998,7 +1012,7 @@ impl WalletProvider for ConcreteProvider {
                         has_inscriptions: false,
                         has_runes: false,
                         has_alkanes: false,
-                        is_coinbase: false,
+                        is_coinbase,
                     };
                     all_utxos.push((outpoint, utxo_info));
                 }

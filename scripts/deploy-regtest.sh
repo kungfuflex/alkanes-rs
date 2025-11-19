@@ -136,6 +136,17 @@ fund_wallet() {
     fi
 }
 
+# Ensure coinbase maturity by mining additional blocks
+ensure_coinbase_maturity() {
+    log_info "Ensuring coinbase maturity (mining 101 blocks to mature recent coinbases)..."
+    "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 101 "p2tr:0" > /dev/null 2>&1
+    
+    log_info "Waiting for sandshrew to index maturity blocks (10 seconds)..."
+    sleep 10
+    
+    log_success "Coinbase outputs matured"
+}
+
 # Deploy a WASM contract using [3, tx] cellpack
 deploy_contract() {
     local CONTRACT_NAME=$1
@@ -499,7 +510,13 @@ main() {
     # deploy_contract "yvTOKEN Vault" "$WASM_DIR/yv_token_vault.wasm" 102 "1"
     
     # OYL AMM System (following oyl-protocol deployment pattern)
-    log_info "Deploying OYL AMM System..."
+    log_info "=========================================="
+    log_info "Phase 6: OYL AMM System"
+    log_info "=========================================="
+    
+    # Ensure we have mature coinbase outputs before deploying AMM
+    ensure_coinbase_maturity
+    
     echo ""
     
     # Deploy pool logic implementation (for cloning)
@@ -521,8 +538,9 @@ main() {
     deploy_contract "OYL Factory Proxy" "$WASM_DIR/alkanes_std_upgradeable.wasm" "$AMM_FACTORY_PROXY_TX" "$((0x7fff)),4,$AMM_FACTORY_LOGIC_IMPL_TX,1"
     
     # Initialize factory proxy
+    # Pattern: [3, proxy_tx, opcode=0, beacon_proxy_tx, beacon_block, beacon_tx]
     log_info "Initializing OYL Factory Proxy..."
-    INIT_PROTOSTONE="[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
+    INIT_PROTOSTONE="[3,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
     log_info "  Protostone: $INIT_PROTOSTONE"
     
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
@@ -533,11 +551,14 @@ main() {
         --fee-rate 1 \
         --mine \
         --trace \
-        -y \
-        > /dev/null 2>&1
+        -y
     
     if [ $? -eq 0 ]; then
         log_success "OYL Factory initialized"
+        
+        # Wait for metashrew to index
+        log_info "Waiting for metashrew to index factory initialization (5 seconds)..."
+        sleep 5
     else
         log_error "Failed to initialize OYL Factory"
     fi
