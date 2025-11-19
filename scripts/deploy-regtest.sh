@@ -226,7 +226,7 @@ initialize_contract() {
     log_info "Initializing $CONTRACT_NAME at $ALKANE_ID..."
     
     # Build the protostone format: [block:tx:opcode,args...]
-    local PROTOSTONE="[$ALKANE_ID:0$([ -n "$ARGS" ] && echo ",$ARGS" || echo "")]"
+    local PROTOSTONE="[$ALKANE_ID:0$([ -n "$ARGS" ] && echo ",$ARGS" || echo "")]:v0:v0"
     
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
     "$ALKANES_CLI" -p regtest \
@@ -478,7 +478,7 @@ main() {
     
     # Initialize dx-btc at [4, 0x1f00] with frBTC[32,0] and yv-fr-btc-vault[4,0x1f01]
     log_info "Initializing dxBTC at [4, 0x1f00]..."
-    INIT_PROTOSTONE="[4,$((0x1f00)),0,32,0,4,$((0x1f01))]"
+    INIT_PROTOSTONE="[3,$((0x1f00)),0,32,0,4,$((0x1f01))]:v0:v0"
     log_info "  Protostone: $INIT_PROTOSTONE"
     
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
@@ -548,9 +548,6 @@ main() {
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$INIT_PROTOSTONE" \
-        --inputs B:10000 \
-        --to p2tr:1 \
-        --change p2tr:2 \
         --from p2tr:0 \
         --fee-rate 1 \
         --mine \

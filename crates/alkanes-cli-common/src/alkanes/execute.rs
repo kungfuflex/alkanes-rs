@@ -309,9 +309,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
         let total_bitcoin_needed: u64 = outputs.iter().filter(|o| o.value.to_sat() > 0).map(|o| o.value.to_sat()).sum();
         let mut final_requirements = params.input_requirements.iter().filter(|req| !matches!(req, InputRequirement::Bitcoin {..})).cloned().collect::<Vec<_>>();
-        if total_bitcoin_needed > 0 {
-            final_requirements.push(InputRequirement::Bitcoin { amount: total_bitcoin_needed });
-        }
+        
+        // Always select at least some Bitcoin for fees, even if no explicit outputs require it
+        // We'll use a rough estimate here and adjust in build_psbt_and_fee
+        let min_fee_estimate = (params.fee_rate.unwrap_or(1.0) * 300.0).ceil() as u64; // ~300 vbytes rough estimate
+        let bitcoin_requirement = total_bitcoin_needed.max(min_fee_estimate);
+        
+        final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
         let selected_utxos = self.select_utxos(&final_requirements, &params.from_addresses).await?;
         let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len())?;
         let (psbt, fee) = self.build_psbt_and_fee(selected_utxos.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
