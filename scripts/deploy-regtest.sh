@@ -4,8 +4,6 @@
 # This script deploys all alkanes to a local regtest environment
 # Pattern follows reference/oyl-amm/deploy-oyl-amm.sh
 
-set -e
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -477,28 +475,6 @@ main() {
     # NOTE: dx-btc and yv-fr-btc-vault are now deployed above in the reserved range
     
     # Initialize dx-btc at [4, 0x1f00] with frBTC[32,0] and yv-fr-btc-vault[4,0x1f01]
-    log_info "Initializing dxBTC at [4, 0x1f00]..."
-    INIT_PROTOSTONE="[3,$((0x1f00)),0,32,0,4,$((0x1f01))]:v0:v0"
-    log_info "  Protostone: $INIT_PROTOSTONE"
-    
-    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
-    "$ALKANES_CLI" -p regtest \
-        --wallet-file "$WALLET_FILE" \
-        --passphrase "$DEPLOY_PASSWORD" \
-        alkanes execute "$INIT_PROTOSTONE" \
-        --fee-rate 1 \
-        --mine \
-        --trace \
-        -y \
-        > /dev/null 2>&1
-    
-    if [ $? -eq 0 ]; then
-        log_success "dxBTC initialized"
-    else
-        log_warn "Failed to initialize dxBTC (may not need initialization)"
-    fi
-    
-    echo ""
     
     # Additional Test Contracts (if needed for specific test scenarios)
     # NOTE: DIESEL governance contracts are instantiated from templates above
@@ -513,9 +489,6 @@ main() {
     log_info "=========================================="
     log_info "Phase 6: OYL AMM System"
     log_info "=========================================="
-    
-    # Ensure we have mature coinbase outputs before deploying AMM
-    ensure_coinbase_maturity
     
     echo ""
     
@@ -570,11 +543,6 @@ main() {
     fi
     if [ -f "$WASM_DIR/btc_yt.wasm" ] && [ -s "$WASM_DIR/btc_yt.wasm" ]; then
         deploy_contract "BTC YT Token" "$WASM_DIR/btc_yt.wasm" 71
-    fi
-    
-    # FR-BTC (Full Wrapped BTC with signer)
-    if [ -f "$WASM_DIR/fr_btc.wasm" ] && [ -s "$WASM_DIR/fr_btc.wasm" ]; then
-        deploy_contract "frBTC (Full)" "$WASM_DIR/fr_btc.wasm" 80
     fi
     
     echo ""
