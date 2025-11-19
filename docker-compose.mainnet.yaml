@@ -1,0 +1,188 @@
+volumes:
+  bitcoin-data:
+  metashrew-data:
+  postgres-data:
+  redis-data:
+services:
+  bitcoind:
+    build:
+      dockerfile: docker/bitcoind/Dockerfile
+      context: .
+    image: bitcoind:alkanes
+    volumes:
+      - bitcoin-data:/root/.bitcoin
+    command:
+      [
+        "-txindex",
+        "-printtoconsole",
+        "-rpcallowip=0.0.0.0/0",
+        "-rpcbind=0.0.0.0",
+        "-rpcuser=bitcoinrpc",
+        "-rpcpassword=bitcoinrpc",
+        "-fallbackfee=0.00001"
+      ]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-rpcuser=bitcoinrpc", "-rpcpassword=bitcoinrpc", "getblockchaininfo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  metashrew:
+    build:
+      dockerfile: docker/metashrew/Dockerfile
+      context: .
+    image: rockshrew:alkanes
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    volumes:
+      - metashrew-data:/data
+      - ./target/wasm32-unknown-unknown/release/alkanes.wasm:/metashrew/indexer.wasm:ro
+    environment:
+      RUST_LOG: none
+      DAEMON_RPC_ADDR: http://bitcoind:8332
+      AUTH: bitcoinrpc:bitcoinrpc
+      DB_PATH: /data
+      LOG_FILTERS: none,rockshrew=debug
+      HOST: 0.0.0.0
+      PORT: 8080
+    restart: unless-stopped
+
+  memshrew:
+    build:
+      dockerfile: docker/memshrew/Dockerfile
+      context: .
+    image: memshrew:alkanes
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    environment:
+      DAEMON_RPC_ADDR: http://bitcoind:8332
+      P2P_ADDR: bitcoind:8333
+      AUTH: bitcoinrpc:bitcoinrpc
+      LOG_FILTERS: none,memshrew=debug
+      HOST: 0.0.0.0
+      PORT: 8081
+    restart: unless-stopped
+
+  ord:
+    build:
+      dockerfile: Dockerfile
+      context: ./docker/ord
+    image: ord:alkanes
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    environment:
+      CHAIN: mainnet
+      RPCUSER: bitcoinrpc
+      RPCPASSWORD: bitcoinrpc
+      PORT: 8090
+      DAEMON_RPC_ADDR: bitcoind:8332
+    restart: unless-stopped
+
+  esplora:
+    build:
+      dockerfile: Dockerfile
+      context: ./docker/electrs
+    image: esplora:alkanes
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    volumes:
+      - bitcoin-data:/data/bitcoin
+    environment:
+      ELECTRS_AUTH: bitcoinrpc:bitcoinrpc
+      ELECTRS_NETWORK: mainnet
+      ELECTRS_DAEMON_RPC_ADDR: bitcoind:8332
+      ELECTRS_HTTP_ADDR: 0.0.0.0:50010
+      ELECTRS_ELECTRUM_RPC_ADDR: 0.0.0.0:50001
+      ELECTRS_DB_DIR: /data/electrs
+      ELECTRS_DAEMON_DIR: /data/bitcoin
+    restart: unless-stopped
+
+  jsonrpc:
+    build:
+      dockerfile: Dockerfile
+      context: .
+      args:
+        - PACKAGE=alkanes-jsonrpc
+    image: alkanes-jsonrpc:latest
+    depends_on:
+      - bitcoind
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 18888
+      BITCOIN_RPC_URL: http://bitcoind:8332
+      BITCOIN_RPC_USER: bitcoinrpc
+      BITCOIN_RPC_PASSWORD: bitcoinrpc
+      METASHREW_URL: http://metashrew:8080
+      MEMSHREW_URL: http://memshrew:8081
+      ORD_URL: http://ord:8090
+      ESPLORA_URL: http://esplora:50010
+      RUST_LOG: info
+    ports:
+      - "18888:18888"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: alkanes_user
+      POSTGRES_PASSWORD: alkanes_pass
+      POSTGRES_DB: alkanes_indexer
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alkanes_user -d alkanes_indexer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  alkanes-contract-indexer:
+    build:
+      dockerfile: Dockerfile
+      context: .
+      args:
+        - PACKAGE=alkanes-contract-indexer
+    image: alkanes-contract-indexer:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jsonrpc:
+        condition: service_started
+    environment:
+      RUST_LOG: info
+      DATABASE_URL: postgres://alkanes_user:alkanes_pass@postgres:5432/alkanes_indexer
+      REDIS_URL: redis://redis:6379/
+      SANDSHREW_RPC_URL: http://jsonrpc:18888
+      NETWORK: mainnet
+      POLL_INTERVAL_MS: 2000
+      FACTORY_BLOCK_ID: 4
+      FACTORY_TX_ID: 65522
+      RPC_MAX_CONCURRENCY: 64
+      RPC_MAX_RETRIES: 5
+      RPC_BASE_BACKOFF_MS: 200
+      RPC_MAX_BACKOFF_MS: 5000
+      RPC_TIMEOUT_MS: 20000
+      RPC_CIRCUIT_COOLDOWN_MS: 5000
+    restart: unless-stopped
