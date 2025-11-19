@@ -4,7 +4,7 @@ This TypeScript SDK provides a keystore backend for **@oyl/sdk** with full Bitco
 
 ## Status
 
-✅ **WASM Module**: Built and ready (`wasm-pkg/`)  
+✅ **WASM Module**: Built and ready (`build/wasm/`)  
 📦 **TypeScript SDK**: Ready to build  
 📖 **Documentation**: Complete integration guides available  
 🧪 **Examples**: Working code examples provided  

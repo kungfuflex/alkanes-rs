@@ -5,6 +5,7 @@ yarn.lock
 
 # Build outputs
 dist/
+build/
 wasm-pkg/
 *.tsbuildinfo
 

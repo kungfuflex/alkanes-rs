@@ -248,7 +248,7 @@ Demonstrates:
 
 ```bash
 cd crates/alkanes-web-sys
-wasm-pack build --target bundler --out-dir ../../ts-sdk/wasm-pkg
+wasm-pack build --target bundler --out-dir ../../ts-sdk/build/wasm
 ```
 
 ### 2. Install Dependencies

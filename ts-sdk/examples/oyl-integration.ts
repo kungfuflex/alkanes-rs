@@ -14,7 +14,7 @@ import {
 } from '../src/index';
 import * as bitcoin from 'bitcoinjs-lib';
 // import { Wallet as OylWallet } from '@oyl/sdk';  // Uncomment when @oyl/sdk is installed
-import init, * as wasm from '../wasm-pkg/alkanes_web_sys';
+import init, * as wasm from '../build/wasm/alkanes_web_sys';
 
 /**
  * Step 1: Initialize WASM module

@@ -23,7 +23,7 @@ import {
 } from '../types';
 
 // Re-export the WASM keystore functions
-import type * as AlkanesWasm from '../../wasm-pkg/alkanes_web_sys';
+import type * as AlkanesWasm from '../../build/wasm/alkanes_web_sys';
 
 /**
  * Default PBKDF2 parameters (matching ethers.js defaults)

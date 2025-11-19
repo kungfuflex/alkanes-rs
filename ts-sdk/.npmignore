@@ -1,7 +1,9 @@
 # Source files
 src/
+scripts/
 examples/
 *.ts
+!*.d.ts
 tsconfig.json
 
 # Tests
@@ -15,8 +17,9 @@ coverage/
 .vscode/
 .idea/
 
-# Build files (except dist)
+# Build files (except dist and build)
 node_modules/
+wasm-pkg/
 *.tsbuildinfo
 
 # Documentation
@@ -29,3 +32,6 @@ docs/
 .eslintrc*
 .prettierrc*
 jest.config.*
+build-and-link.sh
+esbuild.browser.mjs
+tsup.config.ts

@@ -19,7 +19,7 @@ import {
 } from '../types';
 
 // Import WASM module types
-import type * as AlkanesWasm from '../../wasm-pkg/alkanes_web_sys';
+import type * as AlkanesWasm from '../../build/wasm/alkanes_web_sys';
 
 /**
  * RPC client for Bitcoin Core / Sandshrew

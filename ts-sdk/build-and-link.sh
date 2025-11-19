@@ -6,14 +6,23 @@ set -e
 
 echo "📦 Building @alkanes/ts-sdk..."
 
-# Step 1: Build WASM (already completed)
-echo "✅ WASM module already built at wasm-pkg/"
+# Step 1: Build WASM module
+echo "🔨 Building WASM module..."
+npm run build:wasm
 
-# Step 2: Build TypeScript SDK
+# Step 2: Vendor prod WASM files
+echo "📦 Vendoring prod WASM files..."
+npm run build:vendor
+
+# Step 3: Build TypeScript SDK
 echo "🔨 Building TypeScript SDK..."
-npx tsup src/index.ts --format cjs,esm --dts --clean
+npm run build:ts
 
 echo "✅ Build completed!"
+echo ""
+echo "📦 All WASM files are now vendored in build/ directory"
+echo "   - build/wasm/ - alkanes-web-sys WASM module"
+echo "   - build/contracts/ - production contract WASMs"
 echo ""
 echo "📋 Next steps:"
 echo "1. Install @oyl/sdk in your project:"
