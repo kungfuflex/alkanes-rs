@@ -1,7 +1,8 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::{
-    check_and_upgrade_precompiled, genesis, genesis_alkane_upgrade_bytes, is_genesis, setup_diesel,
-    setup_frbtc, setup_frsigil, setup_ftrbtc,
+    check_and_upgrade_precompiled, deploy_futures_from_protostones, genesis,
+    genesis_alkane_upgrade_bytes, is_genesis, setup_diesel, setup_frbtc, setup_frsigil,
+    setup_ftrbtc,
 };
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
@@ -118,6 +119,7 @@ pub fn index_block<B: BlockLike>(block: &B, height: u32) -> Result<()> {
     setup_frsigil(&bitcoin_block)?;  // Must be before setup_frbtc since frBTC/frZEC uses frSIGIL as auth token
     setup_frbtc(&bitcoin_block)?;
     setup_ftrbtc(&bitcoin_block)?;  // Initialize ftrBTC master contract at [31, 0]
+    deploy_futures_from_protostones(&bitcoin_block, height)?;  // Deploy individual futures from protostones
     check_and_upgrade_precompiled(height)?;
     
     // Initialize fuel tank with the full block (needs vfsize of all transactions)
