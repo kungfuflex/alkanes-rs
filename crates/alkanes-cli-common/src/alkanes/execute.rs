@@ -447,13 +447,85 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         log::info!("Need {} sats Bitcoin and {} different alkanes tokens", bitcoin_needed, alkanes_needed.len());
 
         let mut bitcoin_collected = 0u64;
+        let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u64> = alloc::collections::BTreeMap::new();
 
-        for (outpoint, utxo) in spendable_utxos {
-            if bitcoin_collected < bitcoin_needed {
-                bitcoin_collected += utxo.amount;
-                selected_outpoints.push(outpoint);
-            } else {
-                break;
+        // If we need alkanes, we must query each UTXO to find ones that contain the required alkanes
+        if !alkanes_needed.is_empty() {
+            log::info!("Querying UTXOs for alkane balances...");
+            
+            for (outpoint, utxo) in spendable_utxos {
+                // Query this UTXO to see what alkanes it contains
+                match self.provider.protorunes_by_outpoint(
+                    &outpoint.txid.to_string(),
+                    outpoint.vout,
+                    None, // block_tag
+                    1,    // protocol_tag for alkanes
+                ).await {
+                    Ok(response) => {
+                        let mut has_needed_alkane = false;
+                        
+                        // Check if this UTXO has any alkanes we need
+                        for (alkane_id, amount) in &response.balance_sheet.cached.balances {
+                            let key = (alkane_id.block as u64, alkane_id.tx as u64);
+                            if let Some(needed) = alkanes_needed.get(&key) {
+                                let collected = alkanes_collected.entry(key).or_insert(0);
+                                if *collected < *needed {
+                                    has_needed_alkane = true;
+                                    *collected += *amount as u64;
+                                    log::debug!("Found {} of alkane {}:{} in UTXO {}:{} (collected: {}/{})",
+                                        amount, alkane_id.block, alkane_id.tx, outpoint.txid, outpoint.vout, *collected, needed);
+                                }
+                            }
+                        }
+                        
+                        // Select this UTXO if it has alkanes we need OR if we still need Bitcoin
+                        if has_needed_alkane || bitcoin_collected < bitcoin_needed {
+                            bitcoin_collected += utxo.amount;
+                            selected_outpoints.push(outpoint);
+                            log::debug!("Selected UTXO {}:{} (has_alkanes: {}, btc: {})", outpoint.txid, outpoint.vout, has_needed_alkane, utxo.amount);
+                        }
+                        
+                        // Check if we've collected enough of everything
+                        let all_alkanes_satisfied = alkanes_needed.iter().all(|(key, needed)| {
+                            alkanes_collected.get(key).unwrap_or(&0) >= needed
+                        });
+                        
+                        if bitcoin_collected >= bitcoin_needed && all_alkanes_satisfied {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to query alkanes for UTXO {}:{}: {}", outpoint.txid, outpoint.vout, e);
+                        // Still consider this UTXO for Bitcoin if needed
+                        if bitcoin_collected < bitcoin_needed {
+                            bitcoin_collected += utxo.amount;
+                            selected_outpoints.push(outpoint);
+                        }
+                    }
+                }
+            }
+            
+            // Validate we have enough alkanes
+            for (key, needed) in &alkanes_needed {
+                let collected = alkanes_collected.get(key).unwrap_or(&0);
+                if collected < needed {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Insufficient alkanes: need {} of {}:{}, have {}",
+                        needed, key.0, key.1, collected
+                    )));
+                }
+            }
+            
+            log::info!("Selected {} UTXOs with sufficient alkanes", selected_outpoints.len());
+        } else {
+            // No alkanes needed, just select UTXOs for Bitcoin
+            for (outpoint, utxo) in spendable_utxos {
+                if bitcoin_collected < bitcoin_needed {
+                    bitcoin_collected += utxo.amount;
+                    selected_outpoints.push(outpoint);
+                } else {
+                    break;
+                }
             }
         }
 
@@ -463,7 +535,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             )));
         }
 
-        log::info!("Selected {} UTXOs meeting Bitcoin requirements", selected_outpoints.len());
+        log::info!("Selected {} UTXOs meeting all requirements (Bitcoin: {}/{}, Alkanes: {} types)", 
+            selected_outpoints.len(), bitcoin_collected, bitcoin_needed, alkanes_needed.len());
         Ok(selected_outpoints)
     }
 

@@ -1870,16 +1870,13 @@ impl MetashrewRpcProvider for ConcreteProvider {
         let txid = bitcoin::Txid::from_str(txid)?;
         let outpoint = bitcoin::OutPoint { txid, vout };
         let mut request = protorune_pb::OutpointWithProtocol::default();
-        let mut txid_bytes = txid.to_byte_array().to_vec();
-        txid_bytes.reverse();
-        request.txid = txid_bytes;
+        // Note: bitcoin::Txid::to_byte_array() returns bytes in little-endian format,
+        // which is what the indexer expects (no need to reverse)
+        request.txid = txid.to_byte_array().to_vec();
         request.vout = outpoint.vout;
         
         // Set the protocol field - required by the view function
-        let mut protocol = protorune_pb::Uint128::default();
-        protocol.lo = (protocol_tag & 0xFFFFFFFFFFFFFFFF) as u64;
-        protocol.hi = (protocol_tag >> 64) as u64;
-        request.protocol = Some(protocol);
+        request.protocol = Some(<u128 as Into<protorune_pb::Uint128>>::into(protocol_tag));
         
         let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
         let response_bytes = self
