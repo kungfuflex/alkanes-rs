@@ -270,7 +270,7 @@ impl HistoryService {
     ) -> Result<(Vec<PoolCreation>, i64)> {
         let creations = sqlx::query_as::<_, PoolCreation>(
             r#"
-            SELECT * FROM pool_creation
+            SELECT * FROM "PoolCreation"
             ORDER BY block_height DESC, id DESC
             LIMIT $1 OFFSET $2
             "#
@@ -280,7 +280,7 @@ impl HistoryService {
         .fetch_all(&self.db)
         .await?;
 
-        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) as count FROM pool_creation")
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) as count FROM \"PoolCreation\"")
             .fetch_one(&self.db)
             .await?;
 
@@ -611,7 +611,7 @@ impl HistoryService {
                         'txid', pc.txid,
                         'timestamp', pc.timestamp
                     ) as data
-                FROM pool_creation pc
+                FROM "PoolCreation" pc
                 WHERE pc.creator_address = $1
                 
                 UNION ALL
@@ -671,7 +671,7 @@ impl HistoryService {
                 UNION ALL
                 SELECT id FROM burn WHERE from_address = $1 {}
                 UNION ALL
-                SELECT id FROM pool_creation WHERE creator_address = $1
+                SELECT id FROM "PoolCreation" WHERE "creatorAddress" = $1
                 UNION ALL
                 SELECT id FROM wrap WHERE from_address = $1 {}
             ) AS all_txs
@@ -807,7 +807,7 @@ impl HistoryService {
                         'txid', pc.txid,
                         'timestamp', pc.timestamp
                     ) as data
-                FROM pool_creation pc
+                FROM "PoolCreation" pc
                 
                 UNION ALL
                 
@@ -861,7 +861,7 @@ impl HistoryService {
                 UNION ALL
                 SELECT id FROM burn WHERE 1=1 {}
                 UNION ALL
-                SELECT id FROM pool_creation
+                SELECT id FROM "PoolCreation"
                 UNION ALL
                 SELECT id FROM wrap WHERE 1=1 {}
             ) AS all_txs
@@ -894,7 +894,7 @@ impl HistoryService {
     ) -> Result<(Vec<PoolCreation>, i64)> {
         let creations = sqlx::query_as::<_, PoolCreation>(
             r#"
-            SELECT * FROM pool_creation
+            SELECT * FROM "PoolCreation"
             WHERE creator_address = $1
             ORDER BY block_height DESC, id DESC
             LIMIT $2 OFFSET $3
@@ -907,7 +907,7 @@ impl HistoryService {
         .await?;
 
         let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) as count FROM pool_creation WHERE creator_address = $1"
+            r#"SELECT COUNT(*) as count FROM "PoolCreation" WHERE "creatorAddress" = $1"#
         )
         .bind(address)
         .fetch_one(&self.db)

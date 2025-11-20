@@ -72,8 +72,27 @@ struct HistoricalPrice {
 
 impl PriceService {
     pub fn new(infura_endpoint: &str) -> Result<Self> {
-        let url = infura_endpoint.parse().context("Invalid Infura endpoint URL")?;
-        let provider = ProviderBuilder::new().on_http(url);
+        // Create reqwest client with custom headers (required by Infura)
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("origin", "https://app.uniswap.org".parse().unwrap());
+        headers.insert("referer", "https://app.uniswap.org/".parse().unwrap());
+        headers.insert(
+            "user-agent",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+                .parse()
+                .unwrap(),
+        );
+        
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .context("Failed to build HTTP client")?;
+        
+        // Create HTTP transport with custom client and wrap in RpcClient
+        let url = infura_endpoint.parse().context("Invalid URL")?;
+        let http = alloy::transports::http::Http::with_client(client, url);
+        let rpc_client = alloy::rpc::client::RpcClient::new(http, true);
+        let provider = alloy::providers::RootProvider::new(rpc_client);
 
         Ok(Self {
             provider: Arc::new(provider),
@@ -120,10 +139,14 @@ impl PriceService {
         let pool = IUniswapV3Pool::new(WBTC_USDC_POOL, (*self.provider).clone());
 
         // Get current price from slot0
+        let slot0_result = pool.slot0().call().await;
+        
         let IUniswapV3Pool::slot0Return {
             sqrtPriceX96,
             ..
-        } = pool.slot0().call().await.context("Failed to call slot0")?;
+        } = slot0_result.map_err(|e| {
+            anyhow::anyhow!("Failed to call slot0 on Uniswap pool: {:?}", e)
+        })?;
 
         // Convert sqrtPriceX96 to actual price
         // Price = (sqrtPriceX96 / 2^96)^2

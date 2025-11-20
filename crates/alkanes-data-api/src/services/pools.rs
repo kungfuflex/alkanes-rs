@@ -81,9 +81,9 @@ impl PoolService {
         // Query from database
         let result: Option<(i32,)> = sqlx::query_as(
             r#"
-            SELECT block_height
-            FROM processed_blocks
-            ORDER BY block_height DESC
+            SELECT "blockHeight"
+            FROM "ProcessedBlocks"
+            ORDER BY "blockHeight" DESC
             LIMIT 1
             "#
         )
@@ -128,16 +128,16 @@ impl PoolService {
                 ps.token_supply,
                 pc.creator_address,
                 pc.block_height as creation_block_height
-            FROM pool p
+            FROM "Pool" p
             LEFT JOIN LATERAL (
-                SELECT token0_amount, token1_amount, token_supply
-                FROM pool_state
-                WHERE pool_id = p.id
-                ORDER BY block_height DESC
+                SELECT "token0Amount", "token1Amount", "tokenSupply"
+                FROM "PoolState"
+                WHERE "poolId" = p.id
+                ORDER BY "blockHeight" DESC
                 LIMIT 1
             ) ps ON true
-            LEFT JOIN pool_creation pc ON pc.pool_id = p.id
-            WHERE p.factory_block_id = $1 AND p.factory_tx_id = $2
+            LEFT JOIN "PoolCreation" pc ON pc."poolBlockId" = p."poolBlockId" AND pc."poolTxId" = p."poolTxId"
+            WHERE p."factoryBlockId" = $1 AND p."factoryTxId" = $2
             "#
         )
         .bind(&factory_id.block)
@@ -186,12 +186,12 @@ impl PoolService {
                 ps.token_supply,
                 pc.creator_address,
                 pc.block_height as creation_block_height
-            FROM pool p
+            FROM "Pool" p
             LEFT JOIN LATERAL (
-                SELECT token0_amount, token1_amount, token_supply
-                FROM pool_state
-                WHERE pool_id = p.id
-                ORDER BY block_height DESC
+                SELECT "token0Amount", "token1Amount", "tokenSupply"
+                FROM "PoolState"
+                WHERE "poolId" = p.id
+                ORDER BY "blockHeight" DESC
                 LIMIT 1
             ) ps ON true
             LEFT JOIN pool_creation pc ON pc.pool_id = p.id
@@ -335,12 +335,12 @@ impl PoolService {
                 ps.token_supply,
                 pc.creator_address,
                 pc.block_height as creation_block_height
-            FROM pool p
+            FROM "Pool" p
             LEFT JOIN LATERAL (
-                SELECT token0_amount, token1_amount, token_supply
-                FROM pool_state
-                WHERE pool_id = p.id
-                ORDER BY block_height DESC
+                SELECT "token0Amount", "token1Amount", "tokenSupply"
+                FROM "PoolState"
+                WHERE "poolId" = p.id
+                ORDER BY "blockHeight" DESC
                 LIMIT 1
             ) ps ON true
             LEFT JOIN pool_creation pc ON pc.pool_id = p.id

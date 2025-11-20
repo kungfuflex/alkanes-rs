@@ -23,6 +23,11 @@ ARG PACKAGE=alkanes-jsonrpc
 # Build the specified package in release mode
 RUN cargo build --release -p ${PACKAGE}
 
+# Also build dbctl if package is alkanes-contract-indexer
+RUN if [ "${PACKAGE}" = "alkanes-contract-indexer" ]; then \
+      cargo build --release --bin dbctl; \
+    fi
+
 # Runtime stage
 FROM debian:bookworm-slim
 
@@ -30,6 +35,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Build argument (must be redeclared in each stage)
@@ -38,5 +44,18 @@ ARG PACKAGE=alkanes-jsonrpc
 # Copy the built binary from builder stage
 COPY --from=builder /app/target/release/${PACKAGE} /usr/local/bin/app
 
-# Set the binary as the entrypoint
+# For alkanes-contract-indexer: copy dbctl
+RUN --mount=type=bind,from=builder,source=/app/target/release,target=/mnt/release \
+    if [ "${PACKAGE}" = "alkanes-contract-indexer" ] && [ -f /mnt/release/dbctl ]; then \
+      cp /mnt/release/dbctl /usr/local/bin/dbctl; \
+    fi
+
+# For alkanes-contract-indexer: copy docker-entrypoint.sh
+RUN --mount=type=bind,source=crates/alkanes-contract-indexer,target=/mnt/indexer \
+    if [ "${PACKAGE}" = "alkanes-contract-indexer" ] && [ -f /mnt/indexer/docker-entrypoint.sh ]; then \
+      cp /mnt/indexer/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh && \
+      chmod +x /usr/local/bin/docker-entrypoint.sh; \
+    fi
+
+# Set the entrypoint
 ENTRYPOINT ["/usr/local/bin/app"]
