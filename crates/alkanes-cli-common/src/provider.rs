@@ -1757,11 +1757,9 @@ impl MetashrewRpcProvider for ConcreteProvider {
     
     async fn trace_outpoint(&self, txid: &str, vout: u32) -> Result<JsonValue> {
         let txid_parsed = bitcoin::Txid::from_str(txid)?;
-        let mut outpoint_pb = alkanes_pb::Outpoint::default();
-        // The metashrew_view `trace` method expects the raw txid bytes (little-endian),
-        // which is how the `bitcoin::Txid` type stores them internally.
-        // We do not need to reverse them.
-        outpoint_pb.txid = txid_parsed.to_raw_hash().to_byte_array().to_vec();
+        let mut outpoint_pb = protorune_pb::Outpoint::default();
+        // Note: bitcoin::Txid::to_byte_array() returns bytes in little-endian format
+        outpoint_pb.txid = txid_parsed.to_byte_array().to_vec();
         outpoint_pb.vout = vout;
 
         let hex_input = format!("0x{}", hex::encode(outpoint_pb.encode_to_vec()));
@@ -2569,14 +2567,31 @@ impl AlkanesProvider for ConcreteProvider {
         let txid = bitcoin::Txid::from_str(parts[0])?;
         let vout = parts[1].parse::<u32>()?;
 
-        let mut out_point_pb = alkanes_pb::Outpoint::default();
-        out_point_pb.txid = txid.to_raw_hash().as_byte_array().to_vec();
+        let mut out_point_pb = protorune_pb::Outpoint::default();
+        // Note: bitcoin::Txid::to_byte_array() returns bytes in little-endian format
+        out_point_pb.txid = txid.to_byte_array().to_vec();
         out_point_pb.vout = vout;
 
         let hex_input = format!("0x{}", hex::encode(out_point_pb.encode_to_vec()));
         let response_bytes = self.metashrew_view_call("trace", &hex_input, "latest").await?;
         
-        let trace = alkanes_pb::Trace::decode(response_bytes.as_slice())?;
+        if response_bytes.is_empty() {
+            return Ok(alkanes_pb::Trace::default());
+        }
+        
+        // The response is an AlkanesTrace protobuf, not a full Trace wrapper
+        let alkanes_trace = alkanes_pb::AlkanesTrace::decode(response_bytes.as_slice())?;
+        
+        // Wrap it in a Trace message with the outpoint
+        // Convert protorune_pb::Outpoint to alkanes_pb::Outpoint
+        let mut alkanes_outpoint = alkanes_pb::Outpoint::default();
+        alkanes_outpoint.txid = out_point_pb.txid.clone();
+        alkanes_outpoint.vout = out_point_pb.vout;
+        
+        let mut trace = alkanes_pb::Trace::default();
+        trace.outpoint = Some(alkanes_outpoint);
+        trace.trace = Some(alkanes_trace);
+        
         Ok(trace)
     }
 

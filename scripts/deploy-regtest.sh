@@ -492,28 +492,55 @@ main() {
     
     echo ""
     
-    # Deploy pool logic implementation (for cloning)
-    deploy_contract "OYL Pool Logic" "$WASM_DIR/pool.wasm" "$AMM_FACTORY_ID" "50"
+    # Deploy pool logic implementation (for cloning) at 4:50
+    deploy_contract "OYL Pool Logic" "$WASM_DIR/pool.wasm" "50" "50"
     
     # Deploy auth token factory
     deploy_contract "OYL Auth Token Factory" "$WASM_DIR/alkanes_std_auth_token.wasm" "$AUTH_TOKEN_FACTORY_ID" "100"
     
-    # Deploy AMM factory logic implementation
+    # Deploy AMM factory logic implementation at 4:65522
     deploy_contract "OYL Factory Logic" "$WASM_DIR/factory.wasm" "$AMM_FACTORY_LOGIC_IMPL_TX" "50"
     
-    # Deploy beacon proxy for pools
-    deploy_contract "OYL Beacon Proxy" "$WASM_DIR/alkanes_std_beacon_proxy.wasm" "$POOL_BEACON_PROXY_TX" "$((0x8fff))"
+    # Deploy beacon proxy for pools (deploy only, no init)
+    deploy_contract "OYL Beacon Proxy" "$WASM_DIR/alkanes_std_beacon_proxy.wasm" "$POOL_BEACON_PROXY_TX"
     
-    # Deploy upgradeable beacon (points to pool logic)
-    deploy_contract "OYL Upgradeable Beacon" "$WASM_DIR/alkanes_std_upgradeable_beacon.wasm" "$POOL_UPGRADEABLE_BEACON_TX" "$((0x7fff)),4,$AMM_FACTORY_ID,1"
+    # Deploy upgradeable beacon (points to pool logic at 4:50)
+    deploy_contract "OYL Upgradeable Beacon" "$WASM_DIR/alkanes_std_upgradeable_beacon.wasm" "$POOL_UPGRADEABLE_BEACON_TX" "$((0x7fff)),4,50,1"
+    
+    # Initialize beacon proxy to point to upgradeable beacon
+    # [4, n] calls an existing alkane at [4, n]
+    log_info "Initializing OYL Beacon Proxy to point to Upgradeable Beacon..."
+    BEACON_INIT_PROTOSTONE="[4,$POOL_BEACON_PROXY_TX,$((0x7fff)),4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
+    log_info "  Protostone: $BEACON_INIT_PROTOSTONE"
+    
+    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes execute "$BEACON_INIT_PROTOSTONE" \
+        --from p2tr:0 \
+        --fee-rate 1 \
+        --mine \
+        -y
+    
+    if [ $? -eq 0 ]; then
+        log_success "OYL Beacon Proxy initialized"
+        
+        # Wait for metashrew to index
+        log_info "Waiting for metashrew to index beacon proxy initialization (5 seconds)..."
+        sleep 5
+    else
+        log_error "Failed to initialize OYL Beacon Proxy"
+    fi
     
     # Deploy factory proxy
     deploy_contract "OYL Factory Proxy" "$WASM_DIR/alkanes_std_upgradeable.wasm" "$AMM_FACTORY_PROXY_TX" "$((0x7fff)),4,$AMM_FACTORY_LOGIC_IMPL_TX,1"
     
     # Initialize factory proxy
-    # Pattern: [3, proxy_tx, opcode=0, beacon_proxy_tx, beacon_block, beacon_tx]
+    # Pattern: [4, proxy_tx, opcode=0, pool_factory_id, beacon_block, beacon_tx]
+    # [4, n] calls an existing alkane at [4, n]
     log_info "Initializing OYL Factory Proxy..."
-    INIT_PROTOSTONE="[3,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
+    INIT_PROTOSTONE="[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
     log_info "  Protostone: $INIT_PROTOSTONE"
     
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
@@ -582,7 +609,7 @@ main() {
     echo "  - yveDIESEL Vault:        [4, 103]"
     echo ""
     echo "OYL AMM System:"
-    echo "  - OYL Pool Logic:         [4, $AMM_FACTORY_ID]"
+    echo "  - OYL Pool Logic:         [4, 50]"
     echo "  - OYL Auth Token Factory: [4, $AUTH_TOKEN_FACTORY_ID]"
     echo "  - OYL Factory Logic:      [4, $AMM_FACTORY_LOGIC_IMPL_TX]"
     echo "  - OYL Beacon Proxy:       [4, $POOL_BEACON_PROXY_TX]"
