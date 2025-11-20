@@ -20,6 +20,7 @@ pub struct InitPoolParams {
     pub change_address: Option<String>,
     pub fee_rate: Option<f64>,
     pub trace: bool,
+    pub auto_confirm: bool,
 }
 
 /// Parameters for executing a swap
@@ -35,10 +36,11 @@ pub struct SwapExecuteParams {
     pub change_address: Option<String>,
     pub fee_rate: Option<f64>,
     pub trace: bool,
+    pub auto_confirm: bool,
 }
 
-/// Initialize a new liquidity pool (opcode 0)
-/// Calldata format: [factory, 0, token0Block, token0Tx, token1Block, token1Tx]:amount0:amount1:minimumLp
+/// Add liquidity to a pool (opcode 1)
+/// Calldata format: [factory, 1, token0Block, token0Tx, token1Block, token1Tx, amount0, amount1]:v0:v0
 #[cfg(feature = "std")]
 pub async fn init_pool(
     provider: &mut dyn DeezelProvider,
@@ -59,9 +61,10 @@ pub async fn init_pool(
     info!("Liquidity: {} token0, {} token1, minimum LP: {}", 
           params.amount0, params.amount1, minimum_lp);
     
-    // Build calldata: [factoryBlock, factoryTx, 0, token0Block, token0Tx, token1Block, token1Tx]:amount0:amount1:minimumLp
+    // Build calldata: [factoryBlock, factoryTx, 1, token0Block, token0Tx, token1Block, token1Tx, amount0, amount1]:v0:v0
+    // Opcode 1 = mint/add liquidity (pool must already exist from opcode 0 initialization)
     let calldata = format!(
-        "[{},{},0,{},{},{},{}]:{}:{}:{}",
+        "[{},{},1,{},{},{},{},{},{}]:v0:v0",
         params.factory_id.block,
         params.factory_id.tx,
         params.token0.block,
@@ -69,8 +72,7 @@ pub async fn init_pool(
         params.token1.block,
         params.token1.tx,
         params.amount0,
-        params.amount1,
-        minimum_lp
+        params.amount1
     );
     
     info!("Calldata: {}", calldata);
@@ -105,7 +107,7 @@ pub async fn init_pool(
         raw_output: false,
         trace_enabled: params.trace,
         mine_enabled: false,
-        auto_confirm: false,
+        auto_confirm: params.auto_confirm,
     };
     
     // Execute
@@ -201,7 +203,7 @@ pub async fn execute_swap(
         raw_output: false,
         trace_enabled: params.trace,
         mine_enabled: false,
-        auto_confirm: false,
+        auto_confirm: params.auto_confirm,
     };
     
     // Execute

@@ -1001,6 +1001,9 @@ pub enum Alkanes {
         /// Factory ID (defaults to 4:65522)
         #[arg(long, default_value = "4:65522")]
         factory: String,
+        /// Auto-confirm transaction without prompting
+        #[arg(long)]
+        auto_confirm: bool,
     },
     /// Execute a swap on the AMM
     Swap {

@@ -1786,11 +1786,11 @@ impl MetashrewRpcProvider for ConcreteProvider {
         &self,
         address: &str,
         block_tag: Option<String>,
-        _protocol_tag: u128,
+        protocol_tag: u128,
     ) -> Result<crate::alkanes::protorunes::ProtoruneWalletResponse> {
         let mut request = protorune_pb::ProtorunesWalletRequest::default();
         request.wallet = address.as_bytes().to_vec();
-        // request.protocol_tag = Some(crate::utils::to_uint128(protocol_tag));
+        request.protocol_tag = Some(<u128 as Into<protorune_pb::Uint128>>::into(protocol_tag));
         let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
         let response_bytes = self
             .metashrew_view_call(

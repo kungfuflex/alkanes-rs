@@ -379,13 +379,27 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Ok(())
     }
 
-    async fn select_utxos(&self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>) -> Result<Vec<OutPoint>> {
+    async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>) -> Result<Vec<OutPoint>> {
+        use crate::traits::AddressResolver;
+        
         log::info!("Selecting UTXOs for {} requirements", requirements.len());
         if let Some(addrs) = from_addresses {
             log::info!("Sourcing UTXOs from: {addrs:?}");
         }
 
-        let utxos = self.provider.get_utxos(true, from_addresses.clone()).await?;
+        // Resolve address identifiers like p2tr:0 to actual addresses before passing to get_utxos
+        let resolved_from_addresses = if let Some(addrs) = from_addresses {
+            let mut resolved = Vec::new();
+            for addr in addrs {
+                let resolved_addr = self.provider.resolve_all_identifiers(addr).await?;
+                resolved.push(resolved_addr);
+            }
+            Some(resolved)
+        } else {
+            None
+        };
+
+        let utxos = self.provider.get_utxos(true, resolved_from_addresses).await?;
         log::debug!("Found {} total wallet UTXOs from specified sources", utxos.len());
 
         // Bitcoin requires coinbase outputs to have 100 confirmations before spending
@@ -454,11 +468,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     }
 
     async fn create_outputs(
-        &self,
+        &mut self,
         to_addresses: &[String],
         change_address: &Option<String>,
         input_requirements: &[InputRequirement],
     ) -> Result<Vec<TxOut>> {
+        use crate::traits::AddressResolver;
+        
         let mut outputs = Vec::new();
         let network = self.provider.get_network();
 
@@ -478,7 +494,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         for addr_str in to_addresses {
             log::debug!("Parsing to_address in create_outputs: '{addr_str}'");
-            let address = Address::from_str(addr_str)?.require_network(network)?;
+            // Resolve address identifiers like p2tr:0 to actual addresses
+            let resolved_addr = self.provider.resolve_all_identifiers(addr_str).await?;
+            let address = Address::from_str(&resolved_addr)?.require_network(network)?;
             outputs.push(TxOut {
                 value: bitcoin::Amount::from_sat(amount_per_recipient.max(DUST_LIMIT)),
                 script_pubkey: address.script_pubkey(),
@@ -487,7 +505,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         if let Some(change_addr_str) = change_address {
             log::debug!("Parsing change_address in create_outputs: '{change_addr_str}'");
-            let address = Address::from_str(change_addr_str)?.require_network(network)?;
+            // Resolve address identifiers like p2tr:0 to actual addresses
+            let resolved_addr = self.provider.resolve_all_identifiers(change_addr_str).await?;
+            let address = Address::from_str(&resolved_addr)?.require_network(network)?;
             outputs.push(TxOut {
                 value: bitcoin::Amount::from_sat(0),
                 script_pubkey: address.script_pubkey(),

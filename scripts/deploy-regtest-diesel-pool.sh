@@ -58,6 +58,7 @@ $CLI alkanes init-pool \
     --to $ADDR \
     --from $ADDR \
     --change $ADDR \
+    --auto-confirm \
     --trace
 
 # Note: --factory defaults to $FACTORY (4:65522)

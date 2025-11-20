@@ -679,7 +679,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         }
-        Alkanes::InitPool { pair, liquidity, to, from, change, minimum, fee_rate, trace, factory } => {
+        Alkanes::InitPool { pair, liquidity, to, from, change, minimum, fee_rate, trace, factory, auto_confirm } => {
             use alkanes_cli_common::alkanes::amm_cli::{init_pool, InitPoolParams};
             use alkanes_cli_common::alkanes::types::AlkaneId;
             
@@ -725,6 +725,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 change_address: change.clone(),
                 fee_rate: fee_rate.clone(),
                 trace: trace.clone(),
+                auto_confirm: auto_confirm.clone(),
             };
             
             let provider = system.provider_mut();
@@ -774,6 +775,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 change_address: change.clone(),
                 fee_rate: fee_rate.clone(),
                 trace: trace.clone(),
+                auto_confirm: false, // TODO: Add --auto-confirm flag to Swap command
             };
             
             let txid = execute_swap(provider, params).await?;
