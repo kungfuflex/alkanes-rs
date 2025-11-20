@@ -16,6 +16,7 @@ secp256k1 = { workspace = true }
 psbt-v2 = "0.1.0"
 alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
 alkanes-asc = { path = "../alkanes-asc" }
+colored = "2.0"
 url = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 bip39 = { workspace = true }

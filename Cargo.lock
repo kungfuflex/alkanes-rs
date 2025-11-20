@@ -444,6 +444,7 @@ dependencies = [
  "bip39",
  "bitcoin 0.32.7",
  "chrono",
+ "colored",
  "hex",
  "log",
  "prost",

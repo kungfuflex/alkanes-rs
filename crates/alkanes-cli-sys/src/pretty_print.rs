@@ -301,3 +301,259 @@ pub fn pretty_print_network_info(info: &serde_json::Value) -> anyhow::Result<()>
     }
     Ok(())
 }
+// Pretty printing for DataAPI responses (added without cfg guards)
+use alkanes_cli_common::dataapi::{AlkanesResponse, Pool, BitcoinPrice, MarketChart, PoolHistoryResponse, PoolSwap};
+use colored::Colorize;
+
+pub fn print_alkanes_response(response: &AlkanesResponse) {
+    
+    println!("\n{}", "📊 Alkanes Tokens".bold().cyan());
+    println!("{}", "═".repeat(80).cyan());
+    
+    if response.tokens.is_empty() {
+        println!("  {}", "No tokens found".yellow());
+        println!();
+        return;
+    }
+    
+    for (idx, token) in response.tokens.iter().enumerate() {
+        println!("\n{} {} {}", 
+                 format!("{}.", idx + 1).bold(),
+                 "🪙".bold(),
+                 format!("{}:{}", token.id.block, token.id.tx).bright_green());
+        
+        if let Some(ref symbol) = token.symbol {
+            if let Some(ref name) = token.name {
+                println!("   {} {} ({})", "Token:".bold(), name.cyan(), symbol.yellow());
+            } else {
+                println!("   {} {}", "Symbol:".bold(), symbol.yellow());
+            }
+        } else if let Some(ref name) = token.name {
+            println!("   {} {}", "Name:".bold(), name.cyan());
+        }
+        
+        if let Some(decimals) = token.decimals {
+            println!("   {} {}", "Decimals:".bold(), decimals);
+        }
+        
+        if let Some(ref balance) = token.balance {
+            println!("   {} {}", "Balance:".bold(), balance.bright_white());
+        }
+        
+        if let Some(price_usd) = token.price_usd {
+            println!("   {} ${:.4}", "Price USD:".bold(), price_usd);
+        }
+        
+        if let Some(price_sat) = token.price_in_satoshi {
+            println!("   {} {} sats", "Price BTC:".bold(), price_sat);
+        }
+    }
+    
+    println!("\n{}", "─".repeat(80).cyan());
+    println!("{} {}", "Total:".bold(), response.total);
+    println!();
+}
+
+pub fn print_pools_response(pools: &[Pool]) {
+    
+    println!("\n{}", "🏊 Liquidity Pools".bold().cyan());
+    println!("{}", "═".repeat(80).cyan());
+    
+    if pools.is_empty() {
+        println!("  {}", "No pools found".yellow());
+        println!();
+        return;
+    }
+    
+    for (idx, pool) in pools.iter().enumerate() {
+        println!("\n{} {} {}", 
+                 format!("{}.", idx + 1).bold(),
+                 "💧".bold(),
+                 pool.pool_name.bright_cyan().bold());
+        
+        println!("   {} {}:{}", "Pool ID:".bold(), 
+                 pool.pool_block_id.green(), pool.pool_tx_id.green());
+        println!("   {} {}:{} → {}:{}", "Pair:".bold(),
+                 pool.token0_block_id.yellow(), pool.token0_tx_id.yellow(),
+                 pool.token1_block_id.yellow(), pool.token1_tx_id.yellow());
+        
+        if let Some(ref amount0) = pool.token0_amount {
+            if let Some(ref amount1) = pool.token1_amount {
+                println!("   {} {} × {}", "Reserves:".bold(), 
+                         amount0.bright_white(), amount1.bright_white());
+            }
+        }
+        
+        if let Some(ref supply) = pool.token_supply {
+            println!("   {} {}", "LP Supply:".bold(), supply.bright_white());
+        }
+        
+        if let Some(ref creator) = pool.creator_address {
+            println!("   {} {}", "Creator:".bold(), creator.dimmed());
+        }
+    }
+    
+    println!("\n{}", "─".repeat(80).cyan());
+    println!("{} {} pools", "Total:".bold(), pools.len());
+    println!();
+}
+
+pub fn print_bitcoin_price(price: &BitcoinPrice) {
+    
+    println!("\n{}", "₿ Bitcoin Price".bold().yellow());
+    println!("{}", "═".repeat(50).yellow());
+    println!("  {} ${:.2}", "USD:".bold(), price.usd);
+    println!("{}", "─".repeat(50).yellow());
+    println!();
+}
+
+pub fn print_market_chart(chart: &MarketChart) {
+    
+    println!("\n{}", "📈 Bitcoin Market Chart".bold().cyan());
+    println!("{}", "═".repeat(80).cyan());
+    
+    if chart.prices.is_empty() {
+        println!("  {}", "No data available".yellow());
+        println!();
+        return;
+    }
+    
+    println!("\n{}", "  Prices:".bold());
+    for (idx, price_point) in chart.prices.iter().enumerate().take(10) {
+        if price_point.len() >= 2 {
+            let timestamp = price_point[0] as i64 / 1000;
+            let price = price_point[1];
+            let datetime = chrono::DateTime::from_timestamp(timestamp, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
+            println!("    {} {} - ${:.2}", 
+                     format!("{}.", idx + 1).dimmed(),
+                     datetime.bright_white(),
+                     price);
+        }
+    }
+    
+    if chart.prices.len() > 10 {
+        println!("    {} ... and {} more", "...".dimmed(), chart.prices.len() - 10);
+    }
+    
+    println!("\n{}", "─".repeat(80).cyan());
+    println!("{} {} data points", "Total:".bold(), chart.prices.len());
+    println!();
+}
+
+pub fn print_pool_history(history: &PoolHistoryResponse) {
+    
+    println!("\n{}", "📜 Pool History".bold().cyan());
+    println!("{}", "═".repeat(80).cyan());
+    
+    let total_events = history.swaps.len() + history.mints.len() + history.burns.len();
+    
+    if total_events == 0 {
+        println!("  {}", "No history found".yellow());
+        println!();
+        return;
+    }
+    
+    // Print swaps
+    if !history.swaps.is_empty() {
+        println!("\n{} {} Swaps", "💱".bold(), history.swaps.len());
+        for (idx, swap) in history.swaps.iter().enumerate().take(5) {
+            println!("\n   {} Swap #{}", format!("{}.", idx + 1).bold(), swap.id.dimmed());
+            println!("      {} {}:{} → {}:{}", "Pair:".bold(),
+                     swap.sold_token_block_id.yellow(), swap.sold_token_tx_id.yellow(),
+                     swap.bought_token_block_id.green(), swap.bought_token_tx_id.green());
+            println!("      {} {:.4} → {:.4}", "Amount:".bold(), 
+                     swap.sold_amount, swap.bought_amount);
+            println!("      {} {} {}", "Status:".bold(),
+                     if swap.successful { "✅".green() } else { "❌".red() },
+                     if swap.successful { "Success" } else { "Failed" });
+        }
+        if history.swaps.len() > 5 {
+            println!("   {} ... and {} more swaps", "...".dimmed(), history.swaps.len() - 5);
+        }
+    }
+    
+    // Print mints
+    if !history.mints.is_empty() {
+        println!("\n{} {} Mints", "➕".bold(), history.mints.len());
+        for (idx, mint) in history.mints.iter().enumerate().take(5) {
+            println!("\n   {} Mint #{}", format!("{}.", idx + 1).bold(), mint.id.dimmed());
+            println!("      {} {}", "LP Tokens:".bold(), mint.lp_token_amount.bright_white());
+            println!("      {} {} × {}", "Deposited:".bold(),
+                     mint.token0_amount.yellow(), mint.token1_amount.yellow());
+            println!("      {} {} {}", "Status:".bold(),
+                     if mint.successful { "✅".green() } else { "❌".red() },
+                     if mint.successful { "Success" } else { "Failed" });
+        }
+        if history.mints.len() > 5 {
+            println!("   {} ... and {} more mints", "...".dimmed(), history.mints.len() - 5);
+        }
+    }
+    
+    // Print burns
+    if !history.burns.is_empty() {
+        println!("\n{} {} Burns", "➖".bold(), history.burns.len());
+        for (idx, burn) in history.burns.iter().enumerate().take(5) {
+            println!("\n   {} Burn #{}", format!("{}.", idx + 1).bold(), burn.id.dimmed());
+            println!("      {} {}", "LP Tokens:".bold(), burn.lp_token_amount.bright_white());
+            println!("      {} {} × {}", "Withdrawn:".bold(),
+                     burn.token0_amount.yellow(), burn.token1_amount.yellow());
+            println!("      {} {} {}", "Status:".bold(),
+                     if burn.successful { "✅".green() } else { "❌".red() },
+                     if burn.successful { "Success" } else { "Failed" });
+        }
+        if history.burns.len() > 5 {
+            println!("   {} ... and {} more burns", "...".dimmed(), history.burns.len() - 5);
+        }
+    }
+    
+    println!("\n{}", "─".repeat(80).cyan());
+    println!("{} {} total events ({} swaps, {} mints, {} burns)", 
+             "Total:".bold(), total_events, history.swaps.len(), history.mints.len(), history.burns.len());
+    println!();
+}
+
+pub fn print_swap_history(swaps: &[PoolSwap]) {
+    
+    println!("\n{}", "💱 Swap History".bold().cyan());
+    println!("{}", "═".repeat(80).cyan());
+    
+    if swaps.is_empty() {
+        println!("  {}", "No swaps found".yellow());
+        println!();
+        return;
+    }
+    
+    for (idx, swap) in swaps.iter().enumerate() {
+        println!("\n{} {} Swap #{}", 
+                 format!("{}.", idx + 1).bold(),
+                 if swap.successful { "✅" } else { "❌" },
+                 swap.id.dimmed());
+        
+        println!("   {} {}:{}", "Pool:".bold(),
+                 swap.pool_block_id.cyan(), swap.pool_tx_id.cyan());
+        println!("   {} {}:{} → {}:{}", "Trade:".bold(),
+                 swap.sold_token_block_id.yellow(), swap.sold_token_tx_id.yellow(),
+                 swap.bought_token_block_id.green(), swap.bought_token_tx_id.green());
+        println!("   {} {:.4} → {:.4}", "Amount:".bold(),
+                 swap.sold_amount, swap.bought_amount);
+        
+        let price = if swap.sold_amount > 0.0 {
+            swap.bought_amount / swap.sold_amount
+        } else {
+            0.0
+        };
+        println!("   {} {:.6}", "Price:".bold(), price);
+        
+        if let Some(ref seller) = swap.seller_address {
+            println!("   {} {}", "Trader:".bold(), seller.dimmed());
+        }
+        
+        println!("   {} Block #{}", "Block:".bold(), swap.block_height);
+    }
+    
+    println!("\n{}", "─".repeat(80).cyan());
+    println!("{} {} swaps", "Total:".bold(), swaps.len());
+    println!();
+}

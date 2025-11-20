@@ -63,6 +63,9 @@ pub struct DeezelCommands {
     /// BRC20-Prog RPC URL (for querying brc20-programmable-module)
     #[arg(long)]
     pub brc20_prog_rpc_url: Option<String>,
+    /// Data API URL (defaults to http://localhost:4000 for regtest, https://mainnet-api.oyl.gg for mainnet)
+    #[arg(long)]
+    pub data_api: Option<String>,
     /// Network provider
     #[arg(short, long, default_value = "regtest")]
     pub provider: String,
@@ -101,6 +104,9 @@ pub enum Commands {
     /// Metashrew subcommands
     #[command(subcommand)]
     Metashrew(MetashrewCommands),
+    /// DataAPI subcommands - Query data from alkanes-data-api
+    #[command(subcommand)]
+    Dataapi(DataApiCommand),
 }
 
 /// Metashrew subcommands
@@ -963,6 +969,136 @@ pub enum Alkanes {
         #[arg(long)]
         raw: bool,
     },
+    /// Initialize a new liquidity pool
+    InitPool {
+        /// Token pair in format: BLOCK:TX,BLOCK:TX (e.g., 2:0,32:0)
+        #[arg(long)]
+        pair: String,
+        /// Initial liquidity amounts in format: AMOUNT0:AMOUNT1 (e.g., 300000000:50000)
+        #[arg(long)]
+        liquidity: String,
+        /// Recipient address identifier (e.g., p2tr:0)
+        #[arg(long)]
+        to: String,
+        /// Sender address identifier (e.g., p2tr:0)
+        #[arg(long)]
+        from: String,
+        /// Change address identifier (defaults to --from)
+        #[arg(long)]
+        change: Option<String>,
+        /// Minimum LP tokens to receive (optional)
+        #[arg(long)]
+        minimum: Option<u128>,
+        /// Fee rate in sat/vB (optional)
+        #[arg(long)]
+        fee_rate: Option<f64>,
+        /// Show trace after transaction confirms
+        #[arg(long)]
+        trace: bool,
+        /// Factory ID (defaults to 4:65522)
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+    },
+    /// Execute a swap on the AMM
+    Swap {
+        /// Swap path in format: BLOCK:TX:BLOCK:TX (e.g., 2:0:32:0 for DIESEL->frBTC)
+        #[arg(long)]
+        path: String,
+        /// Input token amount
+        #[arg(long)]
+        input: u128,
+        /// Minimum output amount (default: 1)
+        #[arg(long, default_value = "1")]
+        minimum: u128,
+        /// Expiry block height (optional)
+        #[arg(long)]
+        expires: Option<u64>,
+        /// Recipient address identifier
+        #[arg(long)]
+        to: String,
+        /// Sender address identifier
+        #[arg(long)]
+        from: String,
+        /// Change address identifier (defaults to --from)
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB (optional)
+        #[arg(long)]
+        fee_rate: Option<f64>,
+        /// Show trace after transaction confirms
+        #[arg(long)]
+        trace: bool,
+        /// Factory ID (defaults to 4:65522)
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+    },
+}
+
+/// DataAPI subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum DataApiCommand {
+    /// Get all alkanes
+    GetAlkanes {
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        sort_by: Option<String>,
+        #[arg(long)]
+        order: Option<String>,
+        #[arg(long)]
+        search: Option<String>,
+    },
+    /// Get alkanes for an address
+    GetAlkanesByAddress {
+        address: String,
+    },
+    /// Get alkane details
+    GetAlkaneDetails {
+        /// Alkane ID in format BLOCK:TX (e.g., 2:0)
+        id: String,
+    },
+    /// Get all pools (defaults to factory 4:65522)
+    GetPools {
+        /// Factory ID in format BLOCK:TX
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+    },
+    /// Get pool details
+    GetPoolById {
+        /// Pool ID in format BLOCK:TX
+        id: String,
+    },
+    /// Get pool history
+    GetPoolHistory {
+        /// Pool ID in format BLOCK:TX
+        pool_id: String,
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+    },
+    /// Get swap history
+    GetSwapHistory {
+        #[arg(long)]
+        pool_id: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+    },
+    /// Get Bitcoin price
+    GetBitcoinPrice,
+    /// Get Bitcoin market chart
+    GetMarketChart {
+        /// Number of days (1, 7, 14, 30, 90, 180, 365, max)
+        days: String,
+    },
+    /// Health check
+    Health,
 }
 
 /// Runestone subcommands

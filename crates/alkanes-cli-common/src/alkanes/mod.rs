@@ -22,6 +22,7 @@ pub mod rune_transfer;
 pub mod utils;
 pub mod wrap_btc;
 pub mod amm;
+pub mod amm_cli;
 
 pub use types::*;
 pub use amm::{GetAllPoolsResult, AllPoolsDetailsResult, PoolDetailsResult, PoolDetailsWithId};
