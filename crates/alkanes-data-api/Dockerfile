@@ -3,6 +3,11 @@ FROM rust:1.75 as builder
 
 WORKDIR /app
 
+# Install protobuf compiler (required by metashrew-support)
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy workspace files
 COPY Cargo.toml Cargo.lock ./
 COPY rust-toolchain.toml ./
