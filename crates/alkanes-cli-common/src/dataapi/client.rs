@@ -89,7 +89,7 @@ impl DataApiClient {
     }
 
     pub async fn get_alkane_details(&self, id: &AlkaneId) -> Result<AlkaneToken> {
-        let body = json!({ "id": { "block": id.block, "tx": id.tx } });
+        let body = json!({ "id": { "block": id.block.to_string(), "tx": id.tx.to_string() } });
         let response = self.post::<_, AlkaneToken>("get-alkane-details", &body).await?;
         Ok(response.data)
     }
@@ -97,7 +97,7 @@ impl DataApiClient {
     // Pool endpoints
     pub async fn get_pools(&self, factory_id: &AlkaneId) -> Result<Vec<Pool>> {
         let body = json!({
-            "factoryId": { "block": factory_id.block, "tx": factory_id.tx }
+            "factoryId": { "block": factory_id.block.to_string(), "tx": factory_id.tx.to_string() }
         });
         let response = self.post::<_, PoolsResponse>("get-pools", &body).await?;
         Ok(response.data.pools)
@@ -105,7 +105,7 @@ impl DataApiClient {
 
     pub async fn get_pool_by_id(&self, pool_id: &AlkaneId) -> Result<Option<Pool>> {
         let body = json!({
-            "poolId": { "block": pool_id.block, "tx": pool_id.tx }
+            "poolId": { "block": pool_id.block.to_string(), "tx": pool_id.tx.to_string() }
         });
         let response = self.post::<_, Option<Pool>>("get-pool-by-id", &body).await?;
         Ok(response.data)
@@ -119,7 +119,7 @@ impl DataApiClient {
         offset: Option<i32>,
     ) -> Result<HistoryResponse> {
         let body = json!({
-            "poolId": { "block": pool_id.block, "tx": pool_id.tx },
+            "poolId": { "block": pool_id.block.to_string(), "tx": pool_id.tx.to_string() },
             "category": category,
             "limit": limit,
             "offset": offset,
@@ -151,7 +151,7 @@ impl DataApiClient {
         offset: Option<i32>,
     ) -> Result<SwapHistoryResponse> {
         let body = json!({
-            "poolId": pool_id.map(|id| json!({ "block": id.block, "tx": id.tx })),
+            "poolId": pool_id.map(|id| json!({ "block": id.block.to_string(), "tx": id.tx.to_string() })),
             "limit": limit,
             "offset": offset,
         });

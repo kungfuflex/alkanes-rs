@@ -620,6 +620,9 @@ pub enum AlkanesCommands {
     WrapBtc {
         /// Amount of BTC to wrap (in satoshis)
         amount: u64,
+        /// Address to receive the frBTC tokens
+        #[arg(long)]
+        to: String,
         /// Addresses to source UTXOs from
         #[arg(long, num_args = 1..)]
         from: Option<Vec<String>>,

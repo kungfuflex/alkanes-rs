@@ -2533,11 +2533,16 @@ impl AlkanesProvider for ConcreteProvider {
     }
 
     async fn simulate(&self, contract_id: &str, context: &alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
-        let buf = Vec::new();
-        context.encode(&mut Vec::new())?;
-        let params_hex = format!("0x{}", hex::encode(buf));
-        let rpc_params = serde_json::json!([contract_id, params_hex]);
-        self.call(self.rpc_config.metashrew_rpc_url.as_deref().ok_or_else(|| AlkanesError::RpcError("Metashrew RPC URL not configured".to_string()))?, "alkanes_simulate", rpc_params, 1).await
+        use prost::Message;
+        let mut buf = Vec::new();
+        context.encode(&mut buf)?;
+        let params_hex = format!("0x{}", hex::encode(&buf));
+        
+        // Use metashrew_view with "simulate" view function, not alkanes_simulate
+        let result_bytes = self.metashrew_view_call("simulate", &params_hex, "latest").await?;
+        
+        // Return as hex string JSON value
+        Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
     }
 
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {

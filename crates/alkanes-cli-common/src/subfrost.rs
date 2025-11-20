@@ -157,6 +157,40 @@ pub fn compute_address(pubkey_bytes: &[u8], network: Network) -> Result<Address>
     Ok(address)
 }
 
+/// Get the subfrost signer address for a given alkane (typically frBTC at {32, 0})
+///
+/// This is a convenience function that:
+/// 1. Builds the GET_SIGNER request
+/// 2. Calls metashrew_view with "simulate"
+/// 3. Parses the pubkey from the response
+/// 4. Computes the P2TR address
+///
+/// # Arguments
+/// * `provider` - The DeezelProvider to use for the simulate call
+/// * `alkane_id` - The alkane ID to query (usually {32, 0} for frBTC)
+///
+/// # Returns
+/// The subfrost signer address as a string
+pub async fn get_subfrost_address<P: crate::DeezelProvider + ?Sized>(
+    provider: &P,
+    alkane_id: &crate::alkanes::types::AlkaneId,
+) -> Result<String> {
+    // Build the request parcel with the target alkane encoded in calldata
+    let parcel = build_get_signer_parcel();
+    
+    // Call simulate - the alkane ID doesn't matter for GET_SIGNER since it's encoded in calldata
+    let response = provider.simulate("", &parcel).await?;
+    
+    // Parse the signer pubkey from JSON response
+    let pubkey_bytes = parse_signer_pubkey(&response)?;
+    
+    // Compute the address
+    let network = provider.get_network();
+    let address = compute_address(&pubkey_bytes, network)?;
+    
+    Ok(address.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

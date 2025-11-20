@@ -2950,11 +2950,12 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 }
                 Ok(())
             }
-            AlkanesCommands::WrapBtc { amount, from, change, fee_rate, raw, trace, mine, yes } => {
+            AlkanesCommands::WrapBtc { amount, to, from, change, fee_rate, raw, trace, mine, yes } => {
                 use alkanes_cli_common::alkanes::wrap_btc::{WrapBtcExecutor, WrapBtcParams};
                 
                 let params = WrapBtcParams {
                     amount,
+                    to_address: to.clone(),
                     from_addresses: from,
                     change_address: change,
                     fee_rate,

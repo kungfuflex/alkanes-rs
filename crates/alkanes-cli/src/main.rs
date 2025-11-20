@@ -114,70 +114,85 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
             let result = alkanes_cli_common::dataapi::commands::execute_dataapi_health(&client).await?;
             println!("{}", result);
         }
-        DataApiCommand::GetBitcoinPrice => {
-            use alkanes_cli_sys::pretty_print::print_bitcoin_price;
+        DataApiCommand::GetBitcoinPrice { raw } => {
             let price = client.get_bitcoin_price().await?;
-            print_bitcoin_price(&price);
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&price)?);
+            } else {
+                use alkanes_cli_sys::pretty_print::print_bitcoin_price;
+                print_bitcoin_price(&price);
+            }
         }
-        DataApiCommand::GetAlkanes { limit, offset, sort_by, order, search } => {
-            use alkanes_cli_sys::pretty_print::print_alkanes_response;
+        DataApiCommand::GetAlkanes { limit, offset, sort_by, order, search, raw } => {
             let response = client.get_alkanes(limit, offset, sort_by, order, search).await?;
-            print_alkanes_response(&response);
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                use alkanes_cli_sys::pretty_print::print_alkanes_response;
+                print_alkanes_response(&response);
+            }
         }
-        DataApiCommand::GetAlkanesByAddress { address } => {
+        DataApiCommand::GetAlkanesByAddress { address, raw } => {
             let tokens = client.get_alkanes_by_address(&address).await?;
             println!("{}", serde_json::to_string_pretty(&tokens)?);
         }
-        DataApiCommand::GetAlkaneDetails { id } => {
+        DataApiCommand::GetAlkaneDetails { id, raw } => {
             use alkanes_cli_common::dataapi::commands::parse_alkane_id;
             let alkane_id = parse_alkane_id(&id)?;
             let token = client.get_alkane_details(&alkane_id).await?;
             println!("{}", serde_json::to_string_pretty(&token)?);
         }
-        DataApiCommand::GetPools { factory } => {
-            use alkanes_cli_sys::pretty_print::print_pools_response;
+        DataApiCommand::GetPools { factory, raw } => {
             use alkanes_cli_common::dataapi::commands::parse_alkane_id;
             let factory_id = parse_alkane_id(&factory)?;
             let pools = client.get_pools(&factory_id).await?;
-            print_pools_response(&pools);
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&pools)?);
+            } else {
+                use alkanes_cli_sys::pretty_print::print_pools_response;
+                print_pools_response(&pools);
+            }
         }
-        DataApiCommand::GetPoolById { id } => {
+        DataApiCommand::GetPoolById { id, raw } => {
             use alkanes_cli_common::dataapi::commands::parse_alkane_id;
             let pool_id = parse_alkane_id(&id)?;
             let pool = client.get_pool_by_id(&pool_id).await?;
             println!("{}", serde_json::to_string_pretty(&pool)?);
         }
-        DataApiCommand::GetPoolHistory { pool_id, category, limit, offset } => {
-            use alkanes_cli_sys::pretty_print::print_pool_history;
+        DataApiCommand::GetPoolHistory { pool_id, category, limit, offset, raw } => {
             use alkanes_cli_common::dataapi::commands::parse_alkane_id;
             use alkanes_cli_common::dataapi::HistoryTransaction;
             
             let pool_alkane_id = parse_alkane_id(&pool_id)?;
             let history = client.get_pool_history(&pool_alkane_id, category, limit, offset).await?;
             
-            // Extract swaps, mints, burns from transactions
-            let mut swaps = Vec::new();
-            let mut mints = Vec::new();
-            let mut burns = Vec::new();
-            
-            for tx in history.transactions {
-                match tx {
-                    HistoryTransaction::Swap(swap) => swaps.push(swap),
-                    HistoryTransaction::Mint(mint) => mints.push(mint),
-                    HistoryTransaction::Burn(burn) => burns.push(burn),
-                    _ => {},
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&history)?);
+            } else {
+                // Extract swaps, mints, burns from transactions
+                let mut swaps = Vec::new();
+                let mut mints = Vec::new();
+                let mut burns = Vec::new();
+                
+                for tx in history.transactions {
+                    match tx {
+                        HistoryTransaction::Swap(swap) => swaps.push(swap),
+                        HistoryTransaction::Mint(mint) => mints.push(mint),
+                        HistoryTransaction::Burn(burn) => burns.push(burn),
+                        _ => {},
+                    }
                 }
+                
+                let pool_history = alkanes_cli_common::dataapi::PoolHistoryResponse {
+                    swaps,
+                    mints,
+                    burns,
+                };
+                use alkanes_cli_sys::pretty_print::print_pool_history;
+                print_pool_history(&pool_history);
             }
-            
-            let pool_history = alkanes_cli_common::dataapi::PoolHistoryResponse {
-                swaps,
-                mints,
-                burns,
-            };
-            print_pool_history(&pool_history);
         }
-        DataApiCommand::GetSwapHistory { pool_id, limit, offset } => {
-            use alkanes_cli_sys::pretty_print::print_swap_history;
+        DataApiCommand::GetSwapHistory { pool_id, limit, offset, raw } => {
             use alkanes_cli_common::dataapi::commands::parse_alkane_id;
             
             let pool_alkane_id = if let Some(ref id_str) = pool_id {
@@ -187,12 +202,22 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
             };
             
             let history = client.get_swap_history(pool_alkane_id.as_ref(), limit, offset).await?;
-            print_swap_history(&history.swaps);
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&history)?);
+            } else {
+                use alkanes_cli_sys::pretty_print::print_swap_history;
+                print_swap_history(&history.swaps);
+            }
         }
-        DataApiCommand::GetMarketChart { days } => {
-            use alkanes_cli_sys::pretty_print::print_market_chart;
+        DataApiCommand::GetMarketChart { days, raw } => {
             let chart = client.get_bitcoin_market_chart(&days).await?;
-            print_market_chart(&chart);
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&chart)?);
+            } else {
+                use alkanes_cli_sys::pretty_print::print_market_chart;
+                print_market_chart(&chart);
+            }
         }
     }
     Ok(())
@@ -495,13 +520,14 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         }
-        Alkanes::WrapBtc { amount, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
+        Alkanes::WrapBtc { amount, to, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
             use alkanes_cli_common::alkanes::wrap_btc::{WrapBtcExecutor, WrapBtcParams};
             
             let params = WrapBtcParams {
                 amount,
-                from_addresses: from,
-                change_address: change,
+                to_address: to.clone(),
+                from_addresses: from.clone(),
+                change_address: change.clone(),
                 fee_rate,
                 raw_output: raw,
                 trace_enabled: trace,

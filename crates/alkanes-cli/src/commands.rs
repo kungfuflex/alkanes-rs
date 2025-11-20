@@ -906,6 +906,9 @@ pub enum Alkanes {
     WrapBtc {
         /// Amount of BTC to wrap (in satoshis)
         amount: u64,
+        /// Address to receive the frBTC tokens
+        #[arg(long)]
+        to: String,
         /// Addresses to source UTXOs from
         #[arg(long, num_args = 1..)]
         from: Option<Vec<String>>,
@@ -1049,26 +1052,41 @@ pub enum DataApiCommand {
         order: Option<String>,
         #[arg(long)]
         search: Option<String>,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
     },
     /// Get alkanes for an address
     GetAlkanesByAddress {
         address: String,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
     },
     /// Get alkane details
     GetAlkaneDetails {
         /// Alkane ID in format BLOCK:TX (e.g., 2:0)
         id: String,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
     },
     /// Get all pools (defaults to factory 4:65522)
     GetPools {
         /// Factory ID in format BLOCK:TX
         #[arg(long, default_value = "4:65522")]
         factory: String,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
     },
     /// Get pool details
     GetPoolById {
         /// Pool ID in format BLOCK:TX
         id: String,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
     },
     /// Get pool history
     GetPoolHistory {
@@ -1080,6 +1098,9 @@ pub enum DataApiCommand {
         limit: Option<i32>,
         #[arg(long)]
         offset: Option<i32>,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
     },
     /// Get swap history
     GetSwapHistory {
@@ -1089,13 +1110,23 @@ pub enum DataApiCommand {
         limit: Option<i32>,
         #[arg(long)]
         offset: Option<i32>,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
     },
     /// Get Bitcoin price
-    GetBitcoinPrice,
+    GetBitcoinPrice {
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+    },
     /// Get Bitcoin market chart
     GetMarketChart {
         /// Number of days (1, 7, 14, 30, 90, 180, 365, max)
         days: String,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
     },
     /// Health check
     Health,
