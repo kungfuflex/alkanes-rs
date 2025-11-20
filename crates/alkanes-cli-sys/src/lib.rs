@@ -2984,6 +2984,21 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 // It requires access to the full CLI environment
                 Err(anyhow::anyhow!("Backtest command is only available in alkanes-cli, not alkanes-cli-sys"))
             }
+            AlkanesCommands::GetAllPools { factory_id, raw } => {
+                // AMM commands are not implemented in alkanes-cli-sys
+                // They require access to the full CLI environment
+                Err(anyhow::anyhow!("GetAllPools command is only available in alkanes-cli, not alkanes-cli-sys"))
+            }
+            AlkanesCommands::AllPoolsDetails { factory_id, raw } => {
+                // AMM commands are not implemented in alkanes-cli-sys
+                // They require access to the full CLI environment
+                Err(anyhow::anyhow!("AllPoolsDetails command is only available in alkanes-cli, not alkanes-cli-sys"))
+            }
+            AlkanesCommands::PoolDetails { pool_id, raw } => {
+                // AMM commands are not implemented in alkanes-cli-sys
+                // They require access to the full CLI environment
+                Err(anyhow::anyhow!("PoolDetails command is only available in alkanes-cli, not alkanes-cli-sys"))
+            }
         };
         res.map_err(|e| AlkanesError::Wallet(e.to_string()))
     }

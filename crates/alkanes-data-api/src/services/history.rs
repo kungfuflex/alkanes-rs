@@ -109,9 +109,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM swap
+            SELECT * FROM "PoolSwap"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $2 OFFSET $3
             "#,
             where_clause
@@ -124,7 +124,7 @@ impl HistoryService {
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!("SELECT COUNT(*) as count FROM swap {}", where_clause);
+        let count_query = format!(r#"SELECT COUNT(*) as count FROM "PoolSwap" {}"#, where_clause);
         let total: (i64,) = sqlx::query_as(&count_query)
             .bind(&pool_db_id)
             .fetch_one(&self.db)
@@ -152,9 +152,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM swap
+            SELECT * FROM "PoolSwap"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $3 OFFSET $4
             "#,
             where_clause
@@ -168,7 +168,7 @@ impl HistoryService {
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!("SELECT COUNT(*) as count FROM swap {}", where_clause);
+        let count_query = format!(r#"SELECT COUNT(*) as count FROM "PoolSwap" {}"#, where_clause);
         let total: (i64,) = sqlx::query_as(&count_query)
             .bind(&token_id.block)
             .bind(&token_id.tx)
@@ -196,9 +196,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM mint
+            SELECT * FROM "PoolMint"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $2 OFFSET $3
             "#,
             where_clause
@@ -211,7 +211,7 @@ impl HistoryService {
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!("SELECT COUNT(*) as count FROM mint {}", where_clause);
+        let count_query = format!(r#"SELECT COUNT(*) as count FROM "PoolMint" {}"#, where_clause);
         let total: (i64,) = sqlx::query_as(&count_query)
             .bind(&pool_db_id)
             .fetch_one(&self.db)
@@ -238,9 +238,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM burn
+            SELECT * FROM "PoolBurn"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $2 OFFSET $3
             "#,
             where_clause
@@ -253,7 +253,7 @@ impl HistoryService {
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!("SELECT COUNT(*) as count FROM burn {}", where_clause);
+        let count_query = format!(r#"SELECT COUNT(*) as count FROM "PoolBurn" {}"#, where_clause);
         let total: (i64,) = sqlx::query_as(&count_query)
             .bind(&pool_db_id)
             .fetch_one(&self.db)
@@ -271,7 +271,7 @@ impl HistoryService {
         let creations = sqlx::query_as::<_, PoolCreation>(
             r#"
             SELECT * FROM "PoolCreation"
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $1 OFFSET $2
             "#
         )
@@ -306,9 +306,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM swap
+            SELECT * FROM "PoolSwap"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $3 OFFSET $4
             "#,
             where_clause
@@ -322,7 +322,7 @@ impl HistoryService {
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!("SELECT COUNT(*) as count FROM swap {}", where_clause);
+        let count_query = format!(r#"SELECT COUNT(*) as count FROM "PoolSwap" {}"#, where_clause);
         let total: (i64,) = sqlx::query_as(&count_query)
             .bind(&pool_db_id)
             .bind(address)
@@ -354,9 +354,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM swap
+            SELECT * FROM "PoolSwap"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $4 OFFSET $5
             "#,
             where_clause
@@ -371,7 +371,7 @@ impl HistoryService {
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!("SELECT COUNT(*) as count FROM swap {}", where_clause);
+        let count_query = format!(r#"SELECT COUNT(*) as count FROM "PoolSwap" {}"#, where_clause);
         let total: (i64,) = sqlx::query_as(&count_query)
             .bind(address)
             .bind(&token_id.block)
@@ -398,9 +398,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM wrap
+            SELECT * FROM "SubfrostWrap"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $2 OFFSET $3
             "#,
             where_clause
@@ -413,7 +413,7 @@ impl HistoryService {
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!("SELECT COUNT(*) as count FROM wrap {}", where_clause);
+        let count_query = format!(r#"SELECT COUNT(*) as count FROM "SubfrostWrap" {}"#, where_clause);
         let total: (i64,) = sqlx::query_as(&count_query)
             .bind(address)
             .fetch_one(&self.db)
@@ -437,9 +437,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM wrap
+            SELECT * FROM "SubfrostWrap"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $1 OFFSET $2
             "#,
             where_clause
@@ -452,9 +452,9 @@ impl HistoryService {
             .await?;
 
         let count_query = if successful_only {
-            "SELECT COUNT(*) as count FROM wrap WHERE successful = true"
+            r#"SELECT COUNT(*) as count FROM "SubfrostWrap" WHERE successful = true"#
         } else {
-            "SELECT COUNT(*) as count FROM wrap"
+            r#"SELECT COUNT(*) as count FROM "SubfrostWrap""#
         };
         
         let total: (i64,) = sqlx::query_as(count_query)
@@ -469,7 +469,7 @@ impl HistoryService {
         let result: (Option<sqlx::types::BigDecimal>,) = sqlx::query_as(
             r#"
             SELECT SUM(CAST(amount AS NUMERIC)) as total
-            FROM wrap
+            FROM "SubfrostWrap"
             WHERE successful = true
             "#
         )
@@ -634,15 +634,15 @@ impl HistoryService {
                         'successful', w.successful,
                         'timestamp', w.timestamp
                     ) as data
-                FROM wrap w
-                WHERE w.from_address = $1 {}
+                FROM "SubfrostWrap" w
+                WHERE w."address" = $1 {}
             )
             SELECT 
                 tx_type,
                 data
             FROM combined
             WHERE {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $2 OFFSET $3
             "#,
             success_filter, success_filter, success_filter, success_filter, type_filter
@@ -665,15 +665,15 @@ impl HistoryService {
         let count_query = format!(
             r#"
             SELECT COUNT(*) FROM (
-                SELECT id FROM swap WHERE from_address = $1 {}
+                SELECT id FROM "PoolSwap" WHERE "sellerAddress" = $1 {}
                 UNION ALL
-                SELECT id FROM mint WHERE from_address = $1 {}
+                SELECT id FROM "PoolMint" WHERE "minterAddress" = $1 {}
                 UNION ALL
-                SELECT id FROM burn WHERE from_address = $1 {}
+                SELECT id FROM "PoolBurn" WHERE "burnerAddress" = $1 {}
                 UNION ALL
                 SELECT id FROM "PoolCreation" WHERE "creatorAddress" = $1
                 UNION ALL
-                SELECT id FROM wrap WHERE from_address = $1 {}
+                SELECT id FROM "SubfrostWrap" WHERE "address" = $1 {}
             ) AS all_txs
             "#,
             success_filter, success_filter, success_filter, success_filter
@@ -825,7 +825,7 @@ impl HistoryService {
                         'successful', w.successful,
                         'timestamp', w.timestamp
                     ) as data
-                FROM wrap w
+                FROM "SubfrostWrap" w
                 WHERE 1=1 {}
             )
             SELECT 
@@ -833,7 +833,7 @@ impl HistoryService {
                 data
             FROM combined
             WHERE {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $1 OFFSET $2
             "#,
             success_filter, success_filter, success_filter, success_filter, type_filter
@@ -855,15 +855,15 @@ impl HistoryService {
         let count_query = format!(
             r#"
             SELECT COUNT(*) FROM (
-                SELECT id FROM swap WHERE 1=1 {}
+                SELECT id FROM "PoolSwap" WHERE 1=1 {}
                 UNION ALL
-                SELECT id FROM mint WHERE 1=1 {}
+                SELECT id FROM "PoolMint" WHERE 1=1 {}
                 UNION ALL
-                SELECT id FROM burn WHERE 1=1 {}
+                SELECT id FROM "PoolBurn" WHERE 1=1 {}
                 UNION ALL
                 SELECT id FROM "PoolCreation"
                 UNION ALL
-                SELECT id FROM wrap WHERE 1=1 {}
+                SELECT id FROM "SubfrostWrap" WHERE 1=1 {}
             ) AS all_txs
             "#,
             success_filter, success_filter, success_filter, success_filter
@@ -895,8 +895,8 @@ impl HistoryService {
         let creations = sqlx::query_as::<_, PoolCreation>(
             r#"
             SELECT * FROM "PoolCreation"
-            WHERE creator_address = $1
-            ORDER BY block_height DESC, id DESC
+            WHERE "creatorAddress" = $1
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $2 OFFSET $3
             "#
         )
@@ -932,9 +932,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM mint
+            SELECT * FROM "PoolMint"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $2 OFFSET $3
             "#,
             where_clause
@@ -947,7 +947,7 @@ impl HistoryService {
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!("SELECT COUNT(*) as count FROM mint {}", where_clause);
+        let count_query = format!(r#"SELECT COUNT(*) as count FROM "PoolMint" {}"#, where_clause);
         let total: (i64,) = sqlx::query_as(&count_query)
             .bind(address)
             .fetch_one(&self.db)
@@ -972,9 +972,9 @@ impl HistoryService {
 
         let query = format!(
             r#"
-            SELECT * FROM burn
+            SELECT * FROM "PoolBurn"
             {}
-            ORDER BY block_height DESC, id DESC
+            ORDER BY "blockHeight" DESC, id DESC
             LIMIT $2 OFFSET $3
             "#,
             where_clause
@@ -987,7 +987,7 @@ impl HistoryService {
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!("SELECT COUNT(*) as count FROM burn {}", where_clause);
+        let count_query = format!(r#"SELECT COUNT(*) as count FROM "PoolBurn" {}"#, where_clause);
         let total: (i64,) = sqlx::query_as(&count_query)
             .bind(address)
             .fetch_one(&self.db)

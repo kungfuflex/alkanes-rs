@@ -1,5 +1,5 @@
 use anyhow::Result;
-use deezel_common::traits::{MetashrewRpcProvider, BitcoinRpcProvider, EsploraProvider, JsonRpcProvider, DeezelProvider};
+use alkanes_cli_common::traits::{MetashrewRpcProvider, BitcoinRpcProvider, EsploraProvider, JsonRpcProvider, DeezelProvider};
 use tracing::{info, error};
 
 use crate::{pipeline::{BlockContext, Pipeline}, progress::ProgressStore, helpers::block::canonical_tip_height};

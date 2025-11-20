@@ -1,5 +1,5 @@
 use anyhow::Result;
-use deezel_common::traits::{BitcoinRpcProvider, JsonRpcProvider, DeezelProvider, MetashrewRpcProvider};
+use alkanes_cli_common::traits::{BitcoinRpcProvider, JsonRpcProvider, DeezelProvider, MetashrewRpcProvider};
 use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::env;

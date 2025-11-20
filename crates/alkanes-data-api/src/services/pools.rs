@@ -114,20 +114,20 @@ impl PoolService {
             r#"
             SELECT 
                 p.id,
-                p.factory_block_id,
-                p.factory_tx_id,
-                p.pool_block_id,
-                p.pool_tx_id,
-                p.token0_block_id,
-                p.token0_tx_id,
-                p.token1_block_id,
-                p.token1_tx_id,
-                p.pool_name,
-                ps.token0_amount,
-                ps.token1_amount,
-                ps.token_supply,
-                pc.creator_address,
-                pc.block_height as creation_block_height
+                p."factoryBlockId" as factory_block_id,
+                p."factoryTxId" as factory_tx_id,
+                p."poolBlockId" as pool_block_id,
+                p."poolTxId" as pool_tx_id,
+                p."token0BlockId" as token0_block_id,
+                p."token0TxId" as token0_tx_id,
+                p."token1BlockId" as token1_block_id,
+                p."token1TxId" as token1_tx_id,
+                p."poolName" as pool_name,
+                ps."token0Amount" as token0_amount,
+                ps."token1Amount" as token1_amount,
+                ps."tokenSupply" as token_supply,
+                pc."creatorAddress" as creator_address,
+                pc."blockHeight" as creation_block_height
             FROM "Pool" p
             LEFT JOIN LATERAL (
                 SELECT "token0Amount", "token1Amount", "tokenSupply"
@@ -172,20 +172,20 @@ impl PoolService {
             r#"
             SELECT 
                 p.id,
-                p.factory_block_id,
-                p.factory_tx_id,
-                p.pool_block_id,
-                p.pool_tx_id,
-                p.token0_block_id,
-                p.token0_tx_id,
-                p.token1_block_id,
-                p.token1_tx_id,
-                p.pool_name,
-                ps.token0_amount,
-                ps.token1_amount,
-                ps.token_supply,
-                pc.creator_address,
-                pc.block_height as creation_block_height
+                p."factoryBlockId" as factory_block_id,
+                p."factoryTxId" as factory_tx_id,
+                p."poolBlockId" as pool_block_id,
+                p."poolTxId" as pool_tx_id,
+                p."token0BlockId" as token0_block_id,
+                p."token0TxId" as token0_tx_id,
+                p."token1BlockId" as token1_block_id,
+                p."token1TxId" as token1_tx_id,
+                p."poolName" as pool_name,
+                ps."token0Amount" as token0_amount,
+                ps."token1Amount" as token1_amount,
+                ps."tokenSupply" as token_supply,
+                pc."creatorAddress" as creator_address,
+                pc."blockHeight" as creation_block_height
             FROM "Pool" p
             LEFT JOIN LATERAL (
                 SELECT "token0Amount", "token1Amount", "tokenSupply"
@@ -194,8 +194,8 @@ impl PoolService {
                 ORDER BY "blockHeight" DESC
                 LIMIT 1
             ) ps ON true
-            LEFT JOIN pool_creation pc ON pc.pool_id = p.id
-            WHERE p.pool_block_id = $1 AND p.pool_tx_id = $2
+            LEFT JOIN "PoolCreation" pc ON pc."poolBlockId" = p."poolBlockId" AND pc."poolTxId" = p."poolTxId"
+            WHERE p."poolBlockId" = $1 AND p."poolTxId" = $2
             "#
         )
         .bind(&pool_id.block)
@@ -321,20 +321,20 @@ impl PoolService {
             r#"
             SELECT 
                 p.id,
-                p.factory_block_id,
-                p.factory_tx_id,
-                p.pool_block_id,
-                p.pool_tx_id,
-                p.token0_block_id,
-                p.token0_tx_id,
-                p.token1_block_id,
-                p.token1_tx_id,
-                p.pool_name,
-                ps.token0_amount,
-                ps.token1_amount,
-                ps.token_supply,
-                pc.creator_address,
-                pc.block_height as creation_block_height
+                p."factoryBlockId" as factory_block_id,
+                p."factoryTxId" as factory_tx_id,
+                p."poolBlockId" as pool_block_id,
+                p."poolTxId" as pool_tx_id,
+                p."token0BlockId" as token0_block_id,
+                p."token0TxId" as token0_tx_id,
+                p."token1BlockId" as token1_block_id,
+                p."token1TxId" as token1_tx_id,
+                p."poolName" as pool_name,
+                ps."token0Amount" as token0_amount,
+                ps."token1Amount" as token1_amount,
+                ps."tokenSupply" as token_supply,
+                pc."creatorAddress" as creator_address,
+                pc."blockHeight" as creation_block_height
             FROM "Pool" p
             LEFT JOIN LATERAL (
                 SELECT "token0Amount", "token1Amount", "tokenSupply"
@@ -343,12 +343,12 @@ impl PoolService {
                 ORDER BY "blockHeight" DESC
                 LIMIT 1
             ) ps ON true
-            LEFT JOIN pool_creation pc ON pc.pool_id = p.id
-            WHERE p.factory_block_id = $1 
-              AND p.factory_tx_id = $2
+            LEFT JOIN "PoolCreation" pc ON pc."poolBlockId" = p."poolBlockId" AND pc."poolTxId" = p."poolTxId"
+            WHERE p."factoryBlockId" = $1 
+              AND p."factoryTxId" = $2
               AND (
-                  (p.token0_block_id = $3 AND p.token0_tx_id = $4)
-                  OR (p.token1_block_id = $3 AND p.token1_tx_id = $4)
+                  (p."token0BlockId" = $3 AND p."token0TxId" = $4)
+                  OR (p."token1BlockId" = $3 AND p."token1TxId" = $4)
               )
             "#
         )

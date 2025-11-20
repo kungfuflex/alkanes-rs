@@ -1,5 +1,5 @@
 use anyhow::Result;
-use deezel_common::traits::{DeezelProvider, JsonRpcProvider};
+use alkanes_cli_common::traits::{DeezelProvider, JsonRpcProvider};
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

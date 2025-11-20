@@ -1,6 +1,6 @@
 use anyhow::Result;
-use deezel_common::provider::ConcreteProvider;
-use deezel_common::traits::{DeezelProvider, JsonRpcProvider, BitcoinRpcProvider};
+use alkanes_cli_sys::SystemAlkanes as ConcreteProvider;
+use alkanes_cli_common::traits::{DeezelProvider, JsonRpcProvider, BitcoinRpcProvider};
 use sqlx::PgPool;
 use tracing::info;
 use crate::helpers::pools::{fetch_and_upsert_pools_for_tip};

@@ -1,7 +1,7 @@
 use anyhow::Result;
-use deezel_common::provider::ConcreteProvider;
+use alkanes_cli_sys::SystemAlkanes as ConcreteProvider;
 use std::sync::Arc;
-use deezel_common::alkanes::amm::AmmManager;
+use alkanes_cli_common::alkanes::amm::AmmManager;
 use std::env;
 use tracing::{debug, info};
 use sqlx::PgPool;
@@ -33,16 +33,26 @@ pub async fn fetch_all_pools_with_details(
     factory_block: &str,
     factory_tx: &str,
 ) -> Result<Vec<PoolWithDetails>> {
-    // Use AmmManager helpers which perform raw simulate and decode for us
-    let amm = Arc::new(AmmManager::new(Arc::new(provider.clone())));
-    // Use SANDSHREW_RPC_URL from environment (.env loaded in main)
-    let url = env::var("SANDSHREW_RPC_URL").unwrap_or_else(|_| "http://localhost:18888".to_string());
-    debug!(url = %url, factory_block, factory_tx, "fetch pools via AmmManager");
+    use alkanes_cli_common::alkanes::execute::EnhancedAlkanesExecutor;
+    use alkanes_cli_common::alkanes::types::AlkaneId;
+    use alkanes_cli_common::traits::AlkanesProvider;
+    
+    debug!(factory_block, factory_tx, "fetch pools via AmmManager");
 
-    // Step 1: fetch all pool IDs via raw simulate
-    let all = amm
-        .get_all_pools_via_raw_simulate(&url, factory_block.to_string(), factory_tx.to_string())
-        .await?;
+    // Parse factory ID
+    let factory_id = AlkaneId {
+        block: factory_block.parse()?,
+        tx: factory_tx.parse()?,
+    };
+    
+    // Create executor and AMM manager
+    // Note: We need to clone the provider to get a mutable reference
+    let mut provider_clone = provider.clone();
+    let executor = Arc::new(EnhancedAlkanesExecutor::new(&mut provider_clone));
+    let amm = AmmManager::new(executor);
+
+    // Step 1: fetch all pool IDs via simulate
+    let all = amm.get_all_pools(&factory_id, provider).await?;
 
     if all.pools.is_empty() {
         return Ok(Vec::new());
@@ -52,12 +62,13 @@ pub async fn fetch_all_pools_with_details(
 
     // Step 2: concurrently fetch each pool's details with bounded parallelism (10)
     let stream = stream::iter(all.pools.into_iter().map(|id| {
-        let amm = amm.clone();
-        let url = url.clone();
+        let provider = provider.clone();
         async move {
-            let res = amm
-                .get_pool_details_via_raw_simulate(&url, id.block.to_string(), id.tx.to_string())
-                .await;
+            // Create a new executor and amm for each concurrent task
+            let mut provider_clone = provider.clone();
+            let executor = Arc::new(EnhancedAlkanesExecutor::new(&mut provider_clone));
+            let amm = AmmManager::new(executor);
+            let res = amm.get_pool_details(&id, &provider).await;
             (id, res)
         }
     }))
@@ -73,9 +84,9 @@ pub async fn fetch_all_pools_with_details(
                 details: PoolDetailsResult {
                     token0: TypesAlkaneId { block: details.token0.block.to_string(), tx: details.token0.tx.to_string() },
                     token1: TypesAlkaneId { block: details.token1.block.to_string(), tx: details.token1.tx.to_string() },
-                    token0_amount: details.token0_amount as u128,
-                    token1_amount: details.token1_amount as u128,
-                    token_supply: details.token_supply as u128,
+                    token0_amount: details.token0_amount,
+                    token1_amount: details.token1_amount,
+                    token_supply: details.token_supply,
                     pool_name: details.pool_name,
                 },
             });

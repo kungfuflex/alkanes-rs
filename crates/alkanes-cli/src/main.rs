@@ -439,6 +439,107 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
         Alkanes::Backtest { txid, raw } => {
             backtest_transaction(system, &txid, raw).await
         }
+        Alkanes::GetAllPools { factory_id, raw } => {
+            // Parse factory_id to AlkaneId
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(anyhow::anyhow!("Invalid factory_id format. Expected 'block:tx'"));
+            }
+            let block = parts[0].parse::<u64>()?;
+            let tx = parts[1].parse::<u64>()?;
+            let factory = alkanes::types::AlkaneId { block, tx };
+            
+            // Create AMM manager with a temporary executor
+            use alkanes::execute::EnhancedAlkanesExecutor;
+            let provider = system.provider();
+            let mut provider_clone = provider.clone_box();
+            let executor = std::sync::Arc::new(EnhancedAlkanesExecutor::new(&mut *provider_clone));
+            let amm_manager = alkanes::amm::AmmManager::new(executor);
+            
+            // Get all pools
+            let result = amm_manager.get_all_pools(&factory, provider).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("🏊 Found {} pool(s) from factory {}:{}", result.count, block, tx);
+                println!();
+                for (idx, pool) in result.pools.iter().enumerate() {
+                    println!("  {}. Pool {}:{}", idx + 1, pool.block, pool.tx);
+                }
+            }
+            Ok(())
+        }
+        Alkanes::AllPoolsDetails { factory_id, raw } => {
+            // Parse factory_id to AlkaneId
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(anyhow::anyhow!("Invalid factory_id format. Expected 'block:tx'"));
+            }
+            let block = parts[0].parse::<u64>()?;
+            let tx = parts[1].parse::<u64>()?;
+            let factory = alkanes::types::AlkaneId { block, tx };
+            
+            // Create AMM manager with a temporary executor
+            use alkanes::execute::EnhancedAlkanesExecutor;
+            let provider = system.provider();
+            let mut provider_clone = provider.clone_box();
+            let executor = std::sync::Arc::new(EnhancedAlkanesExecutor::new(&mut *provider_clone));
+            let amm_manager = alkanes::amm::AmmManager::new(executor);
+            
+            // Get all pools with details
+            let result = amm_manager.get_all_pools_details(&factory, provider).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("🏊 Found {} pool(s) with details from factory {}:{}", result.count, block, tx);
+                println!();
+                for (idx, pool) in result.pools.iter().enumerate() {
+                    println!("  {}. Pool {}:{}", idx + 1, pool.pool_id.block, pool.pool_id.tx);
+                    println!("     Name: {}", pool.pool_name);
+                    println!("     Token0: {}:{} ({})", pool.token0.block, pool.token0.tx, pool.token0_amount);
+                    println!("     Token1: {}:{} ({})", pool.token1.block, pool.token1.tx, pool.token1_amount);
+                    println!("     LP Supply: {}", pool.token_supply);
+                    println!();
+                }
+            }
+            Ok(())
+        }
+        Alkanes::PoolDetails { pool_id, raw } => {
+            // Parse pool_id to AlkaneId
+            let parts: Vec<&str> = pool_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(anyhow::anyhow!("Invalid pool_id format. Expected 'block:tx'"));
+            }
+            let block = parts[0].parse::<u64>()?;
+            let tx = parts[1].parse::<u64>()?;
+            let pool = alkanes::types::AlkaneId { block, tx };
+            
+            // Create AMM manager with a temporary executor
+            use alkanes::execute::EnhancedAlkanesExecutor;
+            let provider = system.provider();
+            let mut provider_clone = provider.clone_box();
+            let executor = std::sync::Arc::new(EnhancedAlkanesExecutor::new(&mut *provider_clone));
+            let amm_manager = alkanes::amm::AmmManager::new(executor);
+            
+            // Get pool details
+            let result = amm_manager.get_pool_details(&pool, provider).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("🏊 Pool Details for {}:{}", block, tx);
+                println!();
+                println!("  Name: {}", result.pool_name);
+                println!("  Token0: {}:{}", result.token0.block, result.token0.tx);
+                println!("    Amount: {}", result.token0_amount);
+                println!("  Token1: {}:{}", result.token1.block, result.token1.tx);
+                println!("    Amount: {}", result.token1_amount);
+                println!("  LP Token Supply: {}", result.token_supply);
+            }
+            Ok(())
+        }
     }
 }
 

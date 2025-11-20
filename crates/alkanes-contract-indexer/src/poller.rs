@@ -1,4 +1,4 @@
-use deezel_common::provider::ConcreteProvider;
+use alkanes_cli_sys::SystemAlkanes as ConcreteProvider;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration, Instant};
 use tracing::{error, info, warn};

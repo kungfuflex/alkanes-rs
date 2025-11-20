@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::Transaction;
-use deezel_common::runestone_enhanced::format_runestone_with_decoded_messages;
-use deezel_common::traits::{DeezelProvider, JsonRpcProvider, BitcoinRpcProvider, EsploraProvider};
+use alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages;
+use alkanes_cli_common::traits::{DeezelProvider, JsonRpcProvider, BitcoinRpcProvider, EsploraProvider};
 use serde_json::{json, Value as JsonValue};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -246,10 +246,10 @@ where
                                     has_trace = true;
                                     // Determine success from either structured trace or raw events
                                     let mut ok_status = false;
-                                    if let Ok(trace_parsed) = serde_json::from_value::<deezel_common::alkanes::trace::Trace>(res.clone()) {
+                                    if let Ok(trace_parsed) = serde_json::from_value::<alkanes_cli_common::alkanes::trace::Trace>(res.clone()) {
                                         if let Some(first_call) = trace_parsed.calls.first() {
                                             for ev in &first_call.events {
-                                                if let deezel_common::alkanes::trace::Event::Exit(exit) = ev {
+                                                if let alkanes_cli_common::alkanes::trace::Event::Exit(exit) = ev {
                                                     let s = exit.status.to_ascii_lowercase();
                                                     if s.contains("ok") || s.contains("success") { ok_status = true; }
                                                 }

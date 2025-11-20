@@ -939,6 +939,30 @@ pub enum Alkanes {
         #[arg(long)]
         raw: bool,
     },
+    /// Get all pools from an AMM factory contract
+    GetAllPools {
+        /// Factory alkane ID (format: block:tx)
+        factory_id: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all pools with detailed information from an AMM factory contract
+    AllPoolsDetails {
+        /// Factory alkane ID (format: block:tx)
+        factory_id: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get details for a specific pool
+    PoolDetails {
+        /// Pool alkane ID (format: block:tx)
+        pool_id: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// Runestone subcommands

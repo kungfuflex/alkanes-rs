@@ -29,20 +29,23 @@ use alloc::vec;
 // Use specific imports to avoid conflicts
 use super::types::{PoolCreateParams, LiquidityAddParams, LiquidityRemoveParams, SwapParams, TokenAmount, LiquidityRemovalPreview};
 use super::types::AlkaneId as TypesAlkaneId;
-use super::execute::{EnhancedAlkanesExecutor, EnhancedExecuteParams, EnhancedExecuteResult, InputRequirement};
+use super::execute::EnhancedAlkanesExecutor;
+// Execution methods are commented out - only query methods are implemented
+// use super::execute::{EnhancedExecuteParams, EnhancedExecuteResult, InputRequirement};
 use crate::traits::DeezelProvider;
 
 /// AMM operations manager that leverages enhanced execute functionality
-pub struct AmmManager<P: DeezelProvider> {
-    executor: Arc<EnhancedAlkanesExecutor<P>>,
+pub struct AmmManager<'a> {
+    executor: Arc<EnhancedAlkanesExecutor<'a>>,
 }
 
-impl<P: DeezelProvider> AmmManager<P> {
+impl<'a> AmmManager<'a> {
     /// Create a new AMM manager
-    pub fn new(executor: Arc<EnhancedAlkanesExecutor<P>>) -> Self {
+    pub fn new(executor: Arc<EnhancedAlkanesExecutor<'a>>) -> Self {
         Self { executor }
     }
 
+    /* Execution methods commented out - only query methods are needed
     /// Create a new liquidity pool using enhanced execute functionality
     ///
     /// This follows the OYL SDK pattern:
@@ -398,6 +401,293 @@ impl<P: DeezelProvider> AmmManager<P> {
         debug!("Returning placeholder empty reserves for pool {}:{}", pool_id.block, pool_id.tx);
         Ok(Vec::new())
     }
+    */ // End of commented execution methods
+
+    /// Get all AMM pools by simulating the factory contract
+    pub async fn get_all_pools(&self, factory_id: &TypesAlkaneId, provider: &dyn crate::traits::AlkanesProvider) -> Result<GetAllPoolsResult> {
+        info!("Getting all pools from factory {}:{}", factory_id.block, factory_id.tx);
+        
+        // Build MessageContextParcel with GET_ALL_POOLS opcode (3)
+        use crate::proto::alkanes::MessageContextParcel;
+        
+        let mut calldata = Vec::new();
+        // Target alkane: block
+        leb128::write::unsigned(&mut calldata, factory_id.block).unwrap();
+        // Target alkane: tx  
+        leb128::write::unsigned(&mut calldata, factory_id.tx).unwrap();
+        // Opcode 3 (GET_ALL_POOLS)
+        leb128::write::unsigned(&mut calldata, FACTORY_OPCODE_GET_ALL_POOLS).unwrap();
+        
+        let context = MessageContextParcel {
+            alkanes: vec![],
+            transaction: vec![],
+            block: vec![],
+            height: 0,
+            vout: 0,
+            txindex: 0,
+            calldata,
+            pointer: 0,
+            refund_pointer: 0,
+        };
+
+        let result = provider.simulate(&format!("{}:{}", factory_id.block, factory_id.tx), &context).await?;
+        let data_hex = result
+            .get("data")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0x");
+
+        decode_get_all_pools(data_hex)
+            .ok_or_else(|| crate::AlkanesError::Other("Failed to decode get_all_pools result".to_string()))
+    }
+
+    /// Get all pools with detailed information
+    pub async fn get_all_pools_details(&self, factory_id: &TypesAlkaneId, provider: &dyn crate::traits::AlkanesProvider) -> Result<AllPoolsDetailsResult> {
+        let all = self.get_all_pools(factory_id, provider).await?;
+
+        let mut pools_with_details = Vec::new();
+        for pool_id in &all.pools {
+            use crate::proto::alkanes::MessageContextParcel;
+            
+            let mut calldata = Vec::new();
+            // Target alkane: block
+            leb128::write::unsigned(&mut calldata, pool_id.block).unwrap();
+            // Target alkane: tx
+            leb128::write::unsigned(&mut calldata, pool_id.tx).unwrap();
+            // Opcode 999 (POOL_DETAILS)
+            leb128::write::unsigned(&mut calldata, POOL_OPCODE_POOL_DETAILS).unwrap();
+            
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: 0,
+                vout: 0,
+                txindex: 0,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+
+            match provider.simulate(&format!("{}:{}", pool_id.block, pool_id.tx), &context).await {
+                Ok(result) => {
+                    let data_hex = result
+                        .get("data")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("0x");
+                    if let Some(details) = decode_pool_details(data_hex) {
+                        pools_with_details.push(PoolDetailsWithId {
+                            pool_id: pool_id.clone(),
+                            token0: details.token0,
+                            token1: details.token1,
+                            token0_amount: details.token0_amount,
+                            token1_amount: details.token1_amount,
+                            token_supply: details.token_supply,
+                            pool_name: details.pool_name,
+                        });
+                    }
+                }
+                Err(e) => {
+                    log::error!(
+                        "Error getting details for pool {}:{}: {}",
+                        pool_id.block, pool_id.tx, e
+                    );
+                }
+            }
+        }
+
+        Ok(AllPoolsDetailsResult { count: pools_with_details.len(), pools: pools_with_details })
+    }
+
+    /// Get a single pool's details
+    pub async fn get_pool_details(&self, pool_id: &TypesAlkaneId, provider: &dyn crate::traits::AlkanesProvider) -> Result<PoolDetailsResult> {
+        info!("Getting pool details for: {}:{}", pool_id.block, pool_id.tx);
+
+        use crate::proto::alkanes::MessageContextParcel;
+        
+        let mut calldata = Vec::new();
+        // Target alkane: block
+        leb128::write::unsigned(&mut calldata, pool_id.block).unwrap();
+        // Target alkane: tx
+        leb128::write::unsigned(&mut calldata, pool_id.tx).unwrap();
+        // Opcode 999 (POOL_DETAILS)
+        leb128::write::unsigned(&mut calldata, POOL_OPCODE_POOL_DETAILS).unwrap();
+        
+        let context = MessageContextParcel {
+            alkanes: vec![],
+            transaction: vec![],
+            block: vec![],
+            height: 0,
+            vout: 0,
+            txindex: 0,
+            calldata,
+            pointer: 0,
+            refund_pointer: 0,
+        };
+
+        let result = provider.simulate(&format!("{}:{}", pool_id.block, pool_id.tx), &context).await?;
+        let data_hex = result
+            .get("data")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0x");
+
+        decode_pool_details(data_hex)
+            .ok_or_else(|| crate::AlkanesError::Other("Failed to decode pool_details result".to_string()))
+    }
+}
+
+/// Operation codes for pool interactions
+const POOL_OPCODE_INIT_POOL: u64 = 0;
+const POOL_OPCODE_ADD_LIQUIDITY: u64 = 1;
+const POOL_OPCODE_REMOVE_LIQUIDITY: u64 = 2;
+const POOL_OPCODE_SWAP: u64 = 3;
+const POOL_OPCODE_SIMULATE_SWAP: u64 = 4;
+const POOL_OPCODE_NAME: u64 = 99;
+const POOL_OPCODE_POOL_DETAILS: u64 = 999;
+
+/// Factory operation codes
+const FACTORY_OPCODE_INIT_POOL: u64 = 0;
+const FACTORY_OPCODE_CREATE_NEW_POOL: u64 = 1;
+const FACTORY_OPCODE_FIND_EXISTING_POOL_ID: u64 = 2;
+const FACTORY_OPCODE_GET_ALL_POOLS: u64 = 3;
+
+/// Result of a pool details query
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PoolDetailsResult {
+    pub token0: TypesAlkaneId,
+    pub token1: TypesAlkaneId,
+    pub token0_amount: u128,
+    pub token1_amount: u128,
+    pub token_supply: u128,
+    pub pool_name: String,
+}
+
+/// Get-all-pools result
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GetAllPoolsResult {
+    pub count: usize,
+    pub pools: Vec<TypesAlkaneId>,
+}
+
+/// All pools with details result
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AllPoolsDetailsResult {
+    pub count: usize,
+    pub pools: Vec<PoolDetailsWithId>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PoolDetailsWithId {
+    pub pool_id: TypesAlkaneId,
+    pub token0: TypesAlkaneId,
+    pub token1: TypesAlkaneId,
+    pub token0_amount: u128,
+    pub token1_amount: u128,
+    pub token_supply: u128,
+    pub pool_name: String,
+}
+
+fn strip_0x(s: &str) -> &str {
+    if let Some(rest) = s.strip_prefix("0x") { rest } else { s }
+}
+
+fn hex_to_bytes(hex_str: &str) -> Option<Vec<u8>> {
+    let clean = strip_0x(hex_str);
+    hex::decode(clean).ok()
+}
+
+fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
+    if bytes.len() < offset + 8 { return None; }
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&bytes[offset..offset+8]);
+    Some(u64::from_le_bytes(buf))
+}
+
+fn read_u128_le(bytes: &[u8], offset: usize) -> Option<u128> {
+    if bytes.len() < offset + 16 { return None; }
+    let mut buf = [0u8; 16];
+    buf.copy_from_slice(&bytes[offset..offset+16]);
+    Some(u128::from_le_bytes(buf))
+}
+
+fn decode_pool_details(data_hex: &str) -> Option<PoolDetailsResult> {
+    if data_hex == "0x" { return None; }
+    let bytes = hex_to_bytes(data_hex)?;
+
+    // Values are encoded as 128-bit little-endian. We take the low 64 bits.
+    let lo_mask: u128 = 0xFFFF_FFFF_FFFF_FFFF;
+
+    let token0 = TypesAlkaneId {
+        block: (read_u128_le(&bytes, 0)? & lo_mask) as u64,
+        tx: (read_u128_le(&bytes, 16)? & lo_mask) as u64,
+    };
+    let token1 = TypesAlkaneId {
+        block: (read_u128_le(&bytes, 32)? & lo_mask) as u64,
+        tx: (read_u128_le(&bytes, 48)? & lo_mask) as u64,
+    };
+    let token0_amount = read_u128_le(&bytes, 64)?;
+    let token1_amount = read_u128_le(&bytes, 80)?;
+    let token_supply = read_u128_le(&bytes, 96)?;
+    let pool_name = if bytes.len() > 116 {
+        String::from_utf8_lossy(&bytes[116..]).to_string()
+    } else {
+        String::new()
+    };
+
+    Some(PoolDetailsResult { token0, token1, token0_amount, token1_amount, token_supply, pool_name })
+}
+
+fn parse_alkane_id_from_hex(hex_str: &str) -> Option<TypesAlkaneId> {
+    // Expect 32 bytes (64 hex chars) total: 16 for block, 16 for tx
+    let clean = strip_0x(hex_str);
+    if clean.len() < 64 { return None; }
+    let block_hex = &clean[0..32];
+    let tx_hex = &clean[32..64];
+
+    let mut block_bytes = hex::decode(block_hex).ok()?;
+    block_bytes.reverse();
+    let mut tx_bytes = hex::decode(tx_hex).ok()?;
+    tx_bytes.reverse();
+
+    // Take low 8 bytes to fit into u64
+    let block = {
+        if block_bytes.len() < 8 { return None; }
+        let start = block_bytes.len() - 8;
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&block_bytes[start..]);
+        u64::from_be_bytes(buf)
+    };
+    let tx = {
+        if tx_bytes.len() < 8 { return None; }
+        let start = tx_bytes.len() - 8;
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&tx_bytes[start..]);
+        u64::from_be_bytes(buf)
+    };
+
+    Some(TypesAlkaneId { block, tx })
+}
+
+fn decode_get_all_pools(data_hex: &str) -> Option<GetAllPoolsResult> {
+    if data_hex == "0x" { return None; }
+    let clean = strip_0x(data_hex);
+    if clean.len() < 32 { return None; }
+
+    // First 16 bytes (32 hex chars) is count, little-endian
+    let mut count_bytes = hex::decode(&clean[0..32]).ok()?;
+    count_bytes.reverse();
+    let count = u128::from_str_radix(&hex::encode(count_bytes), 16).ok()? as usize;
+
+    let mut pools = Vec::new();
+    for i in 0..count {
+        let offset = 32 + i * 64; // after count (32 hex), each entry is 64 hex chars (32 bytes)
+        if clean.len() < offset + 64 { break; }
+        let entry_hex = &clean[offset..offset+64];
+        if let Some(id) = parse_alkane_id_from_hex(entry_hex) {
+            pools.push(id);
+        }
+    }
+
+    Some(GetAllPoolsResult { count: pools.len(), pools })
 }
 
 /// Calculate optimal liquidity amounts for adding to a pool
