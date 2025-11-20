@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -155,23 +156,25 @@ impl AlkanesService {
         Ok(alkane_map.into_values().collect())
     }
 
-    /// Get static alkane data (name, symbol, decimals, image)
+    /// Get static alkane data (name, symbol, cap, mintAmount, image)
+    /// Opcodes: 99=name, 100=symbol, 102=cap, 104=mintAmount, 1000=image
     pub async fn get_static_alkane_data(&self, id: &AlkaneId) -> Result<AlkaneToken> {
         // Try cache first
         let cache_key = format!("ALKANE-{}-{}", id.block, id.tx);
         
-        // TODO: Check Redis cache
+        if let Ok(mut conn) = self.redis.get_async_connection().await {
+            if let Ok(Some(cached)) = redis::AsyncCommands::get::<_, Option<String>>(&mut conn, &cache_key).await {
+                if let Ok(alkane) = serde_json::from_str::<AlkaneToken>(&cached) {
+                    return Ok(alkane);
+                }
+            }
+        }
 
-        // Simulate calls to get static data
-        let static_opcodes = vec![
-            json!([0, 0]), // name
-            json!([0, 1]), // symbol
-            json!([0, 2]), // decimals
-            json!([0, 4]), // max
-            json!([0, 5]), // cap
-            json!([0, 6]), // premine
-            json!([1, 2]), // image
-        ];
+        // Simulate calls to get static data using OYL API opcodes
+        // staticOpcodes = ["99", "100", "102", "104", "1000"] 
+        // opcodesHRV = ["name", "symbol", "cap", "mintAmount", "image"]
+        let static_opcodes = vec!["99", "100", "102", "104", "1000"];
+        let opcode_names = vec!["name", "symbol", "cap", "mintAmount", "image"];
 
         let mut alkane_data = AlkaneToken {
             id: id.clone(),
@@ -188,23 +191,46 @@ impl AlkanesService {
             price_in_satoshi: None,
         };
 
+        let mut has_valid_result = false;
+
         for (i, opcode) in static_opcodes.iter().enumerate() {
             let request = SimulateRequest {
                 target: id.clone(),
-                inputs: vec![opcode.clone()],
+                inputs: vec![json!(opcode)],
             };
 
             if let Ok(result) = self.rpc.simulate(&request).await {
                 if result.status == 0 {
                     if let Some(parsed) = result.parsed {
-                        match i {
-                            0 => alkane_data.name = parsed.get("string").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                            1 => alkane_data.symbol = parsed.get("string").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                            2 => alkane_data.decimals = parsed.get("le").and_then(|v| v.as_u64()).map(|v| v as u32),
-                            3 => alkane_data.max = parsed.get("le").and_then(|v| v.as_u64()).map(|v| v.to_string()),
-                            4 => alkane_data.cap = parsed.get("le").and_then(|v| v.as_u64()).map(|v| v.to_string()),
-                            5 => alkane_data.premine = parsed.get("le").and_then(|v| v.as_u64()).map(|v| v.to_string()),
-                            6 => alkane_data.image = parsed.get("string").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        has_valid_result = true;
+                        match opcode_names[i] {
+                            "name" => {
+                                alkane_data.name = parsed.get("string")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                            }
+                            "symbol" => {
+                                alkane_data.symbol = parsed.get("string")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .or(Some(String::new()));
+                            }
+                            "cap" => {
+                                alkane_data.cap = parsed.get("le")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|v| v.to_string());
+                            }
+                            "mintAmount" => {
+                                alkane_data.max = parsed.get("le")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|v| v.to_string());
+                            }
+                            "image" => {
+                                alkane_data.image = parsed.get("string")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .or(Some(String::new()));
+                            }
                             _ => {}
                         }
                     }
@@ -212,7 +238,13 @@ impl AlkanesService {
             }
         }
 
-        // TODO: Store in Redis cache
+        // Cache the result if we got valid data
+        if has_valid_result {
+            if let Ok(mut conn) = self.redis.get_async_connection().await {
+                let json = serde_json::to_string(&alkane_data).unwrap_or_default();
+                let _: Result<(), _> = redis::AsyncCommands::set(&mut conn, &cache_key, json).await;
+            }
+        }
 
         Ok(alkane_data)
     }
