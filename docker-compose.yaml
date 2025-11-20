@@ -210,12 +210,12 @@ services:
       SANDSHREW_URL: http://jsonrpc:18888
       NETWORK_ENV: regtest
       ALKANE_FACTORY_ID: "4:65522"
-      ETHEREUM_RPC_URL: ${ETHEREUM_RPC_URL:-https://mainnet.infura.io/v3/YOUR_KEY}
+      ETHEREUM_RPC_URL: ${ETHEREUM_RPC_URL:-https://mainnet.infura.io/v3/099fc58e0de9451d80b18d7c74caa7c1}
       HOST: 0.0.0.0
-      PORT: 3000
+      PORT: 4000
       RUST_LOG: info,alkanes_data_api=debug
     ports:
-      - "3000:3000"
+      - "4000:4000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
