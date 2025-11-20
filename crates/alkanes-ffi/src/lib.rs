@@ -547,19 +547,29 @@ impl AlkanesClient {
     
     /// Trace a transaction output
     pub fn trace_outpoint(&self, txid: String, vout: u32) -> Result<String> {
-        let params = serde_json::json!({
-            "txid": txid,
-            "vout": vout
-        });
+        // Use metashrew_view with "trace" view function
+        use prost::Message;
+        use alkanes_support::proto::alkanes::Outpoint;
         
-        let result = self.call_alkanes_rpc("alkanes_traceOutpoint", params)?;
+        let mut outpoint = Outpoint::default();
+        outpoint.txid = hex::decode(&txid)
+            .map_err(|e| AlkanesError::SerializationError(format!("Failed to decode txid: {}", e)))?;
+        outpoint.vout = vout;
+        
+        let mut buf = Vec::new();
+        outpoint.encode(&mut buf)?;
+        let params_hex = format!("0x{}", hex::encode(&buf));
+        
+        let rpc_params = serde_json::json!(["trace", params_hex, "latest"]);
+        let result = self.call_alkanes_rpc("metashrew_view", rpc_params)?;
+        
         serde_json::to_string(&result)
             .map_err(|e| AlkanesError::SerializationError(e.to_string()))
     }
     
     /// Get the current metashrew height
     pub fn get_height(&self) -> Result<u64> {
-        let result = self.call_alkanes_rpc("alkanes_getHeight", serde_json::json!([]))?;
+        let result = self.call_alkanes_rpc("metashrew_height", serde_json::json!([]))?;
         result.as_u64()
             .ok_or_else(|| AlkanesError::RpcError("Invalid height response".to_string()))
     }

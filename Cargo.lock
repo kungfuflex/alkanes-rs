@@ -468,6 +468,7 @@ version = "0.1.0"
 dependencies = [
  "alkanes-cli-common",
  "alkanes-cli-sys",
+ "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",
  "chrono",
@@ -477,6 +478,7 @@ dependencies = [
  "futures",
  "hex",
  "once_cell",
+ "prost",
  "redis",
  "reqwest",
  "serde",

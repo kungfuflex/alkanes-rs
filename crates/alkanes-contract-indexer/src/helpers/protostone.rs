@@ -51,11 +51,25 @@ async fn trace_call<P: DeezelProvider + JsonRpcProvider + Send + Sync>(
     url: &str,
     job: TraceJob,
 ) -> Result<JsonValue> {
-    let req = json!([{ "txid": job.txid_le_hex, "vout": job.vout }]);
-    // Use variant that preserves the last error string, so callers can match specific upstream failures
-    let res = resilient_call_with_last_error(provider, url, "alkanes_trace", req, 1)
+    // Use metashrew_view with "trace" view function
+    // Encode Outpoint as protobuf
+    use prost::Message;
+    use alkanes_support::proto::alkanes::Outpoint;
+    
+    let mut outpoint = Outpoint::default();
+    outpoint.txid = hex::decode(&job.txid_le_hex)
+        .map_err(|e| anyhow::anyhow!("Failed to decode txid hex: {}", e))?;
+    outpoint.vout = job.vout;
+    
+    let mut buf = Vec::new();
+    outpoint.encode(&mut buf)
+        .map_err(|e| anyhow::anyhow!("Failed to encode outpoint: {}", e))?;
+    let params_hex = format!("0x{}", hex::encode(&buf));
+    
+    let req = json!(["trace", params_hex, "latest"]);
+    let res = resilient_call_with_last_error(provider, url, "metashrew_view", req, 1)
         .await
-        .context("alkanes_trace call failed")?;
+        .context("metashrew_view (trace) call failed")?;
     Ok(res)
 }
 

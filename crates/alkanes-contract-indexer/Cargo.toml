@@ -24,8 +24,10 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 once_cell = "1.19"
 fastrand = "2.1"
 redis = { version = "0.25", features = ["tokio-comp"] }
+prost = { workspace = true }
 
 # Alkanes CLI libraries (local workspace)
+alkanes-support = { path = "../alkanes-support" }
 alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
 alkanes-cli-sys = { path = "../alkanes-cli-sys" }
 

@@ -74,9 +74,9 @@ pub async fn resilient_call<P: DeezelProvider + JsonRpcProvider + Send + Sync>(
             }
             Ok(Err(e)) => {
                 let raw_msg = format!("{e}");
-                // Treat specific upstream client error from alkanes_trace as non-retriable
+                // Treat specific upstream client error from metashrew_view as non-retriable
                 let lc = raw_msg.to_ascii_lowercase();
-                let is_non_retriable = method == "alkanes_trace"
+                let is_non_retriable = method == "metashrew_view"
                     && lc.contains("non-standard error object received")
                     && lc.contains("cannot read properties of undefined");
                 if is_non_retriable {
@@ -141,7 +141,7 @@ pub async fn resilient_call_with_last_error<P: DeezelProvider + JsonRpcProvider 
             Ok(Err(e)) => {
                 let raw_msg = format!("{e}");
                 let lc = raw_msg.to_ascii_lowercase();
-                let is_non_retriable = method == "alkanes_trace"
+                let is_non_retriable = method == "metashrew_view"
                     && lc.contains("non-standard error object received")
                     && lc.contains("cannot read properties of undefined");
                 if is_non_retriable {
