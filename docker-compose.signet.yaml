@@ -187,3 +187,35 @@ services:
       RPC_TIMEOUT_MS: 20000
       RPC_CIRCUIT_COOLDOWN_MS: 5000
     restart: unless-stopped
+
+  alkanes-data-api:
+    build:
+      dockerfile: crates/alkanes-data-api/Dockerfile
+      context: .
+    image: alkanes-data-api:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jsonrpc:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://alkanes_user:alkanes_pass@postgres:5432/alkanes_indexer
+      REDIS_URL: redis://redis:6379
+      SANDSHREW_URL: http://jsonrpc:18888
+      NETWORK_ENV: signet
+      ALKANE_FACTORY_ID: "0:0"
+      ETHEREUM_RPC_URL: ${ETHEREUM_RPC_URL:-https://mainnet.infura.io/v3/YOUR_KEY}
+      HOST: 0.0.0.0
+      PORT: 3000
+      RUST_LOG: info,alkanes_data_api=debug
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
