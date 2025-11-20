@@ -30,6 +30,7 @@ uniffi = { version = "0.28", features = ["cli"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 hex = { workspace = true }
+prost = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }

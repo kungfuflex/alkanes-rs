@@ -534,12 +534,24 @@ impl AlkanesClient {
     
     /// Get bytecode for an alkanes contract
     pub fn get_bytecode(&self, alkane_id: AlkaneId) -> Result<String> {
-        let params = serde_json::json!({
-            "block": alkane_id.block,
-            "tx": alkane_id.tx
-        });
+        // Use metashrew_view with "bytecode" view function
+        use prost::Message;
+        use alkanes_support::proto::alkanes::{BytecodeRequest, AlkaneId as AlkaneIdPb, Uint128};
         
-        let result = self.call_alkanes_rpc("alkanes_getBytecode", params)?;
+        let mut request = BytecodeRequest::default();
+        let mut alkane_id_pb = AlkaneIdPb::default();
+        alkane_id_pb.block = Some(Uint128::from(alkane_id.block as u128));
+        alkane_id_pb.tx = Some(Uint128::from(alkane_id.tx as u128));
+        request.id = Some(alkane_id_pb);
+        
+        let mut buf = Vec::new();
+        request.encode(&mut buf)
+            .map_err(|e| AlkanesError::SerializationError(format!("Failed to encode request: {}", e)))?;
+        let params_hex = format!("0x{}", hex::encode(&buf));
+        
+        let rpc_params = serde_json::json!(["bytecode", params_hex, "latest"]);
+        let result = self.call_alkanes_rpc("metashrew_view", rpc_params)?;
+        
         result.as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| AlkanesError::AlkanesExecutionError("Invalid bytecode response".to_string()))
@@ -557,7 +569,8 @@ impl AlkanesClient {
         outpoint.vout = vout;
         
         let mut buf = Vec::new();
-        outpoint.encode(&mut buf)?;
+        outpoint.encode(&mut buf)
+            .map_err(|e| AlkanesError::SerializationError(format!("Failed to encode outpoint: {}", e)))?;
         let params_hex = format!("0x{}", hex::encode(&buf));
         
         let rpc_params = serde_json::json!(["trace", params_hex, "latest"]);

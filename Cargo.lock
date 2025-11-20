@@ -537,6 +537,7 @@ dependencies = [
  "bitcoin_hashes 0.14.0",
  "hex",
  "log",
+ "prost",
  "rand 0.8.5",
  "rand_core 0.6.4",
  "reqwest",
