@@ -48,6 +48,79 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Self { provider }
     }
 
+    /// Estimate transaction virtual size (vsize) in vbytes
+    /// 
+    /// This is used for fee calculation before UTXO selection.
+    /// 
+    /// # Arguments
+    /// * `num_inputs` - Number of transaction inputs
+    /// * `num_outputs` - Number of transaction outputs
+    /// * `has_envelope` - Whether transaction has large witness data (envelope)
+    /// * `has_runestone` - Whether transaction has OP_RETURN runestone
+    fn estimate_transaction_vsize(
+        num_inputs: usize,
+        num_outputs: usize,
+        has_envelope: bool,
+        has_runestone: bool,
+    ) -> usize {
+        // Base transaction overhead (version, locktime, input/output counts)
+        let base_size = 10; // version(4) + locktime(4) + compact_size(1) + compact_size(1)
+        
+        // Input size estimation
+        // - Previous outpoint: 36 bytes (32 byte txid + 4 byte vout)
+        // - Script sig: 1 byte (empty for witness)
+        // - Sequence: 4 bytes
+        // - Witness: ~65 bytes for P2TR key-path spend (1 byte count + 64 byte signature)
+        let input_size_per_input = 36 + 1 + 4; // Non-witness: 41 bytes
+        let witness_size_per_input = if has_envelope {
+            // For envelope (script-path spend): signature(64) + script(varies) + control block(33)
+            // Estimate ~150KB for contract deployments, but this is only for first input
+            // Average it out across inputs for simplicity
+            150_000 / num_inputs.max(1) + 100
+        } else {
+            // Regular P2TR key-path spend: 65 bytes witness
+            65
+        };
+        
+        // Output size estimation
+        // - Value: 8 bytes
+        // - Script length: 1 byte (compact size)
+        // - Script pubkey: ~34 bytes for P2TR
+        let output_size_per_output = 8 + 1 + 34;
+        
+        // OP_RETURN runestone adds extra output with variable size
+        let runestone_size = if has_runestone {
+            // Runestone OP_RETURN typically 50-200 bytes depending on complexity
+            // Conservative estimate: 150 bytes
+            150
+        } else {
+            0
+        };
+        
+        // Calculate sizes
+        let non_witness_size = base_size 
+            + (num_inputs * input_size_per_input)
+            + (num_outputs * output_size_per_output)
+            + runestone_size;
+        
+        let witness_size = num_inputs * witness_size_per_input;
+        
+        // vsize = (weight / 4) where weight = (non_witness_size * 4) + witness_size
+        let weight = (non_witness_size * 4) + witness_size;
+        let vsize = (weight + 3) / 4; // Ceiling division
+        
+        log::debug!(
+            "Transaction size estimate: {} inputs, {} outputs, envelope: {}, runestone: {}",
+            num_inputs, num_outputs, has_envelope, has_runestone
+        );
+        log::debug!(
+            "  Non-witness: {} bytes, Witness: {} bytes, Weight: {} WU, VSize: {} vbytes",
+            non_witness_size, witness_size, weight, vsize
+        );
+        
+        vsize
+    }
+
     /// Execute an enhanced alkanes transaction with commit/reveal pattern
     pub async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
         log::info!("Starting enhanced alkanes execution");
@@ -310,10 +383,37 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let total_bitcoin_needed: u64 = outputs.iter().filter(|o| o.value.to_sat() > 0).map(|o| o.value.to_sat()).sum();
         let mut final_requirements = params.input_requirements.iter().filter(|req| !matches!(req, InputRequirement::Bitcoin {..})).cloned().collect::<Vec<_>>();
         
-        // Always select at least some Bitcoin for fees, even if no explicit outputs require it
-        // We'll use a rough estimate here and adjust in build_psbt_and_fee
-        let min_fee_estimate = (params.fee_rate.unwrap_or(1.0) * 300.0).ceil() as u64; // ~300 vbytes rough estimate
-        let bitcoin_requirement = total_bitcoin_needed.max(min_fee_estimate);
+        // Estimate transaction size to calculate proper fee BEFORE UTXO selection
+        // This is critical to avoid "absurdly high fee rate" errors
+        let network = self.provider.get_network();
+        let default_fee_rate = match network {
+            bitcoin::Network::Bitcoin => 50.0,
+            bitcoin::Network::Testnet => 10.0,
+            bitcoin::Network::Regtest => 1.0,
+            bitcoin::Network::Signet => 10.0,
+            _ => 10.0,
+        };
+        let fee_rate_sat_vb = params.fee_rate.unwrap_or(default_fee_rate);
+        
+        // Estimate transaction size with initial guess of inputs (will iterate if needed)
+        let num_alkane_reqs = final_requirements.iter().filter(|r| matches!(r, InputRequirement::Alkanes { .. })).count();
+        let estimated_inputs = (num_alkane_reqs + 1).max(2); // At least 2 inputs for safety
+        let estimated_outputs = outputs.len() + 1; // +1 for OP_RETURN
+        let has_runestone = !params.protostones.is_empty();
+        
+        let estimated_vsize = Self::estimate_transaction_vsize(estimated_inputs, estimated_outputs, false, has_runestone);
+        let estimated_fee = (fee_rate_sat_vb * estimated_vsize as f32).ceil() as u64;
+        
+        // Add 50% buffer to fee to account for variations in actual transaction size
+        let fee_with_buffer = (estimated_fee as f64 * 1.5).ceil() as u64;
+        
+        log::info!("Fee estimation: {} vbytes × {:.1} sat/vB = {} sats (with 50% buffer: {} sats)",
+                   estimated_vsize, fee_rate_sat_vb, estimated_fee, fee_with_buffer);
+        
+        // Include fee in Bitcoin requirements for UTXO selection
+        let bitcoin_requirement = total_bitcoin_needed + fee_with_buffer;
+        log::info!("Total Bitcoin requirement: {} sats (outputs) + {} sats (fee) = {} sats",
+                   total_bitcoin_needed, fee_with_buffer, bitcoin_requirement);
         
         final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
         let selected_utxos = self.select_utxos(&final_requirements, &params.from_addresses).await?;
@@ -764,7 +864,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             }
         }
     
-        let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+        // Use network-appropriate default fee rate (already calculated in build_single_transaction)
+        // Keep 600.0 as absolute fallback for commit transactions which may not have network context
+        let fee_rate_sat_vb = fee_rate.unwrap_or(10.0); // Lowered from 600.0
         let estimated_fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
         // Add a small buffer (1%) to account for any size differences between temp tx and final signed tx
         let estimated_fee_with_buffer = (estimated_fee as f64 * 1.01).ceil() as u64;

@@ -5,7 +5,7 @@ echo "🚀 Deploying Regtest DIESEL/frBTC Pool"
 echo "========================================"
 
 # Configuration
-FACTORY="4:65522"
+FACTORY="4:65522"  # Factory proxy (upgradeable)
 DIESEL_ID="2:0"
 FRBTC_ID="32:0"
 DIESEL_AMOUNT="300000000"  # 300M DIESEL
@@ -58,10 +58,9 @@ $CLI alkanes init-pool \
     --to $ADDR \
     --from $ADDR \
     --change $ADDR \
+    --factory "$FACTORY" \
     --auto-confirm \
     --trace
-
-# Note: --factory defaults to $FACTORY (4:65522)
 
 echo ""
 echo "✅ Pool created successfully!"
@@ -70,4 +69,4 @@ echo "🎉 Deployment complete!"
 echo ""
 echo "You can now query the pool:"
 echo "  $CLI dataapi get-pools"
-echo "  (factory defaults to $FACTORY)"
+echo "  (factory is at $FACTORY)"
