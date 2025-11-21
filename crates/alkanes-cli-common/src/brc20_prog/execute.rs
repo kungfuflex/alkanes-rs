@@ -33,10 +33,6 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("Starting BRC20-prog execution");
         log::info!("Inscription content: {}", params.inscription_content);
 
-        // Determine if this is a deploy operation
-        let is_deploy = params.inscription_content.contains("\"op\":\"deploy\"") || 
-                       params.inscription_content.contains("\"op\":\"d\"");
-
         // Create the envelope with the JSON payload
         let envelope = Brc20ProgEnvelope::new(params.inscription_content.as_bytes().to_vec());
 
@@ -60,7 +56,6 @@ impl<'a> Brc20ProgExecutor<'a> {
                 commit_outpoint,
                 commit_output,
                 internal_key,
-                is_deploy,
             )
             .await?;
 
@@ -72,8 +67,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         }
 
         // For deploy operations, execute activation transaction
-        let (activation_txid, activation_fee) = if is_deploy {
-            log::info!("Deploy operation detected - executing activation transaction");
+        let (activation_txid, activation_fee) = {
+            log::info!("Executing activation transaction");
             
             let (act_txid, act_fee) = self
                 .build_and_broadcast_activation(&params, reveal_inscription_outpoint)
@@ -87,8 +82,6 @@ impl<'a> Brc20ProgExecutor<'a> {
             }
             
             (Some(act_txid.to_string()), Some(act_fee))
-        } else {
-            (None, None)
         };
 
         Ok(Brc20ProgExecuteResult {
@@ -171,7 +164,6 @@ impl<'a> Brc20ProgExecutor<'a> {
         commit_outpoint: OutPoint,
         commit_output: TxOut,
         commit_internal_key: XOnlyPublicKey,
-        is_deploy: bool,
     ) -> Result<(Txid, u64, OutPoint)> {
         log::info!("Building reveal transaction");
 
@@ -184,14 +176,13 @@ impl<'a> Brc20ProgExecutor<'a> {
         let change_address = Address::from_str(&change_address_str)?
             .require_network(self.provider.get_network())?;
 
-        // For deploy operations: send inscription to wallet address with 1 sat (first sat)
-        // For call operations: send to OP_RETURN
-        let outputs = if is_deploy {
-            log::info!("Deploy operation: Creating inscription output to wallet address with 1 sat");
+        // Send inscription to wallet address with 546 sat (first sat of utxo)
+        let outputs = {
+            log::info!("Creating inscription output to wallet address with 546 sat");
             
-            // First output: inscription at first sat (1 sat)
+            // First output: inscription at first sat (of 546 sat utxo)
             let inscription_output = TxOut {
-                value: bitcoin::Amount::from_sat(1),
+                value: bitcoin::Amount::from_sat(546),
                 script_pubkey: change_address.script_pubkey(),
             };
             
@@ -207,26 +198,6 @@ impl<'a> Brc20ProgExecutor<'a> {
             };
             
             vec![inscription_output, change_output]
-        } else {
-            log::info!("Call operation: Creating OP_RETURN output");
-            
-            // Create reveal transaction with OP_RETURN output for BRC20PROG
-            let op_return_script = self.create_brc20prog_op_return();
-            let reveal_output = TxOut {
-                value: bitcoin::Amount::ZERO,
-                script_pubkey: op_return_script,
-            };
-
-            // Calculate change amount (commit output value - reveal fee)
-            let estimated_reveal_fee = 50_000u64;
-            let change_amount = commit_output.value.to_sat().saturating_sub(estimated_reveal_fee);
-
-            let change_output = TxOut {
-                value: bitcoin::Amount::from_sat(change_amount),
-                script_pubkey: change_address.script_pubkey(),
-            };
-
-            vec![reveal_output, change_output]
         };
 
         // Build reveal PSBT with script-path spending
@@ -280,9 +251,9 @@ impl<'a> Brc20ProgExecutor<'a> {
             .await?
             .ok_or_else(|| AlkanesError::Wallet(format!("Inscription UTXO not found: {inscription_outpoint}")))?;
 
-        if inscription_utxo.value.to_sat() != 1 {
+        if inscription_utxo.value.to_sat() != 546 {
             return Err(AlkanesError::Wallet(format!(
-                "Expected 1-sat inscription, but found {} sats at {}",
+                "Expected 546-sat inscription, but found {} sats at {}",
                 inscription_utxo.value.to_sat(),
                 inscription_outpoint
             )));
