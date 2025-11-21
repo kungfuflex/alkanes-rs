@@ -185,8 +185,12 @@ pub fn run_special_cellpacks(
         use alkanes_support::id::PrecompiledOp;
         match cellpack.target.precompiled_op() {
             Some(PrecompiledOp::CloneFuture) => {
-                // CLONE_FUTURE: Clone [31, 0] to [31, current_height]
+                // CLONE_FUTURE: Clone [31, 0] to [31, block_height]
+                // Cellpack format: [800_000_000, 31, ...inputs]
                 // Only callable by [32, 0] (frBTC contract)
+                // Similar to factory [6, n, ...] but clones [31, 0] -> [31, height]
+                // and passes ...inputs to the cloned contract
+                
                 let caller = context.lock().unwrap().myself.clone();
                 if caller.block != 32 || caller.tx != 0 {
                     return Err(anyhow!(
@@ -196,10 +200,31 @@ pub fn run_special_cellpacks(
                 
                 // Clone [31, 0] template to [31, current_height]
                 let current_height = context.lock().unwrap().message.height;
-                payload.target = AlkaneId {
+                let future_id = AlkaneId {
                     block: 31,
                     tx: current_height as u128,
                 };
+                
+                // Only allow one future to be minted per block (fr-btc rule)
+                // Check if this future already exists
+                let existing_binary = context
+                    .lock()
+                    .unwrap()
+                    .message
+                    .atomic
+                    .keyword("/alkanes/")
+                    .select(&future_id.clone().into())
+                    .get();
+                
+                if existing_binary.as_ref().len() > 0 {
+                    return Err(anyhow!(
+                        "future [31, {}] already exists - only one future can be minted per block",
+                        current_height
+                    ));
+                }
+                
+                // Set the payload target to the new future contract
+                payload.target = future_id.clone();
                 
                 // Get the template binary from [31, 0]
                 let template_id = AlkaneId { block: 31, tx: 0 };
@@ -217,6 +242,9 @@ pub fn run_special_cellpacks(
                     .set(Arc::new(template_ref));
                     
                 set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
+                
+                // Note: The remaining inputs in cellpack.inputs will be passed
+                // to the cloned contract automatically since payload.inputs = cellpack.inputs
             }
             None => {
                 return Err(anyhow!("unknown precompiled operation"));

@@ -77,7 +77,7 @@ impl AlkaneId {
     pub fn precompiled_op(&self) -> Option<PrecompiledOp> {
         if self.block == 800_000_000 {
             match self.tx {
-                0 => Some(PrecompiledOp::CloneFuture),
+                31 => Some(PrecompiledOp::CloneFuture),
                 _ => None,
             }
         } else {
