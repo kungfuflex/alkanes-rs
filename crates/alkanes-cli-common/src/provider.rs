@@ -2507,10 +2507,10 @@ impl AlkanesProvider for ConcreteProvider {
         }
     }
 
-    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue> {
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>, block_tag: Option<String>) -> Result<JsonValue> {
         let combined_view = format!("{}/{}", contract_id, view_fn);
         let params_hex = params.map(|p| format!("0x{}", hex::encode(p))).unwrap_or_else(|| "0x".to_string());
-        let result_bytes = self.metashrew_view_call(&combined_view, &params_hex, "latest").await?;
+        let result_bytes = self.metashrew_view_call(&combined_view, &params_hex, block_tag.as_deref().unwrap_or("latest")).await?;
 
         // Attempt to deserialize as a simple u64 if it's 8 bytes long.
         if result_bytes.len() == 8 {
@@ -2527,14 +2527,14 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
     }
 
-    async fn simulate(&self, contract_id: &str, context: &alkanes_pb::MessageContextParcel) -> Result<JsonValue> {
+    async fn simulate(&self, contract_id: &str, context: &alkanes_pb::MessageContextParcel, block_tag: Option<String>) -> Result<JsonValue> {
         use prost::Message;
         let mut buf = Vec::new();
         context.encode(&mut buf)?;
         let params_hex = format!("0x{}", hex::encode(&buf));
         
         // Use metashrew_view with "simulate" view function, not alkanes_simulate
-        let result_bytes = self.metashrew_view_call("simulate", &params_hex, "latest").await?;
+        let result_bytes = self.metashrew_view_call("simulate", &params_hex, block_tag.as_deref().unwrap_or("latest")).await?;
         
         // Return as hex string JSON value
         Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
@@ -2606,8 +2606,8 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(block_response)
     }
 
-    async fn sequence(&self) -> Result<JsonValue> {
-        let response_bytes = self.metashrew_view_call("sequence", "0x", "latest").await?;
+    async fn sequence(&self, block_tag: Option<String>) -> Result<JsonValue> {
+        let response_bytes = self.metashrew_view_call("sequence", "0x", block_tag.as_deref().unwrap_or("latest")).await?;
         if response_bytes.len() == 16 {
             let val = u128::from_le_bytes(response_bytes.try_into().unwrap());
             return Ok(serde_json::json!(val));

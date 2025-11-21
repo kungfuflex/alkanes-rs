@@ -40,6 +40,9 @@ use std::sync::Arc;
 const BLACKLISTED_TX_HASHES: [&str; 1] =
     ["5cbb0c466dd08d7af9223d45105fbbf0fdc9fb7cda4831c183d6b0cb5ba60fb0"];
 
+// Logging module must be declared first so macros are available
+pub mod logging;
+
 pub mod balance_sheet;
 pub mod message;
 pub mod protoburn;
@@ -449,8 +452,8 @@ impl Protorune {
         .into();
         if !rune_id_bytes.is_empty() {
             let rune_id = ProtoruneRuneId::try_from(rune_id_bytes)?;
-            println!(
-                "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
+            log_warning!(
+                "Duplicate rune name {} with rune id {:?} - skipping etching",
                 name, rune_id
             );
             return Ok(());
@@ -543,7 +546,7 @@ impl Protorune {
         // TODO: chain name
         let minimum_name = Rune::minimum_at_height(Network::Bitcoin, ordinals::Height(block));
         if rune.n() < minimum_name.n() {
-            println!("error not unlocked");
+            log_error!("Rune name not yet unlocked at block {}", block);
             return Err(anyhow!("Given name is not unlocked yet"));
         }
         if rune.n() >= constants::RESERVED_NAME {
@@ -605,7 +608,7 @@ impl Protorune {
                     runestone_output_index,
                 ) {
                     Err(e) => {
-                        println!("err: {:?}", e);
+                        log_error!("Transaction processing failed: {:?}", e);
                         atomic.rollback();
                     }
                     _ => {
@@ -860,7 +863,7 @@ impl Protorune {
             match tx_hex_to_txid(blacklisted_hash) {
                 std::result::Result::Ok(blacklisted_txid) => {
                     if tx_id == blacklisted_txid {
-                        println!("Ignoring blacklisted transaction: {}", blacklisted_hash);
+                        log_warning!("Ignoring blacklisted transaction: {}", blacklisted_hash);
                         return Ok(());
                     }
                 }
@@ -872,8 +875,8 @@ impl Protorune {
             std::result::Result::Ok(ps) => ps,
             std::result::Result::Err(e) => {
                 let tx_id = tx.compute_txid();
-                println!("[CRITICAL] Failed to decode protostones from runestone in tx {}: {:?}", tx_id, e);
-                println!("[CRITICAL] Runestone: {:?}", runestone);
+                log_error!("Failed to decode protostones from runestone in tx {}: {:?}", tx_id, e);
+                log_debug!("Runestone: {:?}", runestone);
                 panic!("Protostone::from_runestone failed for tx {}: {:?}", tx_id, e);
             }
         };

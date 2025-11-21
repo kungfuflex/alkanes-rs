@@ -853,12 +853,18 @@ pub enum Alkanes {
         contract_id: String,
         /// The parameters to pass to the contract
         params: Option<String>,
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,
     },
     /// Get the sequence for an outpoint
     Sequence {
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,

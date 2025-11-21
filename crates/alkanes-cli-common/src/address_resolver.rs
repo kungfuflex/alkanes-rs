@@ -1031,11 +1031,11 @@ impl AlkanesProvider for StandaloneAddressResolver {
         ))
     }
 
-    async fn simulate(&self, _contract_id: &str, _context: &crate::proto::alkanes::MessageContextParcel) -> Result<crate::JsonValue> {
+    async fn simulate(&self, _contract_id: &str, _context: &crate::proto::alkanes::MessageContextParcel, _block_tag: Option<String>) -> Result<crate::JsonValue> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<crate::JsonValue> {
+    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>, _block_tag: Option<String>) -> Result<crate::JsonValue> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
@@ -1047,7 +1047,7 @@ impl AlkanesProvider for StandaloneAddressResolver {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn sequence(&self) -> Result<crate::JsonValue> {
+    async fn sequence(&self, _block_tag: Option<String>) -> Result<crate::JsonValue> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 

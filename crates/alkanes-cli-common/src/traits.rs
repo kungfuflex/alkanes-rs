@@ -750,15 +750,15 @@ pub trait AlkanesProvider {
         block_tag: Option<String>,
         protocol_tag: u128,
     ) -> Result<ProtoruneOutpointResponse>;
-    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue>;
-    async fn simulate(&self, contract_id: &str, context: &crate::proto::alkanes::MessageContextParcel) -> Result<JsonValue> {
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>, block_tag: Option<String>) -> Result<JsonValue>;
+    async fn simulate(&self, contract_id: &str, context: &crate::proto::alkanes::MessageContextParcel, block_tag: Option<String>) -> Result<JsonValue> {
         let mut buf = Vec::new();
         { use prost::Message; context.encode(&mut buf)?; }
-        self.view(contract_id, "simulate", Some(&buf)).await
+        self.view(contract_id, "simulate", Some(&buf), block_tag).await
     }
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace>;
     async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse>;
-    async fn sequence(&self) -> Result<JsonValue>;
+    async fn sequence(&self, block_tag: Option<String>) -> Result<JsonValue>;
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue>;
     async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace>;
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String>;
@@ -1367,11 +1367,11 @@ impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     ) -> Result<ProtoruneOutpointResponse> {
         AlkanesProvider::protorunes_by_outpoint(&**self, txid, vout, block_tag, protocol_tag).await
     }
-    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue> {
-        (**self).view(contract_id, view_fn, params).await
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>, block_tag: Option<String>) -> Result<JsonValue> {
+        (**self).view(contract_id, view_fn, params, block_tag).await
     }
-    async fn simulate(&self, contract_id: &str, context: &crate::proto::alkanes::MessageContextParcel) -> Result<JsonValue> {
-        (**self).simulate(contract_id, context).await
+    async fn simulate(&self, contract_id: &str, context: &crate::proto::alkanes::MessageContextParcel, block_tag: Option<String>) -> Result<JsonValue> {
+        (**self).simulate(contract_id, context, block_tag).await
     }
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
         (**self).trace(outpoint).await
@@ -1379,8 +1379,8 @@ impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse> {
         AlkanesProvider::get_block(&**self, height).await
     }
-    async fn sequence(&self) -> Result<JsonValue> {
-        (**self).sequence().await
+    async fn sequence(&self, block_tag: Option<String>) -> Result<JsonValue> {
+        (**self).sequence(block_tag).await
     }
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
         (**self).spendables_by_address(address).await

@@ -179,7 +179,7 @@ pub async fn get_subfrost_address<P: crate::DeezelProvider + ?Sized>(
     let parcel = build_get_signer_parcel();
     
     // Call simulate - the alkane ID doesn't matter for GET_SIGNER since it's encoded in calldata
-    let response = provider.simulate("", &parcel).await?;
+    let response = provider.simulate("", &parcel, None).await?;
     
     // Parse the signer pubkey from JSON response
     let pubkey_bytes = parse_signer_pubkey(&response)?;

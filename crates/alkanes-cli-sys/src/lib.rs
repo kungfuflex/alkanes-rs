@@ -731,12 +731,12 @@ impl AlkanesProvider for SystemAlkanes {
     async fn protorunes_by_outpoint(&self, txid: &str, vout: u32, block_tag: Option<String>, protocol_tag: u128) -> Result<alkanes_cli_common::alkanes::protorunes::ProtoruneOutpointResponse> {
         self.provider.protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
     }
-    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<alkanes_cli_common::JsonValue> {
+    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>, _block_tag: Option<String>) -> Result<alkanes_cli_common::JsonValue> {
         unimplemented!()
     }
 
-    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::proto::alkanes::MessageContextParcel) -> Result<alkanes_cli_common::JsonValue> {
-        self.provider.simulate(contract_id, context).await
+    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::proto::alkanes::MessageContextParcel, block_tag: Option<String>) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.simulate(contract_id, context, block_tag).await
     }
     async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         self.provider.trace(outpoint).await
@@ -744,8 +744,8 @@ impl AlkanesProvider for SystemAlkanes {
     async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::BlockResponse> {
         <ConcreteProvider as AlkanesProvider>::get_block(&self.provider, height).await
     }
-    async fn sequence(&self) -> Result<alkanes_cli_common::JsonValue> {
-        self.provider.sequence().await
+    async fn sequence(&self, block_tag: Option<String>) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.sequence(block_tag).await
     }
     async fn spendables_by_address(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.spendables_by_address(address).await
@@ -2707,6 +2707,7 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 params,
                 block_hex,
                 transaction_hex,
+                block_tag,
                 raw,
             } => {
                 use prost::Message;
@@ -2782,7 +2783,7 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 let view_fn = format!("{}:{}/simulate", alkane_id.block, alkane_id.tx);
                 
                 // Call metashrew_view
-                let response_bytes = provider.metashrew_view_call(&view_fn, &hex_input, "latest").await?;
+                let response_bytes = provider.metashrew_view_call(&view_fn, &hex_input, block_tag.as_deref().unwrap_or("latest")).await?;
                 
                 // Decode response as SimulateResponse
                 let simulate_response = alkanes_pb::SimulateResponse::decode(response_bytes.as_slice())?;
@@ -2823,8 +2824,8 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 }
                 Ok(())
             }
-            AlkanesCommands::Sequence { raw } => {
-                let result = provider.sequence().await?;
+            AlkanesCommands::Sequence { block_tag, raw } => {
+                let result = provider.sequence(block_tag).await?;
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&result)?);
                 } else {

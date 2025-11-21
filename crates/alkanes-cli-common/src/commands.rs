@@ -582,6 +582,9 @@ pub enum AlkanesCommands {
         /// Transaction hex (optional, defaults to empty)
         #[arg(long)]
         transaction_hex: Option<String>,
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,
@@ -596,6 +599,9 @@ pub enum AlkanesCommands {
     },
     /// Get sequence of an outpoint
     Sequence {
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,

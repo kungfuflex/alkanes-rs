@@ -524,9 +524,9 @@ main() {
     
     # Step 7: Initialize Factory
     # Calldata: [4, 65522, 0, 780993, 4, 65523]
-    # Note: The pseudocode example includes edicts (-e 2:1:1:5) but we'll try without first
+    # Note: Two protostones, the first one sends one unit of 2:1 to the second protostone, change goes to first physical vout. Second protostone receives the 2:1 to authenticate to 4:65522 and then outputs it back to v0 after the protocol message
     log_info "Initializing OYL Factory with InitFactory opcode..."
-    FACTORY_INIT_PROTOSTONE="[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
+    FACTORY_INIT_PROTOSTONE="[2:1:1:p1]:v0:v0,[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
     log_info "  Protostone: $FACTORY_INIT_PROTOSTONE"
     
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
@@ -535,6 +535,7 @@ main() {
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$FACTORY_INIT_PROTOSTONE" \
         --from p2tr:0 \
+	--inputs 2:1:1 \
         --fee-rate 1 \
         --mine \
         --trace \

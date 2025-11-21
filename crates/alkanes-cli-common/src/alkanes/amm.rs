@@ -430,7 +430,7 @@ impl<'a> AmmManager<'a> {
             refund_pointer: 0,
         };
 
-        let result = provider.simulate(&format!("{}:{}", factory_id.block, factory_id.tx), &context).await?;
+        let result = provider.simulate(&format!("{}:{}", factory_id.block, factory_id.tx), &context, None).await?;
         let data_hex = result
             .get("data")
             .and_then(|v| v.as_str())
@@ -468,7 +468,7 @@ impl<'a> AmmManager<'a> {
                 refund_pointer: 0,
             };
 
-            match provider.simulate(&format!("{}:{}", pool_id.block, pool_id.tx), &context).await {
+            match provider.simulate(&format!("{}:{}", pool_id.block, pool_id.tx), &context, None).await {
                 Ok(result) => {
                     let data_hex = result
                         .get("data")
@@ -524,7 +524,7 @@ impl<'a> AmmManager<'a> {
             refund_pointer: 0,
         };
 
-        let result = provider.simulate(&format!("{}:{}", pool_id.block, pool_id.tx), &context).await?;
+        let result = provider.simulate(&format!("{}:{}", pool_id.block, pool_id.tx), &context, None).await?;
         let data_hex = result
             .get("data")
             .and_then(|v| v.as_str())

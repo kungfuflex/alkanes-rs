@@ -443,14 +443,14 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         },
-        Alkanes::Simulate { contract_id, params, raw } => {
+        Alkanes::Simulate { contract_id, params, block_tag, raw } => {
             let context: alkanes_cli_common::proto::alkanes::MessageContextParcel = if let Some(_p) = params {
                 // TODO: Parse params - for now use default
                 Default::default()
             } else {
                 Default::default()
             };
-            let result = system.provider().simulate(&contract_id, &context).await?;
+            let result = system.provider().simulate(&contract_id, &context, block_tag).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -458,8 +458,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         },
-        Alkanes::Sequence { raw, .. } => {
-            let result = system.provider().sequence().await?;
+        Alkanes::Sequence { block_tag, raw } => {
+            let result = system.provider().sequence(block_tag).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {

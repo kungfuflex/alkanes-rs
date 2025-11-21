@@ -1,3 +1,6 @@
+// Logging module must be declared first so macros are available
+pub mod logging;
+
 #[cfg(not(test))]
 use crate::indexer::configure_network;
 use crate::unwrap::{
@@ -344,18 +347,18 @@ pub fn getstorageat() -> u32 {
 pub fn _start() {
     let data = input();
     let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-    println!("[WASM]: height is {}", height);
+    log_info!("Processing height {}", height);
     let reader = &data[4..];
     
     #[cfg(feature = "zcash")]
     {
         let block_data = reader.to_vec();
-        println!("[WASM] Parsing Zcash block: {} bytes", block_data.len());
-        println!("[WASM] First 100 bytes: {}", hex::encode(&block_data[..100.min(block_data.len())]));
+        log_debug!("Parsing Zcash block: {} bytes", block_data.len());
+        log_debug!("First 100 bytes: {}", hex::encode(&block_data[..100.min(block_data.len())]));
         
         match alkanes_support::zcash::ZcashBlock::parse(&mut Cursor::<Vec<u8>>::new(block_data.clone())) {
             Ok(zblock) => {
-                println!("[WASM] Successfully parsed Zcash block");
+                log_debug!("Successfully parsed Zcash block");
                 
                 // index_block is generic over BlockLike, so we can pass ZcashBlock directly
                 index_block(&zblock, height).unwrap();
@@ -367,8 +370,8 @@ pub fn _start() {
                 flush();
             }
             Err(e) => {
-                println!("[WASM] ERROR parsing Zcash block: {:?}", e);
-                println!("[WASM] Block data dump (full): {}", hex::encode(&block_data));
+                log_error!("ERROR parsing Zcash block: {:?}", e);
+                log_debug!("Block data dump (full): {}", hex::encode(&block_data));
                 panic!("ZcashBlock parsing failed at height {}: {:?}", height, e);
             }
         }

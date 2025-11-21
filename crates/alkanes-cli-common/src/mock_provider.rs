@@ -817,10 +817,10 @@ impl AlkanesProvider for MockProvider {
             "protorunes_by_outpoint".to_string(),
         ))
     }
-    async fn simulate(&self, _contract_id: &str, _context: &crate::proto::alkanes::MessageContextParcel) -> Result<JsonValue> {
+    async fn simulate(&self, _contract_id: &str, _context: &crate::proto::alkanes::MessageContextParcel, _block_tag: Option<String>) -> Result<JsonValue> {
         todo!()
     }
-    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<JsonValue> {
+    async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>, _block_tag: Option<String>) -> Result<JsonValue> {
         todo!()
     }
     async fn trace(&self, _outpoint: &str) -> Result<crate::proto::alkanes::Trace> {
@@ -829,7 +829,7 @@ impl AlkanesProvider for MockProvider {
     async fn get_block(&self, _height: u64) -> Result<crate::proto::alkanes::BlockResponse> {
         Err(AlkanesError::NotImplemented("get_block".to_string()))
     }
-    async fn sequence(&self) -> Result<JsonValue> {
+    async fn sequence(&self, _block_tag: Option<String>) -> Result<JsonValue> {
         todo!()
     }
     async fn spendables_by_address(&self, _address: &str) -> Result<JsonValue> {

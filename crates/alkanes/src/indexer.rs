@@ -1,3 +1,4 @@
+use crate::{log_block, log_cache, log_error, log_network, log_success};
 use crate::message::AlkaneMessageContext;
 use crate::network::{
     check_and_upgrade_precompiled, genesis, genesis_alkane_upgrade_bytes, is_genesis, setup_diesel,
@@ -102,11 +103,14 @@ use std::sync::Arc;
 
 /// Index a block (generic over BlockLike trait)
 pub fn index_block<B: BlockLike>(block: &B, height: u32) -> Result<()> {
+    log_block!("Indexing block at height {}", height);
+    
     #[cfg(not(test))]
     configure_network();
     clear_diesel_mints_cache();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
+        log_network!("Processing genesis block");
         genesis().unwrap();
     }
     
@@ -126,6 +130,8 @@ pub fn index_block<B: BlockLike>(block: &B, height: u32) -> Result<()> {
     // Index using generic block (works with Bitcoin, Zcash, etc.)
     let _updated_addresses =
         Protorune::index_block::<B, AlkaneMessageContext>(block, height.into())?;
+    
+    log_success!("Block {} indexed successfully", height);
 
     unwrap::update_last_block(height as u128)?;
 
@@ -181,10 +187,11 @@ pub fn index_block<B: BlockLike>(block: &B, height: u32) -> Result<()> {
                         .set(Arc::new(filtered_response.write_to_bytes()?));
                 }
                 Err(e) => {
-                    println!("Error caching wallet response for address: {:?}", e);
+                    log_error!("Error caching wallet response for address: {:?}", e);
                 }
             }
         }
+        log_cache!("Cached wallet responses for {} addresses", _updated_addresses.len());
     }
 
     Ok(())
