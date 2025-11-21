@@ -728,8 +728,9 @@ impl AlkanesHostFunctionsImpl {
         storage_map_len: u64,
     ) -> Result<i32> {
         // Check for precompiled contract addresses
-        if cellpack.target.block == 800000000 {
-            // 8e8
+        // Note: CloneFuture (31) needs full extcall context, so exclude it from special handling
+        if cellpack.target.block == 800000000 && cellpack.target.tx != 31 {
+            // 8e8 - simple precompiled operations
             return Self::_handle_special_extcall(caller, cellpack);
         }
 
