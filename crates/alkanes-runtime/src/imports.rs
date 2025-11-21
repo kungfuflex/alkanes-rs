@@ -34,6 +34,7 @@ extern "C" {
         checkpoint: i32,
         start_fuel: u64,
     ) -> i32;
+    pub fn _deploy_future(master_ptr: i32, target_ptr: i32) -> i32;
 }
 
 #[cfg(feature = "test-utils")]
@@ -128,6 +129,9 @@ mod exports {
         start_fuel: u64,
     ) -> i32 {
         0
+    }
+    pub fn _deploy_future(master_ptr: i32, target_ptr: i32) -> i32 {
+        1 // Mock success for tests
     }
 }
 

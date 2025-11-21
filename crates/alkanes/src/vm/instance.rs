@@ -329,6 +329,23 @@ impl AlkanesInstance {
                 )
             },
         )?;
+        linker.func_wrap(
+            "env",
+            "_deploy_future",
+            |caller: Caller<'_, AlkanesState>, master_ptr: i32, target_ptr: i32| -> i32 {
+                match SafeAlkanesHostFunctionsImpl::_deploy_future(
+                    caller,
+                    master_ptr,
+                    target_ptr,
+                ) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!("_deploy_future error: {:?}", e);
+                        0 // Return 0 for failure
+                    }
+                }
+            },
+        )?;
         let mut alkanes_instance = AlkanesInstance {
             instance: linker
                 .instantiate(&mut store, &module)?

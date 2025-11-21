@@ -97,16 +97,16 @@ pub trait Extcall {
             to_arraybuffer_layout::<&[u8]>(&outgoing_alkanes.serialize());
         let mut storage_map_buffer = to_arraybuffer_layout::<&[u8]>(&get_cache().serialize());
         let _call_result = Self::__call(
-            to_passback_ptr(&mut cellpack_buffer),
-            to_passback_ptr(&mut outgoing_alkanes_buffer),
-            to_passback_ptr(&mut storage_map_buffer),
+            to_passback_ptr(&mut cellpack_buffer) as i32 as i32,
+            to_passback_ptr(&mut outgoing_alkanes_buffer) as i32 as i32,
+            to_passback_ptr(&mut storage_map_buffer) as i32 as i32,
             fuel,
         );
         if _call_result < 0 {
             let call_result = _call_result.abs() as usize;
             let mut returndata = to_arraybuffer_layout(&vec![0; call_result]);
             unsafe {
-                __returndatacopy(to_passback_ptr(&mut returndata));
+                __returndatacopy(to_passback_ptr(&mut returndata) as i32 as i32);
             }
             if returndata.len() < 20 {
                 return Err(anyhow!(format!(
@@ -124,7 +124,7 @@ pub trait Extcall {
             let call_result = _call_result as usize;
             let mut returndata = to_arraybuffer_layout(&vec![0; call_result]);
             unsafe {
-                __returndatacopy(to_passback_ptr(&mut returndata));
+                __returndatacopy(to_passback_ptr(&mut returndata) as i32);
             }
             if returndata.len() < 20 {
                 return Err(anyhow!(format!(
@@ -184,7 +184,7 @@ pub trait AlkaneResponder: 'static {
     fn context(&self) -> Result<Context> {
         unsafe {
             let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; __request_context() as usize]);
-            __load_context(to_ptr(&mut buffer) + 4);
+            __load_context((to_ptr(&mut buffer) + 4) as i32);
             let res = Context::parse(&mut Cursor::<Vec<u8>>::new((&buffer[4..]).to_vec()));
             res
         }
@@ -192,7 +192,7 @@ pub trait AlkaneResponder: 'static {
     fn block(&self) -> Vec<u8> {
         unsafe {
             let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; __request_block() as usize]);
-            __load_block(to_ptr(&mut buffer) + 4);
+            __load_block((to_ptr(&mut buffer) + 4) as i32);
             (&buffer[4..]).to_vec()
         }
     }
@@ -211,7 +211,7 @@ pub trait AlkaneResponder: 'static {
         unsafe {
             let mut buffer: Vec<u8> =
                 to_arraybuffer_layout(vec![0; __request_transaction() as usize]);
-            __load_transaction(to_ptr(&mut buffer) + 4);
+            __load_transaction((to_ptr(&mut buffer) + 4) as i32);
             (&buffer[4..]).to_vec()
         }
     }
@@ -226,11 +226,11 @@ pub trait AlkaneResponder: 'static {
     /*
     fn output(&self, v: &OutPoint) -> Result<Vec<u8>> {
         let mut buffer = to_arraybuffer_layout(consensus_encode(v)?);
-        let serialized = to_passback_ptr(&mut buffer);
+        let serialized = to_passback_ptr(&mut buffer) as i32;
         unsafe {
             let mut result: Vec<u8> =
                 to_arraybuffer_layout(vec![0; __request_output(serialized) as usize]);
-            let sz = __load_output(serialized, to_passback_ptr(&mut result));
+            let sz = __load_output(serialized, to_passback_ptr(&mut result) as i32);
             if sz == i32::MAX {
               Err(anyhow!("error fetching output"))
             } else if sz == 0 {
@@ -254,10 +254,10 @@ pub trait AlkaneResponder: 'static {
                     .unwrap_or_else(|| Vec::<u8>::new())
             } else {
                 let mut key_bytes = to_arraybuffer_layout(&k);
-                let key = to_passback_ptr(&mut key_bytes);
+                let key = to_passback_ptr(&mut key_bytes) as i32;
                 let buf_size = __request_storage(key) as usize;
                 let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; buf_size]);
-                __load_storage(key, to_passback_ptr(&mut buffer));
+                __load_storage(key, to_passback_ptr(&mut buffer) as i32);
                 (&buffer[4..]).to_vec()
             }
         }
@@ -273,31 +273,31 @@ pub trait AlkaneResponder: 'static {
         unsafe {
             let mut who_bytes: Vec<u8> = to_arraybuffer_layout::<Vec<u8>>(who.clone().into());
             let mut what_bytes: Vec<u8> = to_arraybuffer_layout::<Vec<u8>>(what.clone().into());
-            let who_ptr = to_ptr(&mut who_bytes) + 4;
-            let what_ptr = to_ptr(&mut what_bytes) + 4;
+            let who_ptr = (to_ptr(&mut who_bytes) + 4) as i32;
+            let what_ptr = (to_ptr(&mut what_bytes) + 4) as i32;
             let mut output: Vec<u8> = to_arraybuffer_layout::<Vec<u8>>(vec![0u8; 16]);
-            __balance(who_ptr, what_ptr, to_ptr(&mut output) + 4);
+            __balance(who_ptr, what_ptr, (to_ptr(&mut output) + 4) as i32);
             u128::from_le_bytes((&output[4..]).try_into().unwrap())
         }
     }
     fn sequence(&self) -> u128 {
         unsafe {
             let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; 16]);
-            __sequence(to_ptr(&mut buffer) + 4);
+            __sequence((to_ptr(&mut buffer) + 4) as i32);
             u128::from_le_bytes((&buffer[4..]).try_into().unwrap())
         }
     }
     fn fuel(&self) -> u64 {
         unsafe {
             let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; 8]);
-            __fuel(to_ptr(&mut buffer) + 4);
+            __fuel((to_ptr(&mut buffer) + 4) as i32);
             u64::from_le_bytes((&buffer[4..]).try_into().unwrap())
         }
     }
     fn height(&self) -> u64 {
         unsafe {
             let mut buffer: Vec<u8> = to_arraybuffer_layout(vec![0; 8]);
-            __height(to_ptr(&mut buffer) + 4);
+            __height((to_ptr(&mut buffer) + 4) as i32);
             u64::from_le_bytes((&buffer[4..]).try_into().unwrap())
         }
     }

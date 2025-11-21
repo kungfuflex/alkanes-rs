@@ -961,4 +961,94 @@ impl SafeAlkanesHostFunctionsImpl {
             )
         })
     }
+
+    /// Deploy a future contract at [31, current_height] from master at [800000000, 31]
+    /// Can ONLY be called by frBTC contract at [32, 0]
+    /// This is the factory function for creating ftrBTC futures
+    pub(super) fn _deploy_future<'a>(
+        mut caller: Caller<'_, AlkanesState>,
+        master_ptr: i32,
+        target_ptr: i32,
+    ) -> Result<i32> {
+        // 1. Verify caller is [32, 0] (frBTC contract)
+        let caller_id = caller
+            .data_mut()
+            .context
+            .lock()
+            .unwrap()
+            .caller
+            .clone();
+
+        if caller_id != (AlkaneId { block: 32, tx: 0 }) {
+            return Err(anyhow!(
+                "Only frBTC [32:0] can deploy futures, caller was [{}, {}]",
+                caller_id.block,
+                caller_id.tx
+            ));
+        }
+
+        // 2. Parse master alkane ID from WASM memory
+        let mem = get_memory(&mut caller)?;
+        let data = mem.data(&caller);
+        let master_buffer = read_arraybuffer(data, master_ptr)?;
+        let master_id = AlkaneId::parse(&mut Cursor::new(master_buffer))?;
+        
+        // Verify master is [800000000, 31]
+        if master_id.block != 800000000 || master_id.tx != 31 {
+            return Err(anyhow!(
+                "Invalid master ID, must be [800000000, 31], got [{}, {}]",
+                master_id.block,
+                master_id.tx
+            ));
+        }
+
+        // 3. Parse target alkane ID from WASM memory
+        let target_buffer = read_arraybuffer(data, target_ptr)?;
+        let target_id = AlkaneId::parse(&mut Cursor::new(target_buffer))?;
+        
+        // Verify target is [31, current_height]
+        let current_height = caller.data_mut().context.lock().unwrap().message.height;
+        
+        if target_id.block != 31 || target_id.tx != current_height as u128 {
+            return Err(anyhow!(
+                "Invalid target ID, must be [31, {}], got [{}, {}]",
+                current_height,
+                target_id.block,
+                target_id.tx
+            ));
+        }
+
+        // 4. Check if master exists
+        let master_ptr = IndexPointer::from_keyword("/alkanes/").select(&master_id.into());
+        let master_bytecode = master_ptr.get();
+        
+        if master_bytecode.len() == 0 {
+            return Err(anyhow!(
+                "Master template at [800000000, 31] does not exist"
+            ));
+        }
+
+        // 5. Check if target already exists (prevent double-deployment)
+        let mut target_ptr = IndexPointer::from_keyword("/alkanes/").select(&target_id.into());
+        
+        if target_ptr.get().len() > 0 {
+            return Err(anyhow!(
+                "Future at [31, {}] already exists",
+                current_height
+            ));
+        }
+
+        // 6. Clone bytecode from master to target
+        target_ptr.set(master_bytecode);
+
+        // 7. Consume fuel for the operation
+        let fuel_cost = 100000u64; // Cost to deploy a future
+        let current_fuel = caller.get_fuel().unwrap_or(0);
+        if current_fuel < fuel_cost {
+            return Err(anyhow!("Insufficient fuel to deploy future"));
+        }
+        let _ = caller.set_fuel(current_fuel - fuel_cost);
+
+        Ok(1) // Success
+    }
 }

@@ -351,11 +351,11 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
 }
 
 pub fn setup_ftrbtc(block: &Block) -> Result<()> {
-    // ftrBTC uses alkane ID [31, 0] - reserved for futures master contract
-    let ftr_btc_id = AlkaneId { block: 31, tx: 0 };
+    // ftrBTC master template at [800000000, 31] - used by _deploy_future to clone futures to [31:height]
+    let ftr_btc_master_id = AlkaneId { block: 800000000, tx: 31 };
     
     let mut ptr =
-        IndexPointer::from_keyword("/alkanes/").select(&ftr_btc_id.into());
+        IndexPointer::from_keyword("/alkanes/").select(&ftr_btc_master_id.into());
     if ptr.get().len() == 0 {
         ptr.set(Arc::new(compress(ftr_btc_build::get_bytes())?));
     } else {
