@@ -762,8 +762,8 @@ impl AlkanesProvider for SystemAlkanes {
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<alkanes_cli_common::alkanes::AlkaneBalance>> {
         <ConcreteProvider as AlkanesProvider>::get_balance(&self.provider, address).await
     }
-    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
-        <ConcreteProvider as AlkanesProvider>::pending_unwraps(&self.provider, height).await
+    async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
+        <ConcreteProvider as AlkanesProvider>::pending_unwraps(&self.provider, block_tag).await
     }
 }
 

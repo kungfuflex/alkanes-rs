@@ -1070,7 +1070,7 @@ impl AlkanesProvider for StandaloneAddressResolver {
     async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
-    async fn pending_unwraps(&self, _height: Option<u64>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
+    async fn pending_unwraps(&self, _block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 }

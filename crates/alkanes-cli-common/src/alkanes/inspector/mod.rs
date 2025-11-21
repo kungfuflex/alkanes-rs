@@ -187,7 +187,7 @@ mod tests {
         async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<AlkaneBalance>, AlkanesError> {
             unimplemented!()
         }
-        async fn pending_unwraps(&self, _height: Option<u64>) -> Result<Vec<crate::alkanes::PendingUnwrap>, AlkanesError> {
+        async fn pending_unwraps(&self, _block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>, AlkanesError> {
             unimplemented!()
         }
     }
