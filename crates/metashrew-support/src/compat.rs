@@ -98,8 +98,8 @@ pub fn to_ptr(v: &mut Vec<u8>) -> u32 {
 /// - Bytes 4+: Actual data payload
 /// 
 /// This function returns a pointer to the data payload, skipping the length.
-pub fn to_passback_ptr(v: &mut Vec<u8>) -> u32 {
-    to_ptr(v) + 4
+pub fn to_passback_ptr(v: &mut Vec<u8>) -> i32 {
+    (to_ptr(v) + 4) as i32
 }
 
 /// Convert data to ArrayBuffer layout with length prefix.
