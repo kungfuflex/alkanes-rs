@@ -41,6 +41,9 @@ impl<'a> Brc20ProgExecutor<'a> {
             self.build_and_broadcast_commit(&params, &envelope).await?;
 
         log::info!("✅ Commit transaction broadcast: {commit_txid}");
+        
+        log::info!("Waiting a while for esplora to index the commit transaction...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 
         // Mine a block if on regtest
         if params.mine_enabled {
@@ -49,7 +52,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         }
 
         // Build and execute reveal transaction
-        let (reveal_txid, reveal_fee, reveal_inscription_outpoint) = self
+        let (reveal_txid, reveal_fee, reveal_inscription_outpoint, reveal_inscription_output) = self
             .build_and_broadcast_reveal(
                 &params,
                 &envelope,
@@ -60,6 +63,9 @@ impl<'a> Brc20ProgExecutor<'a> {
             .await?;
 
         log::info!("✅ Reveal transaction broadcast: {reveal_txid}");
+        
+        log::info!("Waiting a while for esplora to index the reveal transaction...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 
         if params.mine_enabled {
             self.mine_blocks_if_regtest(&params).await?;
@@ -71,7 +77,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             log::info!("Executing activation transaction");
             
             let (act_txid, act_fee) = self
-                .build_and_broadcast_activation(&params, reveal_inscription_outpoint)
+                .build_and_broadcast_activation(&params, reveal_inscription_outpoint, reveal_inscription_output)
                 .await?;
             
             log::info!("✅ Activation transaction broadcast: {act_txid}");
@@ -164,7 +170,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         commit_outpoint: OutPoint,
         commit_output: TxOut,
         commit_internal_key: XOnlyPublicKey,
-    ) -> Result<(Txid, u64, OutPoint)> {
+    ) -> Result<(Txid, u64, OutPoint, TxOut)> {
         log::info!("Building reveal transaction");
 
         // Get change address
@@ -186,14 +192,8 @@ impl<'a> Brc20ProgExecutor<'a> {
                 script_pubkey: change_address.script_pubkey(),
             };
             
-            // Calculate change amount
-            let estimated_reveal_fee = 50_000u64;
-            let change_amount = commit_output.value.to_sat()
-                .saturating_sub(1)  // inscription output
-                .saturating_sub(estimated_reveal_fee);
-            
             let change_output = TxOut {
-                value: bitcoin::Amount::from_sat(change_amount),
+                value: bitcoin::Amount::from_sat(1), // Placeholder, will be updated later
                 script_pubkey: change_address.script_pubkey(),
             };
             
@@ -231,7 +231,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             vout: 0,
         };
 
-        Ok((reveal_txid, reveal_fee, inscription_outpoint))
+        Ok((reveal_txid, reveal_fee, inscription_outpoint, reveal_tx.output[0].clone()))
     }
 
     /// Build and broadcast the activation transaction (for deploy operations)
@@ -240,16 +240,17 @@ impl<'a> Brc20ProgExecutor<'a> {
         &mut self,
         params: &Brc20ProgExecuteParams,
         inscription_outpoint: OutPoint,
+        inscription_utxo: TxOut,
     ) -> Result<(Txid, u64)> {
         log::info!("Building activation transaction");
         log::info!("Inscription outpoint: {}:{}", inscription_outpoint.txid, inscription_outpoint.vout);
 
         // Get the 1-sat inscription UTXO
-        let inscription_utxo = self
+        /*let inscription_utxo = self
             .provider
             .get_utxo(&inscription_outpoint)
             .await?
-            .ok_or_else(|| AlkanesError::Wallet(format!("Inscription UTXO not found: {inscription_outpoint}")))?;
+            .ok_or_else(|| AlkanesError::Wallet(format!("Inscription UTXO not found: {inscription_outpoint}")))?;*/
 
         if inscription_utxo.value.to_sat() != 546 {
             return Err(AlkanesError::Wallet(format!(
@@ -637,7 +638,7 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         if let Some(change_output) = outputs
             .iter_mut()
-            .find(|o| o.value.to_sat() > 0 && !o.script_pubkey.is_op_return())
+            .find(|o| o.value.to_sat() == 1 && !o.script_pubkey.is_op_return())
         {
             change_output.value = bitcoin::Amount::from_sat(change_value);
         }
