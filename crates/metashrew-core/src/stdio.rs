@@ -47,6 +47,6 @@ extern "C" {
 #[allow(unused_unsafe)]
 pub fn log(v: Arc<Vec<u8>>) -> () {
     unsafe {
-        __log(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())));
+        __log(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())) as u32);
     }
 }

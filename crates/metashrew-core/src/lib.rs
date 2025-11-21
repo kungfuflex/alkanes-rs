@@ -169,13 +169,13 @@ pub fn get(v: Arc<Vec<u8>>) -> Arc<Vec<u8>> {
         if CACHE.as_ref().unwrap().contains_key(&v.clone()) {
             return CACHE.as_ref().unwrap().get(&v.clone()).unwrap().clone();
         }
-        let length: i32 = __get_len(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())));
+        let length: i32 = __get_len(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())) as u32);
         let mut buffer = Vec::<u8>::new();
         buffer.extend_from_slice(&length.to_le_bytes());
         buffer.resize((length as usize) + 4, 0);
         __get(
-            to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())),
-            to_passback_ptr(&mut buffer),
+            to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())) as u32,
+            to_passback_ptr(&mut buffer) as u32,
         );
         let value = Arc::new(buffer[4..].to_vec());
         CACHE.as_mut().unwrap().insert(v.clone(), value.clone());
@@ -266,7 +266,7 @@ pub fn flush() {
         let mut buffer = KeyValueFlush::default();
         buffer.list = to_encode;
         let serialized = buffer.encode_to_vec();
-        __flush(to_ptr(&mut to_arraybuffer_layout(&serialized)) + 4);
+        __flush((to_ptr(&mut to_arraybuffer_layout(&serialized)) + 4) as u32);
     }
 }
 
@@ -308,7 +308,7 @@ pub fn input() -> Vec<u8> {
         let mut buffer = Vec::<u8>::new();
         buffer.extend_from_slice(&length.to_le_bytes());
         buffer.resize((length as usize) + 4, 0);
-        __load_input(to_ptr(&mut buffer) + 4);
+        __load_input((to_ptr(&mut buffer) + 4) as u32);
         buffer[4..].to_vec()
     }
 }
