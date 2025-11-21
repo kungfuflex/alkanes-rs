@@ -847,7 +847,7 @@ impl AlkanesProvider for MockProvider {
     async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>> {
         todo!()
     }
-    async fn pending_unwraps(&self, _height: Option<u64>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
+    async fn pending_unwraps(&self, _block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
         todo!()
     }
 }

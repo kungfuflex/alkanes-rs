@@ -2925,8 +2925,8 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 }
                 Ok(())
             }
-            AlkanesCommands::Unwrap { height, raw } => {
-                let result = provider.pending_unwraps(height).await?;
+            AlkanesCommands::Unwrap { block_tag, raw } => {
+                let result = provider.pending_unwraps(block_tag).await?;
                 
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&result)?);

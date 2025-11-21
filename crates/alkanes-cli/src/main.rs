@@ -550,8 +550,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         }
-        Alkanes::Unwrap { height, raw } => {
-            let result = system.provider().pending_unwraps(height).await?;
+        Alkanes::Unwrap { block_tag, raw } => {
+            let result = system.provider().pending_unwraps(block_tag).await?;
             
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);

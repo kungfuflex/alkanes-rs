@@ -673,9 +673,9 @@ pub enum AlkanesCommands {
     },
     /// Get pending unwraps (maps to metashrew_view unwrap)
     Unwrap {
-        /// Block height to query (defaults to current height)
+        /// Block tag to query (e.g., "latest" or a block height)
         #[arg(long)]
-        height: Option<u64>,
+        block_tag: Option<String>,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,

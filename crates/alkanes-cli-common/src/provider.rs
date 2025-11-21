@@ -2790,20 +2790,32 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(result)
     }
 
-    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
+    async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
         use bitcoin::consensus::Decodable;
         use std::io::Cursor;
         
-        // Get the current height if not provided
-        let query_height = match height {
-            Some(h) => h,
-            None => self.get_height().await?,
+        // Get the current height if block_tag is not provided
+        let (query_height, height_tag) = match &block_tag {
+            Some(tag) if tag == "latest" => {
+                let h = self.get_height().await?;
+                (h, "latest".to_string())
+            },
+            Some(tag) => {
+                // Try to parse as a number
+                let h = tag.parse::<u64>()
+                    .map_err(|_| AlkanesError::InvalidParameters(format!("Invalid block_tag: {}", tag)))?;
+                (h, tag.clone())
+            },
+            None => {
+                let h = self.get_height().await?;
+                (h, "latest".to_string())
+            }
         };
         
         // Call the view function
         let height_bytes = (query_height as u128).to_le_bytes().to_vec();
         let hex_input = format!("0x{}", hex::encode(height_bytes));
-        let response_bytes = self.metashrew_view_call("unwrap", &hex_input, "latest").await?;
+        let response_bytes = self.metashrew_view_call("unwrap", &hex_input, &height_tag).await?;
         
         if response_bytes.is_empty() {
             return Ok(vec![]);
