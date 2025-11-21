@@ -3161,7 +3161,9 @@ impl BitcoinRpcProvider for ConcreteProvider {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
-        let params = json!([tx_hex]);
+        let maxfeerate = 0.1;
+        let maxburnamount = 0.1;
+        let params = json!([tx_hex, maxfeerate, maxburnamount]);
         let result = self.call(&rpc_url, "sendrawtransaction", params, 1).await?;
         result.as_str()
             .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransaction response".to_string()))
