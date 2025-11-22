@@ -11,14 +11,16 @@ FRBTC_ID="32:0"
 DIESEL_AMOUNT="300000000"  # 300M DIESEL
 FRBTC_AMOUNT="50000"       # 0.0005 BTC in sats
 ADDR="p2tr:0"
-WALLET_FILE="${HOME}/.alkanes/regtest-wallet.json"
-PASSPHRASE="${ALKANES_PASSPHRASE:-password}"
+WALLET_FILE="${WALLET_FILE:-$HOME/.alkanes/wallet.json}"
+PASSPHRASE="${DEPLOY_PASSWORD:-testtesttest}"
 CLI="./target/release/alkanes-cli -p regtest --wallet-file $WALLET_FILE --passphrase $PASSPHRASE"
 
 # Step 0: Fund the wallet
 echo ""
 echo "💰 Step 0: Funding wallet with Bitcoin..."
-./target/release/alkanes-cli -p regtest --wallet-file ~/.alkanes/regtest-wallet.json bitcoind generatetoaddress 201 bcrt1pldrufx0nklknemsdcjaelst9m24xh0lat9jsrxh45w47detp7xyqw3a70w
+$CLI bitcoind generatetoaddress 201 p2tr:0
+echo "⏳ Waiting for esplora/metashrew to index blocks (10 seconds)..."
+sleep 10
 echo "✅ Wallet funded with 201 blocks"
 
 # Step 1: Mine DIESEL
@@ -46,8 +48,10 @@ echo "✅ frBTC wrapped"
 
 # Wait for confirmations
 echo ""
-echo "⏳ Waiting for confirmations..."
-sleep 5
+echo "⏳ Mining a block to confirm transactions..."
+$CLI bitcoind generatetoaddress 1 p2tr:0
+echo "⏳ Waiting for metashrew to index transactions (15 seconds)..."
+sleep 15
 
 # Step 3: Create the pool
 echo ""

@@ -128,14 +128,7 @@ pub fn handle_message(
                 inner: response.into(),
                 fuel_used: gas_used,
             }));
-            save_trace(
-                &OutPoint {
-                    txid: parcel.transaction.compute_txid(),
-                    vout: parcel.vout,
-                },
-                parcel.height,
-                trace.clone(),
-            )?;
+            // Note: trace will be saved by protorune after adding ValueTransfer events
 
             Ok((response_alkanes.into(), combined))
         })
@@ -182,14 +175,7 @@ pub fn handle_message(
                 inner: response,
                 fuel_used: u64::MAX,
             }));
-            save_trace(
-                &OutPoint {
-                    txid: parcel.transaction.compute_txid(),
-                    vout: parcel.vout,
-                },
-                parcel.height,
-                cloned,
-            )?;
+            // Note: trace will be saved by protorune after adding ValueTransfer events
             Err(e)
         })
 }

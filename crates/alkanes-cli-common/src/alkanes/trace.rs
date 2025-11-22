@@ -192,6 +192,8 @@ impl From<alkanes_support::proto::alkanes::alkanes_trace_event::Event> for Event
             alkanes_support::proto::alkanes::alkanes_trace_event::Event::EnterContext(e) => Event::Enter(e.into()),
             alkanes_support::proto::alkanes::alkanes_trace_event::Event::ExitContext(e) => Event::Exit(e.into()),
             alkanes_support::proto::alkanes::alkanes_trace_event::Event::CreateAlkane(e) => Event::Create(e.into()),
+            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ReceiveIntent(_) => Event::Unknown,
+            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ValueTransfer(_) => Event::Unknown,
             _ => Event::Unknown,
         }
     }
@@ -300,6 +302,39 @@ pub fn format_trace_pretty(trace: &alkanes_support::trace::Trace) -> String {
             let indent_prefix = if is_last { "      " } else { "    │ " };
             
             match event {
+                alkanes_support::trace::TraceEvent::ReceiveIntent { incoming_alkanes } => {
+                    output.push_str(&format!("{} 📬 receive_intent:\n", tree_prefix));
+                    if !incoming_alkanes.0.is_empty() {
+                        output.push_str(&format!("{}    🪙 incoming_transfers: []\n", indent_prefix));
+                        for (j, transfer) in incoming_alkanes.0.iter().enumerate() {
+                            let transfer_tree = if j == incoming_alkanes.0.len() - 1 { "└─" } else { "├─" };
+                            output.push_str(&format!("{}      {} transfer_{}:\n", indent_prefix, transfer_tree, j));
+                            output.push_str(&format!("{}      {}   alkane_id:\n", indent_prefix, if j == incoming_alkanes.0.len() - 1 { " " } else { "│" }));
+                            output.push_str(&format!("{}      {}     block: {}\n", indent_prefix, if j == incoming_alkanes.0.len() - 1 { " " } else { "│" }, transfer.id.block));
+                            output.push_str(&format!("{}      {}     tx: {}\n", indent_prefix, if j == incoming_alkanes.0.len() - 1 { " " } else { "│" }, transfer.id.tx));
+                            output.push_str(&format!("{}      {}   amount: {}\n", indent_prefix, if j == incoming_alkanes.0.len() - 1 { " " } else { "│" }, transfer.value));
+                        }
+                    } else {
+                        output.push_str(&format!("{}    🪙 incoming_transfers: []\n", indent_prefix));
+                    }
+                },
+                alkanes_support::trace::TraceEvent::ValueTransfer { transfers, redirect_to } => {
+                    output.push_str(&format!("{} 💸 value_transfer:\n", tree_prefix));
+                    output.push_str(&format!("{}    redirect_to: vout {}\n", indent_prefix, redirect_to));
+                    if !transfers.is_empty() {
+                        output.push_str(&format!("{}    🪙 transfers:\n", indent_prefix));
+                        for (j, transfer) in transfers.iter().enumerate() {
+                            let transfer_tree = if j == transfers.len() - 1 { "└─" } else { "├─" };
+                            output.push_str(&format!("{}      {} transfer_{}:\n", indent_prefix, transfer_tree, j));
+                            output.push_str(&format!("{}      {}   alkane_id:\n", indent_prefix, if j == transfers.len() - 1 { " " } else { "│" }));
+                            output.push_str(&format!("{}      {}     block: {}\n", indent_prefix, if j == transfers.len() - 1 { " " } else { "│" }, transfer.id.block));
+                            output.push_str(&format!("{}      {}     tx: {}\n", indent_prefix, if j == transfers.len() - 1 { " " } else { "│" }, transfer.id.tx));
+                            output.push_str(&format!("{}      {}   amount: {}\n", indent_prefix, if j == transfers.len() - 1 { " " } else { "│" }, transfer.value));
+                        }
+                    } else {
+                        output.push_str(&format!("{}    🪙 transfers: []\n", indent_prefix));
+                    }
+                },
                 alkanes_support::trace::TraceEvent::CreateAlkane(id) => {
                     output.push_str(&format!("{} 🏗️  create_alkane:\n", tree_prefix));
                     output.push_str(&format!("{}    alkane_id:\n", indent_prefix));
@@ -409,6 +444,39 @@ pub fn trace_to_json(trace: &alkanes_support::trace::Trace) -> JsonValue {
     
     for event in events.iter() {
         let json_event = match event {
+            alkanes_support::trace::TraceEvent::ReceiveIntent { incoming_alkanes } => {
+                let alkane_transfers: Vec<JsonValue> = incoming_alkanes.0.iter().map(|transfer| {
+                    json!({
+                        "alkane_id": {
+                            "block": transfer.id.block,
+                            "tx": transfer.id.tx
+                        },
+                        "amount": transfer.value
+                    })
+                }).collect();
+                
+                json!({
+                    "type": "receive_intent",
+                    "incoming_alkanes": alkane_transfers
+                })
+            },
+            alkanes_support::trace::TraceEvent::ValueTransfer { transfers, redirect_to } => {
+                let alkane_transfers: Vec<JsonValue> = transfers.iter().map(|transfer| {
+                    json!({
+                        "alkane_id": {
+                            "block": transfer.id.block,
+                            "tx": transfer.id.tx
+                        },
+                        "amount": transfer.value
+                    })
+                }).collect();
+                
+                json!({
+                    "type": "value_transfer",
+                    "transfers": alkane_transfers,
+                    "redirect_to": redirect_to
+                })
+            },
             alkanes_support::trace::TraceEvent::CreateAlkane(id) => {
                 json!({
                     "type": "create_alkane",

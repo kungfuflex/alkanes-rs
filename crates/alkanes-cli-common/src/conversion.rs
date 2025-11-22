@@ -267,6 +267,19 @@ pub fn convert_trace_event(event: alkanes_pb::AlkanesTraceEvent) -> TraceEvent {
         Some(alkanes_pb::alkanes_trace_event::Event::CreateAlkane(c)) => {
             TraceEvent::CreateAlkane(c.new_alkane.map_or(Default::default(), convert_alkane_id))
         }
+        Some(alkanes_pb::alkanes_trace_event::Event::ReceiveIntent(ri)) => {
+            TraceEvent::ReceiveIntent {
+                incoming_alkanes: AlkaneTransferParcel(
+                    ri.incoming_alkanes.into_iter().map(convert_alkane_transfer).collect()
+                ),
+            }
+        }
+        Some(alkanes_pb::alkanes_trace_event::Event::ValueTransfer(vt)) => {
+            TraceEvent::ValueTransfer {
+                transfers: vt.transfers.into_iter().map(convert_alkane_transfer).collect(),
+                redirect_to: vt.redirect_to,
+            }
+        }
         None => panic!("unknown trace event"),
     }
 }

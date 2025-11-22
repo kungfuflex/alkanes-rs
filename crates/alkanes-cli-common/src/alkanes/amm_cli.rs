@@ -61,10 +61,13 @@ pub async fn init_pool(
     info!("Liquidity: {} token0, {} token1, minimum LP: {}", 
           params.amount0, params.amount1, minimum_lp);
     
-    // Build calldata: [factoryBlock, factoryTx, 1, token0Block, token0Tx, token1Block, token1Tx, amount0, amount1]:v0:v0
-    // Opcode 1 = mint/add liquidity (pool must already exist from opcode 0 initialization)
+    // Build calldata with two protostones:
+    // 1. First protostone sends 1 unit of factory auth token (2:1) to second protostone (p1)
+    //    Format: :v0:v0:[2:1:1:p1] (no cellpack, just pointer/refund/edict)
+    // 2. Second protostone uses the auth token to call factory with opcode 0 (create pool)
+    //    Format: [factoryBlock,factoryTx,0,...]:v0:v0
     let calldata = format!(
-        "[{},{},1,{},{},{},{},{},{}]:v0:v0",
+        ":v0:v0:[2:1:1:p1],[{},{},0,{},{},{},{},{},{}]:v0:v0",
         params.factory_id.block,
         params.factory_id.tx,
         params.token0.block,
@@ -77,9 +80,13 @@ pub async fn init_pool(
     
     info!("Calldata: {}", calldata);
     
-    // Parse the calldata string manually since we know the format
-    // Format: [factoryBlock,factoryTx,0,token0Block,token0Tx,token1Block,token1Tx]:amount0:amount1:minimumLp
+    // Input requirements: factory auth token (2:1), token0, and token1
     let input_reqs = vec![
+        super::types::InputRequirement::Alkanes {
+            block: 2,
+            tx: 1,
+            amount: 1, // 1 unit of factory auth token
+        },
         super::types::InputRequirement::Alkanes {
             block: params.token0.block,
             tx: params.token0.tx,

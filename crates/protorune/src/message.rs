@@ -36,6 +36,7 @@ pub struct MessageContextParcel {
     pub txindex: u32,
     pub vout: u32,
     pub runtime_balances: Box<BalanceSheet<AtomicPointer>>,
+    pub trace: alkanes_support::trace::Trace,
 }
 
 pub trait ToBytes {
@@ -64,6 +65,7 @@ impl Default for MessageContextParcel {
             txindex: 0,
             runtime_balances: Box::new(BalanceSheet::default()),
             sheets: Box::new(BalanceSheet::default()),
+            trace: alkanes_support::trace::Trace::default(),
         }
     }
 }
