@@ -110,3 +110,80 @@ pub fn parse_alkane_id(id_str: &str) -> Result<AlkaneId> {
         tx: parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid tx number"))?,
     })
 }
+
+// New Data API endpoints
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_address_balances(
+    client: &DataApiClient,
+    address: &str,
+    include_outpoints: bool,
+) -> Result<String> {
+    let response = client.get_address_balances(address, include_outpoints).await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_holders(
+    client: &DataApiClient,
+    alkane: &str,
+    page: i64,
+    limit: i64,
+) -> Result<String> {
+    let response = client.get_holders(alkane, page, limit).await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_holders_count(
+    client: &DataApiClient,
+    alkane: &str,
+) -> Result<String> {
+    let response = client.get_holders_count(alkane).await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_keys(
+    client: &DataApiClient,
+    alkane: &str,
+    prefix: Option<String>,
+    limit: i64,
+) -> Result<String> {
+    let response = client.get_keys(alkane, prefix, limit).await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_trades(
+    client: &DataApiClient,
+    pool: &str,
+    start_time: Option<i64>,
+    end_time: Option<i64>,
+    limit: i64,
+) -> Result<String> {
+    let response = client.get_trades(pool, start_time, end_time, limit).await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_candles(
+    client: &DataApiClient,
+    pool: &str,
+    interval: &str,
+    start_time: Option<i64>,
+    end_time: Option<i64>,
+    limit: i64,
+) -> Result<String> {
+    let response = client.get_candles(pool, interval, start_time, end_time, limit).await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_reserves(
+    client: &DataApiClient,
+    pool: &str,
+) -> Result<String> {
+    let response = client.get_reserves(pool).await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}

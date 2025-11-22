@@ -213,4 +213,81 @@ impl DataApiClient {
         let response = self.post::<_, MarketChart>("get-bitcoin-market-chart", &body).await?;
         Ok(response.data)
     }
+
+    // New balance endpoints
+    pub async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<serde_json::Value> {
+        let body = serde_json::json!({
+            "address": address,
+            "include_outpoints": include_outpoints
+        });
+        let response = self.post::<_, serde_json::Value>("get-address-balances", &body).await?;
+        Ok(response.data)
+    }
+
+    pub async fn get_holders(&self, alkane: &str, page: i64, limit: i64) -> Result<serde_json::Value> {
+        let body = serde_json::json!({
+            "alkane": alkane,
+            "page": page,
+            "limit": limit
+        });
+        let response = self.post::<_, serde_json::Value>("get-holders", &body).await?;
+        Ok(response.data)
+    }
+
+    pub async fn get_holders_count(&self, alkane: &str) -> Result<serde_json::Value> {
+        let body = serde_json::json!({"alkane": alkane});
+        let response = self.post::<_, serde_json::Value>("get-holders-count", &body).await?;
+        Ok(response.data)
+    }
+
+    // Storage endpoint
+    pub async fn get_keys(&self, alkane: &str, prefix: Option<String>, limit: i64) -> Result<serde_json::Value> {
+        let mut body = serde_json::json!({
+            "alkane": alkane,
+            "limit": limit
+        });
+        if let Some(p) = prefix {
+            body["prefix"] = serde_json::Value::String(p);
+        }
+        let response = self.post::<_, serde_json::Value>("get-keys", &body).await?;
+        Ok(response.data)
+    }
+
+    // AMM endpoints
+    pub async fn get_trades(&self, pool: &str, start_time: Option<i64>, end_time: Option<i64>, limit: i64) -> Result<serde_json::Value> {
+        let mut body = serde_json::json!({
+            "pool": pool,
+            "limit": limit
+        });
+        if let Some(st) = start_time {
+            body["start_time"] = serde_json::Value::from(st);
+        }
+        if let Some(et) = end_time {
+            body["end_time"] = serde_json::Value::from(et);
+        }
+        let response = self.post::<_, serde_json::Value>("get-trades", &body).await?;
+        Ok(response.data)
+    }
+
+    pub async fn get_candles(&self, pool: &str, interval: &str, start_time: Option<i64>, end_time: Option<i64>, limit: i64) -> Result<serde_json::Value> {
+        let mut body = serde_json::json!({
+            "pool": pool,
+            "interval": interval,
+            "limit": limit
+        });
+        if let Some(st) = start_time {
+            body["start_time"] = serde_json::Value::from(st);
+        }
+        if let Some(et) = end_time {
+            body["end_time"] = serde_json::Value::from(et);
+        }
+        let response = self.post::<_, serde_json::Value>("get-candles", &body).await?;
+        Ok(response.data)
+    }
+
+    pub async fn get_reserves(&self, pool: &str) -> Result<serde_json::Value> {
+        let body = serde_json::json!({"pool": pool});
+        let response = self.post::<_, serde_json::Value>("get-reserves", &body).await?;
+        Ok(response.data)
+    }
 }

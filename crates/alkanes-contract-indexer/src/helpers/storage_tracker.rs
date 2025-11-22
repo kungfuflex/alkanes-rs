@@ -3,6 +3,9 @@ use serde_json::Value as JsonValue;
 use sqlx::PgPool;
 use tracing::debug;
 
+#[cfg(test)]
+mod tests;
+
 /// Extract storage changes from trace events (ReturnContext)
 pub fn extract_storage_changes(
     tx: &JsonValue,

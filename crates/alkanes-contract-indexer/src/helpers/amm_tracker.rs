@@ -5,6 +5,9 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::debug;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone)]
 pub struct TradeEvent {
     pub txid: String,

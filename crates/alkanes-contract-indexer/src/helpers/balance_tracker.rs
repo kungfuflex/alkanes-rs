@@ -267,3 +267,47 @@ async fn refresh_holders(
     debug!("Refreshed holders for alkane {}:{}", alkane_id_block, alkane_id_tx);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn create_test_trace_event(
+        vout: i32,
+        event_type: &str,
+        data: serde_json::Value,
+        alkane_block: &str,
+        alkane_tx: &str,
+    ) -> super::super::protostone::TraceEventItem {
+        super::super::protostone::TraceEventItem {
+            vout,
+            event_type: event_type.to_string(),
+            data,
+            alkane_address_block: alkane_block.to_string(),
+            alkane_address_tx: alkane_tx.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_extract_balance_changes_simple() {
+        let tx_json = json!({
+            "txid": "abc123def456",
+            "vout": [{"scriptPubKey": {"address": "bc1ptest123"}}]
+        });
+
+        let trace_events = vec![
+            create_test_trace_event(
+                0, "value_transfer",
+                json!({"transfers": [{"id": {"block": 840000, "tx": 123}, "amount": "1000000"}]}),
+                "840000", "100"
+            )
+        ];
+
+        let result = extract_balance_changes(&tx_json, &trace_events);
+        assert!(result.is_ok());
+        let balances = result.unwrap();
+        assert_eq!(balances.len(), 1);
+        assert_eq!(balances[0].address, "bc1ptest123");
+    }
+}
