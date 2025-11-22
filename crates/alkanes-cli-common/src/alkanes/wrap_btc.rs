@@ -82,6 +82,7 @@ impl<'a> WrapBtcExecutor<'a> {
 
         // Build execute params
         let execute_params = EnhancedExecuteParams {
+            alkanes_change_address: None,
             input_requirements: vec![
                 InputRequirement::Bitcoin { amount: params.amount },
             ],

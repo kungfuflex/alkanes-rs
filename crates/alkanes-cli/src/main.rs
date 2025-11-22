@@ -1022,6 +1022,7 @@ fn to_enhanced_execute_params(args: AlkanesExecute) -> Result<alkanes::types::En
         to_addresses: args.to,
         from_addresses: args.from,
         change_address: args.change,
+        alkanes_change_address: args.alkanes_change,
         fee_rate: args.fee_rate,
         envelope_data,
         protostones,
@@ -1044,6 +1045,117 @@ async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result);
+            }
+        }
+        Runestone::Trace { txid, raw } => {
+            use alkanes_cli_common::traits::AlkanesProvider;
+            use prost::Message;
+            
+            // Get and analyze transaction
+            let tx_hex = system.provider().get_transaction_hex(&txid).await?;
+            let tx_bytes = hex::decode(tx_hex)?;
+            let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
+            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)?;
+            
+            // Print transaction structure
+            if !raw {
+                println!("🔍 ═══════════════════════════════════════════════════════════════");
+                println!("🧪           RUNESTONE TRANSACTION TRACE ANALYSIS             🧪");
+                println!("🔍 ═══════════════════════════════════════════════════════════════\n");
+                println!("📝 Transaction ID: {}\n", txid);
+                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result);
+                println!("\n🔍 ═══════════════════════════════════════════════════════════════");
+                println!("🧪                   PROTOSTONE TRACES                        🧪");
+                println!("🔍 ═══════════════════════════════════════════════════════════════\n");
+            }
+            
+            // Extract number of protostones
+            let num_protostones = if let Some(protostones) = result.get("protostones").and_then(|p| p.as_array()) {
+                protostones.len()
+            } else {
+                0
+            };
+            
+            if num_protostones == 0 {
+                if raw {
+                    println!("{{\"transaction\": {}, \"traces\": []}}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("📭 No protostones found in this transaction.\n");
+                }
+                return Ok(());
+            }
+            
+            // Calculate virtual vout indices and trace each protostone
+            // Protostones are indexed starting at tx.output.len() + 1
+            let base_vout = tx.output.len() as u32 + 1;
+            let mut all_traces = Vec::new();
+            
+            for i in 0..num_protostones {
+                let vout = base_vout + i as u32;
+                let outpoint = format!("{}:{}", txid, vout);
+                
+                if !raw {
+                    println!("📊 Protostone #{} (virtual vout {}):", i + 1, vout);
+                    println!("   Outpoint: {}\n", outpoint);
+                }
+                
+                match system.provider().trace(&outpoint).await {
+                    Ok(trace_pb) => {
+                        if let Some(alkanes_trace) = trace_pb.trace {
+                            match alkanes_support::trace::Trace::try_from(
+                                Message::encode_to_vec(&alkanes_trace)
+                            ) {
+                                Ok(trace) => {
+                                    if raw {
+                                        let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
+                                        all_traces.push(json);
+                                    } else {
+                                        let pretty = alkanes_cli_common::alkanes::trace::format_trace_pretty(&trace);
+                                        println!("{}\n", pretty);
+                                    }
+                                }
+                                Err(e) => {
+                                    if raw {
+                                        all_traces.push(serde_json::json!({
+                                            "error": format!("Failed to decode trace: {}", e),
+                                            "events": []
+                                        }));
+                                    } else {
+                                        println!("   ❌ Error: Failed to decode trace: {}\n", e);
+                                    }
+                                }
+                            }
+                        } else {
+                            if raw {
+                                all_traces.push(serde_json::json!({"events": []}));
+                            } else {
+                                println!("   ⚠️ No trace data found.\n");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if raw {
+                            all_traces.push(serde_json::json!({
+                                "error": format!("Failed to trace: {}", e),
+                                "events": []
+                            }));
+                        } else {
+                            println!("   ❌ Error: {}\n", e);
+                        }
+                    }
+                }
+            }
+            
+            if raw {
+                let output = serde_json::json!({
+                    "transaction": result,
+                    "traces": all_traces
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("🎯 ═══════════════════════════════════════════════════════════════");
+                println!("✨                      TRACE COMPLETE                         ✨");
+                println!("🎯 ═══════════════════════════════════════════════════════════════");
             }
         }
     }
@@ -1154,7 +1266,7 @@ async fn execute_esplora_command(
                 println!("🏠 Address {}:\n{}", params, serde_json::to_string_pretty(&result)?);
             }
         }
-        alkanes_cli_common::commands::EsploraCommands::AddressTxs { params, raw, exclude_coinbase } => {
+        alkanes_cli_common::commands::EsploraCommands::AddressTxs { params, raw, exclude_coinbase, runestone_trace } => {
             let resolved_address = provider.resolve_all_identifiers(&params).await?;
             let result = provider.get_address_txs(&resolved_address).await?;
             
@@ -1172,6 +1284,111 @@ async fn execute_esplora_command(
             } else {
                 println!("📄 Transactions for address {}:", params);
                 pretty_print::print_esplora_transactions(&txs);
+            }
+            
+            // If runestone_trace flag is set, trace each transaction that has an OP_RETURN
+            if runestone_trace {
+                use alkanes_cli_common::traits::AlkanesProvider;
+                use prost::Message;
+                
+                println!("\n🔍 ═══════════════════════════════════════════════════════════════");
+                println!("🧪            RUNESTONE TRACES FOR TRANSACTIONS               🧪");
+                println!("🔍 ═══════════════════════════════════════════════════════════════\n");
+                
+                for esplora_tx in &txs {
+                    // Check if transaction has an OP_RETURN output
+                    let has_op_return = esplora_tx.vout.iter().any(|output| {
+                        output.scriptpubkey_type == "op_return"
+                    });
+                    
+                    if has_op_return {
+                        println!("═══════════════════════════════════════════════════════════════");
+                        println!("📝 Transaction: {}", esplora_tx.txid);
+                        println!("═══════════════════════════════════════════════════════════════\n");
+                        
+                        // Get raw transaction
+                        match provider.get_transaction_hex(&esplora_tx.txid).await {
+                            Ok(tx_hex) => {
+                                let tx_bytes = match hex::decode(&tx_hex) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        println!("❌ Error decoding hex: {}", e);
+                                        continue;
+                                    }
+                                };
+                                
+                                let transaction: bitcoin::Transaction = match bitcoin::consensus::deserialize(&tx_bytes) {
+                                    Ok(t) => t,
+                                    Err(e) => {
+                                        println!("❌ Error deserializing transaction: {}", e);
+                                        continue;
+                                    }
+                                };
+                                
+                                // Try to parse runestone
+                                match alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&transaction) {
+                                    Ok(result) => {
+                                        // Extract number of protostones
+                                        let num_protostones = if let Some(protostones) = result.get("protostones").and_then(|p| p.as_array()) {
+                                            protostones.len()
+                                        } else {
+                                            0
+                                        };
+                                        
+                                        if num_protostones == 0 {
+                                            println!("ℹ️ No protostones found in this transaction.\n");
+                                            continue;
+                                        }
+                                        
+                                        println!("🪨 Protostones Found: {}\n", num_protostones);
+                                        
+                                        // Trace each protostone
+                                        let base_vout = transaction.output.len() as u32 + 1;
+                                        for i in 0..num_protostones {
+                                            let vout = base_vout + i as u32;
+                                            let outpoint = format!("{}:{}", esplora_tx.txid, vout);
+                                            
+                                            println!("📊 Protostone #{} (virtual vout {}):", i + 1, vout);
+                                            println!("   Outpoint: {}\n", outpoint);
+                                            
+                                            match provider.trace(&outpoint).await {
+                                                Ok(trace_pb) => {
+                                                    if let Some(alkanes_trace) = trace_pb.trace {
+                                                        // Convert and pretty print trace
+                                                        match alkanes_support::trace::Trace::try_from(
+                                                            prost::Message::encode_to_vec(&alkanes_trace)
+                                                        ) {
+                                                            Ok(trace) => {
+                                                                let formatted = alkanes_cli_common::alkanes::trace::format_trace_pretty(&trace);
+                                                                println!("{}", formatted);
+                                                            }
+                                                            Err(e) => {
+                                                                println!("   ❌ Error decoding trace: {}", e);
+                                                            }
+                                                        }
+                                                    } else {
+                                                        println!("   ⚠️ No trace data found.");
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    println!("   ❌ Error tracing: {}", e);
+                                                }
+                                            }
+                                            println!();
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!("ℹ️ Not a valid runestone: {}\n", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("❌ Error fetching transaction: {}", e);
+                            }
+                        }
+                        println!();
+                    }
+                }
             }
         }
         alkanes_cli_common::commands::EsploraCommands::AddressTxsChain { params, raw } => {

@@ -105,6 +105,7 @@ pub async fn init_pool(
     let mut executor = EnhancedAlkanesExecutor::new(provider);
     let execute_params = EnhancedExecuteParams {
         input_requirements: input_reqs,
+        alkanes_change_address: None,
         to_addresses: vec![params.to_address.clone()],
         from_addresses: Some(vec![params.from_address.clone()]),
         change_address: params.change_address.clone(),
@@ -201,6 +202,7 @@ pub async fn execute_swap(
     let mut executor = EnhancedAlkanesExecutor::new(provider);
     let execute_params = EnhancedExecuteParams {
         input_requirements: input_reqs,
+        alkanes_change_address: None,
         to_addresses: vec![params.to_address.clone()],
         from_addresses: Some(vec![params.from_address.clone()]),
         change_address: params.change_address.clone(),

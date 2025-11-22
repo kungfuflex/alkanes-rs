@@ -25,16 +25,26 @@ use alloc::{vec, vec::Vec, string::{String, ToString}, format};
 use std::{vec, vec::Vec, string::{String, ToString}, format, io::{self, Write}};
 use tokio::time::{sleep, Duration};
 pub use super::types::{
-    EnhancedExecuteParams, EnhancedExecuteResult, ExecutionState, InputRequirement, OutputTarget,
-    ProtostoneSpec, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx,
+    AlkaneId, AlkanesBalance, EnhancedExecuteParams, EnhancedExecuteResult, ExecutionState,
+    InputRequirement, OutputTarget, ProtostoneEdict, ProtostoneSpec, ReadyToSignCommitTx,
+    ReadyToSignRevealTx, ReadyToSignTx,
 };
 use super::envelope::AlkanesEnvelope;
 use anyhow::anyhow;
 use ordinals::Runestone;
-use protorune_support::protostone::{Protostones, Protostone, ProtostoneEdict};
+use protorune_support::protostone::{Protostones, Protostone, ProtostoneEdict as ProtoruneEdict};
 
 const MAX_FEE_SATS: u64 = 100_000; // 0.001 BTC. Cap to avoid "absurdly high fee rate" errors.
 const DUST_LIMIT: u64 = 546;
+
+/// Result from UTXO selection including alkanes balances
+#[derive(Debug, Clone)]
+struct UtxoSelectionResult {
+    /// Selected outpoints
+    outpoints: Vec<OutPoint>,
+    /// Actual alkanes balances found in the selected UTXOs
+    alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64>,
+}
 
 
 /// Enhanced alkanes executor
@@ -318,9 +328,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         required_reveal_amount += estimated_reveal_fee;
         required_reveal_amount += params.to_addresses.len() as u64 * 546;
 
-        let funding_utxos = self
+        let utxo_selection = self
             .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses)
             .await?;
+        let funding_utxos = utxo_selection.outpoints;
 
         let commit_output = TxOut {
             value: bitcoin::Amount::from_sat(required_reveal_amount),
@@ -369,8 +380,14 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     async fn build_single_transaction(&mut self, params: &EnhancedExecuteParams) -> Result<ExecutionState> {
         log::info!("Building single transaction (no envelope)");
 
-        self.validate_protostones(&params.protostones, params.to_addresses.len())?;
-        let mut outputs = self.create_outputs(&params.to_addresses, &params.change_address, &params.input_requirements).await?;
+        // Create outputs first (including identifier-based outputs)
+        // NOTE: We validate against original protostones first, then will re-validate after generating automatic protostone
+        let mut outputs = self.create_outputs(&params.to_addresses, &params.change_address, &params.input_requirements, &params.protostones).await?;
+        
+        // Validate original protostones against the actual number of outputs we created
+        self.validate_protostones(&params.protostones, outputs.len())?;
+        
+        // Apply BTC assignments from protostones
         for protostone in &params.protostones {
             if let Some(transfer) = &protostone.bitcoin_transfer {
                 if let OutputTarget::Output(vout) = transfer.target {
@@ -380,8 +397,20 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 }
             }
         }
+        
+        // Apply BTC assignments from input requirements (B:amount:vN)
+        for requirement in &params.input_requirements {
+            if let InputRequirement::BitcoinOutput { amount, target } = requirement {
+                if let OutputTarget::Output(vout) = target {
+                    if let Some(output) = outputs.get_mut(*vout as usize) {
+                        output.value = bitcoin::Amount::from_sat(*amount);
+                        log::info!("Assigned {} sats to output v{} via B:amount:vN", amount, vout);
+                    }
+                }
+            }
+        }
         let total_bitcoin_needed: u64 = outputs.iter().filter(|o| o.value.to_sat() > 0).map(|o| o.value.to_sat()).sum();
-        let mut final_requirements = params.input_requirements.iter().filter(|req| !matches!(req, InputRequirement::Bitcoin {..})).cloned().collect::<Vec<_>>();
+        let mut final_requirements = params.input_requirements.iter().filter(|req| !matches!(req, InputRequirement::Bitcoin {..} | InputRequirement::BitcoinOutput {..})).cloned().collect::<Vec<_>>();
         
         // Estimate transaction size to calculate proper fee BEFORE UTXO selection
         // This is critical to avoid "absurdly high fee rate" errors
@@ -416,13 +445,108 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                    total_bitcoin_needed, fee_with_buffer, bitcoin_requirement);
         
         final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
-        let selected_utxos = self.select_utxos(&final_requirements, &params.from_addresses).await?;
-        let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len())?;
-        let (psbt, fee) = self.build_psbt_and_fee(selected_utxos.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
+        let utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses).await?;
+        
+        // Calculate alkanes needed and check for excess
+        let alkanes_needed = self.calculate_alkanes_needed(&params.input_requirements);
+        let alkanes_excess = self.calculate_excess(&utxo_selection.alkanes_found, &alkanes_needed);
+        
+        // Handle excess alkanes by generating automatic protostone
+        let final_protostones = if !alkanes_excess.is_empty() {
+            log::info!("🔄 Handling excess alkanes with automatic protostone generation");
+            
+            // Determine alkanes change address
+            let alkanes_change_addr = params.alkanes_change_address.as_ref()
+                .or(params.change_address.as_ref())
+                .map(|s| s.as_str())
+                .unwrap_or("p2tr:0");
+            
+            log::info!("Alkanes change will be sent to: {}", alkanes_change_addr);
+            
+            // Create alkanes change output
+            // This will be the FIRST identifier output (v0) if we're generating automatic protostone
+            // Or it could be a separate output - we need to determine the index
+            let alkanes_change_output_index = if outputs.is_empty() {
+                // No outputs yet, alkanes change will be v0
+                0
+            } else {
+                // Alkanes change goes to first identifier output (v0)
+                0
+            };
+            
+            // Ensure we have an output at the alkanes change index
+            // If outputs is empty or we need a specific output, create it
+            if outputs.len() <= alkanes_change_output_index as usize {
+                use crate::traits::AddressResolver;
+                let resolved_addr = self.provider.resolve_all_identifiers(alkanes_change_addr).await?;
+                let address = Address::from_str(&resolved_addr)?.require_network(self.provider.get_network())?;
+                outputs.insert(alkanes_change_output_index as usize, TxOut {
+                    value: bitcoin::Amount::from_sat(DUST_LIMIT),
+                    script_pubkey: address.script_pubkey(),
+                });
+                log::info!("Created alkanes change output at index {}", alkanes_change_output_index);
+            }
+            
+            // Generate automatic protostone for excess alkanes
+            let auto_protostone = self.generate_alkanes_change_protostone(
+                &alkanes_excess,
+                alkanes_change_output_index,
+            ).await?;
+            
+            // Log original user protostones before adjustment
+            log::info!("📝 Original user protostones (before adjustment):");
+            for (i, ps) in params.protostones.iter().enumerate() {
+                log::info!("   Protostone {}: {} edicts", i, ps.edicts.len());
+                for (j, edict) in ps.edicts.iter().enumerate() {
+                    log::info!("     Edict {}: alkane={}:{}, amount={}, target={:?}", 
+                              j, edict.alkane_id.block, edict.alkane_id.tx, edict.amount, edict.target);
+                }
+                log::info!("     pointer={:?}, refund={:?}", ps.pointer, ps.refund);
+            }
+            
+            // Adjust user protostone references - shift p0->p1, p1->p2, etc.
+            // because we're inserting the auto-change protostone at the beginning
+            let adjusted_user_protostones = self.adjust_protostone_references(&params.protostones);
+            
+            log::info!("📝 Adjusted user protostones (after shifting for auto-change):");
+            for (i, ps) in adjusted_user_protostones.iter().enumerate() {
+                log::info!("   Protostone {}: {} edicts", i, ps.edicts.len());
+                for (j, edict) in ps.edicts.iter().enumerate() {
+                    log::info!("     Edict {}: alkane={}:{}, amount={}, target={:?}", 
+                              j, edict.alkane_id.block, edict.alkane_id.tx, edict.amount, edict.target);
+                }
+                log::info!("     pointer={:?}, refund={:?}", ps.pointer, ps.refund);
+            }
+            
+            // Insert automatic protostone at the BEGINNING
+            let mut combined = vec![auto_protostone];
+            combined.extend(adjusted_user_protostones);
+            
+            log::info!("✅ Generated automatic protostone at beginning, final protostone count: {}", combined.len());
+            combined
+        } else {
+            log::info!("✅ No excess alkanes - using original protostones");
+            params.protostones.clone()
+        };
+        
+        // Validate final protostones after potential automatic protostone insertion
+        self.validate_protostones(&final_protostones, outputs.len())?;
+        
+        log::info!("🔍 About to construct runestone:");
+        log::info!("   outputs.len() = {} (outputs before OP_RETURN)", outputs.len());
+        for (i, output) in outputs.iter().enumerate() {
+            log::info!("   Output {}: {} sats", i, output.value);
+        }
+        
+        let runestone_script = self.construct_runestone_script(&final_protostones, outputs.len())?;
+        let (psbt, fee) = self.build_psbt_and_fee(utxo_selection.outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
+
+        // Validate the transaction before returning
+        self.validate_transaction(&psbt, &utxo_selection.outpoints, fee, params).await?;
 
         let unsigned_tx = &psbt.unsigned_tx;
         let analysis = crate::transaction::analysis::analyze_transaction(unsigned_tx);
-        let inspection_result = self.inspect_from_protostones(&params.protostones).await.ok();
+        let inspection_result = self.inspect_from_protostones(&final_protostones).await.ok();
 
         Ok(ExecutionState::ReadyToSign(ReadyToSignTx {
             psbt,
@@ -431,9 +555,74 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             inspection_result,
         }))
     }
+    
+    /// Validate transaction to ensure sound value transfer semantics
+    async fn validate_transaction(
+        &self,
+        psbt: &bitcoin::psbt::Psbt,
+        selected_utxos: &[OutPoint],
+        fee: u64,
+        params: &EnhancedExecuteParams,
+    ) -> Result<()> {
+        let tx = &psbt.unsigned_tx;
+        
+        // 1. Calculate total input value
+        let mut total_input_value = 0u64;
+        for outpoint in selected_utxos {
+            let utxo = self.provider.get_utxo(outpoint).await?
+                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found during validation: {outpoint}")))?;
+            total_input_value += utxo.value.to_sat();
+        }
+        
+        // 2. Calculate total output value
+        let total_output_value: u64 = tx.output.iter()
+            .filter(|o| !o.script_pubkey.is_op_return())
+            .map(|o| o.value.to_sat())
+            .sum();
+        
+        // 3. Validate: inputs >= outputs + fee
+        if total_input_value < total_output_value + fee {
+            return Err(AlkanesError::Validation(format!(
+                "Insufficient funds: inputs ({}) < outputs ({}) + fee ({})",
+                total_input_value, total_output_value, fee
+            )));
+        }
+        
+        // 4. Validate dust limits
+        for (i, output) in tx.output.iter().enumerate() {
+            if !output.script_pubkey.is_op_return() && output.value.to_sat() > 0 && output.value.to_sat() < DUST_LIMIT {
+                return Err(AlkanesError::Validation(format!(
+                    "Output {} has value {} sats which is below dust limit ({} sats)",
+                    i, output.value.to_sat(), DUST_LIMIT
+                )));
+            }
+        }
+        
+        // 5. Validate fee reasonableness
+        if fee > MAX_FEE_SATS {
+            return Err(AlkanesError::Validation(format!(
+                "Fee {} sats exceeds maximum allowed fee ({} sats)",
+                fee, MAX_FEE_SATS
+            )));
+        }
+        
+        // Calculate actual change amount
+        let actual_change = total_input_value - total_output_value - fee;
+        log::info!("Transaction validation passed:");
+        log::info!("  Total inputs: {} sats", total_input_value);
+        log::info!("  Total outputs: {} sats", total_output_value);
+        log::info!("  Fee: {} sats", fee);
+        log::info!("  Change: {} sats", actual_change);
+        
+        Ok(())
+    }
 
     pub fn validate_protostones(&self, protostones: &[ProtostoneSpec], num_outputs: usize) -> Result<()> {
-        log::info!("Validating {} protostones against {} outputs", protostones.len(), num_outputs);
+        log::info!("Validating {} protostones against {} outputs (including change and OP_RETURN)", protostones.len(), num_outputs);
+        
+        // The last output is the BTC change output, and we'll add an OP_RETURN,
+        // so the actual number of usable physical outputs is num_outputs
+        // (since we validate AFTER creating outputs but BEFORE adding OP_RETURN)
         
         for (i, protostone) in protostones.iter().enumerate() {
             for edict in &protostone.edicts {
@@ -454,12 +643,31 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 }
             }
             
+            // Check pointer
+            if let Some(OutputTarget::Output(v)) = protostone.pointer {
+                if v as usize >= num_outputs {
+                    return Err(AlkanesError::Validation(format!(
+                        "Protostone {i} has pointer to output v{v} but only {num_outputs} outputs will exist"
+                    )));
+                }
+            }
+            
+            // Check refund
+            if let Some(OutputTarget::Output(v)) = protostone.refund {
+                if v as usize >= num_outputs {
+                    return Err(AlkanesError::Validation(format!(
+                        "Protostone {i} has refund to output v{v} but only {num_outputs} outputs will exist"
+                    )));
+                }
+            }
+            
+            // Check edicts
             for edict in &protostone.edicts {
                 match edict.target {
                     OutputTarget::Output(v) => {
                         if v as usize >= num_outputs {
                             return Err(AlkanesError::Validation(format!(
-                                "Edict in protostone {i} targets output v{v} but only {num_outputs} outputs exist"
+                                "Edict in protostone {i} targets output v{v} but only {num_outputs} outputs will exist"
                             )));
                         }
                     },
@@ -479,7 +687,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Ok(())
     }
 
-    async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>) -> Result<Vec<OutPoint>> {
+    async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>) -> Result<UtxoSelectionResult> {
         use crate::traits::AddressResolver;
         
         log::info!("Selecting UTXOs for {} requirements", requirements.len());
@@ -537,6 +745,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 InputRequirement::Bitcoin { amount } => {
                     bitcoin_needed += amount;
                 }
+                InputRequirement::BitcoinOutput { amount, .. } => {
+                    // BitcoinOutput requirements contribute to Bitcoin needed
+                    bitcoin_needed += amount;
+                }
                 InputRequirement::Alkanes { block, tx, amount } => {
                     let key = (*block, *tx);
                     *alkanes_needed.entry(key).or_insert(0) += amount;
@@ -548,6 +760,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut bitcoin_collected = 0u64;
         let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u64> = alloc::collections::BTreeMap::new();
+        let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
 
         // If we need alkanes, we must query each UTXO to find ones that contain the required alkanes
         if !alkanes_needed.is_empty() {
@@ -563,6 +776,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 ).await {
                     Ok(response) => {
                         let mut has_needed_alkane = false;
+                        let mut utxo_selected = false;
                         
                         // Check if this UTXO has any alkanes we need
                         for (alkane_id, amount) in &response.balance_sheet.cached.balances {
@@ -582,7 +796,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         if has_needed_alkane || bitcoin_collected < bitcoin_needed {
                             bitcoin_collected += utxo.amount;
                             selected_outpoints.push(outpoint);
+                            utxo_selected = true;
                             log::debug!("Selected UTXO {}:{} (has_alkanes: {}, btc: {})", outpoint.txid, outpoint.vout, has_needed_alkane, utxo.amount);
+                        }
+                        
+                        // Track ALL alkanes found in selected UTXOs (for change calculation)
+                        if utxo_selected {
+                            for (alkane_id, amount) in &response.balance_sheet.cached.balances {
+                                let alkane_key = AlkaneId {
+                                    block: alkane_id.block as u64,
+                                    tx: alkane_id.tx as u64,
+                                };
+                                *alkanes_found.entry(alkane_key).or_insert(0) += *amount as u64;
+                            }
                         }
                         
                         // Check if we've collected enough of everything
@@ -637,7 +863,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         log::info!("Selected {} UTXOs meeting all requirements (Bitcoin: {}/{}, Alkanes: {} types)", 
             selected_outpoints.len(), bitcoin_collected, bitcoin_needed, alkanes_needed.len());
-        Ok(selected_outpoints)
+        
+        // Log what we actually found for debugging
+        if !alkanes_found.is_empty() {
+            log::info!("Alkanes found in selected UTXOs:");
+            for (alkane_id, amount) in &alkanes_found {
+                log::info!("  {}:{} = {} units", alkane_id.block, alkane_id.tx, amount);
+            }
+        }
+        
+        Ok(UtxoSelectionResult {
+            outpoints: selected_outpoints,
+            alkanes_found,
+        })
     }
 
     async fn create_outputs(
@@ -645,6 +883,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         to_addresses: &[String],
         change_address: &Option<String>,
         input_requirements: &[InputRequirement],
+        protostones: &[ProtostoneSpec],
     ) -> Result<Vec<TxOut>> {
         use crate::traits::AddressResolver;
         
@@ -655,20 +894,51 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             if let InputRequirement::Bitcoin { amount } = req { Some(*amount) } else { None }
         }).sum();
 
-        if total_explicit_bitcoin > 0 && to_addresses.is_empty() {
-            return Err(AlkanesError::Validation("Bitcoin input requirement provided but no recipient addresses.".to_string()));
+        // Scan protostones to find the highest vN identifier referenced
+        let max_identifier = self.find_max_output_identifier(protostones);
+        
+        log::debug!("Scanning {} protostones for output identifiers", protostones.len());
+        log::debug!("Max identifier found: {:?}", max_identifier);
+        log::debug!("to_addresses: {:?}", to_addresses);
+        
+        // Determine how many outputs we need to create
+        let num_identifier_outputs = if to_addresses.is_empty() {
+            // No explicit --to addresses, so we need to create outputs for all identifiers
+            max_identifier.map(|n| (n + 1) as usize).unwrap_or(0)
+        } else {
+            // Use the number of --to addresses, but ensure we have enough for all identifiers
+            to_addresses.len().max(max_identifier.map(|n| (n + 1) as usize).unwrap_or(0))
+        };
+
+        log::info!("Creating {} identifier-based outputs (max identifier: {:?})", 
+                   num_identifier_outputs, max_identifier);
+
+        if total_explicit_bitcoin > 0 && num_identifier_outputs == 0 {
+            return Err(AlkanesError::Validation("Bitcoin input requirement provided but no recipient addresses or output identifiers.".to_string()));
         }
 
-        let amount_per_recipient = if total_explicit_bitcoin > 0 {
-            total_explicit_bitcoin / to_addresses.len() as u64
+        let amount_per_recipient = if total_explicit_bitcoin > 0 && num_identifier_outputs > 0 {
+            total_explicit_bitcoin / num_identifier_outputs as u64
         } else {
             DUST_LIMIT
         };
 
-        for addr_str in to_addresses {
-            log::debug!("Parsing to_address in create_outputs: '{addr_str}'");
+        // Create outputs for each identifier
+        for i in 0..num_identifier_outputs {
+            let addr_str = if i < to_addresses.len() {
+                // Use explicit --to address
+                to_addresses[i].clone()
+            } else if let Some(change_addr) = change_address {
+                // Use --change address as default
+                change_addr.clone()
+            } else {
+                // Default to p2tr:0
+                "p2tr:0".to_string()
+            };
+            
+            log::debug!("Creating output {} for identifier v{}: address '{}'", i, i, addr_str);
             // Resolve address identifiers like p2tr:0 to actual addresses
-            let resolved_addr = self.provider.resolve_all_identifiers(addr_str).await?;
+            let resolved_addr = self.provider.resolve_all_identifiers(&addr_str).await?;
             let address = Address::from_str(&resolved_addr)?.require_network(network)?;
             outputs.push(TxOut {
                 value: bitcoin::Amount::from_sat(amount_per_recipient.max(DUST_LIMIT)),
@@ -676,18 +946,167 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             });
         }
 
-        if let Some(change_addr_str) = change_address {
-            log::debug!("Parsing change_address in create_outputs: '{change_addr_str}'");
-            // Resolve address identifiers like p2tr:0 to actual addresses
-            let resolved_addr = self.provider.resolve_all_identifiers(change_addr_str).await?;
-            let address = Address::from_str(&resolved_addr)?.require_network(network)?;
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(0),
-                script_pubkey: address.script_pubkey(),
-            });
-        }
+        // Add BTC change output if needed
+        // Default to p2wsh:0 if no --change specified
+        let change_addr_str = change_address.as_ref().map(|s| s.as_str()).unwrap_or("p2wsh:0");
+        log::debug!("Adding BTC change output: address '{}'", change_addr_str);
+        let resolved_addr = self.provider.resolve_all_identifiers(change_addr_str).await?;
+        let address = Address::from_str(&resolved_addr)?.require_network(network)?;
+        outputs.push(TxOut {
+            value: bitcoin::Amount::from_sat(0), // Will be filled in later with actual change
+            script_pubkey: address.script_pubkey(),
+        });
 
         Ok(outputs)
+    }
+
+    /// Calculate alkanes needed from input requirements
+    fn calculate_alkanes_needed(&self, requirements: &[InputRequirement]) -> alloc::collections::BTreeMap<AlkaneId, u64> {
+        let mut needed = alloc::collections::BTreeMap::new();
+        
+        for requirement in requirements {
+            if let InputRequirement::Alkanes { block, tx, amount } = requirement {
+                let alkane_id = AlkaneId { block: *block, tx: *tx };
+                *needed.entry(alkane_id).or_insert(0) += amount;
+            }
+        }
+        
+        log::debug!("Alkanes needed: {} types", needed.len());
+        for (alkane_id, amount) in &needed {
+            log::debug!("  {}:{} = {} units", alkane_id.block, alkane_id.tx, amount);
+        }
+        
+        needed
+    }
+    
+    /// Calculate excess alkanes (found - needed)
+    fn calculate_excess(
+        &self,
+        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u64>,
+        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
+    ) -> alloc::collections::BTreeMap<AlkaneId, u64> {
+        let mut excess = alloc::collections::BTreeMap::new();
+        
+        for (alkane_id, found_amount) in alkanes_found {
+            let needed_amount = alkanes_needed.get(alkane_id).unwrap_or(&0);
+            if *found_amount > *needed_amount {
+                let excess_amount = found_amount - needed_amount;
+                excess.insert(alkane_id.clone(), excess_amount);
+                log::info!("Excess alkane {}:{}: {} units (found: {}, needed: {})", 
+                          alkane_id.block, alkane_id.tx, excess_amount, found_amount, needed_amount);
+            }
+        }
+        
+        if excess.is_empty() {
+            log::info!("No excess alkanes - exact match!");
+        } else {
+            log::info!("Found {} types of excess alkanes", excess.len());
+        }
+        
+        excess
+    }
+    
+    /// Generate automatic protostone for alkanes change
+    async fn generate_alkanes_change_protostone(
+        &mut self,
+        excess_alkanes: &alloc::collections::BTreeMap<AlkaneId, u64>,
+        alkanes_change_output_index: u32,
+    ) -> Result<ProtostoneSpec> {
+        log::info!("Generating automatic protostone for {} excess alkane types", excess_alkanes.len());
+        
+        // Create edicts to send all excess alkanes to the change output
+        let mut edicts = Vec::new();
+        for (alkane_id, amount) in excess_alkanes {
+            edicts.push(ProtostoneEdict {
+                alkane_id: alkane_id.clone(),
+                amount: *amount,
+                target: OutputTarget::Output(alkanes_change_output_index),
+            });
+            log::debug!("  Edict: Send {} units of {}:{} to v{}", 
+                       amount, alkane_id.block, alkane_id.tx, alkanes_change_output_index);
+        }
+        
+        // Create the protostone
+        // This protostone will:
+        // - Send excess alkanes to the change output via edicts
+        // - Point to p1 (the first user protostone after this auto-change protostone)
+        // - Refund to the change output
+        Ok(ProtostoneSpec {
+            cellpack: None,
+            edicts,
+            bitcoin_transfer: None,
+            pointer: Some(OutputTarget::Protostone(1)), // Point to p1 (first user protostone)
+            refund: Some(OutputTarget::Output(alkanes_change_output_index)),
+        })
+    }
+    
+    /// Adjust protostone references after inserting automatic protostone at index 0
+    /// This shifts all p0 -> p1, p1 -> p2, etc.
+    fn adjust_protostone_references(&self, protostones: &[ProtostoneSpec]) -> Vec<ProtostoneSpec> {
+        log::info!("Adjusting protostone references (shifting by 1)");
+        
+        let mut adjusted = Vec::new();
+        
+        for (i, protostone) in protostones.iter().enumerate() {
+            let mut adjusted_protostone = protostone.clone();
+            
+            // Adjust pointer
+            if let Some(OutputTarget::Protostone(p)) = adjusted_protostone.pointer {
+                adjusted_protostone.pointer = Some(OutputTarget::Protostone(p + 1));
+                log::debug!("  Protostone {}: pointer p{} -> p{}", i, p, p + 1);
+            }
+            
+            // Adjust refund
+            if let Some(OutputTarget::Protostone(p)) = adjusted_protostone.refund {
+                adjusted_protostone.refund = Some(OutputTarget::Protostone(p + 1));
+                log::debug!("  Protostone {}: refund p{} -> p{}", i, p, p + 1);
+            }
+            
+            // Adjust edicts
+            for (j, edict) in adjusted_protostone.edicts.iter_mut().enumerate() {
+                if let OutputTarget::Protostone(p) = edict.target {
+                    edict.target = OutputTarget::Protostone(p + 1);
+                    log::debug!("  Protostone {}: edict {} target p{} -> p{}", i, j, p, p + 1);
+                }
+            }
+            
+            adjusted.push(adjusted_protostone);
+        }
+        
+        adjusted
+    }
+    
+    /// Find the maximum output identifier (vN) referenced in protostones
+    fn find_max_output_identifier(&self, protostones: &[ProtostoneSpec]) -> Option<u32> {
+        let mut max_id: Option<u32> = None;
+        
+        for protostone in protostones {
+            // Check pointer
+            if let Some(OutputTarget::Output(n)) = protostone.pointer {
+                max_id = Some(max_id.map(|m: u32| m.max(n)).unwrap_or(n));
+            }
+            
+            // Check refund
+            if let Some(OutputTarget::Output(n)) = protostone.refund {
+                max_id = Some(max_id.map(|m: u32| m.max(n)).unwrap_or(n));
+            }
+            
+            // Check edicts
+            for edict in &protostone.edicts {
+                if let OutputTarget::Output(n) = edict.target {
+                    max_id = Some(max_id.map(|m: u32| m.max(n)).unwrap_or(n));
+                }
+            }
+            
+            // Check bitcoin transfer
+            if let Some(btc_transfer) = &protostone.bitcoin_transfer {
+                if let OutputTarget::Output(n) = btc_transfer.target {
+                    max_id = Some(max_id.map(|m: u32| m.max(n)).unwrap_or(n));
+                }
+            }
+        }
+        
+        max_id
     }
 
     fn convert_protostone_specs(&self, specs: &[ProtostoneSpec]) -> Result<Vec<protorune_support::protostone::Protostone>> {
@@ -699,7 +1118,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     fn convert_protostone_specs_with_output_count(&self, specs: &[ProtostoneSpec], num_physical_outputs: u32) -> Result<Vec<protorune_support::protostone::Protostone>> {
         specs.iter().enumerate().map(|(i, spec)| {
             let edicts = spec.edicts.iter().map(|e| {
-                Ok(ProtostoneEdict {
+                Ok(ProtoruneEdict {
                     id: protorune_support::balance_sheet::ProtoruneRuneId {
                         block: e.alkane_id.block as u128,
                         tx: e.alkane_id.tx as u128,
@@ -707,7 +1126,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     amount: e.amount as u128,
                     output: match e.target {
                         OutputTarget::Output(v) => v as u128,
-                        OutputTarget::Protostone(p) => (num_physical_outputs + p) as u128,
+                        // Protostone targets: physical_outputs + 1 (OP_RETURN) + 1 (base offset) + protostone_index
+                        OutputTarget::Protostone(p) => (num_physical_outputs + 2 + p) as u128,
                         OutputTarget::Split => 0, // Split not supported in ProtostoneEdict
                     },
                 })
@@ -716,15 +1136,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             let message = spec.cellpack.as_ref().map(|c| c.encipher()).unwrap_or_default();
             log::info!("Converting protostone #{}: cellpack present={}, message_len={}", i, spec.cellpack.is_some(), message.len());
             
-            // Convert pointer: v{N} -> N, p{N} -> num_physical_outputs + N
+            // Convert pointer: v{N} -> N, p{N} -> num_physical_outputs + 1 (OP_RETURN) + 1 (base offset) + N
             let pointer = match &spec.pointer {
                 Some(OutputTarget::Output(v)) => {
                     log::info!("  Pointer: v{} (physical output {})", v, v);
                     Some(*v)
                 }
                 Some(OutputTarget::Protostone(p)) => {
-                    let calculated = num_physical_outputs + p;
-                    log::info!("  Pointer: p{} (shadow output = {} + {} = {})", p, num_physical_outputs, p, calculated);
+                    let calculated = num_physical_outputs + 2 + p;
+                    log::info!("  Pointer: p{} (shadow output = {} + 1 + 1 + {} = {})", p, num_physical_outputs, p, calculated);
                     Some(calculated)
                 }
                 Some(OutputTarget::Split) => {
@@ -737,15 +1157,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 }
             };
 
-            // Convert refund: v{N} -> N, p{N} -> num_physical_outputs + N
+            // Convert refund: v{N} -> N, p{N} -> num_physical_outputs + 1 (OP_RETURN) + 1 (base offset) + N
             let refund = match &spec.refund {
                 Some(OutputTarget::Output(v)) => {
                     log::info!("  Refund: v{} (physical output {})", v, v);
                     Some(*v)
                 }
                 Some(OutputTarget::Protostone(p)) => {
-                    let calculated = num_physical_outputs + p;
-                    log::info!("  Refund: p{} (shadow output = {} + {} = {})", p, num_physical_outputs, p, calculated);
+                    let calculated = num_physical_outputs + 2 + p;
+                    log::info!("  Refund: p{} (shadow output = {} + 1 + 1 + {} = {})", p, num_physical_outputs, p, calculated);
                     Some(calculated)
                 }
                 Some(OutputTarget::Split) => {
@@ -771,7 +1191,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     }
 
     fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize) -> Result<ScriptBuf> {
-        log::info!("Constructing runestone with {} protostones and {} physical outputs", protostones.len(), num_outputs);
+        log::info!("Constructing runestone with {} protostones and {} outputs (before OP_RETURN)", protostones.len(), num_outputs);
+        log::info!("  After OP_RETURN is added, protostone vouts will start at: {} + 1 = {}", num_outputs, num_outputs + 1);
+        log::info!("  Formula: pN -> vout = {} + N (OP_RETURN gets added later)", num_outputs);
         
         let converted_protostones = self.convert_protostone_specs_with_output_count(protostones, num_outputs as u32)?;
 
@@ -1014,8 +1436,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         commit_internal_key_fingerprint: bitcoin::bip32::Fingerprint,
         commit_internal_key_path: &bitcoin::bip32::DerivationPath,
     ) -> Result<(bitcoin::psbt::Psbt, u64)> {
-        self.validate_protostones(&params.protostones, params.to_addresses.len())?;
-
         let mut selected_utxos = vec![commit_outpoint];
         let mut total_bitcoin_needed = params.to_addresses.len() as u64 * DUST_LIMIT;
         for req in &params.input_requirements {
@@ -1028,11 +1448,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         if commit_output_value < total_bitcoin_needed {
             let additional_needed = total_bitcoin_needed - commit_output_value;
             let additional_reqs = vec![InputRequirement::Bitcoin { amount: additional_needed }];
-            let additional_utxos = self.select_utxos(&additional_reqs, &params.from_addresses).await?;
-            selected_utxos.extend(additional_utxos);
+            let utxo_selection = self.select_utxos(&additional_reqs, &params.from_addresses).await?;
+            selected_utxos.extend(utxo_selection.outpoints);
         }
 
-        let outputs = self.create_outputs(&params.to_addresses, &params.change_address, &params.input_requirements).await?;
+        let outputs = self.create_outputs(&params.to_addresses, &params.change_address, &params.input_requirements, &params.protostones).await?;
+        
+        // Validate protostones against the ACTUAL number of outputs created
+        self.validate_protostones(&params.protostones, outputs.len())?;
+        
         let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len())?;
         
         // Create the commit output TxOut (it may not be indexed yet if still in mempool)
@@ -1135,7 +1559,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     }
 
     /// Traces the reveal transaction to get the results of protostone execution.
+    /// Uses the same code path as the `alkanes trace` command for consistency.
     async fn trace_reveal_transaction(&self, txid: &str, params: &EnhancedExecuteParams) -> Result<Option<Vec<serde_json::Value>>> {
+        use crate::traits::AlkanesProvider;
+        use prost::Message;
+        
         log::info!("Starting enhanced transaction tracing for reveal transaction: {txid}");
         
         let tx_hex = self.provider.get_transaction_hex(txid).await?;
@@ -1151,21 +1579,43 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // It's calculated as tx.output.len() + 1 + protostone_index.
         for (i, _) in params.protostones.iter().enumerate() {
             let vout = (tx.output.len() as u32) + 1 + (i as u32);
-            log::info!("Tracing protostone #{i} at virtual vout {vout}...");
-            match self.provider.trace_outpoint(txid, vout).await {
-                Ok(trace_result) => {
-                    if let Some(events) = trace_result.get("events").and_then(|e| e.as_array()) {
-                        if events.is_empty() {
-                            log::warn!("Trace for {txid}:{vout} came back with an empty 'events' array.");
-                        }
+            let outpoint = format!("{}:{}", txid, vout);
+            log::info!("Tracing protostone #{i} at virtual outpoint {outpoint}...");
+            
+            // Use the same trace() method as the CLI command for consistency
+            match self.provider.trace(&outpoint).await {
+                Ok(trace_pb) => {
+                    if let Some(alkanes_trace) = trace_pb.trace {
+                        // Convert protobuf trace to Trace for JSON serialization
+                        let trace_result = match alkanes_support::trace::Trace::try_from(
+                            Message::encode_to_vec(&alkanes_trace)
+                        ) {
+                            Ok(trace) => {
+                                let json = crate::alkanes::trace::trace_to_json(&trace);
+                                if let Some(events) = json.get("events").and_then(|e| e.as_array()) {
+                                    if events.is_empty() {
+                                        log::warn!("Trace for {outpoint} came back with an empty 'events' array.");
+                                    }
+                                }
+                                log::debug!("Trace result for {outpoint}: {json:?}");
+                                json
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to decode trace for {outpoint}: {e}");
+                                serde_json::json!({
+                                    "error": format!("Failed to decode trace: {}", e),
+                                    "events": []
+                                })
+                            }
+                        };
+                        traces.push(trace_result);
                     } else {
-                        log::warn!("Trace for {txid}:{vout} did not contain an 'events' array.");
+                        log::warn!("Trace for {outpoint} did not contain trace data.");
+                        traces.push(serde_json::json!({"events": []}));
                     }
-                    log::debug!("Trace result for vout {vout}: {trace_result:?}");
-                    traces.push(trace_result);
                 },
                 Err(e) => {
-                    log::warn!("Failed to trace vout {vout}: {e}");
+                    log::warn!("Failed to trace {outpoint}: {e}");
                 }
             }
         }

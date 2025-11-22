@@ -446,6 +446,17 @@ pub fn format_trace_pretty(trace: &alkanes_support::trace::Trace) -> String {
                         output.push_str(&format!("{}    🚨 error_data:\n", indent_prefix));
                         output.push_str(&format!("{}      hex: \"{}\"\n", indent_prefix, hex::encode(&resp.inner.data)));
                         output.push_str(&format!("{}      length: {} bytes\n", indent_prefix, resp.inner.data.len()));
+                        
+                        // If error_data has more than 4 bytes, try to decode error message
+                        if resp.inner.data.len() > 4 {
+                            let message_bytes = &resp.inner.data[4..];
+                            if let Ok(error_message) = core::str::from_utf8(message_bytes) {
+                                let trimmed = error_message.trim_end_matches('\0');
+                                if !trimmed.is_empty() {
+                                    output.push_str(&format!("{}      💬 decoded_message: \"{}\"\n", indent_prefix, trimmed));
+                                }
+                            }
+                        }
                     } else {
                         output.push_str(&format!("{}    🚨 error_data: null\n", indent_prefix));
                     }
@@ -578,11 +589,22 @@ pub fn trace_to_json(trace: &alkanes_support::trace::Trace) -> JsonValue {
                 })
             },
             alkanes_support::trace::TraceEvent::RevertContext(resp) => {
-                json!({
+                let mut revert_json = json!({
                     "type": "revert",
                     "fuel_used": resp.fuel_used,
                     "error_data": if resp.inner.data.is_empty() { json!(null) } else { json!(hex::encode(&resp.inner.data)) }
-                })
+                });
+                
+                // If error_data exists and has more than 4 bytes, try to decode error message
+                if resp.inner.data.len() > 4 {
+                    // Strip first 4 bytes (function selector) and try to decode as UTF-8
+                    let message_bytes = &resp.inner.data[4..];
+                    if let Ok(error_message) = core::str::from_utf8(message_bytes) {
+                        revert_json["error_message"] = json!(error_message.trim_end_matches('\0'));
+                    }
+                }
+                
+                revert_json
             },
         };
         json_events.push(json_event);

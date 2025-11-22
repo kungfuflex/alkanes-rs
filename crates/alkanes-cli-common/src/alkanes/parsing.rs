@@ -14,11 +14,25 @@ pub fn parse_input_requirements(input_str: &str) -> Result<Vec<InputRequirement>
     for part in input_str.split(',') {
         let trimmed = part.trim();
         
-        if let Some(amount_str) = trimmed.strip_prefix("B:") {
-            // Bitcoin requirement: B:amount
-            let amount = amount_str.parse::<u64>()
-                .context("Invalid Bitcoin amount in input requirement")?;
-            requirements.push(InputRequirement::Bitcoin { amount });
+        if trimmed.starts_with("B:") {
+            // Bitcoin requirement: B:amount or B:amount:vN
+            let parts: Vec<&str> = trimmed.split(':').collect();
+            
+            if parts.len() == 2 {
+                // Simple format: B:amount
+                let amount = parts[1].parse::<u64>()
+                    .context("Invalid Bitcoin amount in input requirement")?;
+                requirements.push(InputRequirement::Bitcoin { amount });
+            } else if parts.len() == 3 {
+                // Output assignment format: B:amount:vN
+                let amount = parts[1].parse::<u64>()
+                    .context("Invalid Bitcoin amount in B:amount:vN requirement")?;
+                let target = parse_output_target(parts[2])
+                    .context("Invalid output target in B:amount:vN requirement")?;
+                requirements.push(InputRequirement::BitcoinOutput { amount, target });
+            } else {
+                return Err(anyhow!("Invalid Bitcoin requirement format. Expected 'B:amount' or 'B:amount:vN'"));
+            }
         } else {
             // Alkanes requirement: block:tx:amount
             let parts: Vec<&str> = trimmed.split(':').collect();
@@ -55,57 +69,84 @@ pub fn parse_protostones(protostones_str: &str) -> Result<Vec<ProtostoneSpec>> {
     Ok(protostones)
 }
 
-/// Parse a single protostone specification
+/// Parse a single protostone specification with flexible component ordering
+/// 
+/// Format: Components can appear in any order, separated by colons:
+/// - Bracketed components: [cellpack] or [edict]
+/// - Non-bracketed components: pointer, refund_pointer, or B:amount:target
+/// 
+/// Rules:
+/// - First non-bracketed non-B value = pointer
+/// - Second non-bracketed non-B value = refund_pointer
+/// - If refund_pointer omitted, it equals pointer
+/// - If both omitted, defaults to v0
+/// - Bracketed components are classified by content:
+///   - Cellpack: only comma-separated numbers
+///   - Edict: contains colons (block:tx:amount:target)
+///
+/// Examples:
+/// - [3,100]:v0:v1:[2:1:100:v0]
+/// - v0:v1:[2:1:100:v0]:[3,100]
+/// - [2:1:100:v0]:[3,100]:v0:v1
+/// - [3,100]:v0:[2:1:100:v0]
 fn parse_single_protostone(spec_str: &str) -> Result<ProtostoneSpec> {
+    let parts = split_respecting_brackets(spec_str, ':')?;
+    
     let mut cellpack = None;
     let mut edicts = Vec::new();
     let mut bitcoin_transfer = None;
-    let mut pointer = None;
-    let mut refund_pointer = None;
-
-    let parts = split_respecting_brackets(spec_str, ':')?;
-    let mut part_iter = parts.iter().map(|s| s.as_str());
-
-    let mut current_part = part_iter.next();
-
-    // 1. Parse optional Cellpack
-    if let Some(part) = current_part {
-        if part.starts_with('[') && part.ends_with(']') {
-            cellpack = Some(parse_cellpack(&part[1..part.len() - 1])?);
-            current_part = part_iter.next();
+    let mut non_bracketed_targets = Vec::new();
+    let mut bracketed_parts = Vec::new();
+    
+    // Step 1: Separate bracketed from non-bracketed parts
+    for part in parts {
+        let trimmed = part.trim();
+        
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            // Bracketed component (cellpack or edict)
+            bracketed_parts.push(trimmed[1..trimmed.len() - 1].to_string());
+        } else if trimmed.starts_with("B:") {
+            // Bitcoin transfer (special case)
+            bitcoin_transfer = Some(parse_bitcoin_transfer(trimmed)?);
+        } else if !trimmed.is_empty() {
+            // Non-bracketed target (pointer or refund)
+            non_bracketed_targets.push(trimmed.to_string());
         }
     }
-
-    // 2. Parse Pointer
-    if let Some(part) = current_part {
-        pointer = Some(parse_output_target(part)?);
-        current_part = part_iter.next();
-    }
-
-    // 3. Parse Refund Pointer
-    if let Some(part) = current_part {
-        refund_pointer = Some(parse_output_target(part)?);
-        current_part = part_iter.next();
-    }
-
-    // 4. Parse Edicts
-    while let Some(part) = current_part {
-        if part.starts_with('[') && part.ends_with(']') {
-            edicts.push(parse_edict(&part[1..part.len() - 1])?);
-        } else if part.starts_with("B:") {
-            // This is a Bitcoin transfer, which is not part of the edict list
-            // but a separate field in ProtostoneSpec.
-            // We assume it's the last part of the spec.
-            bitcoin_transfer = Some(parse_bitcoin_transfer(part)?);
-            break;
+    
+    // Step 2: Parse pointer and refund_pointer from non-bracketed targets
+    let pointer = if non_bracketed_targets.is_empty() {
+        // No targets specified, default to v0
+        Some(OutputTarget::Output(0))
+    } else {
+        Some(parse_output_target(&non_bracketed_targets[0])?)
+    };
+    
+    let refund_pointer = if non_bracketed_targets.len() >= 2 {
+        // Explicit refund pointer
+        Some(parse_output_target(&non_bracketed_targets[1])?)
+    } else {
+        // Refund pointer equals pointer
+        pointer.clone()
+    };
+    
+    // Step 3: Classify and parse bracketed components
+    for content in bracketed_parts {
+        if is_cellpack_format(&content) {
+            // This is a cellpack (comma-separated numbers)
+            if cellpack.is_some() {
+                return Err(anyhow!("Multiple cellpacks found in protostone specification"));
+            }
+            cellpack = Some(parse_cellpack(&content)?);
+        } else {
+            // This is an edict (contains colons)
+            edicts.push(parse_edict(&content)?);
         }
-        current_part = part_iter.next();
     }
-
-    // Log the parsed pointer and refund_pointer
-    log::debug!("Parsed pointer: {pointer:?}");
-    log::debug!("Parsed refund_pointer: {refund_pointer:?}");
-
+    
+    log::debug!("Parsed protostone: pointer={:?}, refund={:?}, cellpack={}, edicts={}", 
+                pointer, refund_pointer, cellpack.is_some(), edicts.len());
+    
     Ok(ProtostoneSpec {
         cellpack,
         edicts,
@@ -113,6 +154,26 @@ fn parse_single_protostone(spec_str: &str) -> Result<ProtostoneSpec> {
         pointer,
         refund: refund_pointer,
     })
+}
+
+/// Determine if a bracketed content is a cellpack format
+/// Cellpack: only comma-separated numbers (may have commas)
+/// Edict: contains colons (block:tx:amount:target format)
+fn is_cellpack_format(content: &str) -> bool {
+    // If it contains a colon, it's an edict
+    if content.contains(':') {
+        return false;
+    }
+    
+    // If it only contains numbers and commas, it's a cellpack
+    // Check if all parts are valid u128 numbers
+    for part in content.split(',') {
+        if part.trim().parse::<u128>().is_err() {
+            return false;
+        }
+    }
+    
+    true
 }
 
 /// Parse cellpack from string format

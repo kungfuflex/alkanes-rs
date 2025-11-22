@@ -14,10 +14,17 @@ use std::{fmt, string::String, vec::Vec};
 use alloc::{string::String, vec::Vec, fmt};
 
 /// Alkane ID representing a smart contract or token
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct AlkaneId {
     pub block: u64,
     pub tx: u64,
+}
+
+/// Alkanes balance information for UTXO selection
+#[derive(Debug, Clone)]
+pub struct AlkanesBalance {
+    pub alkane_id: AlkaneId,
+    pub amount: u64,
 }
 
 impl fmt::Display for AlkaneId {
@@ -33,10 +40,12 @@ pub enum InputRequirement {
     Alkanes { block: u64, tx: u64, amount: u64 },
     /// Bitcoin requirement: amount in satoshis
     Bitcoin { amount: u64 },
+    /// Bitcoin output assignment: amount in satoshis to specific output target
+    BitcoinOutput { amount: u64, target: OutputTarget },
 }
 
 /// Output target specification for protostones
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputTarget {
     /// Target specific output index (vN)
     Output(u32),
@@ -240,6 +249,7 @@ pub struct EnhancedExecuteParams {
     pub to_addresses: Vec<String>,
     pub from_addresses: Option<Vec<String>>,
     pub change_address: Option<String>,
+    pub alkanes_change_address: Option<String>,
     pub input_requirements: Vec<InputRequirement>,
     pub protostones: Vec<ProtostoneSpec>,
     pub envelope_data: Option<Vec<u8>>,

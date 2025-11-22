@@ -498,15 +498,18 @@ pub enum AlkanesCommands {
     },
     /// Execute alkanes smart contract with commit/reveal pattern
     Execute {
-        /// Input requirements (format: "B:amount" for Bitcoin, "block:tx:amount" for alkanes)
+        /// Input requirements (format: "B:amount" for Bitcoin, "B:amount:vN" for Bitcoin output assignment, "block:tx:amount" for alkanes)
         #[arg(long)]
         inputs: String,
-        /// Recipient addresses or identifiers
+        /// Recipient addresses or identifiers (comma-separated)
         #[arg(long)]
         to: String,
-        /// Change address or identifier
+        /// Change address or identifier for BTC
         #[arg(long)]
         change: Option<String>,
+        /// Change address or identifier for unwanted alkanes (defaults to --change or p2tr:0)
+        #[arg(long)]
+        alkanes_change: Option<String>,
         /// Fee rate in sat/vB
         #[arg(long)]
         fee_rate: Option<f32>,
@@ -1002,6 +1005,9 @@ pub enum EsploraCommands {
         /// Exclude coinbase transactions from results
         #[arg(long)]
         exclude_coinbase: bool,
+        /// Trace runestones for each transaction with protostones
+        #[arg(long)]
+        runestone_trace: bool,
     },
     /// Get address chain transactions
     AddressTxsChain {

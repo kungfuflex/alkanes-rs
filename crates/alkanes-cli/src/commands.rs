@@ -295,6 +295,8 @@ pub enum EsploraCommands {
         raw: bool,
         #[arg(long)]
         exclude_coinbase: bool,
+        #[arg(long)]
+        runestone_trace: bool,
     },
     AddressTxsChain {
         params: String,
@@ -1152,6 +1154,14 @@ pub enum Runestone {
         #[arg(long)]
         raw: bool,
     },
+    /// Trace all protostones in a runestone transaction
+    Trace {
+        /// The transaction ID
+        txid: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// Protorunes subcommands
@@ -1365,7 +1375,7 @@ pub enum WalletCommands {
 /// Arguments for the `alkanes execute` command
 #[derive(Parser, Debug, Clone, Serialize, Deserialize)]
 pub struct AlkanesExecute {
-    /// Input requirements for the transaction
+    /// Input requirements for the transaction (format: "B:amount", "B:amount:vN", "block:tx:amount")
     #[arg(long)]
     pub inputs: Option<String>,
     /// Recipient addresses
@@ -1374,9 +1384,12 @@ pub struct AlkanesExecute {
     /// Addresses to source UTXOs from
     #[arg(long, num_args = 1..)]
     pub from: Option<Vec<String>>,
-    /// Change address
+    /// Change address for BTC
     #[arg(long)]
     pub change: Option<String>,
+    /// Change address for unwanted alkanes (defaults to --change or p2tr:0)
+    #[arg(long)]
+    pub alkanes_change: Option<String>,
     /// Fee rate in sat/vB
     #[arg(long)]
     pub fee_rate: Option<f32>,

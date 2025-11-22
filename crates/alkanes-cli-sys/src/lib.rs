@@ -2472,7 +2472,7 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                 raw,
                 trace,
                 mine,
-                yes,
+                yes, alkanes_change,
             } => {
                 log::info!("🚀 Starting enhanced alkanes execute command");
 
@@ -2520,6 +2520,7 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                  // Create enhanced execute parameters
                  let execute_params = alkanes_cli_common::alkanes::types::EnhancedExecuteParams {
                      fee_rate,
+                    alkanes_change_address: None,
                      to_addresses: resolved_to_addresses,
                      from_addresses: None, // This field is no longer provided by the CLI
                      change_address: resolved_change,
@@ -3258,7 +3259,7 @@ impl SystemEsplora for SystemAlkanes {
                 }
                 Ok(())
             },
-            EsploraCommands::AddressTxs { params, raw, exclude_coinbase } => {
+            EsploraCommands::AddressTxs { params, raw, exclude_coinbase, runestone_trace: _ } => {
                 let resolved_params = provider.resolve_all_identifiers(&params).await?;
                 let result = provider.get_address_txs(&resolved_params).await?;
                 
