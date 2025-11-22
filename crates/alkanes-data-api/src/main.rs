@@ -88,6 +88,19 @@ async fn main() -> Result<()> {
                         "/global-alkanes-search",
                         web::post().to(handlers::alkanes::global_alkanes_search),
                     )
+                    // Balance endpoints
+                    .route("/get-address-balances", web::post().to(handlers::balance::get_address_balances))
+                    .route("/get-outpoint-balances", web::post().to(handlers::balance::get_outpoint_balances))
+                    .route("/get-holders", web::post().to(handlers::balance::get_holders))
+                    .route("/get-holders-count", web::post().to(handlers::balance::get_holders_count))
+                    .route("/get-address-outpoints", web::post().to(handlers::balance::get_address_outpoints))
+                    // Storage endpoints
+                    .route("/get-keys", web::post().to(handlers::storage::get_keys))
+                    // AMM endpoints
+                    .route("/get-trades", web::post().to(handlers::amm::get_trades))
+                    .route("/get-candles", web::post().to(handlers::amm::get_candles))
+                    .route("/get-reserves", web::post().to(handlers::amm::get_reserves))
+                    .route("/pathfind", web::post().to(handlers::amm::pathfind))
                     // Pool endpoints
                     .route("/get-pools", web::post().to(handlers::pools::get_pools))
                     .route(

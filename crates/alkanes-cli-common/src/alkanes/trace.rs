@@ -60,6 +60,8 @@ pub enum Event {
     Enter(EnterContext),
     Exit(ExitContext),
     Create(Create),
+    ReceiveIntent(ReceiveIntentEvent),
+    ValueTransfer(ValueTransferEvent),
     Unknown,
 }
 
@@ -78,6 +80,17 @@ pub struct ExitContext {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Create {
     pub new_alkane: ContractId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReceiveIntentEvent {
+    pub incoming_alkanes: Vec<AlkaneTransfer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ValueTransferEvent {
+    pub transfers: Vec<AlkaneTransfer>,
+    pub redirect_to: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -192,8 +205,8 @@ impl From<alkanes_support::proto::alkanes::alkanes_trace_event::Event> for Event
             alkanes_support::proto::alkanes::alkanes_trace_event::Event::EnterContext(e) => Event::Enter(e.into()),
             alkanes_support::proto::alkanes::alkanes_trace_event::Event::ExitContext(e) => Event::Exit(e.into()),
             alkanes_support::proto::alkanes::alkanes_trace_event::Event::CreateAlkane(e) => Event::Create(e.into()),
-            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ReceiveIntent(_) => Event::Unknown,
-            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ValueTransfer(_) => Event::Unknown,
+            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ReceiveIntent(e) => Event::ReceiveIntent(e.into()),
+            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ValueTransfer(e) => Event::ValueTransfer(e.into()),
             _ => Event::Unknown,
         }
     }
@@ -212,6 +225,23 @@ impl From<alkanes_support::proto::alkanes::AlkanesExitContext> for ExitContext {
     fn from(e: alkanes_support::proto::alkanes::AlkanesExitContext) -> Self {
         Self {
             status: format!("{:?}", e.status),
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::AlkanesReceiveIntent> for ReceiveIntentEvent {
+    fn from(e: alkanes_support::proto::alkanes::AlkanesReceiveIntent) -> Self {
+        Self {
+            incoming_alkanes: e.incoming_alkanes.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::AlkanesValueTransfer> for ValueTransferEvent {
+    fn from(e: alkanes_support::proto::alkanes::AlkanesValueTransfer) -> Self {
+        Self {
+            transfers: e.transfers.into_iter().map(Into::into).collect(),
+            redirect_to: e.redirect_to,
         }
     }
 }

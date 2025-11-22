@@ -24,7 +24,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "uuid", "time", "json", "chrono", "bigdecimal", "macros"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "uuid", "time", "json", "chrono", "bigdecimal"] }
 redis = { version = "0.25", features = ["tokio-comp", "aio", "connection-manager"] }
 
 # Bitcoin

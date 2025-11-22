@@ -404,8 +404,163 @@ async fn execute_batch(pool: &PgPool, sql: &str) -> Result<()> {
     Ok(())
 }
 
+pub const AMM_SCHEMA: &str = r#"
+-- Trade events from AMM swaps
+create table if not exists "AmmTrade" (
+  "id" uuid primary key default gen_random_uuid(),
+  "txid" text not null,
+  "vout" integer not null,
+  "poolIdBlock" integer not null,
+  "poolIdTx" bigint not null,
+  "token0IdBlock" integer not null,
+  "token0IdTx" bigint not null,
+  "token1IdBlock" integer not null,
+  "token1IdTx" bigint not null,
+  "amount0In" text not null,
+  "amount1In" text not null,
+  "amount0Out" text not null,
+  "amount1Out" text not null,
+  "reserve0After" text not null,
+  "reserve1After" text not null,
+  "timestamp" timestamptz not null,
+  "blockHeight" integer not null,
+  "createdAt" timestamptz not null default now()
+);
+
+create index if not exists "idx_AmmTrade_pool" on "AmmTrade"("poolIdBlock", "poolIdTx");
+create index if not exists "idx_AmmTrade_timestamp" on "AmmTrade"("timestamp");
+create index if not exists "idx_AmmTrade_block" on "AmmTrade"("blockHeight");
+create index if not exists "idx_AmmTrade_pool_timestamp" on "AmmTrade"("poolIdBlock", "poolIdTx", "timestamp");
+
+-- Reserve snapshots
+create table if not exists "AmmReserveSnapshot" (
+  "id" uuid primary key default gen_random_uuid(),
+  "poolIdBlock" integer not null,
+  "poolIdTx" bigint not null,
+  "reserve0" text not null,
+  "reserve1" text not null,
+  "timestamp" timestamptz not null,
+  "blockHeight" integer not null,
+  "createdAt" timestamptz not null default now()
+);
+
+create index if not exists "idx_AmmReserveSnapshot_pool" on "AmmReserveSnapshot"("poolIdBlock", "poolIdTx");
+create index if not exists "idx_AmmReserveSnapshot_timestamp" on "AmmReserveSnapshot"("timestamp");
+create index if not exists "idx_AmmReserveSnapshot_pool_timestamp" on "AmmReserveSnapshot"("poolIdBlock", "poolIdTx", "timestamp" desc);
+
+-- OHLCV candles
+create table if not exists "AmmCandle" (
+  "id" uuid primary key default gen_random_uuid(),
+  "poolIdBlock" integer not null,
+  "poolIdTx" bigint not null,
+  "interval" text not null,
+  "openTime" timestamptz not null,
+  "closeTime" timestamptz not null,
+  "open" text not null,
+  "high" text not null,
+  "low" text not null,
+  "close" text not null,
+  "volume0" text not null,
+  "volume1" text not null,
+  "tradeCount" integer not null,
+  "createdAt" timestamptz not null default now(),
+  unique("poolIdBlock", "poolIdTx", "interval", "openTime")
+);
+
+create index if not exists "idx_AmmCandle_pool" on "AmmCandle"("poolIdBlock", "poolIdTx");
+create index if not exists "idx_AmmCandle_interval" on "AmmCandle"("interval");
+create index if not exists "idx_AmmCandle_time" on "AmmCandle"("openTime");
+create index if not exists "idx_AmmCandle_pool_interval_time" on "AmmCandle"("poolIdBlock", "poolIdTx", "interval", "openTime" desc);
+"#;
+
+pub const STORAGE_SCHEMA: &str = r#"
+-- Storage key-value pairs per alkane
+create table if not exists "AlkaneStorage" (
+  "alkaneIdBlock" integer not null,
+  "alkaneIdTx" bigint not null,
+  "key" text not null,
+  "value" text not null,
+  "lastTxid" text not null,
+  "lastVout" integer not null,
+  "blockHeight" integer not null,
+  "createdAt" timestamptz not null default now(),
+  "updatedAt" timestamptz not null default now(),
+  primary key("alkaneIdBlock", "alkaneIdTx", "key")
+);
+
+create index if not exists "idx_AlkaneStorage_alkane" on "AlkaneStorage"("alkaneIdBlock", "alkaneIdTx");
+create index if not exists "idx_AlkaneStorage_block" on "AlkaneStorage"("blockHeight");
+"#;
+
+pub const BALANCE_SCHEMA: &str = r#"
+-- Aggregate balances per address per alkane
+create table if not exists "AlkaneBalance" (
+  "id" uuid primary key default gen_random_uuid(),
+  "address" text not null,
+  "alkaneIdBlock" integer not null,
+  "alkaneIdTx" bigint not null,
+  "amount" text not null,
+  "updatedAt" timestamptz not null default now(),
+  "createdAt" timestamptz not null default now(),
+  unique("address", "alkaneIdBlock", "alkaneIdTx")
+);
+
+create index if not exists "idx_AlkaneBalance_address" on "AlkaneBalance"("address");
+create index if not exists "idx_AlkaneBalance_alkane" on "AlkaneBalance"("alkaneIdBlock", "alkaneIdTx");
+create index if not exists "idx_AlkaneBalance_amount" on "AlkaneBalance"("alkaneIdBlock", "alkaneIdTx", "amount" desc);
+
+-- UTXO-level balances
+create table if not exists "AlkaneBalanceUtxo" (
+  "id" uuid primary key default gen_random_uuid(),
+  "address" text not null,
+  "outpointTxid" text not null,
+  "outpointVout" integer not null,
+  "alkaneIdBlock" integer not null,
+  "alkaneIdTx" bigint not null,
+  "amount" text not null,
+  "blockHeight" integer not null,
+  "spent" boolean not null default false,
+  "spentTxid" text,
+  "spentBlockHeight" integer,
+  "createdAt" timestamptz not null default now(),
+  "updatedAt" timestamptz not null default now(),
+  unique("outpointTxid", "outpointVout", "alkaneIdBlock", "alkaneIdTx")
+);
+
+create index if not exists "idx_AlkaneBalanceUtxo_address" on "AlkaneBalanceUtxo"("address");
+create index if not exists "idx_AlkaneBalanceUtxo_outpoint" on "AlkaneBalanceUtxo"("outpointTxid", "outpointVout");
+create index if not exists "idx_AlkaneBalanceUtxo_alkane" on "AlkaneBalanceUtxo"("alkaneIdBlock", "alkaneIdTx");
+create index if not exists "idx_AlkaneBalanceUtxo_block" on "AlkaneBalanceUtxo"("blockHeight");
+create index if not exists "idx_AlkaneBalanceUtxo_spent" on "AlkaneBalanceUtxo"("spent") where not "spent";
+
+-- Holder enumeration
+create table if not exists "AlkaneHolder" (
+  "alkaneIdBlock" integer not null,
+  "alkaneIdTx" bigint not null,
+  "address" text not null,
+  "totalAmount" text not null,
+  "lastUpdated" timestamptz not null default now(),
+  primary key("alkaneIdBlock", "alkaneIdTx", "address")
+);
+
+create index if not exists "idx_AlkaneHolder_alkane" on "AlkaneHolder"("alkaneIdBlock", "alkaneIdTx");
+create index if not exists "idx_AlkaneHolder_amount" on "AlkaneHolder"("alkaneIdBlock", "alkaneIdTx", "totalAmount" desc);
+
+-- Holder count cache
+create table if not exists "AlkaneHolderCount" (
+  "alkaneIdBlock" integer not null,
+  "alkaneIdTx" bigint not null,
+  "count" bigint not null default 0,
+  "lastUpdated" timestamptz not null default now(),
+  primary key("alkaneIdBlock", "alkaneIdTx")
+);
+"#;
+
 pub async fn push_schema(pool: &PgPool) -> Result<()> {
-    execute_batch(pool, DDL).await
+    execute_batch(pool, DDL).await?;
+    execute_batch(pool, STORAGE_SCHEMA).await?;
+    execute_batch(pool, BALANCE_SCHEMA).await?;
+    execute_batch(pool, AMM_SCHEMA).await
 }
 
 pub async fn reset_schema(pool: &PgPool) -> Result<()> {

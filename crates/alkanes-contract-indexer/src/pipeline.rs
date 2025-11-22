@@ -2,7 +2,7 @@ use anyhow::Result;
 use alkanes_cli_sys::SystemAlkanes as ConcreteProvider;
 use alkanes_cli_common::traits::{DeezelProvider, JsonRpcProvider, BitcoinRpcProvider};
 use sqlx::PgPool;
-use tracing::info;
+use tracing::{info, warn};
 use crate::helpers::pools::{fetch_and_upsert_pools_for_tip};
 use crate::helpers::notify::{notify_pools_processed, publish_block_processed};
 use crate::helpers::block::{get_block_hash as helper_get_block_hash, get_block_txids as helper_get_block_txids, get_transactions_info as helper_get_transactions_info, tx_has_op_return};
@@ -126,6 +126,131 @@ impl Pipeline {
 
 			let elapsed_ms = t0.elapsed().as_millis() as u64;
 			info!(height = ctx.height, op_return_txs = count, elapsed_ms, "decode_and_trace_for_block: done");
+
+			// Extract and index balances from trace events
+			let balance_t0 = std::time::Instant::now();
+			let mut all_outpoint_balances = Vec::new();
+			for r in &results {
+				if !r.trace_events.is_empty() {
+					match crate::helpers::balance_tracker::extract_balance_changes(
+						&r.transaction_json,
+						&r.trace_events
+					) {
+						Ok(balances) => all_outpoint_balances.extend(balances),
+						Err(e) => warn!(txid = %r.transaction_id, error = ?e, "balance extraction failed"),
+					}
+				}
+			}
+
+			if !all_outpoint_balances.is_empty() {
+				crate::helpers::balance_tracker::upsert_utxo_balances(
+					&self.pool,
+					ctx.height as i32,
+					&all_outpoint_balances
+				).await?;
+				crate::helpers::balance_tracker::update_address_balances(
+					&self.pool,
+					&all_outpoint_balances
+				).await?;
+				crate::helpers::balance_tracker::refresh_holders_for_block(
+					&self.pool,
+					&all_outpoint_balances
+				).await?;
+			}
+			let balance_elapsed_ms = balance_t0.elapsed().as_millis() as u64;
+			info!(height = ctx.height, balance_updates = all_outpoint_balances.len(), elapsed_ms = balance_elapsed_ms, "balance indexing: done");
+
+			// Extract and index storage changes from trace events
+			let storage_t0 = std::time::Instant::now();
+			let mut all_storage_changes = Vec::new();
+			for r in &results {
+				if !r.trace_events.is_empty() {
+					match crate::helpers::storage_tracker::extract_storage_changes(
+						&r.transaction_json,
+						&r.trace_events
+					) {
+						Ok(changes) => all_storage_changes.extend(changes),
+						Err(e) => warn!(txid = %r.transaction_id, error = ?e, "storage extraction failed"),
+					}
+				}
+			}
+
+			if !all_storage_changes.is_empty() {
+				crate::helpers::storage_tracker::upsert_storage_changes(
+					&self.pool,
+					ctx.height as i32,
+					&all_storage_changes
+				).await?;
+			}
+			let storage_elapsed_ms = storage_t0.elapsed().as_millis() as u64;
+			info!(height = ctx.height, storage_updates = all_storage_changes.len(), elapsed_ms = storage_elapsed_ms, "storage indexing: done");
+
+			// Extract and index AMM trade events
+			let amm_t0 = std::time::Instant::now();
+			let mut all_trades = Vec::new();
+			for r in &results {
+				if !r.trace_events.is_empty() {
+					let ts_opt = r.transaction_json.get("status")
+						.and_then(|s| s.get("block_time"))
+						.and_then(|v| v.as_i64());
+					let ts = ts_opt
+						.and_then(|secs| chrono::Utc.timestamp_opt(secs, 0).single())
+						.unwrap_or_else(|| chrono::Utc.timestamp_opt(0, 0).single().unwrap());
+					
+					match crate::helpers::amm_tracker::extract_trade_events(
+						&r.transaction_json,
+						&r.trace_events,
+						ts,
+						ctx.height as i32
+					) {
+						Ok(trades) => all_trades.extend(trades),
+						Err(e) => warn!(txid = %r.transaction_id, error = ?e, "trade extraction failed"),
+					}
+				}
+			}
+
+			if !all_trades.is_empty() {
+				crate::helpers::amm_tracker::insert_trade_events(&self.pool, &all_trades).await?;
+			}
+			
+			// Extract reserve snapshots from storage changes
+			if !all_storage_changes.is_empty() {
+				let ts_opt = results.first()
+					.and_then(|r| r.transaction_json.get("status"))
+					.and_then(|s| s.get("block_time"))
+					.and_then(|v| v.as_i64());
+				let ts = ts_opt
+					.and_then(|secs| chrono::Utc.timestamp_opt(secs, 0).single())
+					.unwrap_or_else(|| chrono::Utc.timestamp_opt(0, 0).single().unwrap());
+				
+				let reserves = crate::helpers::amm_tracker::extract_reserves_from_storage(
+					&all_storage_changes,
+					ts,
+					ctx.height as i32
+				);
+				
+				if !reserves.is_empty() {
+					crate::helpers::amm_tracker::insert_reserve_snapshots(&self.pool, &reserves).await?;
+				}
+			}
+			
+			let amm_elapsed_ms = amm_t0.elapsed().as_millis() as u64;
+			info!(height = ctx.height, trade_events = all_trades.len(), elapsed_ms = amm_elapsed_ms, "AMM indexing: done");
+
+			// Aggregate candles periodically (every 10 blocks)
+			if ctx.height % 10 == 0 && !all_trades.is_empty() {
+				let candle_t0 = std::time::Instant::now();
+				let start_time = chrono::Utc.timestamp_opt((ctx.height as i64 - 600) * 600, 0).single()
+					.unwrap_or_else(|| chrono::Utc::now());
+				let end_time = chrono::Utc::now();
+				
+				if let Err(e) = crate::helpers::amm_tracker::aggregate_candles(&self.pool, start_time, end_time).await {
+					warn!(height = ctx.height, error = ?e, "candle aggregation failed");
+				} else {
+					let candle_elapsed_ms = candle_t0.elapsed().as_millis() as u64;
+					info!(height = ctx.height, elapsed_ms = candle_elapsed_ms, "candle aggregation: done");
+				}
+			}
 
             // Build inputs for PoolSwap / PoolCreation / PoolMint / PoolBurn indexers and run them
 			let mut swap_inputs: Vec<(String, i32, chrono::DateTime<Utc>, serde_json::Value, Vec<serde_json::Value>)> = Vec::new();
