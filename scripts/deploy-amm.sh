@@ -260,108 +260,127 @@ main() {
     "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet utxos p2tr:0 | head -50
     echo ""
     
-    log_warn "Factory initialization COMMENTED OUT for troubleshooting"
-    log_info "To initialize factory manually, run:"
-    echo ""
-    echo "  FACTORY_INIT_PROTOSTONE=\"[2:1:1:p1]:v0:v0,[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0\""
-    echo ""
-    echo "  $ALKANES_CLI -p regtest \\"
-    echo "    --wallet-file $WALLET_FILE \\"
-    echo "    --passphrase $DEPLOY_PASSWORD \\"
-    echo "    alkanes execute \"\$FACTORY_INIT_PROTOSTONE\" \\"
-    echo "    --from p2tr:0 \\"
-    echo "    --inputs 2:1:1 \\"
-    echo "    --fee-rate 1 \\"
-    echo "    --mine \\"
-    echo "    --trace \\"
-    echo "    -y"
+    # Step 7: Initialize Factory
+    log_info "Initializing OYL Factory with InitFactory opcode..."
+    log_info "This requires spending auth token [2:1] to authenticate the call..."
+    
+    FACTORY_INIT_PROTOSTONE="[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
+    log_info "  Protostone: $FACTORY_INIT_PROTOSTONE"
+    log_info "  Opcode 0 = InitFactory(pool_beacon_proxy_id, pool_beacon_id)"
     echo ""
     
-    # COMMENTED OUT: Factory initialization that depends on auth token [2:1]
-    # 
-    # # Step 7: Initialize Factory
-    # # This is the tricky part that needs troubleshooting
-    # # 
-    # # The factory's InitFactory opcode (opcode 0) requires authentication via auth token [2, 1]
-    # # 
-    # # Pattern explanation:
-    # #   - First protostone: [2:1:1:p1]:v0:v0
-    # #     This sends 1 unit of auth token [2:1] to the NEXT protostone (p1 means "physical output 1")
-    # #     Change goes back to v0 (virtual output 0, which becomes physical output 0)
-    # #     
-    # #   - Second protostone: [4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0
-    # #     This receives the auth token from p1, uses it to authenticate the call to factory
-    # #     Opcode 0 = InitFactory(pool_beacon_proxy_id, pool_beacon_id)
-    # #     After the call, outputs the auth token back to v0
-    # #
-    # # The --inputs flag tells the wallet to specifically use a UTXO containing auth token [2:1]
-    # 
-    # log_info "Initializing OYL Factory with InitFactory opcode..."
-    # log_info "This requires spending auth token [2:1] to authenticate the call..."
-    # 
-    # FACTORY_INIT_PROTOSTONE="[2:1:1:p1]:v0:v0,[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
-    # log_info "  Protostone: $FACTORY_INIT_PROTOSTONE"
-    # log_info ""
-    # log_info "  Explanation:"
-    # log_info "    First protostone:  [2:1:1:p1]:v0:v0"
-    # log_info "      - Send 1 unit of auth token [2:1] to physical output 1 (p1)"
-    # log_info "      - Change goes to v0 (becomes physical output 0)"
-    # log_info ""
-    # log_info "    Second protostone: [4,$AMM_FACTORY_PROXY_TX,0,...]:v0:v0"
-    # log_info "      - Receives auth token from p1 (physical output 1 from TX)"
-    # log_info "      - Uses it to authenticate call to factory"
-    # log_info "      - Returns auth token to v0"
-    # echo ""
-    # 
-    # DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
-    # 
-    # # The key here is:
-    # # 1. --inputs 2:1:1 - tells wallet to use a UTXO with auth token [2:1]
-    # # 2. First protostone sends auth token to p1 (next protostone)
-    # # 3. Second protostone receives it and uses it for authentication
-    # # 4. --trace flag helps debug what's happening
-    # # 5. --mine ensures the transaction gets mined immediately
-    # 
-    # "$ALKANES_CLI" -p regtest \
-    #     --wallet-file "$WALLET_FILE" \
-    #     --passphrase "$DEPLOY_PASSWORD" \
-    #     alkanes execute "$FACTORY_INIT_PROTOSTONE" \
-    #     --from p2tr:0 \
-    #     --inputs 2:1:1 \
-    #     --fee-rate 1 \
-    #     --mine \
-    #     --trace \
-    #     -y
-    # 
-    # if [ $? -eq 0 ]; then
-    #     log_success "OYL Factory initialized successfully!"
-    #     
-    #     # Wait for metashrew to index
-    #     log_info "Waiting for metashrew to index factory initialization (5 seconds)..."
-    #     sleep 5
-    #     
-    #     echo ""
-    #     log_success "🎉 OYL AMM deployment complete!"
-    # else
-    #     log_error "Failed to initialize OYL Factory"
-    #     log_error ""
-    #     log_error "Troubleshooting tips:"
-    #     log_error "  1. Check that auth token [2:1] exists in wallet:"
-    #     log_error "     $ALKANES_CLI -p regtest --wallet-file $WALLET_FILE --passphrase $DEPLOY_PASSWORD alkanes getbalance"
-    #     log_error ""
-    #     log_error "  2. Verify auth token factory created tokens at [2, 1]:"
-    #     log_error "     $ALKANES_CLI -p regtest alkanes getbytecode 2:1"
-    #     log_error ""
-    #     log_error "  3. Check wallet UTXOs for auth tokens:"
-    #     log_error "     $ALKANES_CLI -p regtest --wallet-file $WALLET_FILE --passphrase $DEPLOY_PASSWORD wallet utxos p2tr:0"
-    #     log_error ""
-    #     log_error "  4. The issue might be:"
-    #     log_error "     - Auth token not being properly received by second protostone"
-    #     log_error "     - UTXO selection not finding auth token"
-    #     log_error "     - Auth token not being accepted by factory"
-    #     log_error ""
-    #     exit 1
-    # fi
+    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes execute "$FACTORY_INIT_PROTOSTONE" \
+        --from p2tr:0 \
+        --inputs 2:1:1 \
+        --fee-rate 1 \
+        --mine \
+        --trace \
+        -y
+    
+    if [ $? -eq 0 ]; then
+        log_success "OYL Factory initialized successfully!"
+        
+        # Wait for metashrew to index
+        log_info "Waiting for metashrew to index factory initialization (5 seconds)..."
+        sleep 5
+    else
+        log_error "Failed to initialize OYL Factory"
+        exit 1
+    fi
+    echo ""
+    
+    # Step 8: Create test tokens and pool
+    log_info "=========================================="
+    log_info "Creating Test Pool (DIESEL/frBTC)"
+    log_info "=========================================="
+    echo ""
+    
+    # Configuration for test pool
+    DIESEL_ID="2:0"
+    FRBTC_ID="32:0"
+    DIESEL_AMOUNT="300000000"  # 300M DIESEL
+    FRBTC_AMOUNT="50000"       # 0.0005 BTC in sats
+    
+    # Step 8a: Mine DIESEL
+    log_info "Mining DIESEL tokens..."
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes execute "[2,0,77]:v0:v0" \
+        --to p2tr:0 \
+        --from p2tr:0 \
+        --change p2tr:0 \
+        --auto-confirm
+    
+    if [ $? -eq 0 ]; then
+        log_success "DIESEL mined"
+    else
+        log_error "Failed to mine DIESEL"
+        exit 1
+    fi
+    
+    # Step 8b: Wrap BTC for frBTC
+    log_info "Wrapping BTC to frBTC..."
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes wrap-btc \
+        100000000 \
+        --to p2tr:0 \
+        --from p2tr:0 \
+        --change p2tr:0 \
+        --auto-confirm
+    
+    if [ $? -eq 0 ]; then
+        log_success "frBTC wrapped"
+    else
+        log_error "Failed to wrap frBTC"
+        exit 1
+    fi
+    
+    # Wait for confirmations
+    log_info "Mining a block to confirm transactions..."
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        bitcoind generatetoaddress 1 p2tr:0 > /dev/null 2>&1
+    
+    log_info "Waiting for metashrew to index transactions (15 seconds)..."
+    sleep 15
+    
+    # Step 8c: Create the pool
+    log_info "Creating DIESEL/frBTC pool..."
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes init-pool \
+        --pair "$DIESEL_ID,$FRBTC_ID" \
+        --liquidity "$DIESEL_AMOUNT:$FRBTC_AMOUNT" \
+        --to p2tr:0 \
+        --from p2tr:0 \
+        --change p2tr:0 \
+        --factory "4:$AMM_FACTORY_PROXY_TX" \
+        --auto-confirm \
+        --trace
+    
+    if [ $? -eq 0 ]; then
+        log_success "Pool created successfully!"
+        
+        # Wait for metashrew to index
+        log_info "Waiting for metashrew to index pool creation (5 seconds)..."
+        sleep 5
+        
+        echo ""
+        log_success "🎉 OYL AMM deployment and pool creation complete!"
+    else
+        log_error "Failed to create pool"
+        exit 1
+    fi
     
     echo ""
     log_info "=========================================="
@@ -381,16 +400,26 @@ main() {
     log_info "Auth Tokens:"
     echo "  Factory Auth Token:       [2, 1] (created by auth token factory)"
     echo ""
+    log_info "Test Pool:"
+    echo "  DIESEL/frBTC Pool:        Created with 300M DIESEL / 50K frBTC"
+    echo ""
     
     log_info "Next steps:"
     echo ""
-    echo "  1. Create a liquidity pool:"
-    echo "     $ALKANES_CLI -p regtest --wallet-file $WALLET_FILE --passphrase $DEPLOY_PASSWORD \\"
-    echo "       alkanes execute '[2:1:1:p1]:v0:v0,[4,$AMM_FACTORY_PROXY_TX,1,TOKEN0_BLOCK,TOKEN0_TX,TOKEN1_BLOCK,TOKEN1_TX,AMOUNT0,AMOUNT1]:v0:v0' \\"
-    echo "       --from p2tr:0 --inputs 2:1:1 --fee-rate 1 --mine -y"
+    echo "  1. Check pools:"
+    echo "     $ALKANES_CLI -p regtest dataapi get-pools"
     echo ""
     echo "  2. Check alkanes balances:"
     echo "     $ALKANES_CLI -p regtest --wallet-file $WALLET_FILE --passphrase $DEPLOY_PASSWORD alkanes getbalance"
+    echo ""
+    echo "  3. Create another pool:"
+    echo "     $ALKANES_CLI -p regtest --wallet-file $WALLET_FILE --passphrase $DEPLOY_PASSWORD \\"
+    echo "       alkanes init-pool \\"
+    echo "       --pair TOKEN0_BLOCK:TOKEN0_TX,TOKEN1_BLOCK:TOKEN1_TX \\"
+    echo "       --liquidity AMOUNT0:AMOUNT1 \\"
+    echo "       --to p2tr:0 --from p2tr:0 --change p2tr:0 \\"
+    echo "       --factory 4:$AMM_FACTORY_PROXY_TX \\"
+    echo "       --auto-confirm"
     echo ""
     
     log_success "Deployment script completed successfully!"

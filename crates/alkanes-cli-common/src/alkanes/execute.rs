@@ -487,9 +487,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 log::info!("Created alkanes change output at index {}", alkanes_change_output_index);
             }
             
-            // Generate automatic protostone for excess alkanes
+            // Generate automatic protostone to split alkanes
+            // Sends needed amounts to p1 (first user protostone) and excess to change output
             let auto_protostone = self.generate_alkanes_change_protostone(
-                &alkanes_excess,
+                &alkanes_needed,
+                &utxo_selection.alkanes_found,
                 alkanes_change_output_index,
             ).await?;
             
@@ -1009,26 +1011,46 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// Generate automatic protostone for alkanes change
     async fn generate_alkanes_change_protostone(
         &mut self,
-        excess_alkanes: &alloc::collections::BTreeMap<AlkaneId, u64>,
+        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
+        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u64>,
         alkanes_change_output_index: u32,
     ) -> Result<ProtostoneSpec> {
-        log::info!("Generating automatic protostone for {} excess alkane types", excess_alkanes.len());
+        log::info!("Generating automatic split protostone for {} alkane types", alkanes_needed.len());
         
-        // Create edicts to send all excess alkanes to the change output
+        // Create edicts to send needed amounts to p1 (first user protostone)
+        // and true excess (found - needed) to the change output
         let mut edicts = Vec::new();
-        for (alkane_id, amount) in excess_alkanes {
-            edicts.push(ProtostoneEdict {
-                alkane_id: alkane_id.clone(),
-                amount: *amount,
-                target: OutputTarget::Output(alkanes_change_output_index),
-            });
-            log::debug!("  Edict: Send {} units of {}:{} to v{}", 
-                       amount, alkane_id.block, alkane_id.tx, alkanes_change_output_index);
+        
+        for (alkane_id, needed) in alkanes_needed {
+            let found = alkanes_found.get(alkane_id).copied().unwrap_or(0);
+            
+            if found > 0 {
+                // Send needed amount to p1 (the first user protostone that will execute after this auto-change)
+                edicts.push(ProtostoneEdict {
+                    alkane_id: alkane_id.clone(),
+                    amount: *needed,
+                    target: OutputTarget::Protostone(1), // p1
+                });
+                log::debug!("  Edict: Send {} units of {}:{} to p1", 
+                           needed, alkane_id.block, alkane_id.tx);
+                
+                // If there's true excess (found > needed), send it back to change output
+                let excess = found - needed;
+                if excess > 0 {
+                    edicts.push(ProtostoneEdict {
+                        alkane_id: alkane_id.clone(),
+                        amount: excess,
+                        target: OutputTarget::Output(alkanes_change_output_index),
+                    });
+                    log::debug!("  Edict: Send {} units of {}:{} (excess) to v{}", 
+                               excess, alkane_id.block, alkane_id.tx, alkanes_change_output_index);
+                }
+            }
         }
         
         // Create the protostone
         // This protostone will:
-        // - Send excess alkanes to the change output via edicts
+        // - Split alkanes: send needed amounts to p1, send excess to change output
         // - Point to p1 (the first user protostone after this auto-change protostone)
         // - Refund to the change output
         Ok(ProtostoneSpec {

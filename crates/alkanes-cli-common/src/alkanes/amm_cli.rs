@@ -61,13 +61,12 @@ pub async fn init_pool(
     info!("Liquidity: {} token0, {} token1, minimum LP: {}", 
           params.amount0, params.amount1, minimum_lp);
     
-    // Build calldata with two protostones:
-    // 1. First protostone sends 1 unit of factory auth token (2:1) to second protostone (p1)
-    //    Format: :v0:v0:[2:1:1:p1] (no cellpack, just pointer/refund/edict)
-    // 2. Second protostone uses the auth token to call factory with opcode 0 (create pool)
-    //    Format: [factoryBlock,factoryTx,0,...]:v0:v0
+    // Build calldata with one protostone that calls factory with opcode 1 (create new pool)
+    // The tokens will come from transaction inputs (via UTXOs) automatically
+    // If auto-change is needed, it will be inserted as protostone #0 and will send tokens to p1 (this protostone)
+    // Format: [factoryBlock,factoryTx,1,token0Block,token0Tx,token1Block,token1Tx,amount0,amount1,...]:v0:v0
     let calldata = format!(
-        ":v0:v0:[2:1:1:p1],[{},{},0,{},{},{},{},{},{}]:v0:v0",
+        "[{},{},1,{},{},{},{},{},{}]:v0:v0",
         params.factory_id.block,
         params.factory_id.tx,
         params.token0.block,
@@ -81,6 +80,7 @@ pub async fn init_pool(
     info!("Calldata: {}", calldata);
     
     // Input requirements: factory auth token (2:1), token0, and token1
+    // These will be handled by alkanes execute's UTXO selection and auto-change logic
     let input_reqs = vec![
         super::types::InputRequirement::Alkanes {
             block: 2,
@@ -101,11 +101,11 @@ pub async fn init_pool(
     
     let protostones = parse_protostones(&calldata)?;
     
-    // Build execute params
+    // Build execute params with alkanes_change_address set to enable auto-change
     let mut executor = EnhancedAlkanesExecutor::new(provider);
     let execute_params = EnhancedExecuteParams {
         input_requirements: input_reqs,
-        alkanes_change_address: None,
+        alkanes_change_address: Some(params.from_address.clone()), // Enable auto-change for excess alkanes
         to_addresses: vec![params.to_address.clone()],
         from_addresses: Some(vec![params.from_address.clone()]),
         change_address: params.change_address.clone(),

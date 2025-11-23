@@ -492,63 +492,144 @@ main() {
     
     echo ""
     
-    # Following oyl-sdk deployment pattern from pseudocode:
-    # 1. Auth Token: [3, 65517, 100]
-    # 2. Beacon Proxy: [3, 780993, 36863]  
-    # 3. Factory Logic: [3, 65524, 50]
-    # 4. Pool Logic: [3, 65520, 50]
-    # 5. Upgradeable (Factory Proxy): [3, 65522, 32767, 4, 65524, 5]
-    # 6. Upgradeable Beacon: [3, 65523, 32767, 4, 65520, 5]
-    # 7. Init Factory: [4, 65522, 0, 780993, 4, 65523] with edicts
-    
-    # Step 1: Deploy Auth Token
+    # Step 1: Deploy Auth Token Factory
     deploy_contract "OYL Auth Token Factory" "$WASM_DIR/alkanes_std_auth_token.wasm" "$AUTH_TOKEN_FACTORY_ID" "100"
     
-    # Step 2: Deploy Beacon Proxy
-    # Note: 36863 = 0x9000 + 0x7ff = 0x97ff (some initialization value)
+    # Step 2: Deploy Beacon Proxy Template
     deploy_contract "OYL Beacon Proxy" "$WASM_DIR/alkanes_std_beacon_proxy.wasm" "$POOL_BEACON_PROXY_TX" "36863"
     
-    # Step 3: Deploy Factory Logic  
+    # Step 3: Deploy Factory Logic Implementation
     deploy_contract "OYL Factory Logic" "$WASM_DIR/factory.wasm" "$AMM_FACTORY_LOGIC_IMPL_TX" "50"
     
-    # Step 4: Deploy Pool Logic
+    # Step 4: Deploy Pool Logic Implementation
     deploy_contract "OYL Pool Logic" "$WASM_DIR/pool.wasm" "$POOL_LOGIC_TX" "50"
     
-    # Step 5: Deploy Upgradeable (Factory Proxy)
-    # Init: 32767 (0x7fff), block 4, tx 65524, opcode 5 (setImplementation)
+    # Step 5: Deploy Upgradeable Proxy (Factory Proxy)
     deploy_contract "OYL Factory Proxy (Upgradeable)" "$WASM_DIR/alkanes_std_upgradeable.wasm" "$AMM_FACTORY_PROXY_TX" "$((0x7fff)),4,$AMM_FACTORY_LOGIC_IMPL_TX,5"
     
     # Step 6: Deploy Upgradeable Beacon
-    # Init: 32767 (0x7fff), block 4, tx 65520 (pool logic), opcode 5 (setImplementation)
     deploy_contract "OYL Upgradeable Beacon" "$WASM_DIR/alkanes_std_upgradeable_beacon.wasm" "$POOL_UPGRADEABLE_BEACON_TX" "$((0x7fff)),4,$POOL_LOGIC_TX,5"
     
     # Step 7: Initialize Factory
-    # Calldata: [4, 65522, 0, 780993, 4, 65523]
-    # Note: Two protostones, the first one sends one unit of 2:1 to the second protostone, change goes to first physical vout. Second protostone receives the 2:1 to authenticate to 4:65522 and then outputs it back to v0 after the protocol message
     log_info "Initializing OYL Factory with InitFactory opcode..."
-    FACTORY_INIT_PROTOSTONE="[2:1:1:p1]:v0:v0,[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
+    log_info "This requires spending auth token [2:1] to authenticate the call..."
+    
+    FACTORY_INIT_PROTOSTONE="[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
     log_info "  Protostone: $FACTORY_INIT_PROTOSTONE"
+    log_info "  Opcode 0 = InitFactory(pool_beacon_proxy_id, pool_beacon_id)"
+    echo ""
     
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    
     "$ALKANES_CLI" -p regtest \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$FACTORY_INIT_PROTOSTONE" \
         --from p2tr:0 \
-	--inputs 2:1:1 \
+        --inputs 2:1:1 \
         --fee-rate 1 \
         --mine \
         --trace \
         -y
     
     if [ $? -eq 0 ]; then
-        log_success "OYL Factory initialized"
+        log_success "OYL Factory initialized successfully!"
         
         # Wait for metashrew to index
         log_info "Waiting for metashrew to index factory initialization (5 seconds)..."
         sleep 5
     else
         log_error "Failed to initialize OYL Factory"
+        exit 1
+    fi
+    echo ""
+    
+    # Step 8: Create test tokens and pool
+    log_info "=========================================="
+    log_info "Creating Test Pool (DIESEL/frBTC)"
+    log_info "=========================================="
+    echo ""
+    
+    # Configuration for test pool
+    DIESEL_ID="2:0"
+    FRBTC_ID="32:0"
+    DIESEL_AMOUNT="300000000"  # 300M DIESEL
+    FRBTC_AMOUNT="50000"       # 0.0005 BTC in sats
+    
+    # Step 8a: Mine DIESEL
+    log_info "Mining DIESEL tokens..."
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes execute "[2,0,77]:v0:v0" \
+        --to p2tr:0 \
+        --from p2tr:0 \
+        --change p2tr:0 \
+        --auto-confirm
+    
+    if [ $? -eq 0 ]; then
+        log_success "DIESEL mined"
+    else
+        log_error "Failed to mine DIESEL"
+        exit 1
+    fi
+    
+    # Step 8b: Wrap BTC for frBTC
+    log_info "Wrapping BTC to frBTC..."
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes wrap-btc \
+        100000000 \
+        --to p2tr:0 \
+        --from p2tr:0 \
+        --change p2tr:0 \
+        --auto-confirm
+    
+    if [ $? -eq 0 ]; then
+        log_success "frBTC wrapped"
+    else
+        log_error "Failed to wrap frBTC"
+        exit 1
+    fi
+    
+    # Wait for confirmations
+    log_info "Mining a block to confirm transactions..."
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        bitcoind generatetoaddress 1 p2tr:0 > /dev/null 2>&1
+    
+    log_info "Waiting for metashrew to index transactions (15 seconds)..."
+    sleep 15
+    
+    # Step 8c: Create the pool
+    log_info "Creating DIESEL/frBTC pool..."
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes init-pool \
+        --pair "$DIESEL_ID,$FRBTC_ID" \
+        --liquidity "$DIESEL_AMOUNT:$FRBTC_AMOUNT" \
+        --to p2tr:0 \
+        --from p2tr:0 \
+        --change p2tr:0 \
+        --factory "4:$AMM_FACTORY_PROXY_TX" \
+        --auto-confirm \
+        --trace
+    
+    if [ $? -eq 0 ]; then
+        log_success "Pool created successfully!"
+        
+        # Wait for metashrew to index
+        log_info "Waiting for metashrew to index pool creation (5 seconds)..."
+        sleep 5
+        
+        echo ""
+        log_success "🎉 OYL AMM deployment and pool creation complete!"
+    else
+        log_error "Failed to create pool"
+        exit 1
     fi
     
     # BTC PT/YT tokens (if needed for tests)
@@ -602,6 +683,9 @@ main() {
     echo "  - OYL Pool Logic:         [4, $POOL_LOGIC_TX]"
     echo "  - OYL Factory Proxy:      [4, $AMM_FACTORY_PROXY_TX]"
     echo "  - OYL Upgradeable Beacon: [4, $POOL_UPGRADEABLE_BEACON_TX]"
+    echo ""
+    echo "Test Pool:"
+    echo "  - DIESEL/frBTC Pool:      Created with 300M DIESEL / 50K frBTC"
     echo ""
     
 
