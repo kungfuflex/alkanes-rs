@@ -23,6 +23,8 @@ pub mod utils;
 pub mod wrap_btc;
 pub mod amm;
 pub mod amm_cli;
+pub mod pool_details;
 
 pub use types::*;
 pub use amm::{GetAllPoolsResult, AllPoolsDetailsResult, PoolDetailsResult, PoolDetailsWithId};
+pub use pool_details::PoolDetails;

@@ -784,34 +784,191 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
         Alkanes::Backtest { txid, raw } => {
             backtest_transaction(system, &txid, raw).await
         }
-        Alkanes::GetAllPools { factory_id, raw } => {
-            // Parse factory_id to AlkaneId
+        Alkanes::GetAllPools { factory_id, pool_details, raw } => {
+            use alkanes_cli_common::proto::alkanes::{MessageContextParcel, SimulateResponse};
+            use alkanes_cli_common::traits::MetashrewRpcProvider;
+            use prost::Message;
+            
+            // Parse factory_id
             let parts: Vec<&str> = factory_id.split(':').collect();
             if parts.len() != 2 {
                 return Err(anyhow::anyhow!("Invalid factory_id format. Expected 'block:tx'"));
             }
-            let block = parts[0].parse::<u64>()?;
-            let tx = parts[1].parse::<u64>()?;
-            let factory = alkanes::types::AlkaneId { block, tx };
+            let factory_block: u64 = parts[0].parse()?;
+            let factory_tx: u64 = parts[1].parse()?;
             
-            // Create AMM manager with a temporary executor
-            use alkanes::execute::EnhancedAlkanesExecutor;
-            let provider = system.provider();
-            let mut provider_clone = provider.clone_box();
-            let executor = std::sync::Arc::new(EnhancedAlkanesExecutor::new(&mut *provider_clone));
-            let amm_manager = alkanes::amm::AmmManager::new(executor);
+            // Build calldata for opcode 3 (GET_ALL_POOLS)
+            let mut calldata = Vec::new();
+            leb128::write::unsigned(&mut calldata, factory_block).unwrap();
+            leb128::write::unsigned(&mut calldata, factory_tx).unwrap();
+            leb128::write::unsigned(&mut calldata, 3u64).unwrap(); // opcode 3
             
-            // Get all pools
-            let result = amm_manager.get_all_pools(&factory, provider).await?;
+            // Get current height
+            let simulation_height = system.provider().get_metashrew_height().await?;
             
+            // Construct MessageContextParcel
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: simulation_height,
+                vout: 0,
+                txindex: 1,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+            
+            // Run simulation
+            let contract_id_str = format!("{}:{}", factory_block, factory_tx);
+            let result = system.provider().simulate(&contract_id_str, &context, None).await?;
+            
+            // Parse the result
+            if let Some(hex_str) = result.as_str() {
+                let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+                if let Ok(bytes) = hex::decode(hex_data) {
+                    if let Ok(sim_response) = SimulateResponse::decode(bytes.as_slice()) {
+                        if let Some(execution) = &sim_response.execution {
+                            // Parse pool list from execution.data
+                            // Format: first u128 is count, then pairs of u128s for each pool (block, tx)
+                            let data = &execution.data;
+                            
+                            if data.len() < 16 {
+                                return Err(anyhow::anyhow!("Response data too short"));
+                            }
+                            
+                            // Read count (first 16 bytes as u128)
+                            let count = u128::from_le_bytes(data[0..16].try_into()?);
+                            let mut pools = Vec::new();
+                            
+                            // Read pool IDs (pairs of u128)
+                            let mut offset = 16;
+                            for _ in 0..count {
+                                if offset + 32 > data.len() {
+                                    break;
+                                }
+                                let pool_block = u128::from_le_bytes(data[offset..offset + 16].try_into()?) as u64;
+                                offset += 16;
+                                let pool_tx = u128::from_le_bytes(data[offset..offset + 16].try_into()?) as u64;
+                                offset += 16;
+                                pools.push((pool_block, pool_tx));
+                            }
+                            
+                            if pool_details {
+                                // Fetch details for each pool
+                                use alkanes_cli_common::alkanes::PoolDetails;
+                                
+                                #[derive(serde::Serialize)]
+                                struct PoolWithDetails {
+                                    pool_id: String,
+                                    name: String,
+                                    token_a_block: u64,
+                                    token_a_tx: u64,
+                                    reserve_a: u128,
+                                    token_b_block: u64,
+                                    token_b_tx: u64,
+                                    reserve_b: u128,
+                                    total_supply: u128,
+                                }
+                                
+                                let mut pools_with_details = Vec::new();
+                                
+                                for (pool_block, pool_tx) in &pools {
+                                    // Build calldata for opcode 999 (POOL_DETAILS)
+                                    let mut pool_calldata = Vec::new();
+                                    leb128::write::unsigned(&mut pool_calldata, *pool_block).unwrap();
+                                    leb128::write::unsigned(&mut pool_calldata, *pool_tx).unwrap();
+                                    leb128::write::unsigned(&mut pool_calldata, 999u64).unwrap();
+                                    
+                                    let pool_context = MessageContextParcel {
+                                        alkanes: vec![],
+                                        transaction: vec![],
+                                        block: vec![],
+                                        height: simulation_height,
+                                        vout: 0,
+                                        txindex: 1,
+                                        calldata: pool_calldata,
+                                        pointer: 0,
+                                        refund_pointer: 0,
+                                    };
+                                    
+                                    match system.provider().simulate(&format!("{}:{}", pool_block, pool_tx), &pool_context, None).await {
+                                        Ok(pool_result) => {
+                                            if let Some(pool_hex) = pool_result.as_str() {
+                                                let pool_hex_data = pool_hex.strip_prefix("0x").unwrap_or(pool_hex);
+                                                if let Ok(pool_bytes) = hex::decode(pool_hex_data) {
+                                                    if let Ok(pool_sim) = SimulateResponse::decode(pool_bytes.as_slice()) {
+                                                        if let Some(pool_exec) = &pool_sim.execution {
+                                                            if let Ok(details) = PoolDetails::from_bytes(&pool_exec.data) {
+                                                                pools_with_details.push(PoolWithDetails {
+                                                                    pool_id: format!("{}:{}", pool_block, pool_tx),
+                                                                    name: details.pool_name,
+                                                                    token_a_block: details.token_a_block,
+                                                                    token_a_tx: details.token_a_tx,
+                                                                    reserve_a: details.reserve_a,
+                                                                    token_b_block: details.token_b_block,
+                                                                    token_b_tx: details.token_b_tx,
+                                                                    reserve_b: details.reserve_b,
+                                                                    total_supply: details.total_supply,
+                                                                });
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::warn!("Failed to fetch details for pool {}:{}: {}", pool_block, pool_tx, e);
+                                        }
+                                    }
+                                }
+                                
+                                if raw {
+                                    println!("{}", serde_json::to_string_pretty(&pools_with_details)?);
+                                } else {
+                                    println!("🏊 Found {} pool(s) from factory {}:{}", pools_with_details.len(), factory_block, factory_tx);
+                                    println!();
+                                    for (idx, pool) in pools_with_details.iter().enumerate() {
+                                        println!("  {}. {} ({})", idx + 1, pool.name, pool.pool_id);
+                                        println!("     Token A: {}:{} - Reserve: {}", pool.token_a_block, pool.token_a_tx, pool.reserve_a);
+                                        println!("     Token B: {}:{} - Reserve: {}", pool.token_b_block, pool.token_b_tx, pool.reserve_b);
+                                        println!("     LP Supply: {}", pool.total_supply);
+                                        println!();
+                                    }
+                                }
+                            } else {
+                                // Just list pool IDs
+                                if raw {
+                                    #[derive(serde::Serialize)]
+                                    struct PoolList {
+                                        count: usize,
+                                        pools: Vec<String>,
+                                    }
+                                    let pool_list = PoolList {
+                                        count: pools.len(),
+                                        pools: pools.iter().map(|(b, t)| format!("{}:{}", b, t)).collect(),
+                                    };
+                                    println!("{}", serde_json::to_string_pretty(&pool_list)?);
+                                } else {
+                                    println!("🏊 Found {} pool(s) from factory {}:{}", pools.len(), factory_block, factory_tx);
+                                    println!();
+                                    for (idx, (pool_block, pool_tx)) in pools.iter().enumerate() {
+                                        println!("  {}. Pool {}:{}", idx + 1, pool_block, pool_tx);
+                                    }
+                                }
+                            }
+                            
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            
+            // Fallback
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!("🏊 Found {} pool(s) from factory {}:{}", result.count, block, tx);
-                println!();
-                for (idx, pool) in result.pools.iter().enumerate() {
-                    println!("  {}. Pool {}:{}", idx + 1, pool.block, pool.tx);
-                }
+                println!("Failed to parse get-all-pools result");
             }
             Ok(())
         }
@@ -852,36 +1009,94 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             Ok(())
         }
         Alkanes::PoolDetails { pool_id, raw } => {
-            // Parse pool_id to AlkaneId
+            use alkanes_cli_common::proto::alkanes::{MessageContextParcel, Uint128};
+            use alkanes_cli_common::traits::MetashrewRpcProvider;
+            use prost::Message;
+            
+            // Parse pool_id (format: block:tx)
             let parts: Vec<&str> = pool_id.split(':').collect();
             if parts.len() != 2 {
                 return Err(anyhow::anyhow!("Invalid pool_id format. Expected 'block:tx'"));
             }
-            let block = parts[0].parse::<u64>()?;
-            let tx = parts[1].parse::<u64>()?;
-            let pool = alkanes::types::AlkaneId { block, tx };
+            let pool_block: u64 = parts[0].parse()?;
+            let pool_tx: u64 = parts[1].parse()?;
             
-            // Create AMM manager with a temporary executor
-            use alkanes::execute::EnhancedAlkanesExecutor;
-            let provider = system.provider();
-            let mut provider_clone = provider.clone_box();
-            let executor = std::sync::Arc::new(EnhancedAlkanesExecutor::new(&mut *provider_clone));
-            let amm_manager = alkanes::amm::AmmManager::new(executor);
+            // Build calldata for opcode 999 (POOL_DETAILS)
+            let mut calldata = Vec::new();
+            leb128::write::unsigned(&mut calldata, pool_block).unwrap();
+            leb128::write::unsigned(&mut calldata, pool_tx).unwrap();
+            leb128::write::unsigned(&mut calldata, 999u64).unwrap(); // opcode 999
             
-            // Get pool details
-            let result = amm_manager.get_pool_details(&pool, provider).await?;
+            // Get current height
+            let simulation_height = system.provider().get_metashrew_height().await?;
             
+            // Construct MessageContextParcel
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: simulation_height,
+                vout: 0,
+                txindex: 1,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+            
+            // Run simulation
+            let contract_id_str = format!("{}:{}", pool_block, pool_tx);
+            let result = system.provider().simulate(&contract_id_str, &context, None).await?;
+            
+            // Parse the result
+            if let Some(hex_str) = result.as_str() {
+                let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+                if let Ok(bytes) = hex::decode(hex_data) {
+                    // Try to decode as SimulateResponse
+                    use alkanes_cli_common::proto::alkanes::SimulateResponse;
+                    if let Ok(sim_response) = SimulateResponse::decode(bytes.as_slice()) {
+                        if let Some(execution) = &sim_response.execution {
+                            // Parse pool details from execution.data
+                            use alkanes_cli_common::alkanes::PoolDetails;
+                            match PoolDetails::from_bytes(&execution.data) {
+                                Ok(pool_details) => {
+                                    if raw {
+                                        println!("{}", serde_json::to_string_pretty(&pool_details)?);
+                                    } else {
+                                        println!("🏊 Pool Details for {}:{}", pool_block, pool_tx);
+                                        println!();
+                                        println!("  Name:         {}", pool_details.pool_name);
+                                        println!("  Token A:      {}:{}", pool_details.token_a_block, pool_details.token_a_tx);
+                                        println!("  Reserve A:    {}", pool_details.reserve_a);
+                                        println!("  Token B:      {}:{}", pool_details.token_b_block, pool_details.token_b_tx);
+                                        println!("  Reserve B:    {}", pool_details.reserve_b);
+                                        println!("  LP Supply:    {}", pool_details.total_supply);
+                                        
+                                        // Calculate and display price ratios
+                                        if pool_details.reserve_a > 0 && pool_details.reserve_b > 0 {
+                                            let price_a_per_b = pool_details.reserve_b as f64 / pool_details.reserve_a as f64;
+                                            let price_b_per_a = pool_details.reserve_a as f64 / pool_details.reserve_b as f64;
+                                            println!();
+                                            println!("  Price A/B:    {:.6}", price_a_per_b);
+                                            println!("  Price B/A:    {:.6}", price_b_per_a);
+                                        }
+                                    }
+                                    return Ok(());
+                                }
+                                Err(e) => {
+                                    return Err(anyhow::anyhow!("Failed to parse pool details: {}", e));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Fallback to raw JSON output
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!("🏊 Pool Details for {}:{}", block, tx);
-                println!();
-                println!("  Name: {}", result.pool_name);
-                println!("  Token0: {}:{}", result.token0.block, result.token0.tx);
-                println!("    Amount: {}", result.token0_amount);
-                println!("  Token1: {}:{}", result.token1.block, result.token1.tx);
-                println!("    Amount: {}", result.token1_amount);
-                println!("  LP Token Supply: {}", result.token_supply);
+                println!("Failed to parse pool details result");
+                println!("Raw result: {}", serde_json::to_string_pretty(&result)?);
             }
             Ok(())
         }
