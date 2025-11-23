@@ -79,14 +79,11 @@ pub async fn init_pool(
     
     info!("Calldata: {}", calldata);
     
-    // Input requirements: factory auth token (2:1), token0, and token1
+    // Input requirements: token0 and token1
+    // Note: Auth token [2:1] is NOT required for CREATE_NEW_POOL (opcode 1) - anyone can create pools
+    // Auth token is only required for InitFactory (opcode 0) which is a one-time initialization
     // These will be handled by alkanes execute's UTXO selection and auto-change logic
     let input_reqs = vec![
-        super::types::InputRequirement::Alkanes {
-            block: 2,
-            tx: 1,
-            amount: 1, // 1 unit of factory auth token
-        },
         super::types::InputRequirement::Alkanes {
             block: params.token0.block,
             tx: params.token0.tx,
