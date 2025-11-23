@@ -27,4 +27,4 @@ pub mod pool_details;
 
 pub use types::*;
 pub use amm::{GetAllPoolsResult, AllPoolsDetailsResult, PoolDetailsResult, PoolDetailsWithId};
-pub use pool_details::PoolDetails;
+pub use pool_details::{PoolDetails, PoolInfo};

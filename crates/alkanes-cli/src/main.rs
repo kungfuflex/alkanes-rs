@@ -784,13 +784,14 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
         Alkanes::Backtest { txid, raw } => {
             backtest_transaction(system, &txid, raw).await
         }
-        Alkanes::GetAllPools { factory_id, pool_details, raw } => {
+        Alkanes::GetAllPools { factory, pool_details, raw } => {
             use alkanes_cli_common::proto::alkanes::{MessageContextParcel, SimulateResponse};
             use alkanes_cli_common::traits::MetashrewRpcProvider;
+            use alkanes_cli_common::alkanes::{PoolInfo, PoolDetails};
             use prost::Message;
             
-            // Parse factory_id
-            let parts: Vec<&str> = factory_id.split(':').collect();
+            // Parse factory
+            let parts: Vec<&str> = factory.split(':').collect();
             if parts.len() != 2 {
                 return Err(anyhow::anyhow!("Invalid factory_id format. Expected 'block:tx'"));
             }
@@ -854,27 +855,12 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                                 pools.push((pool_block, pool_tx));
                             }
                             
-                            if pool_details {
-                                // Fetch details for each pool
-                                use alkanes_cli_common::alkanes::PoolDetails;
-                                
-                                #[derive(serde::Serialize)]
-                                struct PoolWithDetails {
-                                    pool_id: String,
-                                    name: String,
-                                    token_a_block: u64,
-                                    token_a_tx: u64,
-                                    reserve_a: u128,
-                                    token_b_block: u64,
-                                    token_b_tx: u64,
-                                    reserve_b: u128,
-                                    total_supply: u128,
-                                }
-                                
-                                let mut pools_with_details = Vec::new();
-                                
-                                for (pool_block, pool_tx) in &pools {
-                                    // Build calldata for opcode 999 (POOL_DETAILS)
+                            // Build Vec<PoolInfo> with optional details
+                            let mut pool_infos = Vec::new();
+                            
+                            for (pool_block, pool_tx) in &pools {
+                                let details = if pool_details {
+                                    // Fetch details for this pool
                                     let mut pool_calldata = Vec::new();
                                     leb128::write::unsigned(&mut pool_calldata, *pool_block).unwrap();
                                     leb128::write::unsigned(&mut pool_calldata, *pool_tx).unwrap();
@@ -899,61 +885,51 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                                                 if let Ok(pool_bytes) = hex::decode(pool_hex_data) {
                                                     if let Ok(pool_sim) = SimulateResponse::decode(pool_bytes.as_slice()) {
                                                         if let Some(pool_exec) = &pool_sim.execution {
-                                                            if let Ok(details) = PoolDetails::from_bytes(&pool_exec.data) {
-                                                                pools_with_details.push(PoolWithDetails {
-                                                                    pool_id: format!("{}:{}", pool_block, pool_tx),
-                                                                    name: details.pool_name,
-                                                                    token_a_block: details.token_a_block,
-                                                                    token_a_tx: details.token_a_tx,
-                                                                    reserve_a: details.reserve_a,
-                                                                    token_b_block: details.token_b_block,
-                                                                    token_b_tx: details.token_b_tx,
-                                                                    reserve_b: details.reserve_b,
-                                                                    total_supply: details.total_supply,
-                                                                });
-                                                            }
+                                                            PoolDetails::from_bytes(&pool_exec.data).ok()
+                                                        } else {
+                                                            None
                                                         }
+                                                    } else {
+                                                        None
                                                     }
+                                                } else {
+                                                    None
                                                 }
+                                            } else {
+                                                None
                                             }
                                         }
                                         Err(e) => {
                                             log::warn!("Failed to fetch details for pool {}:{}: {}", pool_block, pool_tx, e);
+                                            None
                                         }
                                     }
-                                }
+                                } else {
+                                    None
+                                };
                                 
-                                if raw {
-                                    println!("{}", serde_json::to_string_pretty(&pools_with_details)?);
-                                } else {
-                                    println!("🏊 Found {} pool(s) from factory {}:{}", pools_with_details.len(), factory_block, factory_tx);
-                                    println!();
-                                    for (idx, pool) in pools_with_details.iter().enumerate() {
-                                        println!("  {}. {} ({})", idx + 1, pool.name, pool.pool_id);
-                                        println!("     Token A: {}:{} - Reserve: {}", pool.token_a_block, pool.token_a_tx, pool.reserve_a);
-                                        println!("     Token B: {}:{} - Reserve: {}", pool.token_b_block, pool.token_b_tx, pool.reserve_b);
-                                        println!("     LP Supply: {}", pool.total_supply);
-                                        println!();
-                                    }
-                                }
+                                pool_infos.push(PoolInfo {
+                                    pool_id_block: *pool_block,
+                                    pool_id_tx: *pool_tx,
+                                    details,
+                                });
+                            }
+                            
+                            // Output results
+                            if raw {
+                                println!("{}", serde_json::to_string_pretty(&pool_infos)?);
                             } else {
-                                // Just list pool IDs
-                                if raw {
-                                    #[derive(serde::Serialize)]
-                                    struct PoolList {
-                                        count: usize,
-                                        pools: Vec<String>,
-                                    }
-                                    let pool_list = PoolList {
-                                        count: pools.len(),
-                                        pools: pools.iter().map(|(b, t)| format!("{}:{}", b, t)).collect(),
-                                    };
-                                    println!("{}", serde_json::to_string_pretty(&pool_list)?);
-                                } else {
-                                    println!("🏊 Found {} pool(s) from factory {}:{}", pools.len(), factory_block, factory_tx);
-                                    println!();
-                                    for (idx, (pool_block, pool_tx)) in pools.iter().enumerate() {
-                                        println!("  {}. Pool {}:{}", idx + 1, pool_block, pool_tx);
+                                println!("🏊 Found {} pool(s) from factory {}:{}", pool_infos.len(), factory_block, factory_tx);
+                                println!();
+                                for (idx, pool_info) in pool_infos.iter().enumerate() {
+                                    if let Some(details) = &pool_info.details {
+                                        println!("  {}. {} ({}:{})", idx + 1, details.pool_name, pool_info.pool_id_block, pool_info.pool_id_tx);
+                                        println!("     Token A: {}:{} - Reserve: {}", details.token_a_block, details.token_a_tx, details.reserve_a);
+                                        println!("     Token B: {}:{} - Reserve: {}", details.token_b_block, details.token_b_tx, details.reserve_b);
+                                        println!("     LP Supply: {}", details.total_supply);
+                                        println!();
+                                    } else {
+                                        println!("  {}. Pool {}:{}", idx + 1, pool_info.pool_id_block, pool_info.pool_id_tx);
                                     }
                                 }
                             }

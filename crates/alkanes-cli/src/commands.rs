@@ -983,9 +983,9 @@ pub enum Alkanes {
     },
     /// Get all pools from an AMM factory contract (defaults to 4:65522)
     GetAllPools {
-        /// Factory alkane ID (format: block:tx) [default: 4:65522]
-        #[arg(default_value = "4:65522")]
-        factory_id: String,
+        /// Factory alkane ID (format: block:tx)
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
         /// Also fetch detailed information for each pool
         #[arg(long)]
         pool_details: bool,

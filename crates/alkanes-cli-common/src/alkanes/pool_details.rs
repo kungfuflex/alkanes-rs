@@ -8,6 +8,14 @@ use std::vec::Vec;
 #[cfg(target_arch = "wasm32")]
 use alloc::vec::Vec;
 
+/// Pool information combining ID and optional details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PoolInfo {
+    pub pool_id_block: u64,
+    pub pool_id_tx: u64,
+    pub details: Option<PoolDetails>,
+}
+
 /// Pool details information structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolDetails {
