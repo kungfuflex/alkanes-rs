@@ -346,6 +346,7 @@ dependencies = [
  "env_logger 0.11.8",
  "futures",
  "hex",
+ "leb128",
  "log",
  "predicates",
  "prost",

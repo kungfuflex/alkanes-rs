@@ -443,14 +443,112 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         },
-        Alkanes::Simulate { contract_id, params, block_tag, raw } => {
-            let context: alkanes_cli_common::proto::alkanes::MessageContextParcel = if let Some(_p) = params {
-                // TODO: Parse params - for now use default
-                Default::default()
+        Alkanes::Simulate { 
+            alkane_id, 
+            inputs, 
+            height, 
+            block, 
+            transaction, 
+            pointer, 
+            txindex, 
+            refund, 
+            block_tag, 
+            raw 
+        } => {
+            use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128};
+            use alkanes_cli_common::traits::MetashrewRpcProvider;
+            
+            // Parse alkane_id (format: block:tx:calldata_opcode, e.g., 4:65522:3)
+            let parts: Vec<&str> = alkane_id.split(':').collect();
+            if parts.len() < 2 {
+                return Err(anyhow::anyhow!("Invalid alkane_id format. Expected block:tx or block:tx:calldata_opcode"));
+            }
+            
+            let target_block: u64 = parts[0].parse()?;
+            let target_tx: u64 = parts[1].parse()?;
+            let calldata_opcode: u64 = if parts.len() >= 3 {
+                parts[2].parse()?
             } else {
-                Default::default()
+                0
             };
-            let result = system.provider().simulate(&contract_id, &context, block_tag).await?;
+            
+            // Parse input alkanes (format: block:tx:amount,block:tx:amount,...)
+            let mut alkane_transfers = Vec::new();
+            if let Some(inputs_str) = inputs {
+                for input in inputs_str.split(',') {
+                    let input_parts: Vec<&str> = input.trim().split(':').collect();
+                    if input_parts.len() != 3 {
+                        return Err(anyhow::anyhow!("Invalid input format '{}'. Expected block:tx:amount", input));
+                    }
+                    let input_block: u64 = input_parts[0].parse()?;
+                    let input_tx: u64 = input_parts[1].parse()?;
+                    let input_amount: u128 = input_parts[2].parse()?;
+                    
+                    alkane_transfers.push(AlkaneTransfer {
+                        id: Some(AlkaneId {
+                            block: Some(Uint128 {
+                                lo: input_block,
+                                hi: 0,
+                            }),
+                            tx: Some(Uint128 {
+                                lo: input_tx,
+                                hi: 0,
+                            }),
+                        }),
+                        value: Some(Uint128 {
+                            lo: (input_amount & 0xFFFFFFFFFFFFFFFF) as u64,
+                            hi: (input_amount >> 64) as u64,
+                        }),
+                    });
+                }
+            }
+            
+            // Get height - default to current metashrew_height if not provided
+            let simulation_height = if let Some(h) = height {
+                h
+            } else {
+                system.provider().get_metashrew_height().await?
+            };
+            
+            // Parse block hex if provided
+            let block_bytes = if let Some(block_hex) = block {
+                let hex_str = block_hex.strip_prefix("0x").unwrap_or(&block_hex);
+                hex::decode(hex_str)?
+            } else {
+                Vec::new()
+            };
+            
+            // Parse transaction hex if provided
+            let transaction_bytes = if let Some(tx_hex) = transaction {
+                let hex_str = tx_hex.strip_prefix("0x").unwrap_or(&tx_hex);
+                hex::decode(hex_str)?
+            } else {
+                Vec::new()
+            };
+            
+            // Build calldata: target_block, target_tx, calldata_opcode
+            let mut calldata = Vec::new();
+            leb128::write::unsigned(&mut calldata, target_block).unwrap();
+            leb128::write::unsigned(&mut calldata, target_tx).unwrap();
+            leb128::write::unsigned(&mut calldata, calldata_opcode).unwrap();
+            
+            // Construct MessageContextParcel
+            let context = MessageContextParcel {
+                alkanes: alkane_transfers,
+                transaction: transaction_bytes,
+                block: block_bytes,
+                height: simulation_height,
+                vout: 0,
+                txindex,
+                calldata,
+                pointer,
+                refund_pointer: refund,
+            };
+            
+            // Run simulation
+            let contract_id_str = format!("{}:{}", target_block, target_tx);
+            let result = system.provider().simulate(&contract_id_str, &context, block_tag).await?;
+            
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {

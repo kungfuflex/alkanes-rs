@@ -851,10 +851,29 @@ pub enum Alkanes {
     },
     /// Simulate an alkanes transaction
     Simulate {
-        /// The contract ID to simulate
-        contract_id: String,
-        /// The parameters to pass to the contract
-        params: Option<String>,
+        /// The alkane ID to simulate (format: block:tx:calldata_opcode, e.g., 4:65522:3)
+        alkane_id: String,
+        /// Input alkanes as comma-separated triplets (e.g., 2:1:1,2:2:100)
+        #[arg(long)]
+        inputs: Option<String>,
+        /// Block height for simulation (defaults to current metashrew_height)
+        #[arg(long)]
+        height: Option<u64>,
+        /// Block hex data (0x prefixed)
+        #[arg(long)]
+        block: Option<String>,
+        /// Transaction hex data (0x prefixed)
+        #[arg(long)]
+        transaction: Option<String>,
+        /// Pointer value (defaults to 0)
+        #[arg(long, default_value = "0")]
+        pointer: u32,
+        /// Transaction index (defaults to 1)
+        #[arg(long, default_value = "1")]
+        txindex: u32,
+        /// Refund pointer (defaults to 0)
+        #[arg(long, default_value = "0")]
+        refund: u32,
         /// Block tag to query (e.g., "latest" or a block height)
         #[arg(long)]
         block_tag: Option<String>,
