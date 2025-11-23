@@ -449,7 +449,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             inputs, 
             height, 
             block, 
-            transaction, 
+            transaction,
+            envelope,
             pointer, 
             txindex, 
             refund, 
@@ -458,6 +459,10 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
         } => {
             use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128};
             use alkanes_cli_common::traits::MetashrewRpcProvider;
+            use prost::Message;
+            use alkanes_support::envelope::RawEnvelope;
+            use bitcoin::{Transaction as BtcTransaction, TxIn, TxOut, OutPoint, Sequence, Amount, Address};
+            use bitcoin::transaction::Version;
             
             // Parse alkane_id (format: block:tx:calldata_opcode, e.g., 4:65522:3)
             let parts: Vec<&str> = alkane_id.split(':').collect();
@@ -519,10 +524,43 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 Vec::new()
             };
             
-            // Parse transaction hex if provided
+            // Parse transaction hex if provided, or create from envelope
             let transaction_bytes = if let Some(tx_hex) = transaction {
                 let hex_str = tx_hex.strip_prefix("0x").unwrap_or(&tx_hex);
                 hex::decode(hex_str)?
+            } else if let Some(envelope_path) = envelope {
+                // Read binary file and pack into transaction witness
+                let binary_data = std::fs::read(&envelope_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to read envelope file '{}': {}", envelope_path, e))?;
+                
+                log::info!("Read {} bytes from envelope file: {}", binary_data.len(), envelope_path);
+                
+                // Create envelope and witness
+                let raw_envelope = RawEnvelope::from(binary_data);
+                let witness = raw_envelope.to_witness(true); // true = compress
+                
+                // Create a minimal transaction with the witness
+                let tx = BtcTransaction {
+                    version: Version::ONE,
+                    lock_time: bitcoin::absolute::LockTime::ZERO,
+                    input: vec![TxIn {
+                        previous_output: OutPoint::null(),
+                        script_sig: bitcoin::ScriptBuf::new(),
+                        sequence: Sequence::MAX,
+                        witness,
+                    }],
+                    output: vec![],
+                };
+                
+                // Serialize the transaction
+                use bitcoin::consensus::Encodable;
+                let mut tx_bytes = Vec::new();
+                tx.consensus_encode(&mut tx_bytes)
+                    .map_err(|e| anyhow::anyhow!("Failed to encode transaction: {}", e))?;
+                
+                log::info!("Created transaction with envelope: {} bytes", tx_bytes.len());
+                
+                tx_bytes
             } else {
                 Vec::new()
             };
@@ -535,21 +573,90 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             
             // Construct MessageContextParcel
             let context = MessageContextParcel {
-                alkanes: alkane_transfers,
-                transaction: transaction_bytes,
-                block: block_bytes,
+                alkanes: alkane_transfers.clone(),
+                transaction: transaction_bytes.clone(),
+                block: block_bytes.clone(),
                 height: simulation_height,
                 vout: 0,
                 txindex,
-                calldata,
+                calldata: calldata.clone(),
                 pointer,
                 refund_pointer: refund,
             };
+            
+            // Debug: Log the context summary
+            log::debug!("Simulating alkane {}:{} with opcode {}", target_block, target_tx, calldata_opcode);
+            log::debug!("Context: height={}, txindex={}, {} input alkanes", 
+                simulation_height, txindex, context.alkanes.len());
             
             // Run simulation
             let contract_id_str = format!("{}:{}", target_block, target_tx);
             let result = system.provider().simulate(&contract_id_str, &context, block_tag).await?;
             
+            // Try to decode the result if it's a hex string
+            if let Some(hex_str) = result.as_str() {
+                let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+                if let Ok(bytes) = hex::decode(hex_data) {
+                    // Try to decode as SimulateResponse
+                    use alkanes_cli_common::proto::alkanes::SimulateResponse;
+                    if let Ok(sim_response) = SimulateResponse::decode(bytes.as_slice()) {
+                        if raw {
+                            // Convert SimulateResponse to JSON for raw output
+                            let json_response = serde_json::json!({
+                                "gas_used": sim_response.gas_used,
+                                "error": sim_response.error,
+                                "execution": sim_response.execution.as_ref().map(|exec| {
+                                    serde_json::json!({
+                                        "data": format!("0x{}", hex::encode(&exec.data)),
+                                        "alkanes": exec.alkanes.iter().map(|transfer| {
+                                            serde_json::json!({
+                                                "id": transfer.id.as_ref().map(|id| {
+                                                    serde_json::json!({
+                                                        "block": id.block.as_ref().map(|b| b.lo).unwrap_or(0),
+                                                        "tx": id.tx.as_ref().map(|t| t.lo).unwrap_or(0),
+                                                    })
+                                                }),
+                                                "value": transfer.value.as_ref().map(|v| {
+                                                    ((v.hi as u128) << 64) | (v.lo as u128)
+                                                }).unwrap_or(0).to_string(),
+                                            })
+                                        }).collect::<Vec<_>>(),
+                                        "storage": exec.storage.iter().map(|kv| {
+                                            serde_json::json!({
+                                                "key": format!("0x{}", hex::encode(&kv.key)),
+                                                "value": format!("0x{}", hex::encode(&kv.value)),
+                                            })
+                                        }).collect::<Vec<_>>(),
+                                    })
+                                }),
+                            });
+                            println!("{}", serde_json::to_string_pretty(&json_response)?);
+                        } else {
+                            println!("Simulation completed successfully");
+                            if let Some(execution) = &sim_response.execution {
+                                println!("  Gas used: {}", sim_response.gas_used);
+                                println!("  Data: 0x{}", hex::encode(&execution.data));
+                                println!("  Alkane transfers: {}", execution.alkanes.len());
+                                for (i, transfer) in execution.alkanes.iter().enumerate() {
+                                    if let (Some(id), Some(value)) = (&transfer.id, &transfer.value) {
+                                        if let (Some(block), Some(tx)) = (&id.block, &id.tx) {
+                                            let amount = ((value.hi as u128) << 64) | (value.lo as u128);
+                                            println!("    [{}] {}:{} = {}", i, block.lo, tx.lo, amount);
+                                        }
+                                    }
+                                }
+                                println!("  Storage changes: {}", execution.storage.len());
+                            }
+                            if !sim_response.error.is_empty() {
+                                println!("  Error: {}", sim_response.error);
+                            }
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+            
+            // Fallback to raw JSON output
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {

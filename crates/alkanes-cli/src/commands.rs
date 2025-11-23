@@ -866,8 +866,11 @@ pub enum Alkanes {
         #[arg(long)]
         block: Option<String>,
         /// Transaction hex data (0x prefixed)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "envelope")]
         transaction: Option<String>,
+        /// Path to binary file (e.g., WASM) to pack into transaction witness
+        #[arg(long, conflicts_with = "transaction")]
+        envelope: Option<String>,
         /// Pointer value (defaults to 0)
         #[arg(long, default_value = "0")]
         pointer: u32,
