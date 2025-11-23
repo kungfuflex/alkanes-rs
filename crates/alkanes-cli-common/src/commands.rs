@@ -1234,3 +1234,19 @@ pub enum OrdCommands {
         raw: bool,
     },
 }
+/// Sandshrew subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum SandshrewCommands {
+    /// Execute a Lua script
+    Evalscript {
+        /// Path to Lua script file
+        #[arg(long)]
+        script: String,
+        /// Arguments to pass to the script
+        #[arg(num_args = 0..)]
+        args: Vec<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+}

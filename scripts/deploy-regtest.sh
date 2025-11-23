@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WASM_DIR="$SCRIPT_DIR/../prod_wasms"
 WALLET_FILE="${WALLET_FILE:-$HOME/.alkanes/wallet.json}"
 DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-testtesttest}"
-RPC_URL="http://localhost:18888"
+RPC_URL="http://127.0.0.1:18888"
 
 # OYL AMM Constants (matching oyl-sdk deployment pattern from pseudocode)
 AUTH_TOKEN_FACTORY_ID=65517      # 0xffed

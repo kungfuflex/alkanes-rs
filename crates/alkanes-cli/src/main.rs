@@ -73,10 +73,10 @@ async fn main() -> Result<()> {
     });
 
     // Execute other commands
-    execute_command(&mut system, args.command, brc20_prog_rpc_url).await
+    execute_command(&mut system, args.command, brc20_prog_rpc_url, args.sandshrew_rpc_url.clone()).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>) -> Result<()> {
+async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, sandshrew_rpc_url: Option<String>) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
@@ -86,6 +86,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Ord(cmd) => execute_ord_command(system.provider(), cmd.into()).await,
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
+        Commands::Sandshrew(command) => execute_sandshrew_command(system.provider(), command, sandshrew_rpc_url).await,
         Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url).await,
         Commands::Dataapi(_) => {
             // Dataapi is handled in main() because it doesn't need the System trait
@@ -2510,4 +2511,96 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             Ok(())
         }
     }
+}
+
+async fn execute_sandshrew_command(
+    provider: &dyn DeezelProvider,
+    command: crate::commands::SandshrewCommands,
+    rpc_url: Option<String>,
+) -> anyhow::Result<()> {
+    use crate::commands::SandshrewCommands;
+    use sha2::{Digest, Sha256};
+    use std::fs;
+
+    let rpc_url = rpc_url.ok_or_else(|| anyhow::anyhow!("Sandshrew RPC URL not set. Use --sandshrew-rpc-url"))?;
+
+    match command {
+        SandshrewCommands::Evalscript { script, args, raw } => {
+            let script_content = fs::read_to_string(&script)
+                .map_err(|e| anyhow::anyhow!("Failed to read script file {}: {}", script, e))?;
+
+            // Hash the script
+            let mut hasher = Sha256::new();
+            hasher.update(script_content.as_bytes());
+            let script_hash = hex::encode(hasher.finalize());
+
+            // Resolve args
+            let mut resolved_args = Vec::new();
+            for arg in args {
+                match provider.resolve_all_identifiers(&arg).await {
+                    Ok(resolved) => resolved_args.push(serde_json::Value::String(resolved)),
+                    Err(_) => resolved_args.push(serde_json::Value::String(arg)),
+                }
+            }
+
+            let client = reqwest::Client::new();
+
+            // Try evalsaved
+            let mut params = vec![serde_json::Value::String(script_hash.clone())];
+            params.extend(resolved_args.clone());
+
+            let request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "sandshrew_evalsaved",
+                "params": params,
+                "id": 1
+            });
+
+            let response = client.post(&rpc_url)
+                .json(&request)
+                .send()
+                .await?;
+
+            let response_json: serde_json::Value = response.json().await?;
+
+            if let Some(error) = response_json.get("error") {
+                // Check if error indicates script not found
+                let error_msg = error.get("message").and_then(|s| s.as_str()).unwrap_or("");
+                if error_msg.contains("Script not found") {
+                    // Fallback to evalscript
+                    if !raw {
+                        println!("Script not cached (hash: {}), falling back to evalscript...", script_hash);
+                    }
+
+                    let mut params = vec![serde_json::Value::String(script_content)];
+                    params.extend(resolved_args);
+
+                    let request = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "sandshrew_evalscript",
+                        "params": params,
+                        "id": 1
+                    });
+
+                    let response = client.post(&rpc_url)
+                        .json(&request)
+                        .send()
+                        .await?;
+                    
+                    let response_json: serde_json::Value = response.json().await?;
+                    
+                    if let Some(result) = response_json.get("result") {
+                        println!("{}", serde_json::to_string_pretty(result)?);
+                    } else if let Some(error) = response_json.get("error") {
+                         return Err(anyhow::anyhow!("RPC error: {}", error));
+                    }
+                } else {
+                    return Err(anyhow::anyhow!("RPC error: {}", error));
+                }
+            } else if let Some(result) = response_json.get("result") {
+                println!("{}", serde_json::to_string_pretty(result)?);
+            }
+        }
+    }
+    Ok(())
 }
