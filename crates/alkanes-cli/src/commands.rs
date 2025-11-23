@@ -107,6 +107,9 @@ pub enum Commands {
     /// DataAPI subcommands - Query data from alkanes-data-api
     #[command(subcommand)]
     Dataapi(DataApiCommand),
+    /// Sandshrew RPC operations
+    #[command(subcommand)]
+    Sandshrew(SandshrewCommands),
 }
 
 /// Metashrew subcommands
@@ -1502,4 +1505,21 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
             },
         }
     }
+}
+
+/// Sandshrew subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum SandshrewCommands {
+    /// Execute a Lua script
+    Evalscript {
+        /// Path to Lua script file
+        #[arg(long)]
+        script: String,
+        /// Arguments to pass to the script
+        #[arg(num_args = 0..)]
+        args: Vec<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
