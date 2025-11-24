@@ -2790,6 +2790,73 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(result)
     }
 
+    async fn trace_protostones(&self, txid: &str) -> Result<Option<Vec<JsonValue>>> {
+        use prost::Message;
+        
+        // Get transaction
+        let tx_hex = self.get_transaction_hex(txid).await?;
+        let tx_bytes = hex::decode(&tx_hex).map_err(|e| AlkanesError::Hex(e.to_string()))?;
+        let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)
+            .map_err(|e| AlkanesError::Serialization(e.to_string()))?;
+        
+        // Decode runestone to get protostones
+        let result = crate::runestone_enhanced::format_runestone_with_decoded_messages(&tx)
+            .map_err(|e| AlkanesError::Other(format!("Failed to decode runestone: {}", e)))?;
+        
+        // Extract number of protostones
+        let num_protostones = if let Some(protostones) = result.get("protostones").and_then(|p| p.as_array()) {
+            protostones.len()
+        } else {
+            0
+        };
+        
+        if num_protostones == 0 {
+            return Ok(None);
+        }
+        
+        // Calculate virtual vout indices and trace each protostone
+        // Protostones are indexed starting at tx.output.len() + 1
+        let base_vout = tx.output.len() as u32 + 1;
+        let mut all_traces = Vec::new();
+        
+        for i in 0..num_protostones {
+            let vout = base_vout + i as u32;
+            let outpoint = format!("{}:{}", txid, vout);
+            
+            match self.trace(&outpoint).await {
+                Ok(trace_pb) => {
+                    if let Some(alkanes_trace) = trace_pb.trace {
+                        match alkanes_support::trace::Trace::try_from(
+                            Message::encode_to_vec(&alkanes_trace)
+                        ) {
+                            Ok(trace) => {
+                                let json = crate::alkanes::trace::trace_to_json(&trace);
+                                all_traces.push(json);
+                            }
+                            Err(e) => {
+                                all_traces.push(serde_json::json!({
+                                    "error": format!("Failed to decode trace: {}", e),
+                                    "events": []
+                                }));
+                            }
+                        }
+                    } else {
+                        // Empty trace - this is normal
+                        all_traces.push(serde_json::json!({"events": []}));
+                    }
+                }
+                Err(e) => {
+                    all_traces.push(serde_json::json!({
+                        "error": format!("Failed to trace: {}", e),
+                        "events": []
+                    }));
+                }
+            }
+        }
+        
+        Ok(Some(all_traces))
+    }
+
     async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
         use bitcoin::consensus::Decodable;
         use std::io::Cursor;

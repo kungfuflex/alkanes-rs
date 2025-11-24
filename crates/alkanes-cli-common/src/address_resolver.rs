@@ -1043,6 +1043,10 @@ impl AlkanesProvider for StandaloneAddressResolver {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
+    async fn trace_protostones(&self, _txid: &str) -> Result<Option<Vec<crate::JsonValue>>> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
+    }
+
     async fn get_block(&self, _height: u64) -> Result<crate::proto::alkanes::BlockResponse> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }

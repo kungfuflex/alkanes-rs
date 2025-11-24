@@ -826,6 +826,10 @@ impl AlkanesProvider for MockProvider {
     async fn trace(&self, _outpoint: &str) -> Result<crate::proto::alkanes::Trace> {
         Err(AlkanesError::NotImplemented("trace".to_string()))
     }
+
+    async fn trace_protostones(&self, _txid: &str) -> Result<Option<Vec<crate::JsonValue>>> {
+        Err(AlkanesError::NotImplemented("trace_protostones".to_string()))
+    }
     async fn get_block(&self, _height: u64) -> Result<crate::proto::alkanes::BlockResponse> {
         Err(AlkanesError::NotImplemented("get_block".to_string()))
     }

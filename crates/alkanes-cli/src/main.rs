@@ -2265,7 +2265,6 @@ async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone
         }
         Runestone::Trace { txid, raw } => {
             use alkanes_cli_common::traits::AlkanesProvider;
-            use prost::Message;
             
             // Get and analyze transaction
             let tx_hex = system.provider().get_transaction_hex(&txid).await?;
@@ -2285,93 +2284,47 @@ async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone
                 println!("🔍 ═══════════════════════════════════════════════════════════════\n");
             }
             
-            // Extract number of protostones
-            let num_protostones = if let Some(protostones) = result.get("protostones").and_then(|p| p.as_array()) {
-                protostones.len()
-            } else {
-                0
-            };
+            // Use the abstracted trace_protostones method
+            let traces_opt = system.provider().trace_protostones(&txid).await?;
             
-            if num_protostones == 0 {
+            if let Some(all_traces) = traces_opt {
+                if raw {
+                    let output = serde_json::json!({
+                        "transaction": result,
+                        "traces": all_traces
+                    });
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                } else {
+                    // Print each trace nicely
+                    for (i, trace_json) in all_traces.iter().enumerate() {
+                        let vout = tx.output.len() as u32 + 1 + i as u32;
+                        println!("📊 Protostone #{} (virtual vout {}):", i + 1, vout);
+                        println!("   Outpoint: {}:{}\n", txid, vout);
+                        
+                        if let Some(error) = trace_json.get("error") {
+                            println!("   ❌ Error: {}\n", error);
+                        } else if let Some(events) = trace_json.get("events").and_then(|e| e.as_array()) {
+                            if events.is_empty() {
+                                println!("   ⚠️ No trace data found.\n");
+                            } else {
+                                // Format the trace nicely - convert back to Trace struct for pretty formatting
+                                use prost::Message;
+                                // For now, just print the JSON
+                                println!("{}\n", serde_json::to_string_pretty(trace_json)?);
+                            }
+                        }
+                    }
+                    
+                    println!("🎯 ═══════════════════════════════════════════════════════════════");
+                    println!("✨                      TRACE COMPLETE                         ✨");
+                    println!("🎯 ═══════════════════════════════════════════════════════════════");
+                }
+            } else {
                 if raw {
                     println!("{{\"transaction\": {}, \"traces\": []}}", serde_json::to_string_pretty(&result)?);
                 } else {
                     println!("📭 No protostones found in this transaction.\n");
                 }
-                return Ok(());
-            }
-            
-            // Calculate virtual vout indices and trace each protostone
-            // Protostones are indexed starting at tx.output.len() + 1
-            let base_vout = tx.output.len() as u32 + 1;
-            let mut all_traces = Vec::new();
-            
-            for i in 0..num_protostones {
-                let vout = base_vout + i as u32;
-                let outpoint = format!("{}:{}", txid, vout);
-                
-                if !raw {
-                    println!("📊 Protostone #{} (virtual vout {}):", i + 1, vout);
-                    println!("   Outpoint: {}\n", outpoint);
-                }
-                
-                match system.provider().trace(&outpoint).await {
-                    Ok(trace_pb) => {
-                        if let Some(alkanes_trace) = trace_pb.trace {
-                            match alkanes_support::trace::Trace::try_from(
-                                Message::encode_to_vec(&alkanes_trace)
-                            ) {
-                                Ok(trace) => {
-                                    if raw {
-                                        let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
-                                        all_traces.push(json);
-                                    } else {
-                                        let pretty = alkanes_cli_common::alkanes::trace::format_trace_pretty(&trace);
-                                        println!("{}\n", pretty);
-                                    }
-                                }
-                                Err(e) => {
-                                    if raw {
-                                        all_traces.push(serde_json::json!({
-                                            "error": format!("Failed to decode trace: {}", e),
-                                            "events": []
-                                        }));
-                                    } else {
-                                        println!("   ❌ Error: Failed to decode trace: {}\n", e);
-                                    }
-                                }
-                            }
-                        } else {
-                            if raw {
-                                all_traces.push(serde_json::json!({"events": []}));
-                            } else {
-                                println!("   ⚠️ No trace data found.\n");
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        if raw {
-                            all_traces.push(serde_json::json!({
-                                "error": format!("Failed to trace: {}", e),
-                                "events": []
-                            }));
-                        } else {
-                            println!("   ❌ Error: {}\n", e);
-                        }
-                    }
-                }
-            }
-            
-            if raw {
-                let output = serde_json::json!({
-                    "transaction": result,
-                    "traces": all_traces
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else {
-                println!("🎯 ═══════════════════════════════════════════════════════════════");
-                println!("✨                      TRACE COMPLETE                         ✨");
-                println!("🎯 ═══════════════════════════════════════════════════════════════");
             }
         }
     }

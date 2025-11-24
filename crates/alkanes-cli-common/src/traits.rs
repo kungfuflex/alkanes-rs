@@ -765,6 +765,10 @@ pub trait AlkanesProvider {
     async fn inspect(&self, target: &str, config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult>;
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>>;
     async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>>;
+    
+    /// Trace all protostones in a transaction (runestone trace)
+    /// Returns None if no protostones, or Some(Vec<JsonValue>) with trace for each protostone
+    async fn trace_protostones(&self, txid: &str) -> Result<Option<Vec<JsonValue>>>;
 }
 
 /// Trait for monitoring operations
@@ -1393,6 +1397,9 @@ impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     }
     async fn inspect(&self, target: &str, config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult> {
         (**self).inspect(target, config).await
+    }
+    async fn trace_protostones(&self, txid: &str) -> Result<Option<Vec<JsonValue>>> {
+        (**self).trace_protostones(txid).await
     }
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>> {
         AlkanesProvider::get_balance(&**self, address).await

@@ -741,6 +741,10 @@ impl AlkanesProvider for SystemAlkanes {
     async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         self.provider.trace(outpoint).await
     }
+
+    async fn trace_protostones(&self, txid: &str) -> Result<Option<Vec<alkanes_cli_common::JsonValue>>> {
+        self.provider.trace_protostones(txid).await
+    }
     async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::BlockResponse> {
         <ConcreteProvider as AlkanesProvider>::get_block(&self.provider, height).await
     }
