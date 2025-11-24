@@ -80,6 +80,10 @@ chrono = { workspace = true }
 smallvec = { workspace = true }
 leb128 = { version = "0.2.5", default-features = false }
 
+# Alloy for Ethereum ABI encoding/decoding
+alloy-sol-types = { version = "0.7", default-features = false }
+alloy-primitives = { version = "0.7", default-features = false }
+
 # Alkanes-rs crates
 alkanes-support = { workspace = true }
 protorune-support = { workspace = true }

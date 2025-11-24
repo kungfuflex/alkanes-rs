@@ -121,6 +121,10 @@ pub struct RpcConfig {
     #[arg(long)]
     pub metashrew_rpc_url: Option<String>,
 
+    /// BRC20-Prog RPC URL (for querying BRC20-Prog contracts, defaults based on network)
+    #[arg(long)]
+    pub brc20_prog_rpc_url: Option<String>,
+
     /// RPC timeout in seconds
     #[arg(long, default_value = "600")]
     pub timeout_seconds: u64,
@@ -163,6 +167,15 @@ impl RpcConfig {
             "testnet" => "https://testnet.sandshrew.io/v2/lasereyes".to_string(),
             "signet" => "https://signet.sandshrew.io/v2/lasereyes".to_string(),
             _ => "http://localhost:18888".to_string(), // regtest
+        }
+    }
+    
+    /// Get default BRC20-Prog RPC URL for the network
+    pub fn get_default_brc20_prog_rpc_url(&self) -> Option<String> {
+        match self.provider.as_str() {
+            "mainnet" => Some("https://rpc.brc20.build".to_string()),
+            "signet" => Some("https://signet-rpc.brc20.build".to_string()),
+            _ => None, // No default for testnet or regtest
         }
     }
     
@@ -291,6 +304,7 @@ impl Default for RpcConfig {
             esplora_url: None,
             ord_url: None,
             metashrew_rpc_url: Some("http://localhost:18888".to_string()),
+            brc20_prog_rpc_url: None,
             timeout_seconds: 600,
         }
     }

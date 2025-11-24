@@ -1104,6 +1104,9 @@ impl DeezelProvider for StandaloneAddressResolver {
     fn get_metashrew_rpc_url(&self) -> Option<String> {
         None
     }
+    fn get_brc20_prog_rpc_url(&self) -> Option<String> {
+        None
+    }
     fn provider_name(&self) -> &str {
         "StandaloneAddressResolver"
     }

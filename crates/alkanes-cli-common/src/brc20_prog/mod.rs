@@ -5,12 +5,14 @@
 pub mod calldata;
 pub mod contract_address;
 pub mod envelope;
+pub mod eth_call;
 pub mod execute;
 pub mod foundry;
 pub mod types;
 pub mod wrap_btc;
 
 pub use calldata::encode_function_call;
+pub use eth_call::{eth_call, get_payments_length, get_signer_address, get_payment, Payment};
 pub use contract_address::{compute_contract_address, pkscript_to_eth_address};
 pub use envelope::Brc20ProgEnvelope;
 pub use execute::Brc20ProgExecutor;
@@ -20,4 +22,9 @@ pub use types::{
     Brc20ProgExecuteResult, Brc20ProgInscriptionType, Brc20ProgDeployInscription,
     Brc20ProgCallInscription,
 };
-pub use wrap_btc::{Brc20ProgWrapBtcExecutor, Brc20ProgWrapBtcParams, FRBTC_CONTRACT_ADDRESS};
+pub use wrap_btc::{
+    Brc20ProgWrapBtcExecutor, Brc20ProgWrapBtcParams,
+    FRBTC_CONTRACT_ADDRESS,
+    DEFAULT_FRBTC_ADDRESS_MAINNET, DEFAULT_FRBTC_ADDRESS_SIGNET, DEFAULT_FRBTC_ADDRESS_REGTEST,
+    get_frbtc_address,
+};

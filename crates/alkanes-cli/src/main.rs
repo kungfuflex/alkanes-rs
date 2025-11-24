@@ -764,16 +764,26 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             } else {
                 if result.is_empty() {
                     println!("✨ No pending unwraps found");
+                    println!();
+                    println!("Note: Results are filtered to only show unwraps with spendable UTXOs in your wallet.");
+                    println!("      Already fulfilled unwraps are automatically excluded.");
                 } else {
                     println!("🔓 Pending Unwraps ({} total):", result.len());
                     println!();
+                    println!("Note: Showing only unwraps with spendable UTXOs still available in wallet.");
+                    println!("      Already fulfilled unwraps have been filtered out.");
+                    println!();
+                    
+                    let total_amount: u64 = result.iter().map(|u| u.amount).sum();
+                    println!("Total unwrap amount: {} sats ({:.8} BTC)", total_amount, total_amount as f64 / 100_000_000.0);
+                    println!();
+                    
                     for (i, unwrap) in result.iter().enumerate() {
-                        let status = if unwrap.fulfilled { "✅ Fulfilled" } else { "⏳ Pending" };
-                        println!("  {}. {}", i + 1, status);
+                        println!("  {}. ⏳ Pending", i + 1);
                         println!("     Outpoint: {}:{}", unwrap.txid, unwrap.vout);
-                        println!("     Amount:   {} sats", unwrap.amount);
+                        println!("     Amount:   {} sats ({:.8} BTC)", unwrap.amount, unwrap.amount as f64 / 100_000_000.0);
                         if let Some(ref addr) = unwrap.address {
-                            println!("     Address:  {}", addr);
+                            println!("     To:       {}", addr);
                         }
                         println!();
                     }

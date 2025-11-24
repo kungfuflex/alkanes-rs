@@ -152,6 +152,7 @@ impl ConcreteProvider {
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
+            brc20_prog_rpc_url: None,
             timeout_seconds: 600,
         };
         
@@ -188,6 +189,7 @@ impl ConcreteProvider {
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
+            brc20_prog_rpc_url: None,
             timeout_seconds: 600,
         };
         
@@ -2862,6 +2864,7 @@ impl AlkanesProvider for ConcreteProvider {
     async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
         use bitcoin::consensus::Decodable;
         use std::io::Cursor;
+        use std::collections::HashSet;
         
         // Get the current height if block_tag is not provided
         let (query_height, height_tag) = match &block_tag {
@@ -2881,27 +2884,105 @@ impl AlkanesProvider for ConcreteProvider {
             }
         };
         
-        // Call the view function
-        let height_bytes = (query_height as u128).to_le_bytes().to_vec();
-        let hex_input = format!("0x{}", hex::encode(height_bytes));
-        let response_bytes = self.metashrew_view_call("unwrap", &hex_input, &height_tag).await?;
+        // Call the view function to get all unwraps from the indexer
+        let params = serde_json::json!(["unwrap", "0x", query_height]);
+        let response = self.call(
+            &self.rpc_config.get_metashrew_rpc_target().url,
+            "metashrew_view",
+            params,
+            1,
+        ).await?;
+        
+        let hex_data = response.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("metashrew_view result is not a string".to_string()))?;
+        let hex_data_stripped = hex_data.strip_prefix("0x").unwrap_or(hex_data);
+        let response_bytes = hex::decode(hex_data_stripped)
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode hex response: {}", e)))?;
         
         if response_bytes.is_empty() {
             return Ok(vec![]);
         }
         
         // Decode the protobuf response
-        let response = crate::proto::alkanes::PendingUnwrapsResponse::decode(response_bytes.as_slice())?;
+        let unwraps_response = crate::proto::alkanes::PendingUnwrapsResponse::decode(response_bytes.as_slice())?;
         
-        // Convert proto payments to PendingUnwrap structs
+        if unwraps_response.payments.is_empty() {
+            log::info!("No pending unwraps found in indexer");
+            return Ok(vec![]);
+        }
+        
+        log::info!("Initially found {} unwraps from indexer", unwraps_response.payments.len());
+        
+        // Get wallet address to filter by spendable UTXOs
+        // If we can't get an address (no wallet loaded), return unfiltered results
+        let wallet_address = match WalletProvider::get_address(self).await {
+            Ok(addr) => {
+                log::info!("Filtering unwraps by spendable UTXOs for address: {}", addr);
+                Some(addr)
+            },
+            Err(e) => {
+                log::warn!("No wallet address available ({}), returning unfiltered unwraps", e);
+                None
+            }
+        };
+        
+        // If we have a wallet address, filter by spendable UTXOs
+        let spendable_outpoints = if let Some(address) = wallet_address {
+            // Call sandshrew_balances to get current UTXOs
+            let sandshrew_url = self.rpc_config.sandshrew_rpc_url.clone()
+                .ok_or_else(|| AlkanesError::Configuration("sandshrew_rpc_url not configured".to_string()))?;
+            
+            let params = serde_json::json!([{ "address": address }]);
+            let balances = self.call(&sandshrew_url, "sandshrew_balances", params, 1).await?;
+            
+            log::debug!("Received balances from sandshrew: {:?}", balances);
+            
+            // Extract spendable outpoints from both "spendable" and "assets" arrays
+            let mut outpoints = HashSet::new();
+            for array_key in ["spendable", "assets"] {
+                if let Some(utxos) = balances[array_key].as_array() {
+                    for utxo in utxos {
+                        if let Some(outpoint_str) = utxo["outpoint"].as_str() {
+                            let parts: Vec<&str> = outpoint_str.split(':').collect();
+                            if parts.len() == 2 {
+                                if let (Ok(txid), Ok(vout)) = (
+                                    bitcoin::Txid::from_str(parts[0]),
+                                    parts[1].parse::<u32>()
+                                ) {
+                                    outpoints.insert(bitcoin::OutPoint::new(txid, vout));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            log::info!("Found {} spendable UTXOs in wallet", outpoints.len());
+            Some(outpoints)
+        } else {
+            None
+        };
+        
+        // Convert proto payments to PendingUnwrap structs, filtering if we have spendables
         let mut result = Vec::new();
-        for payment in response.payments {
+        for payment in unwraps_response.payments {
             let spendable = payment.spendable.ok_or_else(|| {
                 AlkanesError::RpcError("Payment missing spendable field".to_string())
             })?;
             
-            let txid = hex::encode(&spendable.txid);
+            let txid_bytes = spendable.txid.clone();
+            let txid = bitcoin::Txid::from_slice(&txid_bytes)
+                .map_err(|e| AlkanesError::RpcError(format!("Invalid txid in spendable: {}", e)))?;
             let vout = spendable.vout;
+            let outpoint = bitcoin::OutPoint::new(txid, vout);
+            
+            // If we're filtering, only include unwraps whose spendable UTXO still exists
+            if let Some(ref spendables) = spendable_outpoints {
+                if !spendables.contains(&outpoint) {
+                    log::debug!("Skipping fulfilled unwrap: {}:{}", txid, vout);
+                    continue;
+                }
+            }
             
             // Decode the TxOut from the output bytes
             let mut cursor = Cursor::new(payment.output);
@@ -2916,7 +2997,7 @@ impl AlkanesProvider for ConcreteProvider {
                 .map(|a| a.to_string());
             
             result.push(crate::alkanes::PendingUnwrap {
-                txid,
+                txid: txid.to_string(),
                 vout,
                 amount,
                 address,
@@ -2924,6 +3005,7 @@ impl AlkanesProvider for ConcreteProvider {
             });
         }
         
+        log::info!("Returning {} pending unwraps after filtering", result.len());
         Ok(result)
     }
 }
@@ -2948,6 +3030,16 @@ impl DeezelProvider for ConcreteProvider {
 
     fn get_metashrew_rpc_url(&self) -> Option<String> {
         self.rpc_config.metashrew_rpc_url.clone()
+    }
+
+    fn get_brc20_prog_rpc_url(&self) -> Option<String> {
+        // If explicitly set, use that
+        if let Some(ref url) = self.rpc_config.brc20_prog_rpc_url {
+            return Some(url.clone());
+        }
+        
+        // Otherwise, use default based on network
+        self.rpc_config.get_default_brc20_prog_rpc_url()
     }
 
     fn clone_box(&self) -> Box<dyn DeezelProvider> {

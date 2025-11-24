@@ -264,7 +264,11 @@ impl DeezelProvider for SystemAlkanes {
     }
 
     fn get_metashrew_rpc_url(&self) -> Option<String> {
-        unimplemented!()
+        self.provider.get_metashrew_rpc_url()
+    }
+
+    fn get_brc20_prog_rpc_url(&self) -> Option<String> {
+        self.provider.get_brc20_prog_rpc_url()
     }
 
     async fn wrap(&mut self, _amount: u64, _address: Option<String>, _fee_rate: Option<f32>) -> Result<String> {

@@ -826,6 +826,9 @@ pub trait DeezelProvider:
     /// Get the Metashrew RPC URL
     fn get_metashrew_rpc_url(&self) -> Option<String>;
 
+    /// Get the BRC20-Prog RPC URL
+    fn get_brc20_prog_rpc_url(&self) -> Option<String>;
+
     /// Create a boxed, clonable version of the provider
     fn clone_box(&self) -> Box<dyn DeezelProvider>;
     
@@ -1457,6 +1460,9 @@ impl<T: DeezelProvider + ?Sized> DeezelProvider for Box<T> {
     }
     fn get_metashrew_rpc_url(&self) -> Option<String> {
         (**self).get_metashrew_rpc_url()
+    }
+    fn get_brc20_prog_rpc_url(&self) -> Option<String> {
+        (**self).get_brc20_prog_rpc_url()
     }
     fn clone_box(&self) -> Box<dyn DeezelProvider> {
         DeezelProvider::clone_box(&**self)

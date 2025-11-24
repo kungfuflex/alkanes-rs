@@ -1515,6 +1515,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 esplora_url: args.esplora_api_url.clone(),
                 ord_url: args.ord_server_url.clone(),
                 metashrew_rpc_url: args.metashrew_rpc_url.clone(),
+                brc20_prog_rpc_url: args.brc20_prog_rpc_url.clone(),
                 timeout_seconds: 600,
             },
             magic: None,

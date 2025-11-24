@@ -38,9 +38,26 @@ pub struct Brc20ProgWrapBtcParams {
     pub auto_confirm: bool,
 }
 
-/// Dummy FrBTC contract address (placeholder until deployed)
-/// TODO: Update this with the actual deployed contract address
-pub const FRBTC_CONTRACT_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
+/// Default FrBTC contract addresses for different networks
+pub const DEFAULT_FRBTC_ADDRESS_MAINNET: &str = "0x0000000000000000000000000000000000000000";
+pub const DEFAULT_FRBTC_ADDRESS_SIGNET: &str = "0x2920DabE123a626bF5a8a08bB92c8E8FDfC05524";
+pub const DEFAULT_FRBTC_ADDRESS_REGTEST: &str = "0x0000000000000000000000000000000000000000";
+
+/// Legacy constant - kept for backward compatibility
+/// Use get_frbtc_address() with network parameter for network-specific addresses
+pub const FRBTC_CONTRACT_ADDRESS: &str = DEFAULT_FRBTC_ADDRESS_MAINNET;
+
+/// Get the appropriate FRBTC contract address for the given network
+pub fn get_frbtc_address(network: bitcoin::Network) -> &'static str {
+    use bitcoin::Network;
+    match network {
+        Network::Bitcoin => DEFAULT_FRBTC_ADDRESS_MAINNET,
+        Network::Signet => DEFAULT_FRBTC_ADDRESS_SIGNET,
+        Network::Regtest => DEFAULT_FRBTC_ADDRESS_REGTEST,
+        Network::Testnet => DEFAULT_FRBTC_ADDRESS_MAINNET, // Use mainnet address for testnet
+        _ => DEFAULT_FRBTC_ADDRESS_MAINNET,
+    }
+}
 
 /// Executor for brc20-prog wrap-btc operations
 pub struct Brc20ProgWrapBtcExecutor<'a> {
@@ -155,8 +172,28 @@ mod tests {
 
     #[test]
     fn test_frbtc_contract_address() {
-        // Verify the placeholder address is valid hex
+        // Verify all FRBTC addresses are valid hex
         assert!(FRBTC_CONTRACT_ADDRESS.starts_with("0x"));
         assert_eq!(FRBTC_CONTRACT_ADDRESS.len(), 42); // 0x + 40 hex chars
+        
+        assert!(DEFAULT_FRBTC_ADDRESS_MAINNET.starts_with("0x"));
+        assert_eq!(DEFAULT_FRBTC_ADDRESS_MAINNET.len(), 42);
+        
+        assert!(DEFAULT_FRBTC_ADDRESS_SIGNET.starts_with("0x"));
+        assert_eq!(DEFAULT_FRBTC_ADDRESS_SIGNET.len(), 42);
+        
+        assert!(DEFAULT_FRBTC_ADDRESS_REGTEST.starts_with("0x"));
+        assert_eq!(DEFAULT_FRBTC_ADDRESS_REGTEST.len(), 42);
+    }
+    
+    #[test]
+    fn test_get_frbtc_address() {
+        use bitcoin::Network;
+        
+        // Test network-specific addresses
+        assert_eq!(get_frbtc_address(Network::Bitcoin), DEFAULT_FRBTC_ADDRESS_MAINNET);
+        assert_eq!(get_frbtc_address(Network::Signet), DEFAULT_FRBTC_ADDRESS_SIGNET);
+        assert_eq!(get_frbtc_address(Network::Regtest), DEFAULT_FRBTC_ADDRESS_REGTEST);
+        assert_eq!(get_frbtc_address(Network::Testnet), DEFAULT_FRBTC_ADDRESS_MAINNET);
     }
 }
