@@ -3894,6 +3894,65 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
+        Brc20Prog::Unwrap { block_tag: _, raw } => {
+            use alkanes_cli_common::unwrap::{UnwrapProtocol, MetaprotocolUnwrap};
+            use alkanes_cli_common::traits::WalletProvider;
+            
+            // Create BRC20-Prog unwrap implementation
+            let unwrap_impl = UnwrapProtocol::Brc20Prog.create_unwrap_impl();
+            
+            // Get unfiltered unwraps from BRC20-Prog
+            let confirmations_required = 6; // Require 6 confirmations for safety
+            let all_unwraps = unwrap_impl.get_pending_unwraps(provider, confirmations_required).await?;
+            
+            log::info!("[BRC20-Prog Unwrap] Got {} unfiltered unwraps", all_unwraps.len());
+            
+            // Filter by wallet UTXOs
+            let wallet_utxos = provider.get_utxos(false, None).await?;
+            let wallet_utxo_set: std::collections::HashSet<String> = wallet_utxos
+                .iter()
+                .map(|(outpoint, _)| format!("{}:{}", outpoint.txid, outpoint.vout))
+                .collect();
+            
+            let result: Vec<_> = all_unwraps
+                .into_iter()
+                .filter(|u| wallet_utxo_set.contains(&format!("{}:{}", u.txid, u.vout)))
+                .collect();
+            
+            log::info!("[BRC20-Prog Unwrap] Filtered to {} spendable unwraps", result.len());
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                if result.is_empty() {
+                    println!("✨ No pending BRC20-Prog unwraps found");
+                    println!();
+                    println!("Note: Results are filtered to only show unwraps with spendable UTXOs in your wallet.");
+                    println!("      Already fulfilled unwraps are automatically excluded.");
+                } else {
+                    println!("🔓 Pending BRC20-Prog Unwraps ({} total):", result.len());
+                    println!();
+                    println!("Note: Showing only unwraps with spendable UTXOs still available in wallet.");
+                    println!("      Already fulfilled unwraps have been filtered out.");
+                    println!();
+                    
+                    let total_amount: u64 = result.iter().map(|u| u.amount).sum();
+                    println!("Total unwrap amount: {} sats ({:.8} BTC)", total_amount, total_amount as f64 / 100_000_000.0);
+                    println!();
+                    
+                    for (i, unwrap) in result.iter().enumerate() {
+                        println!("  {}. ⏳ Pending", i + 1);
+                        println!("     Outpoint: {}:{}", unwrap.txid, unwrap.vout);
+                        println!("     Amount:   {} sats ({:.8} BTC)", unwrap.amount, unwrap.amount as f64 / 100_000_000.0);
+                        if let Some(ref addr) = unwrap.address {
+                            println!("     To:       {}", addr);
+                        }
+                        println!();
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }
 

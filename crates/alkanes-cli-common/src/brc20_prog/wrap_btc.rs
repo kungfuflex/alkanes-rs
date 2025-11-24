@@ -40,7 +40,7 @@ pub struct Brc20ProgWrapBtcParams {
 
 /// Default FrBTC contract addresses for different networks
 pub const DEFAULT_FRBTC_ADDRESS_MAINNET: &str = "0x0000000000000000000000000000000000000000";
-pub const DEFAULT_FRBTC_ADDRESS_SIGNET: &str = "0x2920DabE123a626bF5a8a08bB92c8E8FDfC05524";
+pub const DEFAULT_FRBTC_ADDRESS_SIGNET: &str = "0x8A3d3eB978c754D3Abf2b293D67848af4041106f";
 pub const DEFAULT_FRBTC_ADDRESS_REGTEST: &str = "0x0000000000000000000000000000000000000000";
 
 /// Legacy constant - kept for backward compatibility

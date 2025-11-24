@@ -174,7 +174,7 @@ impl RpcConfig {
     pub fn get_default_brc20_prog_rpc_url(&self) -> Option<String> {
         match self.provider.as_str() {
             "mainnet" => Some("https://rpc.brc20.build".to_string()),
-            "signet" => Some("https://signet-rpc.brc20.build".to_string()),
+            "signet" => Some("https://rpc-signet.brc20.build".to_string()),
             _ => None, // No default for testnet or regtest
         }
     }

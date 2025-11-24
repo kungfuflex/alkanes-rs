@@ -137,18 +137,57 @@ pub async fn get_payment(
     
     let hex_stripped = response.strip_prefix("0x").unwrap_or(&response);
     let bytes = hex::decode(hex_stripped)
-        .map_err(|e| AlkanesError::RpcError(format!("Failed to decode response: {}", e)))?;
+        .map_err(|e| AlkanesError::RpcError(format!("Failed to decode response hex: {}", e)))?;
     
-    let payment_result = IFrBTC::paymentsCall::abi_decode_returns(&bytes, true)
-        .map_err(|e| AlkanesError::RpcError(format!("Failed to decode Payment struct: {}", e)))?;
+    log::debug!("[get_payment] Response length: {} bytes", bytes.len());
     
-    // Convert from alloy Payment to our Payment type
+    // Manual ABI decoding since alloy has issues with this struct format
+    // The response format for a struct with dynamic bytes is:
+    // [txid(32)] [vout(32)] [value(32)] [offset_to_recipient(32)] [height(32)] [recipient_length(32)] [recipient_data...] [padding]
+    
+    if bytes.len() < 192 {
+        return Err(AlkanesError::RpcError(format!("Response too short: {} bytes", bytes.len())));
+    }
+    
+    // Parse fixed fields
+    let mut txid = [0u8; 32];
+    txid.copy_from_slice(&bytes[0..32]);
+    
+    let vout = U256::from_be_slice(&bytes[32..64]).to::<u32>();
+    let value = U256::from_be_slice(&bytes[64..96]).to::<u64>();
+    let recipient_offset = U256::from_be_slice(&bytes[96..128]).to::<usize>();
+    let height = U256::from_be_slice(&bytes[128..160]).to::<u64>();
+    
+    // Parse dynamic bytes field
+    if bytes.len() < recipient_offset + 32 {
+        return Err(AlkanesError::RpcError(format!(
+            "Response too short for recipient at offset {}: {} bytes",
+            recipient_offset, bytes.len()
+        )));
+    }
+    
+    let recipient_length = U256::from_be_slice(&bytes[recipient_offset..recipient_offset + 32]).to::<usize>();
+    let recipient_start = recipient_offset + 32;
+    let recipient_end = recipient_start + recipient_length;
+    
+    if bytes.len() < recipient_end {
+        return Err(AlkanesError::RpcError(format!(
+            "Response too short for recipient data: need {}, have {} bytes",
+            recipient_end, bytes.len()
+        )));
+    }
+    
+    let recipient = bytes[recipient_start..recipient_end].to_vec();
+    
+    log::debug!("[get_payment] Decoded: vout={}, value={}, height={}, recipient_len={}", 
+        vout, value, height, recipient.len());
+    
     Ok(Payment {
-        txid: payment_result._0.txid.0,
-        vout: payment_result._0.vout.to::<u32>(),
-        value: payment_result._0.value.to::<u64>(),
-        recipient: payment_result._0.recipient.to_vec(),
-        height: payment_result._0.height.to::<u64>(),
+        txid,
+        vout,
+        value,
+        recipient,
+        height,
     })
 }
 

@@ -828,6 +828,15 @@ pub enum Brc20ProgCommands {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// Get pending unwraps from BRC20-Prog FrBTC contract
+    Unwrap {
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl Brc20ProgCommands {
