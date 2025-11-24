@@ -3896,7 +3896,8 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
         }
         Brc20Prog::Unwrap { block_tag: _, raw } => {
             use alkanes_cli_common::unwrap::{UnwrapProtocol, MetaprotocolUnwrap};
-            use alkanes_cli_common::traits::WalletProvider;
+            use alkanes_cli_common::brc20_prog::{get_frbtc_address, get_signer_address};
+            use alkanes_cli_common::traits::{JsonRpcProvider, EsploraProvider};
             
             // Create BRC20-Prog unwrap implementation
             let unwrap_impl = UnwrapProtocol::Brc20Prog.create_unwrap_impl();
@@ -3907,16 +3908,48 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             
             log::info!("[BRC20-Prog Unwrap] Got {} unfiltered unwraps", all_unwraps.len());
             
-            // Filter by wallet UTXOs
-            let wallet_utxos = provider.get_utxos(false, None).await?;
-            let wallet_utxo_set: std::collections::HashSet<String> = wallet_utxos
+            // Get FrBTC contract address and signer address for filtering
+            let network = provider.get_network();
+            let frbtc_address = get_frbtc_address(network);
+            let brc20_prog_rpc_url = provider.get_brc20_prog_rpc_url()
+                .ok_or_else(|| anyhow::anyhow!("brc20_prog_rpc_url not configured"))?;
+            
+            // Get signer address (p2tr script_pubkey) from FrBTC contract
+            let signer_script = get_signer_address(
+                provider as &dyn JsonRpcProvider,
+                &brc20_prog_rpc_url,
+                frbtc_address,
+            ).await?;
+            
+            // Convert script_pubkey to taproot address
+            let script_buf = bitcoin::ScriptBuf::from_bytes(signer_script.to_vec());
+            let signer_address = bitcoin::Address::from_script(&script_buf, network)
+                .map_err(|e| anyhow::anyhow!("Failed to convert script to address: {}", e))?
+                .to_string();
+            
+            log::info!("[BRC20-Prog Unwrap] FrBTC signer address: {}", signer_address);
+            
+            // Get UTXOs at the FrBTC signer address (not wallet UTXOs!)
+            let signer_utxos_json = provider.get_address_utxo(&signer_address).await?;
+            let signer_utxos = signer_utxos_json.as_array()
+                .ok_or_else(|| anyhow::anyhow!("Signer UTXOs response is not an array"))?;
+            
+            // Build UTXO set from signer address
+            let utxo_set: std::collections::HashSet<String> = signer_utxos
                 .iter()
-                .map(|(outpoint, _)| format!("{}:{}", outpoint.txid, outpoint.vout))
+                .filter_map(|utxo| {
+                    let txid = utxo["txid"].as_str()?;
+                    let vout = utxo["vout"].as_u64()?;
+                    Some(format!("{}:{}", txid, vout))
+                })
                 .collect();
             
+            log::info!("[BRC20-Prog Unwrap] Found {} UTXOs at signer address", utxo_set.len());
+            
+            // Filter unwraps by signer address UTXOs
             let result: Vec<_> = all_unwraps
                 .into_iter()
-                .filter(|u| wallet_utxo_set.contains(&format!("{}:{}", u.txid, u.vout)))
+                .filter(|u| utxo_set.contains(&format!("{}:{}", u.txid, u.vout)))
                 .collect();
             
             log::info!("[BRC20-Prog Unwrap] Filtered to {} spendable unwraps", result.len());
@@ -3927,12 +3960,12 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 if result.is_empty() {
                     println!("✨ No pending BRC20-Prog unwraps found");
                     println!();
-                    println!("Note: Results are filtered to only show unwraps with spendable UTXOs in your wallet.");
+                    println!("Note: Results are filtered to only show unwraps with spendable UTXOs at the FrBTC signer address.");
                     println!("      Already fulfilled unwraps are automatically excluded.");
                 } else {
                     println!("🔓 Pending BRC20-Prog Unwraps ({} total):", result.len());
                     println!();
-                    println!("Note: Showing only unwraps with spendable UTXOs still available in wallet.");
+                    println!("Note: Showing only unwraps with spendable UTXOs still available at the FrBTC signer address.");
                     println!("      Already fulfilled unwraps have been filtered out.");
                     println!();
                     

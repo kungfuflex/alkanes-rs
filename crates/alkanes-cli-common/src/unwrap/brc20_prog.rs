@@ -104,21 +104,30 @@ impl MetaprotocolUnwrap for Brc20ProgUnwrap {
             ).await?;
             log::debug!("[Brc20ProgUnwrap] Payment[{}]: height={}, value={}", idx, payment.height, payment.value);
             
-            // Stop if payment is older than cutoff height
-            if payment.height < cutoff_height {
-                log::info!("[Brc20ProgUnwrap] Reached payment older than cutoff height ({})", payment.height);
-                break;
+            // Skip if payment is too new (doesn't have enough confirmations yet)
+            if payment.height > cutoff_height {
+                log::debug!("[Brc20ProgUnwrap] Skipping payment at height {} (too new, needs {} confirmations, cutoff is {})",
+                    payment.height, confirmations_required, cutoff_height);
+                if idx == 0 {
+                    break;
+                }
+                idx -= 1;
+                continue;
             }
             
-            // Stop if we've reached the oldest spendable UTXO
+            // Stop if we've reached a payment older than the oldest spendable UTXO
+            // (This means we can't spend it even if we wanted to)
             if let Some(oldest_height) = oldest_utxo_height {
                 if payment.height < oldest_height {
-                    log::info!("[Brc20ProgUnwrap] Reached payment older than oldest UTXO ({})", oldest_height);
+                    log::info!("[Brc20ProgUnwrap] Reached payment at height {} older than oldest spendable UTXO at height {}", 
+                        payment.height, oldest_height);
                     break;
                 }
             }
             
-            // Convert payment to PendingUnwrap
+            // This payment has enough confirmations and is spendable, include it
+            log::debug!("[Brc20ProgUnwrap] Including payment at height {} (has {} confirmations)", 
+                payment.height, current_height.saturating_sub(payment.height));
             let pending_unwrap = payment_to_pending_unwrap(payment, network)?;
             result.push(pending_unwrap);
             
