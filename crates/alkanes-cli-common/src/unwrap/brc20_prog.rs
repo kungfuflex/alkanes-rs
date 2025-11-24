@@ -148,7 +148,7 @@ impl MetaprotocolUnwrap for Brc20ProgUnwrap {
 }
 
 /// Convert p2tr script_pubkey bytes to Bitcoin address
-fn script_pubkey_to_address(script: &[u8], network: bitcoin::Network) -> Result<String> {
+pub fn script_pubkey_to_address(script: &[u8], network: bitcoin::Network) -> Result<String> {
     let script_buf = bitcoin::ScriptBuf::from_bytes(script.to_vec());
     let address = bitcoin::Address::from_script(&script_buf, network)
         .map_err(|e| AlkanesError::AddressResolution(format!("Failed to convert script to address: {}", e)))?;
@@ -156,7 +156,7 @@ fn script_pubkey_to_address(script: &[u8], network: bitcoin::Network) -> Result<
 }
 
 /// Find the oldest 546 sat UTXO from Esplora UTXO response
-fn find_oldest_546_sat_utxo(utxos_json: &serde_json::Value) -> Result<Option<u64>> {
+pub fn find_oldest_546_sat_utxo(utxos_json: &serde_json::Value) -> Result<Option<u64>> {
     let utxos = utxos_json.as_array()
         .ok_or_else(|| AlkanesError::RpcError("UTXOs response is not an array".to_string()))?;
     
@@ -183,7 +183,7 @@ fn find_oldest_546_sat_utxo(utxos_json: &serde_json::Value) -> Result<Option<u64
 }
 
 /// Convert Payment struct to PendingUnwrap
-fn payment_to_pending_unwrap(payment: crate::brc20_prog::Payment, network: bitcoin::Network) -> Result<PendingUnwrap> {
+pub fn payment_to_pending_unwrap(payment: crate::brc20_prog::Payment, network: bitcoin::Network) -> Result<PendingUnwrap> {
     // Convert txid bytes to hex string
     let txid = hex::encode(payment.txid);
     
