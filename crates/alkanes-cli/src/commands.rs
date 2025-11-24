@@ -1074,6 +1074,9 @@ pub enum Alkanes {
         /// Show trace after transaction confirms
         #[arg(long)]
         trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
         /// Factory ID for path optimization (defaults to 4:65522)
         #[arg(long, default_value = "4:65522")]
         factory: String,

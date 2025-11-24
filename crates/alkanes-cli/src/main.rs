@@ -1141,6 +1141,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             change, 
             fee_rate, 
             trace, 
+            mine,
             factory,
             no_optimize,
             auto_confirm,
@@ -1623,7 +1624,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 protostones,
                 raw_output: false,
                 trace_enabled: trace,
-                mine_enabled: false,
+                mine_enabled: mine,
                 auto_confirm,
             };
             

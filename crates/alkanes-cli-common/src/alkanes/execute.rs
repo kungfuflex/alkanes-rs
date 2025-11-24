@@ -1582,6 +1582,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
     /// Traces the reveal transaction to get the results of protostone execution.
     /// Uses the same code path as the `alkanes trace` command for consistency.
+    /// Polls for traces with retries if they're not immediately available.
     async fn trace_reveal_transaction(&self, txid: &str, params: &EnhancedExecuteParams) -> Result<Option<Vec<serde_json::Value>>> {
         use crate::traits::AlkanesProvider;
         use prost::Message;
@@ -1604,41 +1605,81 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             let outpoint = format!("{}:{}", txid, vout);
             log::info!("Tracing protostone #{i} at virtual outpoint {outpoint}...");
             
-            // Use the same trace() method as the CLI command for consistency
-            match self.provider.trace(&outpoint).await {
-                Ok(trace_pb) => {
-                    if let Some(alkanes_trace) = trace_pb.trace {
-                        // Convert protobuf trace to Trace for JSON serialization
-                        let trace_result = match alkanes_support::trace::Trace::try_from(
-                            Message::encode_to_vec(&alkanes_trace)
-                        ) {
-                            Ok(trace) => {
-                                let json = crate::alkanes::trace::trace_to_json(&trace);
-                                if let Some(events) = json.get("events").and_then(|e| e.as_array()) {
-                                    if events.is_empty() {
-                                        log::warn!("Trace for {outpoint} came back with an empty 'events' array.");
+            // Poll for trace with retries (up to 10 attempts, 1 second apart)
+            const MAX_RETRIES: u32 = 10;
+            const RETRY_DELAY_SECS: u64 = 1;
+            
+            let mut trace_result = None;
+            for attempt in 1..=MAX_RETRIES {
+                match self.provider.trace(&outpoint).await {
+                    Ok(trace_pb) => {
+                        if let Some(alkanes_trace) = trace_pb.trace {
+                            // Convert protobuf trace to Trace for JSON serialization
+                            match alkanes_support::trace::Trace::try_from(
+                                Message::encode_to_vec(&alkanes_trace)
+                            ) {
+                                Ok(trace) => {
+                                    let json = crate::alkanes::trace::trace_to_json(&trace);
+                                    if let Some(events) = json.get("events").and_then(|e| e.as_array()) {
+                                        if events.is_empty() {
+                                            log::warn!("Trace for {outpoint} came back with an empty 'events' array (attempt {attempt}/{MAX_RETRIES}).");
+                                            if attempt < MAX_RETRIES {
+                                                log::info!("Retrying in {RETRY_DELAY_SECS}s...");
+                                                sleep(Duration::from_secs(RETRY_DELAY_SECS)).await;
+                                                continue;
+                                            }
+                                        }
                                     }
+                                    log::debug!("Trace result for {outpoint}: {json:?}");
+                                    trace_result = Some(json);
+                                    break;
                                 }
-                                log::debug!("Trace result for {outpoint}: {json:?}");
-                                json
+                                Err(e) => {
+                                    log::warn!("Failed to parse trace for {outpoint}: {e} (attempt {attempt}/{MAX_RETRIES})");
+                                    if attempt < MAX_RETRIES {
+                                        log::info!("Retrying in {RETRY_DELAY_SECS}s...");
+                                        sleep(Duration::from_secs(RETRY_DELAY_SECS)).await;
+                                        continue;
+                                    }
+                                    trace_result = Some(serde_json::json!({
+                                        "error": format!("Failed to decode trace: {}", e),
+                                        "outpoint": outpoint.clone(),
+                                    }));
+                                    break;
+                                }
                             }
-                            Err(e) => {
-                                log::warn!("Failed to decode trace for {outpoint}: {e}");
-                                serde_json::json!({
-                                    "error": format!("Failed to decode trace: {}", e),
-                                    "events": []
-                                })
+                        } else {
+                            log::warn!("No alkanes_trace found in trace result for {outpoint} (attempt {attempt}/{MAX_RETRIES})");
+                            if attempt < MAX_RETRIES {
+                                log::info!("Retrying in {RETRY_DELAY_SECS}s...");
+                                sleep(Duration::from_secs(RETRY_DELAY_SECS)).await;
+                                continue;
                             }
-                        };
-                        traces.push(trace_result);
-                    } else {
-                        log::warn!("Trace for {outpoint} did not contain trace data.");
-                        traces.push(serde_json::json!({"events": []}));
+                            trace_result = Some(serde_json::json!({
+                                "error": "No trace found",
+                                "outpoint": outpoint.clone(),
+                            }));
+                            break;
+                        }
                     }
-                },
-                Err(e) => {
-                    log::warn!("Failed to trace {outpoint}: {e}");
+                    Err(e) => {
+                        log::warn!("Failed to fetch trace for {outpoint}: {e} (attempt {attempt}/{MAX_RETRIES})");
+                        if attempt < MAX_RETRIES {
+                            log::info!("Retrying in {RETRY_DELAY_SECS}s...");
+                            sleep(Duration::from_secs(RETRY_DELAY_SECS)).await;
+                            continue;
+                        }
+                        trace_result = Some(serde_json::json!({
+                            "error": format!("Failed to fetch trace: {}", e),
+                            "outpoint": outpoint.clone(),
+                        }));
+                        break;
+                    }
                 }
+            }
+            
+            if let Some(result) = trace_result {
+                traces.push(result);
             }
         }
         
