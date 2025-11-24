@@ -292,6 +292,16 @@ impl RpcConfig {
     }
 }
 
+/// Get default BRC20-Prog RPC URL for a given network
+pub fn get_default_brc20_prog_rpc_url(network: bitcoin::Network) -> String {
+    match network {
+        bitcoin::Network::Bitcoin => "https://rpc.brc20.build".to_string(),
+        bitcoin::Network::Signet => "https://rpc-signet.brc20.build".to_string(),
+        bitcoin::Network::Regtest => "http://localhost:3002".to_string(),
+        _ => "https://rpc-signet.brc20.build".to_string(), // Default to signet for other networks
+    }
+}
+
 
 
 impl Default for RpcConfig {
