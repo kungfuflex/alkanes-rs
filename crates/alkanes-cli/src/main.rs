@@ -1153,13 +1153,37 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             use prost::Message;
             use std::io::{self, Write};
             
-            // Parse path - comma-separated alkane IDs (e.g., "2:0,32:0")
-            let path_tokens: Result<Vec<AlkaneId>, _> = path
-                .split(',')
+            // Parse path - comma-separated alkane IDs (e.g., "2:0,32:0" or "B,2:0,32:0")
+            // "B" represents Bitcoin and triggers wrap (at start) or unwrap (at end)
+            let path_parts: Vec<&str> = path.split(',').collect();
+            if path_parts.len() < 2 {
+                return Err(anyhow::anyhow!("Swap path must have at least 2 tokens"));
+            }
+            
+            // Check for wrap (B at start) and unwrap (B at end)
+            let needs_wrap = path_parts[0].to_uppercase() == "B";
+            let needs_unwrap = path_parts[path_parts.len() - 1].to_uppercase() == "B";
+            
+            // Validate B only at start/end, not in middle
+            for (i, part) in path_parts.iter().enumerate() {
+                if part.to_uppercase() == "B" {
+                    if i != 0 && i != path_parts.len() - 1 {
+                        return Err(anyhow::anyhow!("'B' can only appear at the start or end of the path, not in the middle"));
+                    }
+                }
+            }
+            
+            // Parse path tokens, replacing "B" with "32:0" (frBTC)
+            let path_tokens: Result<Vec<AlkaneId>, _> = path_parts
+                .iter()
                 .map(|token_str| {
+                    if token_str.to_uppercase() == "B" {
+                        // B represents frBTC (32:0)
+                        return Ok(AlkaneId { block: 32, tx: 0 });
+                    }
                     let parts: Vec<&str> = token_str.split(':').collect();
                     if parts.len() != 2 {
-                        return Err(anyhow::anyhow!("Invalid alkane ID format: {}. Expected BLOCK:TX", token_str));
+                        return Err(anyhow::anyhow!("Invalid alkane ID format: {}. Expected BLOCK:TX or 'B'", token_str));
                     }
                     Ok(AlkaneId {
                         block: parts[0].parse()?,
@@ -1169,12 +1193,16 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 .collect();
             let mut path_tokens = path_tokens?;
             
-            if path_tokens.len() < 2 {
-                return Err(anyhow::anyhow!("Swap path must have at least 2 tokens"));
-            }
-            
             let input_token = path_tokens[0].clone();
             let output_token = path_tokens[path_tokens.len() - 1].clone();
+            
+            // Show wrap/unwrap status
+            if needs_wrap {
+                println!("🔧 Wrapping BTC → frBTC ({}:{})", input_token.block, input_token.tx);
+            }
+            if needs_unwrap {
+                println!("🔓 Unwrapping frBTC ({}:{}) → BTC", output_token.block, output_token.tx);
+            }
             
             println!("🔄 Preparing swap: {}:{} → {}:{}", 
                      input_token.block, input_token.tx,
@@ -1597,26 +1625,109 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             
             println!("   Calldata: {}", calldata);
             
+            // Fetch subfrost address if wrap or unwrap is needed
+            let subfrost_address = if needs_wrap || needs_unwrap {
+                use alkanes_cli_common::subfrost::get_subfrost_address;
+                use alkanes_cli_common::alkanes::types::AlkaneId as CliAlkaneId;
+                let frbtc_id = CliAlkaneId { block: 32, tx: 0 };
+                let addr = get_subfrost_address(system.provider(), &frbtc_id).await?;
+                println!("📍 Subfrost address: {}", addr);
+                Some(addr)
+            } else {
+                None
+            };
+            
             // Use existing execute logic
             use alkanes_cli_common::alkanes::parsing::parse_protostones;
             use alkanes_cli_common::alkanes::execute::{EnhancedAlkanesExecutor, EnhancedExecuteParams};
-            use alkanes_cli_common::alkanes::types::InputRequirement;
+            use alkanes_cli_common::alkanes::types::{InputRequirement, OutputTarget};
             
-            let input_reqs = vec![
-                InputRequirement::Alkanes {
+            // Build to_addresses based on wrap/unwrap needs
+            let to_addresses = if needs_wrap && needs_unwrap {
+                // Both wrap and unwrap: subfrost(wrap), intermediate, btc_recipient, subfrost(unwrap)
+                vec![
+                    subfrost_address.clone().unwrap(),  // Output 0: BTC payment for wrap
+                    to.clone(),                          // Output 1: Intermediate recipient
+                    to.clone(),                          // Output 2: BTC recipient (unwrap destination)
+                    subfrost_address.clone().unwrap(),  // Output 3: Dust for unwrap cellpack
+                ]
+            } else if needs_wrap {
+                // Wrap only: subfrost(wrap), recipient
+                vec![
+                    subfrost_address.clone().unwrap(),  // Output 0: BTC payment for wrap
+                    to.clone(),                          // Output 1: frBTC recipient
+                ]
+            } else if needs_unwrap {
+                // Unwrap only: recipient, btc_recipient, subfrost(unwrap)
+                vec![
+                    to.clone(),                          // Output 0: Alkanes recipient
+                    to.clone(),                          // Output 1: BTC recipient (unwrap destination)
+                    subfrost_address.clone().unwrap(),  // Output 2: Dust for unwrap cellpack
+                ]
+            } else {
+                // Normal swap: just recipient
+                vec![to.clone()]
+            };
+            
+            // Build input requirements based on wrap needs
+            let input_reqs = if needs_wrap {
+                // Wrap requires BTC input instead of alkanes input
+                vec![InputRequirement::Bitcoin { amount: input as u64 }]
+            } else {
+                // Normal swap or unwrap: alkanes input
+                vec![InputRequirement::Alkanes {
                     block: input_token.block,
                     tx: input_token.tx,
                     amount: input as u64,
-                },
-            ];
+                }]
+            };
             
-            let protostones = parse_protostones(&calldata)?;
+            // Parse the swap protostone from calldata
+            let mut protostones = parse_protostones(&calldata)?;
+            
+            // Prepend wrap protostone if needed
+            if needs_wrap {
+                println!("🔧 Adding wrap protostone: BTC → frBTC");
+                // Wrap outputs frBTC to output 1 (recipient)
+                let wrap_proto = build_wrap_protostone(input as u64, 1);
+                protostones.insert(0, wrap_proto);
+            }
+            
+            // Append unwrap protostone if needed
+            if needs_unwrap {
+                println!("🔓 Adding unwrap protostone: frBTC → BTC");
+                
+                // Calculate output indices based on to_addresses structure
+                let (btc_recipient_vout, subfrost_dust_vout, refund_vout) = if needs_wrap && needs_unwrap {
+                    (2u32, 3u32, 1u32)  // wrap+unwrap: btc=2, dust=3, refund=1
+                } else {
+                    (1u32, 2u32, 0u32)  // unwrap only: btc=1, dust=2, refund=0
+                };
+                
+                // Modify the last protostone (swap) to point to the unwrap protostone
+                // The unwrap will be at protostone index = protostones.len()
+                let unwrap_protostone_index = protostones.len() as u32;
+                
+                if let Some(swap_proto) = protostones.last_mut() {
+                    println!("   ↪ Swap protostone pointing to unwrap protostone #{}", unwrap_protostone_index);
+                    swap_proto.pointer = Some(OutputTarget::Protostone(unwrap_protostone_index));
+                }
+                
+                // Build and append unwrap protostone
+                let unwrap_proto = build_unwrap_protostone(
+                    final_minimum_output,    // Amount of frBTC to unwrap
+                    subfrost_dust_vout,      // Dust output index for cellpack
+                    btc_recipient_vout,      // Where unwrapped BTC goes
+                    refund_vout,             // Refund if unwrap fails
+                );
+                protostones.push(unwrap_proto);
+            }
             
             let mut executor = EnhancedAlkanesExecutor::new(system.provider_mut());
             let execute_params = EnhancedExecuteParams {
                 input_requirements: input_reqs,
                 alkanes_change_address: Some(from.clone()),
-                to_addresses: vec![to.clone()],
+                to_addresses,
                 from_addresses: Some(vec![from.clone()]),
                 change_address: change.clone(),
                 fee_rate: fee_rate.map(|f| f as f32),
@@ -1792,6 +1903,62 @@ fn find_direct_pool(
     }
     
     None
+}
+
+/// Build a wrap protostone that wraps BTC → frBTC
+/// Calls frBTC (32:0) opcode 77 (exchange/wrap)
+fn build_wrap_protostone(
+    amount: u64,
+    pointer_output: u32,
+) -> alkanes_cli_common::alkanes::types::ProtostoneSpec {
+    use alkanes_cli_common::alkanes::types::{ProtostoneSpec, OutputTarget, BitcoinTransfer};
+    use alkanes_support::id::AlkaneId as SupportAlkaneId;
+    
+    ProtostoneSpec {
+        cellpack: Some(alkanes_support::cellpack::Cellpack {
+            target: SupportAlkaneId {
+                block: 32,  // frBTC
+                tx: 0,
+            },
+            inputs: vec![77],  // Opcode 77: exchange/wrap
+        }),
+        edicts: vec![],  // No edicts, minted frBTC goes to pointer destination
+        bitcoin_transfer: Some(BitcoinTransfer {
+            amount,
+            target: OutputTarget::Output(0),  // Send BTC to subfrost address (output 0)
+        }),
+        pointer: Some(OutputTarget::Output(pointer_output)),  // Minted frBTC destination
+        refund: Some(OutputTarget::Output(pointer_output)),   // Refund unused frBTC
+    }
+}
+
+/// Build an unwrap protostone that unwraps frBTC → BTC
+/// Calls frBTC (32:0) opcode 78 (unwrap) with dust output in cellpack
+fn build_unwrap_protostone(
+    unwrap_amount: u128,
+    dust_vout: u32,
+    btc_recipient_vout: u32,
+    refund_vout: u32,
+) -> alkanes_cli_common::alkanes::types::ProtostoneSpec {
+    use alkanes_cli_common::alkanes::types::{ProtostoneSpec, OutputTarget};
+    use alkanes_support::id::AlkaneId as SupportAlkaneId;
+    
+    // Calldata: [32, 0, 78, dust_vout, unwrap_amount]
+    let calldata = vec![32u128, 0u128, 78u128, dust_vout as u128, unwrap_amount];
+    
+    ProtostoneSpec {
+        cellpack: Some(alkanes_support::cellpack::Cellpack {
+            target: SupportAlkaneId {
+                block: 32,  // frBTC
+                tx: 0,
+            },
+            inputs: calldata,
+        }),
+        edicts: vec![],  // frBTC comes from previous protostone's pointer
+        bitcoin_transfer: None,  // No BTC transfer in unwrap, BTC is output from the unwrap itself
+        pointer: Some(OutputTarget::Output(btc_recipient_vout)),  // Where unwrapped BTC goes
+        refund: Some(OutputTarget::Output(refund_vout)),  // Where frBTC goes if unwrap fails
+    }
 }
 
 /// Simulate a swap to get the expected output using factory routing
