@@ -1130,56 +1130,874 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             println!("Transaction ID: {}", txid);
             Ok(())
         }
-        Alkanes::Swap { path, input, minimum, expires, to, from, change, fee_rate, trace, factory } => {
-            use alkanes_cli_common::alkanes::amm_cli::{execute_swap, SwapExecuteParams};
+        Alkanes::Swap { 
+            path, 
+            input, 
+            minimum_output, 
+            slippage, 
+            expires, 
+            to, 
+            from, 
+            change, 
+            fee_rate, 
+            trace, 
+            factory,
+            no_optimize,
+            auto_confirm,
+        } => {
+            use alkanes_cli_common::proto::alkanes::{MessageContextParcel, SimulateResponse};
+            use alkanes_cli_common::traits::MetashrewRpcProvider;
+            use alkanes_cli_common::alkanes::{PoolInfo, PoolDetails};
             use alkanes_cli_common::alkanes::types::AlkaneId;
+            use prost::Message;
+            use std::io::{self, Write};
             
-            // Parse path (e.g., "2:0:32:0" for token0 -> token1)
-            let path_str: Vec<&str> = path.split(':').collect();
-            if path_str.len() % 2 != 0 {
-                return Err(anyhow::anyhow!("Invalid path format. Expected BLOCK:TX:BLOCK:TX"));
+            // Parse path - comma-separated alkane IDs (e.g., "2:0,32:0")
+            let path_tokens: Result<Vec<AlkaneId>, _> = path
+                .split(',')
+                .map(|token_str| {
+                    let parts: Vec<&str> = token_str.split(':').collect();
+                    if parts.len() != 2 {
+                        return Err(anyhow::anyhow!("Invalid alkane ID format: {}. Expected BLOCK:TX", token_str));
+                    }
+                    Ok(AlkaneId {
+                        block: parts[0].parse()?,
+                        tx: parts[1].parse()?,
+                    })
+                })
+                .collect();
+            let mut path_tokens = path_tokens?;
+            
+            if path_tokens.len() < 2 {
+                return Err(anyhow::anyhow!("Swap path must have at least 2 tokens"));
             }
             
-            let mut path_ids = Vec::new();
-            for i in (0..path_str.len()).step_by(2) {
-                path_ids.push(AlkaneId {
-                    block: path_str[i].parse()?,
-                    tx: path_str[i + 1].parse()?,
-                });
-            }
+            let input_token = path_tokens[0].clone();
+            let output_token = path_tokens[path_tokens.len() - 1].clone();
             
-            let factory_id = {
-                let parts: Vec<&str> = factory.split(':').collect();
-                AlkaneId {
-                    block: parts[0].parse()?,
-                    tx: parts[1].parse()?,
+            println!("🔄 Preparing swap: {}:{} → {}:{}", 
+                     input_token.block, input_token.tx,
+                     output_token.block, output_token.tx);
+            println!("💰 Input amount: {}", input);
+            
+            // Get current height
+            let current_height = system.provider().get_height().await?;
+            let expires_block = expires.unwrap_or(current_height + 100);
+            println!("⏰ Expires at block: {}", expires_block);
+            
+            // Parse factory
+            let factory_parts: Vec<&str> = factory.split(':').collect();
+            if factory_parts.len() != 2 {
+                return Err(anyhow::anyhow!("Invalid factory format. Expected 'block:tx'"));
+            }
+            let factory_block: u64 = factory_parts[0].parse()?;
+            let factory_tx: u64 = factory_parts[1].parse()?;
+            
+            // Path optimization: Get all pools and find optimal route
+            let optimal_path = if !no_optimize {
+                println!("\n🔍 Analyzing pool liquidity for optimal path...");
+                
+                // Get all pools with details
+                let mut pool_calldata = Vec::new();
+                leb128::write::unsigned(&mut pool_calldata, factory_block).unwrap();
+                leb128::write::unsigned(&mut pool_calldata, factory_tx).unwrap();
+                leb128::write::unsigned(&mut pool_calldata, 3u64).unwrap(); // GET_ALL_POOLS opcode
+                
+                let context = MessageContextParcel {
+                    alkanes: vec![],
+                    transaction: vec![],
+                    block: vec![],
+                    height: current_height,
+                    vout: 0,
+                    txindex: 1,
+                    calldata: pool_calldata,
+                    pointer: 0,
+                    refund_pointer: 0,
+                };
+                
+                let result = system.provider().simulate(&factory, &context, None).await?;
+                let hex_data = result.as_str().ok_or_else(|| anyhow::anyhow!("Expected string result"))?;
+                let hex_data = hex_data.strip_prefix("0x").unwrap_or(hex_data);
+                let bytes = hex::decode(hex_data)?;
+                let sim_response = SimulateResponse::decode(bytes.as_slice())?;
+                
+                let pools = if let Some(execution) = &sim_response.execution {
+                    let data = &execution.data;
+                    if data.len() < 16 {
+                        return Err(anyhow::anyhow!("Invalid response from factory"));
+                    }
+                    
+                    let count = u128::from_le_bytes(data[0..16].try_into().unwrap()) as usize;
+                    let mut pools = Vec::new();
+                    
+                    for i in 0..count {
+                        let offset = 16 + (i * 32);
+                        if offset + 32 > data.len() {
+                            break;
+                        }
+                        let pool_block = u128::from_le_bytes(data[offset..offset+16].try_into().unwrap()) as u64;
+                        let pool_tx = u128::from_le_bytes(data[offset+16..offset+32].try_into().unwrap()) as u64;
+                        pools.push((pool_block, pool_tx));
+                    }
+                    pools
+                } else {
+                    Vec::new()
+                };
+                
+                // Fetch details for all pools
+                let mut pool_infos = Vec::new();
+                for (pool_block, pool_tx) in &pools {
+                    let mut detail_calldata = Vec::new();
+                    leb128::write::unsigned(&mut detail_calldata, *pool_block).unwrap();
+                    leb128::write::unsigned(&mut detail_calldata, *pool_tx).unwrap();
+                    leb128::write::unsigned(&mut detail_calldata, 999u64).unwrap();
+                    
+                    let detail_context = MessageContextParcel {
+                        alkanes: vec![],
+                        transaction: vec![],
+                        block: vec![],
+                        height: current_height,
+                        vout: 0,
+                        txindex: 1,
+                        calldata: detail_calldata,
+                        pointer: 0,
+                        refund_pointer: 0,
+                    };
+                    
+                    if let Ok(detail_result) = system.provider().simulate(&format!("{}:{}", pool_block, pool_tx), &detail_context, None).await {
+                        if let Some(detail_hex) = detail_result.as_str() {
+                            let detail_hex = detail_hex.strip_prefix("0x").unwrap_or(detail_hex);
+                            if let Ok(detail_bytes) = hex::decode(detail_hex) {
+                                if let Ok(detail_sim) = SimulateResponse::decode(detail_bytes.as_slice()) {
+                                    if let Some(detail_exec) = &detail_sim.execution {
+                                        if let Ok(details) = PoolDetails::from_bytes(&detail_exec.data) {
+                                            pool_infos.push(PoolInfo {
+                                                pool_id_block: *pool_block,
+                                                pool_id_tx: *pool_tx,
+                                                details: Some(details),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
+                
+                println!("   Found {} pools with liquidity data", pool_infos.len());
+                
+                // Filter pools by minimum liquidity threshold
+                // Only consider pools with at least 1000 units of liquidity in both reserves
+                const MIN_LIQUIDITY: u128 = 1000;
+                let liquid_pools: Vec<_> = pool_infos.iter()
+                    .filter(|p| {
+                        if let Some(details) = &p.details {
+                            details.reserve_a >= MIN_LIQUIDITY && details.reserve_b >= MIN_LIQUIDITY
+                        } else {
+                            false
+                        }
+                    })
+                    .cloned()
+                    .collect();
+                
+                println!("   {} pools have sufficient liquidity", liquid_pools.len());
+                
+                // Build a map of all tokens in liquid pools for faster lookup
+                let mut available_tokens = std::collections::HashSet::new();
+                for pool in &liquid_pools {
+                    if let Some(details) = &pool.details {
+                        available_tokens.insert(AlkaneId { block: details.token_a_block, tx: details.token_a_tx });
+                        available_tokens.insert(AlkaneId { block: details.token_b_block, tx: details.token_b_tx });
+                    }
+                }
+                
+                // Calculate output for user's path (if it's viable)
+                let user_path_output = calculate_path_output(&path_tokens, &liquid_pools, input)
+                    .unwrap_or(0);
+                
+                // Try to find a better path (1-4 hops)
+                let mut best_path = path_tokens.clone();
+                let mut best_output = user_path_output;
+                
+                // 1-hop: Check direct swap
+                if let Some(direct_output) = find_direct_pool(&input_token, &output_token, &liquid_pools, input) {
+                    if direct_output > best_output {
+                        best_path = vec![input_token.clone(), output_token.clone()];
+                        best_output = direct_output;
+                    }
+                }
+                
+                // 2-hop: input -> intermediate -> output
+                for pool in &liquid_pools {
+                    if let Some(details) = &pool.details {
+                        let intermediate_a = AlkaneId { block: details.token_a_block, tx: details.token_a_tx };
+                        let intermediate_b = AlkaneId { block: details.token_b_block, tx: details.token_b_tx };
+                        
+                        for intermediate in [intermediate_a, intermediate_b] {
+                            if intermediate != input_token && intermediate != output_token {
+                                let candidate_path = vec![input_token.clone(), intermediate.clone(), output_token.clone()];
+                                if let Ok(output) = calculate_path_output(&candidate_path, &liquid_pools, input) {
+                                    if output > best_output {
+                                        best_path = candidate_path;
+                                        best_output = output;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 3-hop: input -> mid1 -> mid2 -> output
+                // Only check 3-hop if we have enough pools and tokens
+                if liquid_pools.len() >= 3 {
+                    let mut checked_paths = std::collections::HashSet::new();
+                    for pool1 in &liquid_pools {
+                        if let Some(details1) = &pool1.details {
+                            for mid1 in [
+                                AlkaneId { block: details1.token_a_block, tx: details1.token_a_tx },
+                                AlkaneId { block: details1.token_b_block, tx: details1.token_b_tx }
+                            ] {
+                                if mid1 == input_token || mid1 == output_token {
+                                    continue;
+                                }
+                                
+                                for pool2 in &liquid_pools {
+                                    if pool2.pool_id_block == pool1.pool_id_block && pool2.pool_id_tx == pool1.pool_id_tx {
+                                        continue;
+                                    }
+                                    
+                                    if let Some(details2) = &pool2.details {
+                                        for mid2 in [
+                                            AlkaneId { block: details2.token_a_block, tx: details2.token_a_tx },
+                                            AlkaneId { block: details2.token_b_block, tx: details2.token_b_tx }
+                                        ] {
+                                            if mid2 == input_token || mid2 == output_token || mid2 == mid1 {
+                                                continue;
+                                            }
+                                            
+                                            let path_key = format!("{}:{}:{}", mid1.block, mid1.tx, mid2.block);
+                                            if checked_paths.contains(&path_key) {
+                                                continue;
+                                            }
+                                            checked_paths.insert(path_key);
+                                            
+                                            let candidate_path = vec![
+                                                input_token.clone(),
+                                                mid1.clone(),
+                                                mid2.clone(),
+                                                output_token.clone()
+                                            ];
+                                            
+                                            if let Ok(output) = calculate_path_output(&candidate_path, &liquid_pools, input) {
+                                                if output > best_output {
+                                                    best_path = candidate_path;
+                                                    best_output = output;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 4-hop: input -> mid1 -> mid2 -> mid3 -> output
+                // Only check if we have many pools (>= 4) and best output is still not great
+                if liquid_pools.len() >= 4 && best_output < input * 8 / 10 {
+                    // Only explore 4-hop if 3-hop didn't find a good path
+                    // Limit search space to most liquid pools
+                    let mut sorted_pools = liquid_pools.clone();
+                    sorted_pools.sort_by(|a, b| {
+                        let a_liq = a.details.as_ref().map(|d| d.reserve_a + d.reserve_b).unwrap_or(0);
+                        let b_liq = b.details.as_ref().map(|d| d.reserve_a + d.reserve_b).unwrap_or(0);
+                        b_liq.cmp(&a_liq)
+                    });
+                    let top_pools: Vec<_> = sorted_pools.iter().take(10.min(sorted_pools.len())).cloned().collect();
+                    
+                    let mut checked_paths = std::collections::HashSet::new();
+                    for pool1 in &top_pools {
+                        if let Some(details1) = &pool1.details {
+                            for mid1 in [
+                                AlkaneId { block: details1.token_a_block, tx: details1.token_a_tx },
+                                AlkaneId { block: details1.token_b_block, tx: details1.token_b_tx }
+                            ] {
+                                if mid1 == input_token || mid1 == output_token {
+                                    continue;
+                                }
+                                
+                                for pool2 in &top_pools {
+                                    if let Some(details2) = &pool2.details {
+                                        for mid2 in [
+                                            AlkaneId { block: details2.token_a_block, tx: details2.token_a_tx },
+                                            AlkaneId { block: details2.token_b_block, tx: details2.token_b_tx }
+                                        ] {
+                                            if mid2 == input_token || mid2 == output_token || mid2 == mid1 {
+                                                continue;
+                                            }
+                                            
+                                            for pool3 in &top_pools {
+                                                if let Some(details3) = &pool3.details {
+                                                    for mid3 in [
+                                                        AlkaneId { block: details3.token_a_block, tx: details3.token_a_tx },
+                                                        AlkaneId { block: details3.token_b_block, tx: details3.token_b_tx }
+                                                    ] {
+                                                        if mid3 == input_token || mid3 == output_token || mid3 == mid1 || mid3 == mid2 {
+                                                            continue;
+                                                        }
+                                                        
+                                                        let path_key = format!("{}:{}:{}:{}", mid1.block, mid1.tx, mid2.block, mid3.block);
+                                                        if checked_paths.contains(&path_key) {
+                                                            continue;
+                                                        }
+                                                        checked_paths.insert(path_key);
+                                                        
+                                                        let candidate_path = vec![
+                                                            input_token.clone(),
+                                                            mid1.clone(),
+                                                            mid2.clone(),
+                                                            mid3.clone(),
+                                                            output_token.clone()
+                                                        ];
+                                                        
+                                                        if let Ok(output) = calculate_path_output(&candidate_path, &liquid_pools, input) {
+                                                            if output > best_output {
+                                                                best_path = candidate_path;
+                                                                best_output = output;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // If we found a better path, prompt user
+                if best_path != path_tokens && best_output > user_path_output {
+                    let improvement = ((best_output as f64 - user_path_output as f64) / user_path_output as f64) * 100.0;
+                    println!("\n✨ Found a better path with {:.2}% more output!", improvement);
+                    println!("   User path: {} → expected output: {}", 
+                             format_path(&path_tokens), user_path_output);
+                    println!("   Optimal path: {} → expected output: {}", 
+                             format_path(&best_path), best_output);
+                    
+                    if !auto_confirm {
+                        print!("\n   [Y] Use optimal path  [C] Continue with your path  [N] Cancel\n   Choice: ");
+                        io::stdout().flush()?;
+                        
+                        let mut choice = String::new();
+                        io::stdin().read_line(&mut choice)?;
+                        let choice = choice.trim().to_uppercase();
+                        
+                        match choice.as_str() {
+                            "Y" => {
+                                println!("   Using optimal path");
+                                Some(best_path)
+                            }
+                            "C" => {
+                                println!("   Continuing with your path");
+                                None
+                            }
+                            "N" | _ => {
+                                println!("   Swap cancelled");
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        println!("   Auto-confirm: using optimal path");
+                        Some(best_path)
+                    }
+                } else {
+                    println!("   Your path is already optimal!");
+                    None
+                }
+            } else {
+                println!("\n⏩ Path optimization skipped");
+                None
             };
             
-            // Get current height for expiry if not provided
-            let provider = system.provider_mut();
-            let current_height = provider.get_height().await?;
-            let expires_block = expires.unwrap_or(current_height + 10000);
+            // Use optimal path if found, otherwise use user's path
+            if let Some(opt_path) = optimal_path {
+                path_tokens = opt_path;
+            }
             
-            let params = SwapExecuteParams {
-                factory_id,
-                path: path_ids,
-                input_amount: input.clone(),
-                minimum_output: minimum.clone(),
-                expires: expires_block,
-                to_address: to.clone(),
-                from_address: from.clone(),
+            println!("\n🎯 Final path: {}", format_path(&path_tokens));
+            println!("   Path length: {} hops", path_tokens.len() - 1);
+            
+            // Calculate expected output using pool reserves
+            println!("\n📊 Calculating expected output using pool liquidity...");
+            
+            // Get pool details for all hops in the path
+            let mut pool_infos = Vec::new();
+            for i in 0..path_tokens.len() - 1 {
+                let pool_id = find_pool_for_pair(&path_tokens[i], &path_tokens[i + 1], system, &factory, current_height).await?;
+                if let Ok(details) = get_pool_details(system, pool_id.0, pool_id.1, current_height).await {
+                    pool_infos.push(alkanes_cli_common::alkanes::PoolInfo {
+                        pool_id_block: pool_id.0,
+                        pool_id_tx: pool_id.1,
+                        details: Some(details),
+                    });
+                } else {
+                    return Err(anyhow::anyhow!("Could not fetch details for pool {}:{}", pool_id.0, pool_id.1));
+                }
+            }
+            
+            // Calculate expected output using constant product formula
+            let expected_output = calculate_path_output(&path_tokens, &pool_infos, input)?;
+            
+            println!("   Expected output: {} tokens", expected_output);
+            
+            // Calculate minimum output with slippage
+            let final_minimum_output = if let Some(min_out) = minimum_output {
+                println!("   Using explicit minimum output: {}", min_out);
+                min_out
+            } else {
+                let slippage_factor = 1.0 - (slippage / 100.0);
+                let min_out = (expected_output as f64 * slippage_factor) as u128;
+                println!("   Applying {}% slippage: minimum output = {}", slippage, min_out);
+                min_out
+            };
+            
+            // Build protostone for swap
+            // Always use factory routing (opcode 13 = swap_exact_tokens_for_tokens)
+            // This works for both single-hop and multi-hop swaps
+            println!("\n🔨 Building swap transaction...");
+            
+            println!("   Using factory routing");
+            println!("   Path: {}", format_path(&path_tokens));
+            println!("   Input: {} of {}:{}", input, input_token.block, input_token.tx);
+            println!("   Minimum output: {} of {}:{}", final_minimum_output, output_token.block, output_token.tx);
+            
+            // Format: [factoryBlock,factoryTx,13,path_length,token0_block,token0_tx,...,amount_in,min_out,deadline]
+            let mut inputs = vec![
+                factory_block.to_string(),
+                factory_tx.to_string(),
+                "13".to_string(), // opcode for swap_exact_tokens_for_tokens
+                path_tokens.len().to_string(),
+            ];
+            
+            // Add flattened path (block, tx pairs)
+            for token in &path_tokens {
+                inputs.push(token.block.to_string());
+                inputs.push(token.tx.to_string());
+            }
+            
+            // Add amount_in, min_out, deadline
+            inputs.push(input.to_string());
+            inputs.push(final_minimum_output.to_string());
+            inputs.push(expires_block.to_string());
+            
+            let calldata = format!("[{}]", inputs.join(","));
+            
+            println!("   Calldata: {}", calldata);
+            
+            // Use existing execute logic
+            use alkanes_cli_common::alkanes::parsing::parse_protostones;
+            use alkanes_cli_common::alkanes::execute::{EnhancedAlkanesExecutor, EnhancedExecuteParams};
+            use alkanes_cli_common::alkanes::types::InputRequirement;
+            
+            let input_reqs = vec![
+                InputRequirement::Alkanes {
+                    block: input_token.block,
+                    tx: input_token.tx,
+                    amount: input as u64,
+                },
+            ];
+            
+            let protostones = parse_protostones(&calldata)?;
+            
+            let mut executor = EnhancedAlkanesExecutor::new(system.provider_mut());
+            let execute_params = EnhancedExecuteParams {
+                input_requirements: input_reqs,
+                alkanes_change_address: Some(from.clone()),
+                to_addresses: vec![to.clone()],
+                from_addresses: Some(vec![from.clone()]),
                 change_address: change.clone(),
-                fee_rate: fee_rate.clone(),
-                trace: trace.clone(),
-                auto_confirm: false, // TODO: Add --auto-confirm flag to Swap command
+                fee_rate: fee_rate.map(|f| f as f32),
+                envelope_data: None,
+                protostones,
+                raw_output: false,
+                trace_enabled: trace,
+                mine_enabled: false,
+                auto_confirm,
             };
             
-            let txid = execute_swap(provider, params).await?;
-            println!("Transaction ID: {}", txid);
+            println!("\n📤 Executing swap...");
+            let state = executor.execute(execute_params.clone()).await?;
+            let result = match state {
+                alkanes_cli_common::alkanes::types::ExecutionState::ReadyToSign(ready) => {
+                    executor.resume_execution(ready, &execute_params).await?
+                }
+                _ => return Err(anyhow::anyhow!("Unexpected execution state")),
+            };
+            
+            let txid = result.reveal_txid.clone();
+            
+            if !trace {
+                println!("\n✅ Swap executed!");
+                println!("📝 Transaction ID: {}", txid);
+            }
+            
             Ok(())
         }
     }
+}
+
+// Helper functions for swap path optimization and simulation
+
+/// Format a path for display
+fn format_path(path: &[alkanes_cli_common::alkanes::types::AlkaneId]) -> String {
+    path.iter()
+        .map(|id| format!("{}:{}", id.block, id.tx))
+        .collect::<Vec<_>>()
+        .join(" → ")
+}
+
+/// Calculate expected output for a swap path using constant product formula
+fn calculate_path_output(
+    path: &[alkanes_cli_common::alkanes::types::AlkaneId],
+    pools: &[alkanes_cli_common::alkanes::PoolInfo],
+    input_amount: u128,
+) -> Result<u128> {
+    use alkanes_cli_common::alkanes::types::AlkaneId;
+    
+    let mut amount = input_amount;
+    
+    // For each hop in the path
+    for i in 0..path.len() - 1 {
+        let token_in = &path[i];
+        let token_out = &path[i + 1];
+        
+        // Find the pool for this pair
+        let pool = pools.iter().find(|p| {
+            if let Some(details) = &p.details {
+                let token_a = AlkaneId { block: details.token_a_block, tx: details.token_a_tx };
+                let token_b = AlkaneId { block: details.token_b_block, tx: details.token_b_tx };
+                (token_a == *token_in && token_b == *token_out) || (token_a == *token_out && token_b == *token_in)
+            } else {
+                false
+            }
+        });
+        
+        if let Some(pool) = pool {
+            if let Some(details) = &pool.details {
+                let token_a = AlkaneId { block: details.token_a_block, tx: details.token_a_tx };
+                
+                // Determine reserves based on token order
+                let (reserve_in, reserve_out) = if token_a == *token_in {
+                    (details.reserve_a, details.reserve_b)
+                } else {
+                    (details.reserve_b, details.reserve_a)
+                };
+                
+                // Calculate output using constant product formula: x * y = k
+                // amount_out = (amount_in * reserve_out) / (reserve_in + amount_in)
+                // With 0.3% fee: amount_in_with_fee = amount_in * 997 / 1000
+                let amount_in_with_fee = amount * 997 / 1000;
+                let numerator = amount_in_with_fee * reserve_out;
+                let denominator = reserve_in + amount_in_with_fee;
+                
+                if denominator == 0 {
+                    return Err(anyhow::anyhow!("Pool has zero liquidity"));
+                }
+                
+                amount = numerator / denominator;
+            } else {
+                return Err(anyhow::anyhow!("Pool details not available"));
+            }
+        } else {
+            return Err(anyhow::anyhow!("No pool found for pair {}:{} -> {}:{}", 
+                                      token_in.block, token_in.tx, token_out.block, token_out.tx));
+        }
+    }
+    
+    Ok(amount)
+}
+
+/// Find a direct pool between two tokens and calculate output
+fn find_direct_pool(
+    token_in: &alkanes_cli_common::alkanes::types::AlkaneId,
+    token_out: &alkanes_cli_common::alkanes::types::AlkaneId,
+    pools: &[alkanes_cli_common::alkanes::PoolInfo],
+    input_amount: u128,
+) -> Option<u128> {
+    use alkanes_cli_common::alkanes::types::AlkaneId;
+    
+    for pool in pools {
+        if let Some(details) = &pool.details {
+            let token_a = AlkaneId { block: details.token_a_block, tx: details.token_a_tx };
+            let token_b = AlkaneId { block: details.token_b_block, tx: details.token_b_tx };
+            
+            if (token_a == *token_in && token_b == *token_out) || (token_a == *token_out && token_b == *token_in) {
+                let (reserve_in, reserve_out) = if token_a == *token_in {
+                    (details.reserve_a, details.reserve_b)
+                } else {
+                    (details.reserve_b, details.reserve_a)
+                };
+                
+                let amount_in_with_fee = input_amount * 997 / 1000;
+                let numerator = amount_in_with_fee * reserve_out;
+                let denominator = reserve_in + amount_in_with_fee;
+                
+                if denominator > 0 {
+                    return Some(numerator / denominator);
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+/// Simulate a swap to get the expected output using factory routing
+async fn simulate_swap_output<T: System>(
+    system: &mut T,
+    factory: &str,
+    path: &[alkanes_cli_common::alkanes::types::AlkaneId],
+    input_amount: u128,
+    minimum_output: u128,
+    expires: u64,
+    current_height: u64,
+) -> Result<u128> {
+    use alkanes_cli_common::proto::alkanes::{MessageContextParcel, SimulateResponse};
+    use alkanes_cli_common::traits::MetashrewRpcProvider;
+    use prost::Message;
+    
+    // Parse factory
+    let factory_parts: Vec<&str> = factory.split(':').collect();
+    let factory_block: u64 = factory_parts[0].parse()?;
+    let factory_tx: u64 = factory_parts[1].parse()?;
+    
+    // Build calldata for factory swap simulation (opcode 13)
+    // Format: [factory_block, factory_tx, 13, path_length, token0_block, token0_tx, ..., amount_in, min_out, deadline]
+    let mut calldata = Vec::new();
+    leb128::write::unsigned(&mut calldata, factory_block).unwrap();
+    leb128::write::unsigned(&mut calldata, factory_tx).unwrap();
+    leb128::write::unsigned(&mut calldata, 13u64).unwrap(); // swap_exact_tokens_for_tokens opcode
+    leb128::write::unsigned(&mut calldata, path.len() as u64).unwrap();
+    
+    // Add path tokens
+    for token in path {
+        leb128::write::unsigned(&mut calldata, token.block).unwrap();
+        leb128::write::unsigned(&mut calldata, token.tx).unwrap();
+    }
+    
+    // Add amount_in, min_out, deadline
+    leb128::write::unsigned(&mut calldata, input_amount as u64).unwrap();
+    leb128::write::unsigned(&mut calldata, minimum_output as u64).unwrap();
+    leb128::write::unsigned(&mut calldata, expires).unwrap();
+    
+    let context = MessageContextParcel {
+        alkanes: vec![],
+        transaction: vec![],
+        block: vec![],
+        height: current_height,
+        vout: 0,
+        txindex: 1,
+        calldata,
+        pointer: 0,
+        refund_pointer: 0,
+    };
+    
+    let result = system.provider().simulate(factory, &context, None).await?;
+    let hex_data = result.as_str().ok_or_else(|| anyhow::anyhow!("Expected string result"))?;
+    let hex_data = hex_data.strip_prefix("0x").unwrap_or(hex_data);
+    let bytes = hex::decode(hex_data)?;
+    let sim_response = SimulateResponse::decode(bytes.as_slice())?;
+    
+    if let Some(execution) = &sim_response.execution {
+        // The output tokens should be in the execution result
+        // The factory returns the output token in the alkanes field
+        if !execution.alkanes.is_empty() {
+            // Find the output token (last token in path) in the returned alkanes
+            let output_token = &path[path.len() - 1];
+            for alkane in &execution.alkanes {
+                if let Some(alkane_id) = &alkane.id {
+                    // Extract block and tx values
+                    let block_val = alkane_id.block.as_ref().map(|b| (b.hi as u128) << 64 | b.lo as u128).unwrap_or(0);
+                    let tx_val = alkane_id.tx.as_ref().map(|t| (t.hi as u128) << 64 | t.lo as u128).unwrap_or(0);
+                    
+                    if block_val == output_token.block as u128 && tx_val == output_token.tx as u128 {
+                        if let Some(value) = &alkane.value {
+                            return Ok((value.hi as u128) << 64 | value.lo as u128);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If not found in alkanes, it might be in the data field
+        // The contract might return just the amount as u128
+        if execution.data.len() >= 16 {
+            let output = u128::from_le_bytes(execution.data[0..16].try_into().unwrap());
+            return Ok(output);
+        }
+    }
+    
+    Err(anyhow::anyhow!("Could not extract output amount from simulation"))
+}
+
+/// Get pool details for a specific pool
+async fn get_pool_details<T: System>(
+    system: &mut T,
+    pool_block: u64,
+    pool_tx: u64,
+    current_height: u64,
+) -> Result<alkanes_cli_common::alkanes::PoolDetails> {
+    use alkanes_cli_common::proto::alkanes::{MessageContextParcel, SimulateResponse};
+    use alkanes_cli_common::traits::MetashrewRpcProvider;
+    use alkanes_cli_common::alkanes::PoolDetails;
+    use prost::Message;
+    
+    let mut detail_calldata = Vec::new();
+    leb128::write::unsigned(&mut detail_calldata, pool_block).unwrap();
+    leb128::write::unsigned(&mut detail_calldata, pool_tx).unwrap();
+    leb128::write::unsigned(&mut detail_calldata, 999u64).unwrap();
+    
+    let detail_context = MessageContextParcel {
+        alkanes: vec![],
+        transaction: vec![],
+        block: vec![],
+        height: current_height,
+        vout: 0,
+        txindex: 1,
+        calldata: detail_calldata,
+        pointer: 0,
+        refund_pointer: 0,
+    };
+    
+    let detail_result = system.provider().simulate(&format!("{}:{}", pool_block, pool_tx), &detail_context, None).await?;
+    let detail_hex = detail_result.as_str().ok_or_else(|| anyhow::anyhow!("Expected string result"))?;
+    let detail_hex = detail_hex.strip_prefix("0x").unwrap_or(detail_hex);
+    let detail_bytes = hex::decode(detail_hex)?;
+    let detail_sim = SimulateResponse::decode(detail_bytes.as_slice())?;
+    
+    if let Some(detail_exec) = &detail_sim.execution {
+        PoolDetails::from_bytes(&detail_exec.data)
+    } else {
+        Err(anyhow::anyhow!("No execution result in simulation"))
+    }
+}
+
+/// Find the pool ID for a given token pair
+async fn find_pool_for_pair<T: System>(
+    token_a: &alkanes_cli_common::alkanes::types::AlkaneId,
+    token_b: &alkanes_cli_common::alkanes::types::AlkaneId,
+    system: &mut T,
+    factory: &str,
+    current_height: u64,
+) -> Result<(u64, u64)> {
+    use alkanes_cli_common::proto::alkanes::{MessageContextParcel, SimulateResponse};
+    use alkanes_cli_common::traits::MetashrewRpcProvider;
+    use alkanes_cli_common::alkanes::PoolDetails;
+    use prost::Message;
+    
+    // Parse factory
+    let factory_parts: Vec<&str> = factory.split(':').collect();
+    let factory_block: u64 = factory_parts[0].parse()?;
+    let factory_tx: u64 = factory_parts[1].parse()?;
+    
+    // Get all pools
+    let mut pool_calldata = Vec::new();
+    leb128::write::unsigned(&mut pool_calldata, factory_block).unwrap();
+    leb128::write::unsigned(&mut pool_calldata, factory_tx).unwrap();
+    leb128::write::unsigned(&mut pool_calldata, 3u64).unwrap(); // GET_ALL_POOLS opcode
+    
+    let context = MessageContextParcel {
+        alkanes: vec![],
+        transaction: vec![],
+        block: vec![],
+        height: current_height,
+        vout: 0,
+        txindex: 1,
+        calldata: pool_calldata,
+        pointer: 0,
+        refund_pointer: 0,
+    };
+    
+    let result = system.provider().simulate(factory, &context, None).await?;
+    let hex_data = result.as_str().ok_or_else(|| anyhow::anyhow!("Expected string result"))?;
+    let hex_data = hex_data.strip_prefix("0x").unwrap_or(hex_data);
+    let bytes = hex::decode(hex_data)?;
+    let sim_response = SimulateResponse::decode(bytes.as_slice())?;
+    
+    let pools = if let Some(execution) = &sim_response.execution {
+        let data = &execution.data;
+        if data.len() < 16 {
+            return Err(anyhow::anyhow!("Invalid response from factory"));
+        }
+        
+        let count = u128::from_le_bytes(data[0..16].try_into().unwrap()) as usize;
+        let mut pools = Vec::new();
+        
+        for i in 0..count {
+            let offset = 16 + (i * 32);
+            if offset + 32 > data.len() {
+                break;
+            }
+            let pool_block = u128::from_le_bytes(data[offset..offset+16].try_into().unwrap()) as u64;
+            let pool_tx = u128::from_le_bytes(data[offset+16..offset+32].try_into().unwrap()) as u64;
+            pools.push((pool_block, pool_tx));
+        }
+        pools
+    } else {
+        return Err(anyhow::anyhow!("No pools found"));
+    };
+    
+    // Check each pool to find the one with our token pair
+    for (pool_block, pool_tx) in pools {
+        let mut detail_calldata = Vec::new();
+        leb128::write::unsigned(&mut detail_calldata, pool_block).unwrap();
+        leb128::write::unsigned(&mut detail_calldata, pool_tx).unwrap();
+        leb128::write::unsigned(&mut detail_calldata, 999u64).unwrap();
+        
+        let detail_context = MessageContextParcel {
+            alkanes: vec![],
+            transaction: vec![],
+            block: vec![],
+            height: current_height,
+            vout: 0,
+            txindex: 1,
+            calldata: detail_calldata,
+            pointer: 0,
+            refund_pointer: 0,
+        };
+        
+        if let Ok(detail_result) = system.provider().simulate(&format!("{}:{}", pool_block, pool_tx), &detail_context, None).await {
+            if let Some(detail_hex) = detail_result.as_str() {
+                let detail_hex = detail_hex.strip_prefix("0x").unwrap_or(detail_hex);
+                if let Ok(detail_bytes) = hex::decode(detail_hex) {
+                    if let Ok(detail_sim) = SimulateResponse::decode(detail_bytes.as_slice()) {
+                        if let Some(detail_exec) = &detail_sim.execution {
+                            if let Ok(details) = PoolDetails::from_bytes(&detail_exec.data) {
+                                let pool_token_a = alkanes_cli_common::alkanes::types::AlkaneId {
+                                    block: details.token_a_block,
+                                    tx: details.token_a_tx,
+                                };
+                                let pool_token_b = alkanes_cli_common::alkanes::types::AlkaneId {
+                                    block: details.token_b_block,
+                                    tx: details.token_b_tx,
+                                };
+                                
+                                if (pool_token_a == *token_a && pool_token_b == *token_b) ||
+                                   (pool_token_a == *token_b && pool_token_b == *token_a) {
+                                    return Ok((pool_block, pool_tx));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Err(anyhow::anyhow!("No pool found for pair {}:{} / {}:{}", 
+                        token_a.block, token_a.tx, token_b.block, token_b.tx))
 }
 
 async fn backtest_transaction<T: System>(system: &mut T, txid: &str, raw: bool) -> Result<()> {

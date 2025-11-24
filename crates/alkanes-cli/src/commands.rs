@@ -1044,23 +1044,26 @@ pub enum Alkanes {
     },
     /// Execute a swap on the AMM
     Swap {
-        /// Swap path in format: BLOCK:TX:BLOCK:TX (e.g., 2:0:32:0 for DIESEL->frBTC)
+        /// Swap path as comma-separated alkane IDs (e.g., 2:0,32:0 for DIESEL->frBTC)
         #[arg(long)]
         path: String,
         /// Input token amount
         #[arg(long)]
         input: u128,
-        /// Minimum output amount (default: 1)
-        #[arg(long, default_value = "1")]
-        minimum: u128,
-        /// Expiry block height (optional)
+        /// Minimum output amount (overrides slippage calculation if provided)
+        #[arg(long)]
+        minimum_output: Option<u128>,
+        /// Slippage percentage (default: 5.0%)
+        #[arg(long, default_value = "5.0")]
+        slippage: f64,
+        /// Expiry block height (defaults to metashrew_height + 100)
         #[arg(long)]
         expires: Option<u64>,
-        /// Recipient address identifier
-        #[arg(long)]
+        /// Recipient address identifier (defaults to p2tr:0)
+        #[arg(long, default_value = "p2tr:0")]
         to: String,
-        /// Sender address identifier
-        #[arg(long)]
+        /// Sender address identifier (defaults to p2tr:0)
+        #[arg(long, default_value = "p2tr:0")]
         from: String,
         /// Change address identifier (defaults to --from)
         #[arg(long)]
@@ -1071,9 +1074,15 @@ pub enum Alkanes {
         /// Show trace after transaction confirms
         #[arg(long)]
         trace: bool,
-        /// Factory ID (defaults to 4:1 - the factory proxy)
-        #[arg(long, default_value = "4:1")]
+        /// Factory ID for path optimization (defaults to 4:65522)
+        #[arg(long, default_value = "4:65522")]
         factory: String,
+        /// Skip path optimization
+        #[arg(long)]
+        no_optimize: bool,
+        /// Auto-confirm transaction without prompting
+        #[arg(long)]
+        auto_confirm: bool,
     },
 }
 
