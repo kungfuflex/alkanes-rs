@@ -2826,10 +2826,12 @@ impl AlkanesProvider for ConcreteProvider {
             match self.trace(&outpoint).await {
                 Ok(trace_pb) => {
                     if let Some(alkanes_trace) = trace_pb.trace {
-                        match alkanes_support::trace::Trace::try_from(
-                            Message::encode_to_vec(&alkanes_trace)
-                        ) {
-                            Ok(trace) => {
+                        // Convert alkanes-cli-common proto to alkanes-support proto via bytes
+                        // The Into<Trace> trait is only implemented for alkanes_support::proto::alkanes::AlkanesTrace
+                        let trace_bytes = Message::encode_to_vec(&alkanes_trace);
+                        match alkanes_support::proto::alkanes::AlkanesTrace::decode(trace_bytes.as_slice()) {
+                            Ok(support_trace) => {
+                                let trace: alkanes_support::trace::Trace = support_trace.into();
                                 let json = crate::alkanes::trace::trace_to_json(&trace);
                                 all_traces.push(json);
                             }

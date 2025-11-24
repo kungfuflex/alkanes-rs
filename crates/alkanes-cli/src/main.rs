@@ -1639,9 +1639,48 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             
             let txid = result.reveal_txid.clone();
             
-            if !trace {
-                println!("\n✅ Swap executed!");
-                println!("📝 Transaction ID: {}", txid);
+            println!("\n✅ Swap executed!");
+            println!("📝 Transaction ID: {}", txid);
+            
+            // Display traces if requested
+            if trace {
+                if let Some(all_traces) = result.traces {
+                    println!("\n🔍 ═══════════════════════════════════════════════════════════════");
+                    println!("🧪                   PROTOSTONE TRACES                        🧪");
+                    println!("🔍 ═══════════════════════════════════════════════════════════════\n");
+                    
+                    for (i, trace_json) in all_traces.iter().enumerate() {
+                        println!("📊 Protostone #{}", i + 1);
+                        println!("───────────────────\n");
+                        
+                        // Debug: log the trace JSON structure
+                        log::info!("Trace JSON keys: {:?}", trace_json.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                        if let Some(events) = trace_json.get("events") {
+                            log::info!("Events type: {:?}, is_array: {}, array_len: {:?}", 
+                                events, events.is_array(), events.as_array().map(|a| a.len()));
+                        }
+                        
+                        if let Some(error) = trace_json.get("error") {
+                            println!("   ❌ Error: {}\n", error);
+                        } else if let Some(events) = trace_json.get("events").and_then(|e| e.as_array()) {
+                            if events.is_empty() {
+                                println!("   ⚠️  No trace data found.\n");
+                            } else {
+                                // Pretty print the trace
+                                println!("{}\n", serde_json::to_string_pretty(trace_json)?);
+                            }
+                        } else {
+                            println!("   ⚠️  Unexpected trace format: no events array\n");
+                            log::warn!("Trace JSON: {}", serde_json::to_string_pretty(trace_json)?);
+                        }
+                    }
+                    
+                    println!("🎯 ═══════════════════════════════════════════════════════════════");
+                    println!("✨                      TRACE COMPLETE                         ✨");
+                    println!("🎯 ═══════════════════════════════════════════════════════════════");
+                } else {
+                    println!("\n📭 No protostones found in this transaction.");
+                }
             }
             
             Ok(())
