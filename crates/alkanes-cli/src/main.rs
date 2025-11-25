@@ -4027,7 +4027,7 @@ async fn execute_sandshrew_command(
 
             let request = serde_json::json!({
                 "jsonrpc": "2.0",
-                "method": "sandshrew_evalsaved",
+                "method": "lua_evalsaved",
                 "params": params,
                 "id": 1
             });
@@ -4053,7 +4053,7 @@ async fn execute_sandshrew_command(
 
                     let request = serde_json::json!({
                         "jsonrpc": "2.0",
-                        "method": "sandshrew_evalscript",
+                        "method": "lua_evalscript",
                         "params": params,
                         "id": 1
                     });

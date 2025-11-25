@@ -766,69 +766,138 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         // If we need alkanes, we must query each UTXO to find ones that contain the required alkanes
         if !alkanes_needed.is_empty() {
-            log::info!("Querying UTXOs for alkane balances...");
+            log::info!("Querying UTXOs for alkane balances using batched approach...");
             
-            for (outpoint, utxo) in spendable_utxos {
-                // Query this UTXO to see what alkanes it contains
-                match self.provider.protorunes_by_outpoint(
-                    &outpoint.txid.to_string(),
-                    outpoint.vout,
-                    None, // block_tag
-                    1,    // protocol_tag for alkanes
-                ).await {
-                    Ok(response) => {
-                        let mut has_needed_alkane = false;
-                        let mut utxo_selected = false;
-                        
-                        // Check if this UTXO has any alkanes we need
-                        for (alkane_id, amount) in &response.balance_sheet.cached.balances {
-                            let key = (alkane_id.block as u64, alkane_id.tx as u64);
-                            if let Some(needed) = alkanes_needed.get(&key) {
-                                let collected = alkanes_collected.entry(key).or_insert(0);
-                                if *collected < *needed {
-                                    has_needed_alkane = true;
-                                    *collected += *amount as u64;
-                                    log::debug!("Found {} of alkane {}:{} in UTXO {}:{} (collected: {}/{})",
-                                        amount, alkane_id.block, alkane_id.tx, outpoint.txid, outpoint.vout, *collected, needed);
+            // Group UTXOs by address for batch fetching
+            let mut utxos_by_address: alloc::collections::BTreeMap<String, Vec<(OutPoint, UtxoInfo)>> = alloc::collections::BTreeMap::new();
+            for (outpoint, utxo) in spendable_utxos.clone() {
+                utxos_by_address.entry(utxo.address.clone()).or_insert_with(Vec::new).push((outpoint, utxo));
+            }
+            
+            log::info!("Fetching balances for {} addresses (batch mode - 1 RPC call per address instead of {} calls)", 
+                       utxos_by_address.len(), spendable_utxos.len());
+            
+            // Create a map of (txid:vout) -> balance data for quick lookup
+            let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
+            
+            // Batch fetch for each address
+            for (address, _utxos) in &utxos_by_address {
+                match self.provider.batch_fetch_utxo_balances(address, Some(1), None).await {
+                    Ok(result) => {
+                        // Parse the result and index by txid:vout
+                        if let Some(utxos_array) = result.get("utxos").and_then(|v| v.as_array()) {
+                            for utxo_entry in utxos_array {
+                                if let (Some(txid), Some(vout)) = (
+                                    utxo_entry.get("txid").and_then(|v| v.as_str()),
+                                    utxo_entry.get("vout").and_then(|v| v.as_u64())
+                                ) {
+                                    let key = format!("{}:{}", txid, vout);
+                                    utxo_balances.insert(key, utxo_entry.clone());
                                 }
                             }
                         }
-                        
-                        // Select this UTXO if it has alkanes we need OR if we still need Bitcoin
-                        if has_needed_alkane || bitcoin_collected < bitcoin_needed {
-                            bitcoin_collected += utxo.amount;
-                            selected_outpoints.push(outpoint);
-                            utxo_selected = true;
-                            log::debug!("Selected UTXO {}:{} (has_alkanes: {}, btc: {})", outpoint.txid, outpoint.vout, has_needed_alkane, utxo.amount);
-                        }
-                        
-                        // Track ALL alkanes found in selected UTXOs (for change calculation)
-                        if utxo_selected {
-                            for (alkane_id, amount) in &response.balance_sheet.cached.balances {
-                                let alkane_key = AlkaneId {
-                                    block: alkane_id.block as u64,
-                                    tx: alkane_id.tx as u64,
-                                };
-                                *alkanes_found.entry(alkane_key).or_insert(0) += *amount as u64;
-                            }
-                        }
-                        
-                        // Check if we've collected enough of everything
-                        let all_alkanes_satisfied = alkanes_needed.iter().all(|(key, needed)| {
-                            alkanes_collected.get(key).unwrap_or(&0) >= needed
-                        });
-                        
-                        if bitcoin_collected >= bitcoin_needed && all_alkanes_satisfied {
-                            break;
-                        }
                     }
                     Err(e) => {
-                        log::warn!("Failed to query alkanes for UTXO {}:{}: {}", outpoint.txid, outpoint.vout, e);
-                        // Still consider this UTXO for Bitcoin if needed
-                        if bitcoin_collected < bitcoin_needed {
-                            bitcoin_collected += utxo.amount;
-                            selected_outpoints.push(outpoint);
+                        log::warn!("Failed to batch fetch UTXOs for address {}: {}", address, e);
+                        // Fall back to individual queries for this address
+                        for (outpoint, _) in _utxos {
+                            match self.provider.protorunes_by_outpoint(
+                                &outpoint.txid.to_string(),
+                                outpoint.vout,
+                                None, // block_tag
+                                1,    // protocol_tag for alkanes
+                            ).await {
+                                Ok(response) => {
+                                    // Convert to same format as batch result
+                                    let mut balances_array = Vec::new();
+                                    for (alkane_id, amount) in &response.balance_sheet.cached.balances {
+                                        balances_array.push(serde_json::json!({
+                                            "block": alkane_id.block,
+                                            "tx": alkane_id.tx,
+                                            "amount": amount
+                                        }));
+                                    }
+                                    let key = format!("{}:{}", outpoint.txid, outpoint.vout);
+                                    utxo_balances.insert(key, serde_json::json!({
+                                        "txid": outpoint.txid.to_string(),
+                                        "vout": outpoint.vout,
+                                        "balances": balances_array
+                                    }));
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to query alkanes for UTXO {}:{}: {}", outpoint.txid, outpoint.vout, e);
+                                }
+                            }
                         }
+                    }
+                }
+            }
+            
+            // Now process UTXOs using the pre-fetched balance data
+            for (outpoint, utxo) in spendable_utxos {
+                let key = format!("{}:{}", outpoint.txid, outpoint.vout);
+                
+                if let Some(utxo_data) = utxo_balances.get(&key) {
+                    // Parse balance data from batch result
+                    let balances = utxo_data.get("balances").and_then(|v| v.as_array()).map(|arr| {
+                        arr.iter().filter_map(|b| {
+                            let block = b.get("block").and_then(|v| v.as_u64())?;
+                            let tx = b.get("tx").and_then(|v| v.as_u64())?;
+                            let amount = b.get("amount").and_then(|v| v.as_u64())?;
+                            Some(((block, tx), amount))
+                        }).collect::<Vec<_>>()
+                    }).unwrap_or_default();
+                    
+                    let mut has_needed_alkane = false;
+                    let mut utxo_selected = false;
+                    
+                    // Check if this UTXO has any alkanes we need
+                    for ((block, tx), amount) in &balances {
+                        let key = (*block, *tx);
+                        if let Some(needed) = alkanes_needed.get(&key) {
+                            let collected = alkanes_collected.entry(key).or_insert(0);
+                            if *collected < *needed {
+                                has_needed_alkane = true;
+                                *collected += amount;
+                                log::debug!("Found {} of alkane {}:{} in UTXO {}:{} (collected: {}/{})",
+                                    amount, block, tx, outpoint.txid, outpoint.vout, *collected, needed);
+                            }
+                        }
+                    }
+                    
+                    // Select this UTXO if it has alkanes we need OR if we still need Bitcoin
+                    if has_needed_alkane || bitcoin_collected < bitcoin_needed {
+                        bitcoin_collected += utxo.amount;
+                        selected_outpoints.push(outpoint);
+                        utxo_selected = true;
+                        log::debug!("Selected UTXO {}:{} (has_alkanes: {}, btc: {})", outpoint.txid, outpoint.vout, has_needed_alkane, utxo.amount);
+                    }
+                    
+                    // Track ALL alkanes found in selected UTXOs (for change calculation)
+                    if utxo_selected {
+                        for ((block, tx), amount) in &balances {
+                            let alkane_key = AlkaneId {
+                                block: *block,
+                                tx: *tx,
+                            };
+                            *alkanes_found.entry(alkane_key).or_insert(0) += amount;
+                        }
+                    }
+                    
+                    // Check if we've collected enough of everything
+                    let all_alkanes_satisfied = alkanes_needed.iter().all(|(key, needed)| {
+                        alkanes_collected.get(key).unwrap_or(&0) >= needed
+                    });
+                    
+                    if bitcoin_collected >= bitcoin_needed && all_alkanes_satisfied {
+                        break;
+                    }
+                } else {
+                    // No balance data for this UTXO, still consider it for Bitcoin if needed
+                    if bitcoin_collected < bitcoin_needed {
+                        bitcoin_collected += utxo.amount;
+                        selected_outpoints.push(outpoint);
+                        log::debug!("Selected UTXO {}:{} for Bitcoin only (no balance data)", outpoint.txid, outpoint.vout);
                     }
                 }
             }

@@ -134,6 +134,65 @@ impl MetaprotocolUnwrap for AlkanesUnwrap {
         Ok(result)
     }
     
+    async fn get_total_supply(
+        &self,
+        provider: &dyn DeezelProvider,
+    ) -> Result<u64> {
+        log::info!("[AlkanesUnwrap] Fetching frBTC total supply");
+        
+        // Query alkanes storage for /totalsupply at alkane ID (block: 32, tx: 0)
+        let input_data = crate::proto::alkanes::AlkaneStorageRequest {
+            id: Some(crate::proto::alkanes::AlkaneId { 
+                block: Some(crate::proto::alkanes::Uint128 { lo: 32, hi: 0 }),
+                tx: Some(crate::proto::alkanes::Uint128 { lo: 0, hi: 0 }),
+            }),
+            path: "/totalsupply".as_bytes().to_vec(),
+        };
+        
+        let params = serde_json::json!([
+            "getstorageat",
+            hex::encode(&input_data.encode_to_vec()),
+            "latest"
+        ]);
+        
+        let response = provider.call(
+            &provider.get_metashrew_rpc_url().ok_or_else(|| {
+                AlkanesError::Configuration("metashrew_rpc_url not configured".to_string())
+            })?,
+            "metashrew_view",
+            params,
+            1,
+        ).await?;
+        
+        let hex_data = response.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("metashrew_view result is not a string".to_string()))?;
+        let hex_data_stripped = hex_data.strip_prefix("0x").unwrap_or(hex_data);
+        let bytes = hex::decode(hex_data_stripped)
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode hex response: {}", e)))?;
+        
+        let decoded = crate::proto::alkanes::AlkaneStorageResponse::decode(bytes.as_slice())?;
+        
+        if decoded.value.len() < 8 {
+            return Err(AlkanesError::RpcError(format!(
+                "Invalid total supply response: expected at least 8 bytes, got {}",
+                decoded.value.len()
+            )));
+        }
+        
+        let total_supply = u64::from_le_bytes(decoded.value[0..8].try_into().unwrap());
+        
+        // Apply mainnet adjustment if needed (burned frBTC)
+        let network = provider.get_network();
+        let adjusted_total_supply = if network == bitcoin::Network::Bitcoin {
+            total_supply.saturating_sub(4443097)
+        } else {
+            total_supply
+        };
+        
+        log::info!("[AlkanesUnwrap] Total supply: {} sats (adjusted: {})", total_supply, adjusted_total_supply);
+        Ok(adjusted_total_supply)
+    }
+    
     fn protocol_name(&self) -> &'static str {
         "alkanes"
     }

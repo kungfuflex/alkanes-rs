@@ -128,7 +128,16 @@ pub fn handle_message(
                 inner: response.into(),
                 fuel_used: gas_used,
             }));
-            // Note: trace will be saved by protorune after adding ValueTransfer events
+            if let Err(e) = save_trace(
+                &OutPoint {
+                    txid: parcel.transaction.compute_txid(),
+                    vout: parcel.vout,
+                },
+                parcel.height,
+                trace.clone(),
+            ) {
+                println!("Warning: Failed to save trace: {:?}", e);
+            }
 
             Ok((response_alkanes.into(), combined))
         })
@@ -175,7 +184,16 @@ pub fn handle_message(
                 inner: response,
                 fuel_used: u64::MAX,
             }));
-            // Note: trace will be saved by protorune after adding ValueTransfer events
+            if let Err(trace_err) = save_trace(
+                &OutPoint {
+                    txid: parcel.transaction.compute_txid(),
+                    vout: parcel.vout,
+                },
+                parcel.height,
+                cloned,
+            ) {
+                println!("Warning: Failed to save trace on revert: {:?}", trace_err);
+            }
             Err(e)
         })
 }

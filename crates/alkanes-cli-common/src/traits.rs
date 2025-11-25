@@ -808,9 +808,36 @@ pub trait DeezelProvider:
     RunestoneProvider +
     AlkanesProvider +
     MonitorProvider +
+    crate::lua_script::LuaScriptExecutor +
     KeystoreProvider +
     OrdProvider
 {
+    /// Batch fetch UTXOs with their alkane balances for an address
+    /// Default implementation uses the BATCH_UTXO_BALANCES Lua script
+    async fn batch_fetch_utxo_balances(
+        &self,
+        address: &str,
+        protocol_tag: Option<u64>,
+        block_tag: Option<String>,
+    ) -> Result<serde_json::Value> {
+        use crate::lua_script::scripts;
+        use serde_json::Value as JsonValue;
+        
+        let mut args = vec![JsonValue::String(address.to_string())];
+        
+        if let Some(tag) = protocol_tag {
+            args.push(JsonValue::Number(serde_json::Number::from(tag)));
+        } else {
+            args.push(JsonValue::Number(serde_json::Number::from(1))); // Default: alkanes
+        }
+        
+        if let Some(tag) = block_tag {
+            args.push(JsonValue::String(tag));
+        }
+        
+        log::info!("Batching UTXO balance fetch for address: {} (this replaces 90+ individual RPC calls)", address);
+        self.execute_lua_script(&scripts::BATCH_UTXO_BALANCES, args).await
+    }
     /// Get provider name/type
     fn provider_name(&self) -> &str;
 

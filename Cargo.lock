@@ -405,6 +405,7 @@ dependencies = [
  "log",
  "metashrew-support",
  "mockall",
+ "once_cell",
  "ordinals 10.0.0",
  "pbkdf2",
  "prost",

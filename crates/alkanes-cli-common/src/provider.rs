@@ -36,6 +36,7 @@ use crate::network::{NetworkParams, RpcConfig};
 use crate::rpc::get_rpc_url;
 use url::Url;
 use crate::rpc::{determine_rpc_call_type, RpcCallType};
+use crate::lua_script::{LuaScript, LuaScriptExecutor};
 
 fn url_encode(s: &str) -> String {
     s.replace(":", "%3A")
@@ -248,6 +249,26 @@ impl ConcreteProvider {
         
         Ok(bytes)
     }
+
+    // Low-level Lua script execution methods (prefer using LuaScriptExecutor trait)
+    
+    async fn lua_evalscript_internal(&self, script_content: &str, args: Vec<JsonValue>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_alkanes_rpc_target();
+        let mut params = vec![JsonValue::String(script_content.to_string())];
+        params.extend(args);
+        log::debug!("Calling lua_evalscript (script length: {} bytes)", script_content.len());
+        self.call(&target.url, "lua_evalscript", JsonValue::Array(params), 1).await
+    }
+
+    async fn lua_evalsaved_internal(&self, script_hash: &str, args: Vec<JsonValue>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_alkanes_rpc_target();
+        let mut params = vec![JsonValue::String(script_hash.to_string())];
+        params.extend(args);
+        log::debug!("Calling lua_evalsaved (hash: {})", script_hash);
+        self.call(&target.url, "lua_evalsaved", JsonValue::Array(params), 1).await
+    }
+
+    // batch_fetch_utxo_balances is now provided by the DeezelProvider trait with a default implementation
 
     /// Get keystore reference (works for both locked and unlocked keystores)
     pub fn get_keystore(&self) -> Result<&Keystore> {
@@ -2932,8 +2953,9 @@ impl AlkanesProvider for ConcreteProvider {
             let sandshrew_url = self.rpc_config.sandshrew_rpc_url.clone()
                 .ok_or_else(|| AlkanesError::Configuration("sandshrew_rpc_url not configured".to_string()))?;
             
-            let params = serde_json::json!([{ "address": address }]);
-            let balances = self.call(&sandshrew_url, "sandshrew_balances", params, 1).await?;
+            // Use lua/balances.lua script instead of sandshrew_balances
+            use crate::lua_script::scripts;
+            let balances = self.execute_lua_script(&scripts::BALANCES, vec![JsonValue::String(address.clone())]).await?;
             
             log::debug!("Received balances from sandshrew: {:?}", balances);
             
@@ -4072,5 +4094,44 @@ pub mod rebar {
             );
         }
         println!();
+    }
+}
+
+// Implement LuaScriptExecutor for ConcreteProvider
+#[async_trait::async_trait(?Send)]
+impl LuaScriptExecutor for ConcreteProvider {
+    async fn execute_lua_script(
+        &self,
+        script: &LuaScript,
+        args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        // Try lua_evalsaved first (cached execution)
+        match self.lua_evalsaved_internal(script.hash(), args.clone()).await {
+            Ok(result) => {
+                log::debug!("Successfully executed cached script (hash: {})", script.hash());
+                Ok(result)
+            }
+            Err(e) => {
+                // Script not cached or other error, fall back to lua_evalscript
+                log::debug!("Cached execution failed ({}), falling back to full script execution", e);
+                self.lua_evalscript_internal(script.content(), args).await
+            }
+        }
+    }
+
+    async fn lua_evalsaved(
+        &self,
+        script_hash: &str,
+        args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        self.lua_evalsaved_internal(script_hash, args).await
+    }
+
+    async fn lua_evalscript(
+        &self,
+        script_content: &str,
+        args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        self.lua_evalscript_internal(script_content, args).await
     }
 }

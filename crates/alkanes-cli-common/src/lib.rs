@@ -76,6 +76,7 @@ pub mod trace;
 pub mod keystore;
 pub mod esplora;
 pub mod unwrap;
+pub mod lua_script;
 pub mod bitcoind;
 pub mod ord;
 pub mod params_parser;

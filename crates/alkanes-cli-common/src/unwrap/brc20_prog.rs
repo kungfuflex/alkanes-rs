@@ -142,6 +142,58 @@ impl MetaprotocolUnwrap for Brc20ProgUnwrap {
         Ok(result)
     }
     
+    async fn get_total_supply(
+        &self,
+        provider: &dyn DeezelProvider,
+    ) -> Result<u64> {
+        log::info!("[Brc20ProgUnwrap] Fetching frBTC total supply");
+        
+        // Get FrBTC contract address for this network
+        let network = provider.get_network();
+        let frbtc_address = get_frbtc_address(network);
+        
+        // Get BRC20-Prog RPC URL
+        let brc20_prog_rpc_url = provider.get_brc20_prog_rpc_url()
+            .ok_or_else(|| AlkanesError::Configuration("brc20_prog_rpc_url not configured".to_string()))?;
+        
+        // Call totalSupply() on the FrBTC contract
+        // Function selector for totalSupply() is 0x18160ddd
+        let data = "0x18160ddd";
+        
+        let params = serde_json::json!([{
+            "to": frbtc_address,
+            "data": data
+        }, "latest"]);
+        
+        let response = provider.call(
+            &brc20_prog_rpc_url,
+            "eth_call",
+            params,
+            1,
+        ).await?;
+        
+        let hex_result = response.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("eth_call result is not a string".to_string()))?;
+        let hex_stripped = hex_result.strip_prefix("0x").unwrap_or(hex_result);
+        
+        // Decode uint256 result (32 bytes)
+        if hex_stripped.len() != 64 {
+            return Err(AlkanesError::RpcError(format!(
+                "Invalid totalSupply response length: expected 64 hex chars, got {}",
+                hex_stripped.len()
+            )));
+        }
+        
+        let bytes = hex::decode(hex_stripped)
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode hex response: {}", e)))?;
+        
+        // Convert bytes to u64 (take last 8 bytes as total supply should fit in u64)
+        let total_supply = u64::from_be_bytes(bytes[24..32].try_into().unwrap());
+        
+        log::info!("[Brc20ProgUnwrap] Total supply: {} sats", total_supply);
+        Ok(total_supply)
+    }
+    
     fn protocol_name(&self) -> &'static str {
         "brc20-prog"
     }

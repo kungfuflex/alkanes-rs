@@ -33,6 +33,18 @@ pub trait MetaprotocolUnwrap {
         confirmations_required: u64,
     ) -> Result<Vec<PendingUnwrap>>;
     
+    /// Get the total supply of frBTC for this protocol
+    ///
+    /// # Arguments
+    /// * `provider` - The RPC provider to use for queries
+    ///
+    /// # Returns
+    /// The total supply in satoshis
+    async fn get_total_supply(
+        &self,
+        provider: &dyn DeezelProvider,
+    ) -> Result<u64>;
+    
     /// Get the protocol name for logging/debugging
     fn protocol_name(&self) -> &'static str;
 }
