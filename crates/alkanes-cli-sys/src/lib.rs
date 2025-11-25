@@ -863,6 +863,33 @@ impl UtxoProvider for SystemAlkanes {
     }
 }
 
+#[async_trait(?Send)]
+impl alkanes_cli_common::lua_script::LuaScriptExecutor for SystemAlkanes {
+    async fn execute_lua_script(
+        &self,
+        script: &alkanes_cli_common::lua_script::LuaScript,
+        args: Vec<alkanes_cli_common::JsonValue>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.execute_lua_script(script, args).await
+    }
+
+    async fn lua_evalsaved(
+        &self,
+        script_hash: &str,
+        args: Vec<alkanes_cli_common::JsonValue>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.lua_evalsaved(script_hash, args).await
+    }
+
+    async fn lua_evalscript(
+        &self,
+        script_content: &str,
+        args: Vec<alkanes_cli_common::JsonValue>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.lua_evalscript(script_content, args).await
+    }
+}
+
 impl Clone for SystemAlkanes {
     fn clone(&self) -> Self {
         Self {

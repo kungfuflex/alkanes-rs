@@ -1089,6 +1089,35 @@ impl Clone for StandaloneAddressResolver {
     }
 }
 
+// Stub implementation of LuaScriptExecutor for StandaloneAddressResolver
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait(?Send)]
+impl crate::lua_script::LuaScriptExecutor for StandaloneAddressResolver {
+    async fn execute_lua_script(
+        &self,
+        _script: &crate::lua_script::LuaScript,
+        _args: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::Other("LuaScriptExecutor not available in StandaloneAddressResolver".to_string()))
+    }
+
+    async fn lua_evalsaved(
+        &self,
+        _script_hash: &str,
+        _args: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::Other("LuaScriptExecutor not available in StandaloneAddressResolver".to_string()))
+    }
+
+    async fn lua_evalscript(
+        &self,
+        _script_content: &str,
+        _args: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::Other("LuaScriptExecutor not available in StandaloneAddressResolver".to_string()))
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait(?Send)]
 impl DeezelProvider for StandaloneAddressResolver {

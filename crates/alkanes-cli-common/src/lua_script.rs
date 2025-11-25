@@ -87,6 +87,34 @@ pub trait LuaScriptExecutor {
     ) -> Result<JsonValue>;
 }
 
+// Blanket implementation for Box<T>
+#[async_trait::async_trait(?Send)]
+impl<T: LuaScriptExecutor + ?Sized> LuaScriptExecutor for Box<T> {
+    async fn execute_lua_script(
+        &self,
+        script: &LuaScript,
+        args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        (**self).execute_lua_script(script, args).await
+    }
+
+    async fn lua_evalsaved(
+        &self,
+        script_hash: &str,
+        args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        (**self).lua_evalsaved(script_hash, args).await
+    }
+
+    async fn lua_evalscript(
+        &self,
+        script_content: &str,
+        args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        (**self).lua_evalscript(script_content, args).await
+    }
+}
+
 // Embedded Lua scripts
 /// Batch UTXO balance fetching script
 pub const BATCH_UTXO_BALANCES: &str = include_str!("../../../lua/batch_utxo_balances.lua");
