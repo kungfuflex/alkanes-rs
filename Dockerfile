@@ -16,6 +16,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY src ./src
+COPY lua ./lua
 
 # Build argument for which package to build
 ARG PACKAGE=alkanes-jsonrpc

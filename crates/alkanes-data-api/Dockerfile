@@ -16,6 +16,7 @@ COPY rust-toolchain.toml ./
 COPY crates ./crates
 COPY alkanes ./alkanes
 COPY src ./src
+COPY lua ./lua
 
 # Build the release binary
 RUN cargo build --release -p alkanes-data-api

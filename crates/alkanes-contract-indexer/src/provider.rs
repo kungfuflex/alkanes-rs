@@ -17,6 +17,7 @@ pub async fn build_provider(
         esplora_url,
         ord_url: None,
         titan_api_url: None,
+        brc20_prog_rpc_url: None,  // Not used by indexer
         provider: network_provider,
         timeout_seconds: 600,
     };
