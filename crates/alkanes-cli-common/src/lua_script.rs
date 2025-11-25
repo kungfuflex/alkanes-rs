@@ -125,6 +125,9 @@ pub const BALANCES: &str = include_str!("../../../lua/balances.lua");
 /// Multicall script (replacement for sandshrew_multicall)
 pub const MULTICALL: &str = include_str!("../../../lua/multicall.lua");
 
+/// Address UTXOs with full transaction data (batched esplora_tx calls)
+pub const ADDRESS_UTXOS_WITH_TXS: &str = include_str!("../../../lua/address_utxos_with_txs.lua");
+
 /// Lazy-initialized static script instances
 pub mod scripts {
     use super::LuaScript;
@@ -141,6 +144,10 @@ pub mod scripts {
     /// Multicall script
     pub static MULTICALL: Lazy<LuaScript> = 
         Lazy::new(|| LuaScript::from_static(super::MULTICALL));
+
+    /// Address UTXOs with transaction data script
+    pub static ADDRESS_UTXOS_WITH_TXS: Lazy<LuaScript> = 
+        Lazy::new(|| LuaScript::from_static(super::ADDRESS_UTXOS_WITH_TXS));
 }
 
 #[cfg(test)]

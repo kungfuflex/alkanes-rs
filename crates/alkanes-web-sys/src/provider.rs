@@ -1806,6 +1806,44 @@ impl KeystoreProvider for WebProvider {
 }
 
 #[async_trait(?Send)]
+impl alkanes_cli_common::lua_script::LuaScriptExecutor for WebProvider {
+    async fn execute_lua_script(
+        &self,
+        script: &alkanes_cli_common::lua_script::LuaScript,
+        args: Vec<alkanes_cli_common::JsonValue>,
+    ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
+        // Try cached version first
+        match self.lua_evalsaved(script.hash(), args.clone()).await {
+            Ok(result) => Ok(result),
+            Err(_) => {
+                // Cache miss, execute full script
+                self.lua_evalscript(script.content(), args).await
+            }
+        }
+    }
+
+    async fn lua_evalsaved(
+        &self,
+        script_hash: &str,
+        args: Vec<alkanes_cli_common::JsonValue>,
+    ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
+        let mut params = vec![alkanes_cli_common::JsonValue::String(script_hash.to_string())];
+        params.extend(args);
+        self.call(&self.sandshrew_rpc_url, "lua_evalsaved", alkanes_cli_common::JsonValue::Array(params), 1).await
+    }
+
+    async fn lua_evalscript(
+        &self,
+        script_content: &str,
+        args: Vec<alkanes_cli_common::JsonValue>,
+    ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
+        let mut params = vec![alkanes_cli_common::JsonValue::String(script_content.to_string())];
+        params.extend(args);
+        self.call(&self.sandshrew_rpc_url, "lua_evalscript", alkanes_cli_common::JsonValue::Array(params), 1).await
+    }
+}
+
+#[async_trait(?Send)]
 impl DeezelProvider for WebProvider {
     fn provider_name(&self) -> &str {
         "WebProvider"

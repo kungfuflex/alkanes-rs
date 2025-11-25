@@ -39,6 +39,7 @@ pub async fn handle_request_with_storage(
         "alkanes" => handle_alkanes_method(&method_name, &request.params, &request.id, proxy).await,
         "metashrew" => handle_metashrew_method(request, proxy).await,
         "memshrew" => handle_memshrew_method(request, proxy).await,
+        "lua" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage).await,
         "sandshrew" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage).await,
         "btc" => handle_bitcoind_method(request, proxy).await,
         _ => handle_bitcoind_method(request, proxy).await,

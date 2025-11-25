@@ -994,7 +994,76 @@ impl WalletProvider for ConcreteProvider {
         let current_height = self.get_block_count().await.unwrap_or(0);
 
         for address in addresses_to_check {
-            log::debug!("Fetching UTXOs for address: {}", address);
+            log::info!("[WalletProvider] Batching UTXO+transaction fetch for address: {}", address);
+            
+            // Try batched approach first using Lua script
+            match self.execute_lua_script(
+                &crate::lua_script::scripts::ADDRESS_UTXOS_WITH_TXS,
+                vec![json!(address)]
+            ).await {
+                Ok(result) => {
+                    log::info!("[WalletProvider] Successfully fetched UTXOs with transactions in batch");
+                    
+                    // Parse the batched result
+                    if let Some(utxos_array) = result.get("utxos").and_then(|u| u.as_array()) {
+                        for utxo_entry in utxos_array {
+                            let txid = utxo_entry.get("txid").and_then(|t| t.as_str()).unwrap_or("");
+                            let vout = utxo_entry.get("vout").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            let value = utxo_entry.get("value").and_then(|v| v.as_u64()).unwrap_or(0);
+                            
+                            let outpoint = OutPoint::from_str(&format!("{}:{}", txid, vout))?;
+                            
+                            // Get status info
+                            let status = utxo_entry.get("status");
+                            let block_height = status.and_then(|s| s.get("block_height")).and_then(|h| h.as_u64());
+                            let confirmations = if let Some(bh) = block_height {
+                                if current_height > 0 {
+                                    (current_height.saturating_sub(bh) + 1) as u32
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            };
+                            
+                            // Check if coinbase from the included transaction data
+                            let is_coinbase = if let Some(tx) = utxo_entry.get("tx") {
+                                if let Some(vin) = tx.get("vin").and_then(|v| v.as_array()) {
+                                    vin.len() == 1 && vin[0].get("is_coinbase").and_then(|c| c.as_bool()).unwrap_or(false)
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+                            
+                            let utxo_info = UtxoInfo {
+                                txid: txid.to_string(),
+                                vout,
+                                amount: value,
+                                address: address.clone(),
+                                script_pubkey: None,
+                                confirmations,
+                                frozen: false,
+                                freeze_reason: None,
+                                block_height,
+                                has_inscriptions: false,
+                                has_runes: false,
+                                has_alkanes: false,
+                                is_coinbase,
+                            };
+                            all_utxos.push((outpoint, utxo_info));
+                        }
+                        continue; // Successfully processed this address, move to next
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[WalletProvider] Batched fetch failed ({}), falling back to individual calls", e);
+                }
+            }
+            
+            // Fallback to original implementation if batched approach fails
+            log::debug!("Fetching UTXOs for address (fallback): {}", address);
             let utxos_json = self.get_address_utxo(&address).await?;
             if let Ok(esplora_utxos) = serde_json::from_value::<Vec<crate::esplora::EsploraUtxo>>(utxos_json) {
                 for utxo in esplora_utxos {
