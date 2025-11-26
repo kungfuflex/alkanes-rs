@@ -1003,9 +1003,15 @@ impl WalletProvider for ConcreteProvider {
             ).await {
                 Ok(result) => {
                     log::info!("[WalletProvider] Successfully fetched UTXOs with transactions in batch");
+                    log::debug!("[WalletProvider] Lua script result: {:?}", result);
+                    
+                    // The server wraps the Lua result in {"calls": N, "returns": {...}, "runtime": N}
+                    // Extract the actual script return value from the "returns" field
+                    let script_result = result.get("returns").unwrap_or(&result);
                     
                     // Parse the batched result
-                    if let Some(utxos_array) = result.get("utxos").and_then(|u| u.as_array()) {
+                    if let Some(utxos_array) = script_result.get("utxos").and_then(|u| u.as_array()) {
+                        log::info!("[WalletProvider] Found {} UTXOs in batched result", utxos_array.len());
                         for utxo_entry in utxos_array {
                             let txid = utxo_entry.get("txid").and_then(|t| t.as_str()).unwrap_or("");
                             let vout = utxo_entry.get("vout").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -1055,6 +1061,9 @@ impl WalletProvider for ConcreteProvider {
                             all_utxos.push((outpoint, utxo_info));
                         }
                         continue; // Successfully processed this address, move to next
+                    } else {
+                        log::warn!("[WalletProvider] Batched result did not contain 'utxos' array, falling back to individual calls");
+                        log::debug!("[WalletProvider] Result keys: {:?}", result.as_object().map(|o| o.keys().collect::<Vec<_>>()));
                     }
                 }
                 Err(e) => {
