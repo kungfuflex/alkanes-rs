@@ -1592,12 +1592,12 @@ impl AlkanesProvider for BrowserWalletProvider {
         self.web_provider.protorunes_by_outpoint(txid, vout, block_tag, protocol_tag).await
     }
 
-    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue> {
-        self.web_provider.view(contract_id, view_fn, params).await
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>, block_tag: Option<String>) -> Result<JsonValue> {
+        self.web_provider.view(contract_id, view_fn, params, block_tag).await
     }
 
-    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::proto::alkanes::MessageContextParcel) -> Result<JsonValue> {
-        self.web_provider.simulate(contract_id, context).await
+    async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::proto::alkanes::MessageContextParcel, block_tag: Option<String>) -> Result<JsonValue> {
+        self.web_provider.simulate(contract_id, context, block_tag).await
     }
 
     async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
@@ -1608,8 +1608,8 @@ impl AlkanesProvider for BrowserWalletProvider {
         AlkanesProvider::get_block(&self.web_provider, height).await
     }
 
-    async fn sequence(&self) -> Result<JsonValue> {
-        self.web_provider.sequence().await
+    async fn sequence(&self, block_tag: Option<String>) -> Result<JsonValue> {
+        self.web_provider.sequence(block_tag).await
     }
 
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
@@ -1631,8 +1631,12 @@ impl AlkanesProvider for BrowserWalletProvider {
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<AlkaneBalance>> {
         AlkanesProvider::get_balance(&self.web_provider, address).await
     }
-    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
-        AlkanesProvider::pending_unwraps(&self.web_provider, height).await
+    async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
+        AlkanesProvider::pending_unwraps(&self.web_provider, block_tag).await
+    }
+
+    async fn trace_protostones(&self, txid: &str) -> Result<Option<Vec<JsonValue>>> {
+        self.web_provider.trace_protostones(txid).await
     }
 }
 
@@ -1724,6 +1728,7 @@ impl DeezelProvider for BrowserWalletProvider {
             to_addresses: vec![],
             from_addresses: address.map(|a| vec![a]),
             change_address: None,
+            alkanes_change_address: None,
             input_requirements: vec![],
             protostones: vec![ProtostoneSpec {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 1]).unwrap()), // wrap frBTC
@@ -1761,6 +1766,7 @@ impl DeezelProvider for BrowserWalletProvider {
             to_addresses: vec![],
             from_addresses: address.map(|a| vec![a]),
             change_address: None,
+            alkanes_change_address: None,
             input_requirements: vec![],
             protostones: vec![ProtostoneSpec {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 2]).unwrap()), // unwrap frBTC
@@ -1813,5 +1819,35 @@ impl DeezelProvider for BrowserWalletProvider {
     }
     fn get_metashrew_rpc_url(&self) -> Option<String> {
         self.web_provider.get_metashrew_rpc_url()
+    }
+    fn get_brc20_prog_rpc_url(&self) -> Option<String> {
+        self.web_provider.get_brc20_prog_rpc_url()
+    }
+}
+
+#[async_trait(?Send)]
+impl alkanes_cli_common::lua_script::LuaScriptExecutor for BrowserWalletProvider {
+    async fn execute_lua_script(
+        &self,
+        script: &alkanes_cli_common::lua_script::LuaScript,
+        args: Vec<alkanes_cli_common::JsonValue>,
+    ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
+        self.web_provider.execute_lua_script(script, args).await
+    }
+
+    async fn lua_evalsaved(
+        &self,
+        script_hash: &str,
+        args: Vec<alkanes_cli_common::JsonValue>,
+    ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
+        self.web_provider.lua_evalsaved(script_hash, args).await
+    }
+
+    async fn lua_evalscript(
+        &self,
+        script_content: &str,
+        args: Vec<alkanes_cli_common::JsonValue>,
+    ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
+        self.web_provider.lua_evalscript(script_content, args).await
     }
 }

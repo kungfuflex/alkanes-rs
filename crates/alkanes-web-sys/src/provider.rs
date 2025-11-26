@@ -1597,11 +1597,12 @@ impl AlkanesProvider for WebProvider {
     ) -> Result<ProtoruneOutpointResponse> {
         <Self as MetashrewRpcProvider>::get_protorunes_by_outpoint(self, txid, vout, block_tag, protocol_tag).await
     }
-    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>) -> Result<JsonValue> {
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>, block_tag: Option<String>) -> Result<JsonValue> {
         let combined_view = format!("{}/{}", contract_id, view_fn);
         let params_hex = params.map(|p| format!("0x{}", hex::encode(p))).unwrap_or_else(|| "0x".to_string());
+        let block_tag = block_tag.unwrap_or_else(|| "latest".to_string());
         
-        let rpc_params = serde_json::json!([combined_view, params_hex, "latest"]);
+        let rpc_params = serde_json::json!([combined_view, params_hex, block_tag]);
         let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", rpc_params, 1).await?;
 
         let hex_response = result.as_str().ok_or_else(|| {
@@ -1639,8 +1640,9 @@ impl AlkanesProvider for WebProvider {
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         alkanes_cli_common::proto::alkanes::BlockResponse::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn sequence(&self) -> Result<JsonValue> {
-        self.call(&self.sandshrew_rpc_url, "alkanes_sequence", serde_json::json!(["0x"]), 1).await
+    async fn sequence(&self, block_tag: Option<String>) -> Result<JsonValue> {
+        let block_tag = block_tag.unwrap_or_else(|| "latest".to_string());
+        self.call(&self.sandshrew_rpc_url, "alkanes_sequence", serde_json::json!([block_tag]), 1).await
     }
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
         self.call(&self.sandshrew_rpc_url, "alkanes_spendables_by_address", serde_json::json!([address]), 1).await
@@ -1696,9 +1698,71 @@ impl AlkanesProvider for WebProvider {
         let result = self.call(&self.sandshrew_rpc_url, "alkanes_get_balance", serde_json::json!([addr]), 1).await?;
         serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn pending_unwraps(&self, height: Option<u64>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
-        let result = self.call(&self.sandshrew_rpc_url, "alkanes_pending_unwraps", serde_json::json!([height]), 1).await?;
+    async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
+        let block_tag = block_tag.unwrap_or_else(|| "latest".to_string());
+        let result = self.call(&self.sandshrew_rpc_url, "alkanes_pending_unwraps", serde_json::json!([block_tag]), 1).await?;
         serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn trace_protostones(&self, txid: &str) -> Result<Option<Vec<JsonValue>>> {
+        use prost::Message;
+        
+        // Get transaction
+        let tx_hex = self.get_transaction_hex(txid).await?;
+        let tx_bytes = hex::decode(&tx_hex).map_err(|e| AlkanesError::Hex(e.to_string()))?;
+        let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)
+            .map_err(|e| AlkanesError::Serialization(e.to_string()))?;
+        
+        // Decode runestone to get protostones
+        let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)
+            .map_err(|e| AlkanesError::Other(format!("Failed to decode runestone: {}", e)))?;
+        
+        // Extract number of protostones
+        let num_protostones = if let Some(protostones) = result.get("protostones").and_then(|p| p.as_array()) {
+            protostones.len()
+        } else {
+            0
+        };
+        
+        if num_protostones == 0 {
+            return Ok(None);
+        }
+        
+        // Calculate virtual vout indices and trace each protostone
+        // Protostones are indexed starting at tx.output.len() + 1
+        let base_vout = tx.output.len() as u32 + 1;
+        let mut all_traces = Vec::new();
+        
+        for i in 0..num_protostones {
+            let vout = base_vout + i as u32;
+            let outpoint = format!("{}:{}", txid, vout);
+            
+            match self.trace(&outpoint).await {
+                Ok(trace_pb) => {
+                    if let Some(alkanes_trace) = trace_pb.trace {
+                        // Convert alkanes-cli-common proto to alkanes-support proto via bytes
+                        let trace_bytes = Message::encode_to_vec(&alkanes_trace);
+                        match alkanes_support::proto::alkanes::AlkanesTrace::decode(trace_bytes.as_slice()) {
+                            Ok(support_trace) => {
+                                let trace: alkanes_support::trace::Trace = support_trace.into();
+                                let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
+                                all_traces.push(json);
+                            }
+                            Err(e) => {
+                                return Err(AlkanesError::Serialization(format!("Failed to decode trace for protostone {}: {}", i, e)));
+                            }
+                        }
+                    } else {
+                        return Err(AlkanesError::Other(format!("No trace found for protostone {}", i)));
+                    }
+                }
+                Err(e) => {
+                    return Err(AlkanesError::Other(format!("Failed to trace protostone {}: {}", i, e)));
+                }
+            }
+        }
+        
+        Ok(Some(all_traces))
     }
 }
 
@@ -1866,6 +1930,10 @@ impl DeezelProvider for WebProvider {
         Some(self.sandshrew_rpc_url.clone())
     }
 
+    fn get_brc20_prog_rpc_url(&self) -> Option<String> {
+        None
+    }
+
     fn clone_box(&self) -> Box<dyn DeezelProvider> {
         Box::new(self.clone())
     }
@@ -1904,6 +1972,7 @@ impl DeezelProvider for WebProvider {
             to_addresses: vec![],
             from_addresses: address.map(|a| vec![a]),
             change_address: None,
+            alkanes_change_address: None,
             input_requirements: vec![],
             protostones: vec![ProtostoneSpec {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 1]).unwrap()), // Assuming 2 is for wrapping, 0 is frBTC, 1 is mint
@@ -1939,6 +2008,7 @@ impl DeezelProvider for WebProvider {
             to_addresses: vec![],
             from_addresses: address.map(|a| vec![a]),
             change_address: None,
+            alkanes_change_address: None,
             input_requirements: vec![],
             protostones: vec![ProtostoneSpec {
                 cellpack: Some(Cellpack::try_from(vec![2, 0, 2]).unwrap()), // Assuming 2 is for unwrapping, 0 is frBTC, 2 is burn
