@@ -14,10 +14,15 @@ pub struct DataApiClient {
 #[cfg(feature = "std")]
 impl DataApiClient {
     pub fn new(base_url: String) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap();
+        let mut builder = reqwest::Client::builder();
+        
+        // timeout() is not available in WASM
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            builder = builder.timeout(std::time::Duration::from_secs(30));
+        }
+        
+        let client = builder.build().unwrap();
         
         Self { base_url, client }
     }
