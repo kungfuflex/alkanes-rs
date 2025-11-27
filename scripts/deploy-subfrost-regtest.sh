@@ -1,0 +1,716 @@
+#!/bin/bash
+
+# Alkanes Deployment Script for Regtest
+# This script deploys all alkanes to a local regtest environment
+# Pattern follows reference/oyl-amm/deploy-oyl-amm.sh
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+ALKANES_DIR="/data/alkanes-rs"
+SCRIPT_DIR="$ALKANES_DIR/scripts"
+WASM_DIR="$SCRIPT_DIR/../prod_wasms"
+WALLET_FILE="${WALLET_FILE:-$HOME/.alkanes/wallet.json}"
+DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-testtesttest}"
+RPC_URL="https://regtest.subfrost.io/v4/jsonrpc"
+
+# OYL AMM Constants (matching oyl-sdk deployment pattern from pseudocode)
+AUTH_TOKEN_FACTORY_ID=65517      # 0xffed
+POOL_BEACON_PROXY_TX=780993      # Different from previous
+AMM_FACTORY_LOGIC_IMPL_TX=65524  # 0xfff4
+POOL_LOGIC_TX=65520              # 0xfff0
+AMM_FACTORY_PROXY_TX=65522       # 0xfff2 (upgradeable proxy)
+POOL_UPGRADEABLE_BEACON_TX=65523 # 0xfff3
+
+# Helper functions
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+# Check if alkanes-cli exists
+check_cli() {
+    # First check if it's in the target/release directory
+    if [ -f "$SCRIPT_DIR/../target/release/alkanes-cli" ]; then
+        ALKANES_CLI="$SCRIPT_DIR/../target/release/alkanes-cli"
+        log_success "Found alkanes-cli: $ALKANES_CLI"
+    elif command -v alkanes-cli &> /dev/null; then
+        ALKANES_CLI="alkanes-cli"
+        log_success "Found alkanes-cli in PATH: $(which alkanes-cli)"
+    else
+        log_error "alkanes-cli not found"
+        log_info "Please build alkanes-cli first:"
+        log_info "  cd $SCRIPT_DIR/.. && cargo build --release"
+        exit 1
+    fi
+}
+
+# Check if regtest node is running
+check_regtest() {
+    log_info "Checking if regtest node is running..."
+    if ! curl -s "$RPC_URL" > /dev/null 2>&1; then
+        log_error "Cannot connect to regtest node at $RPC_URL"
+        log_info "Please start the regtest node first:"
+        log_info "  cd $ALKANES_DIR && docker-compose up -d"
+        exit 1
+    fi
+    log_success "Regtest node is running at $RPC_URL"
+}
+
+# Check if WASMs exist
+check_wasms() {
+    log_info "Checking if WASM files exist in prod_wasms..."
+    if [ ! -d "$WASM_DIR" ] || [ -z "$(ls -A $WASM_DIR/*.wasm 2>/dev/null)" ]; then
+        log_error "WASM files not found in $WASM_DIR"
+        log_info "Please ensure WASMs are copied to $WASM_DIR"
+        log_info "Or build them with:"
+        log_info "  cd ../subfrost-alkanes && cargo build --release --target wasm32-unknown-unknown"
+        log_info "  cp target/wasm32-unknown-unknown/release/*.wasm $WASM_DIR/"
+        exit 1
+    fi
+    
+    # Count non-empty WASMs
+    local count=$(find "$WASM_DIR" -name "*.wasm" -type f -size +1k | wc -l)
+    log_success "Found $count WASM files in $WASM_DIR"
+}
+
+# Setup wallet if it doesn't exist
+setup_wallet() {
+    if [ ! -f "$WALLET_FILE" ]; then
+        log_info "Creating new wallet..."
+        mkdir -p "$(dirname "$WALLET_FILE")"
+        
+        # Use default password if not set
+        DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+        
+        "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet create
+        log_success "Wallet created at $WALLET_FILE"
+    else
+        log_success "Using existing wallet at $WALLET_FILE"
+    fi
+    
+    # Get wallet address
+    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    WALLET_ADDRESS=$("$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet addresses p2tr:0-1 2>/dev/null | grep -oP 'bcrt1[a-zA-Z0-9]+' | head -1)
+    log_info "Wallet address: $WALLET_ADDRESS"
+}
+
+# Fund wallet with regtest coins
+fund_wallet() {
+    log_info "Checking if wallet needs funding..."
+    
+    # Check if wallet has any UTXOs
+    UTXO_CHECK=$("$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" wallet utxos p2tr:0 2>&1 | grep -c "Outpoint:" || echo "0")
+    
+    if [ "$UTXO_CHECK" -gt "0" ]; then
+        log_success "Wallet already funded with $UTXO_CHECK UTXOs at p2tr:0"
+    else
+        log_info "No UTXOs found, mining blocks to fund wallet..."
+        # Mine 400 blocks to the wallet's p2tr:0 address (increased from 201 for more mature coins)
+        log_info "Mining 400 blocks to $WALLET_ADDRESS (p2tr:0)..."
+        "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 400 "p2tr:0" > /dev/null 2>&1
+        
+        # Wait for sandshrew to index the blocks
+        log_info "Waiting for sandshrew to index blocks (15 seconds)..."
+        sleep 15
+        
+        log_success "Wallet funded! Ready for deployments"
+    fi
+}
+
+# Ensure coinbase maturity by mining additional blocks
+ensure_coinbase_maturity() {
+    log_info "Ensuring coinbase maturity (mining 101 blocks to mature recent coinbases)..."
+    "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 101 "p2tr:0" > /dev/null 2>&1
+    
+    log_info "Waiting for sandshrew to index maturity blocks (10 seconds)..."
+    sleep 10
+    
+    log_success "Coinbase outputs matured"
+}
+
+# Deploy a WASM contract using [3, tx] cellpack
+deploy_contract() {
+    local CONTRACT_NAME=$1
+    local WASM_FILE=$2
+    local TARGET_TX=$3
+    shift 3
+    local INIT_ARGS="$@"
+    
+    log_info "Deploying $CONTRACT_NAME using [3, $TARGET_TX] -> will create at [4, $TARGET_TX]..."
+    
+    if [ ! -f "$WASM_FILE" ]; then
+        log_error "WASM file not found: $WASM_FILE"
+        return 1
+    fi
+    
+    # Build protostone: [3,tx,init_args...]:v0:v0 for deployment
+    local PROTOSTONE="[3,$TARGET_TX$([ -n "$INIT_ARGS" ] && echo ",$INIT_ARGS" || echo "")]:v0:v0"
+    
+    log_info "  Protostone: $PROTOSTONE"
+    
+    # Deploy using alkanes-cli with envelope and protostone
+    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    "$ALKANES_CLI" -p regtest \
+        --wallet-file "$WALLET_FILE" \
+	--sandshrew-rpc-url $RPC_URL \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes execute "$PROTOSTONE" \
+        --envelope "$WASM_FILE" \
+        --from p2tr:0 \
+        --fee-rate 1 \
+        --mine \
+        -y
+    
+    if [ $? -eq 0 ]; then
+        log_success "$CONTRACT_NAME deployed to [4, $TARGET_TX]"
+        
+        # Wait for metashrew to index the deployment
+        log_info "Waiting for metashrew to index (5 seconds)..."
+        $ALKANES_CLI -p regtest --sandshrew-rpc-url https://regtest.subfrost.io/v4/jsonrpc wallet sync
+        
+        # Verify deployment by checking bytecode
+        log_info "Verifying $CONTRACT_NAME deployment at [4, $TARGET_TX]..."
+        
+        # Try up to 3 times with 2 second delays
+        BYTECODE=""
+        for i in 1 2 3; do
+            BYTECODE=$("$ALKANES_CLI" -p regtest --sandshrew-rpc-url https://regtest.subfrost.io/v4/jsonrpc alkanes getbytecode "4:$TARGET_TX" 2>/dev/null)
+            if [ -n "$BYTECODE" ] && [ "$BYTECODE" != "null" ] && [ "$BYTECODE" != '""' ]; then
+                break
+            fi
+            if [ $i -lt 3 ]; then
+                log_info "Bytecode not found yet, waiting 2 seconds..."
+                sleep 2
+            fi
+        done
+        
+        if [ -n "$BYTECODE" ] && [ "$BYTECODE" != "null" ] && [ "$BYTECODE" != '""' ]; then
+            BYTECODE_SIZE=$(echo "$BYTECODE" | wc -c)
+            log_success "✓ Bytecode verified at [4, $TARGET_TX] (${BYTECODE_SIZE} bytes)"
+        else
+            log_error "✗ Bytecode verification failed for $CONTRACT_NAME at [4, $TARGET_TX]"
+            log_error "Deployment failed - contract bytecode not found in metashrew"
+            exit 1
+        fi
+    else
+        log_error "Failed to deploy $CONTRACT_NAME"
+        return 1
+    fi
+}
+
+# Initialize a deployed contract
+initialize_contract() {
+    local CONTRACT_NAME=$1
+    local ALKANE_ID=$2
+    shift 2
+    local ARGS="$@"
+    
+    log_info "Initializing $CONTRACT_NAME at $ALKANE_ID..."
+    
+    # Build the protostone format: [block:tx:opcode,args...]
+    local PROTOSTONE="[$ALKANE_ID:0$([ -n "$ARGS" ] && echo ",$ARGS" || echo "")]:v0:v0"
+    
+    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    "$ALKANES_CLI" -p regtest \
+	--sandshrew-rpc-url $RPC_URL \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes execute "$PROTOSTONE" \
+        --from p2tr:0 \
+        --fee-rate 1 \
+        -y \
+        > /dev/null 2>&1
+    
+    if [ $? -eq 0 ]; then
+        log_success "$CONTRACT_NAME initialized"
+    else
+        log_warn "Failed to initialize $CONTRACT_NAME (may not need initialization)"
+    fi
+}
+
+# Main deployment process
+main() {
+    echo ""
+    log_info "=========================================="
+    log_info "Alkanes Regtest Deployment"
+    log_info "=========================================="
+    echo ""
+    
+    # Pre-deployment checks
+    check_cli
+    check_regtest
+    check_wasms
+    setup_wallet
+    fund_wallet
+    
+    echo ""
+    log_info "=========================================="
+    log_info "Starting Contract Deployments"
+    log_info "=========================================="
+    echo ""
+    
+    # Deploy Genesis Contracts (these are special and auto-deployed by the protocol)
+    log_info "=========================================="
+    log_info "Genesis Contracts (auto-deployed by alkanes-rs)"
+    log_info "=========================================="
+    log_info "  - Genesis Alkane at [1, 0]"
+    log_info "  - DIESEL at [2, 0]"
+    log_info "  - frBTC (or frZEC) at [32, 0] (or [42, 0] for Zcash)"
+    log_info "  - frSIGIL at [32, 1] (or [42, 1] for Zcash)"
+    log_info "  - ftrBTC Master at [31, 0] (via setup_ftrbtc in network.rs)"
+    echo ""
+    
+    log_info "=========================================="
+    log_info "Deployment Patterns"
+    log_info "=========================================="
+    log_info "  [1, 0] + envelope -> CREATE (next available [2, n])"
+    log_info "  [3, tx] + envelope -> creates alkane at [4, tx]"
+    log_info "  [6, tx] + args -> clones template from [4, tx] to next [2, n]"
+    echo ""
+    
+    log_info "=========================================="
+    log_info "Reserved Range: [4, 0x1f00-0x1fff]"
+    log_info "=========================================="
+    log_info "  Core Infrastructure (0x1f00-0x1f0f):"
+    log_info "    - dxBTC at [4, 0x1f00]"
+    log_info "    - yv-fr-btc Vault at [4, 0x1f01]"
+    log_info ""
+    log_info "  LBTC Yield System (0x1f10-0x1f1f):"
+    log_info "    - LBTC Yield Splitter at [4, 0x1f10]"
+    log_info "    - pLBTC at [4, 0x1f11]"
+    log_info "    - yxLBTC at [4, 0x1f12]"
+    log_info "    - FROST Token at [4, 0x1f13]"
+    log_info "    - vxFROST Gauge at [4, 0x1f14] (special: needs fixed ID)"
+    log_info "    - Synth Pool at [4, 0x1f15]"
+    log_info "    - LBTC Oracle at [4, 0x1f16]"
+    log_info "    - LBTC Token at [4, 0x1f17]"
+    log_info ""
+    log_info "  Templates (0x1f20-0x1f2f):"
+    log_info "    - Unit Template at [4, 0x1f20]"
+    log_info "    - VE Token Vault Template at [4, 0x1f21]"
+    log_info "    - YVE Token NFT Template at [4, 0x1f22]"
+    log_info "    - VX Token Gauge Template at [4, 0x1f23]"
+    log_info ""
+    log_info "  DIESEL Governance (instantiated from templates):"
+    log_info "    - veDIESEL: [6, 0x1f21] → creates at [2, n]"
+    log_info "    - yveDIESEL: [6, 0x1f22] → creates at [2, n]"
+    log_info "    - vxDIESEL Gauge: [6, 0x1f23] → creates at [2, n]"
+    echo ""
+    
+    # Deploy Core Alkanes
+    # Note: We deploy to [3, n] which creates the alkane at [4, n]
+    # Format: deploy_contract "Name" "file.wasm" target_tx [init_args...]
+    
+    # === RESERVED RANGE: [4, 0x1f00-0x1fff] for Subfrost System ===
+    
+    log_info "=========================================="
+    log_info "Phase 1: Core Infrastructure"
+    log_info "=========================================="
+    
+    # Deploy dx-btc at [4, 0x1f00] (DX_BTC_ID)
+    # Args: opcode(0), asset_id(frBTC), yv_fr_btc_vault_id, escrow_nft_id, vx_frost_gauge_id
+    # Note: We'll initialize it separately after deploying dependencies
+    deploy_contract "dxBTC" "$WASM_DIR/dx_btc.wasm" $((0x1f00)) "0,32,0,4,$((0x1f01)),4,$((0x1f22)),4,$((0x1f14))"
+    
+    # Deploy yv-fr-btc-vault at [4, 0x1f01] (YV_FR_BTC_VAULT_ID)
+    # Args: opcode(0), yv_fr_btc, yv_boost_id, fr_btc_diesel_lp_id, gauge_contract_id
+    # TODO: Need to deploy yv_boost and gauge_contract first
+    deploy_contract "yv-fr-btc Vault" "$WASM_DIR/yv_fr_btc_vault.wasm" $((0x1f01)) "0,4,$((0x1f01)),2,1,2,2,2,3"
+    
+    log_info "=========================================="
+    log_info "Phase 2: LBTC Yield System"
+    log_info "=========================================="
+    
+    # Deploy lbtc-yield-splitter at [4, 0x1f10] (LBTC_YIELD_SPLITTER_ID)
+    # Args: opcode(0), lbtc_id, btc_pt_id, btc_yt_id, maturity_block
+    deploy_contract "LBTC Yield Splitter" "$WASM_DIR/lbtc_yield_splitter.wasm" $((0x1f10)) "0,4,$((0x1f17)),4,$((0x1f11)),4,$((0x1f12)),1000000"
+    
+    # Deploy p-lbtc at [4, 0x1f11] (PLBTC_ID)
+    # Args: opcode(0), splitter_id
+    deploy_contract "pLBTC (Principal LBTC)" "$WASM_DIR/p_lbtc.wasm" $((0x1f11)) "0,4,$((0x1f10))"
+    
+    # Deploy yx-lbtc at [4, 0x1f12] (YXLBTC_ID)
+    # Args: opcode(0), splitter_id
+    deploy_contract "yxLBTC (Yield LBTC)" "$WASM_DIR/yx_lbtc.wasm" $((0x1f12)) "0,4,$((0x1f10))"
+    
+    # Deploy frost-token at [4, 0x1f13] (FROST_TOKEN_ID)
+    # Args: opcode(0), total_supply, treasury
+    deploy_contract "FROST Token" "$WASM_DIR/frost_token.wasm" $((0x1f13)) "0,1000000000000000000,4,$((0x1f00))"
+    
+    # Deploy vx-frost-gauge at [4, 0x1f14] (VX_FROST_GAUGE_ID)
+    # NOTE: vxFROST is deployed directly (not instantiated) because dx-btc needs to reference it at init time
+    # Args: opcode(0), frost_token
+    deploy_contract "vxFROST Gauge" "$WASM_DIR/vx_frost_gauge.wasm" $((0x1f14)) "0,4,$((0x1f13))"
+    
+    # Deploy synth-pool at [4, 0x1f15] (SYNTH_POOL_ID)
+    # Synth pool may not need initialization args or may need different pattern
+    deploy_contract "Synth Pool (pLBTC/frBTC)" "$WASM_DIR/synth_pool.wasm" $((0x1f15)) "0"
+    
+    log_info "=========================================="
+    log_info "Phase 3: LBTC Oracle System"
+    log_info "=========================================="
+    
+    # Deploy lbtc-oracle (unit alkane) at [4, 0x1f16] (LBTC_ORACLE_ID)
+    # Args: opcode(0), amount
+    deploy_contract "LBTC Oracle" "$WASM_DIR/unit.wasm" $((0x1f16)) "0,1000000000000"
+    
+    # Deploy lbtc token at [4, 0x1f17] (LBTC_ID)
+    # Args: opcode(0), oracle_id
+    deploy_contract "LBTC Token" "$WASM_DIR/lbtc.wasm" $((0x1f17)) "0,4,$((0x1f16))"
+    
+    log_info "=========================================="
+    log_info "Phase 4: Template Contracts"
+    log_info "=========================================="
+    
+    # Deploy unit template at [4, 0x1f20] (UNIT_TEMPLATE_ID)
+    # Args: opcode(0), amount
+    deploy_contract "Unit Template" "$WASM_DIR/unit.wasm" $((0x1f20)) "0,0"
+    
+    # Deploy ve-token-vault-template at [4, 0x1f21] (VE_TOKEN_VAULT_TEMPLATE_ID)
+    # Templates don't need initialization when deployed - they're initialized when cloned
+    deploy_contract "VE Token Vault Template" "$WASM_DIR/ve_token_vault_template.wasm" $((0x1f21)) "0"
+    
+    # Deploy yve-token-nft-template at [4, 0x1f22] (YVE_TOKEN_NFT_TEMPLATE_ID)
+    # Templates don't need initialization when deployed - they're initialized when cloned
+    deploy_contract "YVE Token NFT Template" "$WASM_DIR/yve_token_nft_template.wasm" $((0x1f22)) "0"
+    
+    # Deploy vx-token-gauge-template at [4, 0x1f23] (VX_TOKEN_GAUGE_TEMPLATE_ID)
+    # Templates don't need initialization when deployed - they're initialized when cloned
+    deploy_contract "VX Token Gauge Template" "$WASM_DIR/vx_token_gauge_template.wasm" $((0x1f23)) "0"
+    
+    # log_info "=========================================="
+    # log_info "Phase 5: DIESEL Governance System (Instantiated from Templates)"
+    # log_info "=========================================="
+    
+    # # Instantiate veDIESEL from ve-token-vault-template at [4, 0x1f21]
+    # # Using [6, 0x1f21] cellpack creates instance at next available [2, n]
+    # # Args: opcode(0), asset_id(DIESEL), yve_token_nft_id, vx_token_gauge_id, fr_sigil_id
+    # log_info "Instantiating veDIESEL from template [4, 0x1f21]..."
+    # # We need to instantiate yveDIESEL and vxDIESEL first, so this needs proper IDs
+    # # Using placeholder IDs for now - this should be adjusted based on actual deployment
+    # PROTOSTONE="[6,$((0x1f21)),0,2,0,2,2,2,3,32,1]"  # [6, template_tx, opcode, asset_id, yve_nft_id, vx_gauge_id, fr_sigil_id]
+    # log_info "  Protostone: $PROTOSTONE (creates at [2, n])"
+    
+    # DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    # "$ALKANES_CLI" -p regtest \
+    #     --wallet-file "$WALLET_FILE" \
+    #     --passphrase "$DEPLOY_PASSWORD" \
+    #     alkanes execute "$PROTOSTONE" \
+    #     --from p2tr:0 \
+    #     --fee-rate 1 \
+    #     -y
+    
+    # if [ $? -eq 0 ]; then
+    #     log_success "veDIESEL instantiated at [2, n]"
+    # else
+    #     log_warn "Failed to instantiate veDIESEL"
+    # fi
+    
+    # echo ""
+    
+    # # Instantiate yveDIESEL from yve-token-nft-template at [4, 0x1f22]
+    # # Using [6, 0x1f22] cellpack creates instance at next available [2, n]
+    # # Args: opcode(0), ve_token_vault_id, vx_token_gauge_id, unit_template_id, fr_sigil_id
+    # log_info "Instantiating yveDIESEL from template [4, 0x1f22]..."
+    # PROTOSTONE="[6,$((0x1f22)),0,2,1,2,3,4,$((0x1f20)),32,1]"  # [6, template_tx, opcode, ve_vault_id, vx_gauge_id, unit_template_id, fr_sigil_id]
+    # log_info "  Protostone: $PROTOSTONE (creates at [2, n])"
+    
+    # DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    # "$ALKANES_CLI" -p regtest \
+    #     --wallet-file "$WALLET_FILE" \
+    #     --passphrase "$DEPLOY_PASSWORD" \
+    #     alkanes execute "$PROTOSTONE" \
+    #     --from p2tr:0 \
+    #     --fee-rate 1 \
+    #     -y
+    
+    # if [ $? -eq 0 ]; then
+    #     log_success "yveDIESEL instantiated at [2, n]"
+    # else
+    #     log_warn "Failed to instantiate yveDIESEL"
+    # fi
+    
+    # echo ""
+    
+    # # Instantiate vxDIESEL gauge from vx-token-gauge-template at [4, 0x1f23]
+    # # Using [6, 0x1f23] cellpack creates instance at next available [2, n]
+    # # Args: opcode(0), lp_token, reward_token, yve_token_nft_id, reward_rate, fr_sigil_id
+    # log_info "Instantiating vxDIESEL Gauge from template [4, 0x1f23]..."
+    # # LP token needs to be created first (frBTC/DIESEL pool from OYL AMM)
+    # # Using DIESEL as reward token for now
+    # PROTOSTONE="[6,$((0x1f23)),0,2,4,2,0,2,2,1000000000,32,1]"  # [6, template_tx, opcode, lp_token, reward_token, yve_nft_id, reward_rate, fr_sigil_id]
+    # log_info "  Protostone: $PROTOSTONE (creates at [2, n])"
+    
+    # DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    # "$ALKANES_CLI" -p regtest \
+    #     --wallet-file "$WALLET_FILE" \
+    #     --passphrase "$DEPLOY_PASSWORD" \
+    #     alkanes execute "$PROTOSTONE" \
+    #     --from p2tr:0 \
+    #     --fee-rate 1 \
+    #     -y
+    
+    # if [ $? -eq 0 ]; then
+    #     log_success "vxDIESEL Gauge instantiated at [2, n]"
+    # else
+    #     log_warn "Failed to instantiate vxDIESEL Gauge"
+    # fi
+    
+    # NOTE: ftr-btc at [31, 0] is deployed automatically in alkanes-rs genesis (setup_ftrbtc)
+    # NOTE: dx-btc and yv-fr-btc-vault are now deployed above in the reserved range
+    
+    # Initialize dx-btc at [4, 0x1f00] with frBTC[32,0] and yv-fr-btc-vault[4,0x1f01]
+    
+    # Additional Test Contracts (if needed for specific test scenarios)
+    # NOTE: DIESEL governance contracts are instantiated from templates above
+    # These are generic test vaults deployed to [4, n] via [3, n]
+    
+    # Uncomment if needed for testing:
+    # deploy_contract "Generic Gauge Contract" "$WASM_DIR/gauge_contract.wasm" 100 "1"
+    # deploy_contract "yvBOOST Vault" "$WASM_DIR/yv_boost_vault.wasm" 101 "1"
+    # deploy_contract "yvTOKEN Vault" "$WASM_DIR/yv_token_vault.wasm" 102 "1"
+    
+    # OYL AMM System (following oyl-protocol deployment pattern)
+    log_info "=========================================="
+    log_info "Phase 6: OYL AMM System"
+    log_info "=========================================="
+    
+    echo ""
+    
+    # Step 1: Deploy Auth Token Factory
+    deploy_contract "OYL Auth Token Factory" "$WASM_DIR/alkanes_std_auth_token.wasm" "$AUTH_TOKEN_FACTORY_ID" "100"
+    
+    # Step 2: Deploy Beacon Proxy Template
+    deploy_contract "OYL Beacon Proxy" "$WASM_DIR/alkanes_std_beacon_proxy.wasm" "$POOL_BEACON_PROXY_TX" "36863"
+    
+    # Step 3: Deploy Factory Logic Implementation
+    deploy_contract "OYL Factory Logic" "$WASM_DIR/factory.wasm" "$AMM_FACTORY_LOGIC_IMPL_TX" "50"
+    
+    # Step 4: Deploy Pool Logic Implementation
+    deploy_contract "OYL Pool Logic" "$WASM_DIR/pool.wasm" "$POOL_LOGIC_TX" "50"
+    
+    # Step 5: Deploy Upgradeable Proxy (Factory Proxy)
+    deploy_contract "OYL Factory Proxy (Upgradeable)" "$WASM_DIR/alkanes_std_upgradeable.wasm" "$AMM_FACTORY_PROXY_TX" "$((0x7fff)),4,$AMM_FACTORY_LOGIC_IMPL_TX,5"
+    
+    # Step 6: Deploy Upgradeable Beacon
+    deploy_contract "OYL Upgradeable Beacon" "$WASM_DIR/alkanes_std_upgradeable_beacon.wasm" "$POOL_UPGRADEABLE_BEACON_TX" "$((0x7fff)),4,$POOL_LOGIC_TX,5"
+    
+    # Step 7: Initialize Factory
+    log_info "Initializing OYL Factory with InitFactory opcode..."
+    log_info "This requires spending auth token [2:1] to authenticate the call..."
+    
+    FACTORY_INIT_PROTOSTONE="[4,$AMM_FACTORY_PROXY_TX,0,$POOL_BEACON_PROXY_TX,4,$POOL_UPGRADEABLE_BEACON_TX]:v0:v0"
+    log_info "  Protostone: $FACTORY_INIT_PROTOSTONE"
+    log_info "  Opcode 0 = InitFactory(pool_beacon_proxy_id, pool_beacon_id)"
+    echo ""
+    
+    DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
+    
+    "$ALKANES_CLI" -p regtest \
+	--sandshrew-rpc-url $RPC_URL \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes execute "$FACTORY_INIT_PROTOSTONE" \
+        --from p2tr:0 \
+        --inputs 2:1:1 \
+        --fee-rate 1 \
+        --mine \
+        --trace \
+        -y
+    
+    if [ $? -eq 0 ]; then
+        log_success "OYL Factory initialized successfully!"
+        
+        # Wait for metashrew to index
+        log_info "Waiting for metashrew to index factory initialization (5 seconds)..."
+        $ALKANES_CLI -p regtest --sandshrew-rpc-url https://regtest.subfrost.io/v4/jsonrpc wallet sync
+    else
+        log_error "Failed to initialize OYL Factory"
+        exit 1
+    fi
+    echo ""
+    
+    # Step 8: Create test tokens and pool
+    log_info "=========================================="
+    log_info "Creating Test Pool (DIESEL/frBTC)"
+    log_info "=========================================="
+    echo ""
+    
+    # Configuration for test pool
+    DIESEL_ID="2:0"
+    FRBTC_ID="32:0"
+    DIESEL_AMOUNT="300000000"  # 300M DIESEL
+    FRBTC_AMOUNT="50000"       # 0.0005 BTC in sats
+    
+    # Step 8a: Mine DIESEL
+    log_info "Mining DIESEL tokens..."
+    "$ALKANES_CLI" -p regtest \
+	--sandshrew-rpc-url $RPC_URL \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes execute "[2,0,77]:v0:v0" \
+        --to p2tr:0 \
+        --from p2tr:0 \
+        --change p2tr:0 \
+        --auto-confirm
+    
+    if [ $? -eq 0 ]; then
+        log_success "DIESEL mined"
+    else
+        log_error "Failed to mine DIESEL"
+        exit 1
+    fi
+    
+    # Step 8b: Wrap BTC for frBTC
+    log_info "Wrapping BTC to frBTC..."
+    "$ALKANES_CLI" -p regtest \
+	--sandshrew-rpc-url $RPC_URL \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes wrap-btc \
+        100000000 \
+        --to p2tr:0 \
+        --from p2tr:0 \
+        --change p2tr:0 \
+        --auto-confirm
+    
+    if [ $? -eq 0 ]; then
+        log_success "frBTC wrapped"
+    else
+        log_error "Failed to wrap frBTC"
+        exit 1
+    fi
+    
+    # Wait for confirmations
+    log_info "Mining a block to confirm transactions..."
+    "$ALKANES_CLI" -p regtest \
+	--sandshrew-rpc-url $RPC_URL \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        bitcoind generatetoaddress 1 p2tr:0 > /dev/null 2>&1
+    
+    log_info "Waiting for metashrew to index transactions (15 seconds)..."
+    sleep 15
+    
+    # Step 8c: Create the pool
+    log_info "Creating DIESEL/frBTC pool..."
+    "$ALKANES_CLI" -p regtest \
+	--sandshrew-rpc-url $RPC_URL \
+        --wallet-file "$WALLET_FILE" \
+        --passphrase "$DEPLOY_PASSWORD" \
+        alkanes init-pool \
+        --pair "$DIESEL_ID,$FRBTC_ID" \
+        --liquidity "$DIESEL_AMOUNT:$FRBTC_AMOUNT" \
+        --to p2tr:0 \
+        --from p2tr:0 \
+        --change p2tr:0 \
+        --factory "4:$AMM_FACTORY_PROXY_TX" \
+        --auto-confirm \
+        --trace
+    
+    if [ $? -eq 0 ]; then
+        log_success "Pool created successfully!"
+        
+        # Wait for metashrew to index
+        log_info "Waiting for metashrew to index pool creation (5 seconds)..."
+        $ALKANES_CLI -p regtest --sandshrew-rpc-url https://regtest.subfrost.io/v4/jsonrpc wallet sync
+        
+        echo ""
+        log_success "🎉 OYL AMM deployment and pool creation complete!"
+    else
+        log_error "Failed to create pool"
+        exit 1
+    fi
+    
+    # BTC PT/YT tokens (if needed for tests)
+    if [ -f "$WASM_DIR/btc_pt.wasm" ] && [ -s "$WASM_DIR/btc_pt.wasm" ]; then
+        deploy_contract "BTC PT Token" "$WASM_DIR/btc_pt.wasm" 70
+    fi
+    if [ -f "$WASM_DIR/btc_yt.wasm" ] && [ -s "$WASM_DIR/btc_yt.wasm" ]; then
+        deploy_contract "BTC YT Token" "$WASM_DIR/btc_yt.wasm" 71
+    fi
+    
+    echo ""
+    log_info "=========================================="
+    log_info "Deployment Summary"
+    log_info "=========================================="
+    echo ""
+    
+    log_success "All contracts deployed successfully!"
+    echo ""
+    log_info "Deployed Alkanes:"
+    echo ""
+    echo "Genesis (Auto-deployed):"
+    echo "  - DIESEL:                 [2, 0]"
+    echo "  - frBTC:                  [32, 0]"
+    echo ""
+    echo "Core Contracts:"
+    echo "  - dxBTC Vault:            [2, 1]   (CREATE, deps: frBTC[32,0], yv-fr-btc[3,0])"
+    echo "  - yv-fr-btc Vault:        [3, 0]   (RESERVED, deps: frBTC[32,0])"
+    echo "  - ftrBTC Master:          [31, 0]  (RESERVED)"
+    echo ""
+    echo "LBTC System:"
+    echo "  - FROST Token:            [4, 10]"
+    echo "  - pLBTC:                  [4, 11]"
+    echo "  - yxLBTC:                 [4, 12]"
+    echo "  - LBTC Yield Splitter:    [4, 13]  (deps: pLBTC[4,11], yxLBTC[4,12])"
+    echo "  - Synth Pool:             [4, 30]  (deps: pLBTC[4,11], frBTC[32,0])"
+    echo ""
+    echo "Governance:"
+    echo "  - vxFROST Gauge:          [4, 50]"
+    echo "  - veDIESEL Vault:         [4, 60]"
+    echo ""
+    echo "Additional Vaults & Gauges:"
+    echo "  - Gauge Contract:         [4, 100]"
+    echo "  - yvBOOST Vault:          [4, 101]"
+    echo "  - yvTOKEN Vault:          [4, 102]"
+    echo "  - yveDIESEL Vault:        [4, 103]"
+    echo ""
+    echo "OYL AMM System:"
+    echo "  - OYL Auth Token Factory: [4, $AUTH_TOKEN_FACTORY_ID]"
+    echo "  - OYL Beacon Proxy:       [4, $POOL_BEACON_PROXY_TX]"
+    echo "  - OYL Factory Logic:      [4, $AMM_FACTORY_LOGIC_IMPL_TX]"
+    echo "  - OYL Pool Logic:         [4, $POOL_LOGIC_TX]"
+    echo "  - OYL Factory Proxy:      [4, $AMM_FACTORY_PROXY_TX]"
+    echo "  - OYL Upgradeable Beacon: [4, $POOL_UPGRADEABLE_BEACON_TX]"
+    echo ""
+    echo "Test Pool:"
+    echo "  - DIESEL/frBTC Pool:      Created with 300M DIESEL / 50K frBTC"
+    echo ""
+    
+
+    
+    log_info "Example commands:"
+    echo ""
+    echo "# Check balances:"
+    echo "alkanes-cli -p regtest --wallet-file $WALLET_FILE --passphrase password alkanes getbalance"
+    echo ""
+    echo "# Inspect a contract:"
+    echo "alkanes-cli -p regtest alkanes inspect 4:10"
+    echo ""
+    echo "# Execute a contract call (e.g., transfer FROST):"
+    echo "alkanes-cli -p regtest --wallet-file $WALLET_FILE --passphrase password alkanes execute '[4:10:1,1000,0,0]' --mine -y"
+    echo ""
+    
+    log_success "Deployment complete! Your regtest environment is ready."
+}
+
+# Run main
+main
