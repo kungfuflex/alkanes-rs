@@ -134,6 +134,22 @@ pub struct ConcreteProvider {
 
 
 impl ConcreteProvider {
+    /// Helper method to add X-Subfrost-Api-Key header if URL is a subfrost.io domain
+    #[cfg(feature = "native-deps")]
+    fn add_subfrost_header(&self, url: &str, mut builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Ok(parsed_url) = Url::parse(url) {
+            if let Some(host) = parsed_url.host_str() {
+                if host.ends_with(".subfrost.io") || host == "subfrost.io" {
+                    if let Some(api_key) = self.rpc_config.get_subfrost_api_key() {
+                        log::debug!("Adding X-Subfrost-Api-Key header for {}", host);
+                        builder = builder.header("X-Subfrost-Api-Key", api_key);
+                    }
+                }
+            }
+        }
+        builder
+    }
+
     #[cfg(feature = "std")]
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn new(
@@ -148,12 +164,14 @@ impl ConcreteProvider {
         let rpc_config = RpcConfig {
             provider,
             bitcoin_rpc_url,
+            jsonrpc_url: None,
             sandshrew_rpc_url,
             titan_api_url,
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
             brc20_prog_rpc_url: None,
+            subfrost_api_key: None,
             timeout_seconds: 600,
         };
         
@@ -611,10 +629,20 @@ impl JsonRpcProvider for ConcreteProvider {
             parsed_url.set_username("").map_err(|_| AlkanesError::InvalidParameters("Failed to strip username".into()))?;
             parsed_url.set_password(None).map_err(|_| AlkanesError::InvalidParameters("Failed to strip password".into()))?;
 
-            let mut request_builder = self.http_client.post(parsed_url);
+            let mut request_builder = self.http_client.post(parsed_url.clone());
 
             if !username.is_empty() {
                 request_builder = request_builder.basic_auth(username, password);
+            }
+
+            // Add X-Subfrost-Api-Key header if the URL is a subfrost.io domain
+            if let Some(host) = parsed_url.host_str() {
+                if host.ends_with(".subfrost.io") || host == "subfrost.io" {
+                    if let Some(api_key) = self.rpc_config.get_subfrost_api_key() {
+                        log::debug!("Adding X-Subfrost-Api-Key header for {}", host);
+                        request_builder = request_builder.header("X-Subfrost-Api-Key", api_key);
+                    }
+                }
             }
 
             log::debug!("Request builder: {:?}", request_builder);
@@ -2049,7 +2077,9 @@ impl EsploraProvider for ConcreteProvider {
             let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
             let url = format!("{}/blocks/tip/hash", rpc_url);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_blocks_tip_hash response: {}", text);
             return Ok(text);
@@ -2069,7 +2099,9 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/blocks/tip/height", rpc_url);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_blocks_tip_height response: {}", text);
             return text.parse::<u64>().map_err(|e| AlkanesError::RpcError(format!("Invalid tip height response from REST API: {e}")));
@@ -2092,7 +2124,9 @@ impl EsploraProvider for ConcreteProvider {
                 format!("{}/blocks", rpc_url)
             };
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let json = response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
             log::info!("[EsploraProvider] get_blocks response: {:?}", json);
             return json;
@@ -2110,7 +2144,9 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block-height/{}", rpc_url, height);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_block_by_height response: {}", text);
             return Ok(text);
@@ -2127,7 +2163,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2140,7 +2178,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/status", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2153,7 +2193,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/txids", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2166,7 +2208,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/header", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.text().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2180,7 +2224,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/raw", rpc_url, hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return Ok(hex::encode(bytes));
         }
@@ -2197,7 +2243,9 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}/txid/{}", rpc_url, hash, index);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_block_txid response: {}", text);
             return Ok(text);
@@ -2218,7 +2266,9 @@ impl EsploraProvider for ConcreteProvider {
             } else {
                 format!("{}/block/{}/txs", rpc_url, hash)
             };
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2234,7 +2284,9 @@ impl EsploraProvider for ConcreteProvider {
        if call_type == RpcCallType::Rest {
            let url = format!("{}/address/{}", rpc_url, address);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-           let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+           let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
        }
        
@@ -2250,7 +2302,9 @@ impl EsploraProvider for ConcreteProvider {
        if call_type == RpcCallType::Rest {
            let url = format!("{}/address/{}/utxo", rpc_url, address);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-           let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+           let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
        }
        
@@ -2264,7 +2318,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address/{}/txs", rpc_url, address);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2281,7 +2337,9 @@ impl EsploraProvider for ConcreteProvider {
             } else {
                 format!("{}/address/{}/txs/chain", rpc_url, address)
             };
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2294,7 +2352,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address/{}/txs/mempool", rpc_url, address);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2308,7 +2368,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address-prefix/{}", rpc_url, prefix);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2323,7 +2385,9 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}", rpc_url, txid);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2339,7 +2403,9 @@ impl EsploraProvider for ConcreteProvider {
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/hex", rpc_url, txid);
             log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             log::info!("[EsploraProvider] get_tx_hex response: {}", text);
             return Ok(text);
@@ -2356,7 +2422,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/raw", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return Ok(hex::encode(bytes));
         }
@@ -2371,7 +2439,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/status", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2384,7 +2454,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/merkle-proof", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2397,7 +2469,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/merkleblock-proof", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.text().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2411,7 +2485,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/outspend/{}", rpc_url, txid, index);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2424,7 +2500,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}/outspends", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2437,7 +2515,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx", rpc_url);
-            let response = self.http_client.post(&url).body(tx_hex.to_string()).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.post(&url).body(tx_hex.to_string());
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.text().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2451,7 +2531,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/mempool", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2464,7 +2546,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/mempool/txids", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2477,7 +2561,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/mempool/recent", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -2490,7 +2576,9 @@ impl EsploraProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/fee-estimates", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3525,7 +3613,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/inscription/{}", rpc_url, inscription_id);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3540,7 +3630,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/inscriptions/block/{}", rpc_url, block_hash);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3555,7 +3647,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/address/{}", rpc_url, address);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3570,7 +3664,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/block/{}", rpc_url, query);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3585,7 +3681,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/blockcount", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return text.parse::<u64>().map_err(|e| AlkanesError::RpcError(format!("Invalid block count: {}", e)));
         }
@@ -3607,7 +3705,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/blocks", rpc_url);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3626,7 +3726,9 @@ impl OrdProvider for ConcreteProvider {
             } else {
                 format!("{}/inscription/{}/children", rpc_url, inscription_id)
             };
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3646,7 +3748,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/content/{}", rpc_url, inscription_id);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return Ok(bytes.to_vec());
         }
@@ -3669,7 +3773,9 @@ impl OrdProvider for ConcreteProvider {
             } else {
                 format!("{}/inscriptions", rpc_url)
             };
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3689,7 +3795,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/output/{}", rpc_url, output);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3708,7 +3816,9 @@ impl OrdProvider for ConcreteProvider {
             } else {
                 format!("{}/inscription/{}/parents", rpc_url, inscription_id)
             };
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3728,7 +3838,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/rune/{}", rpc_url, rune);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3747,7 +3859,9 @@ impl OrdProvider for ConcreteProvider {
             } else {
                 format!("{}/runes", rpc_url)
             };
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3767,7 +3881,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/sat/{}", rpc_url, sat);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         
@@ -3782,7 +3898,9 @@ impl OrdProvider for ConcreteProvider {
         #[cfg(feature = "native-deps")]
         if call_type == RpcCallType::Rest {
             let url = format!("{}/tx/{}", rpc_url, txid);
-            let response = self.http_client.get(&url).send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
         }
         

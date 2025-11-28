@@ -103,8 +103,10 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
         url.clone()
     } else {
         match args.provider.as_str() {
-            "mainnet" => "https://mainnet-api.oyl.gg".to_string(),
-            "regtest" | "signet" | "testnet" | _ => "http://localhost:4000".to_string(),
+            "mainnet" => "https://mainnet.subfrost.io/v4/api".to_string(),
+            "signet" => "https://signet.subfrost.io/v4/api".to_string(),
+            "subfrost-regtest" => "https://regtest.subfrost.io/v4/api".to_string(),
+            "regtest" | "testnet" | _ => "http://localhost:4000".to_string(),
         }
     };
     

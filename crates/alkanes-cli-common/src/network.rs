@@ -101,29 +101,37 @@ pub struct RpcConfig {
     #[arg(long)]
     pub bitcoin_rpc_url: Option<String>,
 
-    /// Sandshrew RPC URL (defaults based on network if not provided)
+    /// JSON-RPC URL (defaults based on network if not provided)
+    #[arg(long)]
+    pub jsonrpc_url: Option<String>,
+
+    /// Sandshrew RPC URL (deprecated, use --jsonrpc-url instead)
     #[arg(long)]
     pub sandshrew_rpc_url: Option<String>,
 
-    /// Titan API URL (alternative to sandshrew_rpc_url, uses REST API)
+    /// Titan API URL (alternative to jsonrpc_url, uses REST API)
     #[arg(long)]
     pub titan_api_url: Option<String>,
 
-    /// Esplora API URL (overrides Sandshrew for Esplora calls, enables REST)
+    /// Esplora API URL (overrides JSON-RPC for Esplora calls, enables REST)
     #[arg(long)]
     pub esplora_url: Option<String>,
 
-    /// Ord API URL (overrides Sandshrew for ord calls, enables REST)
+    /// Ord API URL (overrides JSON-RPC for ord calls, enables REST)
     #[arg(long)]
     pub ord_url: Option<String>,
 
-    /// Metashrew RPC URL (overrides Sandshrew for metashrew calls)
+    /// Metashrew RPC URL (overrides JSON-RPC for metashrew calls)
     #[arg(long)]
     pub metashrew_rpc_url: Option<String>,
 
     /// BRC20-Prog RPC URL (for querying BRC20-Prog contracts, defaults based on network)
     #[arg(long)]
     pub brc20_prog_rpc_url: Option<String>,
+
+    /// Subfrost API Key (optional, can also be set via SUBFROST_API_KEY environment variable)
+    #[arg(long)]
+    pub subfrost_api_key: Option<String>,
 
     /// RPC timeout in seconds
     #[arg(long, default_value = "600")]
@@ -145,11 +153,12 @@ pub struct RpcTarget {
 }
 
 impl RpcConfig {
-    /// Validate that only one backend is configured (sandshrew_rpc_url OR titan_api_url)
+    /// Validate that only one backend is configured (jsonrpc_url OR titan_api_url)
     pub fn validate(&self) -> Result<(), AlkanesError> {
-        if self.sandshrew_rpc_url.is_some() && self.titan_api_url.is_some() {
+        let jsonrpc_url = self.get_effective_jsonrpc_url();
+        if jsonrpc_url.is_some() && self.titan_api_url.is_some() {
             return Err(AlkanesError::Configuration(
-                "Cannot specify both --sandshrew-rpc-url and --titan-api-url. Please choose one backend.".to_string()
+                "Cannot specify both --jsonrpc-url (or --sandshrew-rpc-url) and --titan-api-url. Please choose one backend.".to_string()
             ));
         }
         Ok(())
@@ -160,12 +169,25 @@ impl RpcConfig {
         self.titan_api_url.is_some()
     }
     
-    /// Get default Sandshrew RPC URL for the network
-    fn get_default_sandshrew_url(&self) -> String {
+    /// Get the effective JSON-RPC URL (prefer jsonrpc_url, fallback to sandshrew_rpc_url for backward compatibility)
+    fn get_effective_jsonrpc_url(&self) -> Option<String> {
+        self.jsonrpc_url.clone().or_else(|| self.sandshrew_rpc_url.clone())
+    }
+    
+    /// Get effective Subfrost API key (from flag or environment variable)
+    pub fn get_subfrost_api_key(&self) -> Option<String> {
+        self.subfrost_api_key.clone().or_else(|| {
+            std::env::var("SUBFROST_API_KEY").ok()
+        })
+    }
+    
+    /// Get default JSON-RPC URL for the network
+    fn get_default_jsonrpc_url(&self) -> String {
         match self.provider.as_str() {
-            "mainnet" => "https://mainnet.sandshrew.io/v2/lasereyes".to_string(),
+            "mainnet" => "https://mainnet.subfrost.io/v4/jsonrpc".to_string(),
             "testnet" => "https://testnet.sandshrew.io/v2/lasereyes".to_string(),
-            "signet" => "https://signet.sandshrew.io/v2/lasereyes".to_string(),
+            "signet" => "https://signet.subfrost.io/v4/jsonrpc".to_string(),
+            "subfrost-regtest" => "https://regtest.subfrost.io/v4/jsonrpc".to_string(),
             _ => "http://localhost:18888".to_string(), // regtest
         }
     }
@@ -180,105 +202,105 @@ impl RpcConfig {
     }
     
     /// Get the RPC target for Bitcoin Core operations
-    /// Priority: bitcoin_rpc_url > sandshrew_rpc_url (JSONRPC translation) > default
+    /// Priority: bitcoin_rpc_url > jsonrpc_url (JSONRPC translation) > default
     pub fn get_bitcoin_rpc_target(&self) -> RpcTarget {
         if let Some(ref url) = self.bitcoin_rpc_url {
             RpcTarget {
                 url: url.clone(),
                 backend_type: RpcBackendType::JsonRpc,
             }
-        } else if let Some(ref url) = self.sandshrew_rpc_url {
+        } else if let Some(url) = self.get_effective_jsonrpc_url() {
             RpcTarget {
-                url: url.clone(),
+                url,
                 backend_type: RpcBackendType::JsonRpc,
             }
         } else {
             RpcTarget {
-                url: self.get_default_sandshrew_url(),
+                url: self.get_default_jsonrpc_url(),
                 backend_type: RpcBackendType::JsonRpc,
             }
         }
     }
     
     /// Get the RPC target for Metashrew operations (alkanes.wasm view functions)
-    /// Priority: metashrew_rpc_url > sandshrew_rpc_url > default sandshrew
+    /// Priority: metashrew_rpc_url > jsonrpc_url > default jsonrpc
     pub fn get_metashrew_rpc_target(&self) -> RpcTarget {
         if let Some(ref url) = self.metashrew_rpc_url {
             RpcTarget {
                 url: url.clone(),
                 backend_type: RpcBackendType::JsonRpc,
             }
-        } else if let Some(ref url) = self.sandshrew_rpc_url {
+        } else if let Some(url) = self.get_effective_jsonrpc_url() {
             RpcTarget {
-                url: url.clone(),
+                url,
                 backend_type: RpcBackendType::JsonRpc,
             }
         } else {
             RpcTarget {
-                url: self.get_default_sandshrew_url(),
+                url: self.get_default_jsonrpc_url(),
                 backend_type: RpcBackendType::JsonRpc,
             }
         }
     }
     
     /// Get the RPC target for Esplora operations
-    /// Priority: esplora_url (REST) > sandshrew_rpc_url (JSONRPC translation) > default sandshrew
+    /// Priority: esplora_url (REST) > jsonrpc_url (JSONRPC translation) > default jsonrpc
     pub fn get_esplora_rpc_target(&self) -> RpcTarget {
         if let Some(ref url) = self.esplora_url {
             RpcTarget {
                 url: url.clone(),
                 backend_type: RpcBackendType::Rest,
             }
-        } else if let Some(ref url) = self.sandshrew_rpc_url {
+        } else if let Some(url) = self.get_effective_jsonrpc_url() {
             RpcTarget {
-                url: url.clone(),
+                url,
                 backend_type: RpcBackendType::JsonRpc,
             }
         } else {
             RpcTarget {
-                url: self.get_default_sandshrew_url(),
+                url: self.get_default_jsonrpc_url(),
                 backend_type: RpcBackendType::JsonRpc,
             }
         }
     }
     
     /// Get the RPC target for Ord operations
-    /// Priority: ord_url (REST) > sandshrew_rpc_url (JSONRPC translation) > default sandshrew
+    /// Priority: ord_url (REST) > jsonrpc_url (JSONRPC translation) > default jsonrpc
     pub fn get_ord_rpc_target(&self) -> RpcTarget {
         if let Some(ref url) = self.ord_url {
             RpcTarget {
                 url: url.clone(),
                 backend_type: RpcBackendType::Rest,
             }
-        } else if let Some(ref url) = self.sandshrew_rpc_url {
+        } else if let Some(url) = self.get_effective_jsonrpc_url() {
             RpcTarget {
-                url: url.clone(),
+                url,
                 backend_type: RpcBackendType::JsonRpc,
             }
         } else {
             RpcTarget {
-                url: self.get_default_sandshrew_url(),
+                url: self.get_default_jsonrpc_url(),
                 backend_type: RpcBackendType::JsonRpc,
             }
         }
     }
     
     /// Get the RPC target for Alkanes operations (view functions, protorunes, etc.)
-    /// Priority: titan_api_url (REST) > sandshrew_rpc_url (JSONRPC) > default sandshrew
+    /// Priority: titan_api_url (REST) > jsonrpc_url (JSONRPC) > default jsonrpc
     pub fn get_alkanes_rpc_target(&self) -> RpcTarget {
         if let Some(ref url) = self.titan_api_url {
             RpcTarget {
                 url: url.clone(),
                 backend_type: RpcBackendType::Rest,
             }
-        } else if let Some(ref url) = self.sandshrew_rpc_url {
+        } else if let Some(url) = self.get_effective_jsonrpc_url() {
             RpcTarget {
-                url: url.clone(),
+                url,
                 backend_type: RpcBackendType::JsonRpc,
             }
         } else {
             RpcTarget {
-                url: self.get_default_sandshrew_url(),
+                url: self.get_default_jsonrpc_url(),
                 backend_type: RpcBackendType::JsonRpc,
             }
         }
@@ -309,12 +331,14 @@ impl Default for RpcConfig {
         Self {
             provider: "regtest".to_string(),
             bitcoin_rpc_url: None,
+            jsonrpc_url: None,
             sandshrew_rpc_url: Some("http://localhost:18443".to_string()),
             titan_api_url: None,
             esplora_url: None,
             ord_url: None,
             metashrew_rpc_url: Some("http://localhost:18888".to_string()),
             brc20_prog_rpc_url: None,
+            subfrost_api_key: None,
             timeout_seconds: 600,
         }
     }
@@ -340,6 +364,19 @@ impl NetworkParams {
     pub fn from_network_str(network: &str) -> Result<Self, AlkanesError> {
         match network {
             "regtest" => Ok(Self::regtest()),
+            "subfrost-regtest" => Ok(Self {
+                network: Network::Regtest,
+                magic: [0xfa, 0xbf, 0xb5, 0xda],
+                default_port: 18444,
+                rpc_port: 18443,
+                bech32_hrp: "bcrt".to_string(),
+                bech32_prefix: "bcrt".to_string(),
+                p2pkh_prefix: 0x6f,
+                p2sh_prefix: 0xc4,
+                bitcoin_rpc_url: "https://regtest.subfrost.io/v4/jsonrpc".to_string(),
+                metashrew_rpc_url: "https://regtest.subfrost.io/v4/jsonrpc".to_string(),
+                esplora_url: Some("https://regtest.subfrost.io/v4/api".to_string()),
+            }),
             "mainnet" => Ok(Self {
                 network: Network::Bitcoin,
                 magic: [0xf9, 0xbe, 0xb4, 0xd9],

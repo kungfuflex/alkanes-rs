@@ -42,12 +42,18 @@ pub struct DeezelCommands {
     /// Wallet private key file path (for signing with a single key)
     #[arg(long, conflicts_with_all = ["wallet_file", "wallet_address", "wallet_key"])]
     pub wallet_key_file: Option<String>,
-    /// Sandshrew RPC URL
+    /// JSON-RPC URL
+    #[arg(long)]
+    pub jsonrpc_url: Option<String>,
+    /// Sandshrew RPC URL (deprecated, use --jsonrpc-url instead)
     #[arg(long)]
     pub sandshrew_rpc_url: Option<String>,
-    /// Titan API URL (alternative to sandshrew-rpc-url)
+    /// Titan API URL (alternative to jsonrpc-url)
     #[arg(long)]
     pub titan_api_url: Option<String>,
+    /// Subfrost API Key (can also be set via SUBFROST_API_KEY environment variable)
+    #[arg(long)]
+    pub subfrost_api_key: Option<String>,
     /// Bitcoin RPC URL
     #[arg(long)]
     pub bitcoin_rpc_url: Option<String>,
@@ -1519,12 +1525,14 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
             rpc_config: alkanes_cli_common::network::RpcConfig {
                 provider: args.provider.clone(),
                 bitcoin_rpc_url: args.bitcoin_rpc_url.clone(),
+                jsonrpc_url: args.jsonrpc_url.clone(),
                 sandshrew_rpc_url: args.sandshrew_rpc_url.clone(),
                 titan_api_url: args.titan_api_url.clone(),
                 esplora_url: args.esplora_api_url.clone(),
                 ord_url: args.ord_server_url.clone(),
                 metashrew_rpc_url: args.metashrew_rpc_url.clone(),
                 brc20_prog_rpc_url: args.brc20_prog_rpc_url.clone(),
+                subfrost_api_key: args.subfrost_api_key.clone(),
                 timeout_seconds: 600,
             },
             magic: None,
