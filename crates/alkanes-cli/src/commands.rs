@@ -1116,6 +1116,9 @@ pub enum DataApiCommand {
         /// Output raw JSON instead of pretty print
         #[arg(long)]
         raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
     },
     /// Get alkanes for an address
     GetAlkanesByAddress {
@@ -1123,6 +1126,9 @@ pub enum DataApiCommand {
         /// Output raw JSON instead of pretty print
         #[arg(long)]
         raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
     },
     /// Get alkane details
     GetAlkaneDetails {
@@ -1131,6 +1137,9 @@ pub enum DataApiCommand {
         /// Output raw JSON instead of pretty print
         #[arg(long)]
         raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
     },
     /// Get all pools (defaults to factory 4:65522)
     GetPools {
@@ -1140,6 +1149,9 @@ pub enum DataApiCommand {
         /// Output raw JSON instead of pretty print
         #[arg(long)]
         raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
     },
     /// Get pool details
     GetPoolById {
@@ -1148,6 +1160,9 @@ pub enum DataApiCommand {
         /// Output raw JSON instead of pretty print
         #[arg(long)]
         raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
     },
     /// Get pool history
     GetPoolHistory {
@@ -1162,6 +1177,9 @@ pub enum DataApiCommand {
         /// Output raw JSON instead of pretty print
         #[arg(long)]
         raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
     },
     /// Get swap history
     GetSwapHistory {
@@ -1174,12 +1192,18 @@ pub enum DataApiCommand {
         /// Output raw JSON instead of pretty print
         #[arg(long)]
         raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
     },
     /// Get Bitcoin price
     GetBitcoinPrice {
         /// Output raw JSON instead of pretty print
         #[arg(long)]
         raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
     },
     /// Get Bitcoin market chart
     GetMarketChart {
@@ -1188,9 +1212,16 @@ pub enum DataApiCommand {
         /// Output raw JSON instead of pretty print
         #[arg(long)]
         raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
     },
     /// Health check
-    Health,
+    Health {
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
 }
 
 /// Runestone subcommands

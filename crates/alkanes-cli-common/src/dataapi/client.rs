@@ -27,12 +27,17 @@ impl DataApiClient {
         Self { base_url, client }
     }
 
+    fn build_url(&self, endpoint: &str) -> String {
+        let base = self.base_url.trim_end_matches('/');
+        format!("{}/{}", base, endpoint)
+    }
+
     async fn post<T: Serialize, R: serde::de::DeserializeOwned>(
         &self,
         endpoint: &str,
         body: &T,
     ) -> Result<ApiResponse<R>> {
-        let url = format!("{}/api/v1/{}", self.base_url, endpoint);
+        let url = self.build_url(endpoint);
         let response = self.client
             .post(&url)
             .json(body)
@@ -55,8 +60,49 @@ impl DataApiClient {
         Ok(api_response)
     }
 
+    /// Make a POST request and return the raw response text without parsing.
+    /// Useful for debugging when response cannot be decoded.
+    pub async fn post_raw<T: Serialize>(
+        &self,
+        endpoint: &str,
+        body: &T,
+    ) -> Result<String> {
+        let url = self.build_url(endpoint);
+        let response = self.client
+            .post(&url)
+            .json(body)
+            .send()
+            .await
+            .context("Failed to send request")?;
+        
+        let text = response
+            .text()
+            .await
+            .context("Failed to read response text")?;
+        
+        Ok(text)
+    }
+
+    /// Make a GET request and return the raw response text without parsing.
+    /// Useful for debugging when response cannot be decoded.
+    pub async fn get_raw(&self, endpoint: &str) -> Result<String> {
+        let url = self.build_url(endpoint);
+        let response = self.client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to send request")?;
+        
+        let text = response
+            .text()
+            .await
+            .context("Failed to read response text")?;
+        
+        Ok(text)
+    }
+
     pub async fn health(&self) -> Result<()> {
-        let url = format!("{}/api/v1/health", self.base_url);
+        let url = self.build_url("health");
         let response = self.client.get(&url).send().await?;
         
         if response.status().is_success() {
