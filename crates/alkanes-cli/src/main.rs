@@ -63,14 +63,9 @@ async fn main() -> Result<()> {
     // Create a new SystemAlkanes instance
     let mut system = SystemAlkanes::new(&alkanes_args).await?;
 
-    // Set default brc20-prog RPC URL for signet if not provided
-    let brc20_prog_rpc_url = alkanes_args.brc20_prog_rpc_url.clone().or_else(|| {
-        if &alkanes_args.rpc_config.provider == "signet" {
-            Some("https://signet-api.ordinalsbot.com/brc20/rpc".to_string())
-        } else {
-            None
-        }
-    });
+    // Set default brc20-prog RPC URL based on network if not provided
+    let brc20_prog_rpc_url = alkanes_args.brc20_prog_rpc_url.clone()
+        .or_else(|| alkanes_args.rpc_config.get_default_brc20_prog_rpc_url());
 
     // Execute other commands
     execute_command(&mut system, args.command, brc20_prog_rpc_url, args.sandshrew_rpc_url.clone()).await
