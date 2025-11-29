@@ -100,6 +100,8 @@ pub struct MarketChartRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct HistoryRequest {
+    #[serde(rename = "factoryId")]
+    pub factory_id: Option<AlkaneId>,
     #[serde(rename = "poolId")]
     pub pool_id: Option<PoolId>,
     #[serde(rename = "alkaneId")]
