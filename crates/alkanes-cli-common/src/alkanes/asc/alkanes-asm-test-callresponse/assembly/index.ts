@@ -12,21 +12,21 @@ import {
  * @returns Pointer to response data
  * 
  * The alkanes runtime expects:
- * - Return value is a pointer to data
- * - At ptr-4, there's a u32 length field
- * 
- * ArrayBuffer in AssemblyScript has this exact layout!
+ * - Return value is a pointer to the DATA (not the ArrayBuffer object)
+ * - At (return_value - 4), there must be a u32 length field
  */
 export function __execute(): i32 {
-  // Create simple test data: [0x01, 0x02, 0x03, 0x04]
-  const testData = new ArrayBuffer(4);
-  const dataPtr = changetype<usize>(testData);
-  store<u8>(dataPtr + 0, 0x01);
-  store<u8>(dataPtr + 1, 0x02);
-  store<u8>(dataPtr + 2, 0x03);
-  store<u8>(dataPtr + 3, 0x04);
-  let response = new ExtendedCallResponse();
-  const finalized = response.finalize();
-  const finalPtr = changetype<usize>(finalized);
-  return changetype<i32>(finalPtr);
+  // Create ExtendedCallResponse with NO data to test if serialization works
+  const response = new ExtendedCallResponse();
+  
+  // Don't set any data - just test empty response serialization
+  // Expected format: [alkanes_count(16 bytes = 0)][storage_count(4 bytes = 0)][empty data]
+  // Total: 20 bytes of zeros
+  
+  // Finalize to get serialized ExtendedCallResponse
+  const result = response.finalize();
+  
+  // Return pointer to the result ArrayBuffer
+  // (alkanes runtime will read length from result ptr - 4)
+  return changetype<i32>(changetype<usize>(result));
 }

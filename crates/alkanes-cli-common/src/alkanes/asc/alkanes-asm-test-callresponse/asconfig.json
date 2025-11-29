@@ -1,4 +1,9 @@
 {
+  "options": {
+    "runtime": "stub",
+    "explicitStart": true,
+    "bindings": "esm"
+  },
   "targets": {
     "release": {
       "outFile": "build/release.wasm",
@@ -16,8 +21,5 @@
       "sourceMap": true,
       "debug": true
     }
-  },
-  "options": {
-    "bindings": "esm"
   }
 }

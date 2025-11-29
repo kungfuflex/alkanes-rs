@@ -170,6 +170,37 @@ export class ExtendedCallResponse {
     // Serialize each section using our proven classes
     const alkanesBytes = this.alkanes.serialize();
     const storageBytes = this.storage.serialize();
-    return Box.concat([Box.from(this.alkanes.serialize()), Box.from(this.storage.serialize()), Box.from(this.data)]);
+    
+    // Manual concat without Box.concat to avoid function table issues with stub runtime
+    const totalLen = alkanesBytes.byteLength + storageBytes.byteLength + this.data.byteLength;
+    const result = new ArrayBuffer(totalLen);
+    const resultPtr = changetype<usize>(result);
+    
+    // Copy alkanes bytes
+    const alkanesPtr = changetype<usize>(alkanesBytes);
+    const alkanesLen = alkanesBytes.byteLength as usize;
+    for (let i: usize = 0; i < alkanesLen; i++) {
+      store<u8>(resultPtr + i, load<u8>(alkanesPtr + i));
+    }
+    
+    // Copy storage bytes
+    const storagePtr = changetype<usize>(storageBytes);
+    const storageOffset = alkanesLen;
+    const storageLen = storageBytes.byteLength as usize;
+    for (let i: usize = 0; i < storageLen; i++) {
+      store<u8>(resultPtr + storageOffset + i, load<u8>(storagePtr + i));
+    }
+    
+    // Copy data bytes
+    if (this.data.byteLength > 0) {
+      const dataPtr = changetype<usize>(this.data);
+      const dataOffset = alkanesLen + storageLen;
+      const dataLen = this.data.byteLength as usize;
+      for (let i: usize = 0; i < dataLen; i++) {
+        store<u8>(resultPtr + dataOffset + i, load<u8>(dataPtr + i));
+      }
+    }
+    
+    return result;
   }
 }

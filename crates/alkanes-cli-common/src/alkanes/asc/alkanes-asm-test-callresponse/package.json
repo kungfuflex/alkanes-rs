@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "description": "Fetch all AMM pools from factory",
   "scripts": {
-    "asbuild:release": "asc assembly/index.ts --target release && node strip-start.js build/release.wasm build/release.wasm",
-    "asbuild:debug": "asc assembly/index.ts --target debug",
+    "asbuild:release": "asc assembly/index.ts --target release --exportStart _start",
+    "asbuild:debug": "asc assembly/index.ts --target debug --exportStart _start",
     "build": "npm run asbuild:release"
   },
   "devDependencies": {
