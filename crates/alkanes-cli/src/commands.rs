@@ -1025,9 +1025,15 @@ pub enum Alkanes {
         /// Use experimental WASM-based batch optimization to fetch all pools and details in one RPC call
         #[arg(long)]
         experimental_batch_asm: bool,
-        /// Chunk size for batch fetching (default: 50)
-        #[arg(long, default_value = "50")]
+        /// Use experimental parallel WASM fetching with concurrency control (requires --pool-details)
+        #[arg(long)]
+        experimental_asm_parallel: bool,
+        /// Chunk size for batch fetching (default: 30 for parallel, 50 for sequential)
+        #[arg(long, default_value = "30")]
         chunk_size: usize,
+        /// Maximum concurrent requests for parallel fetching (default: 10)
+        #[arg(long, default_value = "10")]
+        max_concurrent: usize,
         /// Specific range to fetch (format: "0-50" or "start-end")
         #[arg(long)]
         range: Option<String>,

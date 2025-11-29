@@ -158,7 +158,16 @@ export function __execute(): i32 {
   }
   
   // Second pass: build response buffer
-  const resultData = new ArrayBuffer(totalSize);
+  // Format: [count(16)][pool0_block(16)][pool0_tx(16)][size0(8)][data0][pool1_block(16)][pool1_tx(16)][size1(8)][data1]...
+  // Each entry: pool_id (32 bytes) + size (8 bytes) + data
+  let adjustedSize = 16; // count
+  for (let i = 0; i < numPools; i++) {
+    adjustedSize += 32; // pool_id (block + tx)
+    adjustedSize += 8;  // size
+    adjustedSize += detailsSizes[i]; // data
+  }
+  
+  const resultData = new ArrayBuffer(adjustedSize);
   const resultPtr = changetype<usize>(resultData);
   
   // Write count
@@ -195,6 +204,13 @@ export function __execute(): i32 {
       changetype<i32>(changetype<usize>(emptyStorage)),
       0xFFFFFFFFFFFFFFFF
     );
+    
+    // Write pool ID (block and tx)
+    store<u64>(resultPtr + writeOffset, poolBlock);
+    store<u64>(resultPtr + writeOffset + 8, poolBlockHi);
+    store<u64>(resultPtr + writeOffset + 16, poolTx);
+    store<u64>(resultPtr + writeOffset + 24, poolTxHi);
+    writeOffset += 32;
     
     if (poolResult < 0) {
       // Failed - write 0 size

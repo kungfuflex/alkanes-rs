@@ -937,7 +937,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
         Alkanes::Backtest { txid, raw } => {
             backtest_transaction(system, &txid, raw).await
         }
-        Alkanes::GetAllPools { factory, pool_details, experimental_asm, experimental_batch_asm, chunk_size, range, raw } => {
+        Alkanes::GetAllPools { factory, pool_details, experimental_asm, experimental_batch_asm, experimental_asm_parallel, chunk_size, max_concurrent, range, raw } => {
             use alkanes_cli_common::proto::alkanes::{MessageContextParcel, SimulateResponse};
             use alkanes_cli_common::traits::MetashrewRpcProvider;
             use alkanes_cli_common::alkanes::{PoolInfo, PoolDetails};
@@ -990,6 +990,168 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                     println!("   🎯 Parsed {} pools:", pools.len());
                     for (i, pool) in pools.iter().enumerate() {
                         println!("      {}. {}", i + 1, pool);
+                    }
+                }
+                
+                return Ok(());
+            }
+            
+            // If experimental_asm_parallel is enabled and pool_details is requested,
+            // use parallel WASM-based batch optimization with concurrency control
+            if experimental_asm_parallel && pool_details {
+                use alkanes_cli_common::traits::AlkanesProvider;
+                use futures::stream::{self, StreamExt};
+                
+                println!("🚀 Using experimental parallel AssemblyScript WASM fetching...");
+                
+                // Load get-all-pools-details WASM
+                let wasm_bytes = include_bytes!("../../alkanes-cli-common/src/alkanes/asc/get-all-pools-details/build/release.wasm");
+                
+                println!("   Loaded WASM ({} bytes)", wasm_bytes.len());
+                
+                // First, get total pool count by calling factory
+                println!("   Fetching pool list from factory...");
+                let get_all_pools_wasm = include_bytes!("../../alkanes-cli-common/src/alkanes/asc/get-all-pools/build/release.wasm");
+                let pool_list_data = system.provider().tx_script(get_all_pools_wasm, vec![], None).await?;
+                
+                // tx_script returns the data field directly: [pool_count(16)][pool0_block(16)][pool0_tx(16)]...
+                if pool_list_data.len() < 16 {
+                    return Err(anyhow::anyhow!("Invalid pool list response"));
+                }
+                
+                let total_pools = u128::from_le_bytes(pool_list_data[0..16].try_into()?) as usize;
+                
+                println!("📊 Total pools: {}", total_pools);
+                
+                // Determine range to fetch
+                let (start, end) = if let Some(range_str) = range {
+                    let parts: Vec<&str> = range_str.split('-').collect();
+                    if parts.len() != 2 {
+                        return Err(anyhow::anyhow!("Invalid range format. Use 'start-end' (e.g., '0-50')"));
+                    }
+                    let start: usize = parts[0].parse()?;
+                    let end: usize = parts[1].parse()?;
+                    (start, end.min(total_pools - 1))
+                } else {
+                    (0, total_pools - 1)
+                };
+                
+                let pools_to_fetch = end - start + 1;
+                println!("🔄 Fetching pools {} to {} ({} pools) in chunks of {} with max {} concurrent requests...", 
+                    start, end, pools_to_fetch, chunk_size, max_concurrent);
+                
+                // Create chunks
+                let mut chunks = Vec::new();
+                for chunk_start in (start..=end).step_by(chunk_size) {
+                    let chunk_end = (chunk_start + chunk_size - 1).min(end);
+                    chunks.push((chunk_start, chunk_end));
+                }
+                
+                println!("   Total chunks: {}", chunks.len());
+                
+                // Fetch chunks in parallel with concurrency limit
+                let provider_arc = std::sync::Arc::new(system.provider().clone_box());
+                let results = stream::iter(chunks.into_iter().enumerate())
+                    .map(|(idx, (chunk_start, chunk_end))| {
+                        let provider = provider_arc.clone();
+                        let wasm = wasm_bytes.to_vec();
+                        async move {
+                            println!("  [{}/...] Fetching chunk {}-{}...", idx + 1, chunk_start, chunk_end);
+                            let start_time = std::time::Instant::now();
+                            let result = provider.tx_script(
+                                &wasm,
+                                vec![chunk_start as u128, chunk_end as u128],
+                                None,
+                            ).await;
+                            let elapsed = start_time.elapsed();
+                            match &result {
+                                Ok(data) => println!("  [{}/...] ✅ Chunk {}-{} complete ({} bytes, {:.2}s)", 
+                                    idx + 1, chunk_start, chunk_end, data.len(), elapsed.as_secs_f64()),
+                                Err(e) => println!("  [{}/...] ❌ Chunk {}-{} failed: {}", 
+                                    idx + 1, chunk_start, chunk_end, e),
+                            }
+                            (chunk_start, chunk_end, result)
+                        }
+                    })
+                    .buffer_unordered(max_concurrent)
+                    .collect::<Vec<_>>()
+                    .await;
+                
+                // Collect and parse results
+                println!("\n📦 Parsing results...");
+                let mut all_pools: Vec<PoolInfo> = Vec::new();
+                
+                for (chunk_start, chunk_end, result) in results {
+                    let response_data = result?;
+                    
+                    // tx_script returns the data field directly: [count(16)][pool0_id(32)][size0(8)][data0]...
+                    if response_data.len() < 16 {
+                        println!("  ⚠️  Chunk {}-{}: Invalid response size", chunk_start, chunk_end);
+                        continue;
+                    }
+                    
+                    // response_data IS the pool data
+                    let pool_data = &response_data[..];
+                    
+                    // Parse pool data: [count(16)][pool0_id(32)][size0(8)][data0][pool1_id(32)][size1(8)][data1]...
+                    if pool_data.len() < 16 {
+                        println!("  ⚠️  Chunk {}-{}: No pool data", chunk_start, chunk_end);
+                        continue;
+                    }
+                    
+                    let pool_count_in_chunk = u128::from_le_bytes(pool_data[0..16].try_into()?) as usize;
+                    let mut offset = 16;
+                    
+                    for _ in 0..pool_count_in_chunk {
+                        // Read pool ID (32 bytes: 16 for block, 16 for tx)
+                        if offset + 32 > pool_data.len() {
+                            break;
+                        }
+                        
+                        let pool_block = u128::from_le_bytes(pool_data[offset..offset+16].try_into()?) as u64;
+                        let pool_tx = u128::from_le_bytes(pool_data[offset+16..offset+32].try_into()?) as u64;
+                        offset += 32;
+                        
+                        // Read size of this pool's details
+                        if offset + 8 > pool_data.len() {
+                            break;
+                        }
+                        let details_size = u64::from_le_bytes(pool_data[offset..offset+8].try_into()?) as usize;
+                        offset += 8;
+                        
+                        if offset + details_size > pool_data.len() {
+                            break;
+                        }
+                        
+                        // Parse pool details using the existing PoolDetails::from_bytes
+                        let details_bytes = &pool_data[offset..offset+details_size];
+                        if let Ok(details) = PoolDetails::from_bytes(details_bytes) {
+                            all_pools.push(PoolInfo {
+                                pool_id_block: pool_block,
+                                pool_id_tx: pool_tx,
+                                details: Some(details),
+                            });
+                        }
+                        
+                        offset += details_size;
+                    }
+                }
+                
+                println!("\n🏊 Successfully fetched {} pool(s) with details", all_pools.len());
+                
+                // Output results
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&all_pools)?);
+                } else {
+                    for (idx, pool_info) in all_pools.iter().enumerate() {
+                        if let Some(details) = &pool_info.details {
+                            println!("  {}. Pool {}:{}", idx + 1, pool_info.pool_id_block, pool_info.pool_id_tx);
+                            println!("     Name: {}", details.pool_name);
+                            println!("     Token A: {}:{} (reserve: {})", details.token_a_block, details.token_a_tx, details.reserve_a);
+                            println!("     Token B: {}:{} (reserve: {})", details.token_b_block, details.token_b_tx, details.reserve_b);
+                            println!("     LP Supply: {}", details.total_supply);
+                            println!();
+                        }
                     }
                 }
                 
