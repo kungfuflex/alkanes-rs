@@ -1638,6 +1638,15 @@ impl AlkanesProvider for BrowserWalletProvider {
     async fn trace_protostones(&self, txid: &str) -> Result<Option<Vec<JsonValue>>> {
         self.web_provider.trace_protostones(txid).await
     }
+
+    async fn tx_script(
+        &self,
+        wasm_bytes: &[u8],
+        inputs: Vec<u128>,
+        block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        self.web_provider.tx_script(wasm_bytes, inputs, block_tag).await
+    }
 }
 
 #[async_trait(?Send)]
