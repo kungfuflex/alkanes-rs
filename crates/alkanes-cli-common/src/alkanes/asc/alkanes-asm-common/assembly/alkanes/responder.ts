@@ -155,11 +155,11 @@ export class AlkaneResponder {
   private extcall(
     callType: ExtcallType,
     target: AlkaneId,
-    inputs: u128[],
+    opcode: u128,
     maxFuel: u64 = 0xFFFFFFFFFFFFFFFF
   ): CallResponse | null {
-    // Build cellpack
-    const cellpack = new Cellpack(target, inputs);
+    // Build cellpack with single input (opcode)
+    const cellpack = Cellpack.withSingleInput(target, opcode);
     const cellpackBuf = cellpack.toArrayBuffer();
     
     // Empty parcels
@@ -207,7 +207,7 @@ export class AlkaneResponder {
     opcode: u128,
     maxFuel: u64 = 0xFFFFFFFFFFFFFFFF
   ): CallResponse | null {
-    return this.extcall(ExtcallType.STATICCALL, target, [opcode], maxFuel);
+    return this.extcall(ExtcallType.STATICCALL, target, opcode, maxFuel);
   }
 
   /**

@@ -17,16 +17,6 @@ async function instantiate(module, imports = {}) {
         start_fuel = BigInt.asUintN(64, start_fuel);
         return __staticcall(cellpack, incoming_alkanes, checkpoint, start_fuel);
       },
-      __call(cellpack, incoming_alkanes, checkpoint, start_fuel) {
-        // ../alkanes-asm-common/assembly/alkanes/runtime/__call(i32, i32, i32, u64) => i32
-        start_fuel = BigInt.asUintN(64, start_fuel);
-        return __call(cellpack, incoming_alkanes, checkpoint, start_fuel);
-      },
-      __delegatecall(cellpack, incoming_alkanes, checkpoint, start_fuel) {
-        // ../alkanes-asm-common/assembly/alkanes/runtime/__delegatecall(i32, i32, i32, u64) => i32
-        start_fuel = BigInt.asUintN(64, start_fuel);
-        return __delegatecall(cellpack, incoming_alkanes, checkpoint, start_fuel);
-      },
     }),
   };
   const { exports } = await WebAssembly.instantiate(module, adaptedImports);

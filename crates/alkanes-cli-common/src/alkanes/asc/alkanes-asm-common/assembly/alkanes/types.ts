@@ -11,15 +11,38 @@ export { AlkaneId, AlkaneTransfer, AlkaneTransferParcel };
 /**
  * Cellpack for calling alkanes
  * Format: [target_block(16)][target_tx(16)][inputs...]
+ * 
+ * NOTE: Stores inputs as buffer instead of Array for stub runtime compatibility
  */
 export class Cellpack {
+  private inputsBuffer: ArrayBuffer;
+  private inputsCount: i32;
+
   constructor(
     public target: AlkaneId,
-    public inputs: u128[] = []
-  ) {}
+    inputsBuffer: ArrayBuffer | null = null,
+    inputsCount: i32 = 0
+  ) {
+    if (inputsBuffer == null) {
+      this.inputsBuffer = new ArrayBuffer(0);
+      this.inputsCount = 0;
+    } else {
+      this.inputsBuffer = inputsBuffer;
+      this.inputsCount = inputsCount;
+    }
+  }
+
+  /**
+   * Create Cellpack with single input (common case for opcodes)
+   */
+  static withSingleInput(target: AlkaneId, input: u128): Cellpack {
+    const inputsBuffer = new ArrayBuffer(16);
+    storeU128(changetype<usize>(inputsBuffer), input);
+    return new Cellpack(target, inputsBuffer, 1);
+  }
 
   toArrayBuffer(): ArrayBuffer {
-    const size = 32 + (this.inputs.length * 16);
+    const size = 32 + this.inputsBuffer.byteLength;
     const buf = new ArrayBuffer(size);
     const ptr = changetype<usize>(buf);
     
@@ -27,10 +50,11 @@ export class Cellpack {
     storeU128(ptr, this.target.block);
     storeU128(ptr + 16, this.target.tx);
     
-    // Write inputs
-    for (let i = 0; i < this.inputs.length; i++) {
-      const offset = 32 + (i * 16);
-      storeU128(ptr + offset, this.inputs[i]);
+    // Copy inputs buffer
+    const inputsPtr = changetype<usize>(this.inputsBuffer);
+    const inputsSize = this.inputsBuffer.byteLength as usize;
+    for (let i: usize = 0; i < inputsSize; i++) {
+      store<u8>(ptr + 32 + i, load<u8>(inputsPtr + i));
     }
     
     return buf;
