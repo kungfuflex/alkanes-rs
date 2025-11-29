@@ -429,6 +429,98 @@ impl WebProvider {
         })
     }
 
+    /// Resume execution after user confirmation (for simple transactions)
+    #[wasm_bindgen(js_name = alkanesResumeExecution)]
+    pub fn alkanes_resume_execution_js(&self, state_json: String, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::types::{EnhancedExecuteParams, ReadyToSignTx};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let state: ReadyToSignTx = serde_json::from_str(&state_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid state JSON: {}", e)))?;
+            let params: EnhancedExecuteParams = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            provider.resume_execution(state, &params).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Resume execution failed: {}", e)))
+        })
+    }
+
+    /// Resume execution after commit transaction confirmation
+    #[wasm_bindgen(js_name = alkanesResumeCommitExecution)]
+    pub fn alkanes_resume_commit_execution_js(&self, state_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::types::ReadyToSignCommitTx;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let state: ReadyToSignCommitTx = serde_json::from_str(&state_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid state JSON: {}", e)))?;
+            provider.resume_commit_execution(state).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Resume commit execution failed: {}", e)))
+        })
+    }
+
+    /// Resume execution after reveal transaction confirmation
+    #[wasm_bindgen(js_name = alkanesResumeRevealExecution)]
+    pub fn alkanes_resume_reveal_execution_js(&self, state_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::types::ReadyToSignRevealTx;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let state: ReadyToSignRevealTx = serde_json::from_str(&state_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid state JSON: {}", e)))?;
+            provider.resume_reveal_execution(state).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Resume reveal execution failed: {}", e)))
+        })
+    }
+
+    /// Simulate an alkanes contract call (read-only)
+    #[wasm_bindgen(js_name = alkanesSimulate)]
+    pub fn alkanes_simulate_js(&self, contract_id: String, context_json: String, block_tag: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::proto::alkanes::MessageContextParcel;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let context: MessageContextParcel = serde_json::from_str(&context_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid context JSON: {}", e)))?;
+            provider.simulate(&contract_id, &context, block_tag).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Simulation failed: {}", e)))
+        })
+    }
+
+    /// Get alkanes contract balance for an address
+    #[wasm_bindgen(js_name = alkanesBalance)]
+    pub fn alkanes_balance_js(&self, address: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            <WebProvider as AlkanesProvider>::get_balance(&provider, address.as_deref()).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Balance query failed: {}", e)))
+        })
+    }
+
+    /// Get alkanes contract bytecode
+    #[wasm_bindgen(js_name = alkanesBytecode)]
+    pub fn alkanes_bytecode_js(&self, alkane_id: String, block_tag: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_bytecode(&alkane_id, block_tag).await
+                .map(|hex_str| JsValue::from_str(&hex_str))
+                .map_err(|e| JsValue::from_str(&format!("Bytecode query failed: {}", e)))
+        })
+    }
+
     #[wasm_bindgen(js_name = alkanesTrace)]
     pub fn alkanes_trace_js(&self, outpoint: String) -> js_sys::Promise {
         use alkanes_cli_common::traits::AlkanesProvider;
