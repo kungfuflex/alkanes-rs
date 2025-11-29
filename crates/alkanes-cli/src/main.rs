@@ -957,8 +957,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 
                 println!("🚀 Using experimental AssemblyScript WASM...");
                 
-                // TEST: Use test WASM first to verify basic serialization
-                let wasm_bytes = include_bytes!("../../alkanes-cli-common/src/alkanes/asc/alkanes-asm-test-callresponse/build/release.wasm");
+                // Load get-all-pools WASM
+                let wasm_bytes = include_bytes!("../../alkanes-cli-common/src/alkanes/asc/get-all-pools/build/release.wasm");
                 
                 println!("   Loaded WASM ({} bytes)", wasm_bytes.len());
                 println!("   Calling factory {}:{}...", factory_block, factory_tx);

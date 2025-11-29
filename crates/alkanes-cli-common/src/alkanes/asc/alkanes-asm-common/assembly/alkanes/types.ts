@@ -1,5 +1,5 @@
 // Core Alkanes types using native ArrayBuffer layout
-import { u128 } from "as-bignum/assembly";
+import { u128 } from "../u128";
 import { AlkaneTransferParcel, AlkaneTransfer, AlkaneId } from "../parcel";
 import { StorageMap } from "../storage-map";
 import { storeU128, loadU128 } from "./utils";
@@ -57,10 +57,18 @@ export class CallResponse {
     const countU64 = count.toU64();
     const parcelSize = 16 + (countU64 as i32 * 48);
     
-    // Extract the response data after the parcel
-    const responseData = data.slice(parcelSize);
+    // Extract the response data after the parcel using manual copy (stub runtime compatible)
+    const responseSize = data.byteLength - parcelSize;
+    const responseData = new ArrayBuffer(responseSize);
+    const responsePtr = changetype<usize>(responseData);
+    const srcPtr = ptr + parcelSize;
+    const responseSizeUsize = responseSize as usize;
     
-    // Parse the parcel
+    for (let i: usize = 0; i < responseSizeUsize; i++) {
+      store<u8>(responsePtr + i, load<u8>(srcPtr + i));
+    }
+    
+    // Parse the parcel (stub implementation, returns empty)
     const parcel = AlkaneTransferParcel.parse(data);
     
     return new CallResponse(parcel, responseData);

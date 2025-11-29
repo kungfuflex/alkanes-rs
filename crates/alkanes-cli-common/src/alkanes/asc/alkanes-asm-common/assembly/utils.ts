@@ -1,4 +1,4 @@
-import { u128 } from "as-bignum/assembly";
+import { u128 } from "./u128";
 // Utility functions
 
 /**

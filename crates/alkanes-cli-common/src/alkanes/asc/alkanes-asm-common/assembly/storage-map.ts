@@ -87,18 +87,53 @@ export class StorageMap {
 
   /**
    * Serialize to ArrayBuffer matching Rust format
+   * Manual implementation to avoid Box.concat with callbacks (stub runtime compatibility)
    */
   serialize(): ArrayBuffer {
-    const sz = new ArrayBuffer(4);
-    store<u32>(changetype<usize>(sz), <i32>this.entries.length);
-    const mappingSerialized = Box.concat(this.entries.map<Box>((v: StorageEntry, i: i32, ary: Array<StorageEntry>) => {
-      const ksz = new ArrayBuffer(4);
-      store<u32>(changetype<usize>(ksz), <i32>v.key.byteLength);
-      const vsz = new ArrayBuffer(4);
-      store<u32>(changetype<usize>(vsz), <i32>v.value.byteLength);
-      return Box.from(Box.concat([Box.from(ksz), Box.from(v.key), Box.from(vsz), Box.from(v.value)]));
-    }));
-    return Box.concat([Box.from(sz), Box.from(mappingSerialized)]);
+    // Calculate total size: count (4 bytes) + entries (4 + key.len + 4 + value.len each)
+    let totalSize: usize = 4; // count
+    for (let i = 0; i < this.entries.length; i++) {
+      const entry = this.entries[i];
+      totalSize += 4 + entry.key.byteLength + 4 + entry.value.byteLength;
+    }
+    
+    const result = new ArrayBuffer(totalSize as i32);
+    const resultPtr = changetype<usize>(result);
+    
+    // Write count
+    store<u32>(resultPtr, this.entries.length as u32);
+    
+    // Write each entry
+    let offset: usize = 4;
+    for (let i = 0; i < this.entries.length; i++) {
+      const entry = this.entries[i];
+      
+      // Write key length
+      store<u32>(resultPtr + offset, entry.key.byteLength as u32);
+      offset += 4;
+      
+      // Write key bytes
+      const keyPtr = changetype<usize>(entry.key);
+      const keyLen = entry.key.byteLength as usize;
+      for (let j: usize = 0; j < keyLen; j++) {
+        store<u8>(resultPtr + offset + j, load<u8>(keyPtr + j));
+      }
+      offset += keyLen;
+      
+      // Write value length
+      store<u32>(resultPtr + offset, entry.value.byteLength as u32);
+      offset += 4;
+      
+      // Write value bytes
+      const valuePtr = changetype<usize>(entry.value);
+      const valueLen = entry.value.byteLength as usize;
+      for (let j: usize = 0; j < valueLen; j++) {
+        store<u8>(resultPtr + offset + j, load<u8>(valuePtr + j));
+      }
+      offset += valueLen;
+    }
+    
+    return result;
   }
 
   /**

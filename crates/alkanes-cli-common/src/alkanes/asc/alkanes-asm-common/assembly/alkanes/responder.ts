@@ -7,31 +7,39 @@ import {
 } from "./runtime";
 import { AlkaneId, Cellpack, AlkaneTransferParcel, CallResponse, ExtendedCallResponse } from "./types";
 import { StorageMap } from "../storage-map";
-import { u128 } from "as-bignum/assembly";
+import { u128 } from "../u128";
 
 /**
  * ExecutionContext parsed from runtime
  * Layout: [myself(32)][caller(32)][vout(16)][incoming_alkanes_count(16)][inputs...]
+ * 
+ * NOTE: We store inputs as a raw buffer instead of Array<u128> for stub runtime compatibility.
+ * Arrays don't work with stub runtime, so we use manual buffer access instead.
  */
 export class ExecutionContext {
   myself: AlkaneId;
   caller: AlkaneId;
   vout: u128;
   incomingAlkanesCount: u128;
-  inputs: u128[];
+  
+  // Store inputs as buffer instead of Array for stub runtime compatibility
+  private inputsBuffer: ArrayBuffer;
+  private inputsCount: i32;
 
   constructor(
     myself: AlkaneId,
     caller: AlkaneId,
     vout: u128,
     incomingAlkanesCount: u128,
-    inputs: u128[]
+    inputsBuffer: ArrayBuffer,
+    inputsCount: i32
   ) {
     this.myself = myself;
     this.caller = caller;
     this.vout = vout;
     this.incomingAlkanesCount = incomingAlkanesCount;
-    this.inputs = inputs;
+    this.inputsBuffer = inputsBuffer;
+    this.inputsCount = inputsCount;
   }
 
   /**
@@ -41,38 +49,52 @@ export class ExecutionContext {
     // Request context size
     const size = __request_context();
     
-    // Allocate ArrayBuffer (automatically has length prefix at -4)
+    // Allocate ArrayBuffer
     const buf = new ArrayBuffer(size);
     const ptr = changetype<usize>(buf);
     
-    // Load context data (runtime will read length from ptr-4)
+    // Load context data
     __load_context(changetype<i32>(ptr));
     
-    // Parse context
-    const myself = AlkaneId.fromBytes(buf, 0);
-    const caller = AlkaneId.fromBytes(buf, 32);
-    const vout = new u128(load<u64>(ptr + 64), load<u64>(ptr + 72));
-    const incomingAlkanesCount = new u128(load<u64>(ptr + 80), load<u64>(ptr + 88));
+    // Parse context fields
+    const myself = AlkaneId.parse(buf, 0);
+    const caller = AlkaneId.parse(buf, 32);
+    const vout = u128.load(ptr + 64);
+    const incomingAlkanesCount = u128.load(ptr + 80);
     
-    // Parse inputs (rest of buffer)
-    const inputCount = (size - 96) / 16;
-    const inputs: u128[] = [];
-    for (let i = 0; i < inputCount; i++) {
-      const offset = 96 + (i * 16);
-      inputs.push(new u128(load<u64>(ptr + offset), load<u64>(ptr + offset + 8)));
+    // Extract inputs buffer (rest of buffer after offset 96)
+    const inputsSize = size - 96;
+    const inputsCount = inputsSize / 16;
+    
+    // Copy inputs to separate buffer
+    const inputsBuffer = new ArrayBuffer(inputsSize);
+    const inputsPtr = changetype<usize>(inputsBuffer);
+    const srcPtr = ptr + 96;
+    const inputsSizeUsize = inputsSize as usize;
+    
+    for (let i: usize = 0; i < inputsSizeUsize; i++) {
+      store<u8>(inputsPtr + i, load<u8>(srcPtr + i));
     }
     
-    return new ExecutionContext(myself, caller, vout, incomingAlkanesCount, inputs);
+    return new ExecutionContext(myself, caller, vout, incomingAlkanesCount, inputsBuffer, inputsCount);
+  }
+
+  /**
+   * Get number of inputs
+   */
+  getInputCount(): i32 {
+    return this.inputsCount;
   }
 
   /**
    * Get input at index
    */
   getInput(index: i32): u128 {
-    if (index < 0 || index >= this.inputs.length) {
+    if (index < 0 || index >= this.inputsCount) {
       return u128.Zero;
     }
-    return this.inputs[index];
+    const ptr = changetype<usize>(this.inputsBuffer);
+    return u128.load(ptr + (index * 16));
   }
 
   /**
@@ -87,6 +109,13 @@ export class ExecutionContext {
    */
   getInputU32(index: i32): u32 {
     return this.getInput(index).lo as u32;
+  }
+
+  /**
+   * Get all inputs as ArrayBuffer (for serialization)
+   */
+  getInputsBuffer(): ArrayBuffer {
+    return this.inputsBuffer;
   }
 }
 

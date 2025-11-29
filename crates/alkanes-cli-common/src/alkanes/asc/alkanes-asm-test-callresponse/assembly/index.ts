@@ -16,12 +16,23 @@ import {
  * - At (return_value - 4), there must be a u32 length field
  */
 export function __execute(): i32 {
-  // Create ExtendedCallResponse with NO data to test if serialization works
+  // Create ExtendedCallResponse
   const response = new ExtendedCallResponse();
   
-  // Don't set any data - just test empty response serialization
-  // Expected format: [alkanes_count(16 bytes = 0)][storage_count(4 bytes = 0)][empty data]
-  // Total: 20 bytes of zeros
+  // Create test data: [0x01, 0x02, 0x03, 0x04]
+  const testData = new ArrayBuffer(4);
+  const dataPtr = changetype<usize>(testData);
+  store<u8>(dataPtr + 0, 0x01);
+  store<u8>(dataPtr + 1, 0x02);
+  store<u8>(dataPtr + 2, 0x03);
+  store<u8>(dataPtr + 3, 0x04);
+  
+  // Set the data in response
+  response.setData(testData);
+  
+  // Expected ExtendedCallResponse format:
+  // [alkanes_count(16 bytes = 0)][storage_count(4 bytes = 0)][data(4 bytes = 01020304)]
+  // Total: 24 bytes
   
   // Finalize to get serialized ExtendedCallResponse
   const result = response.finalize();
