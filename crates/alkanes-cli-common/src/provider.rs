@@ -203,12 +203,14 @@ impl ConcreteProvider {
         let rpc_config = RpcConfig {
             provider,
             bitcoin_rpc_url,
+            jsonrpc_url: None,
             sandshrew_rpc_url,
             titan_api_url,
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
             brc20_prog_rpc_url: None,
+            subfrost_api_key: None,
             timeout_seconds: 600,
         };
         
