@@ -139,6 +139,7 @@ use bitcoin::hashes::hex::FromHex;
 /// }
 /// ```
 #[derive(Clone)]
+#[wasm_bindgen]
 pub struct WebProvider {
     sandshrew_rpc_url: String,
     esplora_rpc_url: Option<String>,
@@ -150,6 +151,147 @@ pub struct WebProvider {
     logger: WebLogger,
     keystore: Option<alkanes_cli_common::keystore::Keystore>,
     passphrase: Option<String>,
+}
+
+#[wasm_bindgen]
+impl WebProvider {
+    /// Create a new WebProvider with given URLs
+    #[wasm_bindgen(constructor)]
+    pub fn new_js(sandshrew_rpc_url: String, esplora_rpc_url: Option<String>) -> Self {
+        let network = Network::Bitcoin; // Default to mainnet
+        Self {
+            sandshrew_rpc_url,
+            esplora_rpc_url,
+            network,
+            storage: WebStorage::new(),
+            network_client: WebNetwork::new(),
+            crypto: WebCrypto::new(),
+            time: WebTime::new(),
+            logger: WebLogger::new(),
+            keystore: None,
+            passphrase: None,
+        }
+    }
+
+    /// Get enriched wallet balances using the balances.lua script
+    /// 
+    /// This uses the built-in balances.lua script with automatic hash-based caching.
+    /// Returns comprehensive balance data including spendable UTXOs, asset UTXOs, and pending.
+    #[wasm_bindgen(js_name = getEnrichedBalances)]
+    pub fn get_enriched_balances_js(
+        &self,
+        address: String,
+        protocol_tag: Option<String>,
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::lua_script::{LuaScriptExecutor, scripts::BALANCES};
+        use serde_json::Value as JsonValue;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let tag = protocol_tag.unwrap_or_else(|| "1".to_string());
+            let args = vec![
+                JsonValue::String(address),
+                JsonValue::String(tag),
+            ];
+
+            let result = provider.execute_lua_script(&BALANCES, args)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get enriched balances: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+        })
+    }
+
+    /// Get all transactions for an address from Esplora
+    #[wasm_bindgen(js_name = getAddressTxs)]
+    pub fn get_address_txs_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let result = provider.get_address_txs(&address)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get address transactions: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+        })
+    }
+
+    /// Get raw transaction hex
+    #[wasm_bindgen(js_name = getTransactionHex)]
+    pub fn get_transaction_hex_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let result = provider.get_transaction_hex(&txid)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get transaction hex: {}", e)))?;
+
+            Ok(JsValue::from_str(&result))
+        })
+    }
+
+    /// Trace alkanes execution for a protostone outpoint
+    #[wasm_bindgen(js_name = traceOutpoint)]
+    pub fn trace_outpoint_js(&self, outpoint: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let trace_pb = provider.trace(&outpoint)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to trace outpoint: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&trace_pb)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize trace: {}", e)))
+        })
+    }
+
+    /// Get address UTXOs
+    #[wasm_bindgen(js_name = getAddressUtxos)]
+    pub fn get_address_utxos_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let result = provider.get_address_utxo(&address)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get address UTXOs: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+        })
+    }
+
+    /// Broadcast a raw transaction
+    #[wasm_bindgen(js_name = broadcastTransaction)]
+    pub fn broadcast_transaction_js(&self, tx_hex: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let result = provider.broadcast_transaction(tx_hex)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to broadcast transaction: {}", e)))?;
+
+            Ok(JsValue::from_str(&result))
+        })
+    }
 }
 
 impl WebProvider {

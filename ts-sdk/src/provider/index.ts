@@ -74,6 +74,24 @@ export class BitcoinRpcClient {
   async getMempoolEntry(txid: string): Promise<any> {
     return this.call('getmempoolentry', [txid]);
   }
+
+  /**
+   * Execute a Lua script on the Sandshrew RPC
+   * @param script - The full Lua script content
+   * @param args - Arguments to pass to the script
+   */
+  async lua_evalscript(script: string, ...args: any[]): Promise<any> {
+    return this.call('lua_evalscript', [script, ...args]);
+  }
+
+  /**
+   * Execute a cached Lua script by hash on the Sandshrew RPC
+   * @param hash - The SHA256 hash of the script
+   * @param args - Arguments to pass to the script
+   */
+  async lua_evalsaved(hash: string, ...args: any[]): Promise<any> {
+    return this.call('lua_evalsaved', [hash, ...args]);
+  }
 }
 
 /**

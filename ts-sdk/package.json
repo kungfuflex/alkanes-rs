@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "description": "TypeScript SDK for Alkanes - Bitcoin smart contracts",
   "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "types": "./index.d.ts",
   "module": "dist/index.mjs",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js",
       "default": "./dist/index.mjs"
