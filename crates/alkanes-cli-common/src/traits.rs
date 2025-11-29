@@ -756,6 +756,16 @@ pub trait AlkanesProvider {
         { use prost::Message; context.encode(&mut buf)?; }
         self.view(contract_id, "simulate", Some(&buf), block_tag).await
     }
+    
+    /// Execute a tx-script with WASM bytecode and inputs
+    /// Returns the raw response data bytes from the WASM execution
+    async fn tx_script(
+        &self,
+        wasm_bytes: &[u8],
+        inputs: Vec<u128>,
+        block_tag: Option<String>,
+    ) -> Result<Vec<u8>>;
+    
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace>;
     async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse>;
     async fn sequence(&self, block_tag: Option<String>) -> Result<JsonValue>;
@@ -1406,6 +1416,14 @@ impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     }
     async fn simulate(&self, contract_id: &str, context: &crate::proto::alkanes::MessageContextParcel, block_tag: Option<String>) -> Result<JsonValue> {
         (**self).simulate(contract_id, context, block_tag).await
+    }
+    async fn tx_script(
+        &self,
+        wasm_bytes: &[u8],
+        inputs: Vec<u128>,
+        block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        (**self).tx_script(wasm_bytes, inputs, block_tag).await
     }
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
         (**self).trace(outpoint).await

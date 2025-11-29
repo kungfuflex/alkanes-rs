@@ -902,6 +902,21 @@ pub enum Alkanes {
         #[arg(long)]
         raw: bool,
     },
+    /// Execute a tx-script with WASM bytecode
+    TxScript {
+        /// Path to WASM file
+        #[arg(long)]
+        envelope: String,
+        /// Cellpack inputs as comma-separated u128 values (e.g., 1,2,3)
+        #[arg(long)]
+        inputs: Option<String>,
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
     /// Get the sequence for an outpoint
     Sequence {
         /// Block tag to query (e.g., "latest" or a block height)
@@ -1004,6 +1019,18 @@ pub enum Alkanes {
         /// Also fetch detailed information for each pool
         #[arg(long)]
         pool_details: bool,
+        /// Use experimental AssemblyScript WASM to fetch pool list via tx_script
+        #[arg(long)]
+        experimental_asm: bool,
+        /// Use experimental WASM-based batch optimization to fetch all pools and details in one RPC call
+        #[arg(long)]
+        experimental_batch_asm: bool,
+        /// Chunk size for batch fetching (default: 50)
+        #[arg(long, default_value = "50")]
+        chunk_size: usize,
+        /// Specific range to fetch (format: "0-50" or "start-end")
+        #[arg(long)]
+        range: Option<String>,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,

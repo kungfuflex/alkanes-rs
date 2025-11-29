@@ -2729,6 +2729,89 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
     }
 
+    async fn tx_script(
+        &self,
+        wasm_bytes: &[u8],
+        inputs: Vec<u128>,
+        block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        use bitcoin::{Transaction, TxIn, TxOut, OutPoint, Amount, ScriptBuf, Sequence};
+        use bitcoin::transaction::Version;
+        use alkanes_support::envelope::RawEnvelope;
+        use alkanes_support::cellpack::Cellpack;
+        use alkanes_support::id::AlkaneId;
+        use prost::Message;
+
+        // Get simulation height
+        let simulation_height = match block_tag {
+            Some(ref tag) if tag == "latest" => self.get_metashrew_height().await?,
+            Some(ref tag) => tag.parse()?,
+            None => self.get_metashrew_height().await?,
+        };
+
+        // Create cellpack with tx-script target (1:0) and inputs
+        let cellpack = Cellpack {
+            target: AlkaneId { block: 1, tx: 0 },
+            inputs,
+        };
+        let calldata = cellpack.encipher();
+
+        // Create envelope with WASM
+        let raw_envelope = RawEnvelope::from(wasm_bytes.to_vec());
+        let witness = raw_envelope.to_witness(true);
+
+        // Create fake deploy transaction
+        let fake_tx = Transaction {
+            version: Version::TWO,
+            lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness,
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(0),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        // Encode transaction
+        use bitcoin::consensus::Encodable;
+        let mut transaction_bytes = Vec::new();
+        fake_tx.consensus_encode(&mut transaction_bytes)
+            .map_err(|e| AlkanesError::Serialization(format!("Failed to encode transaction: {}", e)))?;
+
+        // Create context
+        let context = alkanes_pb::MessageContextParcel {
+            alkanes: vec![],
+            transaction: transaction_bytes,
+            block: vec![],
+            height: simulation_height,
+            vout: 0,
+            txindex: 1,
+            calldata,
+            pointer: 0,
+            refund_pointer: 0,
+        };
+
+        // Simulate tx-script execution
+        let result = self.simulate("1:0", &context, Some("latest".to_string())).await?;
+
+        // Parse response
+        if let Some(hex_str) = result.as_str() {
+            let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+            let bytes = hex::decode(hex_data)?;
+            let sim_response = alkanes_pb::SimulateResponse::decode(bytes.as_slice())?;
+            
+            if let Some(execution) = sim_response.execution {
+                return Ok(execution.data);
+            }
+        }
+
+        Err(AlkanesError::Alkanes("Failed to parse tx_script response".to_string()))
+    }
+
     async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
         if self.rpc_config.using_titan_api() {
             let encoded_outpoint = url_encode(outpoint);
