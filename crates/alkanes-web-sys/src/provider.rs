@@ -139,6 +139,7 @@ use bitcoin::hashes::hex::FromHex;
 /// }
 /// ```
 #[derive(Clone)]
+#[wasm_bindgen]
 pub struct WebProvider {
     sandshrew_rpc_url: String,
     esplora_rpc_url: Option<String>,
@@ -151,6 +152,743 @@ pub struct WebProvider {
     keystore: Option<alkanes_cli_common::keystore::Keystore>,
     passphrase: Option<String>,
 }
+
+#[wasm_bindgen]
+impl WebProvider {
+    /// Create a new WebProvider with given URLs
+    #[wasm_bindgen(constructor)]
+    pub fn new_js(sandshrew_rpc_url: String, esplora_rpc_url: Option<String>) -> Self {
+        let network = Network::Bitcoin; // Default to mainnet
+        Self {
+            sandshrew_rpc_url,
+            esplora_rpc_url,
+            network,
+            storage: WebStorage::new(),
+            network_client: WebNetwork::new(),
+            crypto: WebCrypto::new(),
+            time: WebTime::new(),
+            logger: WebLogger::new(),
+            keystore: None,
+            passphrase: None,
+        }
+    }
+
+    /// Get enriched wallet balances using the balances.lua script
+    /// 
+    /// This uses the built-in balances.lua script with automatic hash-based caching.
+    /// Returns comprehensive balance data including spendable UTXOs, asset UTXOs, and pending.
+    #[wasm_bindgen(js_name = getEnrichedBalances)]
+    pub fn get_enriched_balances_js(
+        &self,
+        address: String,
+        protocol_tag: Option<String>,
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::lua_script::{LuaScriptExecutor, scripts::BALANCES};
+        use serde_json::Value as JsonValue;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let tag = protocol_tag.unwrap_or_else(|| "1".to_string());
+            let args = vec![
+                JsonValue::String(address),
+                JsonValue::String(tag),
+            ];
+
+            let result = provider.execute_lua_script(&BALANCES, args)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get enriched balances: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+        })
+    }
+
+    /// Get all transactions for an address from Esplora
+    #[wasm_bindgen(js_name = getAddressTxs)]
+    pub fn get_address_txs_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let result = provider.get_address_txs(&address)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get address transactions: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+        })
+    }
+
+    /// Get raw transaction hex
+    #[wasm_bindgen(js_name = getTransactionHex)]
+    pub fn get_transaction_hex_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let result = provider.get_transaction_hex(&txid)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get transaction hex: {}", e)))?;
+
+            Ok(JsValue::from_str(&result))
+        })
+    }
+
+    /// Trace alkanes execution for a protostone outpoint
+    #[wasm_bindgen(js_name = traceOutpoint)]
+    pub fn trace_outpoint_js(&self, outpoint: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let trace_pb = provider.trace(&outpoint)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to trace outpoint: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&trace_pb)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize trace: {}", e)))
+        })
+    }
+
+    /// Get address UTXOs
+    #[wasm_bindgen(js_name = getAddressUtxos)]
+    pub fn get_address_utxos_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let result = provider.get_address_utxo(&address)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get address UTXOs: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+        })
+    }
+
+    /// Broadcast a raw transaction
+    #[wasm_bindgen(js_name = broadcastTransaction)]
+    pub fn broadcast_transaction_js(&self, tx_hex: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use wasm_bindgen_futures::future_to_promise;
+
+        let provider = self.clone();
+        
+        future_to_promise(async move {
+            let result = provider.broadcast_transaction(tx_hex)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to broadcast transaction: {}", e)))?;
+
+            Ok(JsValue::from_str(&result))
+        })
+    }
+
+    /// Get address transactions with complete runestone traces (CLI: esplora address-txs --runestone-trace)
+    #[wasm_bindgen(js_name = getAddressTxsWithTraces)]
+    pub fn get_address_txs_with_traces_js(&self, address: String, exclude_coinbase: Option<bool>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::{EsploraProvider, BitcoinRpcProvider, AlkanesProvider};
+        use alkanes_cli_common::esplora::EsploraTransaction;
+        use wasm_bindgen_futures::future_to_promise;
+        use serde_json::Value as JsonValue;
+
+        let provider = self.clone();
+        let exclude_coinbase = exclude_coinbase.unwrap_or(false);
+        
+        future_to_promise(async move {
+            let result = provider.get_address_txs(&address).await
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))?;
+            let mut txs: Vec<EsploraTransaction> = serde_json::from_value(result)
+                .map_err(|e| JsValue::from_str(&format!("Parse failed: {}", e)))?;
+            if exclude_coinbase {
+                txs.retain(|tx| !tx.vin.iter().any(|vin| vin.is_coinbase));
+            }
+            let mut enriched_txs = Vec::new();
+            for esplora_tx in txs {
+                let has_op_return = esplora_tx.vout.iter().any(|o| o.scriptpubkey_type == "op_return");
+                let mut tx_data = serde_json::to_value(&esplora_tx)
+                    .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))?;
+                if has_op_return {
+                    if let Ok(tx_hex) = provider.get_transaction_hex(&esplora_tx.txid).await {
+                        if let Ok(tx_bytes) = hex::decode(&tx_hex) {
+                            if let Ok(transaction) = bitcoin::consensus::deserialize::<bitcoin::Transaction>(&tx_bytes) {
+                                if let Ok(runestone_result) = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&transaction) {
+                                    let num_protostones = runestone_result.get("protostones").and_then(|p| p.as_array()).map(|a| a.len()).unwrap_or(0);
+                                    if num_protostones > 0 {
+                                        if let Some(obj) = tx_data.as_object_mut() {
+                                            obj.insert("runestone".to_string(), runestone_result);
+                                        }
+                                        let base_vout = transaction.output.len() as u32 + 1;
+                                        let mut traces = Vec::new();
+                                        for i in 0..num_protostones {
+                                            let vout = base_vout + i as u32;
+                                            let outpoint = format!("{}:{}", esplora_tx.txid, vout);
+                                            if let Ok(trace_pb) = provider.trace(&outpoint).await {
+                                                if let Ok(trace_json) = serde_json::to_value(&trace_pb) {
+                                                    let mut trace_obj = serde_json::json!({"vout": vout, "outpoint": outpoint, "protostone_index": i});
+                                                    if let Some(obj) = trace_obj.as_object_mut() {
+                                                        obj.insert("trace".to_string(), trace_json);
+                                                    }
+                                                    traces.push(trace_obj);
+                                                }
+                                            }
+                                        }
+                                        if let Some(obj) = tx_data.as_object_mut() {
+                                            obj.insert("alkanes_traces".to_string(), JsonValue::Array(traces));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                enriched_txs.push(tx_data);
+            }
+            serde_wasm_bindgen::to_value(&enriched_txs)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
+        })
+    }
+
+    // === ORD METHODS ===
+    
+    #[wasm_bindgen(js_name = ordInscription)]
+    pub fn ord_inscription_js(&self, inscription_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_inscription(&inscription_id).await
+                .and_then(|r| serde_json::to_value(&r).map_err(Into::into))
+                .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordInscriptions)]
+    pub fn ord_inscriptions_js(&self, page: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_inscriptions(page.map(|p| p as u32)).await
+                .and_then(|r| serde_json::to_value(&r).map_err(Into::into))
+                .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordOutputs)]
+    pub fn ord_outputs_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_output(&address).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordRune)]
+    pub fn ord_rune_js(&self, rune: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_rune(&rune).await
+                .and_then(|r| serde_json::to_value(&r).map_err(Into::into))
+                .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    // === ALKANES METHODS ===
+    
+    /// Execute an alkanes smart contract
+    #[wasm_bindgen(js_name = alkanesExecute)]
+    pub fn alkanes_execute_js(&self, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::types::EnhancedExecuteParams;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let params: EnhancedExecuteParams = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            provider.execute(params).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Execution failed: {}", e)))
+        })
+    }
+
+    /// Resume execution after user confirmation (for simple transactions)
+    #[wasm_bindgen(js_name = alkanesResumeExecution)]
+    pub fn alkanes_resume_execution_js(&self, state_json: String, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::types::{EnhancedExecuteParams, ReadyToSignTx};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let state: ReadyToSignTx = serde_json::from_str(&state_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid state JSON: {}", e)))?;
+            let params: EnhancedExecuteParams = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            provider.resume_execution(state, &params).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Resume execution failed: {}", e)))
+        })
+    }
+
+    /// Resume execution after commit transaction confirmation
+    #[wasm_bindgen(js_name = alkanesResumeCommitExecution)]
+    pub fn alkanes_resume_commit_execution_js(&self, state_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::types::ReadyToSignCommitTx;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let state: ReadyToSignCommitTx = serde_json::from_str(&state_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid state JSON: {}", e)))?;
+            provider.resume_commit_execution(state).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Resume commit execution failed: {}", e)))
+        })
+    }
+
+    /// Resume execution after reveal transaction confirmation
+    #[wasm_bindgen(js_name = alkanesResumeRevealExecution)]
+    pub fn alkanes_resume_reveal_execution_js(&self, state_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::types::ReadyToSignRevealTx;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let state: ReadyToSignRevealTx = serde_json::from_str(&state_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid state JSON: {}", e)))?;
+            provider.resume_reveal_execution(state).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Resume reveal execution failed: {}", e)))
+        })
+    }
+
+    /// Simulate an alkanes contract call (read-only)
+    #[wasm_bindgen(js_name = alkanesSimulate)]
+    pub fn alkanes_simulate_js(&self, contract_id: String, context_json: String, block_tag: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::proto::alkanes::MessageContextParcel;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let context: MessageContextParcel = serde_json::from_str(&context_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid context JSON: {}", e)))?;
+            provider.simulate(&contract_id, &context, block_tag).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Simulation failed: {}", e)))
+        })
+    }
+
+    /// Get alkanes contract balance for an address
+    #[wasm_bindgen(js_name = alkanesBalance)]
+    pub fn alkanes_balance_js(&self, address: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            <WebProvider as AlkanesProvider>::get_balance(&provider, address.as_deref()).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Balance query failed: {}", e)))
+        })
+    }
+
+    /// Get alkanes contract bytecode
+    #[wasm_bindgen(js_name = alkanesBytecode)]
+    pub fn alkanes_bytecode_js(&self, alkane_id: String, block_tag: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_bytecode(&alkane_id, block_tag).await
+                .map(|hex_str| JsValue::from_str(&hex_str))
+                .map_err(|e| JsValue::from_str(&format!("Bytecode query failed: {}", e)))
+        })
+    }
+
+    /// Get all pools with details from an AMM factory (parallel optimized for browser)
+    #[wasm_bindgen(js_name = alkanesGetAllPoolsWithDetails)]
+    pub fn alkanes_get_all_pools_with_details_js(
+        &self,
+        factory_id: String,
+        chunk_size: Option<f64>,
+        max_concurrent: Option<f64>,
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::alkanes::amm::AmmManager;
+        use alkanes_cli_common::alkanes::types::AlkaneId;
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::proto::alkanes::MessageContextParcel;
+        use wasm_bindgen_futures::future_to_promise;
+        use futures::stream::{self, StreamExt};
+        use web_sys::console;
+        use leb128;
+        
+        let provider = self.clone();
+        let chunk_size = chunk_size.map(|c| c as usize).unwrap_or(30);
+        let max_concurrent = max_concurrent.map(|m| m as usize).unwrap_or(10);
+        
+        future_to_promise(async move {
+            // Parse factory ID
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(JsValue::from_str("Invalid factory_id format, expected block:tx"));
+            }
+            let block: u64 = parts[0].parse()
+                .map_err(|_| JsValue::from_str("Invalid block number"))?;
+            let tx: u64 = parts[1].parse()
+                .map_err(|_| JsValue::from_str("Invalid tx number"))?;
+            let factory = AlkaneId { block, tx };
+            
+            // Step 1: Get all pool IDs by calling factory directly
+            let mut calldata = Vec::new();
+            leb128::write::unsigned(&mut calldata, factory.block).unwrap();
+            leb128::write::unsigned(&mut calldata, factory.tx).unwrap();
+            leb128::write::unsigned(&mut calldata, 3u64).unwrap(); // GET_ALL_POOLS opcode
+            
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: 0,
+                vout: 0,
+                txindex: 0,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+
+            let result = provider.simulate(&format!("{}:{}", factory.block, factory.tx), &context, None).await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get pool list: {}", e)))?;
+            
+            let data_hex = result
+                .get("data")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| JsValue::from_str("No data in response"))?;
+
+            // Parse pool IDs from hex response
+            let pool_ids = alkanes_cli_common::alkanes::amm::decode_get_all_pools(data_hex)
+                .ok_or_else(|| JsValue::from_str("Failed to decode pool list"))?
+                .pools;
+            let total = pool_ids.len();
+            
+            // Step 2: Fetch details in parallel chunks
+            let chunks: Vec<Vec<_>> = pool_ids.chunks(chunk_size)
+                .map(|chunk| chunk.to_vec())
+                .collect();
+            
+            let mut all_pool_details = Vec::new();
+            
+            // Process chunks with concurrency limit
+            let results: Vec<_> = stream::iter(chunks)
+                .map(|chunk| {
+                    let provider_clone = provider.clone();
+                    async move {
+                        let mut chunk_results = Vec::new();
+                        for pool_id in chunk {
+                            // Build calldata for POOL_DETAILS opcode (999)
+                            let mut calldata = Vec::new();
+                            leb128::write::unsigned(&mut calldata, pool_id.block).unwrap();
+                            leb128::write::unsigned(&mut calldata, pool_id.tx).unwrap();
+                            leb128::write::unsigned(&mut calldata, 999u64).unwrap();
+                            
+                            let context = MessageContextParcel {
+                                alkanes: vec![],
+                                transaction: vec![],
+                                block: vec![],
+                                height: 0,
+                                vout: 0,
+                                txindex: 0,
+                                calldata,
+                                pointer: 0,
+                                refund_pointer: 0,
+                            };
+                            
+                            match provider_clone.simulate(&format!("{}:{}", pool_id.block, pool_id.tx), &context, None).await {
+                                Ok(result) => {
+                                    let details_json = result;
+                                    chunk_results.push(serde_json::json!({
+                                        "pool_id": format!("{}:{}", pool_id.block, pool_id.tx),
+                                        "pool_id_block": pool_id.block,
+                                        "pool_id_tx": pool_id.tx,
+                                        "details": details_json
+                                    }));
+                                }
+                                Err(e) => {
+                                    console::warn_1(&JsValue::from_str(&format!("Failed to get details for pool {}:{}: {}", pool_id.block, pool_id.tx, e)));
+                                }
+                            }
+                        }
+                        chunk_results
+                    }
+                })
+                .buffer_unordered(max_concurrent)
+                .collect()
+                .await;
+            
+            // Flatten results
+            for chunk_result in results {
+                all_pool_details.extend(chunk_result);
+            }
+            
+            let response = serde_json::json!({
+                "total": total,
+                "count": all_pool_details.len(),
+                "pools": all_pool_details
+            });
+            
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
+        })
+    }
+
+    /// Get all pools from a factory (lightweight, IDs only)
+    #[wasm_bindgen(js_name = alkanesGetAllPools)]
+    pub fn alkanes_get_all_pools_js(&self, factory_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::alkanes::types::AlkaneId;
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::proto::alkanes::MessageContextParcel;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(JsValue::from_str("Invalid factory_id format, expected block:tx"));
+            }
+            let block: u64 = parts[0].parse()
+                .map_err(|_| JsValue::from_str("Invalid block number"))?;
+            let tx: u64 = parts[1].parse()
+                .map_err(|_| JsValue::from_str("Invalid tx number"))?;
+            let factory = AlkaneId { block, tx };
+            
+            // Build calldata for GET_ALL_POOLS (opcode 3)
+            let mut calldata = Vec::new();
+            leb128::write::unsigned(&mut calldata, factory.block).unwrap();
+            leb128::write::unsigned(&mut calldata, factory.tx).unwrap();
+            leb128::write::unsigned(&mut calldata, 3u64).unwrap();
+            
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: 0,
+                vout: 0,
+                txindex: 0,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+
+            let result = provider.simulate(&format!("{}:{}", factory.block, factory.tx), &context, None).await
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))?;
+            
+            let data_hex = result
+                .get("data")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| JsValue::from_str("No data in response"))?;
+
+            let pools_result = alkanes_cli_common::alkanes::amm::decode_get_all_pools(data_hex)
+                .ok_or_else(|| JsValue::from_str("Failed to decode pool list"))?;
+            
+            serde_wasm_bindgen::to_value(&pools_result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = alkanesTrace)]
+    pub fn alkanes_trace_js(&self, outpoint: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.trace(&outpoint).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = alkanesByAddress)]
+    pub fn alkanes_by_address_js(&self, address: String, block_tag: Option<String>, protocol_tag: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let tag = protocol_tag.map(|t| t as u128).unwrap_or(1);
+            provider.protorunes_by_address(&address, block_tag, tag).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = alkanesByOutpoint)]
+    pub fn alkanes_by_outpoint_js(&self, outpoint: String, block_tag: Option<String>, protocol_tag: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let parts: Vec<&str> = outpoint.split(':').collect();
+            if parts.len() != 2 {
+                return Err(JsValue::from_str("Invalid outpoint format, expected txid:vout"));
+            }
+            let txid = parts[0];
+            let vout: u32 = parts[1].parse()
+                .map_err(|_| JsValue::from_str("Invalid vout number"))?;
+            let tag = protocol_tag.map(|t| t as u128).unwrap_or(1);
+            provider.protorunes_by_outpoint(txid, vout, block_tag, tag).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    // === ESPLORA EXTENDED METHODS ===
+    
+    #[wasm_bindgen(js_name = esploraGetTx)]
+    pub fn esplora_get_tx_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_tx(&txid).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetTxStatus)]
+    pub fn esplora_get_tx_status_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_tx_status(&txid).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetAddressInfo)]
+    pub fn esplora_get_address_info_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_address_info(&address).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlocksTipHeight)]
+    pub fn esplora_get_blocks_tip_height_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_blocks_tip_height().await
+                .map(|h| JsValue::from_f64(h as f64))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlocksTipHash)]
+    pub fn esplora_get_blocks_tip_hash_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_blocks_tip_hash().await
+                .map(|h| JsValue::from_str(&h))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    // === BITCOIN RPC METHODS ===
+    
+    #[wasm_bindgen(js_name = bitcoindGetBlockCount)]
+    pub fn bitcoind_get_block_count_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::BitcoinRpcProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_block_count().await
+                .map(|c| JsValue::from_f64(c as f64))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = bitcoindSendRawTransaction)]
+    pub fn bitcoind_send_raw_transaction_js(&self, tx_hex: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::BitcoinRpcProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.send_raw_transaction(&tx_hex).await
+                .map(|txid| JsValue::from_str(&txid))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    // === METASHREW METHODS ===
+    
+    #[wasm_bindgen(js_name = metashrewHeight)]
+    pub fn metashrew_height_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::MetashrewRpcProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_metashrew_height().await
+                .map(|h| JsValue::from_f64(h as f64))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = metashrewStateRoot)]
+    pub fn metashrew_state_root_js(&self, height: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::MetashrewRpcProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let height_val = if let Some(h) = height {
+                serde_json::json!(h as u64)
+            } else {
+                serde_json::json!(null)
+            };
+            <WebProvider as MetashrewRpcProvider>::get_state_root(&provider, height_val).await
+                .map(|r| JsValue::from_str(&r))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    // === WALLET METHODS ===
+    
+    #[wasm_bindgen(js_name = walletCreatePsbt)]
+    pub fn wallet_create_psbt_js(&self, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let params: serde_json::Value = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            // This would need proper parameter parsing based on actual requirements
+            Err(JsValue::from_str("PSBT creation not yet implemented in WASM"))
+        })
+    }
+}
+
 
 impl WebProvider {
     /// Creates a new WebProvider instance for the specified network
@@ -1763,6 +2501,17 @@ impl AlkanesProvider for WebProvider {
         }
         
         Ok(Some(all_traces))
+    }
+
+    async fn tx_script(
+        &self,
+        _wasm_bytes: &[u8],
+        _inputs: Vec<u128>,
+        _block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        // For WASM build, tx_script would need to be proxied through the RPC
+        // or implemented using a different approach
+        Err(AlkanesError::Other("tx_script not implemented for WASM build".to_string()))
     }
 }
 

@@ -51,18 +51,22 @@ pub fn get_rpc_url(config: &crate::network::RpcConfig, command: &Commands) -> Re
         Commands::Bitcoind { .. } => config
             .bitcoin_rpc_url
             .clone()
+            .or_else(|| config.jsonrpc_url.clone())
             .or_else(|| config.sandshrew_rpc_url.clone()),
         Commands::Metashrew { .. } => config
             .metashrew_rpc_url
             .clone()
+            .or_else(|| config.jsonrpc_url.clone())
             .or_else(|| config.sandshrew_rpc_url.clone()),
         Commands::Esplora { .. } => config
             .esplora_url
             .clone()
+            .or_else(|| config.jsonrpc_url.clone())
             .or_else(|| config.sandshrew_rpc_url.clone()),
         Commands::Ord { .. } => config
             .ord_url
             .clone()
+            .or_else(|| config.jsonrpc_url.clone())
             .or_else(|| config.sandshrew_rpc_url.clone()),
         _ => None,
     };
@@ -176,9 +180,12 @@ impl<P: DeezelProvider> RpcClient<P> {
         self.call(&url, method, params).await
     }
     
-    /// Make a Bitcoin Core RPC call
+    /// Make a Bitcoin Core RPC call (via JSON-RPC URL or legacy sandshrew URL)
     pub async fn sandshrew_call(&self, method: &str, params: JsonValue) -> Result<JsonValue> {
-        let url = self.config.sandshrew_rpc_url.as_ref().ok_or_else(|| AlkanesError::RpcError("Missing sandshrew rpc url".to_string()))?;
+        // Try jsonrpc_url first, fallback to sandshrew_rpc_url for backward compatibility
+        let url = self.config.jsonrpc_url.as_ref()
+            .or(self.config.sandshrew_rpc_url.as_ref())
+            .ok_or_else(|| AlkanesError::RpcError("Missing JSON-RPC URL (use --jsonrpc-url or --sandshrew-rpc-url)".to_string()))?;
         self.call(url, method, params).await
     }
 
@@ -544,7 +551,7 @@ mod tests {
         let mut config = RpcConfig::default();
         config.bitcoin_rpc_url = Some("http://bitcoin".to_string());
         config.metashrew_rpc_url = Some("http://metashrew".to_string());
-        config.sandshrew_rpc_url = Some("http://sandshrew".to_string());
+        config.jsonrpc_url = Some("http://sandshrew".to_string());
 
         // Test `determine_rpc_call_type`
         assert_eq!(determine_rpc_call_type(&config, &Commands::Esplora { command: crate::commands::EsploraCommands::Block { hash: "".to_string(), raw: false } }), RpcCallType::JsonRpc);
