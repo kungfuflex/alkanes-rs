@@ -12,12 +12,14 @@ pub async fn build_provider(
     // Build Args using the RpcConfig
     let rpc_config = RpcConfig {
         sandshrew_rpc_url: Some(sandshrew_rpc_url.clone()),
+        jsonrpc_url: Some(sandshrew_rpc_url.clone()),
         bitcoin_rpc_url,
         metashrew_rpc_url: Some(sandshrew_rpc_url),
         esplora_url,
         ord_url: None,
         titan_api_url: None,
         brc20_prog_rpc_url: None,  // Not used by indexer
+        subfrost_api_key: None,
         provider: network_provider,
         timeout_seconds: 600,
     };
