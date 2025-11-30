@@ -13,11 +13,13 @@ pub async fn build_provider(
     let rpc_config = RpcConfig {
         sandshrew_rpc_url: Some(sandshrew_rpc_url.clone()),
         bitcoin_rpc_url,
-        metashrew_rpc_url: Some(sandshrew_rpc_url),
+        metashrew_rpc_url: Some(sandshrew_rpc_url.clone()),
         esplora_url,
         ord_url: None,
         titan_api_url: None,
         brc20_prog_rpc_url: None,  // Not used by indexer
+        jsonrpc_url: Some(sandshrew_rpc_url),  // For AlkanesProvider::trace
+        subfrost_api_key: None,  // Not needed for indexer
         provider: network_provider,
         timeout_seconds: 600,
     };

@@ -174,12 +174,22 @@ pub async fn get_pool_creation_history(
     state: web::Data<AppState>,
     req: web::Json<HistoryRequest>,
 ) -> impl Responder {
+    let factory_id = match &req.factory_id {
+        Some(id) => id,
+        None => {
+            return HttpResponse::BadRequest().json(ErrorResponse::new(
+                400,
+                "factoryId is required".to_string(),
+            ));
+        }
+    };
+
     let history_service = HistoryService::new(state.db_pool.clone());
     let limit = req.count.unwrap_or(50);
     let offset = req.offset.unwrap_or(0);
 
     match history_service
-        .get_pool_creation_history(limit, offset)
+        .get_pool_creation_history(&factory_id.into(), limit, offset)
         .await
     {
         Ok((creations, total)) => {
@@ -363,7 +373,7 @@ pub async fn get_address_unwrap_history(
     let successful_only = req.successful.unwrap_or(true);
 
     match history_service
-        .get_address_wrap_history(address, limit, offset, successful_only)
+        .get_address_unwrap_history(address, limit, offset, successful_only)
         .await
     {
         Ok((unwraps, total)) => {
@@ -425,7 +435,7 @@ pub async fn get_all_unwrap_history(
     let successful_only = req.successful.unwrap_or(true);
 
     match history_service
-        .get_all_wrap_history(limit, offset, successful_only)
+        .get_all_unwrap_history(limit, offset, successful_only)
         .await
     {
         Ok((unwraps, total)) => {

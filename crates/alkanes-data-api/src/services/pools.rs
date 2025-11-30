@@ -217,20 +217,20 @@ impl PoolService {
         // Query all mints for address
         #[derive(sqlx::FromRow)]
         struct LiquiditySum {
-            pool_id: String,
-            from_address: String,
+            pool_block_id: String,
+            pool_tx_id: String,
             total_liquidity: Option<sqlx::types::BigDecimal>,
         }
 
         let mints = sqlx::query_as::<_, LiquiditySum>(
             r#"
             SELECT 
-                pool_id,
-                from_address,
-                SUM(CAST(liquidity_amount AS NUMERIC)) as total_liquidity
-            FROM mint
-            WHERE from_address = $1 AND successful = true
-            GROUP BY pool_id, from_address
+                "poolBlockId" as pool_block_id,
+                "poolTxId" as pool_tx_id,
+                SUM(CAST("lpTokenAmount" AS NUMERIC)) as total_liquidity
+            FROM "PoolMint"
+            WHERE "minterAddress" = $1 AND successful = true
+            GROUP BY "poolBlockId", "poolTxId"
             "#
         )
         .bind(address)
@@ -241,42 +241,42 @@ impl PoolService {
         let burns = sqlx::query_as::<_, LiquiditySum>(
             r#"
             SELECT 
-                pool_id,
-                from_address,
-                SUM(CAST(liquidity_amount AS NUMERIC)) as total_liquidity
-            FROM burn
-            WHERE from_address = $1 AND successful = true
-            GROUP BY pool_id, from_address
+                "poolBlockId" as pool_block_id,
+                "poolTxId" as pool_tx_id,
+                SUM(CAST("lpTokenAmount" AS NUMERIC)) as total_liquidity
+            FROM "PoolBurn"
+            WHERE "burnerAddress" = $1 AND successful = true
+            GROUP BY "poolBlockId", "poolTxId"
             "#
         )
         .bind(address)
         .fetch_all(&self.db)
         .await?;
 
-        // Calculate net positions
+        // Calculate net positions using pool_block_id:pool_tx_id as key
         let mut positions: HashMap<String, f64> = HashMap::new();
         
         for mint in mints {
-            let pool_id = mint.pool_id;
+            let pool_key = format!("{}:{}", mint.pool_block_id, mint.pool_tx_id);
             if let Some(liq) = mint.total_liquidity {
-                *positions.entry(pool_id).or_insert(0.0) += liq.to_string().parse::<f64>().unwrap_or(0.0);
+                *positions.entry(pool_key).or_insert(0.0) += liq.to_string().parse::<f64>().unwrap_or(0.0);
             }
         }
 
         for burn in burns {
-            let pool_id = burn.pool_id;
+            let pool_key = format!("{}:{}", burn.pool_block_id, burn.pool_tx_id);
             if let Some(liq) = burn.total_liquidity {
-                *positions.entry(pool_id).or_insert(0.0) -= liq.to_string().parse::<f64>().unwrap_or(0.0);
+                *positions.entry(pool_key).or_insert(0.0) -= liq.to_string().parse::<f64>().unwrap_or(0.0);
             }
         }
 
         // Filter out zero positions and fetch pool details
         let mut result = Vec::new();
-        for (pool_id, liquidity) in positions {
+        for (pool_key, liquidity) in positions {
             if liquidity > 0.0 {
                 // Get pool details to calculate token amounts
                 result.push(LiquidityPosition {
-                    pool_id: pool_id.clone(),
+                    pool_id: pool_key.clone(),
                     address: address.to_string(),
                     liquidity_amount: liquidity.to_string(),
                     token0_amount: "0".to_string(), // TODO: Calculate based on pool state
