@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 use alkanes_cli_common::{EsploraProvider, Result};
-use deezel_web::provider::WebProvider;
+use alkanes_web_sys::provider::WebProvider;
 use serde_json::json;
 use web_sys::{Response, ResponseInit};
 

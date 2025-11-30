@@ -3,12 +3,12 @@
 //! These tests verify that the BrowserWalletProvider correctly implements
 //! all deezel-common traits and integrates properly with browser wallets.
 
-use deezel_web::wallet_provider::{
+use alkanes_web_sys::wallet_provider::{
     WalletConnector,
     WalletInfo as LocalWalletInfo, PsbtSigningOptions, PsbtSigningInput,
     WalletAccount, WalletConnectionStatus, WalletNetworkInfo
 };
-use deezel_web::provider::WebProvider;
+use alkanes_web_sys::provider::WebProvider;
 use alkanes_cli_common::{DeezelProvider, LogProvider, TimeProvider, CryptoProvider, StorageProvider};
 use wasm_bindgen_test::*;
 

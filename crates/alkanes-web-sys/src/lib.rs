@@ -29,6 +29,7 @@ pub mod crypto;
 pub mod keystore;
 pub mod logging;
 pub mod network;
+pub mod platform;
 pub mod provider;
 pub mod storage;
 pub mod time;

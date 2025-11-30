@@ -5,7 +5,7 @@
 //! and persistence.
 
 use wasm_bindgen_test::*;
-use deezel_web::provider::WebProvider;
+use alkanes_web_sys::provider::WebProvider;
 use alkanes_cli_common::{WalletProvider, Result};
 use bitcoin::Network;
 

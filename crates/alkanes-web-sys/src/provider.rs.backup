@@ -141,7 +141,8 @@ use bitcoin::hashes::hex::FromHex;
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct WebProvider {
-    rpc_config: alkanes_cli_common::network::RpcConfig,
+    sandshrew_rpc_url: String,
+    esplora_rpc_url: Option<String>,
     network: Network,
     storage: WebStorage,
     network_client: WebNetwork,
@@ -154,87 +155,13 @@ pub struct WebProvider {
 
 #[wasm_bindgen]
 impl WebProvider {
-    /// Create a new WebProvider from provider name and optional config overrides
-    /// 
-    /// # Arguments
-    /// * `provider` - Network provider: "mainnet", "signet", "subfrost-regtest", "regtest"
-    /// * `config` - Optional JS object with RpcConfig fields to override defaults
-    ///
-    /// # Example (JavaScript)
-    /// ```js
-    /// // Simple - uses all defaults for signet
-    /// const provider = new WebProvider("signet");
-    /// 
-    /// // With overrides
-    /// const provider = new WebProvider("signet", {
-    ///   bitcoin_rpc_url: "https://custom-rpc.example.com",
-    ///   esplora_url: "https://custom-esplora.example.com"
-    /// });
-    /// ```
+    /// Create a new WebProvider with given URLs
     #[wasm_bindgen(constructor)]
-    pub fn new_js(provider: String, config: Option<JsValue>) -> std::result::Result<WebProvider, JsValue> {
-        // Start with provider string to create base config with defaults
-        let mut rpc_config = alkanes_cli_common::network::RpcConfig {
-            provider: provider.clone(),
-            bitcoin_rpc_url: None,
-            jsonrpc_url: None,
-            sandshrew_rpc_url: None,
-            titan_api_url: None,
-            esplora_url: None,
-            ord_url: None,
-            metashrew_rpc_url: None,
-            brc20_prog_rpc_url: None,
-            subfrost_api_key: None,
-            timeout_seconds: 600,
-        };
-        
-        // Apply any overrides from config object
-        if let Some(cfg) = config {
-            if !cfg.is_null() && !cfg.is_undefined() {
-                // Parse JS object into RpcConfig overrides
-                let config_obj: serde_json::Value = serde_wasm_bindgen::from_value(cfg)
-                    .map_err(|e| JsValue::from_str(&format!("Invalid config object: {}", e)))?;
-                
-                if let Some(obj) = config_obj.as_object() {
-                    if let Some(bitcoin_rpc_url) = obj.get("bitcoin_rpc_url").and_then(|v| v.as_str()) {
-                        rpc_config.bitcoin_rpc_url = Some(bitcoin_rpc_url.to_string());
-                    }
-                    if let Some(jsonrpc_url) = obj.get("jsonrpc_url").and_then(|v| v.as_str()) {
-                        rpc_config.jsonrpc_url = Some(jsonrpc_url.to_string());
-                    }
-                    if let Some(esplora_url) = obj.get("esplora_url").and_then(|v| v.as_str()) {
-                        rpc_config.esplora_url = Some(esplora_url.to_string());
-                    }
-                    if let Some(ord_url) = obj.get("ord_url").and_then(|v| v.as_str()) {
-                        rpc_config.ord_url = Some(ord_url.to_string());
-                    }
-                    if let Some(metashrew_rpc_url) = obj.get("metashrew_rpc_url").and_then(|v| v.as_str()) {
-                        rpc_config.metashrew_rpc_url = Some(metashrew_rpc_url.to_string());
-                    }
-                    if let Some(brc20_prog_rpc_url) = obj.get("brc20_prog_rpc_url").and_then(|v| v.as_str()) {
-                        rpc_config.brc20_prog_rpc_url = Some(brc20_prog_rpc_url.to_string());
-                    }
-                    if let Some(subfrost_api_key) = obj.get("subfrost_api_key").and_then(|v| v.as_str()) {
-                        rpc_config.subfrost_api_key = Some(subfrost_api_key.to_string());
-                    }
-                    if let Some(timeout) = obj.get("timeout_seconds").and_then(|v| v.as_u64()) {
-                        rpc_config.timeout_seconds = timeout;
-                    }
-                }
-            }
-        }
-        
-        // Determine network from provider
-        let network = match provider.as_str() {
-            "mainnet" => Network::Bitcoin,
-            "testnet" => Network::Testnet,
-            "signet" => Network::Signet,
-            "regtest" | "subfrost-regtest" => Network::Regtest,
-            _ => Network::Regtest, // default
-        };
-        
-        Ok(Self {
-            rpc_config,
+    pub fn new_js(sandshrew_rpc_url: String, esplora_rpc_url: Option<String>) -> Self {
+        let network = Network::Bitcoin; // Default to mainnet
+        Self {
+            sandshrew_rpc_url,
+            esplora_rpc_url,
             network,
             storage: WebStorage::new(),
             network_client: WebNetwork::new(),
@@ -243,29 +170,8 @@ impl WebProvider {
             logger: WebLogger::new(),
             keystore: None,
             passphrase: None,
-        })
+        }
     }
-
-    // Helper methods to get effective URLs from RpcConfig
-    pub fn sandshrew_rpc_url(&self) -> String {
-        self.rpc_config.get_alkanes_rpc_target().url
-    }
-
-    pub fn esplora_rpc_url(&self) -> Option<String> {
-        Some(self.rpc_config.get_esplora_rpc_target().url)
-    }
-
-    pub fn bitcoin_rpc_url(&self) -> String {
-        self.rpc_config.get_bitcoin_rpc_target().url
-    }
-
-    pub fn brc20_prog_rpc_url(&self) -> String {
-        self.rpc_config.brc20_prog_rpc_url.clone()
-            .or_else(|| self.rpc_config.get_default_brc20_prog_rpc_url())
-            .unwrap_or_else(|| alkanes_cli_common::network::get_default_brc20_prog_rpc_url(self.network))
-    }
-
-
 
     /// Get enriched wallet balances using the balances.lua script
     /// 
@@ -910,61 +816,6 @@ impl WebProvider {
         })
     }
 
-    #[wasm_bindgen(js_name = esploraGetAddressUtxo)]
-    pub fn esplora_get_address_utxo_js(&self, address: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::EsploraProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_address_utxo(&address).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = esploraGetAddressTxs)]
-    pub fn esplora_get_address_txs_js(&self, address: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::EsploraProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_address_txs(&address).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = esploraBroadcastTx)]
-    pub fn esplora_broadcast_tx_js(&self, tx_hex: String) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let esplora_url = provider.esplora_rpc_url()
-                .ok_or_else(|| JsValue::from_str("Esplora URL not configured"))?;
-            
-            // POST to /tx endpoint
-            let url = format!("{}/tx", esplora_url);
-            let response = crate::platform::fetch(&url, "POST", Some(&tx_hex), vec![("Content-Type", "text/plain")]).await
-                .map_err(|e| JsValue::from_str(&format!("Broadcast failed: {}", e)))?;
-            
-            Ok(JsValue::from_str(&response))
-        })
-    }
-
-    #[wasm_bindgen(js_name = esploraGetTxHex)]
-    pub fn esplora_get_tx_hex_js(&self, txid: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::EsploraProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_tx_hex(&txid).await
-                .map(|h| JsValue::from_str(&h))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
     // === BITCOIN RPC METHODS ===
     
     #[wasm_bindgen(js_name = bitcoindGetBlockCount)]
@@ -988,386 +839,6 @@ impl WebProvider {
             provider.send_raw_transaction(&tx_hex).await
                 .map(|txid| JsValue::from_str(&txid))
                 .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-
-    #[wasm_bindgen(js_name = bitcoindGenerateToAddress)]
-    pub fn bitcoind_generate_to_address_js(&self, nblocks: u32, address: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.generate_to_address(nblocks, &address).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed to generate blocks: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGenerateFuture)]
-    pub fn bitcoind_generate_future_js(&self, address: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.generate_future(&address).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed to generate future: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGetBlockchainInfo)]
-    pub fn bitcoind_get_blockchain_info_js(&self) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_blockchain_info().await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGetNetworkInfo)]
-    pub fn bitcoind_get_network_info_js(&self) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_network_info().await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGetRawTransaction)]
-    pub fn bitcoind_get_raw_transaction_js(&self, txid: String, block_hash: Option<String>) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_raw_transaction(&txid, block_hash.as_deref()).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGetBlock)]
-    pub fn bitcoind_get_block_js(&self, hash: String, raw: bool) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            <WebProvider as BitcoinRpcProvider>::get_block(&provider, &hash, raw).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGetBlockHash)]
-    pub fn bitcoind_get_block_hash_js(&self, height: f64) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            <WebProvider as BitcoinRpcProvider>::get_block_hash(&provider, height as u64).await
-                .map(|h| JsValue::from_str(&h))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGetBlockHeader)]
-    pub fn bitcoind_get_block_header_js(&self, hash: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            <WebProvider as BitcoinRpcProvider>::get_block_header(&provider, &hash).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGetBlockStats)]
-    pub fn bitcoind_get_block_stats_js(&self, hash: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_block_stats(&hash).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGetMempoolInfo)]
-    pub fn bitcoind_get_mempool_info_js(&self) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_mempool_info().await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindEstimateSmartFee)]
-    pub fn bitcoind_estimate_smart_fee_js(&self, target: u32) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.estimate_smart_fee(target).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = bitcoindGetChainTips)]
-    pub fn bitcoind_get_chain_tips_js(&self) -> js_sys::Promise {
-        use alkanes_cli_common::traits::BitcoinRpcProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_chain_tips().await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    // === ALKANES METHODS (additional) ===
-
-    #[wasm_bindgen(js_name = alkanesView)]
-    pub fn alkanes_view_js(&self, contract_id: String, view_fn: String, params: Option<Vec<u8>>, block_tag: Option<String>) -> js_sys::Promise {
-        use alkanes_cli_common::traits::AlkanesProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.view(&contract_id, &view_fn, params.as_deref(), block_tag).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("View failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = alkanesInspect)]
-    pub fn alkanes_inspect_js(&self, target: String, config: JsValue) -> js_sys::Promise {
-        use alkanes_cli_common::traits::AlkanesProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let inspect_config: alkanes_cli_common::alkanes::AlkanesInspectConfig = 
-                serde_wasm_bindgen::from_value(config)
-                    .map_err(|e| JsValue::from_str(&format!("Invalid config: {}", e)))?;
-            
-            provider.inspect(&target, inspect_config).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Inspect failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = alkanesPendingUnwraps)]
-    pub fn alkanes_pending_unwraps_js(&self, block_tag: Option<String>) -> js_sys::Promise {
-        use alkanes_cli_common::traits::AlkanesProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.pending_unwraps(block_tag).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Pending unwraps failed: {}", e)))
-        })
-    }
-
-    // === BRC20-PROG METHODS ===
-
-    #[wasm_bindgen(js_name = brc20progCall)]
-    pub fn brc20prog_call_js(&self, to: String, data: String, block: Option<String>) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([{
-                "to": to,
-                "data": data
-            }, block.unwrap_or_else(|| "latest".to_string())]);
-            
-            provider.call(&brc20_url, "eth_call", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("BRC20-Prog call failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progGetBalance)]
-    pub fn brc20prog_get_balance_js(&self, address: String, block: Option<String>) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([address, block.unwrap_or_else(|| "latest".to_string())]);
-            
-            provider.call(&brc20_url, "eth_getBalance", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get balance failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progGetCode)]
-    pub fn brc20prog_get_code_js(&self, address: String) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([address]);
-            
-            provider.call(&brc20_url, "eth_getCode", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get code failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progGetTransactionCount)]
-    pub fn brc20prog_get_transaction_count_js(&self, address: String, block: Option<String>) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([address, block.unwrap_or_else(|| "latest".to_string())]);
-            
-            provider.call(&brc20_url, "eth_getTransactionCount", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get transaction count failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progBlockNumber)]
-    pub fn brc20prog_block_number_js(&self) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([]);
-            
-            provider.call(&brc20_url, "eth_blockNumber", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get block number failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progChainId)]
-    pub fn brc20prog_chain_id_js(&self) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([]);
-            
-            provider.call(&brc20_url, "eth_chainId", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get chain ID failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progGetTransactionReceipt)]
-    pub fn brc20prog_get_transaction_receipt_js(&self, tx_hash: String) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([tx_hash]);
-            
-            provider.call(&brc20_url, "eth_getTransactionReceipt", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get transaction receipt failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progGetTransactionByHash)]
-    pub fn brc20prog_get_transaction_by_hash_js(&self, tx_hash: String) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([tx_hash]);
-            
-            provider.call(&brc20_url, "eth_getTransactionByHash", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get transaction failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progGetBlockByNumber)]
-    pub fn brc20prog_get_block_by_number_js(&self, block: String, full_tx: bool) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([block, full_tx]);
-            
-            provider.call(&brc20_url, "eth_getBlockByNumber", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get block failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progEstimateGas)]
-    pub fn brc20prog_estimate_gas_js(&self, to: String, data: String, block: Option<String>) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([{
-                "to": to,
-                "data": data
-            }, block.unwrap_or_else(|| "latest".to_string())]);
-            
-            provider.call(&brc20_url, "eth_estimateGas", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Estimate gas failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progGetLogs)]
-    pub fn brc20prog_get_logs_js(&self, filter: JsValue) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            // Convert JsValue filter to serde_json::Value
-            let filter_json: serde_json::Value = serde_wasm_bindgen::from_value(filter)
-                .map_err(|e| JsValue::from_str(&format!("Invalid filter: {}", e)))?;
-            let params = serde_json::json!([filter_json]);
-            
-            provider.call(&brc20_url, "eth_getLogs", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get logs failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = brc20progWeb3ClientVersion)]
-    pub fn brc20prog_web3_client_version_js(&self) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
-            let params = serde_json::json!([]);
-            
-            provider.call(&brc20_url, "web3_clientVersion", params, 1).await
-                .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
-                .map_err(|e| JsValue::from_str(&format!("Get client version failed: {}", e)))
         })
     }
 
@@ -1402,142 +873,6 @@ impl WebProvider {
         })
     }
 
-    #[wasm_bindgen(js_name = metashrewGetBlockHash)]
-    pub fn metashrew_get_block_hash_js(&self, height: f64) -> js_sys::Promise {
-        use alkanes_cli_common::traits::MetashrewProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            <WebProvider as MetashrewProvider>::get_block_hash(&provider, height as u64).await
-                .map(|h| JsValue::from_str(&h.as_str()))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
-        })
-    }
-
-    // === LUA METHODS ===
-
-    #[wasm_bindgen(js_name = luaEvalScript)]
-    pub fn lua_eval_script_js(&self, script: String) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            let url = provider.sandshrew_rpc_url();
-            let params = serde_json::json!([script]);
-            provider.call(&url, "lua_evalscript", params, 1).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Eval script failed: {}", e)))
-        })
-    }
-
-    // === ORD METHODS ===
-
-    #[wasm_bindgen(js_name = ordList)]
-    pub fn ord_list_js(&self, outpoint: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::OrdProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_output(&outpoint).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Ord list failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = ordFind)]
-    pub fn ord_find_js(&self, sat: f64) -> js_sys::Promise {
-        use alkanes_cli_common::traits::OrdProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            provider.get_sat(sat as u64).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Ord find failed: {}", e)))
-        })
-    }
-
-    // === RUNESTONE / PROTORUNES METHODS ===
-
-    #[wasm_bindgen(js_name = runestoneDecodeTx)]
-    pub fn runestone_decode_tx_js(&self, txid: String) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            // Get transaction hex
-            let tx_hex = provider.get_transaction_hex(&txid).await
-                .map_err(|e| JsValue::from_str(&format!("Get tx failed: {}", e)))?;
-            
-            // Decode transaction
-            let tx_bytes = hex::decode(&tx_hex)
-                .map_err(|e| JsValue::from_str(&format!("Hex decode failed: {}", e)))?;
-            let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)
-                .map_err(|e| JsValue::from_str(&format!("Tx deserialize failed: {}", e)))?;
-            
-            // Decode runestone
-            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)
-                .map_err(|e| JsValue::from_str(&format!("Runestone decode failed: {}", e)))?;
-            
-            serde_wasm_bindgen::to_value(&result)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = runestoneAnalyzeTx)]
-    pub fn runestone_analyze_tx_js(&self, txid: String) -> js_sys::Promise {
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            // Get transaction hex
-            let tx_hex = provider.get_transaction_hex(&txid).await
-                .map_err(|e| JsValue::from_str(&format!("Get tx failed: {}", e)))?;
-            
-            // Decode transaction
-            let tx_bytes = hex::decode(&tx_hex)
-                .map_err(|e| JsValue::from_str(&format!("Hex decode failed: {}", e)))?;
-            let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)
-                .map_err(|e| JsValue::from_str(&format!("Tx deserialize failed: {}", e)))?;
-            
-            // Analyze runestone with full formatting
-            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)
-                .map_err(|e| JsValue::from_str(&format!("Runestone analyze failed: {}", e)))?;
-            
-            serde_wasm_bindgen::to_value(&result)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = protorunesDecodeTx)]
-    pub fn protorunes_decode_tx_js(&self, txid: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::AlkanesProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            // Trace protostones in the transaction
-            let result = provider.trace_protostones(&txid).await
-                .map_err(|e| JsValue::from_str(&format!("Trace protostones failed: {}", e)))?;
-            
-            serde_wasm_bindgen::to_value(&result)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
-        })
-    }
-
-    #[wasm_bindgen(js_name = protorunesAnalyzeTx)]
-    pub fn protorunes_analyze_tx_js(&self, txid: String) -> js_sys::Promise {
-        use alkanes_cli_common::traits::AlkanesProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            // Trace and analyze all protostones
-            let result = provider.trace_protostones(&txid).await
-                .map_err(|e| JsValue::from_str(&format!("Analyze protostones failed: {}", e)))?;
-            
-            serde_wasm_bindgen::to_value(&result)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
-        })
-    }
-
     // === WALLET METHODS ===
     
     #[wasm_bindgen(js_name = walletCreatePsbt)]
@@ -1550,40 +885,6 @@ impl WebProvider {
                 .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
             // This would need proper parameter parsing based on actual requirements
             Err(JsValue::from_str("PSBT creation not yet implemented in WASM"))
-        })
-    }
-
-    #[wasm_bindgen(js_name = walletExport)]
-    pub fn wallet_export_js(&self) -> js_sys::Promise {
-        use alkanes_cli_common::traits::WalletProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            // Export returns the mnemonic phrase
-            // The user must have already unlocked the wallet to call this
-            let mnemonic = provider.get_mnemonic().await
-                .map_err(|e| JsValue::from_str(&format!("Export failed: {}", e)))?;
-            
-            match mnemonic {
-                Some(m) => Ok(JsValue::from_str(&m)),
-                None => Err(JsValue::from_str("No mnemonic available"))
-            }
-        })
-    }
-
-    #[wasm_bindgen(js_name = walletBackup)]
-    pub fn wallet_backup_js(&self) -> js_sys::Promise {
-        use alkanes_cli_common::traits::WalletProvider;
-        use wasm_bindgen_futures::future_to_promise;
-        let provider = self.clone();
-        future_to_promise(async move {
-            // Backup returns the wallet data as JSON string
-            // This includes encrypted keystore data compatible with subfrost-app
-            let backup_data = provider.backup().await
-                .map_err(|e| JsValue::from_str(&format!("Backup failed: {}", e)))?;
-            
-            // Return the backup string (JSON format)
-            Ok(JsValue::from_str(&backup_data))
         })
     }
 }
@@ -1625,27 +926,13 @@ impl WebProvider {
         let params = alkanes_cli_common::network::NetworkParams::from_network_str(&network_str)?;
         let logger = WebLogger::new();
         logger.info(&format!(
-            "WebProvider initialized with: Metashrew RPC URL: {}, Esplora URL: {:?}, Network: {}",
+            "WebProvider initialized with: Sandshrew RPC URL: {}, Esplora URL: {:?}, Network: {}",
             &params.metashrew_rpc_url, &params.esplora_url, &params.network
         ));
  
-        // Convert NetworkParams to RpcConfig
-        let mut rpc_config = alkanes_cli_common::network::RpcConfig {
-            provider: network_str.clone(),
-            bitcoin_rpc_url: Some(params.bitcoin_rpc_url.clone()),
-            jsonrpc_url: Some(params.metashrew_rpc_url.clone()),
-            sandshrew_rpc_url: None,
-            titan_api_url: None,
-            esplora_url: params.esplora_url.clone(),
-            ord_url: None,
-            metashrew_rpc_url: Some(params.metashrew_rpc_url.clone()),
-            brc20_prog_rpc_url: None,
-            subfrost_api_key: None,
-            timeout_seconds: 600,
-        };
- 
          Ok(Self {
-            rpc_config,
+            sandshrew_rpc_url: params.metashrew_rpc_url,
+            esplora_rpc_url: params.esplora_url,
             network: params.network,
             storage: WebStorage::new(),
             network_client: WebNetwork::new(),
@@ -1658,23 +945,9 @@ impl WebProvider {
     }
 
    pub fn new_with_params(params: alkanes_cli_common::network::NetworkParams) -> Result<Self> {
-       // Convert NetworkParams to RpcConfig
-       let rpc_config = alkanes_cli_common::network::RpcConfig {
-           provider: "custom".to_string(),
-           bitcoin_rpc_url: Some(params.bitcoin_rpc_url.clone()),
-           jsonrpc_url: Some(params.metashrew_rpc_url.clone()),
-           sandshrew_rpc_url: None,
-           titan_api_url: None,
-           esplora_url: params.esplora_url.clone(),
-           ord_url: None,
-           metashrew_rpc_url: Some(params.metashrew_rpc_url.clone()),
-           brc20_prog_rpc_url: None,
-           subfrost_api_key: None,
-           timeout_seconds: 600,
-       };
-       
        Ok(Self {
-           rpc_config,
+           sandshrew_rpc_url: params.metashrew_rpc_url,
+           esplora_rpc_url: params.esplora_url,
            network: params.network,
            storage: WebStorage::new(),
            network_client: WebNetwork::new(),
@@ -1698,22 +971,9 @@ impl WebProvider {
             _ => return Err(AlkanesError::InvalidParameters("Invalid network".to_string())),
         };
 
-        let rpc_config = alkanes_cli_common::network::RpcConfig {
-            provider: network_str.clone(),
-            bitcoin_rpc_url: None,
-            jsonrpc_url: Some(url.to_string()),
-            sandshrew_rpc_url: None,
-            titan_api_url: None,
-            esplora_url: Some(url.to_string()),
-            ord_url: None,
-            metashrew_rpc_url: Some(url.to_string()),
-            brc20_prog_rpc_url: None,
-            subfrost_api_key: None,
-            timeout_seconds: 600,
-        };
-
         Ok(Self {
-            rpc_config,
+            sandshrew_rpc_url: url.to_string(),
+            esplora_rpc_url: Some(url.to_string()),
             network,
             storage: WebStorage::new(),
             network_client: WebNetwork::new(),
@@ -1752,8 +1012,8 @@ impl WebProvider {
         WalletConfig {
             wallet_path: "web-wallet".to_string(),
             network: self.network,
-            bitcoin_rpc_url: self.sandshrew_rpc_url(),
-            metashrew_rpc_url: self.sandshrew_rpc_url(),
+            bitcoin_rpc_url: self.sandshrew_rpc_url.clone(),
+            metashrew_rpc_url: self.sandshrew_rpc_url.clone(),
             network_params: None,
         }
     }
@@ -1765,14 +1025,48 @@ impl WebProvider {
 
     pub fn network_params(&self) -> Result<alkanes_cli_common::network::NetworkParams> {
         let mut params = alkanes_cli_common::network::NetworkParams::from_network_str(self.network.to_string().as_str())?;
-        params.metashrew_rpc_url = self.sandshrew_rpc_url();
-        params.esplora_url = self.esplora_rpc_url();
+        params.metashrew_rpc_url = self.sandshrew_rpc_url.clone();
+        params.esplora_url = self.esplora_rpc_url.clone();
         Ok(params)
     }
 
-    /// Make a fetch request using platform abstraction (works in browser and Node.js)
-    async fn fetch_request_text(&self, url: &str, method: &str, body: Option<&str>, headers: Vec<(&str, &str)>) -> Result<String> {
-        crate::platform::fetch(url, method, body, headers).await
+    /// Get the Sandshrew RPC URL
+    pub fn sandshrew_rpc_url(&self) -> &str {
+        &self.sandshrew_rpc_url
+    }
+
+    /// Get the Esplora RPC URL
+    pub fn esplora_rpc_url(&self) -> Option<&str> {
+        self.esplora_rpc_url.as_deref()
+    }
+
+    /// Make a fetch request using web-sys
+    async fn fetch_request(&self, url: &str, method: &str, body: Option<&str>, headers: Option<&js_sys::Object>) -> Result<Response> {
+        let window = window().ok_or_else(|| AlkanesError::Network("No window object available".to_string()))?;
+
+        let opts = RequestInit::new();
+        opts.set_method(method);
+        opts.set_mode(RequestMode::Cors);
+
+        if let Some(body_str) = body {
+            opts.set_body(&JsValue::from_str(body_str));
+        }
+
+        if let Some(headers_obj) = headers {
+            opts.set_headers(headers_obj);
+        }
+
+        let request = Request::new_with_str_and_init(url, &opts)
+            .map_err(|e| AlkanesError::Network(format!("Failed to create request: {e:?}")))?;
+
+        let resp_value = JsFuture::from(window.fetch_with_request(&request))
+            .await
+            .map_err(|e| AlkanesError::Network(format!("Fetch failed: {e:?}")))?;
+
+        let resp: Response = resp_value.dyn_into()
+            .map_err(|e| AlkanesError::Network(format!("Failed to cast response: {e:?}")))?;
+
+        Ok(resp)
     }
 
     /// Broadcasts a transaction via Rebar Labs Shield for enhanced privacy
@@ -1832,13 +1126,25 @@ impl WebProvider {
         self.logger.info(&format!("Sending transaction to Rebar Shield endpoint: {rebar_endpoint}"));
         
         // Create headers
+        let headers = js_sys::Object::new();
+        js_sys::Reflect::set(&headers, &"Content-Type".into(), &"application/json".into())
+            .map_err(|e| AlkanesError::Network(format!("Failed to set header: {e:?}")))?;
+        
         // Make HTTP POST request to Rebar Labs Shield
-        let response_str = self.fetch_request_text(
+        let response = self.fetch_request(
             rebar_endpoint,
             "POST",
             Some(&request_body.to_string()),
-            vec![("Content-Type", "application/json")],
+            Some(&headers),
         ).await?;
+        
+        let response_text = JsFuture::from(response.text()
+            .map_err(|e| AlkanesError::Network(format!("Failed to get response text: {e:?}")))?)
+            .await
+            .map_err(|e| AlkanesError::Network(format!("Failed to read Rebar Shield response: {e:?}")))?;
+        
+        let response_str = response_text.as_string()
+            .ok_or_else(|| AlkanesError::Network("Response is not a string".to_string()))?;
         
         let response_json: JsonValue = serde_json::from_str(&response_str)
             .map_err(|e| AlkanesError::Serialization(format!("Failed to parse Rebar Shield JSON: {e}")))?;
@@ -1876,13 +1182,25 @@ impl JsonRpcProvider for WebProvider {
             "id": id
         });
 
-        // Make JSON-RPC request
-        let response_str = self.fetch_request_text(
+        // Create headers
+        let headers = js_sys::Object::new();
+        js_sys::Reflect::set(&headers, &"Content-Type".into(), &"application/json".into())
+            .map_err(|e| AlkanesError::Network(format!("Failed to set header: {e:?}")))?;
+
+        let response = self.fetch_request(
             url,
             "POST",
             Some(&request_body.to_string()),
-            vec![("Content-Type", "application/json")],
+            Some(&headers),
         ).await?;
+
+        let response_text = JsFuture::from(response.text()
+            .map_err(|e| AlkanesError::Network(format!("Failed to get response text: {e:?}")))?)
+            .await
+            .map_err(|e| AlkanesError::Network(format!("Failed to read response: {e:?}")))?;
+
+        let response_str = response_text.as_string()
+            .ok_or_else(|| AlkanesError::Network("Response is not a string".to_string()))?;
 
         let response_json: JsonValue = serde_json::from_str(&response_str)
             .map_err(|e| AlkanesError::Serialization(format!("Failed to parse JSON: {e}")))?;
@@ -2008,9 +1326,7 @@ impl LogProvider for WebProvider {
 impl EsploraProvider for WebProvider {
     async fn get_blocks_tip_hash(&self) -> Result<String> {
         self.logger.info("[EsploraProvider] Calling get_blocks_tip_hash");
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH));
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH, esplora::params::empty(), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tip hash response".to_string()))
@@ -2018,95 +1334,73 @@ impl EsploraProvider for WebProvider {
 
     async fn get_blocks_tip_height(&self) -> Result<u64> {
         self.logger.info("[EsploraProvider] Calling get_blocks_tip_height");
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HEIGHT));
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HEIGHT, esplora::params::empty(), 1).await?;
         result.as_u64().ok_or_else(|| AlkanesError::RpcError("Invalid tip height response".to_string()))
     }
 
     async fn get_blocks(&self, start_height: Option<u64>) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCKS, esplora::params::optional_single(start_height), 1).await
     }
 
     async fn get_block_by_height(&self, height: u64) -> Result<String> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_HEIGHT, esplora::params::single(height), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
     }
 
     async fn get_block(&self, hash: &str) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCK, esplora::params::single(hash), 1).await
     }
 
     async fn get_block_status(&self, hash: &str) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_STATUS, esplora::params::single(hash), 1).await
     }
 
     async fn get_block_txids(&self, hash: &str) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_TXIDS, esplora::params::single(hash), 1).await
     }
 
     async fn get_block_header(&self, hash: &str) -> Result<String> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_HEADER, esplora::params::single(hash), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block header response".to_string()))
     }
 
     async fn get_block_raw(&self, hash: &str) -> Result<String> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_RAW, esplora::params::single(hash), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw block response".to_string()))
     }
 
     async fn get_block_txid(&self, hash: &str, index: u32) -> Result<String> {
         self.logger.info(&format!("[EsploraProvider] Calling get_block_txid for hash: {}, index: {}", hash, index));
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::BLOCK_TXID));
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_TXID, esplora::params::dual(hash, index), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
     }
 
     async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::BLOCK_TXS, esplora::params::optional_dual(hash, start_index), 1).await
     }
 
     async fn get_address_info(&self, address: &str) -> Result<serde_json::Value> {
         self.logger.info(&format!("[EsploraProvider] Calling get_address_info for address: {}", address));
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::ADDRESS));
         self.call(url, esplora::EsploraJsonRpcMethods::ADDRESS, esplora::params::single(address), 1).await
     }
 
     async fn get_address_utxo(&self, address: &str) -> Result<serde_json::Value> {
         self.logger.info(&format!("[EsploraProvider] Calling get_address_utxo for address: {}", address));
-        if let Some(url) = self.esplora_rpc_url().as_deref() {
+        if let Some(url) = self.esplora_rpc_url.as_deref() {
             self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method esplora_address::utxo", url));
             if let Ok(result) = self.call(url, "esplora_address::utxo", esplora::params::single(address), 1).await {
                 return Ok(result);
@@ -2114,131 +1408,97 @@ impl EsploraProvider for WebProvider {
         }
         self.logger.info(&format!("[EsploraProvider] Falling back to JSON-RPC on sandshrew for method esplora_address::utxo"));
         // Fallback or error
-        self.call(&self.sandshrew_rpc_url(), "esplora_address::utxo", esplora::params::single(address), 1).await
+        self.call(&self.sandshrew_rpc_url, "esplora_address::utxo", esplora::params::single(address), 1).await
     }
 
     async fn get_address_txs(&self, address: &str) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, "esplora_address::txs", esplora::params::single(address), 1).await
     }
 
     async fn get_address_txs_chain(&self, address: &str, last_seen_txid: Option<&str>) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::ADDRESS_TXS_CHAIN, esplora::params::optional_dual(address, last_seen_txid), 1).await
     }
 
     async fn get_address_txs_mempool(&self, address: &str) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::ADDRESS_TXS_MEMPOOL, esplora::params::single(address), 1).await
     }
 
     async fn get_address_prefix(&self, prefix: &str) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::ADDRESS_PREFIX, esplora::params::single(prefix), 1).await
     }
 
     async fn get_tx(&self, txid: &str) -> Result<serde_json::Value> {
         self.logger.info(&format!("[EsploraProvider] Calling get_tx for txid: {}", txid));
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.logger.info(&format!("[EsploraProvider] Using JSON-RPC to {} for method {}", url, esplora::EsploraJsonRpcMethods::TX));
         self.call(url, esplora::EsploraJsonRpcMethods::TX, esplora::params::single(txid), 1).await
     }
 
     async fn get_tx_hex(&self, txid: &str) -> Result<String> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::TX_HEX, esplora::params::single(txid), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tx hex response".to_string()))
     }
 
     async fn get_tx_raw(&self, txid: &str) -> Result<String> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::TX_RAW, esplora::params::single(txid), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw tx response".to_string()))
     }
 
     async fn get_tx_status(&self, txid: &str) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::TX_STATUS, esplora::params::single(txid), 1).await
     }
 
     async fn get_tx_merkle_proof(&self, txid: &str) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::TX_MERKLE_PROOF, esplora::params::single(txid), 1).await
     }
 
     async fn get_tx_merkleblock_proof(&self, txid: &str) -> Result<String> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::TX_MERKLEBLOCK_PROOF, esplora::params::single(txid), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid merkleblock proof response".to_string()))
     }
 
     async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::TX_OUTSPEND, esplora::params::dual(txid, index), 1).await
     }
 
     async fn get_tx_outspends(&self, txid: &str) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::TX_OUTSPENDS, esplora::params::single(txid), 1).await
     }
 
     async fn broadcast(&self, tx_hex: &str) -> Result<String> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         let result = self.call(url, esplora::EsploraJsonRpcMethods::BROADCAST, esplora::params::single(tx_hex), 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid broadcast response".to_string()))
     }
 
     async fn get_mempool(&self) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::MEMPOOL, esplora::params::empty(), 1).await
     }
 
     async fn get_mempool_txids(&self) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::MEMPOOL_TXIDS, esplora::params::empty(), 1).await
     }
 
     async fn get_mempool_recent(&self) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::MEMPOOL_RECENT, esplora::params::empty(), 1).await
     }
 
     async fn get_fee_estimates(&self) -> Result<serde_json::Value> {
-        let esplora_url = self.esplora_rpc_url();
-        let sandshrew_url = self.sandshrew_rpc_url();
-        let url = esplora_url.as_deref().unwrap_or(&sandshrew_url);
+        let url = self.esplora_rpc_url.as_deref().unwrap_or(&self.sandshrew_rpc_url);
         self.call(url, esplora::EsploraJsonRpcMethods::FEE_ESTIMATES, esplora::params::empty(), 1).await
     }
 }
@@ -2770,67 +2030,57 @@ impl AddressResolver for WebProvider {
 #[async_trait(?Send)]
 impl BitcoinRpcProvider for WebProvider {
     async fn get_block_count(&self) -> Result<u64> {
-        let result = self.call(&self.sandshrew_rpc_url(), "getblockcount", serde_json::json!([]), 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "getblockcount", serde_json::json!([]), 1).await?;
         result.as_u64().ok_or_else(|| AlkanesError::RpcError("Invalid block count response".to_string()))
     }
     
     async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue> {
         let params = serde_json::json!([nblocks, address]);
-        self.call(&self.sandshrew_rpc_url(), "generatetoaddress", params, 1).await
+        self.call(&self.sandshrew_rpc_url, "generatetoaddress", params, 1).await
     }
 
-    async fn generate_future(&self, _address: &str) -> Result<JsonValue> {
-        use alkanes_cli_common::subfrost::get_subfrost_address;
-        use alkanes_cli_common::alkanes::types::AlkaneId;
-        
-        // Get the Subfrost signer address from frBTC contract [32:0]
-        let frbtc_id = AlkaneId { block: 32, tx: 0 };
-        
-        self.logger.info("🔍 Getting Subfrost signer address from frBTC [32:0]...");
-        let subfrost_address = get_subfrost_address(self, &frbtc_id).await?;
-        self.logger.info(&format!("📍 Subfrost address: {}", subfrost_address));
-        
-        // Generate block to the Subfrost address (this will contain future-claiming protostone)
-        let params = serde_json::json!([1, subfrost_address]);
-        self.logger.info(&format!("⛏️  Generating future block to address: {}", subfrost_address));
-        self.call(&self.sandshrew_rpc_url(), "generatetoaddress", params, 1).await
+    async fn generate_future(&self, address: &str) -> Result<JsonValue> {
+        // Generate a block with future-claiming protostone (regtest only)
+        // This is similar to generate_to_address but with special handling
+        let params = serde_json::json!([1, address]);
+        self.call(&self.sandshrew_rpc_url, "generatetoaddress", params, 1).await
     }
 
     async fn get_new_address(&self) -> Result<JsonValue> {
-        self.call(&self.sandshrew_rpc_url(), "getnewaddress", serde_json::json!([]), 1).await
+        self.call(&self.sandshrew_rpc_url, "getnewaddress", serde_json::json!([]), 1).await
     }
     
     async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
         let params = serde_json::json!([txid, true]);
-        let result = self.call(&self.sandshrew_rpc_url(), "getrawtransaction", params, 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "getrawtransaction", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid transaction hex response".to_string()))
     }
     
     async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue> {
         let verbosity = if raw { 1 } else { 2 };
         let params = serde_json::json!([hash, verbosity]);
-        self.call(&self.sandshrew_rpc_url(), "getblock", params, 1).await
+        self.call(&self.sandshrew_rpc_url, "getblock", params, 1).await
     }
     
     async fn get_block_hash(&self, height: u64) -> Result<String> {
         let params = serde_json::json!([height]);
-        let result = self.call(&self.sandshrew_rpc_url(), "getblockhash", params, 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "getblockhash", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
     }
     
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
         let params = serde_json::json!([tx_hex]);
-        let result = self.call(&self.sandshrew_rpc_url(), "sendrawtransaction", params, 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "sendrawtransaction", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
     }
     
     async fn get_mempool_info(&self) -> Result<JsonValue> {
-        self.call(&self.sandshrew_rpc_url(), "getmempoolinfo", serde_json::json!([]), 1).await
+        self.call(&self.sandshrew_rpc_url, "getmempoolinfo", serde_json::json!([]), 1).await
     }
     
     async fn estimate_smart_fee(&self, target: u32) -> Result<JsonValue> {
         let params = serde_json::json!([target]);
-        self.call(&self.sandshrew_rpc_url(), "estimatesmartfee", params, 1).await
+        self.call(&self.sandshrew_rpc_url, "estimatesmartfee", params, 1).await
     }
     
     async fn get_esplora_blocks_tip_height(&self) -> Result<u64> {
@@ -2840,15 +2090,15 @@ impl BitcoinRpcProvider for WebProvider {
     
     async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<serde_json::Value> {
         let params = serde_json::json!([txid, vout, block, tx]);
-        self.call(&self.sandshrew_rpc_url(), "trace_transaction", params, 1).await
+        self.call(&self.sandshrew_rpc_url, "trace_transaction", params, 1).await
     }
 
     async fn get_blockchain_info(&self) -> Result<JsonValue> {
-        self.call(&self.sandshrew_rpc_url(), "getblockchaininfo", serde_json::json!([]), 1).await
+        self.call(&self.sandshrew_rpc_url, "getblockchaininfo", serde_json::json!([]), 1).await
     }
 
     async fn get_network_info(&self) -> Result<JsonValue> {
-        self.call(&self.sandshrew_rpc_url(), "getnetworkinfo", serde_json::json!([]), 1).await
+        self.call(&self.sandshrew_rpc_url, "getnetworkinfo", serde_json::json!([]), 1).await
     }
 
     async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<JsonValue> {
@@ -2857,30 +2107,30 @@ impl BitcoinRpcProvider for WebProvider {
         } else {
             serde_json::json!([txid, true])
         };
-        self.call(&self.sandshrew_rpc_url(), "getrawtransaction", params, 1).await
+        self.call(&self.sandshrew_rpc_url, "getrawtransaction", params, 1).await
     }
 
     async fn get_block_header(&self, hash: &str) -> Result<JsonValue> {
         let params = serde_json::json!([hash, true]);
-        self.call(&self.sandshrew_rpc_url(), "getblockheader", params, 1).await
+        self.call(&self.sandshrew_rpc_url, "getblockheader", params, 1).await
     }
 
     async fn get_block_stats(&self, hash: &str) -> Result<JsonValue> {
         let params = serde_json::json!([hash]);
-        self.call(&self.sandshrew_rpc_url(), "getblockstats", params, 1).await
+        self.call(&self.sandshrew_rpc_url, "getblockstats", params, 1).await
     }
 
     async fn get_chain_tips(&self) -> Result<JsonValue> {
-        self.call(&self.sandshrew_rpc_url(), "getchaintips", serde_json::json!([]), 1).await
+        self.call(&self.sandshrew_rpc_url, "getchaintips", serde_json::json!([]), 1).await
     }
 
     async fn get_raw_mempool(&self) -> Result<JsonValue> {
-        self.call(&self.sandshrew_rpc_url(), "getrawmempool", serde_json::json!([]), 1).await
+        self.call(&self.sandshrew_rpc_url, "getrawmempool", serde_json::json!([]), 1).await
     }
 
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
         let params = serde_json::json!([txid, vout, include_mempool]);
-        self.call(&self.sandshrew_rpc_url(), "gettxout", params, 1).await
+        self.call(&self.sandshrew_rpc_url, "gettxout", params, 1).await
     }
 }
 
@@ -2931,7 +2181,7 @@ impl MetashrewRpcProvider for WebProvider {
         let hex_input = hex::encode(outpoint_pb.encode_to_vec());
         let params = serde_json::json!(["protorunesbyoutpoint", format!("0x{}", hex_input), "latest"]);
 
-        let result = self.call(&self.sandshrew_rpc_url(), "metashrew_view", params, 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", params, 1).await?;
 
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid protorune response: not a string".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
@@ -2952,7 +2202,7 @@ impl MetashrewRpcProvider for WebProvider {
 
     async fn get_state_root(&self, height: JsonValue) -> Result<String> {
         let params = serde_json::json!(["getStateRoot", "0x", height]);
-        let result = self.call(&self.sandshrew_rpc_url(), "metashrew_view", params, 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid state root response".to_string()))
     }
 }
@@ -3016,8 +2266,7 @@ impl OrdProvider for WebProvider {
         unimplemented!()
     }
     async fn get_output(&self, output: &str) -> Result<OrdOutput> {
-        let url = self.sandshrew_rpc_url();
-        let json = self.call(&url, "ord_output", serde_json::json!([output]), 1).await?;
+        let json = self.call(self.sandshrew_rpc_url(), "ord_output", serde_json::json!([output]), 1).await?;
         serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdParents> {
@@ -3086,14 +2335,13 @@ impl AlkanesProvider for WebProvider {
     ) -> Result<ProtoruneOutpointResponse> {
         <Self as MetashrewRpcProvider>::get_protorunes_by_outpoint(self, txid, vout, block_tag, protocol_tag).await
     }
-    async fn view(&self, _contract_id: &str, view_fn: &str, params: Option<&[u8]>, block_tag: Option<String>) -> Result<JsonValue> {
-        // metashrew_view functions are generic - do NOT prepend contract_id
-        // The contract target is encoded in params (MessageContextParcel)
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>, block_tag: Option<String>) -> Result<JsonValue> {
+        let combined_view = format!("{}/{}", contract_id, view_fn);
         let params_hex = params.map(|p| format!("0x{}", hex::encode(p))).unwrap_or_else(|| "0x".to_string());
         let block_tag = block_tag.unwrap_or_else(|| "latest".to_string());
         
-        let rpc_params = serde_json::json!([view_fn, params_hex, block_tag]);
-        let result = self.call(&self.sandshrew_rpc_url(), "metashrew_view", rpc_params, 1).await?;
+        let rpc_params = serde_json::json!([combined_view, params_hex, block_tag]);
+        let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", rpc_params, 1).await?;
 
         let hex_response = result.as_str().ok_or_else(|| {
             AlkanesError::RpcError("metashrew_view response was not a string".to_string())
@@ -3118,28 +2366,28 @@ impl AlkanesProvider for WebProvider {
 
     async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         use prost::Message;
-        let result = self.call(&self.sandshrew_rpc_url(), "alkanes_trace", serde_json::json!([outpoint]), 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "alkanes_trace", serde_json::json!([outpoint]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         alkanes_cli_common::proto::alkanes::Trace::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::BlockResponse> {
         use prost::Message;
-        let result = self.call(&self.sandshrew_rpc_url(), "alkanes_get_block", serde_json::json!([height]), 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "alkanes_get_block", serde_json::json!([height]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         alkanes_cli_common::proto::alkanes::BlockResponse::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn sequence(&self, block_tag: Option<String>) -> Result<JsonValue> {
         let block_tag = block_tag.unwrap_or_else(|| "latest".to_string());
-        self.call(&self.sandshrew_rpc_url(), "alkanes_sequence", serde_json::json!([block_tag]), 1).await
+        self.call(&self.sandshrew_rpc_url, "alkanes_sequence", serde_json::json!([block_tag]), 1).await
     }
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
-        self.call(&self.sandshrew_rpc_url(), "alkanes_spendables_by_address", serde_json::json!([address]), 1).await
+        self.call(&self.sandshrew_rpc_url, "alkanes_spendables_by_address", serde_json::json!([address]), 1).await
     }
     async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         use prost::Message;
-        let result = self.call(&self.sandshrew_rpc_url(), "alkanes_trace_block", serde_json::json!([height]), 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "alkanes_trace_block", serde_json::json!([height]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         alkanes_cli_common::proto::alkanes::Trace::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
@@ -3169,7 +2417,7 @@ impl AlkanesProvider for WebProvider {
         let hex_input = hex::encode(request.encode_to_vec());
 
         let params = serde_json::json!(["getbytecode", format!("0x{}", hex_input), block_tag.as_deref().unwrap_or("latest")]);
-        let result = self.call(&self.sandshrew_rpc_url(), "metashrew_view", params, 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "metashrew_view", params, 1).await?;
         
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid bytecode response: not a string".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
@@ -3177,7 +2425,7 @@ impl AlkanesProvider for WebProvider {
     }
     async fn inspect(&self, target: &str, config: AlkanesInspectConfig) -> Result<AlkanesInspectResult> {
         let params = serde_json::json!([target, config]);
-        let result = self.call(&self.sandshrew_rpc_url(), "alkanes_inspect", params, 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "alkanes_inspect", params, 1).await?;
         serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<AlkaneBalance>> {
@@ -3185,12 +2433,12 @@ impl AlkanesProvider for WebProvider {
             Some(a) => a.to_string(),
             None => WalletProvider::get_address(self).await?,
         };
-        let result = self.call(&self.sandshrew_rpc_url(), "alkanes_get_balance", serde_json::json!([addr]), 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "alkanes_get_balance", serde_json::json!([addr]), 1).await?;
         serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
         let block_tag = block_tag.unwrap_or_else(|| "latest".to_string());
-        let result = self.call(&self.sandshrew_rpc_url(), "alkanes_pending_unwraps", serde_json::json!([block_tag]), 1).await?;
+        let result = self.call(&self.sandshrew_rpc_url, "alkanes_pending_unwraps", serde_json::json!([block_tag]), 1).await?;
         serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 
@@ -3394,7 +2642,7 @@ impl alkanes_cli_common::lua_script::LuaScriptExecutor for WebProvider {
     ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
         let mut params = vec![alkanes_cli_common::JsonValue::String(script_hash.to_string())];
         params.extend(args);
-        self.call(&self.sandshrew_rpc_url(), "lua_evalsaved", alkanes_cli_common::JsonValue::Array(params), 1).await
+        self.call(&self.sandshrew_rpc_url, "lua_evalsaved", alkanes_cli_common::JsonValue::Array(params), 1).await
     }
 
     async fn lua_evalscript(
@@ -3404,7 +2652,7 @@ impl alkanes_cli_common::lua_script::LuaScriptExecutor for WebProvider {
     ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
         let mut params = vec![alkanes_cli_common::JsonValue::String(script_content.to_string())];
         params.extend(args);
-        self.call(&self.sandshrew_rpc_url(), "lua_evalscript", alkanes_cli_common::JsonValue::Array(params), 1).await
+        self.call(&self.sandshrew_rpc_url, "lua_evalscript", alkanes_cli_common::JsonValue::Array(params), 1).await
     }
 }
 
@@ -3415,20 +2663,20 @@ impl DeezelProvider for WebProvider {
     }
 
     fn get_bitcoin_rpc_url(&self) -> Option<String> {
-        self.esplora_rpc_url()
+        self.esplora_rpc_url.clone()
     }
 
     fn get_esplora_api_url(&self) -> Option<String> {
-        self.esplora_rpc_url()
+        self.esplora_rpc_url.clone()
     }
 
     fn get_ord_server_url(&self) -> Option<String> {
         // Assuming no separate ord server for web provider, using sandshrew
-        Some(self.sandshrew_rpc_url())
+        Some(self.sandshrew_rpc_url.clone())
     }
 
     fn get_metashrew_rpc_url(&self) -> Option<String> {
-        Some(self.sandshrew_rpc_url())
+        Some(self.sandshrew_rpc_url.clone())
     }
 
     fn get_brc20_prog_rpc_url(&self) -> Option<String> {
