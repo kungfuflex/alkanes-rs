@@ -1,12 +1,10 @@
 use anyhow::Result;
 use alkanes_cli_sys::SystemAlkanes as ConcreteProvider;
-use std::sync::Arc;
-use alkanes_cli_common::alkanes::amm::AmmManager;
-use std::env;
-use tracing::{debug, info};
+use alkanes_cli_common::alkanes::experimental_asm::{get_all_pools_with_details_parallel, ParallelFetchConfig};
+use alkanes_cli_common::traits::DeezelProvider;
+use tracing::{debug, info, warn};
 use sqlx::PgPool;
 use crate::db::{pools as db_pools, pool_state as db_pool_state};
-use futures::stream::{self, StreamExt};
 
 #[derive(Debug, Clone)]
 pub struct TypesAlkaneId { pub block: String, pub tx: String }
@@ -30,66 +28,46 @@ pub struct PoolWithDetails {
 
 pub async fn fetch_all_pools_with_details(
     provider: &ConcreteProvider,
-    factory_block: &str,
-    factory_tx: &str,
+    _factory_block: &str,
+    _factory_tx: &str,
 ) -> Result<Vec<PoolWithDetails>> {
-    use alkanes_cli_common::alkanes::execute::EnhancedAlkanesExecutor;
-    use alkanes_cli_common::alkanes::types::AlkaneId;
-    use alkanes_cli_common::traits::AlkanesProvider;
-    
-    debug!(factory_block, factory_tx, "fetch pools via AmmManager");
+    debug!("fetch pools via experimental ASM with parallel mode (chunk_size=30, concurrency=10)");
 
-    // Parse factory ID
-    let factory_id = AlkaneId {
-        block: factory_block.parse()?,
-        tx: factory_tx.parse()?,
+    // Use experimental ASM parallel implementation
+    let config = ParallelFetchConfig {
+        chunk_size: 30,
+        max_concurrent: 10,
+        range: None, // Fetch all pools
     };
-    
-    // Create executor and AMM manager
-    // Note: We need to clone the provider to get a mutable reference
-    let mut provider_clone = provider.clone();
-    let executor = Arc::new(EnhancedAlkanesExecutor::new(&mut provider_clone));
-    let amm = AmmManager::new(executor);
 
-    // Step 1: fetch all pool IDs via simulate
-    let all = amm.get_all_pools(&factory_id, provider).await?;
+    let pools = get_all_pools_with_details_parallel(provider, config).await?;
 
-    if all.pools.is_empty() {
-        return Ok(Vec::new());
-    }
+    info!(pool_count = pools.len(), "fetched all pools with details via experimental ASM");
 
-    debug!(count = all.count, "fetched pool ids; fetching details with concurrency = 10");
-
-    // Step 2: concurrently fetch each pool's details with bounded parallelism (10)
-    let stream = stream::iter(all.pools.into_iter().map(|id| {
-        let provider = provider.clone();
-        async move {
-            // Create a new executor and amm for each concurrent task
-            let mut provider_clone = provider.clone();
-            let executor = Arc::new(EnhancedAlkanesExecutor::new(&mut provider_clone));
-            let amm = AmmManager::new(executor);
-            let res = amm.get_pool_details(&id, &provider).await;
-            (id, res)
-        }
-    }))
-    .buffer_unordered(10);
-
+    // Convert to our internal format
     let mut out: Vec<PoolWithDetails> = Vec::new();
-    tokio::pin!(stream);
-    while let Some((pool_id, details_res)) = stream.next().await {
-        if let Ok(details) = details_res {
+    for pool_info in pools {
+        if let Some(details) = pool_info.details {
             out.push(PoolWithDetails {
-                pool_block: pool_id.block.to_string(),
-                pool_tx: pool_id.tx.to_string(),
+                pool_block: pool_info.pool_id_block.to_string(),
+                pool_tx: pool_info.pool_id_tx.to_string(),
                 details: PoolDetailsResult {
-                    token0: TypesAlkaneId { block: details.token0.block.to_string(), tx: details.token0.tx.to_string() },
-                    token1: TypesAlkaneId { block: details.token1.block.to_string(), tx: details.token1.tx.to_string() },
-                    token0_amount: details.token0_amount,
-                    token1_amount: details.token1_amount,
-                    token_supply: details.token_supply,
+                    token0: TypesAlkaneId { 
+                        block: details.token_a_block.to_string(), 
+                        tx: details.token_a_tx.to_string() 
+                    },
+                    token1: TypesAlkaneId { 
+                        block: details.token_b_block.to_string(), 
+                        tx: details.token_b_tx.to_string() 
+                    },
+                    token0_amount: details.reserve_a,
+                    token1_amount: details.reserve_b,
+                    token_supply: details.total_supply,
                     pool_name: details.pool_name,
                 },
             });
+        } else {
+            warn!(pool_block = pool_info.pool_id_block, pool_tx = pool_info.pool_id_tx, "pool has no details, skipping");
         }
     }
 
