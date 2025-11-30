@@ -521,6 +521,194 @@ impl WebProvider {
         })
     }
 
+    /// Get all pools with details from an AMM factory (parallel optimized for browser)
+    #[wasm_bindgen(js_name = alkanesGetAllPoolsWithDetails)]
+    pub fn alkanes_get_all_pools_with_details_js(
+        &self,
+        factory_id: String,
+        chunk_size: Option<f64>,
+        max_concurrent: Option<f64>,
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::alkanes::amm::AmmManager;
+        use alkanes_cli_common::alkanes::types::AlkaneId;
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::proto::alkanes::MessageContextParcel;
+        use wasm_bindgen_futures::future_to_promise;
+        use futures::stream::{self, StreamExt};
+        use web_sys::console;
+        use leb128;
+        
+        let provider = self.clone();
+        let chunk_size = chunk_size.map(|c| c as usize).unwrap_or(30);
+        let max_concurrent = max_concurrent.map(|m| m as usize).unwrap_or(10);
+        
+        future_to_promise(async move {
+            // Parse factory ID
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(JsValue::from_str("Invalid factory_id format, expected block:tx"));
+            }
+            let block: u64 = parts[0].parse()
+                .map_err(|_| JsValue::from_str("Invalid block number"))?;
+            let tx: u64 = parts[1].parse()
+                .map_err(|_| JsValue::from_str("Invalid tx number"))?;
+            let factory = AlkaneId { block, tx };
+            
+            // Step 1: Get all pool IDs by calling factory directly
+            let mut calldata = Vec::new();
+            leb128::write::unsigned(&mut calldata, factory.block).unwrap();
+            leb128::write::unsigned(&mut calldata, factory.tx).unwrap();
+            leb128::write::unsigned(&mut calldata, 3u64).unwrap(); // GET_ALL_POOLS opcode
+            
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: 0,
+                vout: 0,
+                txindex: 0,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+
+            let result = provider.simulate(&format!("{}:{}", factory.block, factory.tx), &context, None).await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get pool list: {}", e)))?;
+            
+            let data_hex = result
+                .get("data")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| JsValue::from_str("No data in response"))?;
+
+            // Parse pool IDs from hex response
+            let pool_ids = alkanes_cli_common::alkanes::amm::decode_get_all_pools(data_hex)
+                .ok_or_else(|| JsValue::from_str("Failed to decode pool list"))?
+                .pools;
+            let total = pool_ids.len();
+            
+            // Step 2: Fetch details in parallel chunks
+            let chunks: Vec<Vec<_>> = pool_ids.chunks(chunk_size)
+                .map(|chunk| chunk.to_vec())
+                .collect();
+            
+            let mut all_pool_details = Vec::new();
+            
+            // Process chunks with concurrency limit
+            let results: Vec<_> = stream::iter(chunks)
+                .map(|chunk| {
+                    let provider_clone = provider.clone();
+                    async move {
+                        let mut chunk_results = Vec::new();
+                        for pool_id in chunk {
+                            // Build calldata for POOL_DETAILS opcode (999)
+                            let mut calldata = Vec::new();
+                            leb128::write::unsigned(&mut calldata, pool_id.block).unwrap();
+                            leb128::write::unsigned(&mut calldata, pool_id.tx).unwrap();
+                            leb128::write::unsigned(&mut calldata, 999u64).unwrap();
+                            
+                            let context = MessageContextParcel {
+                                alkanes: vec![],
+                                transaction: vec![],
+                                block: vec![],
+                                height: 0,
+                                vout: 0,
+                                txindex: 0,
+                                calldata,
+                                pointer: 0,
+                                refund_pointer: 0,
+                            };
+                            
+                            match provider_clone.simulate(&format!("{}:{}", pool_id.block, pool_id.tx), &context, None).await {
+                                Ok(result) => {
+                                    let details_json = result;
+                                    chunk_results.push(serde_json::json!({
+                                        "pool_id": format!("{}:{}", pool_id.block, pool_id.tx),
+                                        "pool_id_block": pool_id.block,
+                                        "pool_id_tx": pool_id.tx,
+                                        "details": details_json
+                                    }));
+                                }
+                                Err(e) => {
+                                    console::warn_1(&JsValue::from_str(&format!("Failed to get details for pool {}:{}: {}", pool_id.block, pool_id.tx, e)));
+                                }
+                            }
+                        }
+                        chunk_results
+                    }
+                })
+                .buffer_unordered(max_concurrent)
+                .collect()
+                .await;
+            
+            // Flatten results
+            for chunk_result in results {
+                all_pool_details.extend(chunk_result);
+            }
+            
+            let response = serde_json::json!({
+                "total": total,
+                "count": all_pool_details.len(),
+                "pools": all_pool_details
+            });
+            
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
+        })
+    }
+
+    /// Get all pools from a factory (lightweight, IDs only)
+    #[wasm_bindgen(js_name = alkanesGetAllPools)]
+    pub fn alkanes_get_all_pools_js(&self, factory_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::alkanes::types::AlkaneId;
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::proto::alkanes::MessageContextParcel;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(JsValue::from_str("Invalid factory_id format, expected block:tx"));
+            }
+            let block: u64 = parts[0].parse()
+                .map_err(|_| JsValue::from_str("Invalid block number"))?;
+            let tx: u64 = parts[1].parse()
+                .map_err(|_| JsValue::from_str("Invalid tx number"))?;
+            let factory = AlkaneId { block, tx };
+            
+            // Build calldata for GET_ALL_POOLS (opcode 3)
+            let mut calldata = Vec::new();
+            leb128::write::unsigned(&mut calldata, factory.block).unwrap();
+            leb128::write::unsigned(&mut calldata, factory.tx).unwrap();
+            leb128::write::unsigned(&mut calldata, 3u64).unwrap();
+            
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: 0,
+                vout: 0,
+                txindex: 0,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+
+            let result = provider.simulate(&format!("{}:{}", factory.block, factory.tx), &context, None).await
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))?;
+            
+            let data_hex = result
+                .get("data")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| JsValue::from_str("No data in response"))?;
+
+            let pools_result = alkanes_cli_common::alkanes::amm::decode_get_all_pools(data_hex)
+                .ok_or_else(|| JsValue::from_str("Failed to decode pool list"))?;
+            
+            serde_wasm_bindgen::to_value(&pools_result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
+        })
+    }
+
     #[wasm_bindgen(js_name = alkanesTrace)]
     pub fn alkanes_trace_js(&self, outpoint: String) -> js_sys::Promise {
         use alkanes_cli_common::traits::AlkanesProvider;
@@ -2313,6 +2501,17 @@ impl AlkanesProvider for WebProvider {
         }
         
         Ok(Some(all_traces))
+    }
+
+    async fn tx_script(
+        &self,
+        _wasm_bytes: &[u8],
+        _inputs: Vec<u128>,
+        _block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        // For WASM build, tx_script would need to be proxied through the RPC
+        // or implemented using a different approach
+        Err(AlkanesError::Other("tx_script not implemented for WASM build".to_string()))
     }
 }
 

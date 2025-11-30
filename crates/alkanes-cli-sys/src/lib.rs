@@ -742,6 +742,14 @@ impl AlkanesProvider for SystemAlkanes {
     async fn simulate(&self, contract_id: &str, context: &alkanes_cli_common::proto::alkanes::MessageContextParcel, block_tag: Option<String>) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.simulate(contract_id, context, block_tag).await
     }
+    async fn tx_script(
+        &self,
+        wasm_bytes: &[u8],
+        inputs: Vec<u128>,
+        block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        self.provider.tx_script(wasm_bytes, inputs, block_tag).await
+    }
     async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         self.provider.trace(outpoint).await
     }

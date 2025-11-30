@@ -667,7 +667,7 @@ fn parse_alkane_id_from_hex(hex_str: &str) -> Option<TypesAlkaneId> {
     Some(TypesAlkaneId { block, tx })
 }
 
-fn decode_get_all_pools(data_hex: &str) -> Option<GetAllPoolsResult> {
+pub fn decode_get_all_pools(data_hex: &str) -> Option<GetAllPoolsResult> {
     if data_hex == "0x" { return None; }
     let clean = strip_0x(data_hex);
     if clean.len() < 32 { return None; }

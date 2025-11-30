@@ -12,6 +12,8 @@ alkanes-asc = { path = "../alkanes-asc" }
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"
 wasm-bindgen-futures = "0.4"
+tsify = "0.4"
+futures = "0.3"
 gloo-timers = "0.3.0"
 gloo-utils = "0.1.7"
 js-sys = "0.3"
@@ -24,6 +26,7 @@ serde = { workspace = true }
 hex = { workspace = true }
 alkanes-support = { workspace = true }
 prost = { workspace = true }
+leb128 = "0.2.5"
 
 sha2 = { workspace = true }
 sha3 = { workspace = true }

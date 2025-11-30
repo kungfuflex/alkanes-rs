@@ -1039,6 +1039,15 @@ impl AlkanesProvider for StandaloneAddressResolver {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
+    async fn tx_script(
+        &self,
+        _wasm_bytes: &[u8],
+        _inputs: Vec<u128>,
+        _block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
+    }
+
     async fn trace(&self, _outpoint: &str) -> Result<crate::proto::alkanes::Trace> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
