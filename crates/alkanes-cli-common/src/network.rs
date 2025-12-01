@@ -129,6 +129,10 @@ pub struct RpcConfig {
     #[arg(long)]
     pub brc20_prog_rpc_url: Option<String>,
 
+    /// Data API URL (for analytics and indexing data, defaults based on network)
+    #[arg(long)]
+    pub data_api_url: Option<String>,
+
     /// Subfrost API Key (optional, can also be set via SUBFROST_API_KEY environment variable)
     #[arg(long)]
     pub subfrost_api_key: Option<String>,
@@ -198,6 +202,26 @@ impl RpcConfig {
             "mainnet" => Some("https://rpc.brc20.build".to_string()),
             "signet" => Some("https://rpc-signet.brc20.build".to_string()),
             _ => None, // No default for testnet or regtest
+        }
+    }
+    
+    /// Get default Data API URL for the network
+    pub fn get_default_data_api_url(&self) -> String {
+        match self.provider.as_str() {
+            "mainnet" => "https://mainnet.subfrost.io/v4/api".to_string(),
+            "signet" => "https://signet.subfrost.io/v4/api".to_string(),
+            "subfrost-regtest" => "https://regtest.subfrost.io/v4/api".to_string(),
+            _ => "http://localhost:3000".to_string(), // regtest
+        }
+    }
+    
+    /// Get the Data API target
+    /// Priority: data_api_url > default based on network
+    pub fn get_data_api_target(&self) -> RpcTarget {
+        let url = self.data_api_url.clone().unwrap_or_else(|| self.get_default_data_api_url());
+        RpcTarget {
+            url,
+            backend_type: RpcBackendType::JsonRpc,
         }
     }
     
@@ -338,6 +362,7 @@ impl Default for RpcConfig {
             ord_url: None,
             metashrew_rpc_url: Some("http://localhost:18888".to_string()),
             brc20_prog_rpc_url: None,
+            data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
         }

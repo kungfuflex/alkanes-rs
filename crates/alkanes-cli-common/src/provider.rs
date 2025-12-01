@@ -171,6 +171,7 @@ impl ConcreteProvider {
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
             brc20_prog_rpc_url: None,
+            data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
         };
@@ -210,6 +211,7 @@ impl ConcreteProvider {
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
             brc20_prog_rpc_url: None,
+            data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
         };
