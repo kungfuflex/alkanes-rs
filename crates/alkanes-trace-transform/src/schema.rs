@@ -156,18 +156,41 @@ CREATE INDEX IF NOT EXISTS idx_storage_block ON "TraceStorage"(block_height);
 /// Apply the trace transform schema
 #[cfg(feature = "postgres")]
 pub async fn apply_schema(pool: &PgPool) -> Result<()> {
-    // Execute schema in transaction
-    let mut tx = pool.begin().await?;
+    // Execute schema statements one by one without transaction
+    // This allows IF NOT EXISTS to work properly for indexes
     
     // Split by semicolons and execute each statement
-    for statement in TRACE_TRANSFORM_SCHEMA.split(';') {
+    for (idx, statement) in TRACE_TRANSFORM_SCHEMA.split(';').enumerate() {
         let trimmed = statement.trim();
-        if !trimmed.is_empty() && !trimmed.starts_with("--") {
-            sqlx::query(trimmed).execute(&mut *tx).await?;
+        
+        // Skip empty statements
+        if trimmed.is_empty() {
+            continue;
+        }
+        
+        // Remove comment lines
+        let cleaned: String = trimmed
+            .lines()
+            .filter(|line| !line.trim().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        
+        // Skip if only comments (nothing left after removing comment lines)
+        if !cleaned.trim().is_empty() {
+            // Log what we're about to execute
+            let preview = cleaned.lines().next().unwrap_or("").trim();
+            eprintln!("Executing statement {}: {}...", idx, &preview[..preview.len().min(60)]);
+            
+            match sqlx::query(&cleaned).execute(pool).await {
+                Ok(_) => eprintln!("  ✓ Success"),
+                Err(e) => {
+                    eprintln!("  ✗ Failed: {}", e);
+                    eprintln!("  Statement was:\n{}", cleaned);
+                    return Err(e.into());
+                }
+            }
         }
     }
-    
-    tx.commit().await?;
     
     Ok(())
 }

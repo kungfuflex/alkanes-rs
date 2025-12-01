@@ -55,6 +55,7 @@ pub struct TransactionContext {
 pub struct VoutInfo {
     pub index: i32,
     pub address: Option<String>,
+    pub script_pubkey: String,
     pub value: u64,
 }
 
