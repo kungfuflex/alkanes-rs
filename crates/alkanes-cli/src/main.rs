@@ -1602,6 +1602,122 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         }
+        Alkanes::ReflectAlkane { alkane_id, concurrency, raw } => {
+            use alkanes_cli_common::alkanes::experimental_asm::{reflect_alkane, AlkaneReflection};
+            use colored::Colorize;
+            
+            println!("🔍 Reflecting alkane {} with concurrency {}...", alkane_id, concurrency);
+            
+            let reflection = reflect_alkane(system.provider(), &alkane_id, concurrency).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&reflection)?);
+            } else {
+                // Pretty-printed colored output
+                println!("\n📊 Alkane Metadata for {}", alkane_id.bright_cyan().bold());
+                println!("{}", "═".repeat(60).bright_black());
+                
+                if let Some(name) = &reflection.name {
+                    println!("  {} {}", "Name:".bright_yellow(), name.bright_white());
+                }
+                
+                if let Some(symbol) = &reflection.symbol {
+                    println!("  {} {}", "Symbol:".bright_yellow(), symbol.bright_white());
+                }
+                
+                if let Some(total_supply) = reflection.total_supply {
+                    println!("  {} {}", "Total Supply:".bright_yellow(), total_supply.to_string().bright_white());
+                }
+                
+                if let Some(cap) = reflection.cap {
+                    println!("  {} {}", "Cap:".bright_yellow(), cap.to_string().bright_white());
+                }
+                
+                if let Some(minted) = reflection.minted {
+                    println!("  {} {}", "Minted:".bright_yellow(), minted.to_string().bright_white());
+                    
+                    if let Some(cap_val) = reflection.cap {
+                        if cap_val > 0 {
+                            let progress = (minted as f64 / cap_val as f64) * 100.0;
+                            let bar_length = 40;
+                            let filled = ((progress / 100.0) * bar_length as f64) as usize;
+                            let bar = format!(
+                                "[{}{}] {:.1}%",
+                                "█".repeat(filled).bright_green(),
+                                "░".repeat(bar_length - filled).bright_black(),
+                                progress
+                            );
+                            println!("  {} {}", "Progress:".bright_yellow(), bar);
+                        }
+                    }
+                }
+                
+                if let Some(value_per_mint) = reflection.value_per_mint {
+                    println!("  {} {}", "Value Per Mint:".bright_yellow(), value_per_mint.to_string().bright_white());
+                }
+                
+                if let Some(data) = &reflection.data {
+                    println!("  {} 0x{}", "Data:".bright_yellow(), data.bright_white());
+                }
+                
+                println!("{}", "═".repeat(60).bright_black());
+            }
+            
+            Ok(())
+        }
+        Alkanes::ReflectAlkaneRange { block, start_tx, end_tx, concurrency, raw } => {
+            use alkanes_cli_common::alkanes::experimental_asm::reflect_alkane_range;
+            use colored::Colorize;
+            
+            let count = end_tx - start_tx + 1;
+            println!("🔍 Reflecting {} alkanes ({}:{} to {}:{}) with concurrency {}...", 
+                     count, block, start_tx, block, end_tx, concurrency);
+            
+            let reflections = reflect_alkane_range(system.provider(), block, start_tx, end_tx, concurrency).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&reflections)?);
+            } else {
+                println!("\n✅ Successfully reflected {} alkanes\n", reflections.len());
+                
+                for (idx, reflection) in reflections.iter().enumerate() {
+                    println!("{} {}", 
+                             format!("{}.", idx + 1).bright_black(),
+                             reflection.id.bright_cyan().bold());
+                    
+                    if let Some(name) = &reflection.name {
+                        print!("   {} ", name.bright_white());
+                    }
+                    if let Some(symbol) = &reflection.symbol {
+                        print!("({})", symbol.bright_yellow());
+                    }
+                    println!();
+                    
+                    if let Some(total_supply) = reflection.total_supply {
+                        println!("   Supply: {}", total_supply.to_string().bright_white());
+                    }
+                    
+                    if let Some(minted) = reflection.minted {
+                        if let Some(cap) = reflection.cap {
+                            if cap > 0 {
+                                let progress = (minted as f64 / cap as f64) * 100.0;
+                                println!("   Minted: {} / {} ({:.1}%)", 
+                                         minted.to_string().bright_green(),
+                                         cap.to_string().bright_white(),
+                                         progress);
+                            }
+                        }
+                    }
+                    
+                    println!();
+                }
+                
+                println!("{}", "═".repeat(60).bright_black());
+                println!("📊 Total: {} alkanes reflected", reflections.len().to_string().bright_green().bold());
+            }
+            
+            Ok(())
+        }
         Alkanes::InitPool { pair, liquidity, to, from, change, minimum, fee_rate, trace, factory, auto_confirm } => {
             use alkanes_cli_common::alkanes::amm_cli::{init_pool, InitPoolParams};
             use alkanes_cli_common::alkanes::types::AlkaneId;

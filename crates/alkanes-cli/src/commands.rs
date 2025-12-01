@@ -1057,6 +1057,32 @@ pub enum Alkanes {
         #[arg(long)]
         raw: bool,
     },
+    /// Reflect metadata for an alkane by calling standard view opcodes
+    ReflectAlkane {
+        /// Alkane ID to reflect (format: block:tx)
+        alkane_id: String,
+        /// Maximum concurrent RPC calls (default: 30)
+        #[arg(long, default_value = "30")]
+        concurrency: usize,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Reflect metadata for a range of alkanes
+    ReflectAlkaneRange {
+        /// Starting block number
+        block: u64,
+        /// Starting transaction index
+        start_tx: u64,
+        /// Ending transaction index
+        end_tx: u64,
+        /// Maximum concurrent RPC calls (default: 30)
+        #[arg(long, default_value = "30")]
+        concurrency: usize,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
     /// Initialize a new liquidity pool
     InitPool {
         /// Token pair in format: BLOCK:TX,BLOCK:TX (e.g., 2:0,32:0)

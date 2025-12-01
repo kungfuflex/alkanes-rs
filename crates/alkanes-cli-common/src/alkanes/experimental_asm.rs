@@ -7,12 +7,34 @@ use anyhow::Result;
 use futures::stream::{self, StreamExt};
 use crate::alkanes::pool_details::{PoolInfo, PoolDetails};
 use crate::traits::{AlkanesProvider, DeezelProvider};
+use serde::{Serialize, Deserialize};
 
 /// Embedded get-all-pools WASM (compiled from AssemblyScript)
 const GET_ALL_POOLS_WASM: &[u8] = include_bytes!("asc/get-all-pools/build/release.wasm");
 
 /// Embedded get-all-pools-details WASM (compiled from AssemblyScript)
 const GET_ALL_POOLS_DETAILS_WASM: &[u8] = include_bytes!("asc/get-all-pools-details/build/release.wasm");
+
+/// Alkane metadata reflection result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlkaneReflection {
+    /// Alkane ID (block:tx)
+    pub id: String,
+    /// Name from opcode 99 (optional)
+    pub name: Option<String>,
+    /// Symbol from opcode 100 (optional)
+    pub symbol: Option<String>,
+    /// Total supply from opcode 101 (optional)
+    pub total_supply: Option<u128>,
+    /// Cap from opcode 102 (optional)
+    pub cap: Option<u128>,
+    /// Minted from opcode 103 (optional)
+    pub minted: Option<u128>,
+    /// Value per mint from opcode 104 (optional)
+    pub value_per_mint: Option<u128>,
+    /// Additional data from opcode 1000 (optional, as hex)
+    pub data: Option<String>,
+}
 
 /// Configuration for parallel pool fetching
 #[derive(Debug, Clone)]
@@ -217,6 +239,212 @@ pub async fn get_all_pools_with_details(
             range,
         },
     ).await
+}
+
+/// Standard view opcodes for alkanes metadata
+const OPCODE_GET_NAME: u64 = 99;
+const OPCODE_GET_SYMBOL: u64 = 100;
+const OPCODE_GET_TOTAL_SUPPLY: u64 = 101;
+const OPCODE_GET_CAP: u64 = 102;
+const OPCODE_GET_MINTED: u64 = 103;
+const OPCODE_GET_VALUE_PER_MINT: u64 = 104;
+const OPCODE_GET_DATA: u64 = 1000;
+
+/// Reflect metadata for a single alkane by calling standard view opcodes
+/// 
+/// This function makes parallel RPC calls to query all standard view opcodes:
+/// - Opcode 99: GetName
+/// - Opcode 100: GetSymbol
+/// - Opcode 101: GetTotalSupply
+/// - Opcode 102: GetCap
+/// - Opcode 103: GetMinted
+/// - Opcode 104: GetValuePerMint
+/// - Opcode 1000: GetData
+/// 
+/// Opcodes that are not implemented will have `None` values in the result.
+///
+/// # Arguments
+/// * `provider` - The alkanes provider to use for RPC calls
+/// * `alkane_id` - The alkane ID in "block:tx" format
+/// * `concurrency` - Maximum number of concurrent RPC calls
+///
+/// # Returns
+/// An AlkaneReflection struct with all available metadata
+pub async fn reflect_alkane(
+    provider: &dyn DeezelProvider,
+    alkane_id: &str,
+    concurrency: usize,
+) -> Result<AlkaneReflection> {
+    use crate::proto::alkanes::MessageContextParcel;
+    use crate::traits::AlkanesProvider;
+    use prost::Message;
+
+    // Parse alkane ID
+    let parts: Vec<&str> = alkane_id.split(':').collect();
+    if parts.len() != 2 {
+        return Err(anyhow::anyhow!("Invalid alkane_id format. Expected 'block:tx'"));
+    }
+    let block: u64 = parts[0].parse()?;
+    let tx: u64 = parts[1].parse()?;
+
+    // Get current height
+    let simulation_height = provider.get_metashrew_height().await?;
+
+    // Build list of opcodes to query
+    let opcodes = vec![
+        OPCODE_GET_NAME,
+        OPCODE_GET_SYMBOL,
+        OPCODE_GET_TOTAL_SUPPLY,
+        OPCODE_GET_CAP,
+        OPCODE_GET_MINTED,
+        OPCODE_GET_VALUE_PER_MINT,
+        OPCODE_GET_DATA,
+    ];
+
+    // Create tasks for parallel execution
+    let tasks = opcodes.into_iter().map(|opcode| {
+        let provider_clone = provider.clone_box();
+        let alkane_id_str = alkane_id.to_string();
+        async move {
+            // Build calldata for this opcode
+            let mut calldata = Vec::new();
+            leb128::write::unsigned(&mut calldata, block).unwrap();
+            leb128::write::unsigned(&mut calldata, tx).unwrap();
+            leb128::write::unsigned(&mut calldata, opcode).unwrap();
+
+            // Create context
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: simulation_height,
+                vout: 0,
+                txindex: 1,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+
+            // Make the RPC call
+            let result = provider_clone.simulate(&alkane_id_str, &context, Some("latest".to_string())).await;
+            (opcode, result)
+        }
+    });
+
+    // Execute all queries in parallel with concurrency limit
+    let results = stream::iter(tasks)
+        .buffer_unordered(concurrency)
+        .collect::<Vec<_>>()
+        .await;
+
+    // Parse results
+    let mut reflection = AlkaneReflection {
+        id: alkane_id.to_string(),
+        name: None,
+        symbol: None,
+        total_supply: None,
+        cap: None,
+        minted: None,
+        value_per_mint: None,
+        data: None,
+    };
+
+    for (opcode, result) in results {
+        if let Ok(json) = result {
+            if let Some(hex_str) = json.as_str() {
+                let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+                if let Ok(bytes) = hex::decode(hex_data) {
+                    if let Ok(sim_response) = crate::proto::alkanes::SimulateResponse::decode(bytes.as_slice()) {
+                        if let Some(execution) = sim_response.execution {
+                            let data = execution.data;
+                            
+                            match opcode {
+                                OPCODE_GET_NAME => {
+                                    reflection.name = String::from_utf8(data).ok();
+                                }
+                                OPCODE_GET_SYMBOL => {
+                                    reflection.symbol = String::from_utf8(data).ok();
+                                }
+                                OPCODE_GET_TOTAL_SUPPLY => {
+                                    if data.len() >= 16 {
+                                        reflection.total_supply = Some(u128::from_le_bytes(data[0..16].try_into().unwrap()));
+                                    }
+                                }
+                                OPCODE_GET_CAP => {
+                                    if data.len() >= 16 {
+                                        reflection.cap = Some(u128::from_le_bytes(data[0..16].try_into().unwrap()));
+                                    }
+                                }
+                                OPCODE_GET_MINTED => {
+                                    if data.len() >= 16 {
+                                        reflection.minted = Some(u128::from_le_bytes(data[0..16].try_into().unwrap()));
+                                    }
+                                }
+                                OPCODE_GET_VALUE_PER_MINT => {
+                                    if data.len() >= 16 {
+                                        reflection.value_per_mint = Some(u128::from_le_bytes(data[0..16].try_into().unwrap()));
+                                    }
+                                }
+                                OPCODE_GET_DATA => {
+                                    reflection.data = Some(hex::encode(&data));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(reflection)
+}
+
+/// Reflect metadata for a range of alkanes
+///
+/// # Arguments
+/// * `provider` - The alkanes provider to use for RPC calls
+/// * `block` - The block number
+/// * `start_tx` - Starting transaction index (inclusive)
+/// * `end_tx` - Ending transaction index (inclusive)
+/// * `concurrency` - Maximum number of concurrent RPC calls
+///
+/// # Returns
+/// A vector of AlkaneReflection structs
+pub async fn reflect_alkane_range(
+    provider: &dyn DeezelProvider,
+    block: u64,
+    start_tx: u64,
+    end_tx: u64,
+    concurrency: usize,
+) -> Result<Vec<AlkaneReflection>> {
+    // Create tasks for each alkane in the range
+    let concurrency_per_alkane = 7; // Per-alkane opcode concurrency (we parallelize across alkanes)
+    let tasks = (start_tx..=end_tx).map(move |tx| {
+        let alkane_id = format!("{}:{}", block, tx);
+        async move {
+            reflect_alkane(provider, &alkane_id, concurrency_per_alkane).await
+        }
+    });
+
+    // Execute all reflections in parallel with concurrency limit
+    let results = stream::iter(tasks)
+        .buffer_unordered(concurrency)
+        .collect::<Vec<_>>()
+        .await;
+
+    // Collect successful results (skip failures)
+    let mut reflections = Vec::new();
+    for result in results {
+        match result {
+            Ok(reflection) => reflections.push(reflection),
+            Err(e) => {
+                eprintln!("Warning: Failed to reflect alkane: {}", e);
+            }
+        }
+    }
+
+    Ok(reflections)
 }
 
 #[cfg(test)]
