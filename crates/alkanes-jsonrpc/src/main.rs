@@ -11,10 +11,23 @@ use config::Config;
 use jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR};
 use proxy::ProxyClient;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 struct AppState {
     proxy: Arc<ProxyClient>,
     script_storage: lua_executor::ScriptStorage,
+}
+
+/// Guard that cancels the token when dropped (e.g., when HTTP connection closes)
+struct CancellationGuard {
+    token: CancellationToken,
+}
+
+impl Drop for CancellationGuard {
+    fn drop(&mut self) {
+        self.token.cancel();
+        log::debug!("Request cancelled due to connection drop or completion");
+    }
 }
 
 async fn handle_jsonrpc(
@@ -30,7 +43,14 @@ async fn handle_jsonrpc(
 
     log::info!("{}|{}", ip, serde_json::to_string(&body.0).unwrap_or_default());
 
-    match handler::handle_request_with_storage(&body.0, &state.proxy, Some(&state.script_storage)).await {
+    // Create a cancellation token for this request
+    // This token will be cancelled when:
+    // 1. The HTTP connection is dropped by the client (CancellationGuard is dropped)
+    // 2. The request handler completes normally (CancellationGuard is dropped)
+    let cancel_token = CancellationToken::new();
+    let _guard = CancellationGuard { token: cancel_token.clone() };
+
+    match handler::handle_request_with_storage(&body.0, &state.proxy, Some(&state.script_storage), cancel_token).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             log::error!("Error handling request: {:?}", e);

@@ -1,0 +1,13 @@
+{
+  "name": "reflect-alkane-range",
+  "version": "0.1.0",
+  "description": "Reflect information from a range of alkanes (2:n format)",
+  "scripts": {
+    "asbuild:release": "asc assembly/index.ts --target release --exportStart _start",
+    "asbuild:debug": "asc assembly/index.ts --target debug --exportStart _start",
+    "build": "npm run asbuild:release"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.0"
+  }
+}

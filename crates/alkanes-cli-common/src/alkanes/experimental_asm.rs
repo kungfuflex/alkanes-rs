@@ -14,6 +14,12 @@ const GET_ALL_POOLS_WASM: &[u8] = include_bytes!("asc/get-all-pools/build/releas
 /// Embedded get-all-pools-details WASM (compiled from AssemblyScript)
 const GET_ALL_POOLS_DETAILS_WASM: &[u8] = include_bytes!("asc/get-all-pools-details/build/release.wasm");
 
+/// Embedded reflect-alkane WASM (compiled from AssemblyScript)
+const REFLECT_ALKANE_WASM: &[u8] = include_bytes!("asc/reflect-alkane/build/release.wasm");
+
+/// Embedded reflect-alkane-range WASM (compiled from AssemblyScript)
+const REFLECT_ALKANE_RANGE_WASM: &[u8] = include_bytes!("asc/reflect-alkane-range/build/release.wasm");
+
 /// Configuration for parallel pool fetching
 #[derive(Debug, Clone)]
 pub struct ParallelFetchConfig {
@@ -219,6 +225,203 @@ pub async fn get_all_pools_with_details(
     ).await
 }
 
+/// Reflected alkane information
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AlkaneReflection {
+    pub block: u128,
+    pub tx: u128,
+    #[serde(
+        serialize_with = "crate::utils::serialize_bytes_as_string",
+        deserialize_with = "crate::utils::deserialize_bytes_from_string"
+    )]
+    pub name: Vec<u8>,
+    #[serde(
+        serialize_with = "crate::utils::serialize_bytes_as_string",
+        deserialize_with = "crate::utils::deserialize_bytes_from_string"
+    )]
+    pub symbol: Vec<u8>,
+    pub total_supply: u128,
+    pub cap: u128,
+    pub minted: u128,
+    pub value_per_mint: u128,
+    #[serde(
+        serialize_with = "crate::utils::serialize_bytes_as_hex",
+        deserialize_with = "crate::utils::deserialize_bytes_from_hex"
+    )]
+    pub data: Vec<u8>,
+}
+
+impl AlkaneReflection {
+    /// Get name as UTF-8 string, replacing invalid UTF-8 with replacement character
+    pub fn name_string(&self) -> String {
+        String::from_utf8_lossy(&self.name).to_string()
+    }
+    
+    /// Get symbol as UTF-8 string, replacing invalid UTF-8 with replacement character
+    pub fn symbol_string(&self) -> String {
+        String::from_utf8_lossy(&self.symbol).to_string()
+    }
+    
+    /// Get alkane ID as string (block:tx)
+    pub fn id_string(&self) -> String {
+        format!("{}:{}", self.block, self.tx)
+    }
+    
+    /// Calculate mint progress percentage (0-100)
+    pub fn mint_progress(&self) -> f64 {
+        if self.cap == 0 {
+            0.0
+        } else {
+            (self.minted as f64 / self.cap as f64) * 100.0
+        }
+    }
+}
+
+impl AlkaneReflection {
+    /// Parse a single alkane reflection from bytes
+    /// Format: [name_len(16)][name][symbol_len(16)][symbol][total_supply(16)][cap(16)][minted(16)][value_per_mint(16)][data_len(16)][data]
+    fn parse_from_bytes(bytes: &[u8], offset: &mut usize, block: u128, tx: u128) -> Result<Self> {
+        let start = *offset;
+        
+        // Read name
+        if start + 16 > bytes.len() {
+            return Err(anyhow::anyhow!("Insufficient data for name length"));
+        }
+        let name_len = u128::from_le_bytes(bytes[start..start+16].try_into()?) as usize;
+        *offset = start + 16;
+        
+        if *offset + name_len > bytes.len() {
+            return Err(anyhow::anyhow!("Insufficient data for name"));
+        }
+        let name = bytes[*offset..*offset+name_len].to_vec();
+        *offset += name_len;
+        
+        // Read symbol
+        if *offset + 16 > bytes.len() {
+            return Err(anyhow::anyhow!("Insufficient data for symbol length"));
+        }
+        let symbol_len = u128::from_le_bytes(bytes[*offset..*offset+16].try_into()?) as usize;
+        *offset += 16;
+        
+        if *offset + symbol_len > bytes.len() {
+            return Err(anyhow::anyhow!("Insufficient data for symbol"));
+        }
+        let symbol = bytes[*offset..*offset+symbol_len].to_vec();
+        *offset += symbol_len;
+        
+        // Read u128 values
+        if *offset + 64 > bytes.len() {
+            return Err(anyhow::anyhow!("Insufficient data for numeric fields"));
+        }
+        let total_supply = u128::from_le_bytes(bytes[*offset..*offset+16].try_into()?);
+        *offset += 16;
+        let cap = u128::from_le_bytes(bytes[*offset..*offset+16].try_into()?);
+        *offset += 16;
+        let minted = u128::from_le_bytes(bytes[*offset..*offset+16].try_into()?);
+        *offset += 16;
+        let value_per_mint = u128::from_le_bytes(bytes[*offset..*offset+16].try_into()?);
+        *offset += 16;
+        
+        // Read data
+        if *offset + 16 > bytes.len() {
+            return Err(anyhow::anyhow!("Insufficient data for data length"));
+        }
+        let data_len = u128::from_le_bytes(bytes[*offset..*offset+16].try_into()?) as usize;
+        *offset += 16;
+        
+        if *offset + data_len > bytes.len() {
+            return Err(anyhow::anyhow!("Insufficient data for data field"));
+        }
+        let data = bytes[*offset..*offset+data_len].to_vec();
+        *offset += data_len;
+        
+        Ok(AlkaneReflection {
+            block,
+            tx,
+            name,
+            symbol,
+            total_supply,
+            cap,
+            minted,
+            value_per_mint,
+            data,
+        })
+    }
+}
+
+/// Reflect information from a single alkane by calling view opcodes
+/// 
+/// # Arguments
+/// * `provider` - The alkanes provider to use for RPC calls
+/// * `block` - Block component of alkane ID
+/// * `tx` - Transaction component of alkane ID
+/// 
+/// # Returns
+/// AlkaneReflection containing all view opcode results
+pub async fn reflect_alkane(
+    provider: &dyn AlkanesProvider,
+    block: u128,
+    tx: u128,
+) -> Result<AlkaneReflection> {
+    // Call reflect-alkane WASM with alkane ID as inputs
+    // Inputs: [block (u128 as 2xu64), tx (u128 as 2xu64)]
+    let inputs = vec![block, tx];
+    let response_data = provider.tx_script(REFLECT_ALKANE_WASM, inputs, None).await?;
+    
+    let mut offset = 0;
+    AlkaneReflection::parse_from_bytes(&response_data, &mut offset, block, tx)
+}
+
+/// Reflect information from a range of alkanes (format m:n)
+/// 
+/// # Arguments
+/// * `provider` - The alkanes provider to use for RPC calls
+/// * `block` - Block component of alkane IDs (usually 2)
+/// * `start_tx` - Starting tx number in range
+/// * `end_tx` - Ending tx number in range
+/// 
+/// # Returns
+/// Vector of AlkaneReflection for all alkanes that exist in the range
+pub async fn reflect_alkane_range(
+    provider: &dyn AlkanesProvider,
+    block: u128,
+    start_tx: u128,
+    end_tx: u128,
+) -> Result<Vec<AlkaneReflection>> {
+    // Call reflect-alkane-range WASM
+    // Inputs: [block (u128), start_tx (u128), end_tx (u128)]
+    let inputs = vec![block, start_tx, end_tx];
+    let response_data = provider.tx_script(REFLECT_ALKANE_RANGE_WASM, inputs, None).await?;
+    
+    // Parse response
+    // Format: [count(16)][alkane0_data][alkane1_data]...
+    if response_data.len() < 16 {
+        return Err(anyhow::anyhow!("Invalid reflection range response"));
+    }
+    
+    let count = u128::from_le_bytes(response_data[0..16].try_into()?) as usize;
+    let mut alkanes = Vec::with_capacity(count);
+    
+    let mut offset = 16;
+    for _ in 0..count {
+        // Read alkane ID (32 bytes: 16 for block, 16 for tx)
+        if offset + 32 > response_data.len() {
+            break;
+        }
+        
+        let alkane_block = u128::from_le_bytes(response_data[offset..offset+16].try_into()?);
+        let alkane_tx = u128::from_le_bytes(response_data[offset+16..offset+32].try_into()?);
+        offset += 32;
+        
+        // Parse the alkane reflection data
+        if let Ok(reflection) = AlkaneReflection::parse_from_bytes(&response_data, &mut offset, alkane_block, alkane_tx) {
+            alkanes.push(reflection);
+        }
+    }
+    
+    Ok(alkanes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +430,8 @@ mod tests {
     fn test_wasm_embedded() {
         assert!(!GET_ALL_POOLS_WASM.is_empty(), "get-all-pools WASM should be embedded");
         assert!(!GET_ALL_POOLS_DETAILS_WASM.is_empty(), "get-all-pools-details WASM should be embedded");
+        assert!(!REFLECT_ALKANE_WASM.is_empty(), "reflect-alkane WASM should be embedded");
+        assert!(!REFLECT_ALKANE_RANGE_WASM.is_empty(), "reflect-alkane-range WASM should be embedded");
     }
 
     #[test]

@@ -802,11 +802,40 @@ impl AlkanesHostFunctionsImpl {
         subcontext.trace.clock(event);
 
         // Run the call in a new context
-        let (response, gas_used) = run_after_special(
+        // Handle both success and controlled failures (child contract reverts)
+        let (response, gas_used) = match run_after_special(
             Arc::new(Mutex::new(subcontext.clone())),
             binary_rc,
             start_fuel,
-        )?;
+        ) {
+            Ok((resp, fuel)) => (resp, fuel),
+            Err(e) => {
+                // Child contract reverted or encountered an error
+                // This is a controlled failure - return empty data and set returndata
+                // The caller can check the negative return value to detect failure
+                #[cfg(feature = "debug-log")]
+                {
+                    println!("extcall: child contract failed: {:?}", e);
+                }
+                
+                {
+                    let mut context_guard = caller.data_mut().context.lock().unwrap();
+                    // Set returndata to empty to indicate failure
+                    context_guard.returndata = vec![];
+                    
+                    // Add trace event for the failure
+                    let mut return_context = TraceResponse::default();
+                    return_context.fuel_used = 0;
+                    context_guard
+                        .trace
+                        .clock(TraceEvent::ReturnContext(return_context));
+                }
+                
+                // Return -1 to indicate failure (negative value signals error to caller)
+                return Ok(-1);
+            }
+        };
+        
         let serialized = CallResponse::from(response.clone().into()).serialize();
         {
             caller.set_fuel(overflow_error(start_fuel.checked_sub(gas_used))?)?;

@@ -3,18 +3,20 @@ use crate::proxy::ProxyClient;
 use crate::sandshrew;
 use anyhow::Result;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 pub async fn handle_request(
     request: &JsonRpcRequest,
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
-    handle_request_with_storage(request, proxy, None).await
+    handle_request_with_storage(request, proxy, None, CancellationToken::new()).await
 }
 
 pub async fn handle_request_with_storage(
     request: &JsonRpcRequest,
     proxy: &ProxyClient,
     script_storage: Option<&crate::lua_executor::ScriptStorage>,
+    cancel_token: CancellationToken,
 ) -> Result<JsonRpcResponse> {
     let method_parts: Vec<&str> = request.method.split('_').collect();
     
@@ -39,8 +41,8 @@ pub async fn handle_request_with_storage(
         "alkanes" => handle_alkanes_method(&method_name, &request.params, &request.id, proxy).await,
         "metashrew" => handle_metashrew_method(request, proxy).await,
         "memshrew" => handle_memshrew_method(request, proxy).await,
-        "lua" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage).await,
-        "sandshrew" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage).await,
+        "lua" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage, cancel_token).await,
+        "sandshrew" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage, cancel_token).await,
         "btc" => handle_bitcoind_method(request, proxy).await,
         _ => handle_bitcoind_method(request, proxy).await,
     }

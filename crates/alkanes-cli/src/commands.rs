@@ -1135,6 +1135,29 @@ pub enum Alkanes {
         #[arg(long)]
         auto_confirm: bool,
     },
+    /// Reflect information from a single alkane by calling view opcodes
+    ReflectAlkane {
+        /// Alkane ID in format BLOCK:TX (e.g., 2:0)
+        alkane_id: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Reflect information from a range of alkanes (format m:n)
+    ReflectAlkaneRange {
+        /// Block component of alkane IDs (usually 2)
+        #[arg(long, default_value = "2")]
+        block: u128,
+        /// Starting tx number in range
+        #[arg(long)]
+        start_tx: u128,
+        /// Ending tx number in range
+        #[arg(long)]
+        end_tx: u128,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// DataAPI subcommands

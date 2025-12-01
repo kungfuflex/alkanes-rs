@@ -1,0 +1,11 @@
+{
+  "name": "alkanes-asm-test-unimplemented-staticcall",
+  "version": "0.1.0",
+  "description": "Test calling unimplemented opcode via staticcall",
+  "scripts": {
+    "asbuild:release": "asc assembly/index.ts --target release --exportStart _start"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.29"
+  }
+}

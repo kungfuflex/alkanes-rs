@@ -14,6 +14,45 @@ pub fn u128_from_slice(slice: &[u8]) -> u128 {
   bytes[..slice.len()].copy_from_slice(slice);
   u128::from_le_bytes(bytes)
 }
+
+/// Serialize bytes as UTF-8 string (with replacement character for invalid UTF-8)
+pub fn serialize_bytes_as_string<S>(bytes: &[u8], serializer: S) -> core::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::Serialize;
+    let s = alloc::string::String::from_utf8_lossy(bytes);
+    s.serialize(serializer)
+}
+
+/// Deserialize bytes from UTF-8 string
+pub fn deserialize_bytes_from_string<'de, D>(deserializer: D) -> core::result::Result<Vec<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let s = alloc::string::String::deserialize(deserializer)?;
+    Ok(s.into_bytes())
+}
+
+/// Serialize bytes as hex string
+pub fn serialize_bytes_as_hex<S>(bytes: &[u8], serializer: S) -> core::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::Serialize;
+    hex::encode(bytes).serialize(serializer)
+}
+
+/// Deserialize bytes from hex string
+pub fn deserialize_bytes_from_hex<'de, D>(deserializer: D) -> core::result::Result<Vec<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let s = alloc::string::String::deserialize(deserializer)?;
+    hex::decode(s).map_err(serde::de::Error::custom)
+}
 // Chadson v69.69
 // This file contains utility functions for cryptographic operations using the Web Crypto API.
 // It has been refactored to use asynchronous functions to avoid blocking the UI thread during

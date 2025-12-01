@@ -55,6 +55,44 @@ export class u128 {
   }
 
   /**
+   * Less than comparison
+   */
+  lt(other: u128): bool {
+    return this.hi < other.hi || (this.hi == other.hi && this.lo < other.lo);
+  }
+
+  /**
+   * Less than or equal comparison
+   */
+  lte(other: u128): bool {
+    return this.lt(other) || this.eq(other);
+  }
+
+  /**
+   * Greater than comparison
+   */
+  gt(other: u128): bool {
+    return this.hi > other.hi || (this.hi == other.hi && this.lo > other.lo);
+  }
+
+  /**
+   * Greater than or equal comparison
+   */
+  gte(other: u128): bool {
+    return this.gt(other) || this.eq(other);
+  }
+
+  /**
+   * Add two u128 values
+   */
+  add(other: u128): u128 {
+    const lo = this.lo + other.lo;
+    const carry = lo < this.lo ? 1 : 0;
+    const hi = this.hi + other.hi + carry;
+    return new u128(lo, hi);
+  }
+
+  /**
    * Convert to u64 (truncate high bits)
    */
   toU64(): u64 {

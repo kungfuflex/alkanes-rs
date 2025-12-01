@@ -2322,6 +2322,169 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             
             Ok(())
         }
+        Alkanes::ReflectAlkane { alkane_id, raw } => {
+            use alkanes_cli_common::alkanes::experimental_asm::reflect_alkane;
+            use colored::Colorize;
+            
+            let parts: Vec<&str> = alkane_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(anyhow::anyhow!("Invalid alkane_id format. Expected 'block:tx'"));
+            }
+            let block: u128 = parts[0].parse()?;
+            let tx: u128 = parts[1].parse()?;
+            
+            println!("🔍 Reflecting alkane {}...", alkane_id.bright_cyan());
+            
+            let reflection = reflect_alkane(system.provider(), block, tx).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&reflection)?);
+            } else {
+                println!("\n{}", "═".repeat(80).bright_blue());
+                println!("{} {}", "🪙 Alkane:".bold(), reflection.id_string().bright_cyan());
+                println!("{}", "═".repeat(80).bright_blue());
+                println!();
+                
+                // Basic Info
+                println!("{}", "📝 Basic Information".bold().bright_green());
+                println!("   {} {}", "Name:".dimmed(), reflection.name_string().bright_white());
+                println!("   {} {}", "Symbol:".dimmed(), reflection.symbol_string().bright_yellow());
+                println!();
+                
+                // Supply Info
+                println!("{}", "💰 Supply Information".bold().bright_green());
+                println!("   {} {}", "Total Supply:".dimmed(), reflection.total_supply.to_string().bright_white());
+                println!("   {} {}", "Cap:".dimmed(), reflection.cap.to_string().bright_white());
+                println!();
+                
+                // Mint Info
+                println!("{}", "⛏️  Mint Information".bold().bright_green());
+                println!("   {} {}", "Minted:".dimmed(), reflection.minted.to_string().bright_white());
+                println!("   {} {}", "Value Per Mint:".dimmed(), reflection.value_per_mint.to_string().bright_white());
+                
+                if reflection.cap > 0 {
+                    let progress = reflection.mint_progress();
+                    let bar_width = 40;
+                    let filled = (bar_width as f64 * progress / 100.0) as usize;
+                    let empty = bar_width - filled;
+                    
+                    let bar = format!(
+                        "[{}{}] {:.2}%",
+                        "█".repeat(filled).bright_green(),
+                        "░".repeat(empty).dimmed(),
+                        progress
+                    );
+                    println!("   {} {}", "Progress:".dimmed(), bar);
+                }
+                println!();
+                
+                // Data Info
+                println!("{}", "📦 Additional Data".bold().bright_green());
+                println!("   {} {} bytes", "Data Length:".dimmed(), reflection.data.len().to_string().bright_white());
+                if !reflection.data.is_empty() && reflection.data.len() <= 64 {
+                    println!("   {} {}", "Data (hex):".dimmed(), hex::encode(&reflection.data).bright_white());
+                } else if !reflection.data.is_empty() {
+                    println!("   {} {}...", "Data (hex):".dimmed(), hex::encode(&reflection.data[..32]).bright_white());
+                }
+                println!();
+                println!("{}", "═".repeat(80).bright_blue());
+            }
+            Ok(())
+        }
+        Alkanes::ReflectAlkaneRange { block, start_tx, end_tx, raw } => {
+            use alkanes_cli_common::alkanes::experimental_asm::reflect_alkane_range;
+            use colored::Colorize;
+            
+            println!("🔍 Reflecting alkanes in range {}:{}-{}...", 
+                block.to_string().bright_cyan(), 
+                start_tx.to_string().bright_cyan(), 
+                end_tx.to_string().bright_cyan()
+            );
+            
+            let reflections = reflect_alkane_range(system.provider(), block, start_tx, end_tx).await?;
+            
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&reflections)?);
+            } else {
+                println!("\n{}", "═".repeat(80).bright_blue());
+                println!("{} {} alkanes", "🪙 Found:".bold(), reflections.len().to_string().bright_green());
+                println!("{}", "═".repeat(80).bright_blue());
+                println!();
+                
+                if reflections.is_empty() {
+                    println!("{}", "   No alkanes found in this range.".dimmed());
+                } else {
+                    for (i, reflection) in reflections.iter().enumerate() {
+                        // Alkane header
+                        println!("{} {}", 
+                            format!("{}.", i + 1).dimmed(), 
+                            reflection.id_string().bright_cyan().bold()
+                        );
+                        
+                        // Basic info in compact format
+                        println!("   {} {} {}", 
+                            "📝".dimmed(),
+                            reflection.name_string().bright_white(),
+                            format!("({})", reflection.symbol_string()).bright_yellow()
+                        );
+                        
+                        // Supply info
+                        println!("   {} Supply: {}", 
+                            "💰".dimmed(),
+                            reflection.total_supply.to_string().bright_white()
+                        );
+                        
+                        // Mint progress
+                        if reflection.cap > 0 {
+                            let progress = reflection.mint_progress();
+                            let status = if progress >= 100.0 {
+                                format!("Fully Minted ({}/{})", reflection.minted, reflection.cap).bright_green()
+                            } else if progress >= 50.0 {
+                                format!("{}% minted ({}/{})", progress as u64, reflection.minted, reflection.cap).bright_yellow()
+                            } else {
+                                format!("{}% minted ({}/{})", progress as u64, reflection.minted, reflection.cap).bright_white()
+                            };
+                            println!("   {} {}", "⛏️ ".dimmed(), status);
+                        } else {
+                            println!("   {} No cap", "⛏️ ".dimmed());
+                        }
+                        
+                        // Value per mint
+                        if reflection.value_per_mint > 0 {
+                            println!("   {} {} per mint", 
+                                "💎".dimmed(),
+                                reflection.value_per_mint.to_string().bright_white()
+                            );
+                        }
+                        
+                        // Data
+                        if !reflection.data.is_empty() {
+                            println!("   {} {} bytes", 
+                                "📦".dimmed(),
+                                reflection.data.len().to_string().dimmed()
+                            );
+                        }
+                        
+                        println!();
+                    }
+                    
+                    // Summary statistics
+                    let total_supply: u128 = reflections.iter().map(|r| r.total_supply).sum();
+                    let total_minted: u128 = reflections.iter().map(|r| r.minted).sum();
+                    let fully_minted = reflections.iter().filter(|r| r.cap > 0 && r.minted >= r.cap).count();
+                    
+                    println!("{}", "─".repeat(80).dimmed());
+                    println!("{}", "📊 Summary Statistics".bold().bright_green());
+                    println!("   {} {}", "Total Alkanes:".dimmed(), reflections.len().to_string().bright_white());
+                    println!("   {} {}", "Total Supply:".dimmed(), total_supply.to_string().bright_white());
+                    println!("   {} {}", "Total Minted:".dimmed(), total_minted.to_string().bright_white());
+                    println!("   {} {}", "Fully Minted:".dimmed(), fully_minted.to_string().bright_white());
+                }
+                println!();
+                println!("{}", "═".repeat(80).bright_blue());
+            }
+            Ok(())
+        }
     }
 }
 

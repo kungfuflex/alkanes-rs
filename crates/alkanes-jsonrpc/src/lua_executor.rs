@@ -2,11 +2,31 @@ use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
 use crate::proxy::ProxyClient;
 use anyhow::{anyhow, Result};
 use mlua::prelude::*;
+use mlua::HookTriggers;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+
+/// Maximum allowed execution time for Lua scripts (5 minutes)
+/// 
+/// This timeout protects the server from:
+/// - Infinite loops in Lua code (e.g., `while true do end`)
+/// - Extremely long-running computations
+/// - Scripts that hang waiting for resources
+const LUA_EXECUTION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// Lua VM hook check interval (every 10,000 instructions)
+/// 
+/// This controls how often the Lua VM will check for cancellation/timeout.
+/// Setting this too low (e.g., 100) will cause significant performance overhead.
+/// Setting this too high (e.g., 1,000,000) will make cancellation less responsive.
+/// 
+/// 10,000 instructions is a good balance - responsive enough to cancel within
+/// milliseconds in most cases, but low enough overhead to not impact performance.
+const LUA_HOOK_INSTRUCTION_COUNT: u32 = 10_000;
 
 /// Script storage for saved Lua scripts
 #[derive(Clone)]
@@ -65,13 +85,15 @@ pub struct LuaError {
 struct RpcContext {
     proxy: Arc<ProxyClient>,
     call_count: Arc<Mutex<usize>>,
+    cancel_token: CancellationToken,
 }
 
 impl RpcContext {
-    fn new(proxy: Arc<ProxyClient>) -> Self {
+    fn new(proxy: Arc<ProxyClient>, cancel_token: CancellationToken) -> Self {
         Self {
             proxy,
             call_count: Arc::new(Mutex::new(0)),
+            cancel_token,
         }
     }
 
@@ -85,6 +107,11 @@ impl RpcContext {
     }
 
     async fn call_rpc(&self, method: &str, params: Vec<Value>) -> Result<Value> {
+        // Check if cancelled before making RPC call
+        if self.cancel_token.is_cancelled() {
+            return Err(anyhow!("Lua execution cancelled: connection closed"));
+        }
+        
         self.increment_calls().await;
         
         let request = JsonRpcRequest {
@@ -106,15 +133,54 @@ impl RpcContext {
 }
 
 /// Execute a Lua script with RPC access
+/// 
+/// The `cancel_token` parameter allows the caller to abort the Lua execution
+/// when the HTTP connection closes or the request is cancelled.
+/// 
+/// The script execution is also subject to a 5-minute timeout to prevent
+/// infinite loops or long-running synchronous blocking code from consuming
+/// server resources indefinitely.
+/// 
+/// This implementation uses Lua debug hooks to periodically check for cancellation
+/// and timeout, which allows us to interrupt even pure synchronous Lua code like
+/// infinite loops.
 pub async fn execute_lua_script(
     script: &str,
     args: Vec<Value>,
     proxy: &ProxyClient,
+    cancel_token: CancellationToken,
 ) -> Result<LuaExecutionResult> {
     let start = Instant::now();
-    let rpc_context = RpcContext::new(Arc::new(proxy.clone()));
+    let rpc_context = RpcContext::new(Arc::new(proxy.clone()), cancel_token.clone());
 
     let lua = Lua::new();
+
+    // Set up a Lua VM hook that checks for cancellation and timeout
+    // This hook will be called every LUA_HOOK_INSTRUCTION_COUNT instructions
+    let hook_cancel_token = cancel_token.clone();
+    let hook_start = start;
+    
+    lua.set_hook(
+        HookTriggers::new().every_nth_instruction(LUA_HOOK_INSTRUCTION_COUNT),
+        move |_lua, _debug| {
+            // Check if cancelled
+            if hook_cancel_token.is_cancelled() {
+                return Err(mlua::Error::RuntimeError(
+                    "Lua execution cancelled: connection closed".to_string()
+                ));
+            }
+            
+            // Check if timeout exceeded (5 minutes)
+            if hook_start.elapsed() > LUA_EXECUTION_TIMEOUT {
+                return Err(mlua::Error::RuntimeError(
+                    "Lua execution timeout: exceeded 5 minute limit".to_string()
+                ));
+            }
+            
+            // For Lua 5.4, we return Ok(()) to continue execution
+            Ok(())
+        }
+    );
 
     // Create flat _RPC table with all methods
     let rpc_table = lua.create_table()?;
@@ -133,8 +199,31 @@ pub async fn execute_lua_script(
     }
     lua.globals().set("args", args_table)?;
 
-    // Execute the script (async)
-    let result_value: LuaValue = lua.load(script).eval_async().await?;
+    // Execute the script with cancellation and timeout support
+    // The hook will interrupt even pure synchronous Lua code
+    let lua_task = async {
+        let result_value: LuaValue = lua.load(script).eval_async().await?;
+        Ok::<LuaValue, mlua::Error>(result_value)
+    };
+
+    // Race between Lua execution, cancellation, and timeout
+    // The hook provides the primary interruption mechanism, but we also have
+    // the tokio::select! as a backup safety mechanism
+    let result_value = tokio::select! {
+        result = lua_task => {
+            result.map_err(|e| anyhow!("Lua execution error: {}", e))?
+        }
+        _ = cancel_token.cancelled() => {
+            return Err(anyhow!("Lua execution cancelled: connection closed"));
+        }
+        _ = tokio::time::sleep(LUA_EXECUTION_TIMEOUT) => {
+            log::warn!("Lua execution timeout after {} seconds (backup timer)", LUA_EXECUTION_TIMEOUT.as_secs());
+            return Err(anyhow!("Lua execution timeout: exceeded 5 minute limit"));
+        }
+    };
+
+    // Remove the hook to clean up
+    lua.remove_hook();
 
     // Convert result to JSON
     let result = lua_to_json(&result_value, &lua)?;

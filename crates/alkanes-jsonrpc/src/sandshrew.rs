@@ -4,6 +4,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BalanceRequest {
@@ -54,11 +55,12 @@ pub async fn handle_sandshrew_method(
     request_id: &Value,
     proxy: &ProxyClient,
     script_storage: Option<&crate::lua_executor::ScriptStorage>,
+    cancel_token: CancellationToken,
 ) -> Result<JsonRpcResponse> {
     match method {
         "multicall" => handle_multicall(params, request_id, proxy).await,
         "balances" => handle_balances(params, request_id, proxy).await,
-        "evalscript" => handle_evalscript(params, request_id, proxy).await,
+        "evalscript" => handle_evalscript(params, request_id, proxy, cancel_token).await,
         "savescript" => {
             if let Some(storage) = script_storage {
                 handle_savescript(params, request_id, storage).await
@@ -72,7 +74,7 @@ pub async fn handle_sandshrew_method(
         }
         "evalsaved" => {
             if let Some(storage) = script_storage {
-                handle_evalsaved(params, request_id, proxy, storage).await
+                handle_evalsaved(params, request_id, proxy, storage, cancel_token).await
             } else {
                 Ok(JsonRpcResponse::error(
                     INTERNAL_ERROR,
@@ -467,6 +469,7 @@ async fn handle_evalscript(
     params: &[Value],
     request_id: &Value,
     proxy: &ProxyClient,
+    cancel_token: CancellationToken,
 ) -> Result<JsonRpcResponse> {
     if params.is_empty() {
         return Ok(JsonRpcResponse::error(
@@ -482,7 +485,7 @@ async fn handle_evalscript(
 
     let args = params[1..].to_vec();
 
-    let result = crate::lua_executor::execute_lua_script(script, args, proxy).await?;
+    let result = crate::lua_executor::execute_lua_script(script, args, proxy, cancel_token).await?;
 
     Ok(JsonRpcResponse::success(
         serde_json::to_value(result)?,
@@ -520,6 +523,7 @@ async fn handle_evalsaved(
     request_id: &Value,
     proxy: &ProxyClient,
     storage: &crate::lua_executor::ScriptStorage,
+    cancel_token: CancellationToken,
 ) -> Result<JsonRpcResponse> {
     if params.is_empty() {
         return Ok(JsonRpcResponse::error(
@@ -539,7 +543,7 @@ async fn handle_evalsaved(
 
     let args = params[1..].to_vec();
 
-    let result = crate::lua_executor::execute_lua_script(&script, args, proxy).await?;
+    let result = crate::lua_executor::execute_lua_script(&script, args, proxy, cancel_token).await?;
 
     Ok(JsonRpcResponse::success(
         serde_json::to_value(result)?,
