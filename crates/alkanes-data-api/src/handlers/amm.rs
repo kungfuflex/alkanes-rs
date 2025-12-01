@@ -76,6 +76,36 @@ pub async fn get_trades(
     };
 
     let limit = req.limit.min(1000);
+    
+    // Try new trace transform tables first
+    if let Ok(trace_trades) = state.amm_query.get_pool_trades(pool_block, pool_tx, limit).await {
+        if !trace_trades.is_empty() {
+            log::info!("Using trace transform trades for pool: {}:{}", pool_block, pool_tx);
+            let trades: Vec<TradeInfo> = trace_trades.into_iter().map(|t| TradeInfo {
+                txid: t.txid,
+                vout: t.vout,
+                token0: t.token0_id,
+                token1: t.token1_id,
+                amount0_in: t.amount0_in.to_string(),
+                amount1_in: t.amount1_in.to_string(),
+                amount0_out: t.amount0_out.to_string(),
+                amount1_out: t.amount1_out.to_string(),
+                reserve0_after: t.reserve0_after.to_string(),
+                reserve1_after: t.reserve1_after.to_string(),
+                timestamp: t.timestamp.to_rfc3339(),
+                block_height: t.block_height,
+            }).collect();
+            
+            return HttpResponse::Ok().json(GetTradesResponse {
+                ok: true,
+                pool: req.pool.clone(),
+                trades,
+            });
+        }
+    }
+    
+    // Fall back to legacy AmmTrade table
+    log::info!("Using legacy trades for pool: {}:{}", pool_block, pool_tx);
 
     let query = if req.start_time.is_some() || req.end_time.is_some() {
         let start = req.start_time

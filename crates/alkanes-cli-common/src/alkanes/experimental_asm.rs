@@ -34,6 +34,10 @@ pub struct AlkaneReflection {
     pub value_per_mint: Option<u128>,
     /// Additional data from opcode 1000 (optional, as hex)
     pub data: Option<String>,
+    /// Premine amount (derived from initial total_supply or contract-specific, optional)
+    pub premine: Option<u128>,
+    /// Decimals (always 8 for alkanes, included for consistency)
+    pub decimals: u8,
 }
 
 /// Configuration for parallel pool fetching
@@ -347,6 +351,8 @@ pub async fn reflect_alkane(
         minted: None,
         value_per_mint: None,
         data: None,
+        premine: None,
+        decimals: 8, // Always 8 for alkanes
     };
 
     for (opcode, result) in results {
@@ -394,6 +400,24 @@ pub async fn reflect_alkane(
                     }
                 }
             }
+        }
+    }
+
+    // Derive premine from total_supply if available
+    // For genesis alkanes, premine typically equals initial total_supply
+    // For fair-launch tokens, premine is 0
+    if let Some(total_supply) = reflection.total_supply {
+        if let Some(minted) = reflection.minted {
+            // If minted is 0 and total_supply > 0, it's likely a premine
+            if minted == 0 && total_supply > 0 {
+                reflection.premine = Some(total_supply);
+            } else if total_supply > minted {
+                // Premine is the difference between total_supply and minted
+                reflection.premine = Some(total_supply - minted);
+            }
+        } else if total_supply > 0 {
+            // If we don't have minted data but have total_supply, assume it's premine
+            reflection.premine = Some(total_supply);
         }
     }
 

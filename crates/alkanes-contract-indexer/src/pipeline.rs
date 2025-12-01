@@ -19,6 +19,8 @@ use chrono::{TimeZone, Utc};
 use chrono::DateTime;
 use std::time::Instant;
 use crate::db::blocks::upsert_processed_block;
+use crate::transform_integration::{TraceTransformService, convert_trace_event, convert_transaction_context};
+use alkanes_trace_transform::types::VoutInfo;
 
 #[derive(Clone, Debug)]
 pub struct BlockContext {
@@ -126,6 +128,63 @@ impl Pipeline {
 
 			let elapsed_ms = t0.elapsed().as_millis() as u64;
 			info!(height = ctx.height, op_return_txs = count, elapsed_ms, "decode_and_trace_for_block: done");
+
+			// Process traces through transform pipeline
+			let transform_t0 = std::time::Instant::now();
+			let mut transform_service = TraceTransformService::new(self.pool.clone());
+			for r in &results {
+				if !r.trace_events.is_empty() {
+					// Convert transaction info to context
+					let tx_info = txs.iter().find(|tx| {
+						tx.get("txid").and_then(|v| v.as_str()).unwrap_or("") == r.transaction_id
+					});
+					
+					if let Some(tx) = tx_info {
+						let timestamp = tx.get("status")
+							.and_then(|s| s.get("block_time"))
+							.and_then(|bt| bt.as_i64())
+							.and_then(|bt| Utc.timestamp_opt(bt, 0).single())
+							.unwrap_or_else(|| Utc::now());
+						
+						let vouts: Vec<VoutInfo> = tx.get("vout")
+							.and_then(|v| v.as_array())
+							.map(|arr| {
+								arr.iter().enumerate().map(|(i, v)| {
+									VoutInfo {
+										index: i as i32,
+										address: v.get("scriptpubkey_address").and_then(|a| a.as_str()).map(|s| s.to_string()),
+										script_pubkey: v.get("scriptpubkey").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+										value: v.get("value").and_then(|val| val.as_u64()).unwrap_or(0),
+									}
+								}).collect()
+							})
+							.unwrap_or_default();
+						
+						let context = convert_transaction_context(
+							r.transaction_id.clone(),
+							ctx.height as i32,
+							timestamp,
+							vouts,
+						);
+						
+						let traces: Vec<alkanes_trace_transform::types::TraceEvent> = r.trace_events.iter().map(|e| {
+							convert_trace_event(
+								e.event_type.clone(),
+								e.vout,
+								e.alkane_address_block.clone(),
+								e.alkane_address_tx.clone(),
+								e.data.clone(),
+							)
+						}).collect();
+						
+						if let Err(e) = transform_service.process_transaction(context, traces).await {
+							warn!(txid = %r.transaction_id, error = ?e, "transform processing failed");
+						}
+					}
+				}
+			}
+			let transform_elapsed_ms = transform_t0.elapsed().as_millis() as u64;
+			info!(height = ctx.height, elapsed_ms = transform_elapsed_ms, "trace transform processing: done");
 
 			// Extract and index balances from trace events
 			let balance_t0 = std::time::Instant::now();

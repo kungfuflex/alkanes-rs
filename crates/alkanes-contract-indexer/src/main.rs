@@ -12,6 +12,7 @@ mod pipeline;
 mod poller;
 mod provider;
 mod helpers;
+mod transform_integration;
 use crate::db::blocks::ensure_processed_blocks_table;
 
 #[tokio::main]
@@ -33,6 +34,12 @@ async fn main() -> Result<()> {
 
     // Ensure ProcessedBlocks exists (defensive)
     ensure_processed_blocks_table(&pool).await?;
+    
+    // Apply trace transform schema
+    info!("Applying trace transform schema...");
+    let transform_service = transform_integration::TraceTransformService::new(pool.clone());
+    transform_service.apply_schema().await?;
+    info!("Trace transform schema applied");
 
     // Provider
     let provider = provider::build_provider(

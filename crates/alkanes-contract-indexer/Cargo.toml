@@ -30,6 +30,7 @@ prost = { workspace = true }
 alkanes-support = { path = "../alkanes-support" }
 alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
 alkanes-cli-sys = { path = "../alkanes-cli-sys" }
+alkanes-trace-transform = { path = "../alkanes-trace-transform", features = ["postgres"] }
 
 [[bin]]
 name = "dbctl"
