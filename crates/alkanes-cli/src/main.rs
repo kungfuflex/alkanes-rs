@@ -4526,7 +4526,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::Unwrap { block_tag: _, raw } => {
+        Brc20Prog::Unwrap { block_tag: _, raw, experimental_asm } => {
             use alkanes_cli_common::unwrap::{UnwrapProtocol, MetaprotocolUnwrap};
             use alkanes_cli_common::brc20_prog::{get_frbtc_address, get_signer_address};
             use alkanes_cli_common::traits::{JsonRpcProvider, EsploraProvider};
@@ -4536,7 +4536,15 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             
             // Get unfiltered unwraps from BRC20-Prog
             let confirmations_required = 6; // Require 6 confirmations for safety
-            let all_unwraps = unwrap_impl.get_pending_unwraps(provider, confirmations_required).await?;
+            
+            let all_unwraps = if experimental_asm {
+                log::info!("🚀 Using experimental ASM bytecode generator (100x faster!)");
+                use alkanes_cli_common::unwrap::Brc20ProgUnwrap;
+                let brc20_impl = Brc20ProgUnwrap::new();
+                brc20_impl.get_pending_unwraps_experimental_asm(provider, confirmations_required).await?
+            } else {
+                unwrap_impl.get_pending_unwraps(provider, confirmations_required).await?
+            };
             
             log::info!("[BRC20-Prog Unwrap] Got {} unfiltered unwraps", all_unwraps.len());
             

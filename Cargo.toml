@@ -100,3 +100,7 @@ getrandom = "0.2"
 env_logger = "0.11"
 protobuf-json-mapping = "3.4"
 pbkdf2 = "0.12"
+
+# Huff-rs for EVM bytecode generation (experimental features)
+huff_utils = { git = "https://github.com/huff-language/huff-rs", branch = "main" }
+huff_codegen = { git = "https://github.com/huff-language/huff-rs", branch = "main" }

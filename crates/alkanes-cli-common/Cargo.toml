@@ -85,6 +85,10 @@ leb128 = { version = "0.2.5", default-features = false }
 alloy-sol-types = { version = "0.7", default-features = false }
 alloy-primitives = { version = "0.7", default-features = false }
 
+# Huff-rs for EVM bytecode generation (experimental features)
+huff_utils = { workspace = true, optional = true }
+huff_codegen = { workspace = true, optional = true }
+
 # Alkanes-rs crates
 alkanes-support = { workspace = true }
 protorune-support = { workspace = true }
@@ -125,6 +129,7 @@ web-compat = ["spin", "std"]
 worker = []
 frost = ["frost-secp256k1-tr", "frost-core", "elliptic-curve", "ff"]
 wasip2 = []  # No std, no tokio, no reqwest, no futures, no async-trait - only core types and logic
+experimental-asm = ["huff_utils", "huff_codegen"]  # Experimental EVM bytecode assembler features
 
 test-utils = []
 

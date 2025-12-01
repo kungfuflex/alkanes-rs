@@ -140,6 +140,7 @@ pub enum AlkanesError {
     UncompressedPublicKey,
     Other(String),
     Protobuf(String),
+    CodegenError(String),  // For Huff bytecode generation errors
 }
 
 impl core::fmt::Display for AlkanesError {
@@ -175,6 +176,7 @@ impl core::fmt::Display for AlkanesError {
             AlkanesError::UncompressedPublicKey => write!(f, "Uncompressed public key error"),
             AlkanesError::Other(msg) => write!(f, "Other error: {msg}"),
             AlkanesError::Protobuf(msg) => write!(f, "Protobuf error: {msg}"),
+            AlkanesError::CodegenError(msg) => write!(f, "Codegen error: {msg}"),
         }
     }
 }

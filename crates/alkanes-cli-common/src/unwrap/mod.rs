@@ -13,8 +13,9 @@ use async_trait::async_trait;
 pub mod alkanes;
 pub mod brc20_prog;
 
-// Re-export helper functions for external use
-pub use brc20_prog::{script_pubkey_to_address, find_oldest_546_sat_utxo, payment_to_pending_unwrap};
+// Re-export implementations and helper functions for external use
+pub use brc20_prog::{Brc20ProgUnwrap, script_pubkey_to_address, find_oldest_546_sat_utxo, payment_to_pending_unwrap};
+pub use alkanes::AlkanesUnwrap;
 
 /// Trait for fetching pending unwraps from a metaprotocol implementation
 #[async_trait(?Send)]

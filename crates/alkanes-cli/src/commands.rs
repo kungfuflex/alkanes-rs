@@ -828,6 +828,9 @@ pub enum Brc20Prog {
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,
+        /// Use experimental EVM bytecode assembler for batch fetching (100x faster!)
+        #[arg(long)]
+        experimental_asm: bool,
     },
 }
 
@@ -1624,6 +1627,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 brc20_prog_rpc_url: args.brc20_prog_rpc_url.clone(),
                 subfrost_api_key: args.subfrost_api_key.clone(),
                 timeout_seconds: 600,
+                data_api_url: None, // Not used in CLI context
             },
             magic: None,
             log_level: "info".to_string(),
