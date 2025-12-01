@@ -18,7 +18,7 @@ use huff_codegen::Codegen;
 
 #[cfg(feature = "experimental-asm")]
 use huff_utils::{
-    ast::{AstSpan, Contract, MacroDefinition, Statement, StatementType},
+    ast::{AstSpan, Contract, MacroDefinition, Statement, StatementType, Label},
     evm::Opcode,
     evm_version::EVMVersion,
     bytes_util::str_to_bytes32,
@@ -71,23 +71,40 @@ fn build_payment_fetcher_ast(
     let mut statements = Vec::new();
 
     // Step 1: Call getPaymentsLength() on FrBTC
-    // Function selector: 0x8b25f90e (getPaymentsLength())
     statements.extend(build_get_payments_length_call(frbtc_address)?);
 
     // Step 2: Initialize loop (length - 1 -> idx)
     statements.push(push_opcode(Opcode::Push1));
-    statements.push(push_literal("01")?);  // 1
-    statements.push(push_opcode(Opcode::Sub));  // length - 1
+    statements.push(push_literal("01")?);  
+    statements.push(push_opcode(Opcode::Sub));  // [length - 1]
 
-    // Step 3: Initialize result array offset in memory (start at 0x80)
+    // Step 3: Initialize result offset at 0x80
     statements.push(push_opcode(Opcode::Push1));
-    statements.push(push_literal("80")?);  // result_offset = 0x80
+    statements.push(push_literal("80")?);  // [result_offset, idx]
 
-    // Step 4: Loop through payments
-    statements.extend(build_payment_loop(frbtc_address, cutoff_height, oldest_utxo_height)?);
+    // Step 4: Create main loop label
+    let loop_statements = build_payment_loop(frbtc_address, cutoff_height, oldest_utxo_height)?;
+    let loop_label = Label {
+        name: "loop_start".to_string(),
+        inner: loop_statements,
+        span: AstSpan(vec![]),
+    };
+    statements.push(Statement {
+        ty: StatementType::Label(loop_label),
+        span: AstSpan(vec![]),
+    });
 
-    // Step 5: Return the result
-    statements.extend(build_return_statements()?);
+    // Step 5: Create finish label with return logic
+    let return_statements = build_return_statements()?;
+    let finish_label = Label {
+        name: "finish".to_string(),
+        inner: return_statements,
+        span: AstSpan(vec![]),
+    };
+    statements.push(Statement {
+        ty: StatementType::Label(finish_label),
+        span: AstSpan(vec![]),
+    });
 
     Ok(Contract {
         macros: vec![MacroDefinition {
@@ -152,34 +169,59 @@ fn build_get_payments_length_call(frbtc_address: &str) -> Result<Vec<Statement>>
     Ok(statements)
 }
 
-/// Build the payment loop
-/// Stack at entry: [idx, result_offset]
+/// Build the payment loop using Huff labels for jump resolution
+/// Stack at entry: [result_offset, idx]
 #[cfg(feature = "experimental-asm")]
 fn build_payment_loop(
+    _frbtc_address: &str,
+    _cutoff_height: u64,
+    _oldest_utxo_height: u64,
+) -> Result<Vec<Statement>> {
+    let mut loop_body = Vec::new();
+
+    // SIMPLIFIED VERSION: Just return immediately for now to test basic infrastructure
+    // TODO: Implement full loop logic with proper label resolution
+    
+    // Check if idx is 0 (break loop)
+    // Stack: [result_offset, idx]
+    loop_body.push(push_opcode(Opcode::Dup2));     // [idx, result_offset, idx]
+    loop_body.push(push_opcode(Opcode::Iszero));   // [idx==0, result_offset, idx]
+    loop_body.push(Statement {
+        ty: StatementType::LabelCall("finish".to_string()),
+        span: AstSpan(vec![]),
+    });
+    loop_body.push(push_opcode(Opcode::Jumpi));
+    
+    // For now, just immediately jump to finish (skip loop)
+    loop_body.push(Statement {
+        ty: StatementType::LabelCall("finish".to_string()),
+        span: AstSpan(vec![]),
+    });
+    loop_body.push(push_opcode(Opcode::Jump));
+    
+    Ok(loop_body)
+}
+
+// OLD IMPLEMENTATION - keeping for reference when we fix labels
+#[cfg(feature = "experimental-asm")]
+fn _build_payment_loop_full(
     frbtc_address: &str,
     cutoff_height: u64,
     oldest_utxo_height: u64,
 ) -> Result<Vec<Statement>> {
-    let mut statements = Vec::new();
+    let mut loop_body = Vec::new();
 
-    // LOOP_START (JUMPDEST)
-    // Stack: [result_offset, idx]
-    statements.push(push_opcode(Opcode::Jumpdest));  // loop_start label
+    // Check if idx is 0 (break loop)
+    loop_body.push(push_opcode(Opcode::Dup2));
+    loop_body.push(push_opcode(Opcode::Iszero));
+    loop_body.push(Statement {
+        ty: StatementType::LabelCall("finish".to_string()),
+        span: AstSpan(vec![]),
+    });
+    loop_body.push(push_opcode(Opcode::Jumpi));
 
-    // Check if idx is 0 (no more payments to check)
-    statements.push(push_opcode(Opcode::Dup2));  // [idx, result_offset, idx]
-    statements.push(push_opcode(Opcode::Iszero)); // [idx==0, result_offset, idx]
-    // If idx==0, jump to finish (we'll calculate offset later)
-    statements.push(push_opcode(Opcode::Push2));
-    statements.push(push_literal("ffff")?);  // placeholder for FINISH address
-    statements.push(push_opcode(Opcode::Jumpi));
-
-    // Call payments(idx) via STATICCALL
-    // Stack: [result_offset, idx]
-    
     // Prepare calldata: selector + idx
-    // Store selector at 0x00
-    statements.push(push_opcode(Opcode::Push4));
+    loop_body.push(push_opcode(Opcode::Push4));
     statements.push(push_literal("87d81789")?);  // payments(uint256) selector
     statements.push(push_opcode(Opcode::Push1));
     statements.push(push_literal("00")?);
