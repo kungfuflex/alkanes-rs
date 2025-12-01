@@ -37,29 +37,40 @@ pub async fn get_address_balances(
 ) -> HttpResponse {
     let pool = &state.db_pool;
     
-    // Query aggregate balances with runtime query
-    let balances_result = sqlx::query_as::<_, (i32, i64, String)>(
-        r#"select "alkaneIdBlock", "alkaneIdTx", "amount" from "AlkaneBalance" where "address" = $1"#
-    )
-    .bind(&req.address)
-    .fetch_all(pool)
-    .await;
+    // Try new trace transform tables first, fall back to old tables
+    let balances: HashMap<String, String> = match state.balance_query.get_address_balances(&req.address).await {
+        Ok(trace_balances) if !trace_balances.is_empty() => {
+            log::info!("Using trace transform balances for address: {}", req.address);
+            trace_balances.into_iter()
+                .map(|b| (b.alkane_id, b.amount.to_string()))
+                .collect()
+        },
+        Ok(_) | Err(_) => {
+            // Fall back to old AlkaneBalance table
+            log::info!("Using legacy balances for address: {}", req.address);
+            let balances_result = sqlx::query_as::<_, (i32, i64, String)>(
+                r#"select "alkaneIdBlock", "alkaneIdTx", "amount" from "AlkaneBalance" where "address" = $1"#
+            )
+            .bind(&req.address)
+            .fetch_all(pool)
+            .await;
 
-    let balances_rows = match balances_result {
-        Ok(rows) => rows,
-        Err(e) => {
-            log::error!("Failed to fetch address balances: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "ok": false,
-                "error": "internal_error"
-            }));
+            match balances_result {
+                Ok(rows) => {
+                    rows.into_iter()
+                        .map(|(block, tx, amount)| (format!("{}:{}", block, tx), amount))
+                        .collect()
+                },
+                Err(e) => {
+                    log::error!("Failed to fetch address balances: {}", e);
+                    return HttpResponse::InternalServerError().json(serde_json::json!({
+                        "ok": false,
+                        "error": "internal_error"
+                    }));
+                }
+            }
         }
     };
-
-    let mut balances = HashMap::new();
-    for (block, tx, amount) in balances_rows {
-        balances.insert(format!("{}:{}", block, tx), amount);
-    }
 
     let outpoints = if req.include_outpoints {
         let utxo_result = sqlx::query_as::<_, (String, i32, i32, i64, String)>(

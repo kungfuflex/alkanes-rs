@@ -7,5 +7,6 @@ pub mod coordinator;
 pub mod pipeline;
 pub mod poller;
 pub mod provider;
+pub mod transform_integration;
 
 

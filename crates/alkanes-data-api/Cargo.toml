@@ -59,6 +59,7 @@ rand = { workspace = true }
 # Alkanes dependencies
 alkanes-support = { workspace = true }
 alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
+alkanes-trace-transform = { path = "../alkanes-trace-transform", features = ["postgres"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

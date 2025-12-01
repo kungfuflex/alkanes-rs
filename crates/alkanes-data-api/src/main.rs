@@ -27,6 +27,10 @@ async fn main() -> Result<()> {
     let redis_client = services::redis::create_client(&config.redis_url)?;
     let price_service = services::price::PriceService::new(&config.infura_endpoint)?;
     let alkanes_rpc = services::alkanes_rpc::AlkanesRpcClient::new(&config)?;
+    
+    // Initialize trace transform query services
+    let balance_query = services::query_service::BalanceQueryService::new(db_pool.clone());
+    let amm_query = services::query_service::AmmQueryService::new(db_pool.clone());
 
     let app_state = web::Data::new(services::AppState {
         config: config.clone(),
@@ -34,6 +38,8 @@ async fn main() -> Result<()> {
         redis_client,
         price_service,
         alkanes_rpc,
+        balance_query,
+        amm_query,
     });
 
     HttpServer::new(move || {
