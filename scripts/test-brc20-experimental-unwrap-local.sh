@@ -1,9 +1,0 @@
-#!/bin/bash
-# Test script for experimental ASM bytecode using local anvil
-
-/data/alkanes-rs/target/release/alkanes-cli \
-    -p signet \
-    --sandshrew-rpc-url https://signet.subfrost.io/v4/subfrost \
-    --frbtc-address 0x5FbDB2315678afecb367f032d93F642f64180aa3 \
-    --brc20-prog-rpc-url http://localhost:8545 \
-    brc20-prog unwrap --experimental-asm
