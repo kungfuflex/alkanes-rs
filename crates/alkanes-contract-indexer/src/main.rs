@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     // Provider
     let provider = provider::build_provider(
         cfg.bitcoin_rpc_url.clone(),
-        cfg.sandshrew_rpc_url.clone(),
+        cfg.jsonrpc_url.clone(),
         cfg.esplora_url.clone(),
         cfg.network_provider.clone(),
     )
@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
     // Spawn catch-up coordinator (sequential processing until tip)
     let coord_provider = provider::build_provider(
         cfg.bitcoin_rpc_url.clone(),
-        cfg.sandshrew_rpc_url.clone(),
+        cfg.jsonrpc_url.clone(),
         cfg.esplora_url.clone(),
         cfg.network_provider.clone(),
     )

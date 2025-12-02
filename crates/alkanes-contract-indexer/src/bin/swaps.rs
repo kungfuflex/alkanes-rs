@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     let pool = alkanes_contract_indexer::db::connect(&cfg.database_url, 5).await?;
     let provider = alkanes_contract_indexer::provider::build_provider(
         cfg.bitcoin_rpc_url.clone(),
-        cfg.sandshrew_rpc_url.clone(),
+        cfg.jsonrpc_url.clone(),
         cfg.esplora_url.clone(),
         cfg.network_provider.clone(),
     ).await?;

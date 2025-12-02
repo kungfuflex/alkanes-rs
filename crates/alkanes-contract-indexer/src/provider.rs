@@ -5,16 +5,15 @@ use alkanes_cli_common::network::RpcConfig;
 
 pub async fn build_provider(
     bitcoin_rpc_url: Option<String>,
-    sandshrew_rpc_url: String,
+    jsonrpc_url: String,
     esplora_url: Option<String>,
     network_provider: String,
 ) -> Result<ConcreteProvider> {
     // Build Args using the RpcConfig
     let rpc_config = RpcConfig {
-        sandshrew_rpc_url: Some(sandshrew_rpc_url.clone()),
-        jsonrpc_url: Some(sandshrew_rpc_url.clone()),
+        jsonrpc_url: Some(jsonrpc_url.clone()),
         bitcoin_rpc_url,
-        metashrew_rpc_url: Some(sandshrew_rpc_url.clone()),
+        metashrew_rpc_url: Some(jsonrpc_url.clone()),
         esplora_url,
         ord_url: None,
         titan_api_url: None,
@@ -24,7 +23,7 @@ pub async fn build_provider(
         provider: network_provider,
         timeout_seconds: 600,
     };
-    
+
     let args = Args {
         rpc_config,
         magic: None,
@@ -40,7 +39,7 @@ pub async fn build_provider(
             command: alkanes_cli_common::commands::MetashrewCommands::Height,
         },
     };
-    
+
     let provider = ConcreteProvider::new(&args).await?;
     Ok(provider)
 }

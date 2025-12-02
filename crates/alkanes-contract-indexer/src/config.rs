@@ -4,7 +4,7 @@ use std::env;
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub database_url: String,
-    pub sandshrew_rpc_url: String,
+    pub jsonrpc_url: String,
     pub bitcoin_rpc_url: Option<String>,
     pub esplora_url: Option<String>,
     pub network_provider: String,
@@ -17,7 +17,9 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
         let database_url = env::var("DATABASE_URL")?;
-        let sandshrew_rpc_url = env::var("SANDSHREW_RPC_URL")
+        // Support both JSONRPC_URL and legacy SANDSHREW_RPC_URL
+        let jsonrpc_url = env::var("JSONRPC_URL")
+            .or_else(|_| env::var("SANDSHREW_RPC_URL"))
             .unwrap_or_else(|_| "http://localhost:18888".to_string());
         let bitcoin_rpc_url = env::var("BITCOIN_RPC_URL").ok();
         let esplora_url = env::var("ESPLORA_URL").ok();
@@ -32,7 +34,7 @@ impl AppConfig {
 
         Ok(Self {
             database_url,
-            sandshrew_rpc_url,
+            jsonrpc_url,
             bitcoin_rpc_url,
             esplora_url,
             network_provider,

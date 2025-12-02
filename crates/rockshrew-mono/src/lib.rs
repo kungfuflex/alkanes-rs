@@ -673,18 +673,8 @@ pub async fn run_prod(args: Args) -> Result<()> {
         let mut config_engine = wasmtime::Config::default();
         config_engine.async_support(true);
         let engine = wasmtime::Engine::new(&config_engine)?;
-        
-        // Setup WASM logging interceptor with enhanced formatting
-        let logging_interceptor: Box<dyn FnMut(String) + Send> = Box::new(|msg: String| {
-            // Split multi-line messages and prefix each line with [WASM]
-            for line in msg.lines() {
-                if !line.is_empty() {
-                    info!("🔮 [WASM] {}", line);
-                }
-            }
-        });
-        
-        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter, engine, Some(logging_interceptor)).await?;
+
+        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter, engine, None).await?;
         let storage_adapter = match runtime.context.lock().await.db {
             ForkAdapter::Modern(ref modern_adapter) => {
                 RocksDBStorageAdapter::new(modern_adapter.db.clone())
@@ -701,18 +691,8 @@ pub async fn run_prod(args: Args) -> Result<()> {
         let mut config_engine = wasmtime::Config::default();
         config_engine.async_support(true);
         let engine = wasmtime::Engine::new(&config_engine)?;
-        
-        // Setup WASM logging interceptor with enhanced formatting
-        let logging_interceptor: Box<dyn FnMut(String) + Send> = Box::new(|msg: String| {
-            // Split multi-line messages and prefix each line with [WASM]
-            for line in msg.lines() {
-                if !line.is_empty() {
-                    info!("🔮 [WASM] {}", line);
-                }
-            }
-        });
-        
-        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter.clone(), engine, Some(logging_interceptor)).await?;
+
+        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter.clone(), engine, None).await?;
         let storage_adapter = RocksDBStorageAdapter::new(adapter.db.clone());
         let runtime_adapter = MetashrewRuntimeAdapter::new(Arc::new(runtime));
         run_generic(args, runtime_adapter, storage_adapter).await

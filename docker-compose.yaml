@@ -176,7 +176,7 @@ services:
       RUST_LOG: info,alkanes_contract_indexer::transform_integration=debug,alkanes_contract_indexer::pipeline=debug
       DATABASE_URL: postgres://alkanes_user:alkanes_pass@postgres:5432/alkanes_indexer
       REDIS_URL: redis://redis:6379/
-      SANDSHREW_RPC_URL: http://jsonrpc:18888
+      JSONRPC_URL: http://jsonrpc:18888
       NETWORK: regtest
       POLL_INTERVAL_MS: 2000
       START_HEIGHT: 0
@@ -208,7 +208,7 @@ services:
     environment:
       DATABASE_URL: postgres://alkanes_user:alkanes_pass@postgres:5432/alkanes_indexer
       REDIS_URL: redis://redis:6379
-      SANDSHREW_URL: http://jsonrpc:18888
+      JSONRPC_URL: http://jsonrpc:18888
       NETWORK_ENV: regtest
       ALKANE_FACTORY_ID: "4:65522"
       INFURA_ENDPOINT: https://mainnet.infura.io/v3/099fc58e0de9451d80b18d7c74caa7c1
