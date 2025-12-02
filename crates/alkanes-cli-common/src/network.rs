@@ -167,10 +167,10 @@ impl RpcConfig {
     pub fn using_titan_api(&self) -> bool {
         self.titan_api_url.is_some()
     }
-    
-    /// Get the effective JSON-RPC URL (prefer jsonrpc_url, fallback to sandshrew_rpc_url for backward compatibility)
+
+    /// Get the effective JSON-RPC URL (jsonrpc_url or default based on provider)
     fn get_effective_jsonrpc_url(&self) -> Option<String> {
-        self.jsonrpc_url.clone().or_else(|| self.sandshrew_rpc_url.clone())
+        self.jsonrpc_url.clone()
     }
     
     /// Get effective Subfrost API key (from flag or environment variable)
@@ -184,7 +184,6 @@ impl RpcConfig {
     fn get_default_jsonrpc_url(&self) -> String {
         match self.provider.as_str() {
             "mainnet" => "https://mainnet.subfrost.io/v4/jsonrpc".to_string(),
-            "testnet" => "https://testnet.sandshrew.io/v2/lasereyes".to_string(),
             "signet" => "https://signet.subfrost.io/v4/jsonrpc".to_string(),
             "subfrost-regtest" => "https://regtest.subfrost.io/v4/jsonrpc".to_string(),
             _ => "http://localhost:18888".to_string(), // regtest
