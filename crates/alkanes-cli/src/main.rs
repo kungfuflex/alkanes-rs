@@ -236,10 +236,11 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 }
             }
         }
-        DataApiCommand::GetSwapHistory { factory_id, limit, offset, raw, raw_http } => {
+        DataApiCommand::GetSwapHistory { pool_id, limit, offset, raw, raw_http } => {
             use alkanes_cli_common::dataapi::commands::parse_alkane_id;
             
-            let pool_alkane_id = parse_alkane_id(&factory_id)?;
+            let pool_id_str = pool_id.ok_or_else(|| anyhow::anyhow!("--pool-id is required. Specify a pool address like 2:3"))?;
+            let pool_alkane_id = parse_alkane_id(&pool_id_str)?;
             
             if raw_http {
                 let body = json!({

@@ -179,7 +179,7 @@ services:
       SANDSHREW_RPC_URL: http://jsonrpc:18888
       NETWORK: regtest
       POLL_INTERVAL_MS: 2000
-      START_HEIGHT: 400
+      START_HEIGHT: 0
       # Factory constants matching deploy-oyl-amm.sh
       # AMM_FACTORY_ID=65522 (0xfff2) from deploy-oyl-amm.sh
       FACTORY_BLOCK_ID: 4

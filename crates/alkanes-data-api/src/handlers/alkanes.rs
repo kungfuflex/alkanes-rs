@@ -13,6 +13,7 @@ pub async fn get_alkanes(
     let alkanes_service = AlkanesService::new(
         state.alkanes_rpc.clone(),
         state.redis_client.clone(),
+        state.db_pool.clone(),
     );
 
     match alkanes_service
@@ -60,6 +61,7 @@ pub async fn get_alkanes_by_address(
     let alkanes_service = AlkanesService::new(
         state.alkanes_rpc.clone(),
         state.redis_client.clone(),
+        state.db_pool.clone(),
     );
 
     match alkanes_service
@@ -88,6 +90,7 @@ pub async fn get_alkane_details(
     let alkanes_service = AlkanesService::new(
         state.alkanes_rpc.clone(),
         state.redis_client.clone(),
+        state.db_pool.clone(),
     );
 
     match alkanes_service
@@ -123,6 +126,7 @@ pub async fn get_alkanes_utxo(
     let alkanes_service = AlkanesService::new(
         state.alkanes_rpc.clone(),
         state.redis_client.clone(),
+        state.db_pool.clone(),
     );
 
     match alkanes_service.get_alkanes_utxos(&req.address).await {
@@ -155,6 +159,7 @@ pub async fn get_amm_utxos(
     let alkanes_service = AlkanesService::new(
         state.alkanes_rpc.clone(),
         state.redis_client.clone(),
+        state.db_pool.clone(),
     );
     let bitcoin_service = crate::services::bitcoin::BitcoinService::new(state.alkanes_rpc.clone());
 
@@ -191,6 +196,7 @@ pub async fn global_alkanes_search(
     let alkanes_service = AlkanesService::new(
         state.alkanes_rpc.clone(),
         state.redis_client.clone(),
+        state.db_pool.clone(),
     );
 
     match alkanes_service.global_search(&req.query).await {

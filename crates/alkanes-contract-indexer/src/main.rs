@@ -37,9 +37,11 @@ async fn main() -> Result<()> {
     
     // Apply trace transform schema
     info!("Applying trace transform schema...");
-    let transform_service = transform_integration::TraceTransformService::new(pool.clone());
+    let mut transform_service = transform_integration::TraceTransformService::new(pool.clone());
     transform_service.apply_schema().await?;
-    info!("Trace transform schema applied");
+    // Load existing pools from database
+    transform_service.load_existing_pools().await?;
+    info!("Trace transform schema applied and {} pools loaded", transform_service.known_pools.len());
 
     // Provider
     let provider = provider::build_provider(

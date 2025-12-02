@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sqlx::PgPool;
 use std::collections::HashMap;
 
 use super::alkanes_rpc::{AlkaneId, AlkanesRpcClient, SimulateRequest};
@@ -53,11 +54,12 @@ pub struct AlkaneBalance {
 pub struct AlkanesService {
     rpc: AlkanesRpcClient,
     redis: redis::Client,
+    db: sqlx::PgPool,
 }
 
 impl AlkanesService {
-    pub fn new(rpc: AlkanesRpcClient, redis: redis::Client) -> Self {
-        Self { rpc, redis }
+    pub fn new(rpc: AlkanesRpcClient, redis: redis::Client, db: sqlx::PgPool) -> Self {
+        Self { rpc, redis, db }
     }
 
     /// Get alkanes UTXOs for an address
@@ -258,10 +260,68 @@ impl AlkanesService {
         _order: Option<String>,
         _search_query: Option<String>,
     ) -> Result<(Vec<AlkaneToken>, usize)> {
-        // TODO: Implement full alkanes listing with caching
-        // For now, return empty list
+        let limit = limit.unwrap_or(100).min(500);
+        let offset = offset.unwrap_or(0);
         
-        Ok((vec![], 0))
+        // Query TraceAlkane table for all registered alkanes
+        let alkanes = sqlx::query_as::<_, (i32, i64, Option<i32>)>(
+            r#"
+            SELECT alkane_block, alkane_tx, created_at_height
+            FROM "TraceAlkane"
+            ORDER BY created_at_height DESC
+            LIMIT $1 OFFSET $2
+            "#
+        )
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to query TraceAlkane")?;
+        
+        let total: (i64,) = sqlx::query_as(r#"SELECT COUNT(*) as count FROM "TraceAlkane""#)
+            .fetch_one(&self.db)
+            .await
+            .context("Failed to count alkanes")?;
+        let total = total.0 as usize;
+        
+        // Convert to AlkaneToken and enrich with metadata
+        let mut tokens = Vec::new();
+        for (alkane_block, alkane_tx, _created_at_height) in alkanes {
+            let alkane_id = AlkaneId {
+                block: alkane_block.to_string(),
+                tx: alkane_tx.to_string(),
+            };
+            
+            // Try to get metadata from reflect-alkane
+            let mut token = AlkaneToken {
+                id: alkane_id.clone(),
+                name: None,
+                symbol: None,
+                decimals: None,
+                image: None,
+                max: None,
+                cap: None,
+                premine: None,
+                balance: None,
+                floor_price: None,
+                price_usd: None,
+                price_in_satoshi: None,
+            };
+            
+            // Try to enrich with metadata (non-blocking)
+            if let Ok(metadata) = self.get_static_alkane_data(&alkane_id).await {
+                token.name = metadata.name;
+                token.symbol = metadata.symbol;
+                token.decimals = metadata.decimals;
+                token.max = metadata.max;
+                token.cap = metadata.cap;
+                token.premine = metadata.premine;
+            }
+            
+            tokens.push(token);
+        }
+        
+        Ok((tokens, total))
     }
 
     /// Search alkanes globally

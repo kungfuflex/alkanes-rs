@@ -13,10 +13,53 @@ use std::{fmt, string::String, vec::Vec};
 #[cfg(target_arch = "wasm32")]
 use alloc::{string::String, vec::Vec, fmt};
 
+/// Custom deserializer that accepts both string and number
+fn deserialize_string_or_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Deserialize as _};
+    
+    struct StringOrNumber;
+    
+    impl<'de> de::Visitor<'de> for StringOrNumber {
+        type Value = u64;
+        
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or number")
+        }
+        
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+        
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value.parse::<u64>().map_err(de::Error::custom)
+        }
+        
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value.parse::<u64>().map_err(de::Error::custom)
+        }
+    }
+    
+    deserializer.deserialize_any(StringOrNumber)
+}
+
 /// Alkane ID representing a smart contract or token
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct AlkaneId {
+    #[serde(deserialize_with = "deserialize_string_or_number")]
     pub block: u64,
+    #[serde(deserialize_with = "deserialize_string_or_number")]
     pub tx: u64,
 }
 
