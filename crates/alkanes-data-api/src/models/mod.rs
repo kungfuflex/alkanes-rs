@@ -64,8 +64,7 @@ pub struct AddressRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct AlkaneDetailsRequest {
-    #[serde(rename = "alkaneId")]
-    pub alkane_id: AlkaneId,
+    pub id: AlkaneId,
 }
 
 #[derive(Debug, Deserialize)]

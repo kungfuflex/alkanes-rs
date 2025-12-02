@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sqlx::PgPool;
 use std::collections::HashMap;
 
 use super::alkanes_rpc::{AlkaneId, AlkanesRpcClient, SimulateRequest};
@@ -53,11 +54,12 @@ pub struct AlkaneBalance {
 pub struct AlkanesService {
     rpc: AlkanesRpcClient,
     redis: redis::Client,
+    db: sqlx::PgPool,
 }
 
 impl AlkanesService {
-    pub fn new(rpc: AlkanesRpcClient, redis: redis::Client) -> Self {
-        Self { rpc, redis }
+    pub fn new(rpc: AlkanesRpcClient, redis: redis::Client, db: sqlx::PgPool) -> Self {
+        Self { rpc, redis, db }
     }
 
     /// Get alkanes UTXOs for an address
@@ -258,10 +260,68 @@ impl AlkanesService {
         _order: Option<String>,
         _search_query: Option<String>,
     ) -> Result<(Vec<AlkaneToken>, usize)> {
-        // TODO: Implement full alkanes listing with caching
-        // For now, return empty list
+        let limit = limit.unwrap_or(100).min(500);
+        let offset = offset.unwrap_or(0);
         
-        Ok((vec![], 0))
+        // Query TraceAlkane table for all registered alkanes
+        let alkanes = sqlx::query_as::<_, (i32, i64, Option<i32>)>(
+            r#"
+            SELECT alkane_block, alkane_tx, created_at_height
+            FROM "TraceAlkane"
+            ORDER BY created_at_height DESC
+            LIMIT $1 OFFSET $2
+            "#
+        )
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to query TraceAlkane")?;
+        
+        let total: (i64,) = sqlx::query_as(r#"SELECT COUNT(*) as count FROM "TraceAlkane""#)
+            .fetch_one(&self.db)
+            .await
+            .context("Failed to count alkanes")?;
+        let total = total.0 as usize;
+        
+        // Convert to AlkaneToken and enrich with metadata
+        let mut tokens = Vec::new();
+        for (alkane_block, alkane_tx, _created_at_height) in alkanes {
+            let alkane_id = AlkaneId {
+                block: alkane_block.to_string(),
+                tx: alkane_tx.to_string(),
+            };
+            
+            // Try to get metadata from reflect-alkane
+            let mut token = AlkaneToken {
+                id: alkane_id.clone(),
+                name: None,
+                symbol: None,
+                decimals: None,
+                image: None,
+                max: None,
+                cap: None,
+                premine: None,
+                balance: None,
+                floor_price: None,
+                price_usd: None,
+                price_in_satoshi: None,
+            };
+            
+            // Try to enrich with metadata (non-blocking)
+            if let Ok(metadata) = self.get_static_alkane_data(&alkane_id).await {
+                token.name = metadata.name;
+                token.symbol = metadata.symbol;
+                token.decimals = metadata.decimals;
+                token.max = metadata.max;
+                token.cap = metadata.cap;
+                token.premine = metadata.premine;
+            }
+            
+            tokens.push(token);
+        }
+        
+        Ok((tokens, total))
     }
 
     /// Search alkanes globally
@@ -276,8 +336,69 @@ impl AlkanesService {
         Ok(vec![])
     }
 
-    /// Get alkane details by ID
+    /// Get alkane details by ID with enriched market data
     pub async fn get_alkane_details(&self, id: &AlkaneId) -> Result<AlkaneToken> {
-        self.get_static_alkane_data(id).await
+        // Get base metadata from reflect-alkane
+        let mut token = self.get_static_alkane_data(id).await?;
+        
+        // Check if this alkane exists in TraceAlkane registry
+        let exists: Option<(i32,)> = sqlx::query_as(
+            r#"SELECT created_at_height FROM "TraceAlkane" WHERE alkane_block = $1 AND alkane_tx = $2"#
+        )
+        .bind(id.block.to_string().parse::<i32>().unwrap_or(0))
+        .bind(id.tx.to_string().parse::<i64>().unwrap_or(0))
+        .fetch_optional(&self.db)
+        .await
+        .ok()
+        .flatten();
+        
+        if exists.is_none() {
+            // Alkane not in registry, return base data
+            return Ok(token);
+        }
+        
+        // Try to get swap history to calculate floor price
+        let swap_count: Option<(i64,)> = sqlx::query_as(
+            r#"
+            SELECT COUNT(*) FROM "TraceTrade"
+            WHERE token0_block = $1 AND token0_tx = $2
+               OR token1_block = $1 AND token1_tx = $2
+            "#
+        )
+        .bind(id.block.to_string().parse::<i32>().unwrap_or(0))
+        .bind(id.tx.to_string().parse::<i64>().unwrap_or(0))
+        .fetch_optional(&self.db)
+        .await
+        .ok()
+        .flatten();
+        
+        if let Some((count,)) = swap_count {
+            if count > 0 {
+                // Get latest trade price as floor price
+                let latest_price: Option<(String,)> = sqlx::query_as(
+                    r#"
+                    SELECT price FROM "TraceTrade"
+                    WHERE token0_block = $1 AND token0_tx = $2
+                       OR token1_block = $1 AND token1_tx = $2
+                    ORDER BY block_height DESC, block_index DESC
+                    LIMIT 1
+                    "#
+                )
+                .bind(id.block.to_string().parse::<i32>().unwrap_or(0))
+                .bind(id.tx.to_string().parse::<i64>().unwrap_or(0))
+                .fetch_optional(&self.db)
+                .await
+                .ok()
+                .flatten();
+                
+                if let Some((price_str,)) = latest_price {
+                    if let Ok(price) = price_str.parse::<f64>() {
+                        token.floor_price = Some(price);
+                    }
+                }
+            }
+        }
+        
+        Ok(token)
     }
 }

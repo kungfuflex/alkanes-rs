@@ -192,6 +192,34 @@ pub async fn apply_schema(pool: &PgPool) -> Result<()> {
         }
     }
     
+    // Apply alkane registry schema
+    for (idx, statement) in ALKANE_REGISTRY_SCHEMA.split(';').enumerate() {
+        let trimmed = statement.trim();
+        
+        if trimmed.is_empty() {
+            continue;
+        }
+        
+        let cleaned: String = trimmed
+            .lines()
+            .filter(|line| !line.trim().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        
+        if !cleaned.trim().is_empty() {
+            let preview = cleaned.lines().next().unwrap_or("").trim();
+            eprintln!("Executing alkane registry statement {}: {}...", idx, &preview[..preview.len().min(60)]);
+            
+            match sqlx::query(&cleaned).execute(pool).await {
+                Ok(_) => eprintln!("  ✓ Success"),
+                Err(e) => {
+                    eprintln!("  ✗ Failed: {}", e);
+                    return Err(e.into());
+                }
+            }
+        }
+    }
+    
     Ok(())
 }
 
@@ -199,6 +227,8 @@ pub async fn apply_schema(pool: &PgPool) -> Result<()> {
 #[cfg(feature = "postgres")]
 pub async fn drop_schema(pool: &PgPool) -> Result<()> {
     let drop_sql = r#"
+        DROP TABLE IF EXISTS "TraceAlkaneBalance" CASCADE;
+        DROP TABLE IF EXISTS "TraceAlkane" CASCADE;
         DROP TABLE IF EXISTS "TraceCandle" CASCADE;
         DROP TABLE IF EXISTS "TraceReserveSnapshot" CASCADE;
         DROP TABLE IF EXISTS "TraceTrade" CASCADE;
@@ -249,3 +279,47 @@ mod tests {
         drop_schema(&pool).await.unwrap();
     }
 }
+
+/// Schema for tracking all created alkanes
+#[cfg(feature = "postgres")]
+pub const ALKANE_REGISTRY_SCHEMA: &str = r#"
+-- Registry of all created alkanes
+CREATE TABLE IF NOT EXISTS "TraceAlkane" (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    alkane_block INTEGER NOT NULL,
+    alkane_tx BIGINT NOT NULL,
+    created_at_block INTEGER NOT NULL,
+    created_at_tx TEXT NOT NULL,
+    created_at_height INTEGER,
+    created_at_timestamp TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(alkane_block, alkane_tx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trace_alkane_id 
+    ON "TraceAlkane"(alkane_block, alkane_tx);
+    
+CREATE INDEX IF NOT EXISTS idx_trace_alkane_created 
+    ON "TraceAlkane"(created_at_height DESC);
+
+-- Address -> Alkane balances from traces
+CREATE TABLE IF NOT EXISTS "TraceAlkaneBalance" (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    address TEXT NOT NULL,
+    alkane_block INTEGER NOT NULL,
+    alkane_tx BIGINT NOT NULL,
+    balance NUMERIC NOT NULL DEFAULT 0,
+    last_updated_block INTEGER NOT NULL,
+    last_updated_tx TEXT NOT NULL,
+    last_updated_timestamp TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(address, alkane_block, alkane_tx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trace_alkane_balance_address 
+    ON "TraceAlkaneBalance"(address);
+    
+CREATE INDEX IF NOT EXISTS idx_trace_alkane_balance_alkane 
+    ON "TraceAlkaneBalance"(alkane_block, alkane_tx);
+    
+CREATE INDEX IF NOT EXISTS idx_trace_alkane_balance_amount
+    ON "TraceAlkaneBalance"(alkane_block, alkane_tx, balance DESC) WHERE balance > 0
+"#;

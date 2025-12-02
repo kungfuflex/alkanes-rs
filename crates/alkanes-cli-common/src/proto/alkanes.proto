@@ -86,7 +86,18 @@ message AlkanesTraceEvent {
     AlkanesEnterContext enter_context = 1;
     AlkanesExitContext exit_context = 2;
     AlkanesCreate create_alkane = 3;
+    AlkanesReceiveIntent receive_intent = 4;
+    AlkanesValueTransfer value_transfer = 5;
   }
+}
+
+message AlkanesReceiveIntent {
+  repeated AlkaneTransfer incoming_alkanes = 1;
+}
+
+message AlkanesValueTransfer {
+  repeated AlkaneTransfer transfers = 1;
+  uint32 redirect_to = 2;
 }
 
 message AlkanesBlockEvent {

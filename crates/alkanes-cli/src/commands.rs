@@ -1629,6 +1629,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 metashrew_rpc_url: args.metashrew_rpc_url.clone(),
                 brc20_prog_rpc_url: args.brc20_prog_rpc_url.clone(),
                 subfrost_api_key: args.subfrost_api_key.clone(),
+                data_api_url: None,  // Not used in deezel commands
                 timeout_seconds: 600,
                 data_api_url: None, // Not used in CLI context
             },

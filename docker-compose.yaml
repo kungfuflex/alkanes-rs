@@ -173,12 +173,13 @@ services:
       jsonrpc:
         condition: service_started
     environment:
-      RUST_LOG: info
+      RUST_LOG: info,alkanes_contract_indexer::transform_integration=debug,alkanes_contract_indexer::pipeline=debug
       DATABASE_URL: postgres://alkanes_user:alkanes_pass@postgres:5432/alkanes_indexer
       REDIS_URL: redis://redis:6379/
       SANDSHREW_RPC_URL: http://jsonrpc:18888
       NETWORK: regtest
       POLL_INTERVAL_MS: 2000
+      START_HEIGHT: 0
       # Factory constants matching deploy-oyl-amm.sh
       # AMM_FACTORY_ID=65522 (0xfff2) from deploy-oyl-amm.sh
       FACTORY_BLOCK_ID: 4

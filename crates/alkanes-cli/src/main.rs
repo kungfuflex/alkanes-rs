@@ -212,10 +212,10 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
         }
         DataApiCommand::GetPoolHistory { pool_id, category, limit, offset, raw, raw_http } => {
             use alkanes_cli_common::dataapi::commands::parse_alkane_id;
-            use alkanes_cli_common::dataapi::HistoryTransaction;
+            
+            let pool_alkane_id = parse_alkane_id(&pool_id)?;
             
             if raw_http {
-                let pool_alkane_id = parse_alkane_id(&pool_id)?;
                 let body = json!({
                     "poolId": { "block": pool_alkane_id.block.to_string(), "tx": pool_alkane_id.tx.to_string() },
                     "category": category,
@@ -225,59 +225,33 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 let text = client.post_raw("get-pool-history", &body).await?;
                 println!("{}", text);
             } else {
-                let pool_alkane_id = parse_alkane_id(&pool_id)?;
-                let history = client.get_pool_history(&pool_alkane_id, category, limit, offset).await?;
+                // get-pool-history now returns same format as get-swap-history (swaps from TraceTrade)
+                let history = client.get_swap_history(Some(&pool_alkane_id), limit, offset).await?;
                 
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&history)?);
                 } else {
-                    let mut swaps = Vec::new();
-                    let mut mints = Vec::new();
-                    let mut burns = Vec::new();
-                    
-                    for tx in history.transactions {
-                        match tx {
-                            HistoryTransaction::Swap(swap) => swaps.push(swap),
-                            HistoryTransaction::Mint(mint) => mints.push(mint),
-                            HistoryTransaction::Burn(burn) => burns.push(burn),
-                            _ => {},
-                        }
-                    }
-                    
-                    let pool_history = alkanes_cli_common::dataapi::PoolHistoryResponse {
-                        swaps,
-                        mints,
-                        burns,
-                    };
-                    use alkanes_cli_sys::pretty_print::print_pool_history;
-                    print_pool_history(&pool_history);
+                    use alkanes_cli_sys::pretty_print::print_swap_history;
+                    print_swap_history(&history.swaps);
                 }
             }
         }
         DataApiCommand::GetSwapHistory { pool_id, limit, offset, raw, raw_http } => {
             use alkanes_cli_common::dataapi::commands::parse_alkane_id;
             
+            let pool_id_str = pool_id.ok_or_else(|| anyhow::anyhow!("--pool-id is required. Specify a pool address like 2:3"))?;
+            let pool_alkane_id = parse_alkane_id(&pool_id_str)?;
+            
             if raw_http {
-                let pool_alkane_id = if let Some(ref id_str) = pool_id {
-                    Some(parse_alkane_id(id_str)?)
-                } else {
-                    None
-                };
                 let body = json!({
-                    "poolId": pool_alkane_id.map(|id| json!({ "block": id.block.to_string(), "tx": id.tx.to_string() })),
+                    "poolId": { "block": pool_alkane_id.block.to_string(), "tx": pool_alkane_id.tx.to_string() },
                     "limit": limit,
                     "offset": offset,
                 });
                 let text = client.post_raw("get-swap-history", &body).await?;
                 println!("{}", text);
             } else {
-                let pool_alkane_id = if let Some(ref id_str) = pool_id {
-                    Some(parse_alkane_id(id_str)?)
-                } else {
-                    None
-                };
-                
-                let history = client.get_swap_history(pool_alkane_id.as_ref(), limit, offset).await?;
+                let history = client.get_swap_history(Some(&pool_alkane_id), limit, offset).await?;
                 
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&history)?);

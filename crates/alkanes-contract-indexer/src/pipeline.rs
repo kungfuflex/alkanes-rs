@@ -132,7 +132,13 @@ impl Pipeline {
 			// Process traces through transform pipeline
 			let transform_t0 = std::time::Instant::now();
 			let mut transform_service = TraceTransformService::new(self.pool.clone());
+			// Load known pools at start of each block processing
+			if let Err(e) = transform_service.load_existing_pools().await {
+				warn!("Failed to load existing pools: {:?}", e);
+			}
+			info!("Transform pipeline: processing {} transactions from block {}", results.len(), ctx.height);
 			for r in &results {
+				info!("Transform pipeline: tx {} has {} trace_events", r.transaction_id, r.trace_events.len());
 				if !r.trace_events.is_empty() {
 					// Convert transaction info to context
 					let tx_info = txs.iter().find(|tx| {

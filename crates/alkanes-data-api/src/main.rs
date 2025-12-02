@@ -114,6 +114,10 @@ async fn main() -> Result<()> {
                         web::post().to(handlers::pools::get_pool_details),
                     )
                     .route(
+                        "/get-pool-by-id",
+                        web::post().to(handlers::pools::get_pool_details),
+                    )
+                    .route(
                         "/get-all-pools-details",
                         web::post().to(handlers::pools::get_all_pools_details),
                     )
@@ -136,6 +140,14 @@ async fn main() -> Result<()> {
                     // History endpoints
                     .route(
                         "/get-pool-swap-history",
+                        web::post().to(handlers::history::get_pool_swap_history),
+                    )
+                    .route(
+                        "/get-swap-history",
+                        web::post().to(handlers::history::get_pool_swap_history),
+                    )
+                    .route(
+                        "/get-pool-history",
                         web::post().to(handlers::history::get_pool_swap_history),
                     )
                     .route(

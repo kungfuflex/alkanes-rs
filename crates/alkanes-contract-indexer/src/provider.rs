@@ -18,6 +18,7 @@ pub async fn build_provider(
         esplora_url,
         ord_url: None,
         titan_api_url: None,
+        data_api_url: None,  // Not used by indexer
         brc20_prog_rpc_url: None,  // Not used by indexer
         subfrost_api_key: None,  // Not needed for indexer
         provider: network_provider,

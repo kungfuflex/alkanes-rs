@@ -77,7 +77,7 @@ impl OptimizedAmmTracker {
                (txid, vout, pool_block, pool_tx, token0_block, token0_tx, token1_block, token1_tx,
                 amount0_in, amount1_in, amount0_out, amount1_out, reserve0_after, reserve1_after,
                 timestamp, block_height)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10::numeric, $11::numeric, $12::numeric, $13::numeric, $14::numeric, $15, $16)
                ON CONFLICT (txid, vout, pool_block, pool_tx) DO NOTHING"#
         )
         .bind(&trade.txid)
@@ -111,7 +111,7 @@ impl OptimizedAmmTracker {
         sqlx::query(
             r#"INSERT INTO "TraceReserveSnapshot"
                (pool_block, pool_tx, reserve0, reserve1, timestamp, block_height)
-               VALUES ($1, $2, $3, $4, $5, $6)"#
+               VALUES ($1, $2, $3::numeric, $4::numeric, $5, $6)"#
         )
         .bind(snapshot.pool_id.block)
         .bind(snapshot.pool_id.tx)
