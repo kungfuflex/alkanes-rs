@@ -325,7 +325,7 @@ impl RpcConfig {
     }
     
     /// Get the RPC target for Wallet operations (used by alkanes execute)
-    /// Priority: titan_api_url (REST) > sandshrew_rpc_url (JSONRPC) > default sandshrew
+    /// Priority: titan_api_url (REST) > jsonrpc_url (JSONRPC) > default jsonrpc
     /// Note: Wallet operations like send use esplora/bitcoin backends separately
     pub fn get_wallet_rpc_target(&self) -> RpcTarget {
         self.get_alkanes_rpc_target()

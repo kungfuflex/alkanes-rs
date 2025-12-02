@@ -175,12 +175,10 @@ impl<P: DeezelProvider> RpcClient<P> {
         self.call(&url, method, params).await
     }
     
-    /// Make a Bitcoin Core RPC call (via JSON-RPC URL or legacy sandshrew URL)
+    /// Make a JSON-RPC call using the configured jsonrpc_url
     pub async fn sandshrew_call(&self, method: &str, params: JsonValue) -> Result<JsonValue> {
-        // Try jsonrpc_url first, fallback to sandshrew_rpc_url for backward compatibility
         let url = self.config.jsonrpc_url.as_ref()
-            .or(self.config.sandshrew_rpc_url.as_ref())
-            .ok_or_else(|| AlkanesError::RpcError("Missing JSON-RPC URL (use --jsonrpc-url or --sandshrew-rpc-url)".to_string()))?;
+            .ok_or_else(|| AlkanesError::RpcError("Missing JSON-RPC URL (use --jsonrpc-url)".to_string()))?;
         self.call(url, method, params).await
     }
 

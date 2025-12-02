@@ -98,5 +98,13 @@ leptos = "0.6"
 leptos_router = "0.6"
 getrandom = "0.2"
 env_logger = "0.11"
+
+# EVM assembler for bytecode generation
+emasm = { git = "https://github.com/kungfuflex/emasm-rs", branch = "master" }
+emasm-common = { git = "https://github.com/kungfuflex/emasm-rs", branch = "master" }
 protobuf-json-mapping = "3.4"
 pbkdf2 = "0.12"
+
+# Huff-rs for EVM bytecode generation (experimental features)
+huff_utils = { git = "https://github.com/huff-language/huff-rs", branch = "main" }
+huff_codegen = { git = "https://github.com/huff-language/huff-rs", branch = "main" }

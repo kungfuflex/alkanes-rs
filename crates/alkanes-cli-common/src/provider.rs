@@ -155,27 +155,27 @@ impl ConcreteProvider {
     pub async fn new(
         bitcoin_rpc_url: Option<String>,
         metashrew_rpc_url: String,
-        sandshrew_rpc_url: Option<String>,
+        jsonrpc_url: Option<String>,
         titan_api_url: Option<String>,
         esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
         provider: String,
         wallet_path: Option<std::path::PathBuf>,
     ) -> Result<Self> {
         let rpc_config = RpcConfig {
             provider,
             bitcoin_rpc_url,
-            jsonrpc_url: None,
-            sandshrew_rpc_url,
+            jsonrpc_url,
             titan_api_url,
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
-            brc20_prog_rpc_url: None,
+            brc20_prog_rpc_url,
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
         };
-        
+
         Ok(Self {
             rpc_config,
             command: Commands::Wallet {
@@ -195,29 +195,29 @@ impl ConcreteProvider {
     pub async fn new(
         bitcoin_rpc_url: Option<String>,
         metashrew_rpc_url: String,
-        sandshrew_rpc_url: Option<String>,
+        jsonrpc_url: Option<String>,
         titan_api_url: Option<String>,
         esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
         provider: String,
         wallet_path: Option<std::path::PathBuf>,
     ) -> Result<Self> {
         let rpc_config = RpcConfig {
             provider,
             bitcoin_rpc_url,
-            jsonrpc_url: None,
-            sandshrew_rpc_url,
+            jsonrpc_url,
             titan_api_url,
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
-            brc20_prog_rpc_url: None,
+            brc20_prog_rpc_url,
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
         };
-        
+
         let wallet_path_str = wallet_path.and_then(|p| p.to_str().map(|s| s.to_string()));
-        
+
         Ok(Self {
             rpc_config,
             command: Commands::Wallet {
@@ -3202,15 +3202,15 @@ impl AlkanesProvider for ConcreteProvider {
         
         // If we have a wallet address, filter by spendable UTXOs
         let spendable_outpoints = if let Some(address) = wallet_address {
-            // Call sandshrew_balances to get current UTXOs
-            let sandshrew_url = self.rpc_config.sandshrew_rpc_url.clone()
-                .ok_or_else(|| AlkanesError::Configuration("sandshrew_rpc_url not configured".to_string()))?;
+            // Call jsonrpc to get current UTXOs
+            let _jsonrpc_url = self.rpc_config.jsonrpc_url.clone()
+                .ok_or_else(|| AlkanesError::Configuration("jsonrpc_url not configured".to_string()))?;
             
-            // Use lua/balances.lua script instead of sandshrew_balances
+            // Use lua/balances.lua script to get balances
             use crate::lua_script::scripts;
             let balances = self.execute_lua_script(&scripts::BALANCES, vec![JsonValue::String(address.clone())]).await?;
-            
-            log::debug!("Received balances from sandshrew: {:?}", balances);
+
+            log::debug!("Received balances from jsonrpc: {:?}", balances);
             
             // Extract spendable outpoints from both "spendable" and "assets" arrays
             let mut outpoints = HashSet::new();

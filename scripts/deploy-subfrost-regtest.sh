@@ -127,7 +127,7 @@ fund_wallet() {
         "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 400 "p2tr:0" > /dev/null 2>&1
         
         # Wait for sandshrew to index the blocks
-        log_info "Waiting for sandshrew to index blocks (15 seconds)..."
+        log_info "Waiting for indexer to sync blocks (15 seconds)..."
         sleep 15
         
         log_success "Wallet funded! Ready for deployments"
@@ -139,7 +139,7 @@ ensure_coinbase_maturity() {
     log_info "Ensuring coinbase maturity (mining 101 blocks to mature recent coinbases)..."
     "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 101 "p2tr:0" > /dev/null 2>&1
     
-    log_info "Waiting for sandshrew to index maturity blocks (10 seconds)..."
+    log_info "Waiting for indexer to sync maturity blocks (10 seconds)..."
     sleep 10
     
     log_success "Coinbase outputs matured"
@@ -169,7 +169,7 @@ deploy_contract() {
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
     "$ALKANES_CLI" -p regtest \
         --wallet-file "$WALLET_FILE" \
-	--sandshrew-rpc-url $RPC_URL \
+	--jsonrpc-url $RPC_URL \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
         --envelope "$WASM_FILE" \
@@ -183,7 +183,7 @@ deploy_contract() {
         
         # Wait for metashrew to index the deployment
         log_info "Waiting for metashrew to index (5 seconds)..."
-        $ALKANES_CLI -p regtest --sandshrew-rpc-url https://regtest.subfrost.io/v4/jsonrpc wallet sync
+        $ALKANES_CLI -p regtest --jsonrpc-url https://regtest.subfrost.io/v4/jsonrpc wallet sync
         
         # Verify deployment by checking bytecode
         log_info "Verifying $CONTRACT_NAME deployment at [4, $TARGET_TX]..."
@@ -191,7 +191,7 @@ deploy_contract() {
         # Try up to 3 times with 2 second delays
         BYTECODE=""
         for i in 1 2 3; do
-            BYTECODE=$("$ALKANES_CLI" -p regtest --sandshrew-rpc-url https://regtest.subfrost.io/v4/jsonrpc alkanes getbytecode "4:$TARGET_TX" 2>/dev/null)
+            BYTECODE=$("$ALKANES_CLI" -p regtest --jsonrpc-url https://regtest.subfrost.io/v4/jsonrpc alkanes getbytecode "4:$TARGET_TX" 2>/dev/null)
             if [ -n "$BYTECODE" ] && [ "$BYTECODE" != "null" ] && [ "$BYTECODE" != '""' ]; then
                 break
             fi
@@ -229,7 +229,7 @@ initialize_contract() {
     
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
     "$ALKANES_CLI" -p regtest \
-	--sandshrew-rpc-url $RPC_URL \
+	--jsonrpc-url $RPC_URL \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
@@ -524,7 +524,7 @@ main() {
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
     
     "$ALKANES_CLI" -p regtest \
-	--sandshrew-rpc-url $RPC_URL \
+	--jsonrpc-url $RPC_URL \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$FACTORY_INIT_PROTOSTONE" \
@@ -540,7 +540,7 @@ main() {
         
         # Wait for metashrew to index
         log_info "Waiting for metashrew to index factory initialization (5 seconds)..."
-        $ALKANES_CLI -p regtest --sandshrew-rpc-url https://regtest.subfrost.io/v4/jsonrpc wallet sync
+        $ALKANES_CLI -p regtest --jsonrpc-url https://regtest.subfrost.io/v4/jsonrpc wallet sync
     else
         log_error "Failed to initialize OYL Factory"
         exit 1
@@ -562,7 +562,7 @@ main() {
     # Step 8a: Mine DIESEL
     log_info "Mining DIESEL tokens..."
     "$ALKANES_CLI" -p regtest \
-	--sandshrew-rpc-url $RPC_URL \
+	--jsonrpc-url $RPC_URL \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "[2,0,77]:v0:v0" \
@@ -581,7 +581,7 @@ main() {
     # Step 8b: Wrap BTC for frBTC
     log_info "Wrapping BTC to frBTC..."
     "$ALKANES_CLI" -p regtest \
-	--sandshrew-rpc-url $RPC_URL \
+	--jsonrpc-url $RPC_URL \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes wrap-btc \
@@ -601,7 +601,7 @@ main() {
     # Wait for confirmations
     log_info "Mining a block to confirm transactions..."
     "$ALKANES_CLI" -p regtest \
-	--sandshrew-rpc-url $RPC_URL \
+	--jsonrpc-url $RPC_URL \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         bitcoind generatetoaddress 1 p2tr:0 > /dev/null 2>&1
@@ -612,7 +612,7 @@ main() {
     # Step 8c: Create the pool
     log_info "Creating DIESEL/frBTC pool..."
     "$ALKANES_CLI" -p regtest \
-	--sandshrew-rpc-url $RPC_URL \
+	--jsonrpc-url $RPC_URL \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes init-pool \
@@ -630,7 +630,7 @@ main() {
         
         # Wait for metashrew to index
         log_info "Waiting for metashrew to index pool creation (5 seconds)..."
-        $ALKANES_CLI -p regtest --sandshrew-rpc-url https://regtest.subfrost.io/v4/jsonrpc wallet sync
+        $ALKANES_CLI -p regtest --jsonrpc-url https://regtest.subfrost.io/v4/jsonrpc wallet sync
         
         echo ""
         log_success "🎉 OYL AMM deployment and pool creation complete!"

@@ -66,6 +66,9 @@ pub struct DeezelCommands {
     /// BRC20-Prog RPC URL (for querying brc20-programmable-module)
     #[arg(long)]
     pub brc20_prog_rpc_url: Option<String>,
+    /// FrBTC contract address (for testing with custom deployments)
+    #[arg(long)]
+    pub frbtc_address: Option<String>,
     /// Data API URL (defaults to http://localhost:4000 for regtest, https://mainnet-api.oyl.gg for mainnet)
     #[arg(long)]
     pub data_api: Option<String>,
@@ -822,6 +825,9 @@ pub enum Brc20Prog {
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,
+        /// Use experimental EVM bytecode assembler for batch fetching (100x faster!)
+        #[arg(long)]
+        experimental_asm: bool,
     },
 }
 

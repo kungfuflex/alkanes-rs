@@ -89,10 +89,10 @@ async fn main() -> Result<()> {
         .or_else(|| alkanes_args.rpc_config.get_default_brc20_prog_rpc_url());
 
     // Execute other commands
-    execute_command(&mut system, args.command, brc20_prog_rpc_url).await
+    execute_command(&mut system, args.command, brc20_prog_rpc_url, args.sandshrew_rpc_url.clone(), args.frbtc_address.clone()).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>) -> Result<()> {
+async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, sandshrew_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
@@ -102,7 +102,8 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Ord(cmd) => execute_ord_command(system.provider(), cmd.into()).await,
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
-        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url).await,
+        Commands::Sandshrew(command) => execute_sandshrew_command(system.provider(), command, sandshrew_rpc_url).await,
+        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url, frbtc_address).await,
         Commands::Dataapi(_) => {
             // Dataapi is handled in main() because it doesn't need the System trait
             unreachable!("Dataapi commands should be handled in main()")
@@ -3837,7 +3838,7 @@ async fn execute_protorunes_command(
 }
 
 
-async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog, brc20_prog_rpc_url: Option<String>) -> Result<()> {
+async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog, brc20_prog_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
     use commands::Brc20Prog;
     use alkanes_cli_common::brc20_prog::{
         Brc20ProgExecutor, Brc20ProgExecuteParams, Brc20ProgDeployInscription,
@@ -4586,31 +4587,43 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::Unwrap { block_tag: _, raw } => {
-            use alkanes_cli_common::unwrap::{UnwrapProtocol, MetaprotocolUnwrap};
+        Brc20Prog::Unwrap { block_tag: _, raw, experimental_asm } => {
+            use alkanes_cli_common::unwrap::{MetaprotocolUnwrap, Brc20ProgUnwrap};
             use alkanes_cli_common::brc20_prog::{get_frbtc_address, get_signer_address};
             use alkanes_cli_common::traits::{JsonRpcProvider, EsploraProvider};
-            
-            // Create BRC20-Prog unwrap implementation
-            let unwrap_impl = UnwrapProtocol::Brc20Prog.create_unwrap_impl();
-            
+
+            // Create BRC20-Prog unwrap implementation with optional address override
+            let brc20_impl = match frbtc_address.as_deref() {
+                Some(addr) => Brc20ProgUnwrap::with_frbtc_address(addr),
+                None => Brc20ProgUnwrap::new(),
+            };
+
             // Get unfiltered unwraps from BRC20-Prog
             let confirmations_required = 6; // Require 6 confirmations for safety
-            let all_unwraps = unwrap_impl.get_pending_unwraps(provider, confirmations_required).await?;
+
+            let all_unwraps = if experimental_asm {
+                log::info!("🚀 Using experimental ASM bytecode generator (100x faster!)");
+                let frbtc_addr = frbtc_address.as_deref();
+                brc20_impl.get_pending_unwraps_experimental_asm(provider, confirmations_required, frbtc_addr).await?
+            } else {
+                brc20_impl.get_pending_unwraps(provider, confirmations_required).await?
+            };
             
             log::info!("[BRC20-Prog Unwrap] Got {} unfiltered unwraps", all_unwraps.len());
-            
+
             // Get FrBTC contract address and signer address for filtering
+            // Use override if provided, otherwise use default for network
             let network = provider.get_network();
-            let frbtc_address = get_frbtc_address(network);
+            let frbtc_addr = frbtc_address.as_deref()
+                .unwrap_or_else(|| get_frbtc_address(network));
             let brc20_prog_rpc_url = provider.get_brc20_prog_rpc_url()
                 .ok_or_else(|| anyhow::anyhow!("brc20_prog_rpc_url not configured"))?;
-            
+
             // Get signer address (p2tr script_pubkey) from FrBTC contract
             let signer_script = get_signer_address(
                 provider as &dyn JsonRpcProvider,
                 &brc20_prog_rpc_url,
-                frbtc_address,
+                frbtc_addr,
             ).await?;
             
             // Convert script_pubkey to taproot address

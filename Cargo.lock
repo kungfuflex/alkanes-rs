@@ -388,6 +388,8 @@ dependencies = [
  "clap",
  "dirs",
  "elliptic-curve",
+ "emasm",
+ "emasm-common",
  "env_logger 0.10.2",
  "ff",
  "flate2",
@@ -960,13 +962,19 @@ version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccb3ead547f4532bc8af961649942f0b9c16ee9226e26caa3f38420651cc0bf4"
 dependencies = [
+ "alloy-rlp",
  "bytes",
  "cfg-if",
  "const-hex",
  "derive_more 0.99.20",
  "hex-literal",
  "itoa",
+ "k256",
+ "keccak-asm",
+ "proptest",
+ "rand 0.8.5",
  "ruint",
+ "serde",
  "tiny-keccak",
 ]
 
@@ -3526,6 +3534,39 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "emasm"
+version = "0.1.0"
+source = "git+https://github.com/kungfuflex/emasm-rs?branch=master#52b9cc02662dcc1116934d51f880e386bd353f73"
+dependencies = [
+ "emasm-common",
+ "emasm-macros",
+]
+
+[[package]]
+name = "emasm-common"
+version = "0.1.0"
+source = "git+https://github.com/kungfuflex/emasm-rs?branch=master#52b9cc02662dcc1116934d51f880e386bd353f73"
+dependencies = [
+ "alloy-primitives 0.7.7",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "emasm-macros"
+version = "0.1.0"
+source = "git+https://github.com/kungfuflex/emasm-rs?branch=master#52b9cc02662dcc1116934d51f880e386bd353f73"
+dependencies = [
+ "emasm-common",
+ "hex",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.110",
 ]
 
 [[package]]
