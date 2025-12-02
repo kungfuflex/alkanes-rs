@@ -15,7 +15,6 @@ use serde_json::Value as JsonValue;
 pub enum RpcCallType {
     Bitcoin,
     Metashrew,
-    Sandshrew,
     Rest,
     JsonRpc,
 }
@@ -51,23 +50,19 @@ pub fn get_rpc_url(config: &crate::network::RpcConfig, command: &Commands) -> Re
         Commands::Bitcoind { .. } => config
             .bitcoin_rpc_url
             .clone()
-            .or_else(|| config.jsonrpc_url.clone())
-            .or_else(|| config.sandshrew_rpc_url.clone()),
+            .or_else(|| config.jsonrpc_url.clone()),
         Commands::Metashrew { .. } => config
             .metashrew_rpc_url
             .clone()
-            .or_else(|| config.jsonrpc_url.clone())
-            .or_else(|| config.sandshrew_rpc_url.clone()),
+            .or_else(|| config.jsonrpc_url.clone()),
         Commands::Esplora { .. } => config
             .esplora_url
             .clone()
-            .or_else(|| config.jsonrpc_url.clone())
-            .or_else(|| config.sandshrew_rpc_url.clone()),
+            .or_else(|| config.jsonrpc_url.clone()),
         Commands::Ord { .. } => config
             .ord_url
             .clone()
-            .or_else(|| config.jsonrpc_url.clone())
-            .or_else(|| config.sandshrew_rpc_url.clone()),
+            .or_else(|| config.jsonrpc_url.clone()),
         _ => None,
     };
     rpc_url.ok_or_else(|| AlkanesError::RpcError(format!("Missing RPC URL for command: {:?}", command.clone())))

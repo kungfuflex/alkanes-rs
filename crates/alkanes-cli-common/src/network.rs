@@ -350,7 +350,6 @@ impl Default for RpcConfig {
             provider: "regtest".to_string(),
             bitcoin_rpc_url: None,
             jsonrpc_url: None,
-            sandshrew_rpc_url: Some("http://localhost:18443".to_string()),
             titan_api_url: None,
             esplora_url: None,
             ord_url: None,
