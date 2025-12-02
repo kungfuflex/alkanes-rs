@@ -85,9 +85,9 @@ leb128 = { version = "0.2.5", default-features = false }
 alloy-sol-types = { version = "0.7", default-features = false }
 alloy-primitives = { version = "0.7", default-features = false }
 
-# emasm-rs for EVM bytecode generation (experimental features)
-emasm = { workspace = true, optional = true }
-emasm-common = { workspace = true, optional = true }
+# emasm-rs for EVM bytecode generation
+emasm = { workspace = true }
+emasm-common = { workspace = true }
 
 # Alkanes-rs crates
 alkanes-support = { workspace = true }
@@ -129,7 +129,6 @@ web-compat = ["spin", "std"]
 worker = []
 frost = ["frost-secp256k1-tr", "frost-core", "elliptic-curve", "ff"]
 wasip2 = []  # No std, no tokio, no reqwest, no futures, no async-trait - only core types and logic
-experimental-asm = ["emasm", "emasm-common"]  # Experimental EVM bytecode assembler features
 
 test-utils = []
 

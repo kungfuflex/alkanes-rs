@@ -13,7 +13,7 @@ path = "src/main.rs"
 [dependencies]
 sha2 = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
-alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std", "experimental-asm"] }
+alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
 alkanes-cli-sys = { path = "../alkanes-cli-sys" }
 clap = { workspace = true }
 env_logger = { workspace = true }

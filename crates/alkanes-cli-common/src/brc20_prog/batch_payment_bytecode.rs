@@ -10,13 +10,10 @@
 //! 3. Filters based on cutoff_height - stops when reaching a payment older than cutoff
 //! 4. Returns packed Payment data (fixed-size portion only for simplicity)
 
-#[cfg(feature = "experimental-asm")]
 use crate::Result;
 
-#[cfg(feature = "experimental-asm")]
 use emasm::{evm_asm, evm_asm_interpolator, EVMEncodable};
 
-#[cfg(feature = "experimental-asm")]
 use alloy_primitives::Address;
 
 // Function selectors
@@ -36,7 +33,6 @@ use alloy_primitives::Address;
 ///
 /// # Returns
 /// * Hex-encoded bytecode ready to use in eth_call {data: "0x..."}
-#[cfg(feature = "experimental-asm")]
 pub fn generate_batch_payment_fetcher_bytecode(
     frbtc_address: &str,
     cutoff_height: u64,
@@ -299,7 +295,6 @@ pub fn generate_batch_payment_fetcher_bytecode(
 }
 
 /// Parse an Ethereum address from hex string to alloy Address
-#[cfg(feature = "experimental-asm")]
 fn parse_address(addr: &str) -> Result<Address> {
     let addr_no_prefix = addr.strip_prefix("0x").unwrap_or(addr);
     if addr_no_prefix.len() != 40 {
@@ -325,7 +320,6 @@ fn parse_address(addr: &str) -> Result<Address> {
 }
 
 #[cfg(test)]
-#[cfg(feature = "experimental-asm")]
 mod tests {
     use super::*;
 
