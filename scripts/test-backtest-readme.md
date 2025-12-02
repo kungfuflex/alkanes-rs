@@ -37,7 +37,7 @@ The integrated CLI command that does the same thing:
 ```bash
 ./target/release/alkanes-cli \
   --metashrew-rpc-url http://localhost:18888 \
-  --sandshrew-rpc-url http://localhost:18888 \
+  --jsonrpc-url http://localhost:18888 \
   alkanes backtest <TXID>
 ```
 
@@ -175,13 +175,13 @@ The minimal coinbase used in the test:
 # Test with commit transaction
 ./target/release/alkanes-cli \
   --metashrew-rpc-url http://localhost:18888 \
-  --sandshrew-rpc-url http://localhost:18888 \
+  --jsonrpc-url http://localhost:18888 \
   alkanes backtest 2d95f568908349fd00f88c2f5801e5bf7bac084bc561c7c0a6acc1940fc0de57
 
 # Test with reveal transaction (when available)
 ./target/release/alkanes-cli \
   --metashrew-rpc-url http://localhost:18888 \
-  --sandshrew-rpc-url http://localhost:18888 \
+  --jsonrpc-url http://localhost:18888 \
   alkanes backtest <REVEAL_TXID>
 ```
 

@@ -47,7 +47,7 @@ echo "   curl -X POST http://localhost:18888 -H 'Content-Type: application/json'
 echo ""
 echo "3. Use alkanes-cli:"
 echo "   cargo build --release -p alkanes-cli"
-echo "   ./target/release/alkanes-cli -p regtest --sandshrew-rpc-url http://localhost:18888 bitcoind getblockcount"
+echo "   ./target/release/alkanes-cli -p regtest --jsonrpc-url http://localhost:18888 bitcoind getblockcount"
 echo ""
 echo "4. View logs:"
 echo "   docker-compose logs -f jsonrpc"

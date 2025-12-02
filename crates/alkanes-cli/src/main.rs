@@ -89,10 +89,10 @@ async fn main() -> Result<()> {
         .or_else(|| alkanes_args.rpc_config.get_default_brc20_prog_rpc_url());
 
     // Execute other commands
-    execute_command(&mut system, args.command, brc20_prog_rpc_url, args.sandshrew_rpc_url.clone(), args.frbtc_address.clone()).await
+    execute_command(&mut system, args.command, brc20_prog_rpc_url, args.frbtc_address.clone()).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, sandshrew_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
+async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
@@ -102,13 +102,50 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Ord(cmd) => execute_ord_command(system.provider(), cmd.into()).await,
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
-        Commands::Sandshrew(command) => execute_sandshrew_command(system.provider(), command, sandshrew_rpc_url).await,
+        Commands::Lua(cmd) => execute_lua_command(system.provider(), cmd).await,
         Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url, frbtc_address).await,
         Commands::Dataapi(_) => {
             // Dataapi is handled in main() because it doesn't need the System trait
             unreachable!("Dataapi commands should be handled in main()")
         }
     }
+}
+
+async fn execute_lua_command(
+    provider: &dyn DeezelProvider,
+    command: crate::commands::LuaCommands,
+) -> anyhow::Result<()> {
+    use crate::commands::LuaCommands;
+    use alkanes_cli_common::lua_script::{LuaScript, LuaScriptExecutor};
+    use std::fs;
+
+    match command {
+        LuaCommands::Evalscript { script, args, raw } => {
+            let script_content = fs::read_to_string(&script)
+                .map_err(|e| anyhow::anyhow!("Failed to read script file {}: {}", script, e))?;
+
+            let lua_script = LuaScript::from_string(script_content);
+
+            if !raw {
+                println!("Script hash: {}", lua_script.hash());
+            }
+
+            // Resolve args (convert identifiers like alkane IDs to their values)
+            let mut resolved_args = Vec::new();
+            for arg in args {
+                match provider.resolve_all_identifiers(&arg).await {
+                    Ok(resolved) => resolved_args.push(serde_json::Value::String(resolved)),
+                    Err(_) => resolved_args.push(serde_json::Value::String(arg)),
+                }
+            }
+
+            // Execute the script (tries evalsaved first, falls back to evalscript)
+            let result = provider.execute_lua_script(&lua_script, resolved_args).await?;
+
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+    }
+    Ok(())
 }
 
 async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand) -> Result<()> {

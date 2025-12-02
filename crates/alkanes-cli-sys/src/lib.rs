@@ -133,24 +133,25 @@ impl SystemAlkanes {
         }
 
         // Determine the correct RPC URLs, prioritizing command-line args over network defaults.
-        
-        // Set default sandshrew_rpc_url based on provider network if not explicitly provided
-        let sandshrew_rpc_url = args.rpc_config.sandshrew_rpc_url.clone().or_else(|| {
+
+        // Set default jsonrpc_url based on provider network if not explicitly provided
+        let jsonrpc_url = args.rpc_config.jsonrpc_url.clone().or_else(|| {
             match args.rpc_config.provider.as_str() {
-                "mainnet" => Some("https://mainnet.sandshrew.io/v2/lasereyes".to_string()),
-                "signet" => Some("https://signet.sandshrew.io/v2/lasereyes".to_string()),
+                "mainnet" => Some("https://mainnet.subfrost.io/v4/jsonrpc".to_string()),
+                "signet" => Some("https://signet.subfrost.io/v4/jsonrpc".to_string()),
+                "subfrost-regtest" => Some("https://regtest.subfrost.io/v4/jsonrpc".to_string()),
                 "regtest" => Some("http://localhost:18888".to_string()),
                 _ => Some("http://localhost:18888".to_string()),
             }
         });
-        
-        // Only use the network default bitcoin_rpc_url if sandshrew_rpc_url is not provided
+
+        // Only use the network default bitcoin_rpc_url if jsonrpc_url is not provided
         let bitcoin_rpc_url = args
             .rpc_config
             .bitcoin_rpc_url
             .clone()
             .or_else(|| {
-                if sandshrew_rpc_url.is_none() {
+                if jsonrpc_url.is_none() {
                     Some(network_params.bitcoin_rpc_url.clone())
                 } else {
                     None
@@ -161,7 +162,7 @@ impl SystemAlkanes {
             .rpc_config
             .metashrew_rpc_url
             .clone()
-            .or_else(|| sandshrew_rpc_url.clone())
+            .or_else(|| jsonrpc_url.clone())
             .unwrap_or_else(|| network_params.metashrew_rpc_url.clone());
 
         let esplora_url = args
@@ -182,10 +183,10 @@ impl SystemAlkanes {
 
         // Create provider with the resolved URLs
         log::info!(
-            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, sandshrew_rpc: {:?}, titan_api: {:?}, esplora: {:?}, brc20_prog_rpc: {:?}",
+            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, jsonrpc: {:?}, titan_api: {:?}, esplora: {:?}, brc20_prog_rpc: {:?}",
             &bitcoin_rpc_url,
             &metashrew_rpc_url,
-            &sandshrew_rpc_url,
+            &jsonrpc_url,
             &args.rpc_config.titan_api_url,
             &esplora_url,
             &brc20_prog_rpc_url
@@ -193,7 +194,7 @@ impl SystemAlkanes {
         let mut provider = ConcreteProvider::new(
             bitcoin_rpc_url,
             metashrew_rpc_url,
-            sandshrew_rpc_url,
+            jsonrpc_url,
             args.rpc_config.titan_api_url.clone(),
             esplora_url,
             brc20_prog_rpc_url,

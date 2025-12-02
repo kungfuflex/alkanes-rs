@@ -113,7 +113,7 @@ fund_wallet() {
         log_info "Mining 400 blocks to $WALLET_ADDRESS (p2tr:0)..."
         "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 400 "p2tr:0" > /dev/null 2>&1
         
-        log_info "Waiting for sandshrew to index blocks (15 seconds)..."
+        log_info "Waiting for indexer to sync blocks (15 seconds)..."
         sleep 15
         
         log_success "Wallet funded! Ready for deployments"

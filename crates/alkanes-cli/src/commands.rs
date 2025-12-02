@@ -110,9 +110,29 @@ pub enum Commands {
     /// Metashrew subcommands
     #[command(subcommand)]
     Metashrew(MetashrewCommands),
+    /// Lua script execution
+    #[command(subcommand)]
+    Lua(LuaCommands),
     /// DataAPI subcommands - Query data from alkanes-data-api
     #[command(subcommand)]
     Dataapi(DataApiCommand),
+}
+
+/// Lua script subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum LuaCommands {
+    /// Execute a Lua script (tries cached hash first, falls back to full script)
+    Evalscript {
+        /// Path to Lua script file
+        #[arg(long)]
+        script: String,
+        /// Arguments to pass to the script
+        #[arg(num_args = 0..)]
+        args: Vec<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// Metashrew subcommands
@@ -1669,7 +1689,6 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 provider: args.provider.clone(),
                 bitcoin_rpc_url: args.bitcoin_rpc_url.clone(),
                 jsonrpc_url: args.jsonrpc_url.clone(),
-                sandshrew_rpc_url: args.sandshrew_rpc_url.clone(),
                 titan_api_url: args.titan_api_url.clone(),
                 esplora_url: args.esplora_api_url.clone(),
                 ord_url: args.ord_server_url.clone(),
