@@ -4527,39 +4527,42 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             Ok(())
         }
         Brc20Prog::Unwrap { block_tag: _, raw, experimental_asm } => {
-            use alkanes_cli_common::unwrap::{UnwrapProtocol, MetaprotocolUnwrap};
+            use alkanes_cli_common::unwrap::{MetaprotocolUnwrap, Brc20ProgUnwrap};
             use alkanes_cli_common::brc20_prog::{get_frbtc_address, get_signer_address};
             use alkanes_cli_common::traits::{JsonRpcProvider, EsploraProvider};
-            
-            // Create BRC20-Prog unwrap implementation
-            let unwrap_impl = UnwrapProtocol::Brc20Prog.create_unwrap_impl();
-            
+
+            // Create BRC20-Prog unwrap implementation with optional address override
+            let brc20_impl = match frbtc_address.as_deref() {
+                Some(addr) => Brc20ProgUnwrap::with_frbtc_address(addr),
+                None => Brc20ProgUnwrap::new(),
+            };
+
             // Get unfiltered unwraps from BRC20-Prog
             let confirmations_required = 6; // Require 6 confirmations for safety
-            
+
             let all_unwraps = if experimental_asm {
                 log::info!("🚀 Using experimental ASM bytecode generator (100x faster!)");
-                use alkanes_cli_common::unwrap::Brc20ProgUnwrap;
-                let brc20_impl = Brc20ProgUnwrap::new();
                 let frbtc_addr = frbtc_address.as_deref();
                 brc20_impl.get_pending_unwraps_experimental_asm(provider, confirmations_required, frbtc_addr).await?
             } else {
-                unwrap_impl.get_pending_unwraps(provider, confirmations_required).await?
+                brc20_impl.get_pending_unwraps(provider, confirmations_required).await?
             };
             
             log::info!("[BRC20-Prog Unwrap] Got {} unfiltered unwraps", all_unwraps.len());
-            
+
             // Get FrBTC contract address and signer address for filtering
+            // Use override if provided, otherwise use default for network
             let network = provider.get_network();
-            let frbtc_address = get_frbtc_address(network);
+            let frbtc_addr = frbtc_address.as_deref()
+                .unwrap_or_else(|| get_frbtc_address(network));
             let brc20_prog_rpc_url = provider.get_brc20_prog_rpc_url()
                 .ok_or_else(|| anyhow::anyhow!("brc20_prog_rpc_url not configured"))?;
-            
+
             // Get signer address (p2tr script_pubkey) from FrBTC contract
             let signer_script = get_signer_address(
                 provider as &dyn JsonRpcProvider,
                 &brc20_prog_rpc_url,
-                frbtc_address,
+                frbtc_addr,
             ).await?;
             
             // Convert script_pubkey to taproot address

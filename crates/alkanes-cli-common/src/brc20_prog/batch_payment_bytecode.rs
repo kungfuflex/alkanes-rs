@@ -8,16 +8,25 @@
 //! 1. Calls getPaymentsLength() via STATICCALL to get the total payment count
 //! 2. Loops backwards through payments, calling payments(idx) for each
 //! 3. Filters based on cutoff_height - stops when reaching a payment older than cutoff
-//! 4. Returns ABI-encoded Payment[] array
+//! 4. Returns packed Payment data (fixed-size portion only for simplicity)
 
 #[cfg(feature = "experimental-asm")]
 use crate::Result;
 
 #[cfg(feature = "experimental-asm")]
-use emasm::{evm_asm_interpolator, EVMEncodable};
+use emasm::{evm_asm, evm_asm_interpolator, EVMEncodable};
 
 #[cfg(feature = "experimental-asm")]
 use alloy_primitives::Address;
+
+// Function selectors
+// getPaymentsLength() = 0xb8e0ffbe
+// payments(uint256) = 0x87d81789
+
+// Memory layout:
+// 0x00-0x24: Scratch space for calldata (selector + arg)
+// 0x40-0x1000: Return data from STATICCALL (up to ~4KB)
+// 0x1000+: Output buffer for accumulated payments
 
 /// Generate EVM bytecode for batch payment fetching
 ///
@@ -40,72 +49,252 @@ pub fn generate_batch_payment_fetcher_bytecode(
 
     // Parse the address
     let addr_bytes = parse_address(frbtc_address)?;
-    
-    // Create the interpolator with placeholders for address and cutoff height
+
+    // Memory layout constants
+    // 0x00: calldata scratch (selector at 0x1c for right-alignment)
+    // 0x40: return buffer from staticcall
+    // 0x1000: output write pointer (where we accumulate results)
+    // 0x1020: output start (actual data starts here)
+
     let builder = evm_asm_interpolator!([
-        // Call getPaymentsLength() -> uint256
-        // Prepare calldata: selector at memory 0x00
-        0x8b25f90e,          // selector for getPaymentsLength() as a 4-byte integer
-        0x00,
+        // ============================================
+        // STEP 1: Initialize output pointer at 0x1020
+        // We store the write pointer at 0x1000
+        // ============================================
+        0x1020,              // Initial output position
+        0x1000,              // Memory location for write pointer
         "mstore",
-        
+
+        // ============================================
+        // STEP 2: Call getPaymentsLength() -> uint256
+        // ============================================
+        0xb8e0ffbe,          // selector for getPaymentsLength()
+        0x00,
+        "mstore",            // Store selector at 0x00 (right-aligned means selector at 0x1c)
+
         // STATICCALL(gas, address, argsOffset, argsSize, retOffset, retSize)
         0x20,                // retSize = 32 bytes
-        0x00,                // retOffset = 0x00
+        0x40,                // retOffset = 0x40
         0x04,                // argsSize = 4 bytes (selector only)
-        0x1c,                // argsOffset = 28 (selector right-aligned at 0x00)
+        0x1c,                // argsOffset = 28 (selector at bytes 28-31 of word at 0x00)
         &[0],                // FrBTC address placeholder
-        0xffff,              // gas = 65535
+        "gas",               // Use all available gas
         "staticcall",
         "pop",               // Pop success boolean
-        
-        // Load the result (payments length) from memory 0x00
-        0x00,
+
+        // Load the result (payments length) from memory 0x40
+        0x40,
         "mload",
-        
         // Stack: [payments_length]
-        // This is our loop counter (idx)
-        
-        // Jump to loop_start
+
+        // ============================================
+        // STEP 3: Main loop - iterate backwards
+        // Stack: [idx] where idx starts at payments_length
+        // ============================================
         "loop_start",
         "jump",
-        
-        // Loop: iterate backwards from payments_length to 0
+
         ["loop_start", [
             // Stack: [idx]
-            
+
             // Check if idx == 0, if so jump to finish
-            "dup1",          // [idx, idx]
-            "iszero",        // [idx==0, idx]
-            "finish",        // [finish_addr, idx==0, idx]
-            "jumpi",         // Jump to finish if idx==0
-            
-            // Stack: [idx]
-            // Decrement idx
-            0x01,
-            "sub",           // [idx-1]
-            
-            // TODO: Call payments(idx-1) and check height
-            // For now, just loop back
+            "dup1",              // [idx, idx]
+            "iszero",            // [idx==0, idx]
+            "finish",
+            "jumpi",             // Jump to finish if idx==0
+
+            // Decrement idx to get actual array index (0-based)
+            // idx = idx - 1
+            0x01,                // [1, idx]
+            "swap1",             // [idx, 1]
+            "sub",               // [idx-1] = actual_index
+
+            // Stack: [actual_index]
+            // Now call payments(actual_index)
+
+            // Prepare calldata: selector (4 bytes) + index (32 bytes)
+            // selector 0x87d81789 at position 0x00
+            0x87d81789,          // payments(uint256) selector
+            0x00,
+            "mstore",            // selector at 0x00 (will be at 0x1c when right-aligned)
+
+            // Store the index argument at 0x20
+            "dup1",              // [actual_index, actual_index]
+            0x20,                // [0x20, actual_index, actual_index]
+            "mstore",            // Store index at 0x20; Stack: [actual_index]
+
+            // STATICCALL for payments(idx)
+            // Return data layout (ABI-encoded struct with dynamic bytes):
+            // 0x00: txid (32 bytes)
+            // 0x20: vout (32 bytes)
+            // 0x40: value (32 bytes)
+            // 0x60: offset to recipient bytes (32 bytes) - points to 0xa0
+            // 0x80: height (32 bytes)
+            // 0xa0: recipient length (32 bytes)
+            // 0xc0: recipient data (padded to 32 bytes)
+            // Total: ~0xe0 bytes minimum
+            0xe0,                // retSize = 224 bytes (enough for struct)
+            0x40,                // retOffset = 0x40
+            0x24,                // argsSize = 36 bytes (4 selector + 32 index)
+            0x1c,                // argsOffset = 0x1c (selector right-aligned)
+            &[0],                // FrBTC address placeholder
+            "gas",               // Use all available gas
+            "staticcall",
+            "pop",               // Pop success; Stack: [actual_index]
+
+            // ============================================
+            // STEP 4: Check height against cutoff
+            // Height is at offset 0x80 from return data start (0x40)
+            // So height is at memory 0x40 + 0x80 = 0xc0
+            //
+            // Logic: Skip if height > cutoff (payment too new, not enough confirmations)
+            //        Include if height <= cutoff
+            // ============================================
+            0xc0,                // Memory offset for height
+            "mload",             // [height, actual_index]
+
+            // Compare: if height > cutoff, skip this payment (continue loop)
+            // GT: stack[0] > stack[1] ? 1 : 0
+            // We want: (height > cutoff) ? skip : include
+            // Push cutoff, then GT checks if height > cutoff
+            &[1],                // cutoff_height placeholder
+            "swap1",             // [height, cutoff, actual_index]
+            "gt",                // [height > cutoff, actual_index]
+            "skip_payment",
+            "jumpi",             // If height > cutoff, skip this payment
+
+            // Stack: [actual_index]
+            // Height is <= cutoff, so include this payment
+
+            // ============================================
+            // STEP 5: Copy payment data to output buffer
+            // We'll copy the fixed portion: txid, vout, value, height (128 bytes)
+            // Skip dynamic recipient for now to keep it simple
+            // ============================================
+
+            // Load current write pointer
+            0x1000,
+            "mload",             // [write_ptr, actual_index]
+
+            // Copy txid (32 bytes from 0x40)
+            0x40,
+            "mload",             // [txid, write_ptr, actual_index]
+            "dup2",              // [write_ptr, txid, write_ptr, actual_index]
+            "mstore",            // Store txid; Stack: [write_ptr, actual_index]
+
+            // Copy vout (32 bytes from 0x60)
+            0x60,
+            "mload",             // [vout, write_ptr, actual_index]
+            "swap1",             // [write_ptr, vout, actual_index]
+            0x20,
+            "add",               // [write_ptr+32, vout, actual_index]
+            "swap1",             // [vout, write_ptr+32, actual_index]
+            "dup2",              // [write_ptr+32, vout, write_ptr+32, actual_index]
+            "mstore",            // Store vout; Stack: [write_ptr+32, actual_index]
+
+            // Copy value (32 bytes from 0x80)
+            0x80,
+            "mload",             // [value, write_ptr+32, actual_index]
+            "swap1",             // [write_ptr+32, value, actual_index]
+            0x20,
+            "add",               // [write_ptr+64, value, actual_index]
+            "swap1",             // [value, write_ptr+64, actual_index]
+            "dup2",              // [write_ptr+64, value, write_ptr+64, actual_index]
+            "mstore",            // Store value; Stack: [write_ptr+64, actual_index]
+
+            // Copy height (32 bytes from 0xc0)
+            0xc0,
+            "mload",             // [height, write_ptr+64, actual_index]
+            "swap1",             // [write_ptr+64, height, actual_index]
+            0x20,
+            "add",               // [write_ptr+96, height, actual_index]
+            "swap1",             // [height, write_ptr+96, actual_index]
+            "dup2",              // [write_ptr+96, height, write_ptr+96, actual_index]
+            "mstore",            // Store height; Stack: [write_ptr+96, actual_index]
+
+            // Update write pointer: add 128 bytes (4 * 32)
+            0x20,
+            "add",               // [write_ptr+128, actual_index]
+            0x1000,
+            "mstore",            // Store new write pointer; Stack: [actual_index]
+
+            // Continue loop with actual_index (which will be decremented next iteration)
+            // But we need to pass idx (actual_index + 1) to continue the countdown
+            // Wait - we already decremented, so actual_index is what we use
+            // The loop expects idx on stack, decrements to get actual_index
+            // So we need to keep actual_index and NOT add 1 back
+            // Actually, let's trace through:
+            // - Enter loop with idx=3
+            // - Decrement: actual_index=2
+            // - Process payment[2]
+            // - Loop back with actual_index=2 on stack
+            // - But loop_start expects idx and decrements...
+            //
+            // Hmm, we need to restructure. Let me think...
+            // After processing, we have actual_index on stack.
+            // We want to continue with idx-1 for next iteration.
+            // Since actual_index = idx - 1, we can just loop back with actual_index.
+            // But the loop does idx-1 at the start...
+            //
+            // Actually the current flow is:
+            // 1. loop_start receives idx
+            // 2. checks if idx==0, exits if so
+            // 3. computes actual_index = idx - 1
+            // 4. processes payment[actual_index]
+            // 5. loops back with actual_index on stack
+            // 6. next iteration: idx = actual_index, so we check if actual_index==0
+            //    if not, compute actual_index-1 and process
+            //
+            // This is correct! actual_index becomes the new idx.
+
             "loop_start",
             "jump"
         ]],
-        
-        // Finish: return empty result for now
+
+        // ============================================
+        // SKIP_PAYMENT: Continue loop without copying data
+        // Used when height > cutoff (payment too new)
+        // ============================================
+        ["skip_payment", [
+            // Stack: [actual_index]
+            // Continue to next iteration
+            "loop_start",
+            "jump"
+        ]],
+
+        // ============================================
+        // FINISH: Return accumulated data
+        // ============================================
         ["finish", [
-            "pop",           // Pop idx=0
-            0x00,            // offset
-            0x00,            // size
+            "pop",               // Pop remaining idx/index from stack
+
+            // Calculate return size: write_ptr - 0x1020
+            0x1000,
+            "mload",             // [write_ptr]
+            0x1020,              // [0x1020, write_ptr]
+            "swap1",             // [write_ptr, 0x1020]
+            "sub",               // [write_ptr - 0x1020] = size
+
+            // Return(offset, size)
+            0x1020,              // [0x1020, size]
+            "swap1",             // [size, 0x1020]
+            // RETURN expects (offset, size) with offset on top after swap
+            // Actually RETURN pops offset first, then size
+            // So stack should be [size, offset] and RETURN does: return mem[offset:offset+size]
+            "swap1",             // [0x1020, size]
             "return"
         ]]
     ]);
-    
-    // Generate bytecode with the actual address
-    let bytecode = builder(Box::new(addr_bytes));
-    
+
+    // Generate bytecode with the actual address and cutoff height
+    let bytecode = builder(Box::new(addr_bytes), Box::new(cutoff_height));
+
     let hex = hex::encode(&bytecode);
-    log::debug!("[BatchPaymentBytecode] Generated {} bytes of bytecode", bytecode.len());
-    
+    log::info!(
+        "[BatchPaymentBytecode] Generated {} bytes of bytecode",
+        bytecode.len()
+    );
+
     Ok(format!("0x{}", hex))
 }
 
@@ -119,17 +308,17 @@ fn parse_address(addr: &str) -> Result<Address> {
             addr_no_prefix.len()
         )));
     }
-    
+
     let bytes = hex::decode(addr_no_prefix)
         .map_err(|e| crate::AlkanesError::Other(format!("Invalid hex: {}", e)))?;
-    
+
     if bytes.len() != 20 {
         return Err(crate::AlkanesError::Other(format!(
             "Address must be 20 bytes, got {}",
             bytes.len()
         )));
     }
-    
+
     let mut addr_bytes = [0u8; 20];
     addr_bytes.copy_from_slice(&bytes);
     Ok(Address::from(addr_bytes))
@@ -153,12 +342,12 @@ mod tests {
         assert!(!hex.is_empty());
         println!("Generated bytecode: {}", hex);
     }
-    
+
     #[test]
     fn test_parse_address() {
         let addr = parse_address("0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0");
         assert!(addr.is_ok());
-        
+
         let address = addr.unwrap();
         let bytes = address.as_slice();
         assert_eq!(bytes.len(), 20);

@@ -1,0 +1,1 @@
+/data/alkanes-rs/target/release/alkanes-cli -p signet --sandshrew-rpc-url https://signet.subfrost.io/v4/subfrost --frbtc-address $(cat /home/aurora/frbtc-address.txt) brc20-prog unwrap --experimental-asm
