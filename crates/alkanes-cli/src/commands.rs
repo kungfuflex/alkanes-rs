@@ -1248,8 +1248,8 @@ pub enum DataApiCommand {
     },
     /// Get swap history
     GetSwapHistory {
-        #[arg(long)]
-        pool_id: Option<String>,
+        #[arg(long, default_value = "4:65522")]
+        factory_id: String,
         #[arg(long)]
         limit: Option<i32>,
         #[arg(long)]

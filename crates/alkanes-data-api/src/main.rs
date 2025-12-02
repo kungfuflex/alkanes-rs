@@ -139,6 +139,14 @@ async fn main() -> Result<()> {
                         web::post().to(handlers::history::get_pool_swap_history),
                     )
                     .route(
+                        "/get-swap-history",
+                        web::post().to(handlers::history::get_pool_swap_history),
+                    )
+                    .route(
+                        "/get-pool-history",
+                        web::post().to(handlers::history::get_pool_swap_history),
+                    )
+                    .route(
                         "/get-token-swap-history",
                         web::post().to(handlers::history::get_token_swap_history),
                     )

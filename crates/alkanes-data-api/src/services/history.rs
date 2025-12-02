@@ -125,39 +125,47 @@ impl HistoryService {
         pool_id: &AlkaneId,
         limit: i32,
         offset: i32,
-        successful_only: bool,
+        _successful_only: bool,
     ) -> Result<(Vec<Swap>, i64)> {
-        let success_clause = if successful_only {
-            "AND successful = true"
-        } else {
-            ""
-        };
-
-        let query = format!(
-            r#"
-            SELECT * FROM "PoolSwap"
-            WHERE "poolBlockId" = $1 AND "poolTxId" = $2 {}
-            ORDER BY "blockHeight" DESC, "transactionIndex" DESC
+        // Query TraceTrade table instead of PoolSwap
+        let query = r#"
+            SELECT 
+                id::text as id,
+                txid as "transactionId",
+                block_height as "blockHeight",
+                0 as "transactionIndex",
+                pool_block::text as "poolBlockId",
+                pool_tx::text as "poolTxId",
+                token0_block::text as "soldTokenBlockId",
+                token0_tx::text as "soldTokenTxId",
+                token1_block::text as "boughtTokenBlockId",
+                token1_tx::text as "boughtTokenTxId",
+                amount0_in::float8 as "soldAmount",
+                amount1_out::float8 as "boughtAmount",
+                NULL as "sellerAddress",
+                true as successful,
+                timestamp
+            FROM "TraceTrade"
+            WHERE pool_block = $1 AND pool_tx = $2
+            ORDER BY block_height DESC, vout DESC
             LIMIT $3 OFFSET $4
-            "#,
-            success_clause
-        );
+        "#;
 
-        let swaps = sqlx::query_as::<_, Swap>(&query)
-            .bind(&pool_id.block)
-            .bind(&pool_id.tx)
+        let pool_block: i32 = pool_id.block.parse().unwrap_or(0);
+        let pool_tx: i64 = pool_id.tx.parse().unwrap_or(0);
+
+        let swaps = sqlx::query_as::<_, Swap>(query)
+            .bind(pool_block)
+            .bind(pool_tx)
             .bind(limit)
             .bind(offset)
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!(
-            r#"SELECT COUNT(*) as count FROM "PoolSwap" WHERE "poolBlockId" = $1 AND "poolTxId" = $2 {}"#,
-            success_clause
-        );
-        let total: (i64,) = sqlx::query_as(&count_query)
-            .bind(&pool_id.block)
-            .bind(&pool_id.tx)
+        let count_query = r#"SELECT COUNT(*) as count FROM "TraceTrade" WHERE pool_block = $1 AND pool_tx = $2"#;
+        let total: (i64,) = sqlx::query_as(count_query)
+            .bind(pool_block)
+            .bind(pool_tx)
             .fetch_one(&self.db)
             .await?;
 
@@ -170,42 +178,50 @@ impl HistoryService {
         token_id: &AlkaneId,
         limit: i32,
         offset: i32,
-        successful_only: bool,
+        _successful_only: bool,
     ) -> Result<(Vec<Swap>, i64)> {
-        let success_clause = if successful_only {
-            "AND successful = true"
-        } else {
-            ""
-        };
-
-        let query = format!(
-            r#"
-            SELECT * FROM "PoolSwap"
-            WHERE (("soldTokenBlockId" = $1 AND "soldTokenTxId" = $2)
-                   OR ("boughtTokenBlockId" = $1 AND "boughtTokenTxId" = $2)) {}
-            ORDER BY "blockHeight" DESC, "transactionIndex" DESC
+        // Query TraceTrade table for trades involving this token
+        let query = r#"
+            SELECT 
+                id::text as id,
+                txid as "transactionId",
+                block_height as "blockHeight",
+                0 as "transactionIndex",
+                pool_block::text as "poolBlockId",
+                pool_tx::text as "poolTxId",
+                token0_block::text as "soldTokenBlockId",
+                token0_tx::text as "soldTokenTxId",
+                token1_block::text as "boughtTokenBlockId",
+                token1_tx::text as "boughtTokenTxId",
+                amount0_in::float8 as "soldAmount",
+                amount1_out::float8 as "boughtAmount",
+                NULL as "sellerAddress",
+                true as successful,
+                timestamp
+            FROM "TraceTrade"
+            WHERE (token0_block = $1 AND token0_tx = $2)
+               OR (token1_block = $1 AND token1_tx = $2)
+            ORDER BY block_height DESC, vout DESC
             LIMIT $3 OFFSET $4
-            "#,
-            success_clause
-        );
+        "#;
 
-        let swaps = sqlx::query_as::<_, Swap>(&query)
-            .bind(&token_id.block)
-            .bind(&token_id.tx)
+        let token_block: i32 = token_id.block.parse().unwrap_or(0);
+        let token_tx: i64 = token_id.tx.parse().unwrap_or(0);
+
+        let swaps = sqlx::query_as::<_, Swap>(query)
+            .bind(token_block)
+            .bind(token_tx)
             .bind(limit)
             .bind(offset)
             .fetch_all(&self.db)
             .await?;
 
-        let count_query = format!(
-            r#"SELECT COUNT(*) as count FROM "PoolSwap" 
-               WHERE (("soldTokenBlockId" = $1 AND "soldTokenTxId" = $2)
-                      OR ("boughtTokenBlockId" = $1 AND "boughtTokenTxId" = $2)) {}"#,
-            success_clause
-        );
-        let total: (i64,) = sqlx::query_as(&count_query)
-            .bind(&token_id.block)
-            .bind(&token_id.tx)
+        let count_query = r#"SELECT COUNT(*) as count FROM "TraceTrade" 
+               WHERE (token0_block = $1 AND token0_tx = $2)
+                  OR (token1_block = $1 AND token1_tx = $2)"#;
+        let total: (i64,) = sqlx::query_as(count_query)
+            .bind(token_block)
+            .bind(token_tx)
             .fetch_one(&self.db)
             .await?;
 

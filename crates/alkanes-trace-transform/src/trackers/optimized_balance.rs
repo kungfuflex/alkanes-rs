@@ -225,6 +225,13 @@ impl OptimizedBalanceProcessor {
         }
     }
     
+    pub fn with_context(pool: PgPool, context: crate::types::TransactionContext) -> Self {
+        Self {
+            extractor: ValueTransferExtractor::with_context(context),
+            tracker: OptimizedBalanceTracker::new(pool),
+        }
+    }
+    
     /// Process a trace event and update balances
     pub async fn process_trace(&mut self, trace: &TraceEvent) -> Result<()> {
         if let Some(changes) = self.extractor.extract(trace)? {
