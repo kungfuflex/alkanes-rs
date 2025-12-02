@@ -16,9 +16,9 @@ impl BalanceQueryService {
     /// Get aggregate balances for an address
     pub async fn get_address_balances(&self, address: &str) -> Result<Vec<BalanceInfo>> {
         let rows = sqlx::query(
-            r#"SELECT alkane_block, alkane_tx, total_amount::TEXT 
-               FROM "TraceBalanceAggregate"
-               WHERE address = $1 AND total_amount > 0"#
+            r#"SELECT alkane_block, alkane_tx, balance::TEXT
+               FROM "TraceAlkaneBalance"
+               WHERE address = $1 AND balance::numeric > 0"#
         )
         .bind(address)
         .fetch_all(&self.pool)

@@ -2,7 +2,12 @@ use anyhow::Result;
 use serde_json::Value as JsonValue;
 use sqlx::PgPool;
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, info};
+// Import from crate root (inferred_transfers is a sibling module to helpers)
+use crate::inferred_transfers::{
+    TraceEventContext, ProtostoneRouting,
+    infer_value_transfers,
+};
 
 #[derive(Debug, Clone)]
 pub struct BalanceChange {
@@ -20,76 +25,252 @@ pub struct OutpointBalance {
 }
 
 /// Extract balance changes from a transaction's trace events
+/// This function now supports inferring value destinations when no explicit
+/// value_transfer events exist, by using the protostone routing rules.
 pub fn extract_balance_changes(
     tx: &JsonValue,
     trace_events: &[super::protostone::TraceEventItem],
 ) -> Result<Vec<OutpointBalance>> {
     let mut outpoint_balances: HashMap<(String, i32), OutpointBalance> = HashMap::new();
-    
+
     // Get transaction outputs for address resolution
     let outputs = tx.get("vout")
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("Missing vout"))?;
-    
+
     let txid = tx.get("txid")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing txid"))?
         .to_string();
-    
-    // Process each trace event
+
+    let num_outputs = outputs.len();
+
+    // Check if we have explicit value_transfer events
+    let has_value_transfers = trace_events.iter()
+        .any(|e| e.event_type == "value_transfer");
+
+    // Process explicit value_transfer events
     for event in trace_events {
         if event.event_type == "value_transfer" {
-            let vout = event.vout;
-            let data = &event.data;
-            let empty_vec = vec![];
-            let transfers = data.get("transfers")
-                .and_then(|v| v.as_array())
-                .unwrap_or(&empty_vec);
-            let redirect_to = data.get("redirect_to")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(vout as i64) as i32;
-            
-            // Get address for target vout
-            if let Some(address) = get_address_from_output(outputs, redirect_to) {
-                let key = (txid.clone(), redirect_to);
-                let entry = outpoint_balances.entry(key).or_insert_with(|| {
-                    OutpointBalance {
-                        outpoint_txid: txid.clone(),
-                        outpoint_vout: redirect_to,
-                        address: address.clone(),
-                        changes: Vec::new(),
-                    }
-                });
-                
-                for transfer in transfers {
-                    let alkane_id = transfer.get("id").or_else(|| transfer.get("alkaneId")).unwrap_or(&JsonValue::Null);
-                    let block = alkane_id.get("block")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0) as i32;
-                    let tx_num = alkane_id.get("tx")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
-                    let amount = transfer.get("amount")
-                        .or_else(|| transfer.get("value"))
-                        .and_then(|v| {
-                            v.as_str().map(|s| s.to_string())
-                                .or_else(|| v.as_u64().map(|n| n.to_string()))
-                        })
-                        .unwrap_or_else(|| "0".to_string());
-                    
-                    if block > 0 && tx_num > 0 {
-                        entry.changes.push(BalanceChange {
-                            alkane_id_block: block,
-                            alkane_id_tx: tx_num,
-                            amount,
-                        });
-                    }
-                }
+            process_value_transfer_event(
+                &txid, event, outputs, &mut outpoint_balances
+            )?;
+        }
+    }
+
+    // If no value_transfer events, try to infer from receive_intent + return
+    if !has_value_transfers {
+        let inferred = infer_balance_changes_from_traces(
+            &txid, trace_events, outputs, num_outputs
+        )?;
+
+        for ob in inferred {
+            let key = (ob.outpoint_txid.clone(), ob.outpoint_vout);
+            outpoint_balances.insert(key, ob);
+        }
+    }
+
+    Ok(outpoint_balances.into_values().collect())
+}
+
+/// Process an explicit value_transfer event
+fn process_value_transfer_event(
+    txid: &str,
+    event: &super::protostone::TraceEventItem,
+    outputs: &[JsonValue],
+    outpoint_balances: &mut HashMap<(String, i32), OutpointBalance>,
+) -> Result<()> {
+    let vout = event.vout;
+    let data = &event.data;
+    let empty_vec = vec![];
+    let transfers = data.get("transfers")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty_vec);
+    let redirect_to = data.get("redirect_to")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(vout as i64) as i32;
+
+    // Get address for target vout
+    if let Some(address) = get_address_from_output(outputs, redirect_to) {
+        let key = (txid.to_string(), redirect_to);
+        let entry = outpoint_balances.entry(key).or_insert_with(|| {
+            OutpointBalance {
+                outpoint_txid: txid.to_string(),
+                outpoint_vout: redirect_to,
+                address: address.clone(),
+                changes: Vec::new(),
+            }
+        });
+
+        for transfer in transfers {
+            if let Some(change) = parse_balance_change(transfer) {
+                entry.changes.push(change);
             }
         }
     }
-    
-    Ok(outpoint_balances.into_values().collect())
+
+    Ok(())
+}
+
+/// Parse a single balance change from transfer JSON
+fn parse_balance_change(transfer: &JsonValue) -> Option<BalanceChange> {
+    let alkane_id = transfer.get("id")
+        .or_else(|| transfer.get("alkaneId"))?;
+
+    // block and tx can be strings or numbers
+    let block: i32 = alkane_id.get("block")
+        .and_then(|v| {
+            v.as_str().and_then(|s| s.parse().ok())
+                .or_else(|| v.as_i64().map(|n| n as i32))
+        })?;
+
+    let tx_num: i64 = alkane_id.get("tx")
+        .and_then(|v| {
+            v.as_str().and_then(|s| s.parse().ok())
+                .or_else(|| v.as_i64())
+        })?;
+
+    // amount/value can be string or number
+    let amount = transfer.get("value")
+        .or_else(|| transfer.get("amount"))
+        .and_then(|v| {
+            v.as_str().map(|s| s.to_string())
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        })
+        .unwrap_or_else(|| "0".to_string());
+
+    if block > 0 {
+        Some(BalanceChange {
+            alkane_id_block: block,
+            alkane_id_tx: tx_num,
+            amount,
+        })
+    } else {
+        None
+    }
+}
+
+/// Infer balance changes when no explicit value_transfer events exist
+fn infer_balance_changes_from_traces(
+    txid: &str,
+    trace_events: &[super::protostone::TraceEventItem],
+    outputs: &[JsonValue],
+    num_outputs: usize,
+) -> Result<Vec<OutpointBalance>> {
+    let mut result = Vec::new();
+
+    // Convert trace events to our internal format
+    let traces: Vec<TraceEventContext> = trace_events.iter()
+        .map(|e| TraceEventContext {
+            event_type: e.event_type.clone(),
+            vout: e.vout,
+            data: e.data.clone(),
+        })
+        .collect();
+
+    // Find all decoded protostones from the trace events
+    // We need to extract routing info from the traces themselves
+    let protostone_routing = extract_protostone_routing_from_traces(&traces, num_outputs);
+
+    if protostone_routing.is_empty() {
+        debug!("No protostone routing info found, cannot infer transfers");
+        return Ok(result);
+    }
+
+    // Infer value transfers
+    let inferred = infer_value_transfers(&traces, &protostone_routing, num_outputs);
+
+    if !inferred.transfers.is_empty() {
+        info!(
+            "Inferred {} value transfers for tx {} (no explicit value_transfer events)",
+            inferred.transfers.len(), txid
+        );
+    }
+
+    // Convert inferred transfers to OutpointBalance
+    for transfer in inferred.transfers {
+        let to_vout = transfer.to_vout as i32;
+
+        if let Some(address) = get_address_from_output(outputs, to_vout) {
+            let changes: Vec<BalanceChange> = transfer.alkanes.iter()
+                .filter_map(|a| {
+                    if a.block > 0 {
+                        Some(BalanceChange {
+                            alkane_id_block: a.block,
+                            alkane_id_tx: a.tx,
+                            amount: a.value.to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !changes.is_empty() {
+                result.push(OutpointBalance {
+                    outpoint_txid: txid.to_string(),
+                    outpoint_vout: to_vout,
+                    address,
+                    changes,
+                });
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Extract protostone routing info from trace events
+/// This creates ProtostoneRouting entries based on the shadow vouts we see in traces
+fn extract_protostone_routing_from_traces(
+    traces: &[TraceEventContext],
+    num_tx_outputs: usize,
+) -> Vec<ProtostoneRouting> {
+    let mut routing = Vec::new();
+    let mut seen_shadow_vouts: HashMap<i32, bool> = HashMap::new();
+
+    // Shadow vouts start at num_tx_outputs + 1
+    let shadow_vout_start = (num_tx_outputs as i32) + 1;
+
+    // Find unique shadow vouts from traces
+    for trace in traces {
+        if trace.vout >= shadow_vout_start {
+            seen_shadow_vouts.insert(trace.vout, true);
+        }
+    }
+
+    // For each shadow vout, try to extract routing info from invoke event
+    for shadow_vout in seen_shadow_vouts.keys() {
+        let protostone_index = (*shadow_vout as usize) - num_tx_outputs - 1;
+
+        // Look for invoke event to get pointer/refund from context
+        let invoke = traces.iter()
+            .find(|t| t.vout == *shadow_vout && t.event_type == "invoke");
+
+        // Extract pointer from invoke context if available
+        let (pointer, refund_pointer) = if let Some(inv) = invoke {
+            let context = inv.data.get("context");
+            // The protostone fields might be in the decoded protostone, not the trace
+            // For now, use default behavior
+            (None, None)
+        } else {
+            (None, None)
+        };
+
+        // Calculate default output (first non-OP_RETURN)
+        let default_output = 0u32; // TODO: analyze outputs to find first non-OP_RETURN
+
+        routing.push(ProtostoneRouting {
+            shadow_vout: *shadow_vout as u32,
+            protostone_index,
+            pointer,
+            refund_pointer,
+            default_output,
+        });
+    }
+
+    routing
 }
 
 fn get_address_from_output(outputs: &[JsonValue], vout: i32) -> Option<String> {

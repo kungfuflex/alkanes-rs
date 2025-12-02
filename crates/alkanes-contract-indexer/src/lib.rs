@@ -1,6 +1,7 @@
 pub mod config;
 pub mod db;
 pub mod helpers;
+pub mod inferred_transfers;
 pub mod schema;
 pub mod progress;
 pub mod coordinator;

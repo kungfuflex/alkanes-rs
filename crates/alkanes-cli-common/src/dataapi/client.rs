@@ -281,13 +281,19 @@ impl DataApiClient {
             "page": page,
             "limit": limit
         });
-        let response = self.post::<_, serde_json::Value>("get-holders", &body).await?;
+        let response = self.post::<_, serde_json::Value>("get-alkane-holders", &body).await?;
         Ok(response.data)
     }
 
     pub async fn get_holders_count(&self, alkane: &str) -> Result<serde_json::Value> {
         let body = serde_json::json!({"alkane": alkane});
-        let response = self.post::<_, serde_json::Value>("get-holders-count", &body).await?;
+        let response = self.post::<_, serde_json::Value>("get-alkane-holders-count", &body).await?;
+        Ok(response.data)
+    }
+
+    pub async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
+        let body = serde_json::json!({"outpoint": outpoint});
+        let response = self.post::<_, serde_json::Value>("get-outpoint-balances", &body).await?;
         Ok(response.data)
     }
 

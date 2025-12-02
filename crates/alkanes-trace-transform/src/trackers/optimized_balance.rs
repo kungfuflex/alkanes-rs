@@ -23,21 +23,27 @@ impl OptimizedBalanceTracker {
         
         let mut tx = self.pool.begin().await?;
         
-        // Group changes by (address, alkane_id) for aggregation
-        let mut aggregates: HashMap<(String, AlkaneId), u128> = HashMap::new();
+        // Group changes by (address, alkane_id) for aggregation, keeping the latest change for metadata
+        let mut aggregates: HashMap<(String, AlkaneId), (u128, i32, String)> = HashMap::new();
         
         for change in &changes {
             // Insert/update UTXO-level balance
             self.upsert_utxo_balance(&mut tx, change).await?;
             
-            // Accumulate for aggregate update
+            // Accumulate for aggregate update, keeping track of latest block/tx
             let key = (change.address.clone(), change.alkane_id.clone());
-            *aggregates.entry(key).or_insert(0) += change.amount;
+            let entry = aggregates.entry(key).or_insert((0, 0, String::new()));
+            entry.0 += change.amount;
+            // Keep the latest block height and tx
+            if change.block_height >= entry.1 {
+                entry.1 = change.block_height;
+                entry.2 = change.tx_hash.clone();
+            }
         }
         
         // Update aggregate balances
-        for ((address, alkane_id), amount_delta) in aggregates {
-            self.update_aggregate_balance(&mut tx, &address, &alkane_id, amount_delta).await?;
+        for ((address, alkane_id), (amount_delta, block_height, tx_hash)) in aggregates {
+            self.update_aggregate_balance(&mut tx, &address, &alkane_id, amount_delta, block_height, &tx_hash).await?;
             self.update_holder(&mut tx, &address, &alkane_id, amount_delta).await?;
         }
         
@@ -59,7 +65,7 @@ impl OptimizedBalanceTracker {
         sqlx::query(
             r#"INSERT INTO "TraceBalanceUtxo"
                (outpoint_txid, outpoint_vout, address, alkane_block, alkane_tx, amount, block_height, spent)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8)
                ON CONFLICT (outpoint_txid, outpoint_vout, alkane_block, alkane_tx)
                DO UPDATE SET
                    amount = EXCLUDED.amount,
@@ -79,17 +85,19 @@ impl OptimizedBalanceTracker {
         Ok(())
     }
     
-    /// Update aggregate balance
+    /// Update aggregate balance (writes to TraceAlkaneBalance for API compatibility)
     async fn update_aggregate_balance(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         address: &str,
         alkane_id: &AlkaneId,
         amount_delta: u128,
+        block_height: i32,
+        tx_hash: &str,
     ) -> Result<()> {
-        // Get current balance
+        // Get current balance from TraceAlkaneBalance (used by API)
         let current: Option<String> = sqlx::query_scalar(
-            r#"SELECT total_amount::TEXT FROM "TraceBalanceAggregate"
+            r#"SELECT balance::TEXT FROM "TraceAlkaneBalance"
                WHERE address = $1 AND alkane_block = $2 AND alkane_tx = $3"#
         )
         .bind(address)
@@ -103,18 +111,22 @@ impl OptimizedBalanceTracker {
             .unwrap_or(0) + amount_delta;
         
         sqlx::query(
-            r#"INSERT INTO "TraceBalanceAggregate"
-               (address, alkane_block, alkane_tx, total_amount, updated_at)
-               VALUES ($1, $2, $3, $4, NOW())
+            r#"INSERT INTO "TraceAlkaneBalance"
+               (address, alkane_block, alkane_tx, balance, last_updated_block, last_updated_tx, last_updated_timestamp)
+               VALUES ($1, $2, $3, $4::numeric, $5, $6, NOW())
                ON CONFLICT (address, alkane_block, alkane_tx)
                DO UPDATE SET
-                   total_amount = EXCLUDED.total_amount,
-                   updated_at = NOW()"#
+                   balance = EXCLUDED.balance,
+                   last_updated_block = EXCLUDED.last_updated_block,
+                   last_updated_tx = EXCLUDED.last_updated_tx,
+                   last_updated_timestamp = NOW()"#
         )
         .bind(address)
         .bind(alkane_id.block)
         .bind(alkane_id.tx)
         .bind(new_total.to_string())
+        .bind(block_height)
+        .bind(tx_hash)
         .execute(&mut **tx)
         .await?;
         
@@ -148,7 +160,7 @@ impl OptimizedBalanceTracker {
         sqlx::query(
             r#"INSERT INTO "TraceHolder"
                (alkane_block, alkane_tx, address, total_amount, updated_at)
-               VALUES ($1, $2, $3, $4, NOW())
+               VALUES ($1, $2, $3, $4::numeric, NOW())
                ON CONFLICT (alkane_block, alkane_tx, address)
                DO UPDATE SET
                    total_amount = EXCLUDED.total_amount,

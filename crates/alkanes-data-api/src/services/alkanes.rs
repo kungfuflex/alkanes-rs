@@ -51,6 +51,14 @@ pub struct AlkaneBalance {
     pub symbol: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HolderInfo {
+    pub address: String,
+    pub balance: String,
+    #[serde(rename = "lastUpdatedBlock")]
+    pub last_updated_block: i32,
+}
+
 pub struct AlkanesService {
     rpc: AlkanesRpcClient,
     redis: redis::Client,
@@ -104,58 +112,64 @@ impl AlkanesService {
         Ok(alkane_utxos)
     }
 
-    /// Get alkanes by address with balances
+    /// Get alkanes by address with balances from TraceAlkaneBalance
     pub async fn get_alkanes_by_address(
         &self,
         address: &str,
         _filter_lp_tokens: bool,
     ) -> Result<Vec<AlkaneToken>> {
-        let rpc_response = self
-            .rpc
-            .get_alkanes_by_address(address)
-            .await
-            .context("Failed to get alkanes by address")?;
-
-        let mut alkane_map: HashMap<String, AlkaneToken> = HashMap::new();
-
-        // Aggregate balances
-        for item in rpc_response {
-            for rune_item in item.runes {
-                let alkane_id_str = format!("{}:{}", rune_item.rune.id.block, rune_item.rune.id.tx);
-
-                if let Some(existing) = alkane_map.get_mut(&alkane_id_str) {
-                    // Add to existing balance
-                    let current_balance: u128 = existing.balance.as_ref().unwrap_or(&"0".to_string()).parse().unwrap_or(0);
-                    let new_balance: u128 = rune_item.balance.parse().unwrap_or(0);
-                    existing.balance = Some((current_balance + new_balance).to_string());
-                } else if !rune_item.rune.name.is_empty() {
-                    // Create new entry
-                    alkane_map.insert(
-                        alkane_id_str,
-                        AlkaneToken {
-                            id: rune_item.rune.id,
-                            name: Some(rune_item.rune.name),
-                            symbol: Some(rune_item.rune.symbol),
-                            balance: Some(rune_item.balance),
-                            decimals: None,
-                            image: None,
-                            max: None,
-                            cap: None,
-                            premine: None,
-                            floor_price: Some(0.0),
-                            price_usd: Some(0.0),
-                            price_in_satoshi: Some(0),
-                        },
-                    );
-                }
+        // Query TraceAlkaneBalance for this address
+        let balances = sqlx::query_as::<_, (i32, i64, String)>(
+            r#"
+            SELECT alkane_block, alkane_tx, balance
+            FROM "TraceAlkaneBalance"
+            WHERE address = $1 AND balance > 0
+            ORDER BY balance DESC
+            "#
+        )
+        .bind(address)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to query TraceAlkaneBalance")?;
+        
+        let mut tokens = Vec::new();
+        
+        for (alkane_block, alkane_tx, balance_str) in balances {
+            let alkane_id = AlkaneId {
+                block: alkane_block.to_string(),
+                tx: alkane_tx.to_string(),
+            };
+            
+            // Try to get metadata from reflect-alkane
+            let mut token = AlkaneToken {
+                id: alkane_id.clone(),
+                name: None,
+                symbol: None,
+                decimals: None,
+                image: None,
+                max: None,
+                cap: None,
+                premine: None,
+                balance: Some(balance_str),
+                floor_price: None,
+                price_usd: None,
+                price_in_satoshi: None,
+            };
+            
+            // Try to enrich with metadata (non-blocking)
+            if let Ok(metadata) = self.get_static_alkane_data(&alkane_id).await {
+                token.name = metadata.name;
+                token.symbol = metadata.symbol;
+                token.decimals = metadata.decimals;
+                token.max = metadata.max;
+                token.cap = metadata.cap;
+                token.premine = metadata.premine;
             }
+            
+            tokens.push(token);
         }
-
-        // TODO: Fetch static data (name, symbol, decimals, image) for each alkane
-        // TODO: Fetch prices from pools
-        // TODO: Filter LP tokens if requested
-
-        Ok(alkane_map.into_values().collect())
+        
+        Ok(tokens)
     }
 
     /// Get static alkane data (name, symbol, cap, mintAmount, image)
@@ -322,6 +336,98 @@ impl AlkanesService {
         }
         
         Ok((tokens, total))
+    }
+
+    /// Get holders for a specific alkane with pagination
+    pub async fn get_holders(
+        &self,
+        alkane_id: &AlkaneId,
+        min_balance: Option<i64>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<(Vec<HolderInfo>, usize)> {
+        let limit = limit.unwrap_or(100).min(500);
+        let offset = offset.unwrap_or(0);
+        let min_balance = min_balance.unwrap_or(0);
+        
+        let alkane_block = alkane_id.block.parse::<i32>()
+            .context("Invalid alkane block")?;
+        let alkane_tx = alkane_id.tx.parse::<i64>()
+            .context("Invalid alkane tx")?;
+        
+        // Query holders with pagination
+        let holders = sqlx::query_as::<_, (String, String, i32)>(
+            r#"
+            SELECT address, balance, last_updated_block
+            FROM "TraceAlkaneBalance"
+            WHERE alkane_block = $1 
+              AND alkane_tx = $2 
+              AND balance >= $3
+            ORDER BY balance DESC
+            LIMIT $4 OFFSET $5
+            "#
+        )
+        .bind(alkane_block)
+        .bind(alkane_tx)
+        .bind(min_balance)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.db)
+        .await
+        .context("Failed to query holders")?;
+        
+        // Get total count
+        let total: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*) 
+            FROM "TraceAlkaneBalance"
+            WHERE alkane_block = $1 
+              AND alkane_tx = $2 
+              AND balance >= $3
+            "#
+        )
+        .bind(alkane_block)
+        .bind(alkane_tx)
+        .bind(min_balance)
+        .fetch_one(&self.db)
+        .await
+        .context("Failed to count holders")?;
+        
+        let holder_list: Vec<HolderInfo> = holders
+            .into_iter()
+            .map(|(address, balance, last_updated)| HolderInfo {
+                address,
+                balance,
+                last_updated_block: last_updated,
+            })
+            .collect();
+        
+        Ok((holder_list, total.0 as usize))
+    }
+    
+    /// Get holder count for a specific alkane
+    pub async fn get_holder_count(&self, alkane_id: &AlkaneId) -> Result<usize> {
+        let alkane_block = alkane_id.block.parse::<i32>()
+            .context("Invalid alkane block")?;
+        let alkane_tx = alkane_id.tx.parse::<i64>()
+            .context("Invalid alkane tx")?;
+        
+        let count: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*) 
+            FROM "TraceAlkaneBalance"
+            WHERE alkane_block = $1 
+              AND alkane_tx = $2 
+              AND balance > 0
+            "#
+        )
+        .bind(alkane_block)
+        .bind(alkane_tx)
+        .fetch_one(&self.db)
+        .await
+        .context("Failed to count holders")?;
+        
+        Ok(count.0 as usize)
     }
 
     /// Search alkanes globally

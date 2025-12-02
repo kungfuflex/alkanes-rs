@@ -217,3 +217,70 @@ pub async fn global_alkanes_search(
         }
     }
 }
+
+pub async fn get_holders(
+    state: web::Data<AppState>,
+    req: web::Json<crate::models::HoldersRequest>,
+) -> impl Responder {
+    let alkanes_service = AlkanesService::new(
+        state.alkanes_rpc.clone(),
+        state.redis_client.clone(),
+        state.db_pool.clone(),
+    );
+
+    match alkanes_service
+        .get_holders(
+            &(&req.alkane_id).into(),
+            req.min_balance,
+            req.limit,
+            req.offset,
+        )
+        .await
+    {
+        Ok((holders, total)) => {
+            let response = ApiResponse::ok(serde_json::json!({
+                "holders": holders,
+                "total": total,
+                "limit": req.limit.unwrap_or(100),
+                "offset": req.offset.unwrap_or(0),
+            }));
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => {
+            let error = ErrorResponse::with_stack(
+                500,
+                "Failed to get holders".to_string(),
+                e.to_string(),
+            );
+            HttpResponse::InternalServerError().json(error)
+        }
+    }
+}
+
+pub async fn get_holder_count(
+    state: web::Data<AppState>,
+    req: web::Json<AlkaneDetailsRequest>,
+) -> impl Responder {
+    let alkanes_service = AlkanesService::new(
+        state.alkanes_rpc.clone(),
+        state.redis_client.clone(),
+        state.db_pool.clone(),
+    );
+
+    match alkanes_service.get_holder_count(&(&req.id).into()).await {
+        Ok(count) => {
+            let response = ApiResponse::ok(serde_json::json!({
+                "count": count,
+            }));
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => {
+            let error = ErrorResponse::with_stack(
+                500,
+                "Failed to get holder count".to_string(),
+                e.to_string(),
+            );
+            HttpResponse::InternalServerError().json(error)
+        }
+    }
+}

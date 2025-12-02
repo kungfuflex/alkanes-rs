@@ -17,6 +17,27 @@ use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewComma
 use alkanes_cli_common::alkanes;
 use pretty_print::*;
 
+/// Resolve address identifier (e.g., "p2tr:0") to actual address if needed
+/// If the address doesn't contain identifier patterns, returns it as-is
+async fn resolve_address_identifier(args: &DeezelCommands, address: &str) -> Result<String> {
+    // Check if address contains identifier patterns like "p2tr:", "p2wsh:", etc.
+    let is_identifier = address.contains("p2tr:") ||
+                        address.contains("p2wsh:") ||
+                        address.contains("p2wpkh:") ||
+                        address.contains("p2sh:");
+
+    if !is_identifier {
+        // Not an identifier, return as-is (assume it's a raw address)
+        return Ok(address.to_string());
+    }
+
+    // Need to create a system to resolve the identifier
+    let alkanes_args = alkanes_cli_common::commands::Args::from(args);
+    let system = SystemAlkanes::new(&alkanes_args).await?;
+    let resolved = system.provider().resolve_all_identifiers(address).await?;
+    Ok(resolved)
+}
+
 /// Parse a BTC amount string and convert to satoshis
 /// Accepts formats like "0.0001", "1.5", "0.00000001", etc.
 fn parse_btc_amount(amount_str: &str) -> Result<u64> {
@@ -68,10 +89,10 @@ async fn main() -> Result<()> {
         .or_else(|| alkanes_args.rpc_config.get_default_brc20_prog_rpc_url());
 
     // Execute other commands
-    execute_command(&mut system, args.command, brc20_prog_rpc_url, args.sandshrew_rpc_url.clone()).await
+    execute_command(&mut system, args.command, brc20_prog_rpc_url).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, sandshrew_rpc_url: Option<String>) -> Result<()> {
+async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
@@ -81,7 +102,6 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Ord(cmd) => execute_ord_command(system.provider(), cmd.into()).await,
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
-        Commands::Sandshrew(command) => execute_sandshrew_command(system.provider(), command, sandshrew_rpc_url).await,
         Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url).await,
         Commands::Dataapi(_) => {
             // Dataapi is handled in main() because it doesn't need the System trait
@@ -273,6 +293,72 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 } else {
                     use alkanes_cli_sys::pretty_print::print_market_chart;
                     print_market_chart(&chart);
+                }
+            }
+        }
+        DataApiCommand::GetHolders { alkane, page, limit, raw, raw_http } => {
+            if raw_http {
+                let body = json!({
+                    "alkane": alkane,
+                    "page": page,
+                    "limit": limit
+                });
+                let text = client.post_raw("get-alkane-holders", &body).await?;
+                println!("{}", text);
+            } else {
+                let holders = client.get_holders(&alkane, page, limit).await?;
+                if raw {
+                    println!("{}", serde_json::to_string(&holders)?);
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&holders)?);
+                }
+            }
+        }
+        DataApiCommand::GetHolderCount { alkane, raw, raw_http } => {
+            if raw_http {
+                let body = json!({ "alkane": alkane });
+                let text = client.post_raw("get-alkane-holders-count", &body).await?;
+                println!("{}", text);
+            } else {
+                let count = client.get_holders_count(&alkane).await?;
+                if raw {
+                    println!("{}", serde_json::to_string(&count)?);
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&count)?);
+                }
+            }
+        }
+        DataApiCommand::GetAddressBalances { address, include_outpoints, raw, raw_http } => {
+            // Resolve address identifier (e.g., "p2tr:0") to actual address
+            let resolved_address = resolve_address_identifier(args, &address).await?;
+
+            if raw_http {
+                let body = json!({
+                    "address": resolved_address,
+                    "include_outpoints": include_outpoints
+                });
+                let text = client.post_raw("get-address-balances", &body).await?;
+                println!("{}", text);
+            } else {
+                let balances = client.get_address_balances(&resolved_address, include_outpoints).await?;
+                if raw {
+                    println!("{}", serde_json::to_string(&balances)?);
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&balances)?);
+                }
+            }
+        }
+        DataApiCommand::GetOutpointBalances { outpoint, raw, raw_http } => {
+            if raw_http {
+                let body = json!({ "outpoint": outpoint });
+                let text = client.post_raw("get-outpoint-balances", &body).await?;
+                println!("{}", text);
+            } else {
+                let balances = client.get_outpoint_balances(&outpoint).await?;
+                if raw {
+                    println!("{}", serde_json::to_string(&balances)?);
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&balances)?);
                 }
             }
         }
@@ -4595,94 +4681,3 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
     }
 }
 
-async fn execute_sandshrew_command(
-    provider: &dyn DeezelProvider,
-    command: crate::commands::SandshrewCommands,
-    rpc_url: Option<String>,
-) -> anyhow::Result<()> {
-    use crate::commands::SandshrewCommands;
-    use sha2::{Digest, Sha256};
-    use std::fs;
-
-    let rpc_url = rpc_url.ok_or_else(|| anyhow::anyhow!("Sandshrew RPC URL not set. Use --sandshrew-rpc-url"))?;
-
-    match command {
-        SandshrewCommands::Evalscript { script, args, raw } => {
-            let script_content = fs::read_to_string(&script)
-                .map_err(|e| anyhow::anyhow!("Failed to read script file {}: {}", script, e))?;
-
-            // Hash the script
-            let mut hasher = Sha256::new();
-            hasher.update(script_content.as_bytes());
-            let script_hash = hex::encode(hasher.finalize());
-
-            // Resolve args
-            let mut resolved_args = Vec::new();
-            for arg in args {
-                match provider.resolve_all_identifiers(&arg).await {
-                    Ok(resolved) => resolved_args.push(serde_json::Value::String(resolved)),
-                    Err(_) => resolved_args.push(serde_json::Value::String(arg)),
-                }
-            }
-
-            let client = reqwest::Client::new();
-
-            // Try evalsaved
-            let mut params = vec![serde_json::Value::String(script_hash.clone())];
-            params.extend(resolved_args.clone());
-
-            let request = serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "lua_evalsaved",
-                "params": params,
-                "id": 1
-            });
-
-            let response = client.post(&rpc_url)
-                .json(&request)
-                .send()
-                .await?;
-
-            let response_json: serde_json::Value = response.json().await?;
-
-            if let Some(error) = response_json.get("error") {
-                // Check if error indicates script not found
-                let error_msg = error.get("message").and_then(|s| s.as_str()).unwrap_or("");
-                if error_msg.contains("Script not found") {
-                    // Fallback to evalscript
-                    if !raw {
-                        println!("Script not cached (hash: {}), falling back to evalscript...", script_hash);
-                    }
-
-                    let mut params = vec![serde_json::Value::String(script_content)];
-                    params.extend(resolved_args);
-
-                    let request = serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "method": "lua_evalscript",
-                        "params": params,
-                        "id": 1
-                    });
-
-                    let response = client.post(&rpc_url)
-                        .json(&request)
-                        .send()
-                        .await?;
-                    
-                    let response_json: serde_json::Value = response.json().await?;
-                    
-                    if let Some(result) = response_json.get("result") {
-                        println!("{}", serde_json::to_string_pretty(result)?);
-                    } else if let Some(error) = response_json.get("error") {
-                         return Err(anyhow::anyhow!("RPC error: {}", error));
-                    }
-                } else {
-                    return Err(anyhow::anyhow!("RPC error: {}", error));
-                }
-            } else if let Some(result) = response_json.get("result") {
-                println!("{}", serde_json::to_string_pretty(result)?);
-            }
-        }
-    }
-    Ok(())
-}

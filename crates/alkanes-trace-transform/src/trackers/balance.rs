@@ -13,6 +13,7 @@ pub struct BalanceChange {
     pub alkane_id: AlkaneId,
     pub amount: u128,
     pub block_height: i32,
+    pub tx_hash: String, // Transaction hash for tracking
 }
 
 /// Aggregated balance per address per alkane
@@ -81,36 +82,145 @@ impl ValueTransferExtractor {
             // Parse alkane ID
             let alkane_id = transfer.get("id")
                 .or_else(|| transfer.get("alkaneId"));
-            
+
             if let Some(id_obj) = alkane_id {
+                // block and tx can be strings or numbers - handle both
                 let block = id_obj.get("block")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0) as i32;
-                let tx = id_obj.get("tx")
-                    .and_then(|v| v.as_i64())
+                    .and_then(|v| {
+                        v.as_str().and_then(|s| s.parse::<i32>().ok())
+                            .or_else(|| v.as_i64().map(|n| n as i32))
+                    })
                     .unwrap_or(0);
-                
-                // Parse amount
-                let amount = transfer.get("amount")
-                    .or_else(|| transfer.get("value"))
+                let tx = id_obj.get("tx")
+                    .and_then(|v| {
+                        v.as_str().and_then(|s| s.parse::<i64>().ok())
+                            .or_else(|| v.as_i64())
+                    })
+                    .unwrap_or(0);
+
+                // Parse amount - value can be string or number
+                let amount = transfer.get("value")
+                    .or_else(|| transfer.get("amount"))
                     .and_then(|v| {
                         v.as_str().and_then(|s| s.parse::<u128>().ok())
                             .or_else(|| v.as_u64().map(|n| n as u128))
+                            .or_else(|| v.as_i64().map(|n| n as u128))
                     })
                     .unwrap_or(0);
-                
-                if block > 0 && tx > 0 && amount > 0 {
+
+                if block > 0 && amount > 0 {
                     changes.push(BalanceChange {
                         outpoint: outpoint.clone(),
                         address: address.clone(),
                         alkane_id: AlkaneId::new(block, tx),
                         amount,
                         block_height,
+                        tx_hash: txid.clone(),
                     });
                 }
             }
         }
         
+        changes
+    }
+    
+    /// Extract balance changes from receive_intent event with transfers array
+    /// NOTE: receive_intent events show what's INCOMING to a protostone (shadow vout),
+    /// but we should NOT create balance entries from them directly because:
+    /// 1. The vout is a virtual protostone index, not a physical output
+    /// 2. The actual destination is determined by value_transfer events
+    /// We keep this for backward compatibility with tests that use incoming_alkanes format
+    fn extract_from_receive_intent(&self, data: &serde_json::Value, vout: i32) -> Vec<BalanceChange> {
+        let mut changes = Vec::new();
+
+        // Get the address for this vout from context
+        // Note: For receive_intent, vout is typically a shadow vout (tx.output.len() + 1 + i)
+        // which won't have an address. This is expected behavior for protocol messages.
+        let address = self.context.as_ref()
+            .and_then(|ctx| ctx.vouts.iter().find(|v| v.index == vout))
+            .and_then(|v| v.address.clone());
+
+        if address.is_none() {
+            // This is expected for receive_intent events on shadow vouts
+            // The actual balance tracking happens via value_transfer events
+            return changes;
+        }
+
+        let address = address.unwrap();
+        let block_height = self.context.as_ref().map(|c| c.block_height).unwrap_or(0);
+        let txid = self.context.as_ref().map(|c| c.txid.clone()).unwrap_or_default();
+        let outpoint = format!("{}:{}", txid, vout);
+
+        // The field name varies depending on the source:
+        // - From protostone.rs convert_trace_to_events: "transfers"
+        // - From test data: "incoming_alkanes" or "incomingAlkanes"
+        let incoming_alkanes = data.get("transfers")
+            .or_else(|| data.get("incoming_alkanes"))
+            .or_else(|| data.get("incomingAlkanes"))
+            .and_then(|v| v.as_array())
+            .map(|a| a.as_slice())
+            .unwrap_or(&[]);
+
+        for alkane_entry in incoming_alkanes {
+            // Parse alkane ID
+            let alkane_id = alkane_entry.get("id");
+
+            if let Some(id_obj) = alkane_id {
+                // block and tx can be strings or numbers - handle both
+                let block = id_obj.get("block")
+                    .and_then(|v| {
+                        v.as_str().and_then(|s| s.parse::<i32>().ok())
+                            .or_else(|| v.as_i64().map(|n| n as i32))
+                    })
+                    .unwrap_or(0);
+                let tx = id_obj.get("tx")
+                    .and_then(|v| {
+                        v.as_str().and_then(|s| s.parse::<i64>().ok())
+                            .or_else(|| v.as_i64())
+                    })
+                    .unwrap_or(0);
+
+                // Parse amount from value field - can be:
+                // - U128 format {lo, hi}
+                // - String representation
+                // - Direct number
+                let amount = alkane_entry.get("value")
+                    .and_then(|v| {
+                        // Check for U128 format {lo, hi}
+                        if let Some(lo) = v.get("lo") {
+                            lo.as_i64().or_else(|| lo.as_u64().map(|n| n as i64))
+                                .map(|n| n as u128)
+                        } else {
+                            // Fallback to direct value (string or number)
+                            v.as_str().and_then(|s| s.parse::<u128>().ok())
+                                .or_else(|| v.as_u64().map(|n| n as u128))
+                                .or_else(|| v.as_i64().map(|n| n as u128))
+                        }
+                    })
+                    .or_else(|| {
+                        // Fallback to amount field
+                        alkane_entry.get("amount")
+                            .and_then(|v| {
+                                v.as_str().and_then(|s| s.parse::<u128>().ok())
+                                    .or_else(|| v.as_u64().map(|n| n as u128))
+                                    .or_else(|| v.as_i64().map(|n| n as u128))
+                            })
+                    })
+                    .unwrap_or(0);
+
+                if block > 0 && amount > 0 {
+                    changes.push(BalanceChange {
+                        outpoint: outpoint.clone(),
+                        address: address.clone(),
+                        alkane_id: AlkaneId::new(block, tx),
+                        amount,
+                        block_height,
+                        tx_hash: txid.clone(),
+                    });
+                }
+            }
+        }
+
         changes
     }
 }
@@ -125,11 +235,11 @@ impl TraceExtractor for ValueTransferExtractor {
     type Output = Vec<BalanceChange>;
     
     fn extract(&self, trace: &TraceEvent) -> Result<Option<Vec<BalanceChange>>> {
-        if trace.event_type != "value_transfer" {
-            return Ok(None);
-        }
-        
-        let changes = self.extract_transfers(&trace.data, trace.vout);
+        let changes = match trace.event_type.as_str() {
+            "value_transfer" => self.extract_transfers(&trace.data, trace.vout),
+            "receive_intent" => self.extract_from_receive_intent(&trace.data, trace.vout),
+            _ => return Ok(None),
+        };
         
         if changes.is_empty() {
             Ok(None)
@@ -248,11 +358,13 @@ mod tests {
                 VoutInfo {
                     index: 0,
                     address: Some("bc1qtest".to_string()),
+                    script_pubkey: "".to_string(),
                     value: 1000,
                 },
                 VoutInfo {
                     index: 1,
                     address: Some("bc1qtest2".to_string()),
+                    script_pubkey: "".to_string(),
                     value: 2000,
                 },
             ],
@@ -308,6 +420,7 @@ mod tests {
                 alkane_id: AlkaneId::new(4, 10),
                 amount: 1000,
                 block_height: 100,
+                tx_hash: "abc123".to_string(),
             },
             BalanceChange {
                 outpoint: "abc123:1".to_string(),
@@ -315,6 +428,7 @@ mod tests {
                 alkane_id: AlkaneId::new(4, 10),
                 amount: 500,
                 block_height: 100,
+                tx_hash: "abc123".to_string(),
             },
         ];
         
@@ -350,6 +464,7 @@ mod tests {
                 alkane_id: AlkaneId::new(4, 10),
                 amount: 1000,
                 block_height: 100,
+                tx_hash: "tx1".to_string(),
             },
         ]).unwrap();
         
@@ -361,6 +476,7 @@ mod tests {
                 alkane_id: AlkaneId::new(4, 10),
                 amount: 2000,
                 block_height: 101,
+                tx_hash: "tx2".to_string(),
             },
         ]).unwrap();
         

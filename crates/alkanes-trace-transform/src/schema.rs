@@ -227,6 +227,7 @@ pub async fn apply_schema(pool: &PgPool) -> Result<()> {
 #[cfg(feature = "postgres")]
 pub async fn drop_schema(pool: &PgPool) -> Result<()> {
     let drop_sql = r#"
+        DROP TABLE IF EXISTS "TraceUtxoBalance" CASCADE;
         DROP TABLE IF EXISTS "TraceAlkaneBalance" CASCADE;
         DROP TABLE IF EXISTS "TraceAlkane" CASCADE;
         DROP TABLE IF EXISTS "TraceCandle" CASCADE;
@@ -321,5 +322,37 @@ CREATE INDEX IF NOT EXISTS idx_trace_alkane_balance_alkane
     ON "TraceAlkaneBalance"(alkane_block, alkane_tx);
     
 CREATE INDEX IF NOT EXISTS idx_trace_alkane_balance_amount
-    ON "TraceAlkaneBalance"(alkane_block, alkane_tx, balance DESC) WHERE balance > 0
+    ON "TraceAlkaneBalance"(alkane_block, alkane_tx, balance DESC) WHERE balance > 0;
+
+-- UTXO-level alkane balances for precise tracking
+CREATE TABLE IF NOT EXISTS "TraceUtxoBalance" (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tx_hash TEXT NOT NULL,
+    vout INTEGER NOT NULL,
+    alkane_block INTEGER NOT NULL,
+    alkane_tx BIGINT NOT NULL,
+    amount NUMERIC NOT NULL,
+    address TEXT NOT NULL,
+    script_pubkey TEXT,
+    created_block INTEGER NOT NULL,
+    created_tx TEXT NOT NULL,
+    created_timestamp TIMESTAMPTZ DEFAULT NOW(),
+    spent BOOLEAN DEFAULT FALSE,
+    spent_block INTEGER,
+    spent_tx TEXT,
+    spent_timestamp TIMESTAMPTZ,
+    UNIQUE(tx_hash, vout, alkane_block, alkane_tx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_utxo_address 
+    ON "TraceUtxoBalance" (address, alkane_block, alkane_tx) WHERE NOT spent;
+    
+CREATE INDEX IF NOT EXISTS idx_utxo_alkane 
+    ON "TraceUtxoBalance" (alkane_block, alkane_tx) WHERE NOT spent;
+    
+CREATE INDEX IF NOT EXISTS idx_utxo_outpoint 
+    ON "TraceUtxoBalance" (tx_hash, vout) WHERE NOT spent;
+    
+CREATE INDEX IF NOT EXISTS idx_utxo_spent 
+    ON "TraceUtxoBalance" (spent, created_block)
 "#;

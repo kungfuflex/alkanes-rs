@@ -12,6 +12,7 @@ mod pipeline;
 mod poller;
 mod provider;
 mod helpers;
+mod inferred_transfers;
 mod transform_integration;
 use crate::db::blocks::ensure_processed_blocks_table;
 

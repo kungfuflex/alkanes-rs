@@ -42,12 +42,9 @@ pub struct DeezelCommands {
     /// Wallet private key file path (for signing with a single key)
     #[arg(long, conflicts_with_all = ["wallet_file", "wallet_address", "wallet_key"])]
     pub wallet_key_file: Option<String>,
-    /// JSON-RPC URL
+    /// JSON-RPC URL (defaults based on provider: subfrost-regtest, signet, mainnet)
     #[arg(long)]
     pub jsonrpc_url: Option<String>,
-    /// Sandshrew RPC URL (deprecated, use --jsonrpc-url instead)
-    #[arg(long)]
-    pub sandshrew_rpc_url: Option<String>,
     /// Titan API URL (alternative to jsonrpc-url)
     #[arg(long)]
     pub titan_api_url: Option<String>,
@@ -113,9 +110,6 @@ pub enum Commands {
     /// DataAPI subcommands - Query data from alkanes-data-api
     #[command(subcommand)]
     Dataapi(DataApiCommand),
-    /// Sandshrew RPC operations
-    #[command(subcommand)]
-    Sandshrew(SandshrewCommands),
 }
 
 /// Metashrew subcommands
@@ -1287,6 +1281,59 @@ pub enum DataApiCommand {
         #[arg(long)]
         raw_http: bool,
     },
+    /// Get holders of an alkane token
+    GetHolders {
+        /// Alkane ID in format BLOCK:TX (e.g., 2:0)
+        alkane: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: i64,
+        /// Results per page (default: 100, max: 1000)
+        #[arg(long, default_value = "100")]
+        limit: i64,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get holder count for an alkane token
+    GetHolderCount {
+        /// Alkane ID in format BLOCK:TX (e.g., 2:0)
+        alkane: String,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get alkane balances for an address (with UTXO tracking)
+    GetAddressBalances {
+        /// Address or address identifier (e.g., "p2tr:0", "bc1p...")
+        address: String,
+        /// Include individual outpoint details
+        #[arg(long)]
+        include_outpoints: bool,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get alkane balances for a specific outpoint
+    GetOutpointBalances {
+        /// Outpoint in format TXID:VOUT (e.g., "abc123...def:0")
+        outpoint: String,
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
 }
 
 /// Runestone subcommands
@@ -1635,19 +1682,3 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
     }
 }
 
-/// Sandshrew subcommands
-#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
-pub enum SandshrewCommands {
-    /// Execute a Lua script
-    Evalscript {
-        /// Path to Lua script file
-        #[arg(long)]
-        script: String,
-        /// Arguments to pass to the script
-        #[arg(num_args = 0..)]
-        args: Vec<String>,
-        /// Show raw JSON output
-        #[arg(long)]
-        raw: bool,
-    },
-}

@@ -83,6 +83,14 @@ async fn main() -> Result<()> {
                         web::post().to(handlers::alkanes::get_alkane_details),
                     )
                     .route(
+                        "/get-holders",
+                        web::post().to(handlers::alkanes::get_holders),
+                    )
+                    .route(
+                        "/get-holder-count",
+                        web::post().to(handlers::alkanes::get_holder_count),
+                    )
+                    .route(
                         "/get-alkanes-utxo",
                         web::post().to(handlers::alkanes::get_alkanes_utxo),
                     )
@@ -94,11 +102,11 @@ async fn main() -> Result<()> {
                         "/global-alkanes-search",
                         web::post().to(handlers::alkanes::global_alkanes_search),
                     )
-                    // Balance endpoints
+                    // Balance endpoints (trace transform based)
                     .route("/get-address-balances", web::post().to(handlers::balance::get_address_balances))
                     .route("/get-outpoint-balances", web::post().to(handlers::balance::get_outpoint_balances))
-                    .route("/get-holders", web::post().to(handlers::balance::get_holders))
-                    .route("/get-holders-count", web::post().to(handlers::balance::get_holders_count))
+                    .route("/get-alkane-holders", web::post().to(handlers::balance::get_holders))
+                    .route("/get-alkane-holders-count", web::post().to(handlers::balance::get_holders_count))
                     .route("/get-address-outpoints", web::post().to(handlers::balance::get_address_outpoints))
                     // Storage endpoints
                     .route("/get-keys", web::post().to(handlers::storage::get_keys))

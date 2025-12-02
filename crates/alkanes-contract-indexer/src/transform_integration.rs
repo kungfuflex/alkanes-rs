@@ -113,19 +113,9 @@ impl TraceTransformService {
             }
         }
         
-        // Second pass: Track balance changes (receive_intent and value_transfer)
-        for trace in &traces {
-            match trace.event_type.as_str() {
-                "receive_intent" | "value_transfer" => {
-                    if let Err(e) = self.process_balance_change(trace, &context).await {
-                        tracing::warn!("Failed to process balance change for {}: {:?}", trace.event_type, e);
-                    }
-                }
-                _ => {}
-            }
-        }
-        
-        // Update extractor context
+        // Update extractor context for balance processing
+        // The OptimizedBalanceProcessor uses ValueTransferExtractor which now handles
+        // both receive_intent and value_transfer events automatically
         self.balance_processor = OptimizedBalanceProcessor::with_context(self.pool.clone(), context.clone());
         
         // Process each trace
@@ -174,12 +164,215 @@ impl TraceTransformService {
         Ok(())
     }
     
+    /// Create UTXO balance entry from ReceiveIntent event
+    async fn create_utxo_from_receive_intent(
+        &self,
+        trace: &types::TraceEvent,
+        context: &types::TransactionContext,
+    ) -> Result<()> {
+        tracing::info!("create_utxo_from_receive_intent: full data = {}", serde_json::to_string_pretty(&trace.data).unwrap_or_else(|_| "error".to_string()));
+        
+        // Parse ReceiveIntent event structure: incoming_alkanes array
+        let incoming_alkanes = trace.data.get("incoming_alkanes")
+            .or_else(|| trace.data.get("incomingAlkanes"))
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("No incoming_alkanes array in receive_intent"))?;
+        
+        // Get target vout info (the vout where this event occurred)
+        let vout = trace.vout;
+        let target_vout = context.vouts.get(vout as usize)
+            .ok_or_else(|| anyhow::anyhow!("vout {} out of range", vout))?;
+        
+        let address = target_vout.address.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No address for vout {}", vout))?;
+        let script_pubkey = &target_vout.script_pubkey;
+        
+        // Process each incoming alkane
+        for alkane in incoming_alkanes {
+            let alkane_id = alkane.get("id")
+                .ok_or_else(|| anyhow::anyhow!("No id in incoming alkane"))?;
+            let alkane_block = alkane_id.get("block")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| anyhow::anyhow!("No block in alkane id"))? as i32;
+            let alkane_tx = alkane_id.get("tx")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| anyhow::anyhow!("No tx in alkane id"))?;
+            
+            // Amount is in U128 format with "lo" field
+            let amount = alkane.get("value")
+                .and_then(|v| v.get("lo"))
+                .and_then(|v| v.as_i64())
+                .or_else(|| alkane.get("amount")
+                    .and_then(|v| v.as_i64()))
+                .ok_or_else(|| anyhow::anyhow!("No amount in incoming alkane"))? as i64;
+            
+            // Insert UTXO balance
+            sqlx::query(
+                r#"
+                INSERT INTO "TraceUtxoBalance"
+                    (tx_hash, vout, alkane_block, alkane_tx, amount, address, script_pubkey,
+                     created_block, created_tx, created_timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (tx_hash, vout, alkane_block, alkane_tx) DO NOTHING
+                "#
+            )
+            .bind(&context.txid)
+            .bind(vout)
+            .bind(alkane_block)
+            .bind(alkane_tx)
+            .bind(amount)
+            .bind(address)
+            .bind(script_pubkey)
+            .bind(context.block_height as i32)
+            .bind(&context.txid)
+            .bind(context.timestamp)
+            .execute(&self.pool)
+            .await?;
+            
+            // Also update aggregate balance
+            sqlx::query(
+                r#"
+                INSERT INTO "TraceAlkaneBalance"
+                    (address, alkane_block, alkane_tx, balance, last_updated_block, last_updated_tx, last_updated_timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (address, alkane_block, alkane_tx)
+                DO UPDATE SET
+                    balance = "TraceAlkaneBalance".balance + $4,
+                    last_updated_block = $5,
+                    last_updated_tx = $6,
+                    last_updated_timestamp = $7
+                "#
+            )
+            .bind(address)
+            .bind(alkane_block)
+            .bind(alkane_tx)
+            .bind(amount)
+            .bind(context.block_height as i32)
+            .bind(&context.txid)
+            .bind(context.timestamp)
+            .execute(&self.pool)
+            .await?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Create UTXO balance entry from ValueTransfer event
+    async fn create_utxo_balance(
+        &self,
+        trace: &types::TraceEvent,
+        context: &types::TransactionContext,
+    ) -> Result<()> {
+        // Parse ValueTransfer event structure
+        let transfers = trace.data.get("transfers")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("No transfers array in value_transfer"))?;
+        
+        let redirect_to = trace.data.get("redirect_to")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("No redirect_to in value_transfer"))? as i32;
+        
+        // Get target vout info
+        let target_vout = context.vouts.get(redirect_to as usize)
+            .ok_or_else(|| anyhow::anyhow!("redirect_to {} out of range", redirect_to))?;
+        
+        let address = target_vout.address.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No address for vout {}", redirect_to))?;
+        let script_pubkey = &target_vout.script_pubkey;
+        
+        // Process each transfer
+        for transfer in transfers {
+            let alkane_id = transfer.get("id")
+                .ok_or_else(|| anyhow::anyhow!("No id in transfer"))?;
+            let alkane_block = alkane_id.get("block")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| anyhow::anyhow!("No block in alkane id"))? as i32;
+            let alkane_tx = alkane_id.get("tx")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| anyhow::anyhow!("No tx in alkane id"))?;
+            
+            // Amount is in U128 format with "lo" field
+            let amount = transfer.get("value")
+                .and_then(|v| v.get("lo"))
+                .and_then(|v| v.as_i64())
+                .or_else(|| transfer.get("amount")
+                    .and_then(|v| v.as_i64()))
+                .ok_or_else(|| anyhow::anyhow!("No amount in transfer"))? as i64;
+            
+            // Insert UTXO balance
+            sqlx::query(
+                r#"
+                INSERT INTO "TraceUtxoBalance"
+                    (tx_hash, vout, alkane_block, alkane_tx, amount, address, script_pubkey,
+                     created_block, created_tx, created_timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (tx_hash, vout, alkane_block, alkane_tx) DO NOTHING
+                "#
+            )
+            .bind(&context.txid)
+            .bind(redirect_to)
+            .bind(alkane_block)
+            .bind(alkane_tx)
+            .bind(amount)
+            .bind(address)
+            .bind(script_pubkey)
+            .bind(context.block_height as i32)
+            .bind(&context.txid)
+            .bind(context.timestamp)
+            .execute(&self.pool)
+            .await?;
+            
+            // Also update aggregate balance
+            sqlx::query(
+                r#"
+                INSERT INTO "TraceAlkaneBalance"
+                    (address, alkane_block, alkane_tx, balance, last_updated_block, last_updated_tx, last_updated_timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (address, alkane_block, alkane_tx)
+                DO UPDATE SET
+                    balance = "TraceAlkaneBalance".balance + $4,
+                    last_updated_block = $5,
+                    last_updated_tx = $6,
+                    last_updated_timestamp = $7
+                "#
+            )
+            .bind(address)
+            .bind(alkane_block)
+            .bind(alkane_tx)
+            .bind(amount)
+            .bind(context.block_height as i32)
+            .bind(&context.txid)
+            .bind(context.timestamp)
+            .execute(&self.pool)
+            .await?;
+        }
+        
+        Ok(())
+    }
+    
     /// Process balance changes from receive_intent and value_transfer events
+    /// This method is being phased out in favor of using the library's ValueTransferExtractor
+    /// which now handles both event types.
     async fn process_balance_change(
         &self,
         trace: &types::TraceEvent,
         context: &types::TransactionContext,
     ) -> Result<()> {
+        // NOTE: This is legacy code. The balance_processor now handles both
+        // receive_intent and value_transfer through ValueTransferExtractor.
+        // Keeping this for backwards compatibility but it's no longer needed.
+        return Ok(());
+        
+        // Handle ValueTransfer with UTXO tracking
+        if trace.event_type == "value_transfer" {
+            return self.create_utxo_balance(trace, context).await;
+        }
+        
+        // Handle ReceiveIntent with UTXO tracking
+        if trace.event_type == "receive_intent" {
+            return self.create_utxo_from_receive_intent(trace, context).await;
+        }
+        
         // Extract alkane ID - skip if not present or empty
         if trace.alkane_address_block.is_empty() || trace.alkane_address_tx.is_empty() {
             return Ok(());

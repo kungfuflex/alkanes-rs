@@ -165,3 +165,13 @@ pub struct IntentHistoryRequest {
     #[serde(rename = "totalTxs")]
     pub total_txs: Option<i32>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct HoldersRequest {
+    #[serde(rename = "alkaneId")]
+    pub alkane_id: AlkaneId,
+    #[serde(rename = "minBalance")]
+    pub min_balance: Option<i64>,
+    pub limit: Option<i32>,
+    pub offset: Option<i32>,
+}

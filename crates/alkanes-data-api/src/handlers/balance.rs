@@ -282,48 +282,92 @@ pub async fn get_holders(
     let limit = req.limit.min(1000);
     let offset = (req.page - 1) * limit;
 
-    // Get total count
+    // Try TraceHolder first (trace transform tables), then fallback to AlkaneHolder
     let count_result = sqlx::query_as::<_, (i64,)>(
-        r#"select count(*) from "AlkaneHolder" where "alkaneIdBlock" = $1 and "alkaneIdTx" = $2"#
+        r#"select count(*) from "TraceHolder" where alkane_block = $1 and alkane_tx = $2 and total_amount > 0"#
     )
     .bind(block)
     .bind(tx)
     .fetch_one(pool)
     .await;
 
-    let total = match count_result {
-        Ok((count,)) => count,
-        Err(e) => {
-            log::error!("Failed to count holders: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "ok": false,
-                "error": "internal_error"
-            }));
+    let (total, use_trace_table) = match count_result {
+        Ok((count,)) if count > 0 => {
+            log::info!("Using TraceHolder table for holders");
+            (count, true)
+        },
+        _ => {
+            // Fallback to AlkaneHolder
+            log::info!("Using AlkaneHolder table for holders");
+            let count_result = sqlx::query_as::<_, (i64,)>(
+                r#"select count(*) from "AlkaneHolder" where "alkaneIdBlock" = $1 and "alkaneIdTx" = $2"#
+            )
+            .bind(block)
+            .bind(tx)
+            .fetch_one(pool)
+            .await;
+            match count_result {
+                Ok((count,)) => (count, false),
+                Err(e) => {
+                    log::error!("Failed to count holders: {}", e);
+                    return HttpResponse::InternalServerError().json(serde_json::json!({
+                        "ok": false,
+                        "error": "internal_error"
+                    }));
+                }
+            }
         }
     };
 
-    let holders_result = sqlx::query_as::<_, (String, String)>(
-        r#"select "address", "totalAmount" 
-           from "AlkaneHolder" 
-           where "alkaneIdBlock" = $1 and "alkaneIdTx" = $2 
-           order by "totalAmount" desc 
-           limit $3 offset $4"#
-    )
-    .bind(block)
-    .bind(tx)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await;
+    let rows: Vec<(String, String)> = if use_trace_table {
+        let holders_result = sqlx::query_as::<_, (String, String)>(
+            r#"select address, total_amount::TEXT
+               from "TraceHolder"
+               where alkane_block = $1 and alkane_tx = $2 and total_amount > 0
+               order by total_amount desc
+               limit $3 offset $4"#
+        )
+        .bind(block)
+        .bind(tx)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await;
 
-    let rows = match holders_result {
-        Ok(rows) => rows,
-        Err(e) => {
-            log::error!("Failed to fetch holders: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "ok": false,
-                "error": "internal_error"
-            }));
+        match holders_result {
+            Ok(rows) => rows,
+            Err(e) => {
+                log::error!("Failed to fetch holders from TraceHolder: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "ok": false,
+                    "error": "internal_error"
+                }));
+            }
+        }
+    } else {
+        let holders_result = sqlx::query_as::<_, (String, String)>(
+            r#"select "address", "totalAmount"
+               from "AlkaneHolder"
+               where "alkaneIdBlock" = $1 and "alkaneIdTx" = $2
+               order by "totalAmount" desc
+               limit $3 offset $4"#
+        )
+        .bind(block)
+        .bind(tx)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await;
+
+        match holders_result {
+            Ok(rows) => rows,
+            Err(e) => {
+                log::error!("Failed to fetch holders: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "ok": false,
+                    "error": "internal_error"
+                }));
+            }
         }
     };
 

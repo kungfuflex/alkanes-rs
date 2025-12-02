@@ -17,11 +17,13 @@ fn test_complete_swap_transaction() {
             types::VoutInfo {
                 index: 0,
                 address: Some("bc1qswapper".to_string()),
+                script_pubkey: "".to_string(),
                 value: 1000,
             },
             types::VoutInfo {
                 index: 1,
                 address: Some("bc1qpool".to_string()),
+                script_pubkey: "".to_string(),
                 value: 2000,
             },
         ],
@@ -110,6 +112,7 @@ fn test_sequential_swaps() {
             types::VoutInfo {
                 index: 0,
                 address: Some("bc1quser".to_string()),
+                script_pubkey: "".to_string(),
                 value: 1000,
             },
         ],
@@ -146,6 +149,7 @@ fn test_sequential_swaps() {
             types::VoutInfo {
                 index: 0,
                 address: Some("bc1quser".to_string()),
+                script_pubkey: "".to_string(),
                 value: 2000,
             },
         ],
@@ -268,6 +272,360 @@ fn test_amm_trade_tracking_integration() {
     assert!(candle.volume1 > 0);
 }
 
+/// Test receive_intent event with incoming_alkanes array
+/// This simulates the exact data structure from actual alkanes transactions
+#[test]
+fn test_receive_intent_with_incoming_alkanes() {
+    // Setup
+    let mut backend = InMemoryBackend::new();
+    let mut pipeline = TransformPipeline::new();
+    
+    // Create context for a transaction where user receives alkanes
+    let context = types::TransactionContext {
+        txid: "receive_tx_abc123".to_string(),
+        block_height: 485,
+        timestamp: chrono::Utc::now(),
+        vouts: vec![
+            types::VoutInfo {
+                index: 0,
+                address: Some("bcrt1p705x8h5dy67x7tgdu6wv2crq333sdx6h776vc929rxcdlxs5wj2s7h296c".to_string()),
+                script_pubkey: "5120f3e863de8d26bc6f2d0de69cc560608c63069b57f7b4cc154519b0df9a147495".to_string(),
+                value: 546,
+            },
+        ],
+    };
+    
+    // Add balance tracker
+    let balance_extractor = ValueTransferExtractor::with_context(context.clone());
+    pipeline.add_extractor(balance_extractor);
+    pipeline.add_tracker::<BalanceTracker, InMemoryBackend>(BalanceTracker::new());
+    
+    // Simulate receive_intent event with incoming_alkanes array
+    // This matches the exact structure from alkanes runtime
+    let trace = types::TraceEvent {
+        event_type: "receive_intent".to_string(),
+        vout: 0,
+        alkane_address_block: "".to_string(), // receive_intent doesn't have alkane address in top level
+        alkane_address_tx: "".to_string(),
+        data: json!({
+            "incoming_alkanes": [
+                {
+                    "id": {
+                        "block": 2,
+                        "tx": 0
+                    },
+                    "value": {
+                        "lo": 5000000000_i64,
+                        "hi": 0
+                    }
+                },
+                {
+                    "id": {
+                        "block": 32,
+                        "tx": 0
+                    },
+                    "value": {
+                        "lo": 164,
+                        "hi": 0
+                    }
+                }
+            ]
+        }),
+    };
+    
+    // Process trace
+    pipeline.process_trace(&mut backend, &trace).unwrap();
+    
+    // Verify balances were tracked for DIESEL (2:0)
+    let diesel_balance_key = format!("balance:bcrt1p705x8h5dy67x7tgdu6wv2crq333sdx6h776vc929rxcdlxs5wj2s7h296c:{}", 
+        types::AlkaneId::new(2, 0).to_string());
+    let diesel_balance_bytes = backend.get("address_balances", diesel_balance_key.as_bytes()).unwrap();
+    assert!(diesel_balance_bytes.is_some(), "Should have DIESEL balance");
+    
+    let diesel_balance: AddressBalance = serde_json::from_slice(&diesel_balance_bytes.unwrap()).unwrap();
+    assert_eq!(diesel_balance.total_amount, 5000000000);
+    assert_eq!(diesel_balance.alkane_id, types::AlkaneId::new(2, 0));
+    
+    // Verify balances for frBTC (32:0)
+    let frbtc_balance_key = format!("balance:bcrt1p705x8h5dy67x7tgdu6wv2crq333sdx6h776vc929rxcdlxs5wj2s7h296c:{}", 
+        types::AlkaneId::new(32, 0).to_string());
+    let frbtc_balance_bytes = backend.get("address_balances", frbtc_balance_key.as_bytes()).unwrap();
+    assert!(frbtc_balance_bytes.is_some(), "Should have frBTC balance");
+    
+    let frbtc_balance: AddressBalance = serde_json::from_slice(&frbtc_balance_bytes.unwrap()).unwrap();
+    assert_eq!(frbtc_balance.total_amount, 164);
+    assert_eq!(frbtc_balance.alkane_id, types::AlkaneId::new(32, 0));
+    
+    // Verify UTXO-level tracking
+    let diesel_utxo_key = format!("utxo:receive_tx_abc123:0:{}", types::AlkaneId::new(2, 0).to_string());
+    let diesel_utxo_bytes = backend.get("utxo_balances", diesel_utxo_key.as_bytes()).unwrap();
+    assert!(diesel_utxo_bytes.is_some(), "DIESEL UTXO should be tracked");
+    
+    let frbtc_utxo_key = format!("utxo:receive_tx_abc123:0:{}", types::AlkaneId::new(32, 0).to_string());
+    let frbtc_utxo_bytes = backend.get("utxo_balances", frbtc_utxo_key.as_bytes()).unwrap();
+    assert!(frbtc_utxo_bytes.is_some(), "frBTC UTXO should be tracked");
+}
+
+/// Test receive_intent with empty incoming_alkanes
+#[test]
+fn test_receive_intent_empty_array() {
+    let mut backend = InMemoryBackend::new();
+    let mut pipeline = TransformPipeline::new();
+    
+    let context = types::TransactionContext {
+        txid: "empty_receive".to_string(),
+        block_height: 100,
+        timestamp: chrono::Utc::now(),
+        vouts: vec![
+            types::VoutInfo {
+                index: 0,
+                address: Some("bc1qtest".to_string()),
+                script_pubkey: "".to_string(),
+                value: 1000,
+            },
+        ],
+    };
+    
+    let extractor = ValueTransferExtractor::with_context(context);
+    pipeline.add_extractor(extractor);
+    pipeline.add_tracker::<BalanceTracker, InMemoryBackend>(BalanceTracker::new());
+    
+    let trace = types::TraceEvent {
+        event_type: "receive_intent".to_string(),
+        vout: 0,
+        alkane_address_block: "".to_string(),
+        alkane_address_tx: "".to_string(),
+        data: json!({
+            "incoming_alkanes": []
+        }),
+    };
+    
+    // Should not error with empty array
+    let result = pipeline.process_trace(&mut backend, &trace);
+    assert!(result.is_ok(), "Empty incoming_alkanes should not error");
+    
+    // Should not create any balances
+    let all_balances = backend.scan("address_balances").unwrap();
+    assert_eq!(all_balances.len(), 0, "Should have no balances for empty array");
+}
+
+/// Test multiple receive_intent events accumulating balance
+#[test]
+fn test_receive_intent_accumulation() {
+    let mut backend = InMemoryBackend::new();
+    let mut pipeline = TransformPipeline::new();
+    
+    let address = "bcrt1qtest".to_string();
+    
+    // First receive
+    let context1 = types::TransactionContext {
+        txid: "tx1".to_string(),
+        block_height: 100,
+        timestamp: chrono::Utc::now(),
+        vouts: vec![
+            types::VoutInfo {
+                index: 0,
+                address: Some(address.clone()),
+                script_pubkey: "script1".to_string(),
+                value: 546,
+            },
+        ],
+    };
+    
+    let extractor1 = ValueTransferExtractor::with_context(context1);
+    pipeline.add_extractor(extractor1);
+    pipeline.add_tracker::<BalanceTracker, InMemoryBackend>(BalanceTracker::new());
+    
+    let trace1 = types::TraceEvent {
+        event_type: "receive_intent".to_string(),
+        vout: 0,
+        alkane_address_block: "".to_string(),
+        alkane_address_tx: "".to_string(),
+        data: json!({
+            "incoming_alkanes": [
+                {
+                    "id": {"block": 2, "tx": 0},
+                    "value": {"lo": 1000, "hi": 0}
+                }
+            ]
+        }),
+    };
+    
+    pipeline.process_trace(&mut backend, &trace1).unwrap();
+    
+    // Second receive (same alkane, same address)
+    let context2 = types::TransactionContext {
+        txid: "tx2".to_string(),
+        block_height: 101,
+        timestamp: chrono::Utc::now(),
+        vouts: vec![
+            types::VoutInfo {
+                index: 0,
+                address: Some(address.clone()),
+                script_pubkey: "script2".to_string(),
+                value: 546,
+            },
+        ],
+    };
+    
+    let extractor2 = ValueTransferExtractor::with_context(context2);
+    
+    let trace2 = types::TraceEvent {
+        event_type: "receive_intent".to_string(),
+        vout: 0,
+        alkane_address_block: "".to_string(),
+        alkane_address_tx: "".to_string(),
+        data: json!({
+            "incoming_alkanes": [
+                {
+                    "id": {"block": 2, "tx": 0},
+                    "value": {"lo": 500, "hi": 0}
+                }
+            ]
+        }),
+    };
+    
+    // Process second trace
+    if let Ok(Some(changes)) = extractor2.extract(&trace2) {
+        let mut tracker = BalanceTracker::new();
+        tracker.update(&mut backend, changes).unwrap();
+    }
+    
+    // Verify accumulated balance (1000 + 500 = 1500)
+    let balance_key = format!("balance:{}:{}", address, types::AlkaneId::new(2, 0).to_string());
+    let balance_bytes = backend.get("address_balances", balance_key.as_bytes()).unwrap().unwrap();
+    let balance: AddressBalance = serde_json::from_slice(&balance_bytes).unwrap();
+    
+    assert_eq!(balance.total_amount, 1500);
+    
+    // Verify both UTXOs exist
+    let utxo1_key = format!("utxo:tx1:0:{}", types::AlkaneId::new(2, 0).to_string());
+    let utxo2_key = format!("utxo:tx2:0:{}", types::AlkaneId::new(2, 0).to_string());
+    
+    assert!(backend.get("utxo_balances", utxo1_key.as_bytes()).unwrap().is_some());
+    assert!(backend.get("utxo_balances", utxo2_key.as_bytes()).unwrap().is_some());
+}
+
+/// Test value_transfer with STRING format for block/tx/value (as emitted by protostone.rs)
+/// This matches the exact format from alkanes_pb::alkanes_trace_event::Event::ValueTransfer
+#[test]
+fn test_value_transfer_with_string_ids() {
+    let mut backend = InMemoryBackend::new();
+    let mut pipeline = TransformPipeline::new();
+
+    let context = types::TransactionContext {
+        txid: "string_test_tx".to_string(),
+        block_height: 200,
+        timestamp: chrono::Utc::now(),
+        vouts: vec![
+            types::VoutInfo {
+                index: 0,
+                address: Some("bc1qsender".to_string()),
+                script_pubkey: "".to_string(),
+                value: 546,
+            },
+            types::VoutInfo {
+                index: 1,
+                address: Some("bc1qreceiver".to_string()),
+                script_pubkey: "".to_string(),
+                value: 546,
+            },
+        ],
+    };
+
+    let extractor = ValueTransferExtractor::with_context(context);
+    pipeline.add_extractor(extractor);
+    pipeline.add_tracker::<BalanceTracker, InMemoryBackend>(BalanceTracker::new());
+
+    // Use STRING format for block, tx, and value (matches protostone.rs convert_trace_to_events)
+    let trace = types::TraceEvent {
+        event_type: "value_transfer".to_string(),
+        vout: 0,
+        alkane_address_block: "".to_string(),
+        alkane_address_tx: "".to_string(),
+        data: json!({
+            "redirect_to": 1,
+            "transfers": [
+                {
+                    "id": {
+                        "block": "2",    // STRING, not number
+                        "tx": "65523"    // STRING, not number
+                    },
+                    "value": "5000000000"  // STRING, not number
+                }
+            ]
+        }),
+    };
+
+    pipeline.process_trace(&mut backend, &trace).unwrap();
+
+    // Verify balance was tracked correctly
+    let balance_key = format!("balance:bc1qreceiver:{}", types::AlkaneId::new(2, 65523).to_string());
+    let balance_bytes = backend.get("address_balances", balance_key.as_bytes()).unwrap();
+    assert!(balance_bytes.is_some(), "Should have balance for receiver with string IDs");
+
+    let balance: AddressBalance = serde_json::from_slice(&balance_bytes.unwrap()).unwrap();
+    assert_eq!(balance.total_amount, 5000000000);
+    assert_eq!(balance.alkane_id.block, 2);
+    assert_eq!(balance.alkane_id.tx, 65523);
+}
+
+/// Test receive_intent with "transfers" field name (as emitted by protostone.rs)
+#[test]
+fn test_receive_intent_with_transfers_field() {
+    let mut backend = InMemoryBackend::new();
+    let mut pipeline = TransformPipeline::new();
+
+    // Note: For receive_intent, the vout is usually a shadow vout (tx.output.len() + 1 + i)
+    // We need to provide a matching physical vout in the context for this test
+    let context = types::TransactionContext {
+        txid: "receive_transfers_test".to_string(),
+        block_height: 300,
+        timestamp: chrono::Utc::now(),
+        vouts: vec![
+            types::VoutInfo {
+                index: 0,
+                address: Some("bc1qtest".to_string()),
+                script_pubkey: "".to_string(),
+                value: 546,
+            },
+        ],
+    };
+
+    let extractor = ValueTransferExtractor::with_context(context);
+    pipeline.add_extractor(extractor);
+    pipeline.add_tracker::<BalanceTracker, InMemoryBackend>(BalanceTracker::new());
+
+    // Use "transfers" field (not "incoming_alkanes") - matches protostone.rs format
+    let trace = types::TraceEvent {
+        event_type: "receive_intent".to_string(),
+        vout: 0,  // Using physical vout for this test
+        alkane_address_block: "".to_string(),
+        alkane_address_tx: "".to_string(),
+        data: json!({
+            "transfers": [
+                {
+                    "id": {
+                        "block": "4",
+                        "tx": "100"
+                    },
+                    "value": "999"
+                }
+            ]
+        }),
+    };
+
+    pipeline.process_trace(&mut backend, &trace).unwrap();
+
+    // Verify balance was tracked
+    let balance_key = format!("balance:bc1qtest:{}", types::AlkaneId::new(4, 100).to_string());
+    let balance_bytes = backend.get("address_balances", balance_key.as_bytes()).unwrap();
+    assert!(balance_bytes.is_some(), "Should have balance from receive_intent with transfers field");
+
+    let balance: AddressBalance = serde_json::from_slice(&balance_bytes.unwrap()).unwrap();
+    assert_eq!(balance.total_amount, 999);
+}
+
 /// Test reset functionality
 #[test]
 fn test_pipeline_reset() {
@@ -282,6 +640,7 @@ fn test_pipeline_reset() {
             types::VoutInfo {
                 index: 0,
                 address: Some("bc1qtest".to_string()),
+                script_pubkey: "".to_string(),
                 value: 1000,
             },
         ],

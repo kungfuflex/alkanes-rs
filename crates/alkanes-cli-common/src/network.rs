@@ -105,10 +105,6 @@ pub struct RpcConfig {
     #[arg(long)]
     pub jsonrpc_url: Option<String>,
 
-    /// Sandshrew RPC URL (deprecated, use --jsonrpc-url instead)
-    #[arg(long)]
-    pub sandshrew_rpc_url: Option<String>,
-
     /// Titan API URL (alternative to jsonrpc_url, uses REST API)
     #[arg(long)]
     pub titan_api_url: Option<String>,
@@ -159,10 +155,9 @@ pub struct RpcTarget {
 impl RpcConfig {
     /// Validate that only one backend is configured (jsonrpc_url OR titan_api_url)
     pub fn validate(&self) -> Result<(), AlkanesError> {
-        let jsonrpc_url = self.get_effective_jsonrpc_url();
-        if jsonrpc_url.is_some() && self.titan_api_url.is_some() {
+        if self.jsonrpc_url.is_some() && self.titan_api_url.is_some() {
             return Err(AlkanesError::Configuration(
-                "Cannot specify both --jsonrpc-url (or --sandshrew-rpc-url) and --titan-api-url. Please choose one backend.".to_string()
+                "Cannot specify both --jsonrpc-url and --titan-api-url. Please choose one backend.".to_string()
             ));
         }
         Ok(())
