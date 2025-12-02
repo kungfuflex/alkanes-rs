@@ -1631,7 +1631,6 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 subfrost_api_key: args.subfrost_api_key.clone(),
                 data_api_url: None,  // Not used in deezel commands
                 timeout_seconds: 600,
-                data_api_url: None, // Not used in CLI context
             },
             magic: None,
             log_level: "info".to_string(),

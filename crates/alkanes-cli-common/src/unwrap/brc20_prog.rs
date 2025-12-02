@@ -253,13 +253,14 @@ impl Brc20ProgUnwrap {
         let utxos_json = provider.get_address_utxo(&signer_address).await?;
         let oldest_utxo_height = find_oldest_546_sat_utxo(&utxos_json)?.unwrap_or(0);
         
-        log::info!("[Brc20ProgUnwrap] Generating bytecode: cutoff={}, oldest={}", 
+        log::info!("[Brc20ProgUnwrap] Generating bytecode: cutoff={}, oldest={}",
                    cutoff_height, oldest_utxo_height);
-        
+
         // Generate the bytecode
         let bytecode = generate_batch_payment_fetcher_bytecode(
             &frbtc_address,
             cutoff_height,
+            oldest_utxo_height,
         )?;
         
         log::debug!("[Brc20ProgUnwrap] Generated {} bytes of bytecode", bytecode.len() / 2);

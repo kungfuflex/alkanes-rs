@@ -29,18 +29,21 @@ use alloy_primitives::Address;
 ///
 /// # Arguments
 /// * `frbtc_address` - The FrBTC contract address (20 bytes)
-/// * `cutoff_height` - Stop iteration when reaching payment with height < cutoff_height
+/// * `cutoff_height` - Skip payments with height > cutoff_height (too new, not enough confirmations)
+/// * `oldest_utxo_height` - Stop iteration when reaching payment with height < oldest_utxo_height
 ///
 /// # Returns
 /// * Hex-encoded bytecode ready to use in eth_call {data: "0x..."}
 pub fn generate_batch_payment_fetcher_bytecode(
     frbtc_address: &str,
     cutoff_height: u64,
+    oldest_utxo_height: u64,
 ) -> Result<String> {
     log::info!(
-        "[BatchPaymentBytecode] Generating bytecode for frbtc={}, cutoff={}",
+        "[BatchPaymentBytecode] Generating bytecode for frbtc={}, cutoff={}, oldest_utxo={}",
         frbtc_address,
-        cutoff_height
+        cutoff_height,
+        oldest_utxo_height
     );
 
     // Parse the address
@@ -139,28 +142,40 @@ pub fn generate_batch_payment_fetcher_bytecode(
             "pop",               // Pop success; Stack: [actual_index]
 
             // ============================================
-            // STEP 4: Check height against cutoff
+            // STEP 4: Check height against cutoff and floor
             // Height is at offset 0x80 from return data start (0x40)
             // So height is at memory 0x40 + 0x80 = 0xc0
             //
             // Logic: Skip if height > cutoff (payment too new, not enough confirmations)
-            //        Include if height <= cutoff
+            //        Finish if height < oldest_utxo_height (we've gone back far enough)
+            //        Include if oldest_utxo_height <= height <= cutoff
             // ============================================
             0xc0,                // Memory offset for height
             "mload",             // [height, actual_index]
 
-            // Compare: if height > cutoff, skip this payment (continue loop)
-            // GT: stack[0] > stack[1] ? 1 : 0
-            // We want: (height > cutoff) ? skip : include
-            // Push cutoff, then GT checks if height > cutoff
-            &[1],                // cutoff_height placeholder
-            "swap1",             // [height, cutoff, actual_index]
-            "gt",                // [height > cutoff, actual_index]
+            // Check 1: if height > cutoff, skip this payment (continue loop)
+            // GT: pops a (top), pops b (second), pushes (b > a)
+            // So we need: [cutoff, height, ...] then GT gives [height > cutoff, ...]
+            "dup1",              // [height, height, actual_index]
+            &[1],                // cutoff_height placeholder: [cutoff, height, height, actual_index]
+            "swap1",             // [height, cutoff, height, actual_index]
+            "gt",                // [height > cutoff, height, actual_index]
             "skip_payment",
             "jumpi",             // If height > cutoff, skip this payment
 
+            // Stack: [height, actual_index]
+            // Check 2: if height < oldest_utxo_height, finish (we've gone back far enough)
+            // We want: oldest_utxo_height > height (same as height < oldest_utxo_height)
+            // GT: pops a (top), pops b (second), pushes (b > a)
+            // So we need: [height, oldest_utxo_height, ...] then GT gives [oldest > height, ...]
+            &[2],                // oldest_utxo_height placeholder: [oldest, height, actual_index]
+            "swap1",             // [height, oldest, actual_index]
+            "lt",                // [height < oldest, actual_index]
+            "finish",
+            "jumpi",             // If height < oldest_utxo_height, finish
+
             // Stack: [actual_index]
-            // Height is <= cutoff, so include this payment
+            // Height is in valid range: oldest_utxo_height <= height <= cutoff
 
             // ============================================
             // STEP 5: Copy payment data to output buffer
@@ -282,8 +297,8 @@ pub fn generate_batch_payment_fetcher_bytecode(
         ]]
     ]);
 
-    // Generate bytecode with the actual address and cutoff height
-    let bytecode = builder(Box::new(addr_bytes), Box::new(cutoff_height));
+    // Generate bytecode with the actual address, cutoff height, and oldest utxo height
+    let bytecode = builder(Box::new(addr_bytes), Box::new(cutoff_height), Box::new(oldest_utxo_height));
 
     let hex = hex::encode(&bytecode);
     log::info!(
@@ -327,7 +342,8 @@ mod tests {
     fn test_generate_bytecode() {
         let bytecode = generate_batch_payment_fetcher_bytecode(
             "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
-            1000,
+            1000,  // cutoff_height
+            500,   // oldest_utxo_height
         );
 
         assert!(bytecode.is_ok());
