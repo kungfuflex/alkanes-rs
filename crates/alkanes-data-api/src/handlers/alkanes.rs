@@ -94,7 +94,7 @@ pub async fn get_alkane_details(
     );
 
     match alkanes_service
-        .get_alkane_details(&(&req.alkane_id).into())
+        .get_alkane_details(&(&req.id).into())
         .await
     {
         Ok(alkane) => {

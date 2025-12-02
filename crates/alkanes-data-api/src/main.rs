@@ -114,6 +114,10 @@ async fn main() -> Result<()> {
                         web::post().to(handlers::pools::get_pool_details),
                     )
                     .route(
+                        "/get-pool-by-id",
+                        web::post().to(handlers::pools::get_pool_details),
+                    )
+                    .route(
                         "/get-all-pools-details",
                         web::post().to(handlers::pools::get_all_pools_details),
                     )

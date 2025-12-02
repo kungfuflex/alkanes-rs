@@ -336,8 +336,69 @@ impl AlkanesService {
         Ok(vec![])
     }
 
-    /// Get alkane details by ID
+    /// Get alkane details by ID with enriched market data
     pub async fn get_alkane_details(&self, id: &AlkaneId) -> Result<AlkaneToken> {
-        self.get_static_alkane_data(id).await
+        // Get base metadata from reflect-alkane
+        let mut token = self.get_static_alkane_data(id).await?;
+        
+        // Check if this alkane exists in TraceAlkane registry
+        let exists: Option<(i32,)> = sqlx::query_as(
+            r#"SELECT created_at_height FROM "TraceAlkane" WHERE alkane_block = $1 AND alkane_tx = $2"#
+        )
+        .bind(id.block.to_string().parse::<i32>().unwrap_or(0))
+        .bind(id.tx.to_string().parse::<i64>().unwrap_or(0))
+        .fetch_optional(&self.db)
+        .await
+        .ok()
+        .flatten();
+        
+        if exists.is_none() {
+            // Alkane not in registry, return base data
+            return Ok(token);
+        }
+        
+        // Try to get swap history to calculate floor price
+        let swap_count: Option<(i64,)> = sqlx::query_as(
+            r#"
+            SELECT COUNT(*) FROM "TraceTrade"
+            WHERE token0_block = $1 AND token0_tx = $2
+               OR token1_block = $1 AND token1_tx = $2
+            "#
+        )
+        .bind(id.block.to_string().parse::<i32>().unwrap_or(0))
+        .bind(id.tx.to_string().parse::<i64>().unwrap_or(0))
+        .fetch_optional(&self.db)
+        .await
+        .ok()
+        .flatten();
+        
+        if let Some((count,)) = swap_count {
+            if count > 0 {
+                // Get latest trade price as floor price
+                let latest_price: Option<(String,)> = sqlx::query_as(
+                    r#"
+                    SELECT price FROM "TraceTrade"
+                    WHERE token0_block = $1 AND token0_tx = $2
+                       OR token1_block = $1 AND token1_tx = $2
+                    ORDER BY block_height DESC, block_index DESC
+                    LIMIT 1
+                    "#
+                )
+                .bind(id.block.to_string().parse::<i32>().unwrap_or(0))
+                .bind(id.tx.to_string().parse::<i64>().unwrap_or(0))
+                .fetch_optional(&self.db)
+                .await
+                .ok()
+                .flatten();
+                
+                if let Some((price_str,)) = latest_price {
+                    if let Ok(price) = price_str.parse::<f64>() {
+                        token.floor_price = Some(price);
+                    }
+                }
+            }
+        }
+        
+        Ok(token)
     }
 }
