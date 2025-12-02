@@ -68,10 +68,10 @@ async fn main() -> Result<()> {
         .or_else(|| alkanes_args.rpc_config.get_default_brc20_prog_rpc_url());
 
     // Execute other commands
-    execute_command(&mut system, args.command, brc20_prog_rpc_url, args.sandshrew_rpc_url.clone()).await
+    execute_command(&mut system, args.command, brc20_prog_rpc_url, args.sandshrew_rpc_url.clone(), args.frbtc_address.clone()).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, sandshrew_rpc_url: Option<String>) -> Result<()> {
+async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, sandshrew_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
@@ -82,7 +82,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
         Commands::Sandshrew(command) => execute_sandshrew_command(system.provider(), command, sandshrew_rpc_url).await,
-        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url).await,
+        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url, frbtc_address).await,
         Commands::Dataapi(_) => {
             // Dataapi is handled in main() because it doesn't need the System trait
             unreachable!("Dataapi commands should be handled in main()")
@@ -3777,7 +3777,7 @@ async fn execute_protorunes_command(
 }
 
 
-async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog, brc20_prog_rpc_url: Option<String>) -> Result<()> {
+async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog, brc20_prog_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
     use commands::Brc20Prog;
     use alkanes_cli_common::brc20_prog::{
         Brc20ProgExecutor, Brc20ProgExecuteParams, Brc20ProgDeployInscription,
@@ -4541,7 +4541,8 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 log::info!("🚀 Using experimental ASM bytecode generator (100x faster!)");
                 use alkanes_cli_common::unwrap::Brc20ProgUnwrap;
                 let brc20_impl = Brc20ProgUnwrap::new();
-                brc20_impl.get_pending_unwraps_experimental_asm(provider, confirmations_required).await?
+                let frbtc_addr = frbtc_address.as_deref();
+                brc20_impl.get_pending_unwraps_experimental_asm(provider, confirmations_required, frbtc_addr).await?
             } else {
                 unwrap_impl.get_pending_unwraps(provider, confirmations_required).await?
             };

@@ -170,14 +170,25 @@ impl SystemAlkanes {
             .clone()
             .or_else(|| network_params.esplora_url.clone());
 
+        // Set default brc20_prog_rpc_url based on provider network if not explicitly provided
+        let brc20_prog_rpc_url = args.rpc_config.brc20_prog_rpc_url.clone().or_else(|| {
+            match args.rpc_config.provider.as_str() {
+                "mainnet" => Some("https://rpc-mainnet.brc20.build".to_string()),
+                "signet" => Some("https://rpc-signet.brc20.build".to_string()),
+                "regtest" => Some("http://localhost:8545".to_string()),
+                _ => Some("http://localhost:8545".to_string()),
+            }
+        });
+
         // Create provider with the resolved URLs
         log::info!(
-            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, sandshrew_rpc: {:?}, titan_api: {:?}, esplora: {:?}",
+            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, sandshrew_rpc: {:?}, titan_api: {:?}, esplora: {:?}, brc20_prog_rpc: {:?}",
             &bitcoin_rpc_url,
             &metashrew_rpc_url,
             &sandshrew_rpc_url,
             &args.rpc_config.titan_api_url,
-            &esplora_url
+            &esplora_url,
+            &brc20_prog_rpc_url
         );
         let mut provider = ConcreteProvider::new(
             bitcoin_rpc_url,
@@ -185,6 +196,7 @@ impl SystemAlkanes {
             sandshrew_rpc_url,
             args.rpc_config.titan_api_url.clone(),
             esplora_url,
+            brc20_prog_rpc_url,
             args.rpc_config.provider.clone(),
             wallet_path_opt.map(std::path::PathBuf::from),
         )

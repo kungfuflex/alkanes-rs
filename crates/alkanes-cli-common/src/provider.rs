@@ -158,6 +158,7 @@ impl ConcreteProvider {
         sandshrew_rpc_url: Option<String>,
         titan_api_url: Option<String>,
         esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
         provider: String,
         wallet_path: Option<std::path::PathBuf>,
     ) -> Result<Self> {
@@ -170,7 +171,7 @@ impl ConcreteProvider {
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
-            brc20_prog_rpc_url: None,
+            brc20_prog_rpc_url,
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
@@ -198,6 +199,7 @@ impl ConcreteProvider {
         sandshrew_rpc_url: Option<String>,
         titan_api_url: Option<String>,
         esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
         provider: String,
         wallet_path: Option<std::path::PathBuf>,
     ) -> Result<Self> {
@@ -210,7 +212,7 @@ impl ConcreteProvider {
             esplora_url,
             ord_url: None,
             metashrew_rpc_url: Some(metashrew_rpc_url),
-            brc20_prog_rpc_url: None,
+            brc20_prog_rpc_url,
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
