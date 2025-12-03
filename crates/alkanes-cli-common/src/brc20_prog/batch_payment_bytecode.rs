@@ -313,7 +313,8 @@ pub fn generate_batch_payment_fetcher_bytecode(
         // SKIP_PAYMENT: Continue loop without copying
         // ============================================
         ["skip_payment", [
-            // Stack: [actual_index]
+            // Stack: [height, actual_index]
+            "pop",               // Pop height; Stack: [actual_index]
             "loop_start",
             "jump"
         ]],
