@@ -803,6 +803,50 @@ impl WebProvider {
         })
     }
 
+    /// Get pool details including reserves using simulation
+    #[wasm_bindgen(js_name = ammGetPoolDetails)]
+    pub fn amm_get_pool_details_js(&self, pool_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::alkanes::types::AlkaneId;
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::proto::alkanes::MessageContextParcel;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let pool_parts: Vec<&str> = pool_id.split(':').collect();
+            if pool_parts.len() != 2 {
+                return Err(JsValue::from_str("Invalid pool_id format, expected block:tx"));
+            }
+            let pool = AlkaneId {
+                block: pool_parts[0].parse().map_err(|_| JsValue::from_str("Invalid pool block"))?,
+                tx: pool_parts[1].parse().map_err(|_| JsValue::from_str("Invalid pool tx"))?,
+            };
+
+            // Build calldata for GET_RESERVES opcode (typically opcode 4)
+            let mut calldata = Vec::new();
+            leb128::write::unsigned(&mut calldata, pool.block).unwrap();
+            leb128::write::unsigned(&mut calldata, pool.tx).unwrap();
+            leb128::write::unsigned(&mut calldata, 4u64).unwrap(); // GET_RESERVES opcode
+
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: 0,
+                vout: 0,
+                txindex: 0,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+
+            let result = provider.simulate(&pool_id, &context, None).await
+                .map_err(|e| JsValue::from_str(&format!("Simulation failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
+        })
+    }
+
     #[wasm_bindgen(js_name = alkanesTrace)]
     pub fn alkanes_trace_js(&self, outpoint: String) -> js_sys::Promise {
         use alkanes_cli_common::traits::AlkanesProvider;
@@ -1539,7 +1583,185 @@ impl WebProvider {
     }
 
     // === WALLET METHODS ===
-    
+
+    /// Create a new wallet with an optional mnemonic phrase
+    /// If no mnemonic is provided, a new one will be generated
+    /// Returns wallet info including address and mnemonic
+    #[wasm_bindgen(js_name = walletCreate)]
+    pub fn wallet_create_js(&mut self, mnemonic: Option<String>, passphrase: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use alkanes_cli_common::traits::WalletConfig;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        let network = self.network;
+        let rpc_url = self.sandshrew_rpc_url();
+        future_to_promise(async move {
+            let config = WalletConfig {
+                network,
+                wallet_path: "default".to_string(),
+                bitcoin_rpc_url: rpc_url.clone(),
+                metashrew_rpc_url: rpc_url,
+                network_params: None,
+            };
+            let wallet_info = provider.create_wallet(config, mnemonic, passphrase).await
+                .map_err(|e| JsValue::from_str(&format!("Create wallet failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&serde_json::json!({
+                "address": wallet_info.address,
+                "network": format!("{:?}", wallet_info.network),
+                "mnemonic": wallet_info.mnemonic,
+            })).map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Load an existing wallet from storage
+    #[wasm_bindgen(js_name = walletLoad)]
+    pub fn wallet_load_js(&mut self, passphrase: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use alkanes_cli_common::traits::WalletConfig;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        let network = self.network;
+        let rpc_url = self.sandshrew_rpc_url();
+        future_to_promise(async move {
+            let config = WalletConfig {
+                network,
+                wallet_path: "default".to_string(),
+                bitcoin_rpc_url: rpc_url.clone(),
+                metashrew_rpc_url: rpc_url,
+                network_params: None,
+            };
+            let wallet_info = provider.load_wallet(config, passphrase).await
+                .map_err(|e| JsValue::from_str(&format!("Load wallet failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&serde_json::json!({
+                "address": wallet_info.address,
+                "network": format!("{:?}", wallet_info.network),
+                "mnemonic": wallet_info.mnemonic,
+            })).map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get the wallet's primary address
+    #[wasm_bindgen(js_name = walletGetAddress)]
+    pub fn wallet_get_address_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let address = <WebProvider as WalletProvider>::get_address(&provider).await
+                .map_err(|e| JsValue::from_str(&format!("Get address failed: {}", e)))?;
+            Ok(JsValue::from_str(&address))
+        })
+    }
+
+    /// Get the wallet's BTC balance
+    /// Returns { confirmed: number, pending: number }
+    #[wasm_bindgen(js_name = walletGetBalance)]
+    pub fn wallet_get_balance_js(&self, addresses: Option<Vec<String>>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let balance = <WebProvider as WalletProvider>::get_balance(&provider, addresses).await
+                .map_err(|e| JsValue::from_str(&format!("Get balance failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&serde_json::json!({
+                "confirmed": balance.confirmed,
+                "pending": balance.pending,
+            })).map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Send BTC to an address
+    /// params: { address: string, amount: number (satoshis), fee_rate?: number }
+    #[wasm_bindgen(js_name = walletSend)]
+    pub fn wallet_send_js(&mut self, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use alkanes_cli_common::traits::SendParams;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let params: serde_json::Value = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+
+            let send_params = SendParams {
+                address: params.get("address")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| JsValue::from_str("Missing 'address' field"))?
+                    .to_string(),
+                amount: params.get("amount")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| JsValue::from_str("Missing or invalid 'amount' field"))?,
+                fee_rate: params.get("fee_rate")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f as f32),
+                send_all: params.get("send_all").and_then(|v| v.as_bool()).unwrap_or(false),
+                from: params.get("from").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+                }),
+                change_address: params.get("change_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                auto_confirm: params.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
+                rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).unwrap_or(0) as u8,
+                lock_alkanes: params.get("lock_alkanes").and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+
+            let txid = provider.send(send_params).await
+                .map_err(|e| JsValue::from_str(&format!("Send failed: {}", e)))?;
+
+            Ok(JsValue::from_str(&txid))
+        })
+    }
+
+    /// Get UTXOs for the wallet
+    #[wasm_bindgen(js_name = walletGetUtxos)]
+    pub fn wallet_get_utxos_js(&self, addresses: Option<Vec<String>>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let utxos = provider.get_utxos(false, addresses).await
+                .map_err(|e| JsValue::from_str(&format!("Get UTXOs failed: {}", e)))?;
+
+            let utxo_list: Vec<_> = utxos.iter().map(|(outpoint, info)| {
+                serde_json::json!({
+                    "txid": outpoint.txid.to_string(),
+                    "vout": outpoint.vout,
+                    "amount": info.amount,
+                    "confirmations": info.confirmations,
+                    "address": info.address,
+                })
+            }).collect();
+
+            serde_wasm_bindgen::to_value(&utxo_list)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get transaction history for an address
+    #[wasm_bindgen(js_name = walletGetHistory)]
+    pub fn wallet_get_history_js(&self, address: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::{WalletProvider, EsploraProvider};
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let addr = if let Some(a) = address {
+                a
+            } else {
+                <WebProvider as WalletProvider>::get_address(&provider).await
+                    .map_err(|e| JsValue::from_str(&format!("Get address failed: {}", e)))?
+            };
+
+            // Use esplora to get address transactions
+            let txs = provider.get_address_txs(&addr).await
+                .map_err(|e| JsValue::from_str(&format!("Get history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&txs)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
     #[wasm_bindgen(js_name = walletCreatePsbt)]
     pub fn wallet_create_psbt_js(&self, params_json: String) -> js_sys::Promise {
         use alkanes_cli_common::traits::WalletProvider;
@@ -1603,7 +1825,7 @@ impl WebProvider {
                 "offset": offset.unwrap_or(0)
             });
             
-            let response = provider.call(&url, "get-pool-history", body, 1).await
+            let response = provider.rest_call(&url, "get-pool-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pool history failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1616,12 +1838,18 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let url = provider.rpc_config.get_data_api_target().url;
-            let body = serde_json::json!({ "factory_id": factory_id });
-            
-            let response = provider.call(&url, "get-pools", body, 1).await
+            let base_url = provider.rpc_config.get_data_api_target().url;
+            // Parse factory_id like "4:65522" into block and tx
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({ "factoryId": { "block": parts[0], "tx": parts[1] } })
+            } else {
+                serde_json::json!({ "factory_id": factory_id })
+            };
+
+            let response = provider.rest_call(&base_url, "get-pools", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pools failed: {}", e)))?;
-            
+
             serde_wasm_bindgen::to_value(&response)
                 .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
         })
@@ -1632,12 +1860,12 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let url = provider.rpc_config.get_data_api_target().url;
+            let base_url = provider.rpc_config.get_data_api_target().url;
             let body = serde_json::json!({ "address": address });
-            
-            let response = provider.call(&url, "get-alkanes-by-address", body, 1).await
+
+            let response = provider.rest_call(&base_url, "get-alkanes-by-address", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get alkanes by address failed: {}", e)))?;
-            
+
             serde_wasm_bindgen::to_value(&response)
                 .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
         })
@@ -1648,15 +1876,15 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let url = provider.rpc_config.get_data_api_target().url;
+            let base_url = provider.rpc_config.get_data_api_target().url;
             let body = serde_json::json!({
                 "address": address,
                 "include_outpoints": include_outpoints
             });
-            
-            let response = provider.call(&url, "get-address-balances", body, 1).await
+
+            let response = provider.rest_call(&base_url, "get-address-balances", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address balances failed: {}", e)))?;
-            
+
             serde_wasm_bindgen::to_value(&response)
                 .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
         })
@@ -1674,7 +1902,7 @@ impl WebProvider {
                 "offset": offset.unwrap_or(0)
             });
             
-            let response = provider.call(&url, "get-all-history", body, 1).await
+            let response = provider.rest_call(&url, "get-all-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get all history failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1694,7 +1922,7 @@ impl WebProvider {
                 "offset": offset.unwrap_or(0)
             });
             
-            let response = provider.call(&url, "get-swap-history", body, 1).await
+            let response = provider.rest_call(&url, "get-swap-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get swap history failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1714,7 +1942,7 @@ impl WebProvider {
                 "offset": offset.unwrap_or(0)
             });
             
-            let response = provider.call(&url, "get-mint-history", body, 1).await
+            let response = provider.rest_call(&url, "get-mint-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get mint history failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1734,7 +1962,7 @@ impl WebProvider {
                 "offset": offset.unwrap_or(0)
             });
             
-            let response = provider.call(&url, "get-burn-history", body, 1).await
+            let response = provider.rest_call(&url, "get-burn-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get burn history failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1755,7 +1983,7 @@ impl WebProvider {
                 "limit": limit.unwrap_or(100)
             });
             
-            let response = provider.call(&url, "get-trades", body, 1).await
+            let response = provider.rest_call(&url, "get-trades", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get trades failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1777,7 +2005,7 @@ impl WebProvider {
                 "limit": limit.unwrap_or(100)
             });
             
-            let response = provider.call(&url, "get-candles", body, 1).await
+            let response = provider.rest_call(&url, "get-candles", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get candles failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1793,7 +2021,7 @@ impl WebProvider {
             let url = provider.rpc_config.get_data_api_target().url;
             let body = serde_json::json!({ "pool": pool });
             
-            let response = provider.call(&url, "get-reserves", body, 1).await
+            let response = provider.rest_call(&url, "get-reserves", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get reserves failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1813,7 +2041,7 @@ impl WebProvider {
                 "limit": limit
             });
             
-            let response = provider.call(&url, "get-holders", body, 1).await
+            let response = provider.rest_call(&url, "get-alkane-holders", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get holders failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1829,7 +2057,7 @@ impl WebProvider {
             let url = provider.rpc_config.get_data_api_target().url;
             let body = serde_json::json!({ "alkane": alkane });
             
-            let response = provider.call(&url, "get-holders-count", body, 1).await
+            let response = provider.rest_call(&url, "get-alkane-holders-count", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get holders count failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1849,7 +2077,7 @@ impl WebProvider {
                 "limit": limit
             });
             
-            let response = provider.call(&url, "get-keys", body, 1).await
+            let response = provider.rest_call(&url, "get-keys", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get keys failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1865,7 +2093,7 @@ impl WebProvider {
             let url = provider.rpc_config.get_data_api_target().url;
             let body = serde_json::json!({});
             
-            let response = provider.call(&url, "get-bitcoin-price", body, 1).await
+            let response = provider.rest_call(&url, "get-bitcoin-price", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get bitcoin price failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -1881,7 +2109,7 @@ impl WebProvider {
             let url = provider.rpc_config.get_data_api_target().url;
             let body = serde_json::json!({ "days": days });
             
-            let response = provider.call(&url, "get-bitcoin-market-chart", body, 1).await
+            let response = provider.rest_call(&url, "get-bitcoin-market-chart", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get bitcoin market chart failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&response)
@@ -2075,6 +2303,41 @@ impl WebProvider {
     /// Make a fetch request using platform abstraction (works in browser and Node.js)
     async fn fetch_request_text(&self, url: &str, method: &str, body: Option<&str>, headers: Vec<(&str, &str)>) -> Result<String> {
         crate::platform::fetch(url, method, body, headers).await
+    }
+
+    /// Make a REST API call (not JSON-RPC) - used for Data API
+    async fn rest_call(&self, base_url: &str, endpoint: &str, body: JsonValue) -> Result<JsonValue> {
+        let url = format!("{}/{}", base_url.trim_end_matches('/'), endpoint);
+        self.logger.info(&format!(
+            "REST API call -> URL: {}, Body: {}",
+            url,
+            serde_json::to_string_pretty(&body).unwrap_or_else(|_| "INVALID_JSON".to_string()),
+        ));
+
+        let response_str = self.fetch_request_text(
+            &url,
+            "POST",
+            Some(&body.to_string()),
+            vec![("Content-Type", "application/json")],
+        ).await?;
+
+        self.logger.info(&format!("REST API response: {}", response_str));
+
+        let response_json: JsonValue = serde_json::from_str(&response_str)
+            .map_err(|e| AlkanesError::Serialization(format!("Failed to parse JSON: {e}")))?;
+
+        // Check for error field in response
+        if let Some(ok) = response_json.get("ok") {
+            if ok == false {
+                let error_msg = response_json
+                    .get("error")
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("Unknown error");
+                return Err(AlkanesError::JsonRpc(format!("API error: {}", error_msg)));
+            }
+        }
+
+        Ok(response_json)
     }
 
     /// Broadcasts a transaction via Rebar Labs Shield for enhanced privacy
@@ -3189,28 +3452,41 @@ impl BitcoinRpcProvider for WebProvider {
 #[async_trait(?Send)]
 impl MetashrewRpcProvider for WebProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
-        unimplemented!()
+        let result = self.call(&self.sandshrew_rpc_url(), "metashrew_height", serde_json::json!([]), 1).await?;
+        // Handle both numeric and string responses
+        if let Some(h) = result.as_u64() {
+            return Ok(h);
+        }
+        if let Some(s) = result.as_str() {
+            return s.parse::<u64>().map_err(|e| AlkanesError::RpcError(format!("Invalid height: {}", e)));
+        }
+        Err(AlkanesError::RpcError("Invalid metashrew height response".to_string()))
     }
-    
-    async fn get_contract_meta(&self, _block: &str, _tx: &str) -> Result<JsonValue> {
-        unimplemented!()
+
+    async fn get_contract_meta(&self, block: &str, tx: &str) -> Result<JsonValue> {
+        let params = serde_json::json!([block, tx]);
+        self.call(&self.sandshrew_rpc_url(), "metashrew_view", params, 1).await
     }
-    
-    async fn trace_outpoint(&self, _txid: &str, _vout: u32) -> Result<JsonValue> {
-        unimplemented!()
+
+    async fn trace_outpoint(&self, txid: &str, vout: u32) -> Result<JsonValue> {
+        let params = serde_json::json!([txid, vout]);
+        self.call(&self.sandshrew_rpc_url(), "metashrew_view", params, 1).await
     }
-    
-    async fn get_spendables_by_address(&self, _address: &str) -> Result<JsonValue> {
-        unimplemented!()
+
+    async fn get_spendables_by_address(&self, address: &str) -> Result<JsonValue> {
+        let params = serde_json::json!([address]);
+        self.call(&self.sandshrew_rpc_url(), "spendablesbyaddress", params, 1).await
     }
-    
+
     async fn get_protorunes_by_address(
         &self,
-        _address: &str,
-        _block_tag: Option<String>,
-        _protocol_tag: u128,
+        address: &str,
+        block_tag: Option<String>,
+        protocol_tag: u128,
     ) -> Result<ProtoruneWalletResponse> {
-        unimplemented!()
+        let params = serde_json::json!([address, block_tag, protocol_tag]);
+        let result = self.call(&self.sandshrew_rpc_url(), "protorunesbyaddress", params, 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     
     async fn get_protorunes_by_outpoint(

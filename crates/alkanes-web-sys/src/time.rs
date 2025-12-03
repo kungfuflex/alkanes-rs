@@ -41,148 +41,56 @@
 //! # }
 //! ```
 
-use alkanes_cli_common::{AlkanesError, Result};
-use js_sys::{Date, Promise};
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
-use web_sys::{window, Performance};
-use core::future::Future;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use crate::platform;
+use async_trait::async_trait;
+
 #[cfg(target_arch = "wasm32")]
 extern crate alloc;
-#[cfg(target_arch = "wasm32")]
-use alloc::string::ToString;
-#[cfg(target_arch = "wasm32")]
-use alloc::boxed::Box;
 
-/// Web time implementation using Performance API
+/// Web time implementation using platform abstractions
+///
+/// Works in both browser and Node.js environments
 #[derive(Clone)]
-pub struct WebTime {
-    #[allow(dead_code)]
-    performance: Option<Performance>,
-}
+pub struct WebTime;
 
 impl WebTime {
     /// Create a new WebTime instance
     pub fn new() -> Self {
-        let performance = window()
-            .and_then(|w| w.performance());
-        
-        Self { performance }
+        Self
     }
 
-    /// Get high-resolution time from Performance API if available
-    #[allow(dead_code)]
-    fn get_performance_now(&self) -> Option<f64> {
-        self.performance.as_ref().map(|p| p.now())
-    }
-
-    /// Get time from Date API as fallback
+    /// Get time from Date API (works in both browser and Node.js)
     fn get_date_now(&self) -> f64 {
-        Date::now()
+        js_sys::Date::now()
+    }
+
+    /// Get high-resolution time from Performance API if available (browser only)
+    #[allow(dead_code)]
+    pub fn get_performance_now(&self) -> Option<f64> {
+        if platform::is_browser() {
+            web_sys::window()
+                .and_then(|w| w.performance())
+                .map(|p| p.now())
+        } else {
+            None
+        }
     }
 }
-
-use async_trait::async_trait;
 
 #[async_trait(?Send)]
 impl alkanes_cli_common::TimeProvider for WebTime {
     fn now_secs(&self) -> u64 {
-        // Use Date.now() which returns milliseconds since Unix epoch
-        let millis = self.get_date_now();
-        (millis / 1000.0) as u64
+        platform::get_timestamp_secs()
     }
 
     fn now_millis(&self) -> u64 {
-        // Use Date.now() which returns milliseconds since Unix epoch
-        self.get_date_now() as u64
+        platform::get_timestamp_ms()
     }
 
-    async fn sleep_ms(&self, _ms: u64) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // For non-WASM targets, this is tricky without a proper async runtime.
-            // The original code attempted to use tokio, but it's not a dependency.
-            // We'll panic for now, as this path is not expected to be used.
-            todo!("sleep_ms is not implemented for non-wasm targets in deezel-web");
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            WebSleep::new(_ms).await;
-        }
+    async fn sleep_ms(&self, ms: u64) {
+        let _ = platform::sleep_ms(ms).await;
     }
 }
-
-/// Future implementation for sleep using setTimeout
-pub struct WebSleep {
-    promise: Option<Promise>,
-    duration_ms: u64,
-}
-
-impl WebSleep {
-    #[allow(dead_code)]
-    fn new(duration_ms: u64) -> Self {
-        Self {
-            promise: None,
-            duration_ms,
-        }
-    }
-
-    fn create_promise(&mut self) -> Result<Promise> {
-        let window = window().ok_or_else(|| AlkanesError::Io("No window object available".to_string()))?;
-        
-        // Create a promise that resolves after the specified duration
-        let promise = Promise::new(&mut |resolve, _reject| {
-            let timeout_id = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                &resolve,
-                self.duration_ms as i32,
-            );
-            
-            // We could store the timeout_id for cancellation, but for simplicity we don't
-            match timeout_id {
-                Ok(_) => {},
-                Err(_) => {
-                    // If setTimeout fails, resolve immediately
-                    let _ = resolve.call0(&JsValue::UNDEFINED);
-                }
-            }
-        });
-        
-        Ok(promise)
-    }
-}
-
-impl Future for WebSleep {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.promise.is_none() {
-            match self.create_promise() {
-                Ok(promise) => {
-                    self.promise = Some(promise);
-                },
-                Err(_) => {
-                    // If we can't create a promise, just return ready immediately
-                    return Poll::Ready(());
-                }
-            }
-        }
-
-        if let Some(promise) = &self.promise {
-            let mut future = JsFuture::from(promise.clone());
-            match Pin::new(&mut future).poll(cx) {
-                Poll::Ready(_) => Poll::Ready(()),
-                Poll::Pending => Poll::Pending,
-            }
-        } else {
-            Poll::Ready(())
-        }
-    }
-}
-
-// Implement Send for WebSleep (required for the trait)
-unsafe impl Send for WebSleep {}
 
 impl Default for WebTime {
     fn default() -> Self {

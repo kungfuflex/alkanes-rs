@@ -1,12 +1,204 @@
 //! Platform abstraction layer for WASM bindings
 //!
 //! This module provides functions that abstract platform-specific functionality,
-//! allowing tests to run in different environments (browser, Node.js, etc.)
+//! allowing code to run in different environments (browser, Node.js, etc.)
+//!
+//! The key abstractions provided are:
+//! - `fetch` - HTTP requests (works in both browser and Node.js)
+//! - `console_log` - Console logging (works in both browser and Node.js)
+//! - `is_browser` - Runtime environment detection
+//! - `get_timestamp_ms` - Current time in milliseconds
+//! - `sleep_ms` - Async sleep functionality
+//! - `PlatformStorage` - Key-value storage abstraction
 
 use alkanes_cli_common::{AlkanesError, Result};
 use wasm_bindgen::JsValue;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
+use js_sys::{Object, Reflect};
+
+/// Check if we're running in a browser environment
+pub fn is_browser() -> bool {
+    let global = js_sys::global();
+    Reflect::has(&global, &"window".into()).unwrap_or(false)
+}
+
+/// Log a message to the console (works in both browser and Node.js)
+pub fn console_log(level: &str, message: &str) {
+    let _ = Reflect::get(&js_sys::global(), &"console".into())
+        .and_then(|console| {
+            let log_fn = Reflect::get(&console, &level.into())?;
+            if let Ok(func) = log_fn.dyn_into::<js_sys::Function>() {
+                let _ = func.call1(&JsValue::NULL, &JsValue::from_str(message));
+            }
+            Ok(JsValue::UNDEFINED)
+        });
+}
+
+/// Get current timestamp in milliseconds (works in both browser and Node.js)
+pub fn get_timestamp_ms() -> u64 {
+    js_sys::Date::now() as u64
+}
+
+/// Get current timestamp in seconds (works in both browser and Node.js)
+pub fn get_timestamp_secs() -> u64 {
+    (js_sys::Date::now() / 1000.0) as u64
+}
+
+/// Sleep for a specified number of milliseconds (works in both browser and Node.js)
+pub async fn sleep_ms(ms: u64) -> Result<()> {
+    let global = js_sys::global();
+
+    // Create a promise that resolves after the timeout
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        // Try to use setTimeout from globalThis (works in both browser and Node.js)
+        let set_timeout = Reflect::get(&global, &"setTimeout".into())
+            .ok()
+            .and_then(|f| f.dyn_into::<js_sys::Function>().ok());
+
+        if let Some(set_timeout_fn) = set_timeout {
+            let _ = set_timeout_fn.call2(
+                &JsValue::NULL,
+                &resolve,
+                &JsValue::from_f64(ms as f64)
+            );
+        } else {
+            // If setTimeout not available, resolve immediately
+            let _ = resolve.call0(&JsValue::UNDEFINED);
+        }
+    });
+
+    JsFuture::from(promise)
+        .await
+        .map_err(|e| AlkanesError::Io(format!("Sleep failed: {:?}", e)))?;
+
+    Ok(())
+}
+
+/// Platform-agnostic storage interface
+///
+/// In browser: uses localStorage
+/// In Node.js: uses in-memory storage (for tests)
+pub struct PlatformStorage {
+    // In-memory fallback for Node.js
+    memory_storage: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    is_browser: bool,
+}
+
+impl PlatformStorage {
+    pub fn new() -> Self {
+        Self {
+            memory_storage: std::cell::RefCell::new(std::collections::HashMap::new()),
+            is_browser: is_browser(),
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<String> {
+        let prefixed_key = format!("alkanes:{}", key);
+
+        if self.is_browser {
+            // Browser: use localStorage via web_sys
+            web_sys::window()
+                .and_then(|w| w.local_storage().ok())
+                .flatten()
+                .and_then(|storage| storage.get_item(&prefixed_key).ok())
+                .flatten()
+        } else {
+            // Node.js: use in-memory storage
+            self.memory_storage.borrow().get(&prefixed_key).cloned()
+        }
+    }
+
+    pub fn set(&self, key: &str, value: &str) -> Result<()> {
+        let prefixed_key = format!("alkanes:{}", key);
+
+        if self.is_browser {
+            // Browser: use localStorage via web_sys
+            let storage = web_sys::window()
+                .and_then(|w| w.local_storage().ok())
+                .flatten()
+                .ok_or_else(|| AlkanesError::Storage("localStorage not available".to_string()))?;
+
+            storage.set_item(&prefixed_key, value)
+                .map_err(|e| AlkanesError::Storage(format!("Failed to set item: {:?}", e)))
+        } else {
+            // Node.js: use in-memory storage
+            self.memory_storage.borrow_mut().insert(prefixed_key, value.to_string());
+            Ok(())
+        }
+    }
+
+    pub fn remove(&self, key: &str) -> Result<()> {
+        let prefixed_key = format!("alkanes:{}", key);
+
+        if self.is_browser {
+            // Browser: use localStorage via web_sys
+            let storage = web_sys::window()
+                .and_then(|w| w.local_storage().ok())
+                .flatten()
+                .ok_or_else(|| AlkanesError::Storage("localStorage not available".to_string()))?;
+
+            storage.remove_item(&prefixed_key)
+                .map_err(|e| AlkanesError::Storage(format!("Failed to remove item: {:?}", e)))
+        } else {
+            // Node.js: use in-memory storage
+            self.memory_storage.borrow_mut().remove(&prefixed_key);
+            Ok(())
+        }
+    }
+
+    pub fn exists(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
+
+    pub fn list_keys(&self, prefix: &str) -> Vec<String> {
+        let full_prefix = format!("alkanes:{}", prefix);
+
+        if self.is_browser {
+            // Browser: iterate localStorage
+            let mut keys = Vec::new();
+            if let Some(storage) = web_sys::window()
+                .and_then(|w| w.local_storage().ok())
+                .flatten()
+            {
+                if let Ok(length) = storage.length() {
+                    for i in 0..length {
+                        if let Ok(Some(key)) = storage.key(i) {
+                            if key.starts_with(&full_prefix) {
+                                if let Some(stripped) = key.strip_prefix("alkanes:") {
+                                    keys.push(stripped.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            keys
+        } else {
+            // Node.js: iterate in-memory storage
+            self.memory_storage.borrow()
+                .keys()
+                .filter(|k| k.starts_with(&full_prefix))
+                .filter_map(|k| k.strip_prefix("alkanes:").map(|s| s.to_string()))
+                .collect()
+        }
+    }
+}
+
+impl Default for PlatformStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clone for PlatformStorage {
+    fn clone(&self) -> Self {
+        Self {
+            memory_storage: std::cell::RefCell::new(self.memory_storage.borrow().clone()),
+            is_browser: self.is_browser,
+        }
+    }
+}
 
 /// Perform a fetch request (works in both browser and Node.js)
 pub async fn fetch(url: &str, method: &str, body: Option<&str>, headers: Vec<(&str, &str)>) -> Result<String> {
