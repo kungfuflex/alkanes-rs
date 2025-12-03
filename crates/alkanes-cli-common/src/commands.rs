@@ -119,6 +119,11 @@ pub enum Commands {
     /// Interact with an ord indexer
     #[command(subcommand)]
     Ord(OrdCommands),
+    /// Subfrost operations (frBTC unwrap utilities)
+    Subfrost {
+        #[command(subcommand)]
+        command: SubfrostCommands,
+    },
 }
 
 impl From<RunestoneCommands> for Commands {
@@ -1254,6 +1259,34 @@ pub enum SandshrewCommands {
         /// Arguments to pass to the script
         #[arg(num_args = 0..)]
         args: Vec<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+}
+
+/// Subfrost subcommands (frBTC unwrap utilities)
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum SubfrostCommands {
+    /// Calculate minimum unwrap amount based on current fee rates
+    ///
+    /// Computes the minimum frBTC amount that must be queued in an unwrap
+    /// for it to be processed by subfrost. An unwrap will be skipped if:
+    /// - The amount is too small to cover the premium + fee share
+    /// - The resulting output would be below the dust threshold (546 sats)
+    MinimumUnwrap {
+        /// Override fee rate in sat/vB (if not provided, fetches from network)
+        #[arg(long)]
+        fee_rate: Option<f64>,
+        /// Premium percentage charged by subfrost (default: 0.1% = 0.001)
+        #[arg(long, default_value = "0.001")]
+        premium: f64,
+        /// Expected number of inputs in the aggregate transaction (default: 10)
+        #[arg(long, default_value = "10")]
+        expected_inputs: usize,
+        /// Expected number of outputs in the aggregate transaction (default: 10)
+        #[arg(long, default_value = "10")]
+        expected_outputs: usize,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,

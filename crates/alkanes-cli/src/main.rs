@@ -13,7 +13,7 @@ use serde_json::json;
 
 mod commands;
 mod pretty_print;
-use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand};
+use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands};
 use alkanes_cli_common::alkanes;
 use pretty_print::*;
 
@@ -108,6 +108,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
             // Dataapi is handled in main() because it doesn't need the System trait
             unreachable!("Dataapi commands should be handled in main()")
         }
+        Commands::Subfrost(cmd) => execute_subfrost_command(system.provider(), cmd).await,
     }
 }
 
@@ -143,6 +144,35 @@ async fn execute_lua_command(
             let result = provider.execute_lua_script(&lua_script, resolved_args).await?;
 
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+    }
+    Ok(())
+}
+
+async fn execute_subfrost_command(
+    provider: &dyn DeezelProvider,
+    command: SubfrostCommands,
+) -> Result<()> {
+    use alkanes_cli_common::subfrost;
+
+    match command {
+        SubfrostCommands::MinimumUnwrap {
+            fee_rate,
+            premium,
+            expected_inputs,
+            expected_outputs,
+            raw,
+        } => {
+            let result = subfrost::execute_minimum_unwrap(
+                provider,
+                fee_rate,
+                premium,
+                expected_inputs,
+                expected_outputs,
+                raw,
+            )
+            .await?;
+            println!("{}", result);
         }
     }
     Ok(())
