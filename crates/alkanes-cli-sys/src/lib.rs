@@ -176,6 +176,7 @@ impl SystemAlkanes {
             match args.rpc_config.provider.as_str() {
                 "mainnet" => Some("https://rpc-mainnet.brc20.build".to_string()),
                 "signet" => Some("https://rpc-signet.brc20.build".to_string()),
+                "subfrost-regtest" => Some("https://regtest.subfrost.io/v4/jsonrpc/brc20-prog".to_string()),
                 "regtest" => Some("http://localhost:8545".to_string()),
                 _ => Some("http://localhost:8545".to_string()),
             }

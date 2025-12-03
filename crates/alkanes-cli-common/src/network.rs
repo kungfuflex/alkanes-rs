@@ -195,7 +195,8 @@ impl RpcConfig {
         match self.provider.as_str() {
             "mainnet" => Some("https://rpc.brc20.build".to_string()),
             "signet" => Some("https://rpc-signet.brc20.build".to_string()),
-            _ => None, // No default for testnet or regtest
+            "subfrost-regtest" => Some("https://regtest.subfrost.io/v4/jsonrpc/brc20-prog".to_string()),
+            _ => None, // No default for testnet or local regtest
         }
     }
     
