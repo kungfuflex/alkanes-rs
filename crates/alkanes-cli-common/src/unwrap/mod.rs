@@ -14,7 +14,7 @@ pub mod alkanes;
 pub mod brc20_prog;
 
 // Re-export implementations and helper functions for external use
-pub use brc20_prog::{Brc20ProgUnwrap, script_pubkey_to_address, find_oldest_546_sat_utxo, payment_to_pending_unwrap};
+pub use brc20_prog::{Brc20ProgUnwrap, script_pubkey_to_address, find_oldest_546_sat_utxo, payment_to_pending_unwrap, parse_abi_encoded_payments};
 pub use alkanes::AlkanesUnwrap;
 
 /// Trait for fetching pending unwraps from a metaprotocol implementation
