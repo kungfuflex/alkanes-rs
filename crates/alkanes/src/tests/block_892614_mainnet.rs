@@ -12,28 +12,27 @@ mod tests {
     use alkanes_support::id::AlkaneId;
     use bitcoin::Block;
     use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
+    use metashrew_core::{println, stdio::stdout};
     use metashrew_support::index_pointer::KeyValuePointer;
     use protorune_support::utils::consensus_decode;
+    use std::fmt::Write;
     use std::io::Cursor;
     use std::sync::Arc;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     const BLOCK_892614_HEX: &str = include_str!("blocks/block_892614_mainnet.hex");
     const ALKANE_4_33_BYTECODE_HEX: &str = include_str!("blocks/alkane_4_33_bytecode.hex");
+    const ALKANE_2_0_BYTECODE_HEX: &str = include_str!("blocks/alkane_2_0_bytecode.hex");
     const ALKANE_2_19_BYTECODE_HEX: &str = include_str!("blocks/alkane_2_19_bytecode.hex");
+    const ALKANE_2_56_BYTECODE_HEX: &str = include_str!("blocks/alkane_2_56_bytecode.hex");
+    const ALKANE_2_215_BYTECODE_HEX: &str = include_str!("blocks/alkane_2_215_bytecode.hex");
 
     /// Helper function to preload alkane bytecode into the index
     fn preload_alkane_bytecode(alkane_id: AlkaneId, bytecode: &[u8]) {
         let compressed = compress(bytecode.to_vec()).expect("Failed to compress bytecode");
-        let mut ptr = IndexPointer::from_keyword("/alkanes/").select(&alkane_id.into());
+        let key: Vec<u8> = alkane_id.clone().into();
+        let mut ptr = IndexPointer::from_keyword("/alkanes/").select(&key);
         ptr.set(Arc::new(compressed));
-        println!(
-            "Preloaded alkane [{}:{}] with {} bytes (compressed from {} bytes)",
-            alkane_id.block,
-            alkane_id.tx,
-            ptr.get().len(),
-            bytecode.len()
-        );
     }
 
     /// Test that block 892614 can be parsed correctly
@@ -69,17 +68,37 @@ mod tests {
 
         println!("\n=== Indexing Block 892614 with Preloaded Factory ===");
 
-        // Preload the alkane [4:33] bytecode (the factory template)
-        let bytecode_4_33 = hex::decode(ALKANE_4_33_BYTECODE_HEX.trim())
-            .expect("Failed to decode alkane 4:33 bytecode hex");
-        println!("Loaded alkane [4:33] bytecode: {} bytes", bytecode_4_33.len());
-        preload_alkane_bytecode(AlkaneId { block: 4, tx: 33 }, &bytecode_4_33);
+        // Mark genesis as already seen to prevent genesis() from resetting sequence
+        let mut seen_genesis_ptr = IndexPointer::from_keyword("/seen-genesis");
+        seen_genesis_ptr.set(Arc::new(vec![1u8]));
 
-        // Preload the alkane [2:19] bytecode (called by many txs in this block)
-        let bytecode_2_19 = hex::decode(ALKANE_2_19_BYTECODE_HEX.trim())
-            .expect("Failed to decode alkane 2:19 bytecode hex");
-        println!("Loaded alkane [2:19] bytecode: {} bytes", bytecode_2_19.len());
-        preload_alkane_bytecode(AlkaneId { block: 2, tx: 19 }, &bytecode_2_19);
+        // Set the sequence number to a value that indicates existing alkanes are already created
+        // The highest [2:x] called in this block is [2:215], so sequence must be > 215
+        // In production, this would be the actual current sequence number
+        let initial_sequence: u128 = 300;
+        // Use IndexPointer to write directly to global store (not checkpoint stack)
+        let mut seq_ptr = IndexPointer::from_keyword("/alkanes/sequence");
+        seq_ptr.set_value(initial_sequence);
+        println!("Set initial sequence to {}", initial_sequence);
+
+        // Preload all alkanes that are called in this block
+        let preload_list: Vec<(AlkaneId, &str)> = vec![
+            (AlkaneId { block: 4, tx: 33 }, ALKANE_4_33_BYTECODE_HEX),
+            (AlkaneId { block: 2, tx: 0 }, ALKANE_2_0_BYTECODE_HEX),
+            (AlkaneId { block: 2, tx: 19 }, ALKANE_2_19_BYTECODE_HEX),
+            (AlkaneId { block: 2, tx: 56 }, ALKANE_2_56_BYTECODE_HEX),
+            (AlkaneId { block: 2, tx: 215 }, ALKANE_2_215_BYTECODE_HEX),
+        ];
+
+        for (alkane_id, hex_str) in preload_list {
+            let bytecode = hex::decode(hex_str.trim())
+                .expect(&format!("Failed to decode alkane {:?} bytecode hex", alkane_id));
+            println!(
+                "Preloading alkane [{}:{}]: {} bytes",
+                alkane_id.block, alkane_id.tx, bytecode.len()
+            );
+            preload_alkane_bytecode(alkane_id.clone(), &bytecode);
+        }
 
         let block_bytes = hex::decode(BLOCK_892614_HEX.trim()).expect("Failed to decode hex");
 
@@ -109,24 +128,41 @@ mod tests {
         let sequence_after = sequence_pointer(&AtomicPointer::default()).get_value::<u128>();
         println!("Sequence after indexing: {}", sequence_after);
 
-        // Print what was deployed
-        let deployments = sequence_after - sequence_before;
-        println!("Alkane deployments in block: {}", deployments);
+        // Check if sequence went backwards (indicating a bug)
+        if sequence_after < sequence_before {
+            println!("BUG: Sequence went BACKWARDS from {} to {}", sequence_before, sequence_after);
+            println!("This indicates the indexer is not preserving the initial sequence");
+            // Check what alkanes were created at low sequence numbers
+            for seq in 0..sequence_after {
+                let alkane_id = AlkaneId { block: 2, tx: seq };
+                let ptr = IndexPointer::from_keyword("/alkanes/").select(&alkane_id.clone().into());
+                let data = ptr.get();
+                if data.len() > 0 {
+                    println!(
+                        "  [2:{}] has {} bytes stored (factory ref: {})",
+                        seq, data.len(), data.len() == 32
+                    );
+                }
+            }
+        } else {
+            // Normal case - sequence increased
+            let deployments = sequence_after - sequence_before;
+            println!("Alkane deployments in block: {}", deployments);
 
-        // Check what alkanes exist at the new sequence numbers
-        for seq in sequence_before..sequence_after {
-            let alkane_id = AlkaneId { block: 2, tx: seq };
-            let ptr = IndexPointer::from_keyword("/alkanes/").select(&alkane_id.clone().into());
-            let data = ptr.get();
-            println!(
-                "  Alkane [2:{}] has {} bytes stored",
-                seq,
-                data.len()
-            );
+            // Check what alkanes exist at the new sequence numbers
+            for seq in sequence_before..sequence_after {
+                let alkane_id = AlkaneId { block: 2, tx: seq };
+                let ptr = IndexPointer::from_keyword("/alkanes/").select(&alkane_id.clone().into());
+                let data = ptr.get();
+                println!(
+                    "  Alkane [2:{}] has {} bytes stored",
+                    seq,
+                    data.len()
+                );
+            }
         }
 
-        // For now, just print what we got - don't assert specific count
-        println!("Total deployments: {}", deployments);
+        println!("Sequence went from {} to {}", initial_sequence, sequence_after);
     }
 
     /// Test indexing block 892614 without preloaded bytecode (will revert due to EOF)
