@@ -8,7 +8,7 @@
 //! 1. Calls getPaymentsLength() via STATICCALL to get the total payment count
 //! 2. Loops backwards through payments, calling payments(idx) for each
 //! 3. Filters based on cutoff_height - stops when reaching a payment older than cutoff
-//! 4. Returns packed Payment data (fixed-size portion only for simplicity)
+//! 4. Returns ABI-encoded Payment[] array with full struct data including recipient
 
 use crate::Result;
 
@@ -21,9 +21,19 @@ use alloy_primitives::Address;
 // payments(uint256) = 0x87d81789
 
 // Memory layout:
-// 0x00-0x24: Scratch space for calldata (selector + arg)
-// 0x40-0x1000: Return data from STATICCALL (up to ~4KB)
-// 0x1000+: Output buffer for accumulated payments
+// 0x00-0x40: Scratch space for calldata (selector + arg)
+// 0x40-0x200: Return data from STATICCALL (single payment, up to ~0x1C0 bytes)
+// 0x1000: Payment count (how many payments we've accumulated)
+// 0x1020: Write pointer for output data
+// 0x2000+: Output buffer for ABI-encoded Payment[] array
+//
+// ABI encoding for Payment[]:
+// - 0x2000: offset to array data (0x20)
+// - 0x2020: array length
+// - 0x2040: offset to payment[0] data (relative to 0x2040)
+// - 0x2060: offset to payment[1] data
+// - ... more offsets ...
+// - Then the actual payment structs follow
 
 /// Generate EVM bytecode for batch payment fetching
 ///
@@ -49,19 +59,27 @@ pub fn generate_batch_payment_fetcher_bytecode(
     // Parse the address
     let addr_bytes = parse_address(frbtc_address)?;
 
-    // Memory layout constants
-    // 0x00: calldata scratch (selector at 0x1c for right-alignment)
-    // 0x40: return buffer from staticcall
-    // 0x1000: output write pointer (where we accumulate results)
-    // 0x1020: output start (actual data starts here)
+    // Memory layout constants:
+    // 0x1000: payment count
+    // 0x1020: write pointer (where next payment struct will be written)
+    // 0x1040: offsets write pointer (where next offset entry will be written)
+    // 0x2000: start of offsets array
+    // 0x3000: start of payment data
 
     let builder = evm_asm_interpolator!([
         // ============================================
-        // STEP 1: Initialize output pointer at 0x1020
-        // We store the write pointer at 0x1000
+        // STEP 1: Initialize counters and pointers
         // ============================================
-        0x1020,              // Initial output position
-        0x1000,              // Memory location for write pointer
+        0x00,                // Initial payment count = 0
+        0x1000,              // Memory location for count
+        "mstore",
+
+        0x3000,              // Initial data write pointer (payment structs start here)
+        0x1020,              // Memory location for data pointer
+        "mstore",
+
+        0x2000,              // Initial offsets write pointer
+        0x1040,              // Memory location for offsets pointer
         "mstore",
 
         // ============================================
@@ -103,7 +121,6 @@ pub fn generate_batch_payment_fetcher_bytecode(
             "jumpi",             // Jump to finish if idx==0
 
             // Decrement idx to get actual array index (0-based)
-            // idx = idx - 1
             0x01,                // [1, idx]
             "swap1",             // [idx, 1]
             "sub",               // [idx-1] = actual_index
@@ -112,10 +129,9 @@ pub fn generate_batch_payment_fetcher_bytecode(
             // Now call payments(actual_index)
 
             // Prepare calldata: selector (4 bytes) + index (32 bytes)
-            // selector 0x87d81789 at position 0x00
             0x87d81789,          // payments(uint256) selector
             0x00,
-            "mstore",            // selector at 0x00 (will be at 0x1c when right-aligned)
+            "mstore",            // selector at 0x00
 
             // Store the index argument at 0x20
             "dup1",              // [actual_index, actual_index]
@@ -123,16 +139,12 @@ pub fn generate_batch_payment_fetcher_bytecode(
             "mstore",            // Store index at 0x20; Stack: [actual_index]
 
             // STATICCALL for payments(idx)
-            // Return data layout (ABI-encoded struct with dynamic bytes):
-            // 0x00: txid (32 bytes)
-            // 0x20: vout (32 bytes)
-            // 0x40: value (32 bytes)
-            // 0x60: offset to recipient bytes (32 bytes) - points to 0xa0
-            // 0x80: height (32 bytes)
-            // 0xa0: recipient length (32 bytes)
-            // 0xc0: recipient data (padded to 32 bytes)
-            // Total: ~0xe0 bytes minimum
-            0xe0,                // retSize = 224 bytes (enough for struct)
+            // We request 0x200 bytes which is enough for:
+            // - Fixed fields: 5 * 32 = 160 bytes (0xa0)
+            // - Recipient length: 32 bytes
+            // - Recipient data: up to ~200 bytes (p2tr scripts are ~34 bytes)
+            // Total: ~256 bytes typical, 512 bytes max
+            0x200,               // retSize = 512 bytes
             0x40,                // retOffset = 0x40
             0x24,                // argsSize = 36 bytes (4 selector + 32 index)
             0x1c,                // argsOffset = 0x1c (selector right-aligned)
@@ -145,155 +157,424 @@ pub fn generate_batch_payment_fetcher_bytecode(
             // STEP 4: Check height against cutoff and floor
             // Height is at offset 0x80 from return data start (0x40)
             // So height is at memory 0x40 + 0x80 = 0xc0
-            //
-            // Logic: Skip if height > cutoff (payment too new, not enough confirmations)
-            //        Finish if height < oldest_utxo_height (we've gone back far enough)
-            //        Include if oldest_utxo_height <= height <= cutoff
             // ============================================
             0xc0,                // Memory offset for height
             "mload",             // [height, actual_index]
 
-            // Check 1: if height > cutoff, skip this payment (continue loop)
-            // GT: pops a (top), pops b (second), pushes (b > a)
-            // So we need: [cutoff, height, ...] then GT gives [height > cutoff, ...]
+            // Check 1: if height > cutoff, skip this payment
             "dup1",              // [height, height, actual_index]
-            &[1],                // cutoff_height placeholder: [cutoff, height, height, actual_index]
+            &[1],                // cutoff_height placeholder
             "swap1",             // [height, cutoff, height, actual_index]
             "gt",                // [height > cutoff, height, actual_index]
             "skip_payment",
-            "jumpi",             // If height > cutoff, skip this payment
+            "jumpi",             // If height > cutoff, skip
 
             // Stack: [height, actual_index]
-            // Check 2: if height < oldest_utxo_height, finish (we've gone back far enough)
-            // We want: oldest_utxo_height > height (same as height < oldest_utxo_height)
-            // GT: pops a (top), pops b (second), pushes (b > a)
-            // So we need: [height, oldest_utxo_height, ...] then GT gives [oldest > height, ...]
-            &[2],                // oldest_utxo_height placeholder: [oldest, height, actual_index]
+            // Check 2: if height < oldest_utxo_height, finish
+            &[2],                // oldest_utxo_height placeholder
             "swap1",             // [height, oldest, actual_index]
             "lt",                // [height < oldest, actual_index]
             "finish",
-            "jumpi",             // If height < oldest_utxo_height, finish
+            "jumpi",             // If height < oldest, finish
 
             // Stack: [actual_index]
-            // Height is in valid range: oldest_utxo_height <= height <= cutoff
+            // Height is in valid range, include this payment
 
             // ============================================
-            // STEP 5: Copy payment data to output buffer
-            // We'll copy the fixed portion: txid, vout, value, height (128 bytes)
-            // Skip dynamic recipient for now to keep it simple
+            // STEP 5: Copy full ABI-encoded payment to output
+            // Return data layout from payments(idx):
+            // 0x40 + 0x00: txid (32 bytes)
+            // 0x40 + 0x20: vout (32 bytes)
+            // 0x40 + 0x40: value (32 bytes)
+            // 0x40 + 0x60: offset to recipient (32 bytes) - value is 0xa0
+            // 0x40 + 0x80: height (32 bytes)
+            // 0x40 + 0xa0: recipient length (32 bytes)
+            // 0x40 + 0xc0: recipient data (padded)
+            //
+            // We need to copy the entire struct maintaining ABI format.
+            // Each payment struct size = 0xa0 + 0x20 + ceil(recipient_len/32)*32
             // ============================================
 
-            // Load current write pointer
-            0x1000,
-            "mload",             // [write_ptr, actual_index]
+            // Get recipient length from 0x40 + 0xa0 = 0xe0
+            0xe0,
+            "mload",             // [recipient_len, actual_index]
 
-            // Copy txid (32 bytes from 0x40)
-            0x40,
-            "mload",             // [txid, write_ptr, actual_index]
-            "dup2",              // [write_ptr, txid, write_ptr, actual_index]
-            "mstore",            // Store txid; Stack: [write_ptr, actual_index]
+            // Calculate padded recipient size: ((len + 31) / 32) * 32
+            // In EVM: (len + 31) & ~31 = (len + 0x1f) & 0xffffffe0
+            0x1f,
+            "add",               // [recipient_len + 31, actual_index]
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe0,
+            "and",               // [padded_recipient_size, actual_index]
 
-            // Copy vout (32 bytes from 0x60)
-            0x60,
-            "mload",             // [vout, write_ptr, actual_index]
-            "swap1",             // [write_ptr, vout, actual_index]
-            0x20,
-            "add",               // [write_ptr+32, vout, actual_index]
-            "swap1",             // [vout, write_ptr+32, actual_index]
-            "dup2",              // [write_ptr+32, vout, write_ptr+32, actual_index]
-            "mstore",            // Store vout; Stack: [write_ptr+32, actual_index]
-
-            // Copy value (32 bytes from 0x80)
-            0x80,
-            "mload",             // [value, write_ptr+32, actual_index]
-            "swap1",             // [write_ptr+32, value, actual_index]
-            0x20,
-            "add",               // [write_ptr+64, value, actual_index]
-            "swap1",             // [value, write_ptr+64, actual_index]
-            "dup2",              // [write_ptr+64, value, write_ptr+64, actual_index]
-            "mstore",            // Store value; Stack: [write_ptr+64, actual_index]
-
-            // Copy height (32 bytes from 0xc0)
+            // Total struct size = 0xc0 + padded_recipient_size
+            // (0xc0 = 6 words: txid, vout, value, offset, height, recipient_length)
             0xc0,
-            "mload",             // [height, write_ptr+64, actual_index]
-            "swap1",             // [write_ptr+64, height, actual_index]
+            "add",               // [struct_size, actual_index]
+
+            // Stack: [struct_size, actual_index]
+
+            // Get current data write pointer
+            0x1020,
+            "mload",             // [write_ptr, struct_size, actual_index]
+
+            // Calculate offset for this payment relative to data start (0x3000)
+            // offset = write_ptr - 0x3000
+            "dup1",              // [write_ptr, write_ptr, struct_size, actual_index]
+            0x3000,
+            "swap1",             // [write_ptr, 0x3000, write_ptr, struct_size, actual_index]
+            "sub",               // [offset, write_ptr, struct_size, actual_index]
+
+            // Store offset in offsets array
+            0x1040,
+            "mload",             // [offsets_ptr, offset, write_ptr, struct_size, actual_index]
+            "dup2",              // [offset, offsets_ptr, offset, write_ptr, struct_size, actual_index]
+            "dup2",              // [offsets_ptr, offset, offsets_ptr, offset, write_ptr, struct_size, actual_index]
+            "mstore",            // Store offset; Stack: [offsets_ptr, offset, write_ptr, struct_size, actual_index]
+
+            // Update offsets pointer (+32)
             0x20,
-            "add",               // [write_ptr+96, height, actual_index]
-            "swap1",             // [height, write_ptr+96, actual_index]
-            "dup2",              // [write_ptr+96, height, write_ptr+96, actual_index]
-            "mstore",            // Store height; Stack: [write_ptr+96, actual_index]
+            "add",               // [offsets_ptr + 32, offset, write_ptr, struct_size, actual_index]
+            0x1040,
+            "mstore",            // Stack: [offset, write_ptr, struct_size, actual_index]
+            "pop",               // Stack: [write_ptr, struct_size, actual_index]
 
-            // Update write pointer: add 128 bytes (4 * 32)
-            0x20,
-            "add",               // [write_ptr+128, actual_index]
-            0x1000,
-            "mstore",            // Store new write pointer; Stack: [actual_index]
+            // Now copy the payment data using memory copy loop
+            // Source: 0x40, Dest: write_ptr, Size: struct_size
+            // Stack: [write_ptr, struct_size, actual_index]
 
-            // Continue loop with actual_index (which will be decremented next iteration)
-            // But we need to pass idx (actual_index + 1) to continue the countdown
-            // Wait - we already decremented, so actual_index is what we use
-            // The loop expects idx on stack, decrements to get actual_index
-            // So we need to keep actual_index and NOT add 1 back
-            // Actually, let's trace through:
-            // - Enter loop with idx=3
-            // - Decrement: actual_index=2
-            // - Process payment[2]
-            // - Loop back with actual_index=2 on stack
-            // - But loop_start expects idx and decrements...
-            //
-            // Hmm, we need to restructure. Let me think...
-            // After processing, we have actual_index on stack.
-            // We want to continue with idx-1 for next iteration.
-            // Since actual_index = idx - 1, we can just loop back with actual_index.
-            // But the loop does idx-1 at the start...
-            //
-            // Actually the current flow is:
-            // 1. loop_start receives idx
-            // 2. checks if idx==0, exits if so
-            // 3. computes actual_index = idx - 1
-            // 4. processes payment[actual_index]
-            // 5. loops back with actual_index on stack
-            // 6. next iteration: idx = actual_index, so we check if actual_index==0
-            //    if not, compute actual_index-1 and process
-            //
-            // This is correct! actual_index becomes the new idx.
+            "dup2",              // [struct_size, write_ptr, struct_size, actual_index]
+            0x40,                // [0x40, struct_size, write_ptr, struct_size, actual_index]
+            "dup3",              // [write_ptr, 0x40, struct_size, write_ptr, struct_size, actual_index]
+            // We need to copy struct_size bytes from 0x40 to write_ptr
 
-            "loop_start",
-            "jump"
+            // Copy loop: copy 32 bytes at a time
+            // Stack: [dest, src, remaining, write_ptr, struct_size, actual_index]
+            "copy_loop",
+            "jump",
+
+            ["copy_loop", [
+                // Stack: [dest, src, remaining, write_ptr, struct_size, actual_index]
+                "dup3",          // [remaining, dest, src, remaining, ...]
+                "iszero",        // [remaining==0, dest, src, remaining, ...]
+                "copy_done",
+                "jumpi",
+
+                // Copy 32 bytes
+                "dup2",          // [src, dest, src, remaining, ...]
+                "mload",         // [data, dest, src, remaining, ...]
+                "dup2",          // [dest, data, dest, src, remaining, ...]
+                "mstore",        // Stack: [dest, src, remaining, ...]
+
+                // Advance pointers
+                0x20,
+                "add",           // [dest+32, src, remaining, ...]
+                "swap1",         // [src, dest+32, remaining, ...]
+                0x20,
+                "add",           // [src+32, dest+32, remaining, ...]
+                "swap1",         // [dest+32, src+32, remaining, ...]
+
+                // Decrement remaining
+                "swap2",         // [remaining, src+32, dest+32, ...]
+                0x20,
+                "swap1",         // [remaining, 32, src+32, dest+32, ...]
+                "sub",           // [remaining-32, src+32, dest+32, ...]
+                "swap2",         // [dest+32, src+32, remaining-32, ...]
+
+                "copy_loop",
+                "jump"
+            ]],
+
+            ["copy_done", [
+                // Stack: [dest, src, remaining, write_ptr, struct_size, actual_index]
+                "pop",           // [src, remaining, write_ptr, struct_size, actual_index]
+                "pop",           // [remaining, write_ptr, struct_size, actual_index]
+                "pop",           // [write_ptr, struct_size, actual_index]
+
+                // Update write pointer
+                "add",           // [write_ptr + struct_size, actual_index]
+                0x1020,
+                "mstore",        // Stack: [actual_index]
+
+                // Increment payment count
+                0x1000,
+                "mload",         // [count, actual_index]
+                0x01,
+                "add",           // [count+1, actual_index]
+                0x1000,
+                "mstore",        // Stack: [actual_index]
+
+                // Continue loop
+                "loop_start",
+                "jump"
+            ]]
         ]],
 
         // ============================================
-        // SKIP_PAYMENT: Continue loop without copying data
-        // Used when height > cutoff (payment too new)
+        // SKIP_PAYMENT: Continue loop without copying
         // ============================================
         ["skip_payment", [
             // Stack: [actual_index]
-            // Continue to next iteration
             "loop_start",
             "jump"
         ]],
 
         // ============================================
-        // FINISH: Return accumulated data
+        // FINISH: Build ABI-encoded Payment[] and return
         // ============================================
         ["finish", [
-            "pop",               // Pop remaining idx/index from stack
+            "pop",               // Pop remaining idx
 
-            // Calculate return size: write_ptr - 0x1020
+            // Load payment count
             0x1000,
-            "mload",             // [write_ptr]
-            0x1020,              // [0x1020, write_ptr]
-            "swap1",             // [write_ptr, 0x1020]
-            "sub",               // [write_ptr - 0x1020] = size
+            "mload",             // [count]
 
-            // Return(offset, size)
-            0x1020,              // [0x1020, size]
-            "swap1",             // [size, 0x1020]
-            // RETURN expects (offset, size) with offset on top after swap
-            // Actually RETURN pops offset first, then size
-            // So stack should be [size, offset] and RETURN does: return mem[offset:offset+size]
-            "swap1",             // [0x1020, size]
-            "return"
+            // If count == 0, return empty array
+            "dup1",
+            "iszero",
+            "return_empty",
+            "jumpi",
+
+            // Build ABI-encoded array:
+            // The offsets are at 0x2000, data starts at 0x3000
+            // Final format: [array_offset=0x20][length][offset0][offset1]...[data0][data1]...
+            //
+            // We need to adjust offsets to be relative to the start of the offsets section
+            // Current offsets are relative to 0x3000
+            // We need them relative to the start of the array content
+            //
+            // Array content layout after length:
+            // - N offsets (each 32 bytes) = N * 32 bytes
+            // - Then data
+            // So offset[i] should be: N*32 + original_offset[i]
+
+            // Stack: [count]
+
+            // Calculate offset adjustment: count * 32
+            "dup1",              // [count, count]
+            0x20,
+            "mul",               // [count*32, count]
+
+            // Now we need to adjust all offsets in the array at 0x2000
+            // Loop through and add count*32 to each
+
+            // Stack: [adjustment, count]
+            0x2000,              // [ptr, adjustment, count]
+            "dup3",              // [count, ptr, adjustment, count]
+
+            "adjust_loop",
+            "jump",
+
+            ["adjust_loop", [
+                // Stack: [remaining, ptr, adjustment, count]
+                "dup1",          // [remaining, remaining, ptr, adjustment, count]
+                "iszero",
+                "adjust_done",
+                "jumpi",
+
+                // Load current offset
+                "dup2",          // [ptr, remaining, ptr, adjustment, count]
+                "mload",         // [offset, remaining, ptr, adjustment, count]
+
+                // Add adjustment
+                "dup4",          // [adjustment, offset, remaining, ptr, adjustment, count]
+                "add",           // [new_offset, remaining, ptr, adjustment, count]
+
+                // Store back
+                "dup3",          // [ptr, new_offset, remaining, ptr, adjustment, count]
+                "mstore",        // Stack: [remaining, ptr, adjustment, count]
+
+                // Advance ptr and decrement remaining
+                "swap1",         // [ptr, remaining, adjustment, count]
+                0x20,
+                "add",           // [ptr+32, remaining, adjustment, count]
+                "swap1",         // [remaining, ptr+32, adjustment, count]
+                0x01,
+                "swap1",         // [remaining, 1, ptr+32, adjustment, count]
+                "sub",           // [remaining-1, ptr+32, adjustment, count]
+
+                "adjust_loop",
+                "jump"
+            ]],
+
+            ["adjust_done", [
+                // Stack: [remaining=0, ptr, adjustment, count]
+                "pop",           // [ptr, adjustment, count]
+                "pop",           // [adjustment, count]
+                "pop",           // [count]
+
+                // Now build the final output
+                // We need to return: [0x20][count][offsets...][data...]
+                //
+                // Currently:
+                // - Offsets are at 0x2000 (count * 32 bytes)
+                // - Data is at 0x3000 to write_ptr
+                //
+                // We'll build output at 0x1800:
+                // 0x1800: 0x20 (offset to array data)
+                // 0x1820: count
+                // 0x1840: offsets (copied from 0x2000)
+                // 0x1840 + count*32: data (copied from 0x3000)
+
+                // Stack: [count]
+
+                // Store array offset (0x20) at 0x1800
+                0x20,
+                0x1800,
+                "mstore",
+
+                // Store count at 0x1820
+                "dup1",          // [count, count]
+                0x1820,
+                "mstore",        // Stack: [count]
+
+                // Calculate offsets size
+                "dup1",          // [count, count]
+                0x20,
+                "mul",           // [offsets_size, count]
+
+                // Copy offsets from 0x2000 to 0x1840
+                // Stack: [offsets_size, count]
+                "dup1",          // [offsets_size, offsets_size, count]
+                0x2000,          // [0x2000, offsets_size, offsets_size, count]
+                0x1840,          // [0x1840, 0x2000, offsets_size, offsets_size, count]
+
+                "final_copy_loop",
+                "jump",
+
+                ["final_copy_loop", [
+                    // Stack: [dest, src, remaining, offsets_size, count]
+                    "dup3",
+                    "iszero",
+                    "offsets_copy_done",
+                    "jumpi",
+
+                    "dup2",
+                    "mload",
+                    "dup2",
+                    "mstore",
+
+                    0x20,
+                    "add",
+                    "swap1",
+                    0x20,
+                    "add",
+                    "swap1",
+
+                    "swap2",
+                    0x20,
+                    "swap1",
+                    "sub",
+                    "swap2",
+
+                    "final_copy_loop",
+                    "jump"
+                ]],
+
+                ["offsets_copy_done", [
+                    // Stack: [dest, src, remaining=0, offsets_size, count]
+                    "pop",       // [src, remaining, offsets_size, count]
+                    "pop",       // [remaining, offsets_size, count]
+                    "pop",       // [offsets_size, count]
+
+                    // Now copy data from 0x3000 to 0x1840 + offsets_size
+                    // Data size = write_ptr - 0x3000
+
+                    // Calculate data destination
+                    0x1840,
+                    "add",       // [data_dest, count]
+
+                    // Get data size
+                    0x1020,
+                    "mload",     // [write_ptr, data_dest, count]
+                    0x3000,
+                    "swap1",
+                    "sub",       // [data_size, data_dest, count]
+
+                    // Stack: [data_size, data_dest, count]
+                    "dup1",      // [data_size, data_size, data_dest, count]
+                    0x3000,      // [0x3000, data_size, data_size, data_dest, count]
+                    "dup4",      // [data_dest, 0x3000, data_size, data_size, data_dest, count]
+
+                    "data_copy_loop",
+                    "jump",
+
+                    ["data_copy_loop", [
+                        // Stack: [dest, src, remaining, data_size, data_dest, count]
+                        "dup3",
+                        "iszero",
+                        "data_copy_done",
+                        "jumpi",
+
+                        "dup2",
+                        "mload",
+                        "dup2",
+                        "mstore",
+
+                        0x20,
+                        "add",
+                        "swap1",
+                        0x20,
+                        "add",
+                        "swap1",
+
+                        "swap2",
+                        0x20,
+                        "swap1",
+                        "sub",
+                        "swap2",
+
+                        "data_copy_loop",
+                        "jump"
+                    ]],
+
+                    ["data_copy_done", [
+                        // Stack: [dest, src, remaining=0, data_size, data_dest, count]
+                        "pop",   // [src, remaining, data_size, data_dest, count]
+                        "pop",   // [remaining, data_size, data_dest, count]
+                        "pop",   // [data_size, data_dest, count]
+
+                        // Calculate total return size:
+                        // 32 (array offset) + 32 (length) + offsets_size + data_size
+                        // = 0x40 + count*32 + data_size
+
+                        // Stack: [data_size, data_dest, count]
+                        "swap2", // [count, data_dest, data_size]
+                        0x20,
+                        "mul",   // [offsets_size, data_dest, data_size]
+                        "swap1",
+                        "pop",   // [offsets_size, data_size]
+                        "add",   // [offsets_size + data_size]
+                        0x40,
+                        "add",   // [total_size]
+
+                        // Return from 0x1800
+                        // RETURN opcode pops: offset (top), then size
+                        // We want RETURN(offset=0x1800, size=total_size)
+                        // Stack currently: [total_size]
+                        // Push 0x1800, then stack is: [0x1800, total_size]
+                        // RETURN will pop offset=0x1800, size=total_size - correct!
+                        0x1800,
+                        "return"
+                    ]]
+                ]]
+            ]],
+
+            ["return_empty", [
+                // Return empty array: [0x20][0]
+                "pop",           // Pop count=0
+
+                0x20,
+                0x1800,
+                "mstore",
+
+                0x00,
+                0x1820,
+                "mstore",
+
+                0x40,            // size
+                0x1800,          // offset
+                "return"
+            ]]
         ]]
     ]);
 

@@ -3539,7 +3539,7 @@ dependencies = [
 [[package]]
 name = "emasm"
 version = "0.1.0"
-source = "git+https://github.com/kungfuflex/emasm-rs?branch=master#52b9cc02662dcc1116934d51f880e386bd353f73"
+source = "git+https://github.com/kungfuflex/emasm-rs?branch=master#06fc3bbc545605c0360c6496d3315dc9689299dc"
 dependencies = [
  "emasm-common",
  "emasm-macros",
@@ -3548,7 +3548,7 @@ dependencies = [
 [[package]]
 name = "emasm-common"
 version = "0.1.0"
-source = "git+https://github.com/kungfuflex/emasm-rs?branch=master#52b9cc02662dcc1116934d51f880e386bd353f73"
+source = "git+https://github.com/kungfuflex/emasm-rs?branch=master#06fc3bbc545605c0360c6496d3315dc9689299dc"
 dependencies = [
  "alloy-primitives 0.7.7",
  "hex",
@@ -3560,7 +3560,7 @@ dependencies = [
 [[package]]
 name = "emasm-macros"
 version = "0.1.0"
-source = "git+https://github.com/kungfuflex/emasm-rs?branch=master#52b9cc02662dcc1116934d51f880e386bd353f73"
+source = "git+https://github.com/kungfuflex/emasm-rs?branch=master#06fc3bbc545605c0360c6496d3315dc9689299dc"
 dependencies = [
  "emasm-common",
  "hex",

@@ -273,8 +273,7 @@ impl Brc20ProgUnwrap {
         log::info!("[Brc20ProgUnwrap] Making single eth_call with custom bytecode...");
         let response = provider.call(&brc20_prog_rpc_url, "eth_call", params, 1).await?;
         
-        // Parse response - raw Payment structs packed together
-        // Each payment is 128 bytes: [txid(32), vout(32), value(32), height(32)]
+        // Parse response - ABI-encoded Payment[] array
         let hex_stripped = response.as_str()
             .ok_or_else(|| AlkanesError::RpcError("eth_call result is not a string".to_string()))?
             .strip_prefix("0x").unwrap_or(response.as_str().unwrap());
@@ -282,49 +281,34 @@ impl Brc20ProgUnwrap {
         let bytes = hex::decode(hex_stripped)
             .map_err(|e| AlkanesError::RpcError(format!("Failed to decode response: {}", e)))?;
 
-        log::info!("[Brc20ProgUnwrap] Received {} bytes, parsing into Payment structs", bytes.len());
+        log::info!("[Brc20ProgUnwrap] Received {} bytes, parsing ABI-encoded Payment[] array", bytes.len());
 
-        // Parse Payment structs (128 bytes each: txid, vout, value, height)
-        const PAYMENT_SIZE: usize = 128;
-        let mut result = Vec::new();
-        for (i, chunk) in bytes.chunks(PAYMENT_SIZE).enumerate() {
-            if chunk.len() < PAYMENT_SIZE {
-                log::warn!("[Brc20ProgUnwrap] Chunk {} has only {} bytes, skipping", i, chunk.len());
-                continue;
-            }
+        // Parse ABI-encoded Payment[] array using helper function
+        let payments = parse_abi_encoded_payments(&bytes)?;
 
-            // Parse the Payment struct
-            // Layout: [txid(32), vout(32), value(32), height(32)]
-            let mut txid = [0u8; 32];
-            txid.copy_from_slice(&chunk[0..32]);
-            txid.reverse(); // Convert to display order (little-endian txid)
+        // Convert to PendingUnwrap
+        let result: Vec<PendingUnwrap> = payments.into_iter().map(|payment| {
+            // Convert recipient bytes to address
+            let recipient_script = bitcoin::ScriptBuf::from_bytes(payment.recipient.clone());
+            let address = bitcoin::Address::from_script(&recipient_script, network)
+                .ok()
+                .map(|a| a.to_string());
 
-            // vout is last 4 bytes of 32-byte word (big-endian)
-            let vout_bytes: [u8; 4] = chunk[60..64].try_into().unwrap();
-            let vout = u32::from_be_bytes(vout_bytes);
+            // Convert txid to display order (little-endian)
+            let mut txid = payment.txid;
+            txid.reverse();
 
-            // value is last 8 bytes of 32-byte word (big-endian)
-            let value_bytes: [u8; 8] = chunk[88..96].try_into().unwrap();
-            let value = u64::from_be_bytes(value_bytes);
+            log::debug!("[Brc20ProgUnwrap] Parsed payment: txid={}, vout={}, value={}, height={}, recipient={:?}",
+                       hex::encode(&txid[..8]), payment.vout, payment.value, payment.height, address);
 
-            // height is last 8 bytes of 32-byte word (big-endian)
-            let height_bytes: [u8; 8] = chunk[120..128].try_into().unwrap();
-            let height = u64::from_be_bytes(height_bytes);
-
-            // recipient is not included in this simplified format
-            let address = None;
-
-            result.push(PendingUnwrap {
+            PendingUnwrap {
                 txid: hex::encode(&txid),
-                vout,
-                amount: value,
+                vout: payment.vout,
+                amount: payment.value,
                 address,
                 fulfilled: false,
-            });
-
-            log::debug!("[Brc20ProgUnwrap] Parsed payment {}: txid={}, vout={}, value={}, height={}",
-                       i, hex::encode(&txid[..8]), vout, value, height);
-        }
+            }
+        }).collect();
 
         log::info!("[Brc20ProgUnwrap] ✅ Parsed {} payments from bytecode execution (single eth_call!)", result.len());
         Ok(result)
@@ -384,4 +368,47 @@ pub fn payment_to_pending_unwrap(payment: crate::brc20_prog::Payment, network: b
         address,
         fulfilled: false, // BRC20-Prog doesn't track fulfilled status in the same way
     })
+}
+
+/// Parse ABI-encoded Payment[] array from bytecode execution result using alloy's ABI decoder
+pub fn parse_abi_encoded_payments(bytes: &[u8]) -> Result<Vec<crate::brc20_prog::Payment>> {
+    use alloy_sol_types::SolValue;
+    use crate::brc20_prog::eth_call::IFrBTC;
+
+    if bytes.is_empty() {
+        log::debug!("[parse_abi_encoded_payments] Empty response, returning empty array");
+        return Ok(vec![]);
+    }
+
+    log::debug!("[parse_abi_encoded_payments] Response length: {} bytes", bytes.len());
+
+    // Use alloy's ABI decoder for Vec<IFrBTC::Payment>
+    let decoded: Vec<IFrBTC::Payment> = Vec::<IFrBTC::Payment>::abi_decode(bytes, true)
+        .map_err(|e| AlkanesError::RpcError(format!("Failed to ABI decode Payment[]: {}", e)))?;
+
+    log::debug!("[parse_abi_encoded_payments] Decoded {} payments", decoded.len());
+
+    // Convert from alloy's IFrBTC::Payment to our Payment struct
+    let payments: Vec<crate::brc20_prog::Payment> = decoded
+        .into_iter()
+        .map(|p| {
+            let mut txid = [0u8; 32];
+            txid.copy_from_slice(p.txid.as_slice());
+
+            crate::brc20_prog::Payment {
+                txid,
+                vout: p.vout.try_into().unwrap_or(0),
+                value: p.value.try_into().unwrap_or(0),
+                recipient: p.recipient.to_vec(),
+                height: p.height.try_into().unwrap_or(0),
+            }
+        })
+        .collect();
+
+    for (i, p) in payments.iter().enumerate() {
+        log::debug!("[parse_abi_encoded_payments] Payment {}: vout={}, value={}, height={}, recipient_len={}",
+                   i, p.vout, p.value, p.height, p.recipient.len());
+    }
+
+    Ok(payments)
 }
