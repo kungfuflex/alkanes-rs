@@ -294,9 +294,8 @@ impl Brc20ProgUnwrap {
                 .ok()
                 .map(|a| a.to_string());
 
-            // Convert txid to display order (little-endian)
-            let mut txid = payment.txid;
-            txid.reverse();
+            // txid is already in display order (same as UTXO set), no need to reverse
+            let txid = payment.txid;
 
             log::debug!("[Brc20ProgUnwrap] Parsed payment: txid={}, vout={}, value={}, height={}, recipient={:?}",
                        hex::encode(&txid[..8]), payment.vout, payment.value, payment.height, address);
