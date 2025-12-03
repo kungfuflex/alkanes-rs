@@ -210,12 +210,12 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 let text = client.post_raw("get-bitcoin-price", &json!({})).await?;
                 println!("{}", text);
             } else {
-                let price = client.get_bitcoin_price().await?;
+                let response = client.get_bitcoin_price().await?;
                 if raw {
-                    println!("{}", serde_json::to_string_pretty(&price)?);
+                    println!("{}", serde_json::to_string_pretty(&response)?);
                 } else {
                     use alkanes_cli_sys::pretty_print::print_bitcoin_price;
-                    print_bitcoin_price(&price);
+                    print_bitcoin_price(&response.bitcoin);
                 }
             }
         }
@@ -274,12 +274,12 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 println!("{}", text);
             } else {
                 let factory_id = parse_alkane_id(&factory)?;
-                let pools = client.get_pools(&factory_id).await?;
+                let response = client.get_pools(&factory_id).await?;
                 if raw {
-                    println!("{}", serde_json::to_string_pretty(&pools)?);
+                    println!("{}", serde_json::to_string_pretty(&response)?);
                 } else {
                     use alkanes_cli_sys::pretty_print::print_pools_response;
-                    print_pools_response(&pools);
+                    print_pools_response(&response.pools);
                 }
             }
         }
@@ -378,7 +378,8 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 if raw {
                     println!("{}", serde_json::to_string(&holders)?);
                 } else {
-                    println!("{}", serde_json::to_string_pretty(&holders)?);
+                    use alkanes_cli_sys::pretty_print::print_holders_response;
+                    print_holders_response(&holders);
                 }
             }
         }
@@ -392,7 +393,8 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 if raw {
                     println!("{}", serde_json::to_string(&count)?);
                 } else {
-                    println!("{}", serde_json::to_string_pretty(&count)?);
+                    use alkanes_cli_sys::pretty_print::print_holder_count_response;
+                    print_holder_count_response(&count);
                 }
             }
         }

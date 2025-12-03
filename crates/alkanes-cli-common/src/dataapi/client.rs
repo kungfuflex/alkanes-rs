@@ -36,7 +36,7 @@ impl DataApiClient {
         &self,
         endpoint: &str,
         body: &T,
-    ) -> Result<ApiResponse<R>> {
+    ) -> Result<R> {
         let url = self.build_url(endpoint);
         let response = self.client
             .post(&url)
@@ -44,20 +44,29 @@ impl DataApiClient {
             .send()
             .await
             .context("Failed to send request")?;
-        
-        let api_response = response
-            .json::<ApiResponse<R>>()
+
+        // First get the response as a generic JSON value to check for errors
+        let json_value: serde_json::Value = response
+            .json()
             .await
             .context("Failed to parse response")?;
-        
-        if api_response.status_code != 200 {
-            return Err(anyhow::anyhow!(
-                "API error: {}",
-                api_response.error.unwrap_or_else(|| "Unknown error".to_string())
-            ));
+
+        // Check if the response indicates an error
+        if let Some(ok) = json_value.get("ok") {
+            if ok == false {
+                let error_msg = json_value
+                    .get("error")
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("Unknown error");
+                return Err(anyhow::anyhow!("API error: {}", error_msg));
+            }
         }
-        
-        Ok(api_response)
+
+        // Parse the full response into the expected type
+        let result: R = serde_json::from_value(json_value)
+            .context("Failed to deserialize response")?;
+
+        Ok(result)
     }
 
     /// Make a POST request and return the raw response text without parsing.
@@ -128,38 +137,33 @@ impl DataApiClient {
             "order": order,
             "searchQuery": search_query,
         });
-        
-        let response = self.post::<_, AlkanesResponse>("get-alkanes", &body).await?;
-        Ok(response.data)
+
+        self.post::<_, AlkanesResponse>("get-alkanes", &body).await
     }
 
     pub async fn get_alkanes_by_address(&self, address: &str) -> Result<Vec<AlkaneToken>> {
         let body = json!({ "address": address });
-        let response = self.post::<_, Vec<AlkaneToken>>("get-alkanes-by-address", &body).await?;
-        Ok(response.data)
+        self.post::<_, Vec<AlkaneToken>>("get-alkanes-by-address", &body).await
     }
 
     pub async fn get_alkane_details(&self, id: &AlkaneId) -> Result<AlkaneToken> {
         let body = json!({ "id": { "block": id.block.to_string(), "tx": id.tx.to_string() } });
-        let response = self.post::<_, AlkaneToken>("get-alkane-details", &body).await?;
-        Ok(response.data)
+        self.post::<_, AlkaneToken>("get-alkane-details", &body).await
     }
 
     // Pool endpoints
-    pub async fn get_pools(&self, factory_id: &AlkaneId) -> Result<Vec<Pool>> {
+    pub async fn get_pools(&self, factory_id: &AlkaneId) -> Result<PoolsResponse> {
         let body = json!({
             "factoryId": { "block": factory_id.block.to_string(), "tx": factory_id.tx.to_string() }
         });
-        let response = self.post::<_, PoolsResponse>("get-pools", &body).await?;
-        Ok(response.data.pools)
+        self.post::<_, PoolsResponse>("get-pools", &body).await
     }
 
     pub async fn get_pool_by_id(&self, pool_id: &AlkaneId) -> Result<Option<Pool>> {
         let body = json!({
             "poolId": { "block": pool_id.block.to_string(), "tx": pool_id.tx.to_string() }
         });
-        let response = self.post::<_, Option<Pool>>("get-pool-by-id", &body).await?;
-        Ok(response.data)
+        self.post::<_, Option<Pool>>("get-pool-by-id", &body).await
     }
 
     pub async fn get_pool_history(
@@ -175,8 +179,7 @@ impl DataApiClient {
             "limit": limit,
             "offset": offset,
         });
-        let response = self.post::<_, HistoryResponse>("get-pool-history", &body).await?;
-        Ok(response.data)
+        self.post::<_, HistoryResponse>("get-pool-history", &body).await
     }
 
     // History endpoints
@@ -191,8 +194,7 @@ impl DataApiClient {
             "offset": offset,
             "successfulOnly": successful_only,
         });
-        let response = self.post::<_, HistoryResponse>("get-all-history", &body).await?;
-        Ok(response.data)
+        self.post::<_, HistoryResponse>("get-all-history", &body).await
     }
 
     pub async fn get_swap_history(
@@ -206,8 +208,7 @@ impl DataApiClient {
             "limit": limit,
             "offset": offset,
         });
-        let response = self.post::<_, SwapHistoryResponse>("get-swap-history", &body).await?;
-        Ok(response.data)
+        self.post::<_, SwapHistoryResponse>("get-swap-history", &body).await
     }
 
     pub async fn get_mint_history(
@@ -221,8 +222,7 @@ impl DataApiClient {
             "limit": limit,
             "offset": offset,
         });
-        let response = self.post::<_, MintHistoryResponse>("get-mint-history", &body).await?;
-        Ok(response.data)
+        self.post::<_, MintHistoryResponse>("get-mint-history", &body).await
     }
 
     pub async fn get_burn_history(
@@ -236,8 +236,7 @@ impl DataApiClient {
             "limit": limit,
             "offset": offset,
         });
-        let response = self.post::<_, BurnHistoryResponse>("get-burn-history", &body).await?;
-        Ok(response.data)
+        self.post::<_, BurnHistoryResponse>("get-burn-history", &body).await
     }
 
     pub async fn get_pool_creation_history(
@@ -249,20 +248,17 @@ impl DataApiClient {
             "limit": limit,
             "offset": offset,
         });
-        let response = self.post::<_, PoolCreationHistoryResponse>("get-pool-creation-history", &body).await?;
-        Ok(response.data)
+        self.post::<_, PoolCreationHistoryResponse>("get-pool-creation-history", &body).await
     }
 
     // Price endpoints
-    pub async fn get_bitcoin_price(&self) -> Result<BitcoinPrice> {
-        let response = self.post::<_, BitcoinPriceResponse>("get-bitcoin-price", &json!({})).await?;
-        Ok(response.data.bitcoin)
+    pub async fn get_bitcoin_price(&self) -> Result<BitcoinPriceResponse> {
+        self.post::<_, BitcoinPriceResponse>("get-bitcoin-price", &json!({})).await
     }
 
     pub async fn get_bitcoin_market_chart(&self, days: &str) -> Result<MarketChart> {
         let body = json!({ "days": days });
-        let response = self.post::<_, MarketChart>("get-bitcoin-market-chart", &body).await?;
-        Ok(response.data)
+        self.post::<_, MarketChart>("get-bitcoin-market-chart", &body).await
     }
 
     // New balance endpoints
@@ -271,8 +267,7 @@ impl DataApiClient {
             "address": address,
             "include_outpoints": include_outpoints
         });
-        let response = self.post::<_, serde_json::Value>("get-address-balances", &body).await?;
-        Ok(response.data)
+        self.post::<_, serde_json::Value>("get-address-balances", &body).await
     }
 
     pub async fn get_holders(&self, alkane: &str, page: i64, limit: i64) -> Result<serde_json::Value> {
@@ -281,20 +276,17 @@ impl DataApiClient {
             "page": page,
             "limit": limit
         });
-        let response = self.post::<_, serde_json::Value>("get-alkane-holders", &body).await?;
-        Ok(response.data)
+        self.post::<_, serde_json::Value>("get-alkane-holders", &body).await
     }
 
     pub async fn get_holders_count(&self, alkane: &str) -> Result<serde_json::Value> {
         let body = serde_json::json!({"alkane": alkane});
-        let response = self.post::<_, serde_json::Value>("get-alkane-holders-count", &body).await?;
-        Ok(response.data)
+        self.post::<_, serde_json::Value>("get-alkane-holders-count", &body).await
     }
 
     pub async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
         let body = serde_json::json!({"outpoint": outpoint});
-        let response = self.post::<_, serde_json::Value>("get-outpoint-balances", &body).await?;
-        Ok(response.data)
+        self.post::<_, serde_json::Value>("get-outpoint-balances", &body).await
     }
 
     // Storage endpoint
@@ -306,8 +298,7 @@ impl DataApiClient {
         if let Some(p) = prefix {
             body["prefix"] = serde_json::Value::String(p);
         }
-        let response = self.post::<_, serde_json::Value>("get-keys", &body).await?;
-        Ok(response.data)
+        self.post::<_, serde_json::Value>("get-keys", &body).await
     }
 
     // AMM endpoints
@@ -322,8 +313,7 @@ impl DataApiClient {
         if let Some(et) = end_time {
             body["end_time"] = serde_json::Value::from(et);
         }
-        let response = self.post::<_, serde_json::Value>("get-trades", &body).await?;
-        Ok(response.data)
+        self.post::<_, serde_json::Value>("get-trades", &body).await
     }
 
     pub async fn get_candles(&self, pool: &str, interval: &str, start_time: Option<i64>, end_time: Option<i64>, limit: i64) -> Result<serde_json::Value> {
@@ -338,13 +328,11 @@ impl DataApiClient {
         if let Some(et) = end_time {
             body["end_time"] = serde_json::Value::from(et);
         }
-        let response = self.post::<_, serde_json::Value>("get-candles", &body).await?;
-        Ok(response.data)
+        self.post::<_, serde_json::Value>("get-candles", &body).await
     }
 
     pub async fn get_reserves(&self, pool: &str) -> Result<serde_json::Value> {
         let body = serde_json::json!({"pool": pool});
-        let response = self.post::<_, serde_json::Value>("get-reserves", &body).await?;
-        Ok(response.data)
+        self.post::<_, serde_json::Value>("get-reserves", &body).await
     }
 }

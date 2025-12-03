@@ -557,3 +557,54 @@ pub fn print_swap_history(swaps: &[PoolSwap]) {
     println!("{} {} swaps", "Total:".bold(), swaps.len());
     println!();
 }
+
+pub fn print_holders_response(response: &serde_json::Value) {
+    let alkane = response.get("alkane").and_then(|v| v.as_str()).unwrap_or("Unknown");
+    let total = response.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+    let page = response.get("page").and_then(|v| v.as_i64()).unwrap_or(1);
+    let limit = response.get("limit").and_then(|v| v.as_i64()).unwrap_or(100);
+    let has_more = response.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    println!("\n{}", format!("👥 Holders for {}", alkane).bold().cyan());
+    println!("{}", "═".repeat(80).cyan());
+
+    if let Some(items) = response.get("items").and_then(|v| v.as_array()) {
+        if items.is_empty() {
+            println!("  {}", "No holders found".yellow());
+            println!();
+            return;
+        }
+
+        for (idx, holder) in items.iter().enumerate() {
+            let address = holder.get("address").and_then(|v| v.as_str()).unwrap_or("Unknown");
+            let amount = holder.get("amount").and_then(|v| v.as_str()).unwrap_or("0");
+
+            println!("\n  {} {}",
+                     format!("{}.", idx + 1).dimmed(),
+                     address.bright_white());
+            println!("     {} {}", "Balance:".bold(), amount.green());
+        }
+    } else {
+        println!("  {}", "No holder data available".yellow());
+    }
+
+    println!("\n{}", "─".repeat(80).cyan());
+    println!("{} {} holder(s) | Page {} | {} per page{}",
+             "Total:".bold(),
+             total,
+             page,
+             limit,
+             if has_more { " | More available" } else { "" });
+    println!();
+}
+
+pub fn print_holder_count_response(response: &serde_json::Value) {
+    let alkane = response.get("alkane").and_then(|v| v.as_str()).unwrap_or("Unknown");
+    let count = response.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    println!("\n{}", format!("👥 Holder Count for {}", alkane).bold().cyan());
+    println!("{}", "═".repeat(50).cyan());
+    println!("  {} {}", "Count:".bold(), count.to_string().green());
+    println!("{}", "─".repeat(50).cyan());
+    println!();
+}
