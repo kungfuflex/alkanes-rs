@@ -1137,159 +1137,144 @@ static RPCHelpMan submitheader()
 // ============================================================================
 // Runestone/Protostone Encoding Helpers for generatefuture
 // ============================================================================
+//
+// Runestone Tag values (from ordinals tag.rs):
+//   Body = 0, Flags = 2, Rune = 4, Premine = 6, Cap = 8, Amount = 10,
+//   HeightStart = 12, HeightEnd = 14, OffsetStart = 16, OffsetEnd = 18,
+//   Mint = 20, Pointer = 22, Cenotaph = 126, Divisibility = 1, Spacers = 3,
+//   Symbol = 5, Nop = 127, Protocol = 16383, Burn = 83, Message = 81,
+//   Refund = 93, ProtoPointer = 91, From = 95
+//
+// Protostone encoding format:
+//   Inside the Protocol field value, we encode:
+//   [protocol_tag, num_varints, ...field_varints...]
+//
+//   Fields are tag-value pairs where:
+//   - ProtoPointer (91) = output index
+//   - Message (81) = cellpack bytes as u128 chunks
+//
+// ============================================================================
 
-// Encode a single value as LEB128 varint
-static std::vector<uint8_t> EncodeVarint(uint64_t n)
+// Runestone tag constants
+static constexpr uint64_t TAG_POINTER = 22;
+static constexpr uint64_t TAG_PROTOCOL = 16383;
+
+// Protostone field tag constants
+static constexpr uint64_t TAG_PROTO_POINTER = 91;
+static constexpr uint64_t TAG_MESSAGE = 81;
+
+// Encode a single u128 value as LEB128 varint
+// Note: This handles values up to 128 bits by continuing the encoding
+static void EncodeU128Varint(__uint128_t n, std::vector<uint8_t>& out)
 {
-    std::vector<uint8_t> result;
     while (n >= 0x80) {
-        result.push_back((n & 0x7F) | 0x80);
+        out.push_back((n & 0x7F) | 0x80);
         n >>= 7;
     }
-    result.push_back(n & 0x7F);
-    return result;
+    out.push_back(n & 0x7F);
 }
 
-// Encode a list of values as concatenated varints
-static std::vector<uint8_t> EncodeVarintList(const std::vector<uint64_t>& values)
+// Encode a u64 value as LEB128 varint
+static void EncodeU64Varint(uint64_t n, std::vector<uint8_t>& out)
 {
-    std::vector<uint8_t> result;
-    for (uint64_t val : values) {
-        std::vector<uint8_t> encoded = EncodeVarint(val);
-        result.insert(result.end(), encoded.begin(), encoded.end());
+    while (n >= 0x80) {
+        out.push_back((n & 0x7F) | 0x80);
+        n >>= 7;
+    }
+    out.push_back(n & 0x7F);
+}
+
+// Convert a byte vector (up to 15 bytes) to a u128 value (little-endian)
+static __uint128_t BytesToU128(const std::vector<uint8_t>& bytes)
+{
+    __uint128_t result = 0;
+    for (size_t i = 0; i < bytes.size() && i < 16; i++) {
+        result |= ((__uint128_t)bytes[i]) << (i * 8);
     }
     return result;
 }
 
-// Split bytes into u128 values (15 bytes per u128, little-endian)
-// This matches the Rust implementation in protorune-support
-static std::vector<std::vector<uint8_t>> SplitBytesTo128(const std::vector<uint8_t>& bytes)
+// Split bytes into u128 chunks (15 bytes per chunk to avoid overflow issues)
+// This matches the Rust protorune-support split_bytes function
+static std::vector<__uint128_t> SplitBytesToU128Chunks(const std::vector<uint8_t>& bytes)
 {
-    std::vector<std::vector<uint8_t>> result;
-    std::vector<uint8_t> current;
-    
-    for (size_t i = 0; i < bytes.size(); i++) {
-        if (i > 0 && i % 15 == 0) {
-            // Pad to 16 bytes (128 bits)
-            while (current.size() < 16) {
-                current.push_back(0);
-            }
-            result.push_back(current);
-            current.clear();
+    std::vector<__uint128_t> result;
+
+    for (size_t i = 0; i < bytes.size(); i += 15) {
+        std::vector<uint8_t> chunk;
+        for (size_t j = i; j < bytes.size() && j < i + 15; j++) {
+            chunk.push_back(bytes[j]);
         }
-        current.push_back(bytes[i]);
-    }
-    
-    // Handle last chunk
-    if (!current.empty()) {
-        while (current.size() < 16) {
-            current.push_back(0);
+        // Pad to 16 bytes
+        while (chunk.size() < 16) {
+            chunk.push_back(0);
         }
-        result.push_back(current);
+        result.push_back(BytesToU128(chunk));
     }
-    
-    return result;
-}
 
-// Convert 16-byte array to uint64_t values for varint encoding
-// We encode as two uint64_t values since u128 doesn't exist in standard C++
-static std::vector<uint64_t> BytesToU64Pairs(const std::vector<uint8_t>& bytes)
-{
-    assert(bytes.size() == 16);
-    
-    // Little-endian: first 8 bytes are low u64, next 8 are high u64
-    uint64_t low = 0;
-    uint64_t high = 0;
-    
-    for (int i = 0; i < 8; i++) {
-        low |= (uint64_t)bytes[i] << (i * 8);
+    if (result.empty()) {
+        result.push_back(0);
     }
-    for (int i = 0; i < 8; i++) {
-        high |= (uint64_t)bytes[i + 8] << (i * 8);
-    }
-    
-    // For Runestone encoding, we need to encode this as a single u128 value
-    // which gets encoded as varints. However, Bitcoin's varint is limited to u64.
-    // The ordinals library encodes u128 values by encoding them as a sequence.
-    // For simplicity, we'll encode as low u64 only if high is 0, otherwise both.
-    
-    std::vector<uint64_t> result;
-    if (high == 0) {
-        result.push_back(low);
-    } else {
-        // For u128 > u64::MAX, we need special handling
-        // The runestone protocol encodes these as multiple varints
-        // For now, we'll use a simplified approach
-        result.push_back(low);
-        if (high > 0) {
-            result.push_back(high);
-        }
-    }
-    
-    return result;
-}
 
-// Encode protostone message (cellpack) into protocol field format
-// Format: [protocol_tag, message_length, ...message_u128s...]
-static std::vector<uint64_t> EncodeProtostoneToU64Vec(const std::vector<uint64_t>& cellpack)
-{
-    std::vector<uint64_t> result;
-    
-    // Protocol tag = 1 (ALKANES)
-    result.push_back(1);
-    
-    // Encode the cellpack as varint bytes
-    std::vector<uint8_t> message_bytes = EncodeVarintList(cellpack);
-    
-    // Split into u128 chunks
-    std::vector<std::vector<uint8_t>> u128_chunks = SplitBytesTo128(message_bytes);
-    
-    // Message length (number of u128 values)
-    result.push_back(u128_chunks.size());
-    
-    // Convert each u128 chunk to u64 values
-    for (const auto& chunk : u128_chunks) {
-        std::vector<uint64_t> u64s = BytesToU64Pairs(chunk);
-        result.insert(result.end(), u64s.begin(), u64s.end());
-    }
-    
     return result;
 }
 
 // Create OP_RETURN script with Runestone containing Protostone
-static CScript CreateRunestoneWithProtostone(const std::vector<uint64_t>& cellpack)
+// The cellpack is the message bytes (e.g., [32, 0, 77] for wrap-btc execute)
+static CScript CreateRunestoneWithProtostone(const std::vector<uint8_t>& cellpack, uint32_t output_index = 0)
 {
+    // Step 1: Build the protostone fields
+    // Fields: [ProtoPointer, value, Message, message_u128_value]
+
+    // Convert cellpack bytes to u128 value
+    // The message bytes are stored as a u128 little-endian value
+    __uint128_t message_u128 = BytesToU128(cellpack);
+
+    // Protostone fields: [ProtoPointer_tag, pointer_value, Message_tag, message_value]
+    std::vector<__uint128_t> protostone_fields;
+    protostone_fields.push_back(TAG_PROTO_POINTER);
+    protostone_fields.push_back(output_index);
+    protostone_fields.push_back(TAG_MESSAGE);
+    protostone_fields.push_back(message_u128);
+
+    // Step 2: Build the full protostone structure
+    // Format: [protocol_tag=1, num_field_varints, ...field_varints...]
+    std::vector<__uint128_t> protostone_values;
+    protostone_values.push_back(1);  // protocol_tag = 1 (ALKANES)
+    protostone_values.push_back(protostone_fields.size());  // number of varints in fields
+    for (auto v : protostone_fields) {
+        protostone_values.push_back(v);
+    }
+
+    // Step 3: LEB128 encode the protostone values
+    std::vector<uint8_t> protostone_leb;
+    for (auto v : protostone_values) {
+        EncodeU128Varint(v, protostone_leb);
+    }
+
+    // Step 4: Split the LEB-encoded protostone into u128 chunks for Protocol field
+    std::vector<__uint128_t> protocol_u128_chunks = SplitBytesToU128Chunks(protostone_leb);
+
+    // Step 5: Build the runestone payload
+    // Format: [Pointer_tag=22, pointer_value=0, Protocol_tag=16383, proto_u128_1, Protocol_tag=16383, proto_u128_2, ...]
+    std::vector<uint8_t> runestone_payload;
+
+    // Add Pointer field (tag=22, value=output_index)
+    EncodeU64Varint(TAG_POINTER, runestone_payload);
+    EncodeU64Varint(output_index, runestone_payload);
+
+    // Add Protocol field(s) - one tag-value pair per u128 chunk
+    for (auto chunk : protocol_u128_chunks) {
+        EncodeU64Varint(TAG_PROTOCOL, runestone_payload);
+        EncodeU128Varint(chunk, runestone_payload);
+    }
+
+    // Step 6: Build the OP_RETURN script
+    // Format: OP_RETURN OP_13 <push payload>
     CScript script;
-    
-    // Runestone magic: OP_RETURN OP_13
     script << OP_RETURN << OP_13;
-    
-    // Encode the protocol field
-    std::vector<uint64_t> protocol_values = EncodeProtostoneToU64Vec(cellpack);
-    
-    // Runestone fields are encoded as: tag, value, tag, value, ...
-    // Tag 0 = protocol (special: consumes all remaining values)
-    // Tag 2 = pointer
-    
-    // Add pointer field first (tag=2, value=0)
-    std::vector<uint8_t> pointer_bytes = EncodeVarint(2);  // tag
-    pointer_bytes.push_back(0);  // value = 0
-    
-    // Add protocol field (tag=0, consumes rest)
-    std::vector<uint8_t> protocol_tag_bytes = EncodeVarint(0);
-    
-    // Encode all protocol values
-    std::vector<uint8_t> protocol_data = EncodeVarintList(protocol_values);
-    
-    // Combine: pointer, then protocol tag, then protocol data
-    std::vector<uint8_t> runestone_data;
-    runestone_data.insert(runestone_data.end(), pointer_bytes.begin(), pointer_bytes.end());
-    runestone_data.insert(runestone_data.end(), protocol_tag_bytes.begin(), protocol_tag_bytes.end());
-    runestone_data.insert(runestone_data.end(), protocol_data.begin(), protocol_data.end());
-    
-    // Add to script
-    script << runestone_data;
-    
+    script << runestone_payload;
+
     return script;
 }
 
@@ -1338,7 +1323,8 @@ static RPCHelpMan generatefuture()
             CMutableTransaction coinbase_tx(*block.vtx[0]);
             
             // Create OP_RETURN output with runestone containing protostone [32, 0, 77]
-            std::vector<uint64_t> cellpack = {32, 0, 77};
+            // This cellpack represents an alkanes execute call for wrap-btc
+            std::vector<uint8_t> cellpack = {32, 0, 77};
             CScript runestone_script = CreateRunestoneWithProtostone(cellpack);
             coinbase_tx.vout.push_back(CTxOut(0, runestone_script));
 
