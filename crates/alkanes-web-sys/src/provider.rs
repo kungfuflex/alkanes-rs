@@ -3871,12 +3871,12 @@ impl AlkanesProvider for WebProvider {
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
         self.call(&self.sandshrew_rpc_url(), "alkanes_spendables_by_address", serde_json::json!([address]), 1).await
     }
-    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent> {
         use prost::Message;
         let result = self.call(&self.sandshrew_rpc_url(), "alkanes_trace_block", serde_json::json!([height]), 1).await?;
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
-        alkanes_cli_common::proto::alkanes::Trace::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
+        alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         use alkanes_cli_common::proto::alkanes::{BytecodeRequest, AlkaneId, Uint128};

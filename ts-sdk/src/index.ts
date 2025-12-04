@@ -62,7 +62,19 @@ export {
   BitcoinRpcClient,
   EsploraClient,
   AlkanesRpcClient,
+  DataApiClient,
   createProvider,
+  NETWORK_PRESETS,
+} from './provider';
+
+export type {
+  AlkanesProviderConfig,
+  PoolDetails,
+  PoolWithDetails,
+  TradeInfo,
+  CandleInfo,
+  HolderInfo,
+  ExecuteResult,
 } from './provider';
 
 // Type exports

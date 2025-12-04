@@ -1616,7 +1616,7 @@ impl AlkanesProvider for BrowserWalletProvider {
         self.web_provider.spendables_by_address(address).await
     }
 
-    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent> {
         self.web_provider.trace_block(height).await
     }
 

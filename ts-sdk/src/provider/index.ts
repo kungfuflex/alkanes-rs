@@ -1,8 +1,8 @@
 /**
  * Provider integration for Alkanes SDK
- * 
- * Compatible with @oyl/sdk Provider interface.
- * Integrates with alkanes-web-sys WASM backend for alkanes-specific functionality.
+ *
+ * Provides a clean TypeScript wrapper over the WebProvider WASM bindings.
+ * Compatible with @oyl/sdk Provider interface patterns.
  */
 
 import * as bitcoin from 'bitcoinjs-lib';
@@ -14,360 +14,666 @@ import {
   UTXO,
   AddressBalance,
   AlkaneBalance,
-  AlkaneCallParams,
   AlkaneId,
 } from '../types';
 
-// Import WASM module types
-// @ts-ignore - WASM types are available at runtime
-import type * as AlkanesWasm from '../../build/wasm/alkanes_web_sys';
+// WASM provider type - loaded dynamically at runtime
+type WasmWebProvider = any;
+
+// Network configuration presets
+export const NETWORK_PRESETS: Record<string, { rpcUrl: string; dataApiUrl: string; networkType: NetworkType }> = {
+  'mainnet': {
+    rpcUrl: 'https://mainnet.subfrost.io/v4/subfrost',
+    dataApiUrl: 'https://mainnet.subfrost.io/v4/subfrost',
+    networkType: 'mainnet',
+  },
+  'testnet': {
+    rpcUrl: 'https://testnet.subfrost.io/v4/subfrost',
+    dataApiUrl: 'https://testnet.subfrost.io/v4/subfrost',
+    networkType: 'testnet',
+  },
+  'signet': {
+    rpcUrl: 'https://signet.subfrost.io/v4/subfrost',
+    dataApiUrl: 'https://signet.subfrost.io/v4/subfrost',
+    networkType: 'signet',
+  },
+  'subfrost-regtest': {
+    rpcUrl: 'https://regtest.subfrost.io/v4/subfrost',
+    dataApiUrl: 'https://regtest.subfrost.io/v4/subfrost',
+    networkType: 'regtest',
+  },
+  'regtest': {
+    rpcUrl: 'http://localhost:18888',
+    dataApiUrl: 'http://localhost:18888',
+    networkType: 'regtest',
+  },
+  'local': {
+    rpcUrl: 'http://localhost:18888',
+    dataApiUrl: 'http://localhost:18888',
+    networkType: 'regtest',
+  },
+};
+
+// Extended provider configuration
+export interface AlkanesProviderConfig {
+  /** Network type or preset name */
+  network: string;
+  /** Custom RPC URL (overrides preset) */
+  rpcUrl?: string;
+  /** Custom Data API URL (overrides preset, defaults to rpcUrl) */
+  dataApiUrl?: string;
+  /** bitcoinjs-lib network (auto-detected if not provided) */
+  bitcoinNetwork?: bitcoin.Network;
+}
+
+// Pool details from factory
+export interface PoolDetails {
+  token0: AlkaneId;
+  token1: AlkaneId;
+  reserve0: string;
+  reserve1: string;
+  totalSupply: string;
+}
+
+export interface PoolWithDetails {
+  poolId: AlkaneId;
+  details: PoolDetails | null;
+}
+
+// Trade info from data API
+export interface TradeInfo {
+  txid: string;
+  vout: number;
+  token0: string;
+  token1: string;
+  amount0In: string;
+  amount1In: string;
+  amount0Out: string;
+  amount1Out: string;
+  reserve0After: string;
+  reserve1After: string;
+  timestamp: string;
+  blockHeight: number;
+}
+
+// Candle (OHLCV) data
+export interface CandleInfo {
+  openTime: string;
+  closeTime: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume0: string;
+  volume1: string;
+  tradeCount: number;
+}
+
+// Holder info
+export interface HolderInfo {
+  address: string;
+  amount: string;
+}
+
+// Execute result
+export interface ExecuteResult {
+  txid: string;
+  rawTx: string;
+  fee: number;
+  size: number;
+}
 
 /**
- * RPC client for Bitcoin Core / Sandshrew
+ * Bitcoin RPC client (uses WebProvider internally)
  */
 export class BitcoinRpcClient {
-  constructor(private url: string) {}
-
-  async call(method: string, params: any[] = []): Promise<any> {
-    const response = await fetch(this.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method,
-        params,
-      }),
-    });
-
-    const json = await response.json();
-    if (json.error) {
-      throw new Error(`RPC error: ${json.error.message}`);
-    }
-    return json.result;
-  }
+  constructor(private provider: WasmWebProvider) {}
 
   async getBlockCount(): Promise<number> {
-    return this.call('getblockcount');
+    return this.provider.bitcoindGetBlockCount();
   }
 
   async getBlockHash(height: number): Promise<string> {
-    return this.call('getblockhash', [height]);
+    return this.provider.bitcoindGetBlockHash(height);
   }
 
-  async getBlock(hash: string): Promise<any> {
-    return this.call('getblock', [hash, 2]); // Verbosity 2 for full tx data
+  async getBlock(hash: string, raw: boolean = false): Promise<any> {
+    return this.provider.bitcoindGetBlock(hash, raw);
   }
 
   async sendRawTransaction(hex: string): Promise<string> {
-    return this.call('sendrawtransaction', [hex]);
+    return this.provider.bitcoindSendRawTransaction(hex);
   }
 
-  async getTransaction(txid: string): Promise<any> {
-    return this.call('getrawtransaction', [txid, true]);
+  async getTransaction(txid: string, blockHash?: string): Promise<any> {
+    return this.provider.bitcoindGetRawTransaction(txid, blockHash);
   }
 
-  async testMempoolAccept(txHex: string[]): Promise<any[]> {
-    return this.call('testmempoolaccept', [txHex]);
+  async getBlockchainInfo(): Promise<any> {
+    return this.provider.bitcoindGetBlockchainInfo();
   }
 
-  async getMempoolEntry(txid: string): Promise<any> {
-    return this.call('getmempoolentry', [txid]);
+  async getNetworkInfo(): Promise<any> {
+    return this.provider.bitcoindGetNetworkInfo();
   }
 
-  /**
-   * Execute a Lua script on the Sandshrew RPC
-   * @param script - The full Lua script content
-   * @param args - Arguments to pass to the script
-   */
-  async lua_evalscript(script: string, ...args: any[]): Promise<any> {
-    return this.call('lua_evalscript', [script, ...args]);
+  async getMempoolInfo(): Promise<any> {
+    return this.provider.bitcoindGetMempoolInfo();
   }
 
-  /**
-   * Execute a cached Lua script by hash on the Sandshrew RPC
-   * @param hash - The SHA256 hash of the script
-   * @param args - Arguments to pass to the script
-   */
-  async lua_evalsaved(hash: string, ...args: any[]): Promise<any> {
-    return this.call('lua_evalsaved', [hash, ...args]);
+  async estimateSmartFee(target: number): Promise<any> {
+    return this.provider.bitcoindEstimateSmartFee(target);
+  }
+
+  async generateToAddress(nblocks: number, address: string): Promise<any> {
+    return this.provider.bitcoindGenerateToAddress(nblocks, address);
   }
 }
 
 /**
- * Esplora API client
+ * Esplora API client (uses WebProvider internally)
  */
 export class EsploraClient {
-  constructor(private baseUrl: string) {}
+  constructor(private provider: WasmWebProvider) {}
 
   async getAddressInfo(address: string): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/address/${address}`);
-    return response.json();
+    return this.provider.esploraGetAddressInfo(address);
   }
 
   async getAddressUtxos(address: string): Promise<UTXO[]> {
-    const response = await fetch(`${this.baseUrl}/address/${address}/utxo`);
-    return response.json();
+    return this.provider.esploraGetAddressUtxo(address);
   }
 
-  async getAddressBalance(address: string): Promise<AddressBalance> {
-    const [info, utxos] = await Promise.all([
-      this.getAddressInfo(address),
-      this.getAddressUtxos(address),
-    ]);
-
-    return {
-      address,
-      confirmed: info.chain_stats.funded_txo_sum - info.chain_stats.spent_txo_sum,
-      unconfirmed: info.mempool_stats.funded_txo_sum - info.mempool_stats.spent_txo_sum,
-      utxos,
-    };
+  async getAddressTxs(address: string): Promise<any[]> {
+    return this.provider.esploraGetAddressTxs(address);
   }
 
-  async getTxInfo(txid: string): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/tx/${txid}`);
-    return response.json();
+  async getTx(txid: string): Promise<any> {
+    return this.provider.esploraGetTx(txid);
+  }
+
+  async getTxStatus(txid: string): Promise<any> {
+    return this.provider.esploraGetTxStatus(txid);
+  }
+
+  async getTxHex(txid: string): Promise<string> {
+    return this.provider.esploraGetTxHex(txid);
+  }
+
+  async getBlocksTipHeight(): Promise<number> {
+    return this.provider.esploraGetBlocksTipHeight();
+  }
+
+  async getBlocksTipHash(): Promise<string> {
+    return this.provider.esploraGetBlocksTipHash();
   }
 
   async broadcastTx(txHex: string): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/tx`, {
-      method: 'POST',
-      body: txHex,
-    });
-    return response.text();
+    return this.provider.esploraBroadcastTx(txHex);
   }
 }
 
 /**
- * Alkanes RPC client (integrates with WASM)
+ * Alkanes RPC client (uses WebProvider internally)
  */
 export class AlkanesRpcClient {
-  private wasm?: typeof AlkanesWasm;
+  constructor(private provider: WasmWebProvider) {}
 
-  constructor(
-    private metashrewUrl: string,
-    private sandshrewUrl?: string,
-    wasmModule?: typeof AlkanesWasm
-  ) {
-    this.wasm = wasmModule;
+  async getBalance(address?: string): Promise<AlkaneBalance[]> {
+    return this.provider.alkanesBalance(address);
   }
 
-  async getAlkaneBalance(address: string, alkaneId: AlkaneId): Promise<AlkaneBalance> {
-    // Use WASM backend if available
-    if (this.wasm) {
-      const provider = new this.wasm.WebProvider(this.metashrewUrl, this.sandshrewUrl || '');
-      const balance = await provider.getAlkaneBalance(
-        address,
-        JSON.stringify(alkaneId)
-      );
-      return JSON.parse(balance);
-    }
-
-    // Fallback to direct HTTP call
-    const response = await fetch(`${this.metashrewUrl}/alkanes/balance`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address, alkaneId }),
-    });
-
-    return response.json();
+  async getByAddress(address: string, blockTag?: string, protocolTag?: number): Promise<any> {
+    return this.provider.alkanesByAddress(address, blockTag, protocolTag);
   }
 
-  async getAlkaneBytecode(alkaneId: AlkaneId, blockTag?: string): Promise<string> {
-    if (this.wasm) {
-      return this.wasm.get_alkane_bytecode(
-        'mainnet',
-        alkaneId.block,
-        alkaneId.tx,
-        blockTag || ''
-      ) as any; // Cast needed as Promise return
-    }
-
-    const response = await fetch(`${this.metashrewUrl}/alkanes/bytecode`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ alkaneId, blockTag }),
-    });
-
-    const data = await response.json();
-    return data.bytecode;
+  async getByOutpoint(outpoint: string, blockTag?: string, protocolTag?: number): Promise<any> {
+    return this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
   }
 
-  async simulateAlkaneCall(params: AlkaneCallParams): Promise<any> {
-    if (this.wasm) {
-      // Get bytecode first
-      const bytecode = await this.getAlkaneBytecode(params.alkaneId);
-      
-      // Simulate using WASM
-      const result = await this.wasm.simulate_alkane_call(
-        JSON.stringify(params.alkaneId),
-        bytecode,
-        '0x' // Empty cellpack for now
-      );
-      
-      return JSON.parse(result as any);
-    }
+  async getBytecode(alkaneId: string, blockTag?: string): Promise<string> {
+    return this.provider.alkanesBytecode(alkaneId, blockTag);
+  }
 
-    // Fallback
-    const response = await fetch(`${this.metashrewUrl}/alkanes/simulate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
+  async simulate(contractId: string, contextJson: string, blockTag?: string): Promise<any> {
+    return this.provider.alkanesSimulate(contractId, contextJson, blockTag);
+  }
 
-    return response.json();
+  async execute(paramsJson: string): Promise<any> {
+    return this.provider.alkanesExecute(paramsJson);
+  }
+
+  async trace(outpoint: string): Promise<any> {
+    return this.provider.alkanesTrace(outpoint);
+  }
+
+  async view(contractId: string, viewFn: string, params?: Uint8Array, blockTag?: string): Promise<any> {
+    return this.provider.alkanesView(contractId, viewFn, params, blockTag);
+  }
+
+  async getAllPools(factoryId: string): Promise<any> {
+    return this.provider.alkanesGetAllPools(factoryId);
+  }
+
+  async getAllPoolsWithDetails(factoryId: string, chunkSize?: number, maxConcurrent?: number): Promise<PoolWithDetails[]> {
+    return this.provider.alkanesGetAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent);
+  }
+
+  async getPendingUnwraps(blockTag?: string): Promise<any> {
+    return this.provider.alkanesPendingUnwraps(blockTag);
   }
 }
 
 /**
- * Main Alkanes Provider (compatible with @oyl/sdk)
+ * Data API client (uses WebProvider internally)
+ */
+export class DataApiClient {
+  constructor(private provider: WasmWebProvider) {}
+
+  // Pool operations
+  async getPools(factoryId: string): Promise<any> {
+    return this.provider.dataApiGetPools(factoryId);
+  }
+
+  async getPoolHistory(poolId: string, category?: string, limit?: number, offset?: number): Promise<any> {
+    return this.provider.dataApiGetPoolHistory(poolId, category, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
+  }
+
+  async getAllHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+    return this.provider.dataApiGetAllHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
+  }
+
+  async getSwapHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+    return this.provider.dataApiGetSwapHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
+  }
+
+  async getMintHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+    return this.provider.dataApiGetMintHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
+  }
+
+  async getBurnHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+    return this.provider.dataApiGetBurnHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
+  }
+
+  // Trading data
+  async getTrades(pool: string, startTime?: number, endTime?: number, limit?: number): Promise<TradeInfo[]> {
+    return this.provider.dataApiGetTrades(pool, startTime, endTime, limit ? BigInt(limit) : undefined);
+  }
+
+  async getCandles(pool: string, interval: string, startTime?: number, endTime?: number, limit?: number): Promise<CandleInfo[]> {
+    return this.provider.dataApiGetCandles(pool, interval, startTime, endTime, limit ? BigInt(limit) : undefined);
+  }
+
+  async getReserves(pool: string): Promise<any> {
+    return this.provider.dataApiGetReserves(pool);
+  }
+
+  // Balance operations
+  async getAlkanesByAddress(address: string): Promise<any> {
+    return this.provider.dataApiGetAlkanesByAddress(address);
+  }
+
+  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<any> {
+    return this.provider.dataApiGetAddressBalances(address, includeOutpoints);
+  }
+
+  // Token operations
+  async getHolders(alkane: string, page: number = 0, limit: number = 100): Promise<HolderInfo[]> {
+    return this.provider.dataApiGetHolders(alkane, BigInt(page), BigInt(limit));
+  }
+
+  async getHoldersCount(alkane: string): Promise<number> {
+    return this.provider.dataApiGetHoldersCount(alkane);
+  }
+
+  async getKeys(alkane: string, prefix?: string, limit: number = 100): Promise<any> {
+    return this.provider.dataApiGetKeys(alkane, prefix, BigInt(limit));
+  }
+
+  // Market data
+  async getBitcoinPrice(): Promise<any> {
+    return this.provider.dataApiGetBitcoinPrice();
+  }
+
+  async getBitcoinMarketChart(days: string): Promise<any> {
+    return this.provider.dataApiGetBitcoinMarketChart(days);
+  }
+}
+
+/**
+ * Main Alkanes Provider
+ *
+ * Provides a unified interface to all Alkanes functionality:
+ * - Bitcoin RPC operations
+ * - Esplora API operations
+ * - Alkanes smart contract operations
+ * - Data API for analytics and trading data
  */
 export class AlkanesProvider {
-  public bitcoin: BitcoinRpcClient;
-  public esplora: EsploraClient;
-  public alkanes: AlkanesRpcClient;
-  public network: bitcoin.networks.Network;
-  public networkType: NetworkType;
-  public url: string;
+  private _provider: WasmWebProvider | null = null;
+  private _bitcoin: BitcoinRpcClient | null = null;
+  private _esplora: EsploraClient | null = null;
+  private _alkanes: AlkanesRpcClient | null = null;
+  private _dataApi: DataApiClient | null = null;
 
-  constructor(config: ProviderConfig, wasmModule?: typeof AlkanesWasm) {
-    this.network = config.network;
-    this.networkType = config.networkType;
-    this.url = config.url;
+  public readonly network: bitcoin.Network;
+  public readonly networkType: NetworkType;
+  public readonly rpcUrl: string;
+  public readonly dataApiUrl: string;
+  private readonly networkPreset: string;
 
-    const masterUrl = config.projectId ? 
-      `${config.url}/${config.version || 'v1'}/${config.projectId}` :
-      config.url;
+  constructor(config: AlkanesProviderConfig) {
+    // Resolve network preset
+    const preset = NETWORK_PRESETS[config.network] || NETWORK_PRESETS['mainnet'];
+    this.networkPreset = config.network;
+    this.networkType = preset.networkType;
+    this.rpcUrl = config.rpcUrl || preset.rpcUrl;
+    this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
 
-    this.bitcoin = new BitcoinRpcClient(masterUrl);
-    this.esplora = new EsploraClient(masterUrl);
-    this.alkanes = new AlkanesRpcClient(
-      masterUrl,
-      undefined,
-      wasmModule
+    // Set bitcoinjs network
+    if (config.bitcoinNetwork) {
+      this.network = config.bitcoinNetwork;
+    } else {
+      switch (this.networkType) {
+        case 'mainnet':
+          this.network = bitcoin.networks.bitcoin;
+          break;
+        case 'testnet':
+        case 'signet':
+          this.network = bitcoin.networks.testnet;
+          break;
+        case 'regtest':
+        default:
+          this.network = bitcoin.networks.regtest;
+      }
+    }
+  }
+
+  /**
+   * Initialize the provider (loads WASM if needed)
+   */
+  async initialize(): Promise<void> {
+    if (this._provider) return;
+
+    // Dynamic import of WASM module
+    // Path is relative to the ts-sdk package root
+    const wasm = await import('@alkanes/ts-sdk/wasm');
+
+    // Create provider with appropriate network name
+    const providerName = this.networkPreset === 'local' ? 'regtest' : this.networkPreset;
+
+    // Create config override if custom URLs provided
+    const configOverride: any = {};
+    if (this.rpcUrl !== NETWORK_PRESETS[this.networkPreset]?.rpcUrl) {
+      configOverride.sandshrew_rpc_url = this.rpcUrl;
+    }
+
+    this._provider = new wasm.WebProvider(
+      providerName,
+      Object.keys(configOverride).length > 0 ? configOverride : undefined
     );
   }
 
   /**
-   * Push a PSBT to the network (compatible with @oyl/sdk)
+   * Get the underlying WASM provider (initializes if needed)
    */
-  async pushPsbt({ psbtHex, psbtBase64 }: { 
-    psbtHex?: string;
-    psbtBase64?: string;
-  }): Promise<TransactionResult> {
-    if (!psbtHex && !psbtBase64) {
-      throw new Error('Please supply psbt in either base64 or hex format');
+  private async getProvider(): Promise<WasmWebProvider> {
+    if (!this._provider) {
+      await this.initialize();
     }
-
-    if (psbtHex && psbtBase64) {
-      throw new Error('Please select one format of psbt to broadcast');
-    }
-
-    let psbt: bitcoin.Psbt;
-    if (psbtHex) {
-      psbt = bitcoin.Psbt.fromHex(psbtHex, { network: this.network });
-    } else {
-      psbt = bitcoin.Psbt.fromBase64(psbtBase64!, { network: this.network });
-    }
-
-    let extractedTx: bitcoin.Transaction;
-    try {
-      extractedTx = psbt.extractTransaction();
-    } catch (error) {
-      throw new Error(`Transaction could not be extracted due to invalid Psbt. ${error}`);
-    }
-
-    const txId = extractedTx.getId();
-    const rawTx = extractedTx.toHex();
-
-    // Test mempool acceptance
-    const [result] = await this.bitcoin.testMempoolAccept([rawTx]);
-    if (!result.allowed) {
-      throw new Error(`Mempool rejected tx due to ${result['reject-reason']}`);
-    }
-
-    // Broadcast
-    await this.bitcoin.sendRawTransaction(rawTx);
-
-    // Get transaction info
-    try {
-      const mempoolEntry = await this.bitcoin.getMempoolEntry(txId);
-      const fee = mempoolEntry.fees['base'] * 10 ** 8;
-
-      return {
-        txId,
-        rawTx,
-        size: mempoolEntry.vsize,
-        weight: mempoolEntry.weight,
-        fee,
-        satsPerVByte: (fee / (mempoolEntry.weight / 4)).toFixed(2),
-      };
-    } catch (error) {
-      // Fallback to esplora
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      const tx = await this.esplora.getTxInfo(txId);
-      
-      return {
-        txId,
-        rawTx,
-        size: tx.size,
-        weight: tx.weight,
-        fee: tx.fee,
-        satsPerVByte: (tx.fee / (tx.weight / 4)).toFixed(2),
-      };
-    }
+    return this._provider!;
   }
 
   /**
-   * Get block information
+   * Bitcoin RPC client
    */
-  async getBlockInfo(hashOrHeight: string | number): Promise<BlockInfo> {
-    const hash = typeof hashOrHeight === 'number' ?
-      await this.bitcoin.getBlockHash(hashOrHeight) :
-      hashOrHeight;
+  get bitcoin(): BitcoinRpcClient {
+    if (!this._bitcoin) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._bitcoin = new BitcoinRpcClient(this._provider);
+    }
+    return this._bitcoin;
+  }
 
-    const block = await this.bitcoin.getBlock(hash);
+  /**
+   * Esplora API client
+   */
+  get esplora(): EsploraClient {
+    if (!this._esplora) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._esplora = new EsploraClient(this._provider);
+    }
+    return this._esplora;
+  }
+
+  /**
+   * Alkanes RPC client
+   */
+  get alkanes(): AlkanesRpcClient {
+    if (!this._alkanes) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._alkanes = new AlkanesRpcClient(this._provider);
+    }
+    return this._alkanes;
+  }
+
+  /**
+   * Data API client
+   */
+  get dataApi(): DataApiClient {
+    if (!this._dataApi) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._dataApi = new DataApiClient(this._provider);
+    }
+    return this._dataApi;
+  }
+
+  // ============================================================================
+  // CONVENIENCE METHODS
+  // ============================================================================
+
+  /**
+   * Get BTC balance for an address
+   */
+  async getBalance(address: string): Promise<AddressBalance> {
+    const provider = await this.getProvider();
+    const info = await provider.esploraGetAddressInfo(address);
+    const utxos = await provider.esploraGetAddressUtxo(address);
 
     return {
-      hash: block.hash,
-      height: block.height,
-      timestamp: block.time,
-      txCount: block.tx.length,
+      address,
+      confirmed: info.chain_stats?.funded_txo_sum - info.chain_stats?.spent_txo_sum || 0,
+      unconfirmed: info.mempool_stats?.funded_txo_sum - info.mempool_stats?.spent_txo_sum || 0,
+      utxos,
     };
   }
 
   /**
-   * Get address balance
+   * Get enriched balances (BTC + alkanes) for an address
    */
-  async getBalance(address: string): Promise<AddressBalance> {
-    return this.esplora.getAddressBalance(address);
+  async getEnrichedBalances(address: string, protocolTag?: string): Promise<any> {
+    const provider = await this.getProvider();
+    return provider.getEnrichedBalances(address, protocolTag);
   }
 
   /**
-   * Get alkane balance for address
+   * Get alkane token balance for an address
    */
-  async getAlkaneBalance(address: string, alkaneId: AlkaneId): Promise<AlkaneBalance> {
-    return this.alkanes.getAlkaneBalance(address, alkaneId);
+  async getAlkaneBalance(address: string, alkaneId?: AlkaneId): Promise<AlkaneBalance[]> {
+    const provider = await this.getProvider();
+    const balances = await provider.alkanesBalance(address);
+
+    if (alkaneId) {
+      // Filter to specific token
+      return balances.filter((b: any) =>
+        b.id?.block === alkaneId.block && b.id?.tx === alkaneId.tx
+      );
+    }
+    return balances;
   }
 
   /**
-   * Simulate alkane contract call
+   * Get alkane token details
    */
-  async simulateAlkaneCall(params: AlkaneCallParams): Promise<any> {
-    return this.alkanes.simulateAlkaneCall(params);
+  async getAlkaneTokenDetails(params: { alkaneId: AlkaneId }): Promise<any> {
+    const provider = await this.getProvider();
+    const id = `${params.alkaneId.block}:${params.alkaneId.tx}`;
+
+    // Get token info through view call
+    const nameResult = await provider.alkanesView(id, 'name', undefined, undefined);
+    const symbolResult = await provider.alkanesView(id, 'symbol', undefined, undefined);
+    const decimalsResult = await provider.alkanesView(id, 'decimals', undefined, undefined);
+    const totalSupplyResult = await provider.alkanesView(id, 'totalSupply', undefined, undefined);
+
+    return {
+      id: params.alkaneId,
+      name: nameResult?.data || '',
+      symbol: symbolResult?.data || '',
+      decimals: decimalsResult?.data || 8,
+      totalSupply: totalSupplyResult?.data || '0',
+    };
+  }
+
+  /**
+   * Get transaction history for an address
+   */
+  async getAddressHistory(address: string): Promise<any[]> {
+    const provider = await this.getProvider();
+    return provider.getAddressTxs(address);
+  }
+
+  /**
+   * Get address history with alkane traces
+   */
+  async getAddressHistoryWithTraces(address: string, excludeCoinbase?: boolean): Promise<any[]> {
+    const provider = await this.getProvider();
+    return provider.getAddressTxsWithTraces(address, excludeCoinbase);
+  }
+
+  /**
+   * Get current block height
+   */
+  async getBlockHeight(): Promise<number> {
+    const provider = await this.getProvider();
+    return provider.metashrewHeight();
+  }
+
+  /**
+   * Broadcast a transaction
+   */
+  async broadcastTransaction(txHex: string): Promise<string> {
+    const provider = await this.getProvider();
+    return provider.broadcastTransaction(txHex);
+  }
+
+  /**
+   * Get all AMM pools from a factory
+   */
+  async getAllPools(factoryId: string): Promise<PoolWithDetails[]> {
+    const provider = await this.getProvider();
+    return provider.alkanesGetAllPoolsWithDetails(factoryId, undefined, undefined);
+  }
+
+  /**
+   * Get pool reserves
+   */
+  async getPoolReserves(poolId: string): Promise<any> {
+    const provider = await this.getProvider();
+    return provider.dataApiGetReserves(poolId);
+  }
+
+  /**
+   * Get recent trades for a pool
+   */
+  async getPoolTrades(poolId: string, limit?: number): Promise<TradeInfo[]> {
+    const provider = await this.getProvider();
+    return provider.dataApiGetTrades(poolId, undefined, undefined, limit ? BigInt(limit) : undefined);
+  }
+
+  /**
+   * Get candle data for a pool
+   */
+  async getPoolCandles(poolId: string, interval: string = '1h', limit?: number): Promise<CandleInfo[]> {
+    const provider = await this.getProvider();
+    return provider.dataApiGetCandles(poolId, interval, undefined, undefined, limit ? BigInt(limit) : undefined);
+  }
+
+  /**
+   * Get Bitcoin price in USD
+   */
+  async getBitcoinPrice(): Promise<number> {
+    const provider = await this.getProvider();
+    const result = await provider.dataApiGetBitcoinPrice();
+    return result?.price || 0;
+  }
+
+  /**
+   * Execute an alkanes contract call
+   */
+  async executeAlkanes(params: {
+    contractId: string;
+    calldata: number[];
+    feeRate?: number;
+    inputs?: any[];
+  }): Promise<ExecuteResult> {
+    const provider = await this.getProvider();
+    const paramsJson = JSON.stringify({
+      target: params.contractId,
+      calldata: params.calldata,
+      fee_rate: params.feeRate,
+      inputs: params.inputs,
+    });
+    return provider.alkanesExecute(paramsJson);
+  }
+
+  /**
+   * Simulate an alkanes contract call (read-only)
+   */
+  async simulateAlkanes(contractId: string, calldata: number[], blockTag?: string): Promise<any> {
+    const provider = await this.getProvider();
+    const context = {
+      alkanes: [],
+      transaction: [],
+      block: [],
+      height: 0,
+      vout: 0,
+      txindex: 0,
+      calldata,
+      pointer: 0,
+      refund_pointer: 0,
+    };
+    return provider.alkanesSimulate(contractId, JSON.stringify(context), blockTag);
   }
 }
 
 /**
  * Create an Alkanes provider instance
- * 
+ *
  * @param config - Provider configuration
- * @param wasmModule - Optional WASM module for alkanes functionality
- * @returns AlkanesProvider instance compatible with @oyl/sdk
+ * @returns AlkanesProvider instance
+ *
+ * @example
+ * ```typescript
+ * // Use a preset network
+ * const provider = await createProvider({ network: 'subfrost-regtest' });
+ * await provider.initialize();
+ *
+ * // Use custom URLs
+ * const provider = await createProvider({
+ *   network: 'regtest',
+ *   rpcUrl: 'http://localhost:18888',
+ * });
+ * await provider.initialize();
+ * ```
  */
-export function createProvider(
-  config: ProviderConfig,
-  wasmModule?: typeof AlkanesWasm
-): AlkanesProvider {
-  return new AlkanesProvider(config, wasmModule);
+export function createProvider(config: AlkanesProviderConfig): AlkanesProvider {
+  return new AlkanesProvider(config);
 }
