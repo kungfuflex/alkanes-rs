@@ -2577,19 +2577,26 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                         
                         if let Some(error) = trace_json.get("error") {
                             println!("   ❌ Error: {}\n", error);
-                        } else if let Some(events) = trace_json.get("events").and_then(|e| e.as_array()) {
-                            if events.is_empty() {
-                                println!("   ⚠️  No trace data found.\n");
-                            } else {
-                                // Pretty print the trace
-                                println!("{}\n", serde_json::to_string_pretty(trace_json)?);
-                            }
                         } else {
-                            println!("   ⚠️  Unexpected trace format: no events array\n");
-                            log::warn!("Trace JSON: {}", serde_json::to_string_pretty(trace_json)?);
+                            // Check for events in either "trace" or "events" field
+                            let events = trace_json.get("trace").and_then(|e| e.as_array())
+                                .or_else(|| trace_json.get("events").and_then(|e| e.as_array()));
+
+                            if let Some(events) = events {
+                                if events.is_empty() {
+                                    println!("   ⚠️  No trace data found.\n");
+                                } else {
+                                    // Format the trace nicely using the tree-view formatter
+                                    let pretty = alkanes_cli_common::alkanes::trace::format_trace_json_pretty(trace_json);
+                                    println!("{}\n", pretty);
+                                }
+                            } else {
+                                println!("   ⚠️  Unexpected trace format: no events array\n");
+                                log::warn!("Trace JSON: {}", serde_json::to_string_pretty(trace_json)?);
+                            }
                         }
                     }
-                    
+
                     println!("🎯 ═══════════════════════════════════════════════════════════════");
                     println!("✨                      TRACE COMPLETE                         ✨");
                     println!("🎯 ═══════════════════════════════════════════════════════════════");
@@ -3313,18 +3320,25 @@ async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone
                         
                         if let Some(error) = trace_json.get("error") {
                             println!("   ❌ Error: {}\n", error);
-                        } else if let Some(events) = trace_json.get("events").and_then(|e| e.as_array()) {
-                            if events.is_empty() {
-                                println!("   ⚠️ No trace data found.\n");
+                        } else {
+                            // Check for events in either "trace" or "events" field
+                            let events = trace_json.get("trace").and_then(|e| e.as_array())
+                                .or_else(|| trace_json.get("events").and_then(|e| e.as_array()));
+
+                            if let Some(events) = events {
+                                if events.is_empty() {
+                                    println!("   ⚠️ No trace data found.\n");
+                                } else {
+                                    // Format the trace nicely using the tree-view formatter
+                                    let pretty = alkanes_cli_common::alkanes::trace::format_trace_json_pretty(trace_json);
+                                    println!("{}\n", pretty);
+                                }
                             } else {
-                                // Format the trace nicely - convert back to Trace struct for pretty formatting
-                                use prost::Message;
-                                // For now, just print the JSON
-                                println!("{}\n", serde_json::to_string_pretty(trace_json)?);
+                                println!("   ⚠️ Unexpected trace format.\n");
                             }
                         }
                     }
-                    
+
                     println!("🎯 ═══════════════════════════════════════════════════════════════");
                     println!("✨                      TRACE COMPLETE                         ✨");
                     println!("🎯 ═══════════════════════════════════════════════════════════════");
