@@ -437,7 +437,7 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 let text = client.get_raw("blockheight").await?;
                 println!("{}", text);
             } else {
-                let result = dataapi::execute_dataapi_get_block_height(&client).await?;
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_block_height(&client).await?;
                 if raw {
                     println!("{}", result);
                 } else {
@@ -450,7 +450,7 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 let text = client.get_raw("blockhash").await?;
                 println!("{}", text);
             } else {
-                let result = dataapi::execute_dataapi_get_block_hash(&client).await?;
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_block_hash(&client).await?;
                 if raw {
                     println!("{}", result);
                 } else {
@@ -463,7 +463,7 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 let text = client.get_raw("indexer-position").await?;
                 println!("{}", text);
             } else {
-                let result = dataapi::execute_dataapi_get_indexer_position(&client).await?;
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_indexer_position(&client).await?;
                 if raw {
                     println!("{}", result);
                 } else {
