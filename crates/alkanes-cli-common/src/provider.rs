@@ -1009,14 +1009,48 @@ impl WalletProvider for ConcreteProvider {
     
     async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
         log::info!("[WalletProvider] Calling get_utxos for addresses: {:?}", addresses);
-        
-        // If no addresses provided, use the address from AddressOnly or ExternalKey mode
+
+        // If no addresses provided, get addresses from wallet state or keystore
         let addresses_to_check = if addresses.is_none() || addresses.as_ref().unwrap().is_empty() {
             match &self.wallet_state {
                 WalletState::AddressOnly { address, .. } | WalletState::ExternalKey { address, .. } => {
                     vec![address.clone()]
                 }
-                _ => return Ok(Vec::new()),
+                _ => {
+                    // For keystore wallets, query addresses from the keystore
+                    // Get addresses for multiple script types that the wallet supports
+                    let mut all_addresses = Vec::new();
+
+                    if let Ok(keystore) = self.get_keystore() {
+                        let network = self.get_network();
+                        // Get p2tr addresses (most common for alkanes)
+                        if let Ok(addrs) = keystore.get_addresses(network, "p2tr", 0, 0, 20) {
+                            for addr_info in addrs {
+                                all_addresses.push(addr_info.address);
+                            }
+                        }
+                        // Also get p2wpkh addresses
+                        if let Ok(addrs) = keystore.get_addresses(network, "p2wpkh", 0, 0, 20) {
+                            for addr_info in addrs {
+                                all_addresses.push(addr_info.address);
+                            }
+                        }
+                        // Also get p2wsh addresses
+                        if let Ok(addrs) = keystore.get_addresses(network, "p2wsh", 0, 0, 20) {
+                            for addr_info in addrs {
+                                all_addresses.push(addr_info.address);
+                            }
+                        }
+                    }
+
+                    if all_addresses.is_empty() {
+                        log::warn!("[WalletProvider] No addresses found in wallet");
+                        return Ok(Vec::new());
+                    }
+
+                    log::info!("[WalletProvider] Found {} addresses from keystore", all_addresses.len());
+                    all_addresses
+                }
             }
         } else {
             addresses.unwrap()
@@ -1042,7 +1076,17 @@ impl WalletProvider for ConcreteProvider {
                     let script_result = result.get("returns").unwrap_or(&result);
                     
                     // Parse the batched result
-                    if let Some(utxos_array) = script_result.get("utxos").and_then(|u| u.as_array()) {
+                    // Note: In Lua, an empty table `{}` serializes as an object {}, not an array []
+                    // So we need to handle both cases: array with items, or empty object (no UTXOs)
+                    let utxos_value = script_result.get("utxos");
+                    let utxos_array: Option<&Vec<serde_json::Value>> = utxos_value.and_then(|u| u.as_array());
+                    let is_empty_object = utxos_value.map(|u| u.is_object() && u.as_object().map(|o| o.is_empty()).unwrap_or(false)).unwrap_or(false);
+
+                    if is_empty_object {
+                        // Empty object {} from Lua means no UTXOs - this is valid, continue to next address
+                        log::info!("[WalletProvider] Found 0 UTXOs in batched result (empty object)");
+                        continue;
+                    } else if let Some(utxos_array) = utxos_array {
                         log::info!("[WalletProvider] Found {} UTXOs in batched result", utxos_array.len());
                         for utxo_entry in utxos_array {
                             let txid = utxo_entry.get("txid").and_then(|t| t.as_str()).unwrap_or("");
