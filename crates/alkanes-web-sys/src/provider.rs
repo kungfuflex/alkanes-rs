@@ -214,6 +214,9 @@ impl WebProvider {
                     if let Some(brc20_prog_rpc_url) = obj.get("brc20_prog_rpc_url").and_then(|v| v.as_str()) {
                         rpc_config.brc20_prog_rpc_url = Some(brc20_prog_rpc_url.to_string());
                     }
+                    if let Some(data_api_url) = obj.get("data_api_url").and_then(|v| v.as_str()) {
+                        rpc_config.data_api_url = Some(data_api_url.to_string());
+                    }
                     if let Some(subfrost_api_key) = obj.get("subfrost_api_key").and_then(|v| v.as_str()) {
                         rpc_config.subfrost_api_key = Some(subfrost_api_key.to_string());
                     }
@@ -2108,11 +2111,164 @@ impl WebProvider {
         future_to_promise(async move {
             let url = provider.rpc_config.get_data_api_target().url;
             let body = serde_json::json!({ "days": days });
-            
+
             let response = provider.rest_call(&url, "get-bitcoin-market-chart", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get bitcoin market chart failed: {}", e)))?;
-            
+
             serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Reflect alkane token metadata by querying standard opcodes
+    ///
+    /// This method queries the alkane contract with standard opcodes to retrieve
+    /// token metadata like name, symbol, total supply, cap, minted, and value per mint.
+    ///
+    /// # Arguments
+    /// * `alkane_id` - The alkane ID in "block:tx" format (e.g., "2:1234")
+    ///
+    /// # Returns
+    /// An AlkaneReflection object with all available metadata
+    #[wasm_bindgen(js_name = alkanesReflect)]
+    pub fn alkanes_reflect_js(&self, alkane_id: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        use alkanes_cli_common::alkanes::AlkaneReflection;
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::proto::alkanes::{MessageContextParcel, SimulateResponse};
+
+        let provider = self.clone();
+        future_to_promise(async move {
+            // Opcode constants for standard token reflection
+            const OPCODE_GET_NAME: u64 = 99;
+            const OPCODE_GET_SYMBOL: u64 = 100;
+            const OPCODE_GET_TOTAL_SUPPLY: u64 = 101;
+            const OPCODE_GET_CAP: u64 = 102;
+            const OPCODE_GET_MINTED: u64 = 103;
+            const OPCODE_GET_VALUE_PER_MINT: u64 = 104;
+            const OPCODE_GET_DATA: u64 = 1000;
+
+            // Parse alkane ID
+            let parts: Vec<&str> = alkane_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(JsValue::from_str("Invalid alkane_id format. Expected 'block:tx'"));
+            }
+            let block: u64 = parts[0].parse()
+                .map_err(|_| JsValue::from_str("Invalid block number"))?;
+            let tx: u64 = parts[1].parse()
+                .map_err(|_| JsValue::from_str("Invalid tx number"))?;
+
+            // Get current height for simulation
+            let simulation_height = provider.get_metashrew_height().await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get height: {}", e)))?;
+
+            // Initialize reflection result
+            let mut reflection = AlkaneReflection {
+                id: alkane_id.clone(),
+                name: None,
+                symbol: None,
+                total_supply: None,
+                cap: None,
+                minted: None,
+                value_per_mint: None,
+                data: None,
+                premine: None,
+                decimals: 8,
+            };
+
+            // Query each opcode serially (WASM is single-threaded anyway)
+            let opcodes = vec![
+                OPCODE_GET_NAME,
+                OPCODE_GET_SYMBOL,
+                OPCODE_GET_TOTAL_SUPPLY,
+                OPCODE_GET_CAP,
+                OPCODE_GET_MINTED,
+                OPCODE_GET_VALUE_PER_MINT,
+                OPCODE_GET_DATA,
+            ];
+
+            for opcode in opcodes {
+                // Build calldata for this opcode using LEB128 encoding
+                let mut calldata = Vec::new();
+                leb128::write::unsigned(&mut calldata, block).unwrap();
+                leb128::write::unsigned(&mut calldata, tx).unwrap();
+                leb128::write::unsigned(&mut calldata, opcode).unwrap();
+
+                // Create context
+                let context = MessageContextParcel {
+                    alkanes: vec![],
+                    transaction: vec![],
+                    block: vec![],
+                    height: simulation_height,
+                    vout: 0,
+                    txindex: 1,
+                    calldata,
+                    pointer: 0,
+                    refund_pointer: 0,
+                };
+
+                // Make the simulate call
+                if let Ok(json) = provider.simulate(&alkane_id, &context, Some("latest".to_string())).await {
+                    if let Some(hex_str) = json.as_str() {
+                        let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+                        if let Ok(bytes) = hex::decode(hex_data) {
+                            if let Ok(sim_response) = <SimulateResponse as prost::Message>::decode(bytes.as_slice()) {
+                                if let Some(execution) = sim_response.execution {
+                                    let data = execution.data;
+
+                                    match opcode {
+                                        99 => { // OPCODE_GET_NAME
+                                            reflection.name = String::from_utf8(data).ok();
+                                        }
+                                        100 => { // OPCODE_GET_SYMBOL
+                                            reflection.symbol = String::from_utf8(data).ok();
+                                        }
+                                        101 => { // OPCODE_GET_TOTAL_SUPPLY
+                                            if data.len() >= 16 {
+                                                reflection.total_supply = Some(u128::from_le_bytes(data[0..16].try_into().unwrap()));
+                                            }
+                                        }
+                                        102 => { // OPCODE_GET_CAP
+                                            if data.len() >= 16 {
+                                                reflection.cap = Some(u128::from_le_bytes(data[0..16].try_into().unwrap()));
+                                            }
+                                        }
+                                        103 => { // OPCODE_GET_MINTED
+                                            if data.len() >= 16 {
+                                                reflection.minted = Some(u128::from_le_bytes(data[0..16].try_into().unwrap()));
+                                            }
+                                        }
+                                        104 => { // OPCODE_GET_VALUE_PER_MINT
+                                            if data.len() >= 16 {
+                                                reflection.value_per_mint = Some(u128::from_le_bytes(data[0..16].try_into().unwrap()));
+                                            }
+                                        }
+                                        1000 => { // OPCODE_GET_DATA
+                                            reflection.data = Some(hex::encode(&data));
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Derive premine from total_supply
+            if let Some(total_supply) = reflection.total_supply {
+                if let Some(minted) = reflection.minted {
+                    if minted == 0 && total_supply > 0 {
+                        reflection.premine = Some(total_supply);
+                    } else if total_supply > minted {
+                        reflection.premine = Some(total_supply - minted);
+                    }
+                } else if total_supply > 0 {
+                    reflection.premine = Some(total_supply);
+                }
+            }
+
+            serde_wasm_bindgen::to_value(&reflection)
                 .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
         })
     }
