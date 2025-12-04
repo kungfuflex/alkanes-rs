@@ -2132,8 +2132,7 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         use alkanes_cli_common::alkanes::AlkaneReflection;
         use alkanes_cli_common::traits::AlkanesProvider;
-        use crate::proto::alkanes::MessageContextParcel;
-        use prost::Message;
+        use alkanes_cli_common::proto::alkanes::{MessageContextParcel, SimulateResponse};
 
         let provider = self.clone();
         future_to_promise(async move {
@@ -2210,7 +2209,7 @@ impl WebProvider {
                     if let Some(hex_str) = json.as_str() {
                         let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
                         if let Ok(bytes) = hex::decode(hex_data) {
-                            if let Ok(sim_response) = crate::proto::alkanes::SimulateResponse::decode(bytes.as_slice()) {
+                            if let Ok(sim_response) = <SimulateResponse as prost::Message>::decode(bytes.as_slice()) {
                                 if let Some(execution) = sim_response.execution {
                                     let data = execution.data;
 
