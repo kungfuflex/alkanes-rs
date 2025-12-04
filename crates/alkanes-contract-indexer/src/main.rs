@@ -76,27 +76,22 @@ async fn main() -> Result<()> {
     let tip_provider = provider;
     let poller_pipeline = pipeline.clone();
     let poller_progress = progress::ProgressStore::new(pool.clone());
-    // If we have a configured start height, coordinate catch-up to start only after
-    // the poller has initialized metashrew height and refreshed pools.
-    let (poller_init_tx, maybe_init_rx) = if cfg.start_height.is_some() {
-        let (tx, rx) = oneshot::channel::<()>();
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
+    // Always coordinate catch-up - wait for poller to initialize pools before starting
+    let (poller_init_tx, poller_init_rx) = oneshot::channel::<()>();
     let poller_fut = async move {
         let poller = poller::BlockPoller::new(
             tip_provider,
             poller_pipeline,
             poller_progress,
             cfg.poll_interval_ms,
-            poller_init_tx,
+            Some(poller_init_tx),
             cfg.start_height,
         );
         poller.run().await;
     };
 
     // Spawn catch-up coordinator (sequential processing until tip)
+    // This always runs - when no position exists, it starts from start_height or 0
     let coord_provider = provider::build_provider(
         cfg.bitcoin_rpc_url.clone(),
         cfg.jsonrpc_url.clone(),
@@ -106,9 +101,8 @@ async fn main() -> Result<()> {
     .await?;
     let coordinator = coordinator::CatchUpCoordinator::new(coord_provider, pipeline, progress_store, cfg.start_height);
     let coordinator_fut = async move {
-        if let Some(rx) = maybe_init_rx {
-            let _ = rx.await; // wait for initial pools refresh + height init
-        }
+        // Wait for initial pools refresh + height init before starting catch-up
+        let _ = poller_init_rx.await;
         loop {
             let _ = coordinator.run_once().await;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;

@@ -18,7 +18,6 @@ use crate::db::transactions::replace_pool_creations;
 use chrono::{TimeZone, Utc};
 use chrono::DateTime;
 use std::time::Instant;
-use crate::db::blocks::upsert_processed_block;
 use crate::transform_integration::{TraceTransformService, convert_trace_event, convert_transaction_context};
 use alkanes_trace_transform::types::VoutInfo;
 
@@ -373,9 +372,40 @@ impl Pipeline {
 			.unwrap_or_else(|| Utc::now());
 
 
-		// Record processed block marker
-		upsert_processed_block(&self.pool, ctx.height as i32, &block_hash, block_ts).await?;
-		info!(height = ctx.height, %block_hash, "recorded ProcessedBlocks entry");
+		// ATOMIC: Record both ProcessedBlocks and indexer_position in a single transaction
+		// This ensures we never have a gap between indexed data and position tracking
+		let mut final_tx = self.pool.begin().await?;
+
+		// Upsert ProcessedBlocks entry
+		sqlx::query(
+			r#"
+			insert into "ProcessedBlocks" ("blockHeight", "blockHash", "timestamp", "isProcessing")
+			values ($1, $2, $3, false)
+			on conflict ("blockHeight") do update set
+				"blockHash" = excluded."blockHash",
+				"timestamp" = excluded."timestamp",
+				"isProcessing" = false
+			"#,
+		)
+		.bind(ctx.height as i32)
+		.bind(&block_hash)
+		.bind(block_ts)
+		.execute(&mut *final_tx)
+		.await?;
+
+		// Upsert indexer_position (the single-row progress tracker)
+		sqlx::query(
+			"INSERT INTO indexer_position (id, height, block_hash)
+			 VALUES (1, $1, $2)
+			 ON CONFLICT (id) DO UPDATE SET height = $1, block_hash = $2"
+		)
+		.bind(ctx.height as i64)
+		.bind(&block_hash)
+		.execute(&mut *final_tx)
+		.await?;
+
+		final_tx.commit().await?;
+		info!(height = ctx.height, %block_hash, "recorded ProcessedBlocks and position atomically");
 
 		// Notify downstream services via Redis pub-sub only for realtime blocks (not during catch-up)
 		if ctx.emit_publish {
