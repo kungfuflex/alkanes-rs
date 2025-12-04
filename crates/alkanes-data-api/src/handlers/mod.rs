@@ -4,6 +4,7 @@ pub mod balance;
 pub mod bitcoin;
 pub mod health;
 pub mod history;
+pub mod indexer;
 pub mod pools;
 pub mod price;
 pub mod storage;

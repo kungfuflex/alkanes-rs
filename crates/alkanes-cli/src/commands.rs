@@ -1363,6 +1363,33 @@ pub enum DataApiCommand {
         #[arg(long)]
         raw_http: bool,
     },
+    /// Get the latest block height processed by the indexer
+    GetBlockHeight {
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get the latest block hash processed by the indexer
+    GetBlockHash {
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get the indexer position (height and hash of latest processed block)
+    GetIndexerPosition {
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
 }
 
 /// Runestone subcommands

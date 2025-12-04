@@ -187,3 +187,23 @@ pub async fn execute_dataapi_get_reserves(
     let response = client.get_reserves(pool).await?;
     Ok(serde_json::to_string_pretty(&response)?)
 }
+
+// Indexer status endpoints
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_block_height(client: &DataApiClient) -> Result<String> {
+    let response = client.get_block_height().await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_block_hash(client: &DataApiClient) -> Result<String> {
+    let response = client.get_block_hash().await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}
+
+#[cfg(feature = "std")]
+pub async fn execute_dataapi_get_indexer_position(client: &DataApiClient) -> Result<String> {
+    let response = client.get_indexer_position().await?;
+    Ok(serde_json::to_string_pretty(&response)?)
+}

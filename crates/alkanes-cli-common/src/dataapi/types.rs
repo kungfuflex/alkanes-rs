@@ -212,3 +212,20 @@ pub struct MarketChartResponse {
     pub market_caps: Vec<Vec<f64>>,
     pub total_volumes: Vec<Vec<f64>>,
 }
+
+// Indexer status response types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexerBlockHeightResponse {
+    pub height: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexerBlockHashResponse {
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexerPositionResponse {
+    pub height: i64,
+    pub hash: String,
+}

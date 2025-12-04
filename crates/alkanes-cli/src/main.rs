@@ -432,6 +432,45 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 }
             }
         }
+        DataApiCommand::GetBlockHeight { raw, raw_http } => {
+            if raw_http {
+                let text = client.get_raw("blockheight").await?;
+                println!("{}", text);
+            } else {
+                let result = dataapi::execute_dataapi_get_block_height(&client).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("{}", result);
+                }
+            }
+        }
+        DataApiCommand::GetBlockHash { raw, raw_http } => {
+            if raw_http {
+                let text = client.get_raw("blockhash").await?;
+                println!("{}", text);
+            } else {
+                let result = dataapi::execute_dataapi_get_block_hash(&client).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("{}", result);
+                }
+            }
+        }
+        DataApiCommand::GetIndexerPosition { raw, raw_http } => {
+            if raw_http {
+                let text = client.get_raw("indexer-position").await?;
+                println!("{}", text);
+            } else {
+                let result = dataapi::execute_dataapi_get_indexer_position(&client).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("{}", result);
+                }
+            }
+        }
     }
     Ok(())
 }

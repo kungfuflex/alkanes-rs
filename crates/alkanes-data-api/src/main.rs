@@ -52,6 +52,10 @@ async fn main() -> Result<()> {
             .service(
                 web::scope("/api/v1")
                     .route("/health", web::get().to(handlers::health::health_check))
+                    // Indexer status endpoints
+                    .route("/blockheight", web::get().to(handlers::indexer::get_block_height))
+                    .route("/blockhash", web::get().to(handlers::indexer::get_block_hash))
+                    .route("/indexer-position", web::get().to(handlers::indexer::get_indexer_position))
                     // Bitcoin price endpoints
                     .route(
                         "/get-bitcoin-price",

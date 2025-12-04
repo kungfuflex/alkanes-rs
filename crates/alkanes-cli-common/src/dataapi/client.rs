@@ -115,13 +115,44 @@ impl DataApiClient {
             .send()
             .await
             .context("Failed to send request")?;
-        
+
         let text = response
             .text()
             .await
             .context("Failed to read response text")?;
-        
+
         Ok(text)
+    }
+
+    async fn get<R: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<R> {
+        let url = self.build_url(endpoint);
+        let response = self.client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to send request")?;
+
+        let json_value: serde_json::Value = response
+            .json()
+            .await
+            .context("Failed to parse response")?;
+
+        // Handle wrapped responses with statusCode/data envelope
+        let data_value = if json_value.get("statusCode").is_some() {
+            if let Some(error) = json_value.get("error").and_then(|e| e.as_str()) {
+                if !error.is_empty() {
+                    return Err(anyhow::anyhow!("API error: {}", error));
+                }
+            }
+            json_value.get("data").cloned().unwrap_or(json_value.clone())
+        } else {
+            json_value
+        };
+
+        let result: R = serde_json::from_value(data_value)
+            .context("Failed to deserialize response")?;
+
+        Ok(result)
     }
 
     pub async fn health(&self) -> Result<()> {
@@ -348,5 +379,18 @@ impl DataApiClient {
     pub async fn get_reserves(&self, pool: &str) -> Result<serde_json::Value> {
         let body = serde_json::json!({"pool": pool});
         self.post::<_, serde_json::Value>("get-reserves", &body).await
+    }
+
+    // Indexer status endpoints
+    pub async fn get_block_height(&self) -> Result<IndexerBlockHeightResponse> {
+        self.get("blockheight").await
+    }
+
+    pub async fn get_block_hash(&self) -> Result<IndexerBlockHashResponse> {
+        self.get("blockhash").await
+    }
+
+    pub async fn get_indexer_position(&self) -> Result<IndexerPositionResponse> {
+        self.get("indexer-position").await
     }
 }
