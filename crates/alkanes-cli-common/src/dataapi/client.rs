@@ -62,8 +62,22 @@ impl DataApiClient {
             }
         }
 
-        // Parse the full response into the expected type
-        let result: R = serde_json::from_value(json_value)
+        // Handle wrapped responses with statusCode/data envelope
+        let data_value = if let Some(status_code) = json_value.get("statusCode") {
+            // This is a wrapped response
+            if let Some(error) = json_value.get("error").and_then(|e| e.as_str()) {
+                if !error.is_empty() {
+                    return Err(anyhow::anyhow!("API error: {}", error));
+                }
+            }
+            // Extract the data field
+            json_value.get("data").cloned().unwrap_or(json_value.clone())
+        } else {
+            json_value
+        };
+
+        // Parse the data into the expected type
+        let result: R = serde_json::from_value(data_value)
             .context("Failed to deserialize response")?;
 
         Ok(result)
