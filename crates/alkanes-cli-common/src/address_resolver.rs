@@ -1068,7 +1068,7 @@ impl AlkanesProvider for StandaloneAddressResolver {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::Trace> {
+    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::AlkanesBlockTraceEvent> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 

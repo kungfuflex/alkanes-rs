@@ -32,6 +32,7 @@ use crate::traits::{
 };
 use crate::{
     alkanes::protorunes::{ProtoruneOutpointResponse, ProtoruneWalletResponse},
+    lua_script::{LuaScript, LuaScriptExecutor},
     network::NetworkParams,
     AlkanesError, Result,
 };
@@ -839,7 +840,7 @@ impl AlkanesProvider for MockProvider {
     async fn spendables_by_address(&self, _address: &str) -> Result<JsonValue> {
         todo!()
     }
-    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::Trace> {
+    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::AlkanesBlockTraceEvent> {
         Err(AlkanesError::NotImplemented("trace_block".to_string()))
     }
     async fn get_bytecode(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<String> {
@@ -853,6 +854,14 @@ impl AlkanesProvider for MockProvider {
     }
     async fn pending_unwraps(&self, _block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
         todo!()
+    }
+    async fn tx_script(
+        &self,
+        _wasm_bytes: &[u8],
+        _inputs: Vec<u128>,
+        _block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        Err(AlkanesError::NotImplemented("tx_script".to_string()))
     }
 }
 
@@ -1014,6 +1023,10 @@ impl DeezelProvider for MockProvider {
         None
     }
 
+    fn get_brc20_prog_rpc_url(&self) -> Option<String> {
+        None
+    }
+
     fn secp(&self) -> &Secp256k1<All> {
         &self.secp
     }
@@ -1037,5 +1050,32 @@ impl DeezelProvider for MockProvider {
 
     async fn unwrap(&mut self, _amount: u64, _address: Option<String>) -> Result<String> {
         unimplemented!("unwrap is not implemented for MockProvider")
+    }
+}
+
+#[async_trait(?Send)]
+impl LuaScriptExecutor for MockProvider {
+    async fn execute_lua_script(
+        &self,
+        _script: &LuaScript,
+        _args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({}))
+    }
+
+    async fn lua_evalsaved(
+        &self,
+        _script_hash: &str,
+        _args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({}))
+    }
+
+    async fn lua_evalscript(
+        &self,
+        _script_content: &str,
+        _args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({}))
     }
 }

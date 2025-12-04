@@ -2973,15 +2973,19 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(serde_json::json!(entries))
     }
 
-    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::AlkanesBlockTraceEvent> {
         let mut block_request = alkanes_pb::BlockRequest::default();
         block_request.height = height as u32;
-        
+
         let hex_input = format!("0x{}", hex::encode(block_request.encode_to_vec()));
         let response_bytes = self.metashrew_view_call("traceblock", &hex_input, "latest").await?;
 
-        let trace = alkanes_pb::Trace::decode(response_bytes.as_slice())?;
-        Ok(trace)
+        if response_bytes.is_empty() {
+            return Ok(alkanes_pb::AlkanesBlockTraceEvent::default());
+        }
+
+        let trace_response = alkanes_pb::AlkanesBlockTraceEvent::decode(response_bytes.as_slice())?;
+        Ok(trace_response)
     }
 
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {

@@ -780,7 +780,7 @@ impl AlkanesProvider for SystemAlkanes {
     async fn spendables_by_address(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.spendables_by_address(address).await
     }
-    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent> {
         self.provider.trace_block(height).await
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {

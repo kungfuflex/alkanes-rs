@@ -958,21 +958,53 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
         },
         Alkanes::TraceBlock { height, raw } => {
             let result = system.provider().trace_block(height).await?;
-            // The result is a proto::alkanes::Trace which contains the trace
-            if let Some(alkanes_trace) = result.trace {
-                // Convert via protobuf encoding/decoding
-                let trace = alkanes_support::trace::Trace::try_from(
-                    prost::Message::encode_to_vec(&alkanes_trace)
-                )?;
-                if raw {
-                    let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
-                    println!("{}", serde_json::to_string_pretty(&json)?);
-                } else {
-                    let pretty = alkanes_cli_common::alkanes::trace::format_trace_pretty(&trace);
-                    println!("{}", pretty);
-                }
-            } else {
+            // The result is AlkanesBlockTraceEvent which contains repeated AlkanesBlockEvent
+            if result.events.is_empty() {
                 println!("No trace data found for block: {}", height);
+            } else {
+                let mut all_json_traces = Vec::new();
+                let mut all_pretty_traces = Vec::new();
+
+                for (i, block_event) in result.events.iter().enumerate() {
+                    if let Some(ref alkanes_trace) = block_event.traces {
+                        // Convert via protobuf encoding/decoding
+                        match alkanes_support::trace::Trace::try_from(
+                            prost::Message::encode_to_vec(alkanes_trace)
+                        ) {
+                            Ok(trace) => {
+                                if raw {
+                                    let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
+                                    all_json_traces.push(serde_json::json!({
+                                        "txindex": block_event.txindex,
+                                        "outpoint": block_event.outpoint.as_ref().map(|op| {
+                                            let txid_hex = hex::encode(&op.txid);
+                                            format!("{}:{}", txid_hex, op.vout)
+                                        }),
+                                        "trace": json
+                                    }));
+                                } else {
+                                    let outpoint_str = block_event.outpoint.as_ref().map(|op| {
+                                        let txid_hex = hex::encode(&op.txid);
+                                        format!("{}:{}", txid_hex, op.vout)
+                                    }).unwrap_or_else(|| format!("trace #{}", i));
+                                    let pretty = alkanes_cli_common::alkanes::trace::format_trace_pretty(&trace);
+                                    all_pretty_traces.push(format!("📊 Trace for {} (txindex: {}):\n{}", outpoint_str, block_event.txindex, pretty));
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to decode trace #{}: {}", i, e);
+                            }
+                        }
+                    }
+                }
+
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&all_json_traces)?);
+                } else {
+                    for pretty in all_pretty_traces {
+                        println!("{}\n", pretty);
+                    }
+                }
             }
             Ok(())
         },

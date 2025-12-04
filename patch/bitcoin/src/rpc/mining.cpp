@@ -1161,6 +1161,7 @@ static constexpr uint64_t TAG_PROTOCOL = 16383;
 
 // Protostone field tag constants
 static constexpr uint64_t TAG_PROTO_POINTER = 91;
+static constexpr uint64_t TAG_REFUND_POINTER = 93;
 static constexpr uint64_t TAG_MESSAGE = 81;
 
 // Encode a single u128 value as LEB128 varint
@@ -1230,10 +1231,12 @@ static CScript CreateRunestoneWithProtostone(const std::vector<uint8_t>& cellpac
     // The message bytes are stored as a u128 little-endian value
     __uint128_t message_u128 = BytesToU128(cellpack);
 
-    // Protostone fields: [ProtoPointer_tag, pointer_value, Message_tag, message_value]
+    // Protostone fields: [ProtoPointer_tag, pointer_value, RefundPointer_tag, refund_value, Message_tag, message_value]
     std::vector<__uint128_t> protostone_fields;
     protostone_fields.push_back(TAG_PROTO_POINTER);
     protostone_fields.push_back(output_index);
+    protostone_fields.push_back(TAG_REFUND_POINTER);
+    protostone_fields.push_back(output_index);  // refund_pointer = pointer
     protostone_fields.push_back(TAG_MESSAGE);
     protostone_fields.push_back(message_u128);
 
