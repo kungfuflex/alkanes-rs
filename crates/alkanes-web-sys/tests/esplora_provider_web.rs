@@ -201,7 +201,7 @@ pub async fn test_get_block_by_height_web() {
     assert_eq!(result.unwrap(), mock_hash);
 
     let body: serde_json::Value = serde_json::from_str(&mock.last_request_body()).unwrap();
-    assert_eq!(body["method"], "esplora_block:height");
+    assert_eq!(body["method"], "esplora_block-height");
     assert_eq!(body["params"], json!([height]));
 }
 

@@ -213,14 +213,14 @@ impl EsploraJsonRpcMethods {
     pub const BLOCKS_TIP_HASH: &'static str = "esplora_blocks:tip:hash";
     pub const BLOCKS_TIP_HEIGHT: &'static str = "esplora_blocks:tip:height";
     pub const BLOCKS: &'static str = "esplora_blocks";
-    pub const BLOCK_HEIGHT: &'static str = "esplora_block:height";
+    pub const BLOCK_HEIGHT: &'static str = "esplora_block-height";
     pub const BLOCK: &'static str = "esplora_block";
-    pub const BLOCK_STATUS: &'static str = "esplora_block:status";
-    pub const BLOCK_TXIDS: &'static str = "esplora_block:txids";
-    pub const BLOCK_HEADER: &'static str = "esplora_block:header";
-    pub const BLOCK_RAW: &'static str = "esplora_block:raw";
-    pub const BLOCK_TXID: &'static str = "esplora_block:txid";
-    pub const BLOCK_TXS: &'static str = "esplora_block:txs";
+    pub const BLOCK_STATUS: &'static str = "esplora_block::status";
+    pub const BLOCK_TXIDS: &'static str = "esplora_block::txids";
+    pub const BLOCK_HEADER: &'static str = "esplora_block::header";
+    pub const BLOCK_RAW: &'static str = "esplora_block::raw";
+    pub const BLOCK_TXID: &'static str = "esplora_block::txid";
+    pub const BLOCK_TXS: &'static str = "esplora_block::txs";
 
     // Address endpoints
     pub const ADDRESS: &'static str = "esplora_address";
