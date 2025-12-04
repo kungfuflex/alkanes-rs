@@ -214,6 +214,9 @@ impl WebProvider {
                     if let Some(brc20_prog_rpc_url) = obj.get("brc20_prog_rpc_url").and_then(|v| v.as_str()) {
                         rpc_config.brc20_prog_rpc_url = Some(brc20_prog_rpc_url.to_string());
                     }
+                    if let Some(data_api_url) = obj.get("data_api_url").and_then(|v| v.as_str()) {
+                        rpc_config.data_api_url = Some(data_api_url.to_string());
+                    }
                     if let Some(subfrost_api_key) = obj.get("subfrost_api_key").and_then(|v| v.as_str()) {
                         rpc_config.subfrost_api_key = Some(subfrost_api_key.to_string());
                     }
