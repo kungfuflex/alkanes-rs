@@ -55,8 +55,9 @@ impl Pipeline {
 		res
 	}
 
-	// Sequential per-block processing (historical and then following tip)
-	pub async fn process_block_sequential<P>(&self, provider: &P, ctx: BlockContext) -> Result<()>
+	/// Sequential per-block processing (historical and then following tip)
+	/// Returns the block hash on success for position tracking
+	pub async fn process_block_sequential<P>(&self, provider: &P, ctx: BlockContext) -> Result<String>
 	where
 		P: DeezelProvider + JsonRpcProvider + BitcoinRpcProvider + Send + Sync,
 	{
@@ -381,7 +382,8 @@ impl Pipeline {
 			publish_block_processed(ctx.height).await;
 		}
 
-		Ok(())
+		// Return the block hash for position tracking
+		Ok(block_hash)
 	}
 }
 

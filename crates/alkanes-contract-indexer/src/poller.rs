@@ -3,11 +3,12 @@ use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration, Instant};
 use tracing::{error, info, warn};
 
-use crate::{pipeline::{BlockContext, Pipeline}, helpers::block::canonical_tip_height};
+use crate::{pipeline::{BlockContext, Pipeline}, progress::ProgressStore, helpers::block::canonical_tip_height};
 
 pub struct BlockPoller {
     provider: ConcreteProvider,
     pipeline: Pipeline,
+    progress: ProgressStore,
     poll_interval_ms: u64,
     init_signal: Option<oneshot::Sender<()>>, // fired once after initial pools refresh + height init
     start_height: Option<u64>,
@@ -17,61 +18,102 @@ impl BlockPoller {
     pub fn new(
         provider: ConcreteProvider,
         pipeline: Pipeline,
+        progress: ProgressStore,
         poll_interval_ms: u64,
         init_signal: Option<oneshot::Sender<()>>,
         start_height: Option<u64>,
     ) -> Self {
-        Self { provider, pipeline, poll_interval_ms, init_signal, start_height }
+        Self { provider, pipeline, progress, poll_interval_ms, init_signal, start_height }
     }
 
     pub async fn run(mut self) {
-        let mut last_height: Option<u64> = None;
+        let mut initialized = false;
         let mut backoff_ms: u64 = self.poll_interval_ms.max(250);
+
         loop {
             let tick_start = Instant::now();
+
+            // First, check our current position from the database
+            let position = match self.progress.get_position().await {
+                Ok(pos) => pos,
+                Err(e) => {
+                    error!(error = %e, "failed to get position from database");
+                    backoff_ms = (backoff_ms.saturating_mul(2)).min(30_000);
+                    sleep(Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+            };
+
             match canonical_tip_height(&self.provider).await {
-                Ok(height) => {
+                Ok(tip_height) => {
                     backoff_ms = self.poll_interval_ms; // reset on success
-                    match last_height {
-                        None => {
-                            // On first observation, refresh pools/state once
-                            if let Err(e) = self.pipeline.fetch_pools_for_tip(&self.provider, height).await {
-                                error!(height, error = %e, "fetch_pools_for_tip failed");
-                            }
-                            info!(height, "initialized metashrew height");
-                            // If we are not running catch-up, begin processing the current tip immediately
-                            if self.start_height.is_none() {
-                                info!(height, "new block detected");
-                                if let Err(e) = self.pipeline.process_block_sequential(&self.provider, BlockContext { height, emit_publish: true }).await {
-                                    error!(height, error = %e, "block processing failed");
-                                }
-                            }
-                            last_height = Some(height);
-                            if let Some(tx) = self.init_signal.take() {
-                                let _ = tx.send(());
-                            }
+
+                    if !initialized {
+                        // On first observation, refresh pools/state once
+                        if let Err(e) = self.pipeline.fetch_pools_for_tip(&self.provider, tip_height).await {
+                            error!(height = tip_height, error = %e, "fetch_pools_for_tip failed");
                         }
-                        Some(prev) if height > prev => {
-                            // Before processing new blocks, update pools and states once at the new tip
-                            if let Err(e) = self.pipeline.fetch_pools_for_tip(&self.provider, height).await {
-                                error!(height, error = %e, "fetch_pools_for_tip failed");
+                        info!(tip_height, "initialized metashrew height");
+                        initialized = true;
+
+                        if let Some(tx) = self.init_signal.take() {
+                            let _ = tx.send(());
+                        }
+                    }
+
+                    // Determine the next block to process based on our position
+                    let next_height = match &position {
+                        Some(pos) => pos.height.saturating_add(1),
+                        None => {
+                            // No position yet - if we have a start_height, coordinator handles it
+                            // Otherwise start from tip
+                            if self.start_height.is_some() {
+                                continue; // Let coordinator handle catch-up
                             }
-                            for h in (prev + 1)..=height {
-                                info!(height = h, "new block detected");
-                                if let Err(e) = self.pipeline.process_block_sequential(&self.provider, BlockContext { height: h, emit_publish: true }).await {
+                            tip_height
+                        }
+                    };
+
+                    // Check for reorg: if tip is less than our position, something's wrong
+                    if let Some(pos) = &position {
+                        if tip_height < pos.height {
+                            warn!(
+                                tip = tip_height,
+                                our_position = pos.height,
+                                "tip is behind our position, possible reorg"
+                            );
+                            // Don't process anything - wait for tip to catch up or handle reorg
+                            sleep(Duration::from_millis(self.poll_interval_ms)).await;
+                            continue;
+                        }
+                    }
+
+                    // Process blocks one at a time if we're behind
+                    if next_height <= tip_height {
+                        // Refresh pools at new tip before processing
+                        if let Err(e) = self.pipeline.fetch_pools_for_tip(&self.provider, tip_height).await {
+                            error!(height = tip_height, error = %e, "fetch_pools_for_tip failed");
+                        }
+
+                        for h in next_height..=tip_height {
+                            info!(height = h, "new block detected");
+
+                            match self.pipeline.process_block_sequential(&self.provider, BlockContext { height: h, emit_publish: true }).await {
+                                Ok(block_hash) => {
+                                    // Update position only after successful indexing
+                                    if let Err(e) = self.progress.set_position(h, &block_hash).await {
+                                        error!(height = h, error = %e, "failed to update position");
+                                        break;
+                                    }
+                                    info!(height = h, %block_hash, "position updated");
+                                }
+                                Err(e) => {
                                     error!(height = h, error = %e, "block processing failed");
                                     // Stop advancing so we can retry this specific height on next loop
                                     break;
-                                } else {
-                                    last_height = Some(h);
                                 }
                             }
                         }
-                        Some(prev) if height < prev => {
-                            warn!(current = height, prev, "height decreased, possible reorg; updating pointer");
-                            last_height = Some(height);
-                        }
-                        _ => {}
                     }
                 }
                 Err(e) => {

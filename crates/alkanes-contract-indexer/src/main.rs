@@ -54,8 +54,10 @@ async fn main() -> Result<()> {
     .await?;
 
     // Pipeline and poller
-    // Bootstrap kv storage used for progress tracking
-    progress::ensure_kv_table(&pool).await?;
+    // Bootstrap position table used for progress tracking
+    progress::ensure_position_table(&pool).await?;
+    // Migrate from old kv_store if needed
+    progress::migrate_from_kv_store(&pool).await?;
 
     let pipeline = pipeline::Pipeline::new(
         pool.clone(),
@@ -63,11 +65,17 @@ async fn main() -> Result<()> {
         cfg.factory_tx_id.clone(),
     );
     let progress_store = progress::ProgressStore::new(pool.clone());
-    let _last_processed = progress_store.get_last_processed_height().await?;
+    let position = progress_store.get_position().await?;
+    if let Some(ref pos) = position {
+        info!(height = pos.height, block_hash = %pos.block_hash, "resuming from position");
+    } else {
+        info!("no position found, starting fresh");
+    }
 
     // Spawn tip poller (always triggers pools fetch; also processes blocks when following tip)
     let tip_provider = provider;
     let poller_pipeline = pipeline.clone();
+    let poller_progress = progress::ProgressStore::new(pool.clone());
     // If we have a configured start height, coordinate catch-up to start only after
     // the poller has initialized metashrew height and refreshed pools.
     let (poller_init_tx, maybe_init_rx) = if cfg.start_height.is_some() {
@@ -80,6 +88,7 @@ async fn main() -> Result<()> {
         let poller = poller::BlockPoller::new(
             tip_provider,
             poller_pipeline,
+            poller_progress,
             cfg.poll_interval_ms,
             poller_init_tx,
             cfg.start_height,
