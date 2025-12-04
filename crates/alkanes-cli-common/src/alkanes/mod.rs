@@ -33,4 +33,4 @@ pub mod experimental_asm;
 pub use types::*;
 pub use amm::{GetAllPoolsResult, AllPoolsDetailsResult, PoolDetailsResult, PoolDetailsWithId};
 pub use pool_details::{PoolDetails, PoolInfo};
-pub use experimental_asm::{get_all_pools, get_all_pools_with_details, get_all_pools_with_details_parallel, ParallelFetchConfig};
+pub use experimental_asm::{get_all_pools, get_all_pools_with_details, get_all_pools_with_details_parallel, ParallelFetchConfig, AlkaneReflection, reflect_alkane};
