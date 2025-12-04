@@ -10,6 +10,7 @@ use actix_web::{middleware::Logger, web, App, HttpRequest, HttpResponse, HttpSer
 use config::Config;
 use jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR};
 use proxy::ProxyClient;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 struct AppState {
@@ -50,7 +51,7 @@ async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     let config = Config::from_env();
-    
+
     log::info!("Starting alkanes-jsonrpc server");
     log::info!("Server: http://{}:{}", config.server_host, config.server_port);
     log::info!("Bitcoin RPC: {}", config.bitcoin_rpc_url);
@@ -58,6 +59,15 @@ async fn main() -> std::io::Result<()> {
     log::info!("Memshrew: {}", config.memshrew_url);
     log::info!("Ord: {}", config.ord_url);
     log::info!("Esplora: {}", config.esplora_url);
+
+    // Create script storage with optional disk persistence
+    let script_storage = if let Some(ref path) = config.lua_script_path {
+        log::info!("Lua script path: {}", path);
+        lua_executor::ScriptStorage::with_disk_path(PathBuf::from(path))
+    } else {
+        log::info!("Lua script path: not configured (in-memory only)");
+        lua_executor::ScriptStorage::new()
+    };
 
     let proxy = Arc::new(ProxyClient::new(config.clone()));
 
@@ -74,7 +84,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(AppState {
                 proxy: proxy.clone(),
-                script_storage: lua_executor::ScriptStorage::new(),
+                script_storage: script_storage.clone(),
             }))
             .app_data(web::JsonConfig::default().limit(100 * 1024 * 1024))
             .wrap(cors)

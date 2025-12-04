@@ -58,5 +58,10 @@ RUN --mount=type=bind,source=crates/alkanes-contract-indexer,target=/mnt/indexer
       chmod +x /usr/local/bin/docker-entrypoint.sh; \
     fi
 
+# For alkanes-jsonrpc: create lua script directory for persistent caching
+RUN if [ "${PACKAGE}" = "alkanes-jsonrpc" ]; then \
+      mkdir -p /data/lua-scripts; \
+    fi
+
 # Set the entrypoint
 ENTRYPOINT ["/usr/local/bin/app"]

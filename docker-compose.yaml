@@ -4,6 +4,7 @@ volumes:
   metashrew-data:
   postgres-data:
   redis-data:
+  lua-scripts:
 services:
   bitcoind:
     build:
@@ -112,6 +113,8 @@ services:
     image: alkanes-jsonrpc:latest
     depends_on:
       - bitcoind
+    volumes:
+      - lua-scripts:/data/lua-scripts
     environment:
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 18888
@@ -122,6 +125,7 @@ services:
       MEMSHREW_URL: http://memshrew:8081
       ORD_URL: http://ord:8090
       ESPLORA_URL: http://esplora:50010
+      LUA_SCRIPT_PATH: /data/lua-scripts
       RUST_LOG: info
     ports:
       - "18888:18888"
