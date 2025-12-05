@@ -83,7 +83,7 @@ use bitcoin::{
     bip32::{DerivationPath, Fingerprint},
     psbt::Psbt,
     secp256k1::{All, Keypair, Secp256k1},
-    OutPoint, Transaction, TxOut, XOnlyPublicKey, ScriptBuf,
+    OutPoint, Transaction, TxOut, XOnlyPublicKey, ScriptBuf, Witness,
 };
 use alkanes_cli_common::{
     alkanes::{
@@ -983,6 +983,19 @@ impl WebProvider {
         })
     }
 
+    #[wasm_bindgen(js_name = esploraGetFeeEstimates)]
+    pub fn esplora_get_fee_estimates_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_fee_estimates().await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
     #[wasm_bindgen(js_name = esploraBroadcastTx)]
     pub fn esplora_broadcast_tx_js(&self, tx_hex: String) -> js_sys::Promise {
         use wasm_bindgen_futures::future_to_promise;
@@ -1676,8 +1689,34 @@ impl WebProvider {
         })
     }
 
+    /// Load a wallet from mnemonic for signing transactions
+    /// This must be called before walletSend or other signing operations
+    #[wasm_bindgen(js_name = walletLoadMnemonic)]
+    pub fn wallet_load_mnemonic(&mut self, mnemonic_str: String, passphrase: Option<String>) -> std::result::Result<(), JsValue> {
+        use alkanes_cli_common::keystore::Keystore;
+
+        let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, &mnemonic_str)
+            .map_err(|e| JsValue::from_str(&format!("Invalid mnemonic: {}", e)))?;
+
+        let pass = passphrase.as_deref().unwrap_or("");
+        let keystore = Keystore::new(&mnemonic, self.network, pass, None)
+            .map_err(|e| JsValue::from_str(&format!("Failed to create keystore: {}", e)))?;
+
+        self.keystore = Some(keystore);
+        self.passphrase = passphrase;
+
+        Ok(())
+    }
+
+    /// Check if wallet is loaded (has keystore for signing)
+    #[wasm_bindgen(js_name = walletIsLoaded)]
+    pub fn wallet_is_loaded(&self) -> bool {
+        self.keystore.is_some()
+    }
+
     /// Send BTC to an address
     /// params: { address: string, amount: number (satoshis), fee_rate?: number }
+    /// Wallet must be loaded first via walletLoadMnemonic
     #[wasm_bindgen(js_name = walletSend)]
     pub fn wallet_send_js(&mut self, params_json: String) -> js_sys::Promise {
         use alkanes_cli_common::traits::WalletProvider;
@@ -1687,6 +1726,11 @@ impl WebProvider {
         future_to_promise(async move {
             let params: serde_json::Value = serde_json::from_str(&params_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+
+            // Check that wallet is loaded
+            if provider.keystore.is_none() {
+                return Err(JsValue::from_str("Wallet not loaded. Call walletLoadMnemonic first."));
+            }
 
             let send_params = SendParams {
                 address: params.get("address")
@@ -2579,6 +2623,38 @@ impl WebProvider {
         
         Ok(txid.to_string())
     }
+
+    /// Derive a keypair for a specific script type (p2wpkh, p2tr, etc.)
+    /// This is used for signing transactions with the correct key based on input type.
+    async fn derive_keypair_for_script_type(&self, script_type: &str) -> Result<Keypair> {
+        use bip39::Mnemonic;
+        use bitcoin::bip32::Xpriv;
+
+        let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
+        let pass = self.passphrase.as_deref().unwrap_or_default();
+        let mnemonic_str = keystore.decrypt_mnemonic(pass)?;
+        let mnemonic = Mnemonic::parse_in(bip39::Language::English, &mnemonic_str)?;
+
+        let secp = Secp256k1::new();
+        let seed = mnemonic.to_seed(pass);
+        let root = Xpriv::new_master(self.network, &seed)?;
+
+        // Select purpose based on script type
+        let purpose = match script_type {
+            "p2wpkh" => "84",
+            "p2tr" => "86",
+            "p2sh-p2wpkh" => "49",
+            "p2pkh" => "44",
+            _ => "86", // default to taproot
+        };
+
+        let coin_type = if self.network == Network::Bitcoin { "0" } else { "1" };
+        let path_str = format!("m/{}'/{}/0'/0/0", purpose, coin_type);
+        let path = DerivationPath::from_str(&path_str)?;
+        let child_xprv = root.derive_priv(&secp, &path)?;
+
+        Ok(child_xprv.to_keypair(&secp))
+    }
 }
 
 #[async_trait(?Send)]
@@ -3050,7 +3126,8 @@ impl WalletProvider for WebProvider {
         self.logger.info("[WalletProvider] Calling get_address");
         let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let network_params = self.network_params()?;
-        let addresses = self.derive_addresses(&keystore.account_xpub, &network_params, &["p2tr"], 0, 1).await?;
+        // Default to p2wpkh for spending - p2tr is reserved for alkanes assets
+        let addresses = self.derive_addresses(&keystore.account_xpub, &network_params, &["p2wpkh"], 0, 1).await?;
         let address = addresses.first()
             .map(|a| a.address.clone())
             .ok_or_else(|| AlkanesError::Wallet("Could not derive address".to_string()))?;
@@ -3280,14 +3357,25 @@ impl WalletProvider for WebProvider {
         let recipient = Address::from_str(&params.address)?.assume_checked();
         let amount = Amount::from_sat(params.amount);
 
-        let address = <Self as WalletProvider>::get_address(self).await?;
-        let utxos = self.get_utxos(false, Some(vec![address])).await?;
+        // Use from addresses if provided, otherwise use default p2wpkh address
+        let from_addresses = if let Some(from) = params.from.as_ref() {
+            if !from.is_empty() {
+                from.clone()
+            } else {
+                vec![<Self as WalletProvider>::get_address(self).await?]
+            }
+        } else {
+            vec![<Self as WalletProvider>::get_address(self).await?]
+        };
+
+        let utxos = self.get_utxos(false, Some(from_addresses.clone())).await?;
         if utxos.is_empty() {
             return Err(AlkanesError::Wallet("No UTXOs available".to_string()));
         }
 
         let mut inputs = vec![];
-        let mut total_input = 0;
+        let mut total_input = 0u64;
+        let mut input_utxo_infos = vec![];
 
         for (outpoint, utxo_info) in &utxos {
             inputs.push(TxIn {
@@ -3297,6 +3385,7 @@ impl WalletProvider for WebProvider {
                 witness: Witness::new(),
             });
             total_input += utxo_info.amount;
+            input_utxo_infos.push(utxo_info.clone());
         }
 
         let mut outputs = vec![];
@@ -3304,22 +3393,28 @@ impl WalletProvider for WebProvider {
             value: amount,
             script_pubkey: recipient.script_pubkey(),
         });
-        
+
         let fee_rate = params.fee_rate.unwrap_or(1.0) as u64;
-        let estimated_vsize = 150; // Super rough estimate
+        // Better vsize estimate: p2wpkh inputs ~68 vbytes each, outputs ~31 vbytes each, header ~10.5 vbytes
+        let estimated_vsize = 10 + (inputs.len() as u64 * 68) + (2 * 31); // 2 outputs (recipient + change)
         let fee = fee_rate * estimated_vsize;
 
         if total_input < amount.to_sat() + fee {
-            return Err(AlkanesError::Wallet("Insufficient funds".to_string()));
+            return Err(AlkanesError::Wallet(format!(
+                "Insufficient funds: have {} sats, need {} sats (amount: {}, fee: {})",
+                total_input, amount.to_sat() + fee, amount.to_sat(), fee
+            )));
         }
 
         let change_address = <Self as WalletProvider>::get_address(self).await?;
         let change_address = Address::from_str(&change_address)?.assume_checked();
         let change_amount = total_input - amount.to_sat() - fee;
-        outputs.push(TxOut {
-            value: Amount::from_sat(change_amount),
-            script_pubkey: change_address.script_pubkey(),
-        });
+        if change_amount > 546 { // Only add change if above dust threshold
+            outputs.push(TxOut {
+                value: Amount::from_sat(change_amount),
+                script_pubkey: change_address.script_pubkey(),
+            });
+        }
 
         let unsigned_tx = Transaction {
             version: bitcoin::transaction::Version(2),
@@ -3328,7 +3423,16 @@ impl WalletProvider for WebProvider {
             output: outputs,
         };
 
-        let psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
+
+        // Populate witness_utxo for each input (required for signing)
+        for (i, utxo_info) in input_utxo_infos.iter().enumerate() {
+            let from_addr = Address::from_str(&utxo_info.address)?.assume_checked();
+            psbt.inputs[i].witness_utxo = Some(TxOut {
+                value: Amount::from_sat(utxo_info.amount),
+                script_pubkey: from_addr.script_pubkey(),
+            });
+        }
 
         Ok(STANDARD.encode(&psbt.serialize()))
     }
@@ -3420,38 +3524,74 @@ impl WalletProvider for WebProvider {
     }
     
     async fn sign_psbt(&mut self, psbt: &Psbt) -> Result<Psbt> {
+        use bitcoin::sighash::{SighashCache, EcdsaSighashType};
+        use bitcoin::ecdsa::Signature as EcdsaSignature;
+        use bitcoin::secp256k1::Message;
+
         let mut psbt = psbt.clone();
-        let keypair = self.get_keypair().await?;
         let secp = Secp256k1::new();
-        let mut sighash_cache = bitcoin::sighash::SighashCache::new(&psbt.unsigned_tx);
+
+        // Collect all prevouts for taproot signing
+        let prevouts: Vec<TxOut> = psbt.inputs.iter()
+            .filter_map(|input| input.witness_utxo.clone())
+            .collect();
+
+        let mut sighash_cache = SighashCache::new(&psbt.unsigned_tx);
+
         for i in 0..psbt.inputs.len() {
-            let prev_txo = psbt.inputs[i].witness_utxo.as_ref().ok_or(AlkanesError::Wallet("Missing witness UTXO".to_string()))?;
-            let sighash = sighash_cache.taproot_key_spend_signature_hash(i, &bitcoin::sighash::Prevouts::All(&[prev_txo.clone()]), bitcoin::sighash::TapSighashType::Default)?;
-            let sig = secp.sign_schnorr_with_rng(&sighash.into(), &keypair, &mut rand::thread_rng());
-            psbt.inputs[i].tap_key_sig = Some(bitcoin::taproot::Signature{ signature: sig, sighash_type: bitcoin::sighash::TapSighashType::Default });
+            let prev_txo = psbt.inputs[i].witness_utxo.as_ref()
+                .ok_or(AlkanesError::Wallet("Missing witness UTXO".to_string()))?;
+
+            let script_pubkey = &prev_txo.script_pubkey;
+
+            if script_pubkey.is_p2wpkh() {
+                // P2WPKH signing - uses ECDSA
+                let keypair = self.derive_keypair_for_script_type("p2wpkh").await?;
+                let pubkey = bitcoin::PublicKey::new(keypair.public_key());
+
+                // Compute sighash for p2wpkh
+                let sighash = sighash_cache.p2wpkh_signature_hash(
+                    i,
+                    &script_pubkey.p2wpkh_script_code().ok_or(AlkanesError::Wallet("Failed to get p2wpkh script code".to_string()))?,
+                    prev_txo.value,
+                    EcdsaSighashType::All,
+                )?;
+
+                let msg = Message::from_digest_slice(&sighash[..])?;
+                let sig = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                let ecdsa_sig = EcdsaSignature::sighash_all(sig);
+
+                // Set the witness: [signature, pubkey]
+                psbt.inputs[i].final_script_witness = Some(Witness::from_slice(&[
+                    ecdsa_sig.to_vec().as_slice(),
+                    pubkey.to_bytes().as_slice(),
+                ]));
+            } else if script_pubkey.is_p2tr() {
+                // P2TR signing - uses Schnorr
+                let keypair = self.derive_keypair_for_script_type("p2tr").await?;
+
+                let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                    i,
+                    &bitcoin::sighash::Prevouts::All(&prevouts),
+                    bitcoin::sighash::TapSighashType::Default,
+                )?;
+
+                let sig = secp.sign_schnorr_with_rng(&sighash.into(), &keypair, &mut rand::thread_rng());
+                psbt.inputs[i].tap_key_sig = Some(bitcoin::taproot::Signature {
+                    signature: sig,
+                    sighash_type: bitcoin::sighash::TapSighashType::Default,
+                });
+            } else {
+                return Err(AlkanesError::Wallet(format!("Unsupported script type for input {}", i)));
+            }
         }
+
         Ok(psbt)
     }
-    
-    async fn get_keypair(&self) -> Result<Keypair> {
-        use bip39::Mnemonic;
-        use bitcoin::bip32::Xpriv;
 
-        let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
-        let pass = self.passphrase.as_deref().unwrap_or_default();
-        let mnemonic_str = keystore.decrypt_mnemonic(pass)?;
-        let mnemonic = Mnemonic::parse_in(bip39::Language::English, &mnemonic_str)?;
-        
-        let secp = Secp256k1::new();
-        let seed = mnemonic.to_seed(pass);
-        let root = Xpriv::new_master(self.network, &seed)?;
-        
-        // Assuming default derivation path for now
-        let path_str = format!("m/86'/{}/0'/0/0", if self.network == Network::Bitcoin { "0" } else { "1" });
-        let path = DerivationPath::from_str(&path_str)?;
-        let child_xprv = root.derive_priv(&secp, &path)?;
-        
-        Ok(child_xprv.to_keypair(&secp))
+    async fn get_keypair(&self) -> Result<Keypair> {
+        // Default to p2tr for backwards compatibility
+        self.derive_keypair_for_script_type("p2tr").await
     }
 
     fn set_passphrase(&mut self, passphrase: Option<String>) {
@@ -4014,30 +4154,53 @@ impl MonitorProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl KeystoreProvider for WebProvider {
-    async fn derive_addresses(&self, master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
+    async fn derive_addresses(&self, _master_public_key: &str, network_params: &alkanes_cli_common::network::NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
+        let keystore = self.keystore.as_ref().ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
         let mut addresses = Vec::new();
+
+        // Determine network key (mainnet or testnet)
+        let network_key = match network_params.network {
+            Network::Bitcoin => "mainnet",
+            _ => "testnet",  // testnet, signet, regtest all use coin_type 1
+        };
+
         for script_type in script_types {
+            // Get the correct account xpub for this script type and network
+            let xpub_key = format!("{}:{}", script_type, network_key);
+            let account_xpub = keystore.account_xpubs.get(&xpub_key)
+                .ok_or_else(|| AlkanesError::Wallet(format!("No account xpub found for {}", xpub_key)))?;
+
+            let purpose = match script_type {
+                &"p2wpkh" => "84",
+                &"p2tr" => "86",
+                &"p2sh-p2wpkh" => "49",
+                &"p2pkh" => "44",
+                _ => continue,
+            };
+            let coin_type = match network_params.network {
+                Network::Bitcoin => "0",
+                _ => "1",
+            };
+
             for i in start_index..(start_index + count) {
-                let purpose = match script_type {
-                    &"p2wpkh" => "84",
-                    &"p2tr" => "86",
-                    _ => continue,
-                };
-                let coin_type = match network_params.network {
-                    Network::Bitcoin => "0",
-                    _ => "1",
-                };
-                let path_str = format!("m/{purpose}'/{coin_type}'/0'/0/{i}");
-                let path = DerivationPath::from_str(&path_str)?;
+                // The account_xpub is already derived to m/{purpose}'/{coin_type}'/0'
+                // So we only need to derive the non-hardened part: 0/{i}
+                let relative_path_str = format!("0/{i}");
+                let relative_path = DerivationPath::from_str(&format!("m/{}", relative_path_str))?;
+
                 let address = alkanes_cli_common::keystore::derive_address_from_public_key(
-                    master_public_key,
-                    &path,
+                    account_xpub,
+                    &relative_path,
                     network_params,
                     script_type,
                 )?;
+
+                // Full derivation path for display purposes
+                let full_path_str = format!("m/{purpose}'/{coin_type}'/0'/0/{i}");
+
                 addresses.push(KeystoreAddress {
                     address,
-                    derivation_path: path_str,
+                    derivation_path: full_path_str,
                     index: i,
                     script_type: (*script_type).to_string(),
                     network: Some(network_params.network.to_string()),
