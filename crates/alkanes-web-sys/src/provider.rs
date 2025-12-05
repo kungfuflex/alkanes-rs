@@ -81,6 +81,7 @@ use crate::time::WebTime;
 use crate::logging::WebLogger;
 use bitcoin::{
     bip32::{DerivationPath, Fingerprint},
+    key::TapTweak,
     psbt::Psbt,
     secp256k1::{All, Keypair, Secp256k1},
     OutPoint, Transaction, TxOut, XOnlyPublicKey, ScriptBuf, Witness,
@@ -2639,21 +2640,45 @@ impl WebProvider {
         let seed = mnemonic.to_seed(pass);
         let root = Xpriv::new_master(self.network, &seed)?;
 
-        // Select purpose based on script type
-        let purpose = match script_type {
-            "p2wpkh" => "84",
-            "p2tr" => "86",
-            "p2sh-p2wpkh" => "49",
-            "p2pkh" => "44",
-            _ => "86", // default to taproot
+        // Get the derivation path from keystore's hd_paths, or fall back to standard paths
+        let coin_type = if self.network == Network::Bitcoin { "0" } else { "1" };
+        let path_str = if let Some(path_template) = keystore.hd_paths.get(script_type) {
+            // Replace COIN placeholder with actual coin type
+            path_template.replace("COIN", coin_type)
+        } else {
+            // Fall back to standard BIP paths if not in keystore
+            let purpose = match script_type {
+                "p2wpkh" => "84",
+                "p2tr" => "86",
+                "p2sh-p2wpkh" => "49",
+                "p2pkh" => "44",
+                _ => "86", // default to taproot
+            };
+            format!("m/{}'/{}'/0'/0/0", purpose, coin_type)
         };
 
-        let coin_type = if self.network == Network::Bitcoin { "0" } else { "1" };
-        let path_str = format!("m/{}'/{}/0'/0/0", purpose, coin_type);
         let path = DerivationPath::from_str(&path_str)?;
         let child_xprv = root.derive_priv(&secp, &path)?;
 
         Ok(child_xprv.to_keypair(&secp))
+    }
+
+    /// Find address info from the keystore by searching derived addresses.
+    /// This mirrors the implementation in alkanes-cli-common provider.
+    fn find_address_info(keystore: &alkanes_cli_common::keystore::Keystore, address: &bitcoin::Address, network: Network, script_type: &str) -> Result<alkanes_cli_common::traits::AddressInfo> {
+        // Search through derived addresses to find the matching one
+        for i in 0..1000 { // Reasonable search limit
+            for chain in 0..=1 { // 0 = receive, 1 = change
+                if let Ok(addrs) = keystore.get_addresses(network, script_type, chain, i, 1) {
+                    if let Some(info) = addrs.first() {
+                        if info.address == address.to_string() {
+                            return Ok(info.clone());
+                        }
+                    }
+                }
+            }
+        }
+        Err(AlkanesError::Wallet(format!("Address {} not found in keystore for script type {}", address, script_type)))
     }
 }
 
@@ -3059,13 +3084,14 @@ impl WalletProvider for WebProvider {
         let keystore_bytes = serde_json::to_vec(&keystore)?;
         self.storage.write(&config.wallet_path, &keystore_bytes).await?;
 
-        let network_params = self.network_params()?;
-        let addresses = self.derive_addresses(&keystore.account_xpub, &network_params, &["p2tr"], 0, 1).await?;
-        let address = addresses.first().map(|a| a.address.clone()).unwrap_or_default();
-        
-        // Store the keystore in the provider instance
+        // Store the keystore in the provider instance BEFORE derive_addresses
+        // (derive_addresses uses self.keystore internally)
         self.keystore = Some(keystore);
-        self.passphrase = passphrase;
+        self.passphrase = passphrase.clone();
+
+        let network_params = self.network_params()?;
+        let addresses = self.derive_addresses(&self.keystore.as_ref().unwrap().account_xpub, &network_params, &["p2tr"], 0, 1).await?;
+        let address = addresses.first().map(|a| a.address.clone()).unwrap_or_default();
         
         Ok(WalletInfo {
             address,
@@ -3081,13 +3107,14 @@ impl WalletProvider for WebProvider {
         let pass = passphrase.as_deref().ok_or_else(|| AlkanesError::Wallet("Passphrase required to load wallet".to_string()))?;
         let mnemonic = keystore.decrypt_mnemonic(pass)?;
 
-        let network_params = self.network_params()?;
-        let addresses = self.derive_addresses(&keystore.account_xpub, &network_params, &["p2tr"], 0, 1).await?;
-        let address = addresses.first().map(|a| a.address.clone()).unwrap_or_default();
-
-        // Store the keystore in the provider instance
+        // Store the keystore in the provider instance BEFORE derive_addresses
+        // (derive_addresses uses self.keystore internally)
         self.keystore = Some(keystore);
         self.passphrase = passphrase;
+
+        let network_params = self.network_params()?;
+        let addresses = self.derive_addresses(&self.keystore.as_ref().unwrap().account_xpub, &network_params, &["p2tr"], 0, 1).await?;
+        let address = addresses.first().map(|a| a.address.clone()).unwrap_or_default();
 
         Ok(WalletInfo {
             address,
@@ -3161,7 +3188,10 @@ impl WalletProvider for WebProvider {
     }
     
     async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(bitcoin::OutPoint, UtxoInfo)>> {
+        use alkanes_cli_common::lua_script::{LuaScriptExecutor, scripts::SPENDABLE_UTXOS};
+
         self.logger.info(&format!("[WalletProvider] Calling get_utxos for addresses: {:?}", addresses));
+
         let addrs = if let Some(a) = addresses {
             a
         } else {
@@ -3169,35 +3199,99 @@ impl WalletProvider for WebProvider {
         };
 
         let mut all_utxos = Vec::new();
-        let tip = self.get_blocks_tip_height().await?;
 
         for address in addrs {
-            let utxos_val = self.get_address_utxo(&address).await;
-            if let Ok(utxos_val) = utxos_val {
-                if let Ok(esplora_utxos) = serde_json::from_value::<Vec<esplora::EsploraUtxo>>(utxos_val) {
-                    for utxo in esplora_utxos {
-                        if let Ok(outpoint) = OutPoint::from_str(&format!("{}:{}", utxo.txid, utxo.vout)) {
-                            let confirmations = if let Some(height) = utxo.status.block_height {
-                                tip.saturating_sub(height as u64) + 1
-                            } else {
-                                0
-                            };
-                            let utxo_info = UtxoInfo {
-                                txid: utxo.txid,
-                                vout: utxo.vout,
-                                amount: utxo.value,
-                                address: address.clone(),
-                                script_pubkey: None,
-                                confirmations: confirmations as u32,
-                                frozen: false,
-                                freeze_reason: None,
-                                block_height: utxo.status.block_height.map(|h| h as u64),
-                                has_inscriptions: false, // Will be enriched later
-                                has_runes: false, // Will be enriched later
-                                has_alkanes: false, // Will be enriched later
-                                is_coinbase: false, // Cannot determine from this endpoint
-                            };
-                            all_utxos.push((outpoint, utxo_info));
+            // Use the spendable_utxos lua script to filter out immature coinbase server-side
+            let args = vec![serde_json::Value::String(address.clone())];
+            let result = self.execute_lua_script(&SPENDABLE_UTXOS, args).await;
+
+            match result {
+                Ok(lua_result) => {
+                    // The lua result has structure: {"calls": N, "returns": {...}}
+                    // We need to get the "returns" field first
+                    let returns = lua_result.get("returns").unwrap_or(&lua_result);
+
+                    // Parse the spendable UTXOs from the lua script result
+                    if let Some(spendable) = returns.get("spendable").and_then(|v| v.as_array()) {
+                        for utxo_val in spendable {
+                            let txid = utxo_val.get("txid").and_then(|v| v.as_str()).unwrap_or_default();
+                            let vout = utxo_val.get("vout").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            let value = utxo_val.get("value").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let confirmations = utxo_val.get("confirmations").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            let height = utxo_val.get("height").and_then(|v| v.as_u64());
+                            let is_coinbase = utxo_val.get("is_coinbase").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                            if let Ok(outpoint) = OutPoint::from_str(&format!("{}:{}", txid, vout)) {
+                                let utxo_info = UtxoInfo {
+                                    txid: txid.to_string(),
+                                    vout,
+                                    amount: value,
+                                    address: address.clone(),
+                                    script_pubkey: None,
+                                    confirmations,
+                                    frozen: false,
+                                    freeze_reason: None,
+                                    block_height: height,
+                                    has_inscriptions: false,
+                                    has_runes: false,
+                                    has_alkanes: false,
+                                    is_coinbase,
+                                };
+                                all_utxos.push((outpoint, utxo_info));
+                            }
+                        }
+                    }
+
+                    // Log any immature coinbase UTXOs that were filtered out
+                    if let Some(immature) = returns.get("immature").and_then(|v| v.as_array()) {
+                        if !immature.is_empty() {
+                            self.logger.info(&format!(
+                                "[WalletProvider] Filtered out {} immature coinbase UTXOs for address {}",
+                                immature.len(), address
+                            ));
+                        }
+                    }
+
+                    self.logger.info(&format!(
+                        "[WalletProvider] Found {} spendable UTXOs for address {}",
+                        all_utxos.len(), address
+                    ));
+                },
+                Err(e) => {
+                    self.logger.warn(&format!(
+                        "[WalletProvider] Failed to get spendable UTXOs via lua script for {}: {}, falling back to esplora",
+                        address, e
+                    ));
+                    // Fallback to direct esplora call (without coinbase filtering)
+                    let utxos_val = self.get_address_utxo(&address).await;
+                    if let Ok(utxos_val) = utxos_val {
+                        if let Ok(esplora_utxos) = serde_json::from_value::<Vec<esplora::EsploraUtxo>>(utxos_val) {
+                            let tip = self.get_blocks_tip_height().await.unwrap_or(0);
+                            for utxo in esplora_utxos {
+                                if let Ok(outpoint) = OutPoint::from_str(&format!("{}:{}", utxo.txid, utxo.vout)) {
+                                    let confirmations = if let Some(height) = utxo.status.block_height {
+                                        tip.saturating_sub(height as u64) + 1
+                                    } else {
+                                        0
+                                    };
+                                    let utxo_info = UtxoInfo {
+                                        txid: utxo.txid,
+                                        vout: utxo.vout,
+                                        amount: utxo.value,
+                                        address: address.clone(),
+                                        script_pubkey: None,
+                                        confirmations: confirmations as u32,
+                                        frozen: false,
+                                        freeze_reason: None,
+                                        block_height: utxo.status.block_height.map(|h| h as u64),
+                                        has_inscriptions: false,
+                                        has_runes: false,
+                                        has_alkanes: false,
+                                        is_coinbase: false,
+                                    };
+                                    all_utxos.push((outpoint, utxo_info));
+                                }
+                            }
                         }
                     }
                 }
@@ -3456,7 +3550,9 @@ impl WalletProvider for WebProvider {
         if self.network == Network::Bitcoin {
             self.broadcast_via_rebar_shield(&tx_hex).await
         } else {
-            <Self as EsploraProvider>::broadcast(self, &tx_hex).await
+            // Use bitcoind sendrawtransaction RPC instead of esplora broadcast
+            // The esplora_broadcast method is not supported by Sandshrew/subfrost RPC
+            <Self as BitcoinRpcProvider>::send_raw_transaction(self, &tx_hex).await
         }
     }
     
@@ -3527,9 +3623,21 @@ impl WalletProvider for WebProvider {
         use bitcoin::sighash::{SighashCache, EcdsaSighashType};
         use bitcoin::ecdsa::Signature as EcdsaSignature;
         use bitcoin::secp256k1::Message;
+        use bitcoin::key::UntweakedKeypair;
+        use bitcoin::Address;
+        use bitcoin::bip32::Xpriv;
+        use bip39::Mnemonic;
+
+        let keystore = self.keystore.as_ref()
+            .ok_or_else(|| AlkanesError::Wallet("Wallet not loaded".to_string()))?;
+        let pass = self.passphrase.as_deref().unwrap_or_default();
+        let mnemonic_str = keystore.decrypt_mnemonic(pass)?;
+        let mnemonic = Mnemonic::parse_in(bip39::Language::English, &mnemonic_str)?;
 
         let mut psbt = psbt.clone();
         let secp = Secp256k1::new();
+        let seed = mnemonic.to_seed(pass);
+        let root = Xpriv::new_master(self.network, &seed)?;
 
         // Collect all prevouts for taproot signing
         let prevouts: Vec<TxOut> = psbt.inputs.iter()
@@ -3544,12 +3652,38 @@ impl WalletProvider for WebProvider {
 
             let script_pubkey = &prev_txo.script_pubkey;
 
+            // Parse the address from the script to find its derivation path
+            let address = Address::from_script(script_pubkey, self.network)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {}", e)))?;
+
+            // Determine script type from the script_pubkey
+            let script_type = if script_pubkey.is_p2wpkh() {
+                "p2wpkh"
+            } else if script_pubkey.is_p2tr() {
+                "p2tr"
+            } else if script_pubkey.is_p2pkh() {
+                "p2pkh"
+            } else {
+                return Err(AlkanesError::Wallet(format!("Unsupported script type for input {}", i)));
+            };
+
+            // Find the address in the keystore to get its derivation path
+            let addr_info = Self::find_address_info(keystore, &address, self.network, script_type)?;
+            let path = DerivationPath::from_str(&addr_info.derivation_path)?;
+
+            self.logger.info(&format!(
+                "[sign_psbt] Input {}: address={}, script_type={}, path={}",
+                i, address, script_type, addr_info.derivation_path
+            ));
+
+            // Derive the private key using the correct path
+            let derived_xpriv = root.derive_priv(&secp, &path)?;
+            let keypair = derived_xpriv.to_keypair(&secp);
+
             if script_pubkey.is_p2wpkh() {
                 // P2WPKH signing - uses ECDSA
-                let keypair = self.derive_keypair_for_script_type("p2wpkh").await?;
                 let pubkey = bitcoin::PublicKey::new(keypair.public_key());
 
-                // Compute sighash for p2wpkh
                 let sighash = sighash_cache.p2wpkh_signature_hash(
                     i,
                     &script_pubkey.p2wpkh_script_code().ok_or(AlkanesError::Wallet("Failed to get p2wpkh script code".to_string()))?,
@@ -3561,14 +3695,14 @@ impl WalletProvider for WebProvider {
                 let sig = secp.sign_ecdsa(&msg, &keypair.secret_key());
                 let ecdsa_sig = EcdsaSignature::sighash_all(sig);
 
-                // Set the witness: [signature, pubkey]
                 psbt.inputs[i].final_script_witness = Some(Witness::from_slice(&[
                     ecdsa_sig.to_vec().as_slice(),
                     pubkey.to_bytes().as_slice(),
                 ]));
             } else if script_pubkey.is_p2tr() {
-                // P2TR signing - uses Schnorr
-                let keypair = self.derive_keypair_for_script_type("p2tr").await?;
+                // P2TR signing - uses Schnorr with tweaked keypair
+                let untweaked_keypair = UntweakedKeypair::from(keypair);
+                let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
 
                 let sighash = sighash_cache.taproot_key_spend_signature_hash(
                     i,
@@ -3576,13 +3710,18 @@ impl WalletProvider for WebProvider {
                     bitcoin::sighash::TapSighashType::Default,
                 )?;
 
-                let sig = secp.sign_schnorr_with_rng(&sighash.into(), &keypair, &mut rand::thread_rng());
-                psbt.inputs[i].tap_key_sig = Some(bitcoin::taproot::Signature {
+                let msg = Message::from_digest_slice(&sighash[..])?;
+                let sig = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut rand::thread_rng());
+
+                let taproot_sig = bitcoin::taproot::Signature {
                     signature: sig,
                     sighash_type: bitcoin::sighash::TapSighashType::Default,
-                });
-            } else {
-                return Err(AlkanesError::Wallet(format!("Unsupported script type for input {}", i)));
+                };
+
+                psbt.inputs[i].tap_key_sig = Some(taproot_sig);
+                psbt.inputs[i].final_script_witness = Some(Witness::from_slice(&[
+                    taproot_sig.to_vec().as_slice(),
+                ]));
             }
         }
 

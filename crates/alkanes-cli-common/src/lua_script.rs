@@ -128,6 +128,9 @@ pub const MULTICALL: &str = include_str!("../../../lua/multicall.lua");
 /// Address UTXOs with full transaction data (batched esplora_tx calls)
 pub const ADDRESS_UTXOS_WITH_TXS: &str = include_str!("../../../lua/address_utxos_with_txs.lua");
 
+/// Spendable UTXOs script (filters out immature coinbase outputs)
+pub const SPENDABLE_UTXOS: &str = include_str!("../../../lua/spendable_utxos.lua");
+
 /// Lazy-initialized static script instances
 pub mod scripts {
     use super::LuaScript;
@@ -146,8 +149,12 @@ pub mod scripts {
         Lazy::new(|| LuaScript::from_static(super::MULTICALL));
 
     /// Address UTXOs with transaction data script
-    pub static ADDRESS_UTXOS_WITH_TXS: Lazy<LuaScript> = 
+    pub static ADDRESS_UTXOS_WITH_TXS: Lazy<LuaScript> =
         Lazy::new(|| LuaScript::from_static(super::ADDRESS_UTXOS_WITH_TXS));
+
+    /// Spendable UTXOs script (filters out immature coinbase)
+    pub static SPENDABLE_UTXOS: Lazy<LuaScript> =
+        Lazy::new(|| LuaScript::from_static(super::SPENDABLE_UTXOS));
 }
 
 #[cfg(test)]
@@ -176,5 +183,6 @@ mod tests {
         let _ = &scripts::BATCH_UTXO_BALANCES;
         let _ = &scripts::BALANCES;
         let _ = &scripts::MULTICALL;
+        let _ = &scripts::SPENDABLE_UTXOS;
     }
 }
