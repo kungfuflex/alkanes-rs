@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WASM_DIR="$SCRIPT_DIR/../prod_wasms"
 WALLET_FILE="${WALLET_FILE:-$HOME/.alkanes/wallet.json}"
 DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-testtesttest}"
-RPC_URL="http://127.0.0.1:18888"
+RPC_URL="${RPC_URL:-http://127.0.0.1:18888}"
 
 # OYL AMM Constants (matching oyl-sdk deployment pattern from pseudocode)
 AUTH_TOKEN_FACTORY_ID=65517      # 0xffed
@@ -137,7 +137,7 @@ fund_wallet() {
 # Ensure coinbase maturity by mining additional blocks
 ensure_coinbase_maturity() {
     log_info "Ensuring coinbase maturity (mining 101 blocks to mature recent coinbases)..."
-    "$ALKANES_CLI" -p regtest --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 101 "p2tr:0" > /dev/null 2>&1
+    "$ALKANES_CLI" -p regtest --jsonrpc-url $RPC_URL --wallet-file "$WALLET_FILE" --passphrase "$DEPLOY_PASSWORD" bitcoind generatetoaddress 101 "p2tr:0" > /dev/null 2>&1
     
     log_info "Waiting for indexer to sync maturity blocks (10 seconds)..."
     sleep 10
@@ -169,6 +169,7 @@ deploy_contract() {
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
     "$ALKANES_CLI" -p regtest \
         --wallet-file "$WALLET_FILE" \
+	--jsonrpc-url $RPC_URL \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
         --envelope "$WASM_FILE" \
@@ -190,7 +191,7 @@ deploy_contract() {
         # Try up to 3 times with 2 second delays
         BYTECODE=""
         for i in 1 2 3; do
-            BYTECODE=$("$ALKANES_CLI" -p regtest alkanes getbytecode "4:$TARGET_TX" 2>/dev/null)
+            BYTECODE=$("$ALKANES_CLI" --jsonrpc-url $RPC_URL -p regtest alkanes getbytecode "4:$TARGET_TX" 2>/dev/null)
             if [ -n "$BYTECODE" ] && [ "$BYTECODE" != "null" ] && [ "$BYTECODE" != '""' ]; then
                 break
             fi
@@ -228,11 +229,13 @@ initialize_contract() {
     
     DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-password}"
     "$ALKANES_CLI" -p regtest \
+	--jsonrpc-url $RPC_URL \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$PROTOSTONE" \
         --from p2tr:0 \
         --fee-rate 1 \
+	--mine \
         -y \
         > /dev/null 2>&1
     
@@ -523,6 +526,7 @@ main() {
     
     "$ALKANES_CLI" -p regtest \
         --wallet-file "$WALLET_FILE" \
+	--jsonrpc-url $RPC_URL \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes execute "$FACTORY_INIT_PROTOSTONE" \
         --from p2tr:0 \
@@ -561,9 +565,11 @@ main() {
     "$ALKANES_CLI" -p regtest \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
+	--jsonrpc-url $RPC_URL \
         alkanes execute "[2,0,77]:v0:v0" \
         --to p2tr:0 \
         --from p2tr:0 \
+	--mine \
         --change p2tr:0 \
         --auto-confirm
     
@@ -578,11 +584,13 @@ main() {
     log_info "Wrapping BTC to frBTC..."
     "$ALKANES_CLI" -p regtest \
         --wallet-file "$WALLET_FILE" \
+	--jsonrpc-url $RPC_RPC \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes wrap-btc \
         100000000 \
         --to p2tr:0 \
         --from p2tr:0 \
+	--mine \
         --change p2tr:0 \
         --auto-confirm
     
@@ -606,6 +614,7 @@ main() {
     # Step 8c: Create the pool
     log_info "Creating DIESEL/frBTC pool..."
     "$ALKANES_CLI" -p regtest \
+	--jsonrpc-url $RPC_URL \
         --wallet-file "$WALLET_FILE" \
         --passphrase "$DEPLOY_PASSWORD" \
         alkanes init-pool \
@@ -613,6 +622,7 @@ main() {
         --liquidity "$DIESEL_AMOUNT:$FRBTC_AMOUNT" \
         --to p2tr:0 \
         --from p2tr:0 \
+	--mine \
         --change p2tr:0 \
         --factory "4:$AMM_FACTORY_PROXY_TX" \
         --auto-confirm \
