@@ -1,3 +1,4 @@
+use crate::{log_block, log_cache, log_error, log_network, log_success};
 use crate::message::AlkaneMessageContext;
 use crate::network::{
     check_and_upgrade_precompiled, genesis, genesis_alkane_upgrade_bytes, is_genesis, setup_diesel,
@@ -90,10 +91,13 @@ use protorune_support::proto::protorune::ProtorunesWalletRequest;
 use std::sync::Arc;
 
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
+    log_block!("Indexing block at height {}", height);
+
     configure_network();
     clear_diesel_mints_cache();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
+        log_network!("Processing genesis block");
         genesis().unwrap();
     }
     setup_diesel(block)?;
@@ -105,6 +109,8 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
         Protorune::index_block::<_, AlkaneMessageContext>(block, height.into())?;
+
+    log_success!("Block {} indexed successfully", height);
 
     unwrap::update_last_block(height as u128)?;
 
@@ -160,10 +166,11 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
                         .set(Arc::new(filtered_response.write_to_bytes()?));
                 }
                 Err(e) => {
-                    println!("Error caching wallet response for address: {:?}", e);
+                    log_error!("Error caching wallet response for address: {:?}", e);
                 }
             }
         }
+        log_cache!("Cached wallet responses for {} addresses", _updated_addresses.len());
     }
 
     Ok(())
