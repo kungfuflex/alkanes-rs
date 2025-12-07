@@ -403,7 +403,84 @@ pub fn generate_batch_payment_fetcher_bytecode(
                 "pop",           // [adjustment, count]
                 "pop",           // [count]
 
-                // Now build the final output
+                // IMPORTANT: Reverse the offsets array!
+                // Since we iterated backwards through payments but stored offsets forward,
+                // offset[0] currently points to payment[length-1] instead of payment[0].
+                // We need to reverse the array so the ABI encoding is correct.
+                //
+                // Reverse in-place: swap offset[i] with offset[count-1-i] for i < count/2
+                // Stack: [count]
+
+                "dup1",          // [count, count]
+                0x02,
+                "swap1",         // [count, 2, count]
+                "div",           // [count/2, count] = number of swaps needed
+
+                // Stack: [swaps_needed, count]
+                0x00,            // [i=0, swaps_needed, count]
+
+                "reverse_loop",
+                "jump",
+
+                ["reverse_loop", [
+                    // Stack: [i, swaps_needed, count]
+                    "dup2",      // [swaps_needed, i, swaps_needed, count]
+                    "dup2",      // [i, swaps_needed, i, swaps_needed, count]
+                    "lt",        // [i < swaps_needed, i, swaps_needed, count]
+                    "iszero",    // [i >= swaps_needed, i, swaps_needed, count]
+                    "reverse_done",
+                    "jumpi",
+
+                    // Calculate left pointer: 0x2000 + i*32
+                    "dup1",      // [i, i, swaps_needed, count]
+                    0x20,
+                    "mul",       // [i*32, i, swaps_needed, count]
+                    0x2000,
+                    "add",       // [left_ptr, i, swaps_needed, count]
+
+                    // Calculate right pointer: 0x2000 + (count-1-i)*32
+                    "dup4",      // [count, left_ptr, i, swaps_needed, count]
+                    0x01,
+                    "swap1",     // [count, 1, left_ptr, i, swaps_needed, count]
+                    "sub",       // [count-1, left_ptr, i, swaps_needed, count]
+                    "dup4",      // [i, count-1, left_ptr, i, swaps_needed, count]
+                    "swap1",     // [count-1, i, left_ptr, i, swaps_needed, count]
+                    "sub",       // [count-1-i, left_ptr, i, swaps_needed, count]
+                    0x20,
+                    "mul",       // [(count-1-i)*32, left_ptr, i, swaps_needed, count]
+                    0x2000,
+                    "add",       // [right_ptr, left_ptr, i, swaps_needed, count]
+
+                    // Stack: [right_ptr, left_ptr, i, swaps_needed, count]
+                    // Load values
+                    "dup1",      // [right_ptr, right_ptr, left_ptr, i, swaps_needed, count]
+                    "mload",     // [right_val, right_ptr, left_ptr, i, swaps_needed, count]
+                    "dup3",      // [left_ptr, right_val, right_ptr, left_ptr, i, swaps_needed, count]
+                    "mload",     // [left_val, right_val, right_ptr, left_ptr, i, swaps_needed, count]
+
+                    // Store left_val at right_ptr
+                    "dup3",      // [right_ptr, left_val, right_val, right_ptr, left_ptr, i, swaps_needed, count]
+                    "mstore",    // Stack: [right_val, right_ptr, left_ptr, i, swaps_needed, count]
+
+                    // Store right_val at left_ptr
+                    "swap2",     // [left_ptr, right_ptr, right_val, i, swaps_needed, count]
+                    "mstore",    // Stack: [right_ptr, i, swaps_needed, count]
+                    "pop",       // [i, swaps_needed, count]
+
+                    // Increment i
+                    0x01,
+                    "add",       // [i+1, swaps_needed, count]
+
+                    "reverse_loop",
+                    "jump"
+                ]],
+
+                ["reverse_done", [
+                    // Stack: [i, swaps_needed, count]
+                    "pop",       // [swaps_needed, count]
+                    "pop",       // [count]
+
+                    // Now build the final output
                 // We need to return: [0x20][count][offsets...][data...]
                 //
                 // Currently:
@@ -558,6 +635,7 @@ pub fn generate_batch_payment_fetcher_bytecode(
                         "return"
                     ]]
                 ]]
+            ]]
             ]],
 
             ["return_empty", [
