@@ -58,7 +58,7 @@ impl Pipeline {
 	/// Returns the block hash on success for position tracking
 	pub async fn process_block_sequential<P>(&self, provider: &P, ctx: BlockContext) -> Result<String>
 	where
-		P: DeezelProvider + JsonRpcProvider + BitcoinRpcProvider + Send + Sync,
+		P: DeezelProvider + JsonRpcProvider + BitcoinRpcProvider + alkanes_cli_common::traits::AlkanesProvider + alkanes_cli_common::traits::EsploraProvider + Send + Sync,
 	{
 		// Resolve block hash via bitcoind and print/log it
 		let block_hash = helper_get_block_hash(provider, ctx.height).await?;

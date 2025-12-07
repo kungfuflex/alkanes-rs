@@ -4000,53 +4000,109 @@ impl RunestoneProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl OrdProvider for WebProvider {
-    async fn get_inscription(&self, _inscription_id: &str) -> Result<OrdInscription> {
-        unimplemented!()
+    async fn get_inscription(&self, inscription_id: &str) -> Result<OrdInscription> {
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_inscription", serde_json::json!([inscription_id]), 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    
-    async fn get_inscriptions_in_block(&self, _block_hash: &str) -> Result<OrdInscriptions> {
-        unimplemented!()
+
+    async fn get_inscriptions_in_block(&self, block_hash: &str) -> Result<OrdInscriptions> {
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_inscriptions_block", serde_json::json!([block_hash]), 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_ord_address_info(&self, _address: &str) -> Result<OrdAddressInfo> {
-        unimplemented!()
+    async fn get_ord_address_info(&self, address: &str) -> Result<OrdAddressInfo> {
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_address", serde_json::json!([address]), 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_block_info(&self, _query: &str) -> Result<OrdBlock> {
-        unimplemented!()
+    async fn get_block_info(&self, query: &str) -> Result<OrdBlock> {
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_block", serde_json::json!([query]), 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_ord_block_count(&self) -> Result<u64> {
-        unimplemented!()
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_blockcount", serde_json::json!([]), 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_ord_blocks(&self) -> Result<OrdBlocks> {
-        unimplemented!()
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_blocks", serde_json::json!([]), 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_children(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdChildren> {
-        unimplemented!()
+    async fn get_children(&self, inscription_id: &str, page: Option<u32>) -> Result<OrdChildren> {
+        let url = self.sandshrew_rpc_url();
+        let params = match page {
+            Some(p) => serde_json::json!([inscription_id, p]),
+            None => serde_json::json!([inscription_id]),
+        };
+        let json = self.call(&url, "ord_children", params, 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_content(&self, _inscription_id: &str) -> Result<Vec<u8>> {
-        unimplemented!()
+    async fn get_content(&self, inscription_id: &str) -> Result<Vec<u8>> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_content", serde_json::json!([inscription_id]), 1).await?;
+        // Content comes as base64 or hex string - try to parse appropriately
+        if let Some(content_str) = json.as_str() {
+            // Try base64 first, then hex
+            if let Ok(decoded) = STANDARD.decode(content_str) {
+                return Ok(decoded);
+            }
+            if let Ok(decoded) = hex::decode(content_str) {
+                return Ok(decoded);
+            }
+            return Ok(content_str.as_bytes().to_vec());
+        }
+        Err(AlkanesError::Serialization("Invalid content format".to_string()))
     }
-    async fn get_inscriptions(&self, _page: Option<u32>) -> Result<OrdInscriptions> {
-        unimplemented!()
+    async fn get_inscriptions(&self, page: Option<u32>) -> Result<OrdInscriptions> {
+        let url = self.sandshrew_rpc_url();
+        let params = match page {
+            Some(p) => serde_json::json!([p]),
+            None => serde_json::json!([]),
+        };
+        let json = self.call(&url, "ord_inscriptions", params, 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_output(&self, output: &str) -> Result<OrdOutput> {
         let url = self.sandshrew_rpc_url();
         let json = self.call(&url, "ord_output", serde_json::json!([output]), 1).await?;
         serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdParents> {
-        unimplemented!()
+    async fn get_parents(&self, inscription_id: &str, page: Option<u32>) -> Result<OrdParents> {
+        let url = self.sandshrew_rpc_url();
+        let params = match page {
+            Some(p) => serde_json::json!([inscription_id, p]),
+            None => serde_json::json!([inscription_id]),
+        };
+        let json = self.call(&url, "ord_parents", params, 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_rune(&self, _rune: &str) -> Result<OrdRuneInfo> {
-        unimplemented!()
+    async fn get_rune(&self, rune: &str) -> Result<OrdRuneInfo> {
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_rune", serde_json::json!([rune]), 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_runes(&self, _page: Option<u32>) -> Result<OrdRunes> {
-        unimplemented!()
+    async fn get_runes(&self, page: Option<u32>) -> Result<OrdRunes> {
+        let url = self.sandshrew_rpc_url();
+        let params = match page {
+            Some(p) => serde_json::json!([p]),
+            None => serde_json::json!([]),
+        };
+        let json = self.call(&url, "ord_runes", params, 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_sat(&self, _sat: u64) -> Result<OrdSat> {
-        unimplemented!()
+    async fn get_sat(&self, sat: u64) -> Result<OrdSat> {
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_sat", serde_json::json!([sat]), 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
-    async fn get_tx_info(&self, _txid: &str) -> Result<OrdTxInfo> {
-        unimplemented!()
+    async fn get_tx_info(&self, txid: &str) -> Result<OrdTxInfo> {
+        let url = self.sandshrew_rpc_url();
+        let json = self.call(&url, "ord_tx", serde_json::json!([txid]), 1).await?;
+        serde_json::from_value(json).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
 }
 
