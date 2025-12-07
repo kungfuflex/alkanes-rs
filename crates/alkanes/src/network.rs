@@ -9,7 +9,6 @@ use crate::precompiled::{
     alkanes_std_genesis_alkane_upgraded_eoa_regtest_build,
     alkanes_std_genesis_alkane_upgraded_mainnet_build,
     alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_build, fr_sigil_build,
-    ftr_btc_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -36,26 +35,11 @@ use {
     std::fmt::Write,
 };
 
-#[cfg(not(feature = "zcash"))]
 pub fn fr_btc_bytes() -> Vec<u8> {
     fr_btc_build::get_bytes()
 }
 
-#[cfg(feature = "zcash")]
-pub fn fr_btc_bytes() -> Vec<u8> {
-    // For Zcash, use fr_zec instead of fr_btc
-    use crate::precompiled::fr_zec_build;
-    fr_zec_build::get_bytes()
-}
-
-#[cfg(not(feature = "zcash"))]
 pub fn fr_sigil_bytes() -> Vec<u8> {
-    fr_sigil_build::get_bytes()
-}
-
-#[cfg(feature = "zcash")]
-pub fn fr_sigil_bytes() -> Vec<u8> {
-    // Zcash also uses frSIGIL
     fr_sigil_build::get_bytes()
 }
 
@@ -229,23 +213,15 @@ pub fn is_genesis(height: u64) -> bool {
 }
 
 pub fn setup_frsigil(block: &Block) -> Result<()> {
-    // Zcash uses [42, 1] for frSIGIL, Bitcoin uses [32, 1]
-    #[cfg(not(feature = "zcash"))]
-    let fr_sigil_id = AlkaneId { block: 32, tx: 1 };
-    #[cfg(feature = "zcash")]
-    let fr_sigil_id = AlkaneId { block: 42, tx: 1 };
-    
     let mut ptr =
-        IndexPointer::from_keyword("/alkanes/").select(&fr_sigil_id.into());
+        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 1 }).into());
     if ptr.get().len() == 0 {
-        let sigil_bytes = fr_sigil_bytes();
-        let compressed = compress(sigil_bytes)?;
-        ptr.set(Arc::new(compressed));
+        ptr.set(Arc::new(compress(fr_sigil_bytes())?));
     } else {
         return Ok(());
     }
     let mut atomic: AtomicPointer = AtomicPointer::default();
-    let fr_sigil = fr_sigil_id;
+    let fr_sigil = AlkaneId { block: 32, tx: 1 };
 
     let parcel3 = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
@@ -271,7 +247,13 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
         trace: alkanes_support::trace::Trace::default(),
     };
-    let (response2, _gas_used2) = simulate_parcel(&parcel3, u64::MAX)?;
+    let (response2, _gas_used2) = (match simulate_parcel(&parcel3, u64::MAX) {
+        Ok((a, b)) => Ok((a, b)),
+        Err(e) => {
+            println!("{:?}", e);
+            Err(e)
+        }
+    })?;
     let outpoint_bytes = outpoint_encode(&OutPoint {
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
@@ -297,22 +279,15 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
 }
 
 pub fn setup_frbtc(block: &Block) -> Result<()> {
-    // Zcash uses different alkane IDs: [42, 0] for frZEC, [42, 1] for frSIGIL
-    // Bitcoin uses: [32, 0] for frBTC, [32, 1] for frSIGIL
-    #[cfg(not(feature = "zcash"))]
-    let fr_coin_id = AlkaneId { block: 32, tx: 0 };
-    #[cfg(feature = "zcash")]
-    let fr_coin_id = AlkaneId { block: 42, tx: 0 };
-    
     let mut ptr =
-        IndexPointer::from_keyword("/alkanes/").select(&fr_coin_id.into());
+        IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 0 }).into());
     if ptr.get().len() == 0 {
         ptr.set(Arc::new(compress(fr_btc_bytes())?));
     } else {
         return Ok(());
     }
     let mut atomic: AtomicPointer = AtomicPointer::default();
-    let fr_btc = fr_coin_id;
+    let fr_btc = AlkaneId { block: 32, tx: 0 };
     let parcel2 = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
@@ -352,20 +327,6 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
     Ok(())
 }
 
-pub fn setup_ftrbtc(block: &Block) -> Result<()> {
-    // ftrBTC uses alkane ID [31, 0] - reserved for futures master contract
-    let ftr_btc_id = AlkaneId { block: 31, tx: 0 };
-    
-    let mut ptr =
-        IndexPointer::from_keyword("/alkanes/").select(&ftr_btc_id.into());
-    if ptr.get().len() == 0 {
-        ptr.set(Arc::new(compress(ftr_btc_build::get_bytes())?));
-    } else {
-        return Ok(());
-    }
-    Ok(())
-}
-
 pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
     if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
         let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
@@ -383,13 +344,8 @@ pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes_eoa())?));
-            #[cfg(not(feature = "zcash"))]
-            let fr_coin_upgrade_id = AlkaneId { block: 32, tx: 0 };
-            #[cfg(feature = "zcash")]
-            let fr_coin_upgrade_id = AlkaneId { block: 42, tx: 0 };
-            
             IndexPointer::from_keyword("/alkanes/")
-                .select(&fr_coin_upgrade_id.into())
+                .select(&(AlkaneId { block: 32, tx: 0 }).into())
                 .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
         }
     }

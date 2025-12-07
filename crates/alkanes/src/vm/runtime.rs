@@ -47,7 +47,7 @@ impl AlkanesRuntimeContext {
             incoming_alkanes,
             myself: AlkaneId::default(),
             caller: AlkaneId::default(),
-            trace: message_copy.trace.clone(), // Use the shared trace from parcel
+            trace: message_copy.trace.clone(),
             inputs: cloned.inputs,
         }
     }

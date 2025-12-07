@@ -545,9 +545,58 @@ fn get_trace_event_at_index(outpoint: &OutPoint, index: Option<isize>) -> Result
     Ok(event)
 }
 
+/// Find the last ReturnContext event in the trace (searching backwards)
+fn find_last_return_context(outpoint: &OutPoint) -> Result<TraceEvent> {
+    let trace_data: Trace = view::trace(outpoint)?.try_into()?;
+    let trace_events = trace_data.0.lock().expect("Mutex poisoned");
+
+    if trace_events.is_empty() {
+        panic!("No trace events found");
+    }
+
+    // Search backwards for ReturnContext
+    for event in trace_events.iter().rev() {
+        if matches!(event, TraceEvent::ReturnContext(_)) {
+            return Ok(event.clone());
+        }
+    }
+    panic!("No ReturnContext event found in trace. Events: {:?}", *trace_events);
+}
+
+/// Find the last RevertContext event in the trace (searching backwards)
+fn find_last_revert_context(outpoint: &OutPoint) -> Result<TraceEvent> {
+    let trace_data: Trace = view::trace(outpoint)?.try_into()?;
+    let trace_events = trace_data.0.lock().expect("Mutex poisoned");
+
+    if trace_events.is_empty() {
+        panic!("No trace events found");
+    }
+
+    // Search backwards for RevertContext
+    for event in trace_events.iter().rev() {
+        if matches!(event, TraceEvent::RevertContext(_)) {
+            return Ok(event.clone());
+        }
+    }
+    panic!("No RevertContext event found in trace. Events: {:?}", *trace_events);
+}
+
 pub fn assert_revert_context(outpoint: &OutPoint, expected_error_message: &str) -> Result<()> {
-    // This is a convenience wrapper around assert_revert_context_at_index that checks the last event
-    assert_revert_context_at_index(outpoint, expected_error_message, None)
+    // Search for the last RevertContext event in the trace
+    let event = find_last_revert_context(outpoint)?;
+    match event {
+        TraceEvent::RevertContext(trace_response) => {
+            let data = String::from_utf8_lossy(&trace_response.inner.data);
+            assert!(
+                data.contains(expected_error_message),
+                "Expected error message '{}' not found in: '{}'",
+                expected_error_message,
+                data
+            );
+            Ok(())
+        }
+        _ => unreachable!(), // find_last_revert_context only returns RevertContext
+    }
 }
 
 pub fn assert_revert_context_at_index(
@@ -555,7 +604,10 @@ pub fn assert_revert_context_at_index(
     expected_error_message: &str,
     index: Option<isize>,
 ) -> Result<()> {
-    let event = get_trace_event_at_index(outpoint, index)?;
+    let event = match index {
+        Some(_) => get_trace_event_at_index(outpoint, index)?,
+        None => find_last_revert_context(outpoint)?,
+    };
     match event {
         TraceEvent::RevertContext(trace_response) => {
             let data = String::from_utf8_lossy(&trace_response.inner.data);
@@ -578,7 +630,12 @@ pub fn assert_return_context<F, T>(outpoint: &OutPoint, check_function: F) -> Re
 where
     F: Fn(TraceResponse) -> Result<T>,
 {
-    assert_return_context_at_index(outpoint, check_function, None)
+    // Search for the last ReturnContext event in the trace
+    let event = find_last_return_context(outpoint)?;
+    match event {
+        TraceEvent::ReturnContext(trace_response) => check_function(trace_response),
+        _ => unreachable!(), // find_last_return_context only returns ReturnContext
+    }
 }
 
 pub fn assert_return_context_at_index<F, T>(
@@ -589,7 +646,10 @@ pub fn assert_return_context_at_index<F, T>(
 where
     F: Fn(TraceResponse) -> Result<T>,
 {
-    let event = get_trace_event_at_index(outpoint, index)?;
+    let event = match index {
+        Some(_) => get_trace_event_at_index(outpoint, index)?,
+        None => find_last_return_context(outpoint)?,
+    };
     match event {
         TraceEvent::ReturnContext(trace_response) => check_function(trace_response),
         _ => panic!(

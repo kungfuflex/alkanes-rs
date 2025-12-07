@@ -103,7 +103,7 @@ impl AlkanesProvider for WebProvider {
         unimplemented!()
     }
 
-    async fn trace_block(&self, _height: u64) -> Result<alkanes_support::proto::alkanes::Trace> {
+    async fn trace_block(&self, _height: u64) -> Result<alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent> {
         unimplemented!()
     }
 

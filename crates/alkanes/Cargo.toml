@@ -9,10 +9,6 @@ repository.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[[example]]
-name = "test_block_286639"
-required-features = ["zcash"]
-
 [features]
 test-utils = []
 testnet = []
@@ -20,9 +16,30 @@ dogecoin = []
 luckycoin = []
 bellscoin = []
 fractal = []
-zcash = ["ordinals/zcash", "protorune/zcash", "alkanes-support/zcash"]
 mainnet = ["protorune/mainnet"]
+proxy = []
+owned_token = []
+auth_token = []
+genesis_alkane = []
+regtest = []
+genesis_protorune = []
+amm_pool = ["auth_token"]
+amm_factory = ["auth_token"]
+amm = ["amm_pool", "amm_factory"]
+orbital = []
 cache = ["protorune/cache"]
+all = []
+minimal = [
+    "refunder",
+    "merkle_distributor",
+    "free_mint",
+    "upgradeable",
+    "proxy",
+]
+refunder = []
+merkle_distributor = []
+free_mint = []
+upgradeable = []
 debug-log = []
 
 [dependencies]
@@ -52,15 +69,21 @@ js-sys = { workspace = true }
 hex_lit = { workspace = true }
 once_cell = { workspace = true }
 borsh = { version = "1.5.7", features = ["derive"] }
-sha2 = "0.10.9"
+sha2 = { workspace = true }
 
 [dev-dependencies]
-alkanes = { path = "." }
+alkanes = { path = ".", features = [
+    "genesis_alkane",
+    "genesis_protorune",
+    "amm",
+    "orbital",
+    "auth_token",
+    "minimal",
+] }
 metashrew-core = { workspace = true, features = ["test-utils"] }
 protorune = { workspace = true, features = ["test-utils"] }
-async-trait = "0.1"
-hex = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-metashrew-runtime = { path = "../metashrew-runtime" }
-tokio = { version = "1.42", features = ["full"] }
+[build-dependencies]
+anyhow = { workspace = true }
+flate2 = { workspace = true }
+hex = { workspace = true }

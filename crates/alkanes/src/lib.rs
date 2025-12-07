@@ -1,7 +1,3 @@
-// Logging module must be declared first so macros are available
-pub mod logging;
-
-#[cfg(not(test))]
 use crate::indexer::configure_network;
 use crate::unwrap::{
     deserialize_payments, fr_btc_payments_at_block, fr_btc_storage_pointer, update_last_block,
@@ -37,8 +33,6 @@ pub mod unwrap;
 pub mod utils;
 pub mod view;
 pub mod vm;
-#[cfg(feature = "zcash")]
-pub mod zcash;
 use crate::indexer::index_block;
 
 /*
@@ -347,51 +341,18 @@ pub fn getstorageat() -> u32 {
 pub fn _start() {
     let data = input();
     let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-    log_info!("Processing height {}", height);
     let reader = &data[4..];
-    
-    #[cfg(feature = "zcash")]
-    {
-        let block_data = reader.to_vec();
-        log_debug!("Parsing Zcash block: {} bytes", block_data.len());
-        log_debug!("First 100 bytes: {}", hex::encode(&block_data[..100.min(block_data.len())]));
-        
-        match alkanes_support::zcash::ZcashBlock::parse(&mut Cursor::<Vec<u8>>::new(block_data.clone())) {
-            Ok(zblock) => {
-                log_debug!("Successfully parsed Zcash block");
-                
-                // index_block is generic over BlockLike, so we can pass ZcashBlock directly
-                index_block(&zblock, height).unwrap();
-                
-                // TODO: etl::index_extensions for Zcash blocks
-                // For now, skip etl::index_extensions as it requires bitcoin::Block
-                // and we don't have a direct conversion from ZcashBlock
-                
-                flush();
-            }
-            Err(e) => {
-                log_error!("ERROR parsing Zcash block: {:?}", e);
-                log_debug!("Block data dump (full): {}", hex::encode(&block_data));
-                panic!("ZcashBlock parsing failed at height {}: {:?}", height, e);
-            }
-        }
-    }
-    
-    #[cfg(not(feature = "zcash"))]
-    {
-        #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
-        let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(reader.to_vec()))
-            .unwrap()
-            .to_consensus();
-        
-        #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin")))]
-        let block: Block =
-            consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
+    #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
+    let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(reader.to_vec()))
+        .unwrap()
+        .to_consensus();
+    #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin")))]
+    let block: Block =
+        consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
 
-        index_block(&block, height).unwrap();
-        etl::index_extensions(height, &block);
-        flush();
-    }
+    index_block(&block, height).unwrap();
+    etl::index_extensions(height, &block);
+    flush();
 }
 
 // #[cfg(test)]

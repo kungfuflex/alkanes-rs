@@ -728,9 +728,8 @@ impl AlkanesHostFunctionsImpl {
         storage_map_len: u64,
     ) -> Result<i32> {
         // Check for precompiled contract addresses
-        // Note: CloneFuture (31) needs full extcall context, so exclude it from special handling
-        if cellpack.target.block == 800000000 && cellpack.target.tx != 31 {
-            // 8e8 - simple precompiled operations
+        if cellpack.target.block == 800000000 {
+            // 8e8
             return Self::_handle_special_extcall(caller, cellpack);
         }
 
@@ -827,35 +826,12 @@ impl AlkanesHostFunctionsImpl {
         Ok(serialized.len() as i32)
     }
     pub(super) fn log<'a>(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
-        use crate::logging::{LogTree, log_tree, LogStyle};
-        
         let mem = get_memory(caller)?;
-        let (alkane_id, message) = {
+        let message = {
             let data = mem.data(&caller);
-            let msg = read_arraybuffer(data, v)?;
-            let id = caller.data_mut().context.lock().unwrap().myself.clone();
-            (id, msg)
+            read_arraybuffer(data, v)?
         };
-        
-        let msg_str = String::from_utf8(message)?;
-        
-        // Check if message has multiple lines - if so, use tree format
-        let lines: Vec<&str> = msg_str.lines().collect();
-        if lines.len() > 1 {
-            let mut tree = LogTree::new(format!("[{}:{}]", alkane_id.block, alkane_id.tx));
-            for (i, line) in lines.iter().enumerate() {
-                if i == lines.len() - 1 {
-                    tree.add_last(line.to_string());
-                } else {
-                    tree.add(line.to_string());
-                }
-            }
-            log_tree(LogStyle::VM, &tree);
-        } else {
-            // Single line - simple format
-            println!("⚙️ [VM] [{}:{}] {}", alkane_id.block, alkane_id.tx, msg_str);
-        }
-        
+        print!("{}", String::from_utf8(message)?);
         Ok(())
     }
 }
