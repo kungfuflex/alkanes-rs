@@ -45,6 +45,10 @@ pub struct DeezelCommands {
     /// JSON-RPC URL (defaults based on provider: subfrost-regtest, signet, mainnet)
     #[arg(long)]
     pub jsonrpc_url: Option<String>,
+    /// Custom headers for JSON-RPC requests (can be specified multiple times)
+    /// Format: "Header-Name: Header-Value" (e.g., "Host: signet.subfrost.io")
+    #[arg(long = "jsonrpc-header", value_name = "HEADER")]
+    pub jsonrpc_headers: Vec<String>,
     /// Titan API URL (alternative to jsonrpc-url)
     #[arg(long)]
     pub titan_api_url: Option<String>,
@@ -1755,6 +1759,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 subfrost_api_key: args.subfrost_api_key.clone(),
                 data_api_url: None,  // Not used in deezel commands
                 timeout_seconds: 600,
+                jsonrpc_headers: args.jsonrpc_headers.clone(),
             },
             magic: None,
             log_level: "info".to_string(),

@@ -134,9 +134,11 @@ pub struct ConcreteProvider {
 
 
 impl ConcreteProvider {
-    /// Helper method to add X-Subfrost-Api-Key header if URL is a subfrost.io domain
+    /// Helper method to add custom headers to requests
+    /// Adds X-Subfrost-Api-Key header if URL is a subfrost.io domain, plus any --jsonrpc-header values
     #[cfg(feature = "native-deps")]
-    fn add_subfrost_header(&self, url: &str, mut builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    fn add_custom_headers(&self, url: &str, mut builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        // Add X-Subfrost-Api-Key header if URL is a subfrost.io domain
         if let Ok(parsed_url) = Url::parse(url) {
             if let Some(host) = parsed_url.host_str() {
                 if host.ends_with(".subfrost.io") || host == "subfrost.io" {
@@ -147,7 +149,21 @@ impl ConcreteProvider {
                 }
             }
         }
+
+        // Add custom JSON-RPC headers from --jsonrpc-header flags
+        for (header_name, header_value) in self.rpc_config.get_jsonrpc_headers() {
+            log::debug!("Adding custom header: {}: {}", header_name, header_value);
+            builder = builder.header(&header_name, &header_value);
+        }
+
         builder
+    }
+
+    /// Helper method to add X-Subfrost-Api-Key header if URL is a subfrost.io domain
+    /// @deprecated Use add_custom_headers instead
+    #[cfg(feature = "native-deps")]
+    fn add_subfrost_header(&self, url: &str, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.add_custom_headers(url, builder)
     }
 
     #[cfg(feature = "std")]
@@ -162,6 +178,32 @@ impl ConcreteProvider {
         provider: String,
         wallet_path: Option<std::path::PathBuf>,
     ) -> Result<Self> {
+        Self::new_with_headers(
+            bitcoin_rpc_url,
+            metashrew_rpc_url,
+            jsonrpc_url,
+            titan_api_url,
+            esplora_url,
+            brc20_prog_rpc_url,
+            provider,
+            wallet_path,
+            Vec::new(),
+        ).await
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn new_with_headers(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        jsonrpc_url: Option<String>,
+        titan_api_url: Option<String>,
+        esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+        jsonrpc_headers: Vec<String>,
+    ) -> Result<Self> {
         let rpc_config = RpcConfig {
             provider,
             bitcoin_rpc_url,
@@ -174,6 +216,7 @@ impl ConcreteProvider {
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
+            jsonrpc_headers,
         };
 
         Ok(Self {
@@ -202,6 +245,32 @@ impl ConcreteProvider {
         provider: String,
         wallet_path: Option<std::path::PathBuf>,
     ) -> Result<Self> {
+        Self::new_with_headers(
+            bitcoin_rpc_url,
+            metashrew_rpc_url,
+            jsonrpc_url,
+            titan_api_url,
+            esplora_url,
+            brc20_prog_rpc_url,
+            provider,
+            wallet_path,
+            Vec::new(),
+        ).await
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(target_arch = "wasm32")]
+    pub async fn new_with_headers(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        jsonrpc_url: Option<String>,
+        titan_api_url: Option<String>,
+        esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+        jsonrpc_headers: Vec<String>,
+    ) -> Result<Self> {
         let rpc_config = RpcConfig {
             provider,
             bitcoin_rpc_url,
@@ -214,6 +283,7 @@ impl ConcreteProvider {
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
+            jsonrpc_headers,
         };
 
         let wallet_path_str = wallet_path.and_then(|p| p.to_str().map(|s| s.to_string()));
@@ -647,6 +717,12 @@ impl JsonRpcProvider for ConcreteProvider {
                         request_builder = request_builder.header("X-Subfrost-Api-Key", api_key);
                     }
                 }
+            }
+
+            // Add custom JSON-RPC headers from --jsonrpc-header flags
+            for (header_name, header_value) in self.rpc_config.get_jsonrpc_headers() {
+                log::debug!("Adding custom header: {}: {}", header_name, header_value);
+                request_builder = request_builder.header(&header_name, &header_value);
             }
 
             log::debug!("Request builder: {:?}", request_builder);
