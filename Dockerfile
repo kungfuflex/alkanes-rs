@@ -37,6 +37,8 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     postgresql-client \
+    curl \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Build argument (must be redeclared in each stage)

@@ -393,6 +393,7 @@ drop table if exists "CuratedPools" cascade;
 drop table if exists "SubfrostUnwrap" cascade;
 drop table if exists "SubfrostWrap" cascade;
 drop table if exists kv_store cascade;
+drop table if exists indexer_position cascade;
 "#;
 
 async fn execute_batch(pool: &PgPool, sql: &str) -> Result<()> {

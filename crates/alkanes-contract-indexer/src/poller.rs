@@ -65,12 +65,9 @@ impl BlockPoller {
                     let next_height = match &position {
                         Some(pos) => pos.height.saturating_add(1),
                         None => {
-                            // No position yet - if we have a start_height, coordinator handles it
-                            // Otherwise start from tip
-                            if self.start_height.is_some() {
-                                continue; // Let coordinator handle catch-up
-                            }
-                            tip_height
+                            // No position yet - start from configured start_height or 0
+                            // The coordinator will handle the sequential catch-up
+                            self.start_height.unwrap_or(0)
                         }
                     };
 
@@ -98,14 +95,10 @@ impl BlockPoller {
                         for h in next_height..=tip_height {
                             info!(height = h, "new block detected");
 
+                            // Process the block - position is updated atomically inside
                             match self.pipeline.process_block_sequential(&self.provider, BlockContext { height: h, emit_publish: true }).await {
                                 Ok(block_hash) => {
-                                    // Update position only after successful indexing
-                                    if let Err(e) = self.progress.set_position(h, &block_hash).await {
-                                        error!(height = h, error = %e, "failed to update position");
-                                        break;
-                                    }
-                                    info!(height = h, %block_hash, "position updated");
+                                    info!(height = h, %block_hash, "block processed");
                                 }
                                 Err(e) => {
                                     error!(height = h, error = %e, "block processing failed");

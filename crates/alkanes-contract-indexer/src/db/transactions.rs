@@ -260,6 +260,8 @@ pub async fn replace_pool_creations(
                 base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13, base+14
             ));
         }
+        // Skip duplicate pool creations (same pool can appear in multiple traces)
+        q.push_str(" on conflict (\"poolBlockId\", \"poolTxId\") do nothing");
         let mut qb = sqlx::query(&q);
         for (
             txid, bh, idx, pb, pt, t0b, t0t, t1b, t1t, a0, a1, supply, creator, ts

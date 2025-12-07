@@ -22,9 +22,8 @@ import {
   ImportOptions,
 } from '../types';
 
-// Re-export the WASM keystore functions
-// @ts-ignore - WASM types are available at runtime
-import type * as AlkanesWasm from '../../build/wasm/alkanes_web_sys';
+// WASM module type - loaded dynamically at runtime
+type AlkanesWasm = any;
 
 /**
  * Default PBKDF2 parameters (matching ethers.js defaults)
@@ -50,9 +49,9 @@ export const DERIVATION_PATHS = {
  * Can be used standalone or integrated with WASM backend.
  */
 export class KeystoreManager {
-  private wasm?: typeof AlkanesWasm;
+  private wasm?: AlkanesWasm;
 
-  constructor(wasmModule?: typeof AlkanesWasm) {
+  constructor(wasmModule?: AlkanesWasm) {
     this.wasm = wasmModule;
   }
 

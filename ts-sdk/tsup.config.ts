@@ -12,6 +12,11 @@ export default defineConfig({
   external: [
     'node:crypto',
     'crypto',
+    // WASM module - loaded separately via package exports
+    '@alkanes/ts-sdk/wasm',
+    '../../build/wasm/alkanes_web_sys',
+    '../build/wasm/alkanes_web_sys',
+    './build/wasm/alkanes_web_sys',
   ],
   noExternal: [
     'bip39',

@@ -82,8 +82,45 @@ export class AlkanesWallet {
   }
 
   /**
+   * Get the coin type for the current network
+   * BIP44 uses coin type 0 for mainnet, 1 for testnet/regtest
+   */
+  private getCoinType(): number {
+    return this.network === bitcoin.networks.bitcoin ? 0 : 1;
+  }
+
+  /**
+   * Get the correct derivation path base for an address type
+   * Adjusts coin type based on network (0 for mainnet, 1 for testnet/regtest)
+   */
+  private getDerivationPathForType(type: AddressType): string {
+    const coinType = this.getCoinType();
+    let purpose: number;
+
+    switch (type) {
+      case AddressType.P2PKH:
+        purpose = 44;
+        break;
+      case AddressType.P2SH:
+        purpose = 49;
+        break;
+      case AddressType.P2WPKH:
+        purpose = 84;
+        break;
+      case AddressType.P2TR:
+        purpose = 86;
+        break;
+      default:
+        purpose = 84;
+    }
+
+    // Return path with correct coin type: m/purpose'/coinType'/account'/change
+    return `m/${purpose}'/${coinType}'/0'/0`;
+  }
+
+  /**
    * Derive address at specific index
-   * 
+   *
    * @param type - Address type (p2wpkh, p2tr, etc.)
    * @param index - Derivation index
    * @param change - Change address (0 = receiving, 1 = change)
@@ -94,38 +131,42 @@ export class AlkanesWallet {
     index: number = 0,
     change: number = 0
   ): AddressInfo {
-    const node = this.accountNode.derive(change).derive(index);
+    // Use the correct derivation path for each address type
+    const basePath = this.getDerivationPathForType(type);
+    const accountPath = basePath.replace(/\/\d+$/, ''); // Remove last index to get account path
+    const accountNode = this.root.derivePath(accountPath);
+    const node = accountNode.derive(change).derive(index);
     const pubkey = node.publicKey;
-    
+
     let address: string;
     let payment: bitcoin.Payment;
-    
+
     switch (type) {
       case AddressType.P2PKH:
         payment = bitcoin.payments.p2pkh({ pubkey, network: this.network });
         address = payment.address!;
         break;
-        
+
       case AddressType.P2WPKH:
         payment = bitcoin.payments.p2wpkh({ pubkey, network: this.network });
         address = payment.address!;
         break;
-        
+
       case AddressType.P2TR:
         const internalPubkey = pubkey.slice(1, 33); // Remove first byte for x-only
-        payment = bitcoin.payments.p2tr({ 
-          internalPubkey, 
-          network: this.network 
+        payment = bitcoin.payments.p2tr({
+          internalPubkey,
+          network: this.network
         });
         address = payment.address!;
         break;
-        
+
       default:
         throw new Error(`Unsupported address type: ${type}`);
     }
-    
-    const path = `${DERIVATION_PATHS.BIP84}/${change}/${index}`;
-    
+
+    const path = `${basePath}/${change}/${index}`;
+
     return {
       address,
       path,
