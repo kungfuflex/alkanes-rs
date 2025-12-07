@@ -1,7 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::{
     check_and_upgrade_precompiled, genesis, genesis_alkane_upgrade_bytes, is_genesis, setup_diesel,
-    setup_frbtc, setup_frsigil,
+    setup_frbtc, setup_frsigil, setup_ftrbtc,
 };
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
@@ -99,6 +99,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     setup_diesel(block)?;
     setup_frbtc(block)?;
     setup_frsigil(block)?;
+    setup_ftrbtc(block)?;
     check_and_upgrade_precompiled(height)?;
     FuelTank::initialize(&block, height);
     // Get the set of updated addresses from the indexing process

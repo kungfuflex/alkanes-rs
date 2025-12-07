@@ -18,3 +18,4 @@ pub mod fr_btc_build;
 pub mod fr_btc_build_v1_1_0;
 pub mod fr_sigil_build;
 pub mod free_mint_build;
+pub mod ftr_btc_build;
