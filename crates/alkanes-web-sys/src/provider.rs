@@ -187,8 +187,9 @@ impl WebProvider {
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
+            jsonrpc_headers: Vec::new(),
         };
-        
+
         // Apply any overrides from config object
         if let Some(cfg) = config {
             if !cfg.is_null() && !cfg.is_undefined() {
@@ -858,6 +859,18 @@ impl WebProvider {
         let provider = self.clone();
         future_to_promise(async move {
             provider.trace(&outpoint).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = traceProtostones)]
+    pub fn trace_protostones_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.trace_protostones(&txid).await
                 .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
                 .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
         })
@@ -2373,8 +2386,9 @@ impl WebProvider {
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
+            jsonrpc_headers: Vec::new(),
         };
- 
+
          Ok(Self {
             rpc_config,
             network: params.network,
@@ -2402,6 +2416,7 @@ impl WebProvider {
            data_api_url: None,
            subfrost_api_key: None,
            timeout_seconds: 600,
+           jsonrpc_headers: Vec::new(),
        };
        
        Ok(Self {
@@ -2441,6 +2456,7 @@ impl WebProvider {
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
+            jsonrpc_headers: Vec::new(),
         };
 
         Ok(Self {
@@ -4187,10 +4203,52 @@ impl AlkanesProvider for WebProvider {
 
     async fn trace(&self, outpoint: &str) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
         use prost::Message;
-        let result = self.call(&self.sandshrew_rpc_url(), "alkanes_trace", serde_json::json!([outpoint]), 1).await?;
-        let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace response".to_string()))?;
-        let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
-        alkanes_cli_common::proto::alkanes::Trace::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
+        use alkanes_cli_common::proto::alkanes as alkanes_pb;
+        use alkanes_cli_common::proto::protorune as protorune_pb;
+        use core::str::FromStr;
+        use bitcoin::hashes::Hash;
+
+        // Parse outpoint string "txid:vout"
+        let parts: Vec<&str> = outpoint.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::InvalidParameters("Invalid outpoint format. Expected 'txid:vout'".to_string()));
+        }
+        let txid = bitcoin::Txid::from_str(parts[0])
+            .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid txid: {}", e)))?;
+        let vout = parts[1].parse::<u32>()
+            .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid vout: {}", e)))?;
+
+        // Encode outpoint as protobuf
+        let mut out_point_pb = protorune_pb::Outpoint::default();
+        out_point_pb.txid = txid.to_byte_array().to_vec();
+        out_point_pb.vout = vout;
+        let hex_input = format!("0x{}", hex::encode(out_point_pb.encode_to_vec()));
+
+        // Call metashrew_view with "trace" view function
+        let rpc_params = serde_json::json!(["trace", hex_input, "latest"]);
+        let result = self.call(&self.sandshrew_rpc_url(), "metashrew_view", rpc_params, 1).await?;
+
+        let hex_response = result.as_str().ok_or_else(|| AlkanesError::RpcError("metashrew_view trace response was not a string".to_string()))?;
+        let response_bytes = hex::decode(hex_response.strip_prefix("0x").unwrap_or(hex_response))?;
+
+        if response_bytes.is_empty() {
+            return Ok(alkanes_pb::Trace::default());
+        }
+
+        // The response is an AlkanesTrace protobuf, not a full Trace wrapper
+        let alkanes_trace = alkanes_pb::AlkanesTrace::decode(response_bytes.as_slice())
+            .map_err(|e| AlkanesError::Serialization(format!("Failed to decode AlkanesTrace: {}", e)))?;
+
+        // Wrap it in a Trace message with the outpoint
+        let mut alkanes_outpoint = alkanes_pb::Outpoint::default();
+        alkanes_outpoint.txid = out_point_pb.txid.clone();
+        alkanes_outpoint.vout = out_point_pb.vout;
+
+        let mut trace = alkanes_pb::Trace::default();
+        trace.outpoint = Some(alkanes_outpoint);
+        trace.trace = Some(alkanes_trace);
+
+        Ok(trace)
     }
     async fn get_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::BlockResponse> {
         use prost::Message;
