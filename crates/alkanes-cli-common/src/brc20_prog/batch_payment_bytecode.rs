@@ -64,7 +64,7 @@ pub fn generate_batch_payment_fetcher_bytecode(
     // 0x1020: write pointer (where next payment struct will be written)
     // 0x1040: offsets write pointer (where next offset entry will be written)
     // 0x2000: start of offsets array
-    // 0x3000: start of payment data
+    // 0x4000: start of payment data (must not overlap with offsets array at 0x2000)
 
     let builder = evm_asm_interpolator!([
         // ============================================
@@ -74,7 +74,7 @@ pub fn generate_batch_payment_fetcher_bytecode(
         0x1000,              // Memory location for count
         "mstore",
 
-        0x3000,              // Initial data write pointer (payment structs start here)
+        0x4000,              // Initial data write pointer (payment structs start here)
         0x1020,              // Memory location for data pointer
         "mstore",
 
@@ -217,11 +217,11 @@ pub fn generate_batch_payment_fetcher_bytecode(
             0x1020,
             "mload",             // [write_ptr, struct_size, actual_index]
 
-            // Calculate offset for this payment relative to data start (0x3000)
-            // offset = write_ptr - 0x3000
+            // Calculate offset for this payment relative to data start (0x4000)
+            // offset = write_ptr - 0x4000
             "dup1",              // [write_ptr, write_ptr, struct_size, actual_index]
-            0x3000,
-            "swap1",             // [write_ptr, 0x3000, write_ptr, struct_size, actual_index]
+            0x4000,
+            "swap1",             // [write_ptr, 0x4000, write_ptr, struct_size, actual_index]
             "sub",               // [offset, write_ptr, struct_size, actual_index]
 
             // Store offset in offsets array
@@ -336,11 +336,11 @@ pub fn generate_batch_payment_fetcher_bytecode(
             "jumpi",
 
             // Build ABI-encoded array:
-            // The offsets are at 0x2000, data starts at 0x3000
+            // The offsets are at 0x2000, data starts at 0x4000
             // Final format: [array_offset=0x20][length][offset0][offset1]...[data0][data1]...
             //
             // We need to adjust offsets to be relative to the start of the offsets section
-            // Current offsets are relative to 0x3000
+            // Current offsets are relative to 0x4000
             // We need them relative to the start of the array content
             //
             // Array content layout after length:
@@ -351,6 +351,8 @@ pub fn generate_batch_payment_fetcher_bytecode(
             // Stack: [count]
 
             // Calculate offset adjustment: count * 32
+            // Offsets in ABI encoding are relative to the start of the offsets array (after length)
+            // So we need to add count*32 (size of all offsets) to each raw offset
             "dup1",              // [count, count]
             0x20,
             "mul",               // [count*32, count]
@@ -403,100 +405,24 @@ pub fn generate_batch_payment_fetcher_bytecode(
                 "pop",           // [adjustment, count]
                 "pop",           // [count]
 
-                // IMPORTANT: Reverse the offsets array!
-                // Since we iterated backwards through payments but stored offsets forward,
-                // offset[0] currently points to payment[length-1] instead of payment[0].
-                // We need to reverse the array so the ABI encoding is correct.
+                // NOTE: Payments are stored in reverse order (newest first) because we iterate
+                // backwards through the payments array. The Rust parsing code will reverse
+                // the resulting Vec to get chronological order.
                 //
-                // Reverse in-place: swap offset[i] with offset[count-1-i] for i < count/2
                 // Stack: [count]
 
-                "dup1",          // [count, count]
-                0x02,
-                "swap1",         // [count, 2, count]
-                "div",           // [count/2, count] = number of swaps needed
-
-                // Stack: [swaps_needed, count]
-                0x00,            // [i=0, swaps_needed, count]
-
-                "reverse_loop",
-                "jump",
-
-                ["reverse_loop", [
-                    // Stack: [i, swaps_needed, count]
-                    "dup2",      // [swaps_needed, i, swaps_needed, count]
-                    "dup2",      // [i, swaps_needed, i, swaps_needed, count]
-                    "lt",        // [i < swaps_needed, i, swaps_needed, count]
-                    "iszero",    // [i >= swaps_needed, i, swaps_needed, count]
-                    "reverse_done",
-                    "jumpi",
-
-                    // Calculate left pointer: 0x2000 + i*32
-                    "dup1",      // [i, i, swaps_needed, count]
-                    0x20,
-                    "mul",       // [i*32, i, swaps_needed, count]
-                    0x2000,
-                    "add",       // [left_ptr, i, swaps_needed, count]
-
-                    // Calculate right pointer: 0x2000 + (count-1-i)*32
-                    "dup4",      // [count, left_ptr, i, swaps_needed, count]
-                    0x01,
-                    "swap1",     // [count, 1, left_ptr, i, swaps_needed, count]
-                    "sub",       // [count-1, left_ptr, i, swaps_needed, count]
-                    "dup4",      // [i, count-1, left_ptr, i, swaps_needed, count]
-                    "swap1",     // [count-1, i, left_ptr, i, swaps_needed, count]
-                    "sub",       // [count-1-i, left_ptr, i, swaps_needed, count]
-                    0x20,
-                    "mul",       // [(count-1-i)*32, left_ptr, i, swaps_needed, count]
-                    0x2000,
-                    "add",       // [right_ptr, left_ptr, i, swaps_needed, count]
-
-                    // Stack: [right_ptr, left_ptr, i, swaps_needed, count]
-                    // Load values
-                    "dup1",      // [right_ptr, right_ptr, left_ptr, i, swaps_needed, count]
-                    "mload",     // [right_val, right_ptr, left_ptr, i, swaps_needed, count]
-                    "dup3",      // [left_ptr, right_val, right_ptr, left_ptr, i, swaps_needed, count]
-                    "mload",     // [left_val, right_val, right_ptr, left_ptr, i, swaps_needed, count]
-
-                    // Store left_val at right_ptr
-                    // Stack: [left_val, right_val, right_ptr, left_ptr, i, swaps_needed, count]
-                    // dup3 gets right_ptr (position 2, 1-indexed = 3)
-                    "dup3",      // [right_ptr, left_val, right_val, right_ptr, left_ptr, i, swaps_needed, count]
-                    "mstore",    // mstore(right_ptr, left_val) -> Stack: [right_val, right_ptr, left_ptr, i, swaps_needed, count]
-
-                    // Store right_val at left_ptr
-                    // Stack: [right_val, right_ptr, left_ptr, i, swaps_needed, count]
-                    // dup3 gets left_ptr (position 2, 1-indexed = 3)
-                    "dup3",      // [left_ptr, right_val, right_ptr, left_ptr, i, swaps_needed, count]
-                    "mstore",    // mstore(left_ptr, right_val) -> Stack: [right_ptr, left_ptr, i, swaps_needed, count]
-                    "pop",       // [left_ptr, i, swaps_needed, count]
-                    "pop",       // [i, swaps_needed, count]
-
-                    // Increment i
-                    0x01,
-                    "add",       // [i+1, swaps_needed, count]
-
-                    "reverse_loop",
-                    "jump"
-                ]],
-
-                ["reverse_done", [
-                    // Stack: [i, swaps_needed, count]
-                    "pop",       // [swaps_needed, count]
-                    "pop",       // [count]
-
-                    // Now build the final output
+                // Now build the final output
                 // We need to return: [0x20][count][offsets...][data...]
                 //
                 // Currently:
                 // - Offsets are at 0x2000 (count * 32 bytes)
-                // - Data is at 0x3000 to write_ptr
+                // - Data is at 0x4000 to write_ptr
                 //
                 // We'll build output at 0x1800:
                 // 0x1800: 0x20 (offset to array data)
                 // 0x1820: count
                 // 0x1840: offsets (copied from 0x2000)
-                // 0x1840 + count*32: data (copied from 0x3000)
+                // 0x1840 + count*32: data (copied from 0x4000)
 
                 // Stack: [count]
 
@@ -559,8 +485,8 @@ pub fn generate_batch_payment_fetcher_bytecode(
                     "pop",       // [remaining, offsets_size, count]
                     "pop",       // [offsets_size, count]
 
-                    // Now copy data from 0x3000 to 0x1840 + offsets_size
-                    // Data size = write_ptr - 0x3000
+                    // Now copy data from 0x4000 to 0x1840 + offsets_size
+                    // Data size = write_ptr - 0x4000
 
                     // Calculate data destination
                     0x1840,
@@ -569,14 +495,14 @@ pub fn generate_batch_payment_fetcher_bytecode(
                     // Get data size
                     0x1020,
                     "mload",     // [write_ptr, data_dest, count]
-                    0x3000,
+                    0x4000,
                     "swap1",
                     "sub",       // [data_size, data_dest, count]
 
                     // Stack: [data_size, data_dest, count]
                     "dup1",      // [data_size, data_size, data_dest, count]
-                    0x3000,      // [0x3000, data_size, data_size, data_dest, count]
-                    "dup4",      // [data_dest, 0x3000, data_size, data_size, data_dest, count]
+                    0x4000,      // [0x4000, data_size, data_size, data_dest, count]
+                    "dup4",      // [data_dest, 0x4000, data_size, data_size, data_dest, count]
 
                     "data_copy_loop",
                     "jump",
@@ -640,7 +566,6 @@ pub fn generate_batch_payment_fetcher_bytecode(
                         "return"
                     ]]
                 ]]
-            ]]
             ]],
 
             ["return_empty", [
