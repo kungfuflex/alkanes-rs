@@ -459,12 +459,17 @@ pub fn generate_batch_payment_fetcher_bytecode(
                     "mload",     // [left_val, right_val, right_ptr, left_ptr, i, swaps_needed, count]
 
                     // Store left_val at right_ptr
+                    // Stack: [left_val, right_val, right_ptr, left_ptr, i, swaps_needed, count]
+                    // dup3 gets right_ptr (position 2, 1-indexed = 3)
                     "dup3",      // [right_ptr, left_val, right_val, right_ptr, left_ptr, i, swaps_needed, count]
-                    "mstore",    // Stack: [right_val, right_ptr, left_ptr, i, swaps_needed, count]
+                    "mstore",    // mstore(right_ptr, left_val) -> Stack: [right_val, right_ptr, left_ptr, i, swaps_needed, count]
 
                     // Store right_val at left_ptr
-                    "swap2",     // [left_ptr, right_ptr, right_val, i, swaps_needed, count]
-                    "mstore",    // Stack: [right_ptr, i, swaps_needed, count]
+                    // Stack: [right_val, right_ptr, left_ptr, i, swaps_needed, count]
+                    // dup3 gets left_ptr (position 2, 1-indexed = 3)
+                    "dup3",      // [left_ptr, right_val, right_ptr, left_ptr, i, swaps_needed, count]
+                    "mstore",    // mstore(left_ptr, right_val) -> Stack: [right_ptr, left_ptr, i, swaps_needed, count]
+                    "pop",       // [left_ptr, i, swaps_needed, count]
                     "pop",       // [i, swaps_needed, count]
 
                     // Increment i

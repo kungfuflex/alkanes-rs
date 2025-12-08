@@ -472,16 +472,53 @@ pub fn parse_abi_encoded_payments(bytes: &[u8]) -> Result<Vec<crate::brc20_prog:
         let mut txid = [0u8; 32];
         txid.copy_from_slice(&bytes[actual_offset..actual_offset + 32]);
 
-        let vout = U256::from_be_slice(&bytes[actual_offset + 32..actual_offset + 64]).to::<u32>();
-        let value = U256::from_be_slice(&bytes[actual_offset + 64..actual_offset + 96]).to::<u64>();
-        let recipient_offset_in_struct = U256::from_be_slice(&bytes[actual_offset + 96..actual_offset + 128]).to::<usize>();
-        let height = U256::from_be_slice(&bytes[actual_offset + 128..actual_offset + 160]).to::<u64>();
+        let vout_u256 = U256::from_be_slice(&bytes[actual_offset + 32..actual_offset + 64]);
+        let value_u256 = U256::from_be_slice(&bytes[actual_offset + 64..actual_offset + 96]);
+        let recipient_offset_u256 = U256::from_be_slice(&bytes[actual_offset + 96..actual_offset + 128]);
+        let height_u256 = U256::from_be_slice(&bytes[actual_offset + 128..actual_offset + 160]);
+
+        // Use try_into to safely convert, skip malformed payments
+        let vout: u32 = match vout_u256.try_into() {
+            Ok(v) => v,
+            Err(_) => {
+                log::warn!("[parse_abi_encoded_payments] Payment {}: vout overflow ({}), skipping", i, vout_u256);
+                continue;
+            }
+        };
+        let value: u64 = match value_u256.try_into() {
+            Ok(v) => v,
+            Err(_) => {
+                log::warn!("[parse_abi_encoded_payments] Payment {}: value overflow ({}), skipping", i, value_u256);
+                continue;
+            }
+        };
+        let recipient_offset_in_struct: usize = match recipient_offset_u256.try_into() {
+            Ok(v) => v,
+            Err(_) => {
+                log::warn!("[parse_abi_encoded_payments] Payment {}: recipient_offset overflow ({}), skipping", i, recipient_offset_u256);
+                continue;
+            }
+        };
+        let height: u64 = match height_u256.try_into() {
+            Ok(v) => v,
+            Err(_) => {
+                log::warn!("[parse_abi_encoded_payments] Payment {}: height overflow ({}), skipping", i, height_u256);
+                continue;
+            }
+        };
 
         // Read recipient bytes
         let recipient_abs_offset = actual_offset + recipient_offset_in_struct;
 
         let recipient = if recipient_abs_offset + 32 <= bytes.len() {
-            let recipient_len = U256::from_be_slice(&bytes[recipient_abs_offset..recipient_abs_offset + 32]).to::<usize>();
+            let recipient_len_u256 = U256::from_be_slice(&bytes[recipient_abs_offset..recipient_abs_offset + 32]);
+            let recipient_len: usize = match recipient_len_u256.try_into() {
+                Ok(v) => v,
+                Err(_) => {
+                    log::warn!("[parse_abi_encoded_payments] Payment {}: recipient_len overflow ({}), skipping", i, recipient_len_u256);
+                    continue;
+                }
+            };
             let recipient_data_start = recipient_abs_offset + 32;
             let recipient_data_end = recipient_data_start + recipient_len;
 
