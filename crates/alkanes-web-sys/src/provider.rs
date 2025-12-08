@@ -1997,9 +1997,11 @@ impl WebProvider {
             
             let response = provider.rest_call(&url, "get-pool-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pool history failed: {}", e)))?;
-            
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+
+            let json_str = serde_json::to_string(&response)
+                .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+            js_sys::JSON::parse(&json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
         })
     }
 
@@ -2020,8 +2022,11 @@ impl WebProvider {
             let response = provider.rest_call(&base_url, "get-pools", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pools failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            // Use JSON.parse to convert serde_json::Value to JsValue correctly
+            let json_str = serde_json::to_string(&response)
+                .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+            js_sys::JSON::parse(&json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
         })
     }
 
@@ -2036,8 +2041,10 @@ impl WebProvider {
             let response = provider.rest_call(&base_url, "get-alkanes-by-address", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get alkanes by address failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            let json_str = serde_json::to_string(&response)
+                .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+            js_sys::JSON::parse(&json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
         })
     }
 
@@ -2094,9 +2101,11 @@ impl WebProvider {
             
             let response = provider.rest_call(&url, "get-swap-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get swap history failed: {}", e)))?;
-            
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+
+            let json_str = serde_json::to_string(&response)
+                .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+            js_sys::JSON::parse(&json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
         })
     }
 
@@ -2193,9 +2202,11 @@ impl WebProvider {
             
             let response = provider.rest_call(&url, "get-reserves", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get reserves failed: {}", e)))?;
-            
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+
+            let json_str = serde_json::to_string(&response)
+                .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+            js_sys::JSON::parse(&json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
         })
     }
 
