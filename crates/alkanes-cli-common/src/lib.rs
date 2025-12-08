@@ -89,6 +89,9 @@ pub mod subfrost;
 #[cfg(feature = "std")]
 pub mod dataapi;
 
+#[cfg(feature = "std")]
+pub mod opi;
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock_provider;
 
