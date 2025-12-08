@@ -128,16 +128,14 @@ pub fn handle_message(
                 inner: response.into(),
                 fuel_used: gas_used,
             }));
-            if let Err(e) = save_trace(
+            save_trace(
                 &OutPoint {
                     txid: parcel.transaction.compute_txid(),
                     vout: parcel.vout,
                 },
                 parcel.height,
                 trace.clone(),
-            ) {
-                println!("Warning: Failed to save trace: {:?}", e);
-            }
+            ).expect(&format!("save_trace failed for tx {} vout {}", parcel.transaction.compute_txid(), parcel.vout));
 
             Ok((response_alkanes.into(), combined))
         })
@@ -184,16 +182,14 @@ pub fn handle_message(
                 inner: response,
                 fuel_used: u64::MAX,
             }));
-            if let Err(trace_err) = save_trace(
+            save_trace(
                 &OutPoint {
                     txid: parcel.transaction.compute_txid(),
                     vout: parcel.vout,
                 },
                 parcel.height,
                 cloned,
-            ) {
-                println!("Warning: Failed to save trace on revert: {:?}", trace_err);
-            }
+            ).expect(&format!("save_trace on revert failed for tx {} vout {}", parcel.transaction.compute_txid(), parcel.vout));
             Err(e)
         })
 }

@@ -1049,7 +1049,7 @@ impl Protorune {
                         },
                         height,
                         trace,
-                    )?;
+                    ).expect(&format!("save_trace failed for tx {} vout {}", tx.compute_txid(), shadow_vout));
 
                     Ok(())
                 })

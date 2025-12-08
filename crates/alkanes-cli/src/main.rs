@@ -93,11 +93,14 @@ async fn main() -> Result<()> {
     let brc20_prog_rpc_url = alkanes_args.brc20_prog_rpc_url.clone()
         .or_else(|| alkanes_args.rpc_config.get_default_brc20_prog_rpc_url());
 
+    // Get JSON-RPC headers (used by brc20-prog RPC client)
+    let jsonrpc_headers = alkanes_args.rpc_config.get_jsonrpc_headers();
+
     // Execute other commands
-    execute_command(&mut system, args.command, brc20_prog_rpc_url, args.frbtc_address.clone()).await
+    execute_command(&mut system, args.command, brc20_prog_rpc_url, jsonrpc_headers, args.frbtc_address.clone()).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
+async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, jsonrpc_headers: Vec<(String, String)>, frbtc_address: Option<String>) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
@@ -108,7 +111,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
         Commands::Lua(cmd) => execute_lua_command(system.provider(), cmd).await,
-        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url, frbtc_address).await,
+        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url, jsonrpc_headers, frbtc_address).await,
         Commands::Dataapi(_) => {
             // Dataapi is handled in main() because it doesn't need the System trait
             unreachable!("Dataapi commands should be handled in main()")
@@ -487,14 +490,25 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
 async fn execute_opi_command(args: &DeezelCommands, command: OpiCommands) -> Result<()> {
     use alkanes_cli_common::opi::{OpiClient, OpiConfig};
 
-    // Determine the OPI URL based on --opi-url flag or provider network
+    // Determine the OPI URL based on --opi-url flag, jsonrpc-url, or provider network
     let opi_url = if let Some(ref url) = args.opi_url {
         url.clone()
+    } else if let Some(ref jsonrpc_url) = args.jsonrpc_url {
+        // Derive OPI URL from jsonrpc URL
+        // If URL ends with /jsonrpc or /v4/jsonrpc, replace with /opi or /v4/opi
+        if jsonrpc_url.ends_with("/jsonrpc") {
+            format!("{}/opi", jsonrpc_url.trim_end_matches("/jsonrpc"))
+        } else if jsonrpc_url.ends_with("/v4/jsonrpc") {
+            format!("{}/v4/opi", jsonrpc_url.trim_end_matches("/v4/jsonrpc"))
+        } else {
+            // Just append /opi to the base URL
+            format!("{}/opi", jsonrpc_url.trim_end_matches('/'))
+        }
     } else {
         OpiConfig::default_url_for_network(&args.provider)
     };
 
-    let client = OpiClient::new(opi_url);
+    let client = OpiClient::with_headers(opi_url, args.opi_headers.clone());
 
     match command {
         OpiCommands::BlockHeight => {
@@ -560,6 +574,150 @@ async fn execute_opi_command(args: &DeezelCommands, command: OpiCommands) -> Res
         OpiCommands::Raw { endpoint } => {
             let result = alkanes_cli_common::opi::execute_opi_raw(&client, &endpoint).await?;
             println!("{}", result);
+        }
+
+        // ==================== RUNES ====================
+        OpiCommands::Runes(runes_cmd) => {
+            use crate::commands::OpiRunesCommands;
+            match runes_cmd {
+                OpiRunesCommands::BlockHeight => {
+                    match client.get_runes_block_height().await? {
+                        Some(h) => println!("{}", h),
+                        None => println!("null"),
+                    }
+                }
+                OpiRunesCommands::BalanceOnBlock { block_height, pkscript, rune_id } => {
+                    let result = client.get_runes_balance_on_block(block_height, &pkscript, &rune_id).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::ActivityOnBlock { block_height } => {
+                    let result = client.get_runes_activity_on_block(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::CurrentBalance { address, pkscript } => {
+                    let result = client.get_runes_current_balance_of_wallet(address.as_deref(), pkscript.as_deref()).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::UnspentOutpoints { address, pkscript } => {
+                    let result = client.get_runes_unspent_outpoints_of_wallet(address.as_deref(), pkscript.as_deref()).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::Holders { rune_id } => {
+                    let result = client.get_runes_holders(&rune_id).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::HashOfAllActivity { block_height } => {
+                    let result = client.get_runes_hash_of_all_activity(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::Event { txid } => {
+                    let result = client.get_runes_event(&txid).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+
+        // ==================== BITMAP ====================
+        OpiCommands::Bitmap(bitmap_cmd) => {
+            use crate::commands::OpiBitmapCommands;
+            match bitmap_cmd {
+                OpiBitmapCommands::BlockHeight => {
+                    match client.get_bitmap_block_height().await? {
+                        Some(h) => println!("{}", h),
+                        None => println!("null"),
+                    }
+                }
+                OpiBitmapCommands::HashOfAllActivity { block_height } => {
+                    let result = client.get_bitmap_hash_of_all_activity(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiBitmapCommands::HashOfAllBitmaps => {
+                    let result = client.get_bitmap_hash_of_all_bitmaps().await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiBitmapCommands::InscriptionId { bitmap } => {
+                    let result = client.get_bitmap_inscription_id(&bitmap).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+
+        // ==================== POW20 ====================
+        OpiCommands::Pow20(pow20_cmd) => {
+            use crate::commands::OpiPow20Commands;
+            match pow20_cmd {
+                OpiPow20Commands::BlockHeight => {
+                    match client.get_pow20_block_height().await? {
+                        Some(h) => println!("{}", h),
+                        None => println!("null"),
+                    }
+                }
+                OpiPow20Commands::BalanceOnBlock { block_height, pkscript, ticker } => {
+                    let result = client.get_pow20_balance_on_block(block_height, &pkscript, &ticker).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::ActivityOnBlock { block_height } => {
+                    let result = client.get_pow20_activity_on_block(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::CurrentBalance { ticker, address, pkscript } => {
+                    let result = client.get_pow20_current_balance_of_wallet(&ticker, address.as_deref(), pkscript.as_deref()).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::ValidTxNotesOfWallet { address, pkscript } => {
+                    let result = client.get_pow20_valid_tx_notes_of_wallet(address.as_deref(), pkscript.as_deref()).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::ValidTxNotesOfTicker { ticker } => {
+                    let result = client.get_pow20_valid_tx_notes_of_ticker(&ticker).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::Holders { ticker } => {
+                    let result = client.get_pow20_holders(&ticker).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::HashOfAllActivity { block_height } => {
+                    let result = client.get_pow20_hash_of_all_activity(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::HashOfAllCurrentBalances => {
+                    let result = client.get_pow20_hash_of_all_current_balances().await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+
+        // ==================== SNS ====================
+        OpiCommands::Sns(sns_cmd) => {
+            use crate::commands::OpiSnsCommands;
+            match sns_cmd {
+                OpiSnsCommands::BlockHeight => {
+                    match client.get_sns_block_height().await? {
+                        Some(h) => println!("{}", h),
+                        None => println!("null"),
+                    }
+                }
+                OpiSnsCommands::HashOfAllActivity { block_height } => {
+                    let result = client.get_sns_hash_of_all_activity(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiSnsCommands::HashOfAllRegisteredNames => {
+                    let result = client.get_sns_hash_of_all_registered_names().await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiSnsCommands::Info { name } => {
+                    let result = client.get_sns_info(&name).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiSnsCommands::InscriptionsOfDomain { domain } => {
+                    let result = client.get_sns_inscriptions_of_domain(&domain).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiSnsCommands::RegisteredNamespaces => {
+                    let result = client.get_sns_registered_namespaces().await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
         }
     }
     Ok(())
@@ -4082,7 +4240,7 @@ async fn execute_protorunes_command(
 }
 
 
-async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog, brc20_prog_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
+async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog, brc20_prog_rpc_url: Option<String>, jsonrpc_headers: Vec<(String, String)>, frbtc_address: Option<String>) -> Result<()> {
     use commands::Brc20Prog;
     use alkanes_cli_common::brc20_prog::{
         Brc20ProgExecutor, Brc20ProgExecuteParams, Brc20ProgDeployInscription,
@@ -4355,7 +4513,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let code = client.eth_get_code(&address).await?;
             
             if raw {
@@ -4379,7 +4537,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let params = EthCallParams { to, data, from, gas: None, gas_price: None, value: None };
             let result = client.eth_call(params, block.as_deref()).await?;
             
@@ -4397,7 +4555,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let balance = client.eth_get_balance(&address, &block).await?;
             
             // Parse the hex balance
@@ -4426,7 +4584,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let params = EthCallParams { to, data, from, gas: None, gas_price: None, value: None };
             let gas = client.eth_estimate_gas(params, block.as_deref()).await?;
             
@@ -4445,7 +4603,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let block_num = client.eth_block_number().await?;
             
             if raw {
@@ -4463,7 +4621,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let block_info = client.eth_get_block_by_number(&block, full).await?;
             
             if raw {
@@ -4485,7 +4643,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let block_info = client.eth_get_block_by_hash(&hash, full).await?;
             
             if raw {
@@ -4507,7 +4665,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let nonce = client.eth_get_transaction_count(&address, &block).await?;
             
             if raw {
@@ -4525,7 +4683,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let tx = client.eth_get_transaction_by_hash(&hash).await?;
             
             if raw {
@@ -4555,7 +4713,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let receipt = client.eth_get_transaction_receipt(&hash).await?;
             
             if raw {
@@ -4587,7 +4745,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let value = client.eth_get_storage_at(&address, &position).await?;
             
             if raw {
@@ -4605,7 +4763,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             
             let topics_parsed = if let Some(topics_str) = topics {
                 Some(serde_json::from_str(&topics_str)?)
@@ -4647,7 +4805,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let chain_id = client.eth_chain_id().await?;
             
             if raw {
@@ -4665,7 +4823,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let gas_price = client.eth_gas_price().await?;
             
             if raw {
@@ -4681,7 +4839,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let version = client.brc20_version().await?;
             
             if raw {
@@ -4697,7 +4855,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let receipt = client.brc20_get_tx_receipt_by_inscription_id(&inscription_id).await?;
             
             if raw {
@@ -4723,7 +4881,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let inscription_id = client.brc20_get_inscription_id_by_tx_hash(&tx_hash).await?;
             
             if raw {
@@ -4743,7 +4901,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let inscription_id = client.brc20_get_inscription_id_by_contract_address(&address).await?;
             
             if raw {
@@ -4763,7 +4921,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let balance = client.brc20_balance(&pkscript, &ticker).await?;
             
             if raw {
@@ -4779,7 +4937,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let trace = client.debug_trace_transaction(&hash).await?;
             
             if raw {
@@ -4803,7 +4961,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let content = client.txpool_content().await?;
             
             if raw {
@@ -4821,7 +4979,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let version = client.web3_client_version().await?;
             
             if raw {
