@@ -184,15 +184,16 @@ impl SystemAlkanes {
 
         // Create provider with the resolved URLs
         log::info!(
-            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, jsonrpc: {:?}, titan_api: {:?}, esplora: {:?}, brc20_prog_rpc: {:?}",
+            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, jsonrpc: {:?}, titan_api: {:?}, esplora: {:?}, brc20_prog_rpc: {:?}, jsonrpc_headers: {:?}",
             &bitcoin_rpc_url,
             &metashrew_rpc_url,
             &jsonrpc_url,
             &args.rpc_config.titan_api_url,
             &esplora_url,
-            &brc20_prog_rpc_url
+            &brc20_prog_rpc_url,
+            &args.rpc_config.jsonrpc_headers
         );
-        let mut provider = ConcreteProvider::new(
+        let mut provider = ConcreteProvider::new_with_headers(
             bitcoin_rpc_url,
             metashrew_rpc_url,
             jsonrpc_url,
@@ -201,6 +202,7 @@ impl SystemAlkanes {
             brc20_prog_rpc_url,
             args.rpc_config.provider.clone(),
             wallet_path_opt.map(std::path::PathBuf::from),
+            args.rpc_config.jsonrpc_headers.clone(),
         )
         .await?;
 

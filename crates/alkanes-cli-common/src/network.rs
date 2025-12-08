@@ -136,6 +136,11 @@ pub struct RpcConfig {
     /// RPC timeout in seconds
     #[arg(long, default_value = "600")]
     pub timeout_seconds: u64,
+
+    /// Custom headers for JSON-RPC requests (can be specified multiple times)
+    /// Format: "Header-Name: Header-Value" (e.g., "Host: signet.subfrost.io")
+    #[arg(long = "jsonrpc-header", value_name = "HEADER")]
+    pub jsonrpc_headers: Vec<String>,
 }
 
 /// Type of RPC backend to use
@@ -178,6 +183,23 @@ impl RpcConfig {
         self.subfrost_api_key.clone().or_else(|| {
             std::env::var("SUBFROST_API_KEY").ok()
         })
+    }
+
+    /// Get parsed JSON-RPC headers as (name, value) pairs
+    /// Headers should be in format "Header-Name: Header-Value"
+    pub fn get_jsonrpc_headers(&self) -> Vec<(String, String)> {
+        self.jsonrpc_headers
+            .iter()
+            .filter_map(|header| {
+                let parts: Vec<&str> = header.splitn(2, ':').collect();
+                if parts.len() == 2 {
+                    Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
+                } else {
+                    log::warn!("Invalid header format (expected 'Name: Value'): {}", header);
+                    None
+                }
+            })
+            .collect()
     }
     
     /// Get default JSON-RPC URL for the network
@@ -359,6 +381,7 @@ impl Default for RpcConfig {
             data_api_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
+            jsonrpc_headers: Vec::new(),
         }
     }
 }

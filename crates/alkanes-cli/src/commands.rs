@@ -45,6 +45,10 @@ pub struct DeezelCommands {
     /// JSON-RPC URL (defaults based on provider: subfrost-regtest, signet, mainnet)
     #[arg(long)]
     pub jsonrpc_url: Option<String>,
+    /// Custom headers for JSON-RPC requests (can be specified multiple times)
+    /// Format: "Header-Name: Header-Value" (e.g., "Host: signet.subfrost.io")
+    #[arg(long = "jsonrpc-header", value_name = "HEADER")]
+    pub jsonrpc_headers: Vec<String>,
     /// Titan API URL (alternative to jsonrpc-url)
     #[arg(long)]
     pub titan_api_url: Option<String>,
@@ -72,6 +76,9 @@ pub struct DeezelCommands {
     /// Data API URL (defaults to http://localhost:4000 for regtest, https://mainnet-api.oyl.gg for mainnet)
     #[arg(long)]
     pub data_api: Option<String>,
+    /// OPI (Open Protocol Indexer) URL (defaults based on network)
+    #[arg(long)]
+    pub opi_url: Option<String>,
     /// Network provider
     #[arg(short, long, default_value = "regtest")]
     pub provider: String,
@@ -116,6 +123,9 @@ pub enum Commands {
     /// DataAPI subcommands - Query data from alkanes-data-api
     #[command(subcommand)]
     Dataapi(DataApiCommand),
+    /// OPI (Open Protocol Indexer) subcommands - BRC-20 indexer queries
+    #[command(subcommand)]
+    Opi(OpiCommands),
     /// Subfrost operations (frBTC unwrap utilities)
     #[command(subcommand)]
     Subfrost(SubfrostCommands),
@@ -1392,6 +1402,98 @@ pub enum DataApiCommand {
     },
 }
 
+/// OPI (Open Protocol Indexer) subcommands
+/// Query BRC-20 indexer for balances, events, and holders
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiCommands {
+    /// Get current indexed block height
+    BlockHeight,
+    /// Get extras indexed block height
+    ExtrasBlockHeight,
+    /// Get database version
+    DbVersion,
+    /// Get event hash version
+    EventHashVersion,
+    /// Get balance at a specific block height
+    BalanceOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: String,
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get all BRC-20 activity for a block
+    ActivityOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get Bitcoin RPC results cached for a block
+    BitcoinRpcResultsOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get current balance of a wallet
+    CurrentBalance {
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get valid TX notes for a wallet
+    ValidTxNotesOfWallet {
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get valid TX notes for a ticker
+    ValidTxNotesOfTicker {
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get holders of a BRC-20 ticker
+    Holders {
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get hash of all activity at a block height
+    HashOfAllActivity {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get hash of all current balances
+    HashOfAllCurrentBalances,
+    /// Get events for an inscription
+    Event {
+        /// Inscription ID
+        #[arg(long)]
+        inscription_id: String,
+    },
+    /// Get client IP (for debugging)
+    Ip,
+    /// Make a raw request to OPI endpoint
+    Raw {
+        /// Endpoint path (e.g., "v1/brc20/block_height")
+        endpoint: String,
+    },
+}
+
 /// Runestone subcommands
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
 pub enum Runestone {
@@ -1755,6 +1857,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 subfrost_api_key: args.subfrost_api_key.clone(),
                 data_api_url: None,  // Not used in deezel commands
                 timeout_seconds: 600,
+                jsonrpc_headers: args.jsonrpc_headers.clone(),
             },
             magic: None,
             log_level: "info".to_string(),

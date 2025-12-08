@@ -13,7 +13,7 @@ use serde_json::json;
 
 mod commands;
 mod pretty_print;
-use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands};
+use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands, OpiCommands};
 use alkanes_cli_common::alkanes;
 use pretty_print::*;
 
@@ -75,6 +75,11 @@ async fn main() -> Result<()> {
         return execute_dataapi_command(&args, cmd.clone()).await;
     }
 
+    // Handle OPI commands early (they don't need the System trait)
+    if let Commands::Opi(ref cmd) = args.command {
+        return execute_opi_command(&args, cmd.clone()).await;
+    }
+
     // Convert DeezelCommands to Args
     let alkanes_args = alkanes_cli_common::commands::Args::from(&args);
 
@@ -107,6 +112,10 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Dataapi(_) => {
             // Dataapi is handled in main() because it doesn't need the System trait
             unreachable!("Dataapi commands should be handled in main()")
+        }
+        Commands::Opi(_) => {
+            // OPI is handled in main() because it doesn't need the System trait
+            unreachable!("OPI commands should be handled in main()")
         }
         Commands::Subfrost(cmd) => execute_subfrost_command(system.provider(), cmd).await,
     }
@@ -470,6 +479,87 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                     println!("{}", result);
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+async fn execute_opi_command(args: &DeezelCommands, command: OpiCommands) -> Result<()> {
+    use alkanes_cli_common::opi::{OpiClient, OpiConfig};
+
+    // Determine the OPI URL based on --opi-url flag or provider network
+    let opi_url = if let Some(ref url) = args.opi_url {
+        url.clone()
+    } else {
+        OpiConfig::default_url_for_network(&args.provider)
+    };
+
+    let client = OpiClient::new(opi_url);
+
+    match command {
+        OpiCommands::BlockHeight => {
+            let result = alkanes_cli_common::opi::execute_opi_block_height(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::ExtrasBlockHeight => {
+            let result = alkanes_cli_common::opi::execute_opi_extras_block_height(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::DbVersion => {
+            let result = alkanes_cli_common::opi::execute_opi_db_version(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::EventHashVersion => {
+            let result = alkanes_cli_common::opi::execute_opi_event_hash_version(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::BalanceOnBlock { block_height, pkscript, ticker } => {
+            let result = alkanes_cli_common::opi::execute_opi_balance_on_block(&client, block_height, &pkscript, &ticker).await?;
+            println!("{}", result);
+        }
+        OpiCommands::ActivityOnBlock { block_height } => {
+            let result = alkanes_cli_common::opi::execute_opi_activity_on_block(&client, block_height).await?;
+            println!("{}", result);
+        }
+        OpiCommands::BitcoinRpcResultsOnBlock { block_height } => {
+            let result = alkanes_cli_common::opi::execute_opi_bitcoin_rpc_results_on_block(&client, block_height).await?;
+            println!("{}", result);
+        }
+        OpiCommands::CurrentBalance { ticker, address, pkscript } => {
+            let result = alkanes_cli_common::opi::execute_opi_current_balance(&client, &ticker, address.as_deref(), pkscript.as_deref()).await?;
+            println!("{}", result);
+        }
+        OpiCommands::ValidTxNotesOfWallet { address, pkscript } => {
+            let result = alkanes_cli_common::opi::execute_opi_valid_tx_notes_of_wallet(&client, address.as_deref(), pkscript.as_deref()).await?;
+            println!("{}", result);
+        }
+        OpiCommands::ValidTxNotesOfTicker { ticker } => {
+            let result = alkanes_cli_common::opi::execute_opi_valid_tx_notes_of_ticker(&client, &ticker).await?;
+            println!("{}", result);
+        }
+        OpiCommands::Holders { ticker } => {
+            let result = alkanes_cli_common::opi::execute_opi_holders(&client, &ticker).await?;
+            println!("{}", result);
+        }
+        OpiCommands::HashOfAllActivity { block_height } => {
+            let result = alkanes_cli_common::opi::execute_opi_hash_of_all_activity(&client, block_height).await?;
+            println!("{}", result);
+        }
+        OpiCommands::HashOfAllCurrentBalances => {
+            let result = alkanes_cli_common::opi::execute_opi_hash_of_all_current_balances(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::Event { inscription_id } => {
+            let result = alkanes_cli_common::opi::execute_opi_event(&client, &inscription_id).await?;
+            println!("{}", result);
+        }
+        OpiCommands::Ip => {
+            let result = alkanes_cli_common::opi::execute_opi_ip(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::Raw { endpoint } => {
+            let result = alkanes_cli_common::opi::execute_opi_raw(&client, &endpoint).await?;
+            println!("{}", result);
         }
     }
     Ok(())
