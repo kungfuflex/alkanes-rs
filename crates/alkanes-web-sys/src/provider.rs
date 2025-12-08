@@ -110,6 +110,11 @@ use alkanes_cli_common::index_pointer::StubPointer;
 use alkanes_cli_common::alkanes::balance_sheet::BalanceSheet;
 use core::str::FromStr;
 use bitcoin::hashes::hex::FromHex;
+use once_cell::sync::Lazy;
+
+/// Global secp256k1 context for cryptographic operations
+/// This is initialized once and shared across all WebProvider instances
+static SECP: Lazy<Secp256k1<All>> = Lazy::new(Secp256k1::new);
 
 
 /// Web-compatible provider implementation for browser environments
@@ -522,6 +527,88 @@ impl WebProvider {
         future_to_promise(async move {
             let params: EnhancedExecuteParams = serde_json::from_str(&params_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            provider.execute(params).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Execution failed: {}", e)))
+        })
+    }
+
+    /// Execute an alkanes smart contract using CLI-style string parameters
+    /// This is the recommended method for executing alkanes contracts as it supports
+    /// the same parameter format as alkanes-cli.
+    ///
+    /// # Parameters
+    /// - `to_addresses`: JSON array of recipient addresses
+    /// - `input_requirements`: String format like "B:10000" or "2:0:1000" (alkane block:tx:amount)
+    /// - `protostones`: String format like "[32,0,77]:v0:v0" (cellpack:pointer:refund)
+    /// - `fee_rate`: Optional fee rate in sat/vB
+    /// - `envelope_hex`: Optional envelope data as hex string
+    /// - `options_json`: Optional JSON with additional options (trace_enabled, mine_enabled, auto_confirm, raw_output)
+    #[wasm_bindgen(js_name = alkanesExecuteWithStrings)]
+    pub fn alkanes_execute_with_strings_js(
+        &self,
+        to_addresses_json: String,
+        input_requirements: String,
+        protostones: String,
+        fee_rate: Option<f32>,
+        envelope_hex: Option<String>,
+        options_json: Option<String>,
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::types::EnhancedExecuteParams;
+        use alkanes_cli_common::alkanes::parsing::{parse_input_requirements, parse_protostones};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            // Parse to_addresses from JSON array
+            let to_addresses: Vec<String> = serde_json::from_str(&to_addresses_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid to_addresses JSON: {}", e)))?;
+
+            // Parse input requirements from string format (e.g., "B:10000" or "2:0:1000")
+            let input_reqs = parse_input_requirements(&input_requirements)
+                .map_err(|e| JsValue::from_str(&format!("Invalid input_requirements: {}", e)))?;
+
+            // Parse protostones from string format (e.g., "[32,0,77]:v0:v0")
+            let proto_specs = parse_protostones(&protostones)
+                .map_err(|e| JsValue::from_str(&format!("Invalid protostones: {}", e)))?;
+
+            // Parse envelope data if provided
+            let envelope_data = if let Some(hex) = envelope_hex {
+                Some(hex::decode(&hex)
+                    .map_err(|e| JsValue::from_str(&format!("Invalid envelope hex: {}", e)))?)
+            } else {
+                None
+            };
+
+            // Parse options
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output) = if let Some(opts_json) = options_json {
+                let opts: serde_json::Value = serde_json::from_str(&opts_json)
+                    .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
+                (
+                    opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                    opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                    opts.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                    opts.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                )
+            } else {
+                (false, false, true, false)
+            };
+
+            let params = EnhancedExecuteParams {
+                fee_rate,
+                to_addresses,
+                from_addresses: None,
+                change_address: None,
+                alkanes_change_address: None,
+                input_requirements: input_reqs,
+                protostones: proto_specs,
+                envelope_data,
+                raw_output,
+                trace_enabled,
+                mine_enabled,
+                auto_confirm,
+            };
+
             provider.execute(params).await
                 .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
                 .map_err(|e| JsValue::from_str(&format!("Execution failed: {}", e)))
@@ -1617,31 +1704,53 @@ impl WebProvider {
     /// Create a new wallet with an optional mnemonic phrase
     /// If no mnemonic is provided, a new one will be generated
     /// Returns wallet info including address and mnemonic
+    ///
+    /// Note: This sets the keystore on self synchronously so walletIsLoaded() returns true immediately
     #[wasm_bindgen(js_name = walletCreate)]
-    pub fn wallet_create_js(&mut self, mnemonic: Option<String>, passphrase: Option<String>) -> js_sys::Promise {
-        use alkanes_cli_common::traits::WalletProvider;
-        use alkanes_cli_common::traits::WalletConfig;
-        use wasm_bindgen_futures::future_to_promise;
-        let mut provider = self.clone();
-        let network = self.network;
-        let rpc_url = self.sandshrew_rpc_url();
-        future_to_promise(async move {
-            let config = WalletConfig {
-                network,
-                wallet_path: "default".to_string(),
-                bitcoin_rpc_url: rpc_url.clone(),
-                metashrew_rpc_url: rpc_url,
-                network_params: None,
-            };
-            let wallet_info = provider.create_wallet(config, mnemonic, passphrase).await
-                .map_err(|e| JsValue::from_str(&format!("Create wallet failed: {}", e)))?;
+    pub fn wallet_create_js(&mut self, mnemonic: Option<String>, passphrase: Option<String>) -> std::result::Result<JsValue, JsValue> {
+        use alkanes_cli_common::keystore::Keystore;
 
-            serde_wasm_bindgen::to_value(&serde_json::json!({
-                "address": wallet_info.address,
-                "network": format!("{:?}", wallet_info.network),
-                "mnemonic": wallet_info.mnemonic,
-            })).map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
-        })
+        // Generate or parse mnemonic
+        let mnemonic = if let Some(m) = mnemonic {
+            bip39::Mnemonic::parse_in(bip39::Language::English, &m)
+                .map_err(|e| JsValue::from_str(&format!("Invalid mnemonic: {}", e)))?
+        } else {
+            let mut entropy = [0u8; 32];
+            use rand::RngCore;
+            rand::thread_rng().fill_bytes(&mut entropy);
+            bip39::Mnemonic::from_entropy_in(bip39::Language::English, &entropy)
+                .map_err(|e| JsValue::from_str(&format!("Failed to generate mnemonic: {}", e)))?
+        };
+
+        let pass = passphrase.as_deref().unwrap_or("");
+
+        // Create keystore synchronously so self.keystore is set immediately
+        let keystore = Keystore::new(&mnemonic, self.network, pass, None)
+            .map_err(|e| JsValue::from_str(&format!("Failed to create keystore: {}", e)))?;
+
+        // Derive the taproot address (p2tr) - use BIP86 derivation
+        let addresses = keystore.get_addresses(self.network, "p2tr", 0, 0, 1)
+            .map_err(|e| JsValue::from_str(&format!("Failed to derive addresses: {}", e)))?;
+
+        let address = addresses.first()
+            .ok_or_else(|| JsValue::from_str("Failed to derive taproot address"))?
+            .address
+            .clone();
+
+        // Store the keystore in self - this makes walletIsLoaded() return true
+        let mnemonic_str = mnemonic.to_string();
+        self.keystore = Some(keystore);
+        self.passphrase = passphrase;
+
+        // Return as a plain JS object
+        let result = js_sys::Object::new();
+        js_sys::Reflect::set(&result, &JsValue::from_str("address"), &JsValue::from_str(&address))
+            .map_err(|e| JsValue::from_str(&format!("Failed to set address: {:?}", e)))?;
+        js_sys::Reflect::set(&result, &JsValue::from_str("network"), &JsValue::from_str(&format!("{:?}", self.network)))
+            .map_err(|e| JsValue::from_str(&format!("Failed to set network: {:?}", e)))?;
+        js_sys::Reflect::set(&result, &JsValue::from_str("mnemonic"), &JsValue::from_str(&mnemonic_str))
+            .map_err(|e| JsValue::from_str(&format!("Failed to set mnemonic: {:?}", e)))?;
+        Ok(result.into())
     }
 
     /// Load an existing wallet from storage
@@ -3766,20 +3875,33 @@ impl WalletProvider for WebProvider {
 
 #[async_trait(?Send)]
 impl AddressResolver for WebProvider {
-    async fn resolve_all_identifiers(&self, _input: &str) -> Result<String> {
-        unimplemented!()
+    async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
+        // No identifier resolution needed - return input as-is
+        // Identifiers like @name would need ENS/BNS lookup which we don't support
+        Ok(input.to_string())
     }
-    
+
     fn contains_identifiers(&self, _input: &str) -> bool {
-        unimplemented!()
+        // We don't support any identifier formats (like @name or .btc domains)
+        false
     }
-    
-    async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String> {
-        unimplemented!()
+
+    async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
+        // Derive address from keystore if available
+        if let Some(keystore) = &self.keystore {
+            let addresses = keystore.get_addresses(self.network, address_type, 0, index, 1)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to derive address: {}", e)))?;
+            addresses.first()
+                .map(|a| a.address.clone())
+                .ok_or_else(|| AlkanesError::Wallet("No address found at index".to_string()))
+        } else {
+            Err(AlkanesError::Wallet("Wallet not loaded".to_string()))
+        }
     }
-    
+
     async fn list_identifiers(&self) -> Result<Vec<String>> {
-        unimplemented!()
+        // No identifiers to list
+        Ok(Vec::new())
     }
 }
 
@@ -3989,13 +4111,23 @@ impl MetashrewRpcProvider for WebProvider {
 #[async_trait(?Send)]
 impl MetashrewProvider for WebProvider {
     async fn get_height(&self) -> Result<u64> {
-        unimplemented!()
+        // Use metashrew_height RPC method
+        let result = self.call(&self.sandshrew_rpc_url(), "metashrew_height", JsonValue::Array(vec![]), 1).await?;
+        result.as_u64()
+            .ok_or_else(|| AlkanesError::RpcError("Invalid metashrew height response".to_string()))
     }
-    async fn get_block_hash(&self, _height: u64) -> Result<String> {
-        unimplemented!()
+
+    async fn get_block_hash(&self, height: u64) -> Result<String> {
+        // Use Bitcoin RPC getblockhash
+        let result = self.call(&self.sandshrew_rpc_url(), "getblockhash", serde_json::json!([height]), 1).await?;
+        result.as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
     }
+
     async fn get_state_root(&self, _height: JsonValue) -> Result<String> {
-        unimplemented!()
+        // State root is metashrew-specific, not commonly needed
+        Err(AlkanesError::NotImplemented("get_state_root not implemented for WebProvider".to_string()))
     }
 }
 
@@ -4600,15 +4732,64 @@ impl DeezelProvider for WebProvider {
     }
 
     fn secp(&self) -> &Secp256k1<All> {
-        unimplemented!("WebProvider does not hold a secp context directly. It should be handled in the crypto module.")
+        &SECP
     }
 
-    async fn get_utxo(&self, _outpoint: &OutPoint) -> Result<Option<TxOut>> {
-        unimplemented!()
+    async fn get_utxo(&self, outpoint: &OutPoint) -> Result<Option<TxOut>> {
+        use alkanes_cli_common::traits::EsploraProvider;
+
+        // Fetch the transaction using esplora_tx RPC
+        let txid = outpoint.txid.to_string();
+        let tx_hex = match self.get_transaction_hex(&txid).await {
+            Ok(hex) => hex,
+            Err(_) => return Ok(None), // Transaction not found
+        };
+
+        // Decode the transaction
+        let tx_bytes = hex::decode(&tx_hex)
+            .map_err(|e| AlkanesError::Hex(format!("Failed to decode tx hex: {}", e)))?;
+        let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes)
+            .map_err(|e| AlkanesError::Serialization(format!("Failed to deserialize transaction: {}", e)))?;
+
+        // Get the output at the specified index
+        let vout = outpoint.vout as usize;
+        if vout >= tx.output.len() {
+            return Ok(None);
+        }
+
+        Ok(Some(tx.output[vout].clone()))
     }
 
-    async fn sign_taproot_script_spend(&self, _sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        unimplemented!()
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+        use bitcoin::bip32::Xpriv;
+        use bip39::Mnemonic;
+
+        // Get the keystore and decrypt the mnemonic
+        let keystore = self.keystore.as_ref()
+            .ok_or_else(|| AlkanesError::Wallet("No keystore loaded - call walletCreate or walletLoadMnemonic first".to_string()))?;
+
+        let pass = self.passphrase.as_deref().unwrap_or_default();
+        let mnemonic_str = keystore.decrypt_mnemonic(pass)?;
+        let mnemonic = Mnemonic::parse_in(bip39::Language::English, &mnemonic_str)?;
+
+        // Derive the root key from mnemonic
+        let seed = mnemonic.to_seed(pass);
+        let root = Xpriv::new_master(self.network, &seed)?;
+
+        // Use the BIP86 derivation path for taproot (m/86'/0'/0'/0/0 for mainnet, m/86'/1'/0'/0/0 for testnet/regtest)
+        let coin_type = if self.network == Network::Bitcoin { 0 } else { 1 };
+        let derivation_path = format!("m/86'/{}'/0'/0/0", coin_type);
+        let path = DerivationPath::from_str(&derivation_path)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid derivation path: {}", e)))?;
+
+        // Derive the keypair
+        let xpriv = root.derive_priv(&SECP, &path)?;
+        let keypair = Keypair::from_secret_key(&SECP, &xpriv.private_key);
+
+        // Sign the sighash with schnorr
+        let signature = SECP.sign_schnorr(&sighash, &keypair);
+
+        Ok(signature)
     }
 
     async fn wrap(&mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Result<String> {
