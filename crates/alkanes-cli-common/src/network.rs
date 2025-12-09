@@ -213,12 +213,21 @@ impl RpcConfig {
     }
     
     /// Get default BRC20-Prog RPC URL for the network
+    /// For mainnet/signet: use brc20.build URLs
+    /// For everything else: derive from jsonrpc_url with /brc20-prog path appended
     pub fn get_default_brc20_prog_rpc_url(&self) -> Option<String> {
         match self.provider.as_str() {
             "mainnet" => Some("https://rpc.brc20.build".to_string()),
             "signet" => Some("https://rpc-signet.brc20.build".to_string()),
-            "subfrost-regtest" => Some("https://regtest.subfrost.io/v4/jsonrpc/brc20-prog".to_string()),
-            _ => None, // No default for testnet or local regtest
+            _ => {
+                // Derive from jsonrpc_url with /brc20-prog path appended
+                self.get_effective_jsonrpc_url()
+                    .or_else(|| Some(self.get_default_jsonrpc_url()))
+                    .map(|url| {
+                        let base = url.trim_end_matches('/');
+                        format!("{}/brc20-prog", base)
+                    })
+            }
         }
     }
     

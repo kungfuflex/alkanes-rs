@@ -79,6 +79,10 @@ pub struct DeezelCommands {
     /// OPI (Open Protocol Indexer) URL (defaults based on network)
     #[arg(long)]
     pub opi_url: Option<String>,
+    /// Custom headers for OPI requests (can be specified multiple times)
+    /// Format: "Header-Name: Header-Value" (e.g., "Host: regtest.subfrost.io")
+    #[arg(long = "opi-header", value_name = "HEADER")]
+    pub opi_headers: Vec<String>,
     /// Network provider
     #[arg(short, long, default_value = "regtest")]
     pub provider: String,
@@ -1406,15 +1410,15 @@ pub enum DataApiCommand {
 /// Query BRC-20 indexer for balances, events, and holders
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
 pub enum OpiCommands {
-    /// Get current indexed block height
+    /// Get current indexed block height (BRC-20)
     BlockHeight,
-    /// Get extras indexed block height
+    /// Get extras indexed block height (BRC-20)
     ExtrasBlockHeight,
-    /// Get database version
+    /// Get database version (BRC-20)
     DbVersion,
-    /// Get event hash version
+    /// Get event hash version (BRC-20)
     EventHashVersion,
-    /// Get balance at a specific block height
+    /// Get balance at a specific block height (BRC-20)
     BalanceOnBlock {
         /// Block height to query
         #[arg(long)]
@@ -1438,9 +1442,190 @@ pub enum OpiCommands {
         #[arg(long)]
         block_height: u64,
     },
-    /// Get current balance of a wallet
+    /// Get current balance of a wallet (BRC-20)
     CurrentBalance {
         /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get valid TX notes for a wallet (BRC-20)
+    ValidTxNotesOfWallet {
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get valid TX notes for a ticker (BRC-20)
+    ValidTxNotesOfTicker {
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get holders of a BRC-20 ticker
+    Holders {
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get hash of all activity at a block height (BRC-20)
+    HashOfAllActivity {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get hash of all current balances (BRC-20)
+    HashOfAllCurrentBalances,
+    /// Get events for an inscription (BRC-20)
+    Event {
+        /// Inscription ID
+        #[arg(long)]
+        inscription_id: String,
+    },
+    /// Get client IP (for debugging)
+    Ip,
+    /// Make a raw request to OPI endpoint
+    Raw {
+        /// Endpoint path (e.g., "v1/brc20/block_height")
+        endpoint: String,
+    },
+
+    // ==================== RUNES ====================
+    /// Runes indexer subcommands
+    #[command(subcommand)]
+    Runes(OpiRunesCommands),
+
+    // ==================== BITMAP ====================
+    /// Bitmap indexer subcommands
+    #[command(subcommand)]
+    Bitmap(OpiBitmapCommands),
+
+    // ==================== POW20 ====================
+    /// POW20 indexer subcommands
+    #[command(subcommand)]
+    Pow20(OpiPow20Commands),
+
+    // ==================== SNS ====================
+    /// SNS (Sats Names Service) indexer subcommands
+    #[command(subcommand)]
+    Sns(OpiSnsCommands),
+}
+
+/// OPI Runes subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiRunesCommands {
+    /// Get current indexed block height
+    BlockHeight,
+    /// Get Runes balance at a specific block height
+    BalanceOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: String,
+        /// Rune ID
+        #[arg(long)]
+        rune_id: String,
+    },
+    /// Get all Runes activity for a block
+    ActivityOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get current Runes balance of a wallet
+    CurrentBalance {
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get unspent rune outpoints of a wallet
+    UnspentOutpoints {
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get holders of a Rune
+    Holders {
+        /// Rune ID
+        #[arg(long)]
+        rune_id: String,
+    },
+    /// Get hash of all activity at a block height
+    HashOfAllActivity {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get events for a transaction
+    Event {
+        /// Transaction ID
+        #[arg(long)]
+        txid: String,
+    },
+}
+
+/// OPI Bitmap subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiBitmapCommands {
+    /// Get current indexed block height
+    BlockHeight,
+    /// Get hash of all activity at a block height
+    HashOfAllActivity {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get hash of all bitmaps
+    HashOfAllBitmaps,
+    /// Get inscription ID of a bitmap
+    InscriptionId {
+        /// Bitmap number
+        #[arg(long)]
+        bitmap: String,
+    },
+}
+
+/// OPI POW20 subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiPow20Commands {
+    /// Get current indexed block height
+    BlockHeight,
+    /// Get POW20 balance at a specific block height
+    BalanceOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: String,
+        /// POW20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get all POW20 activity for a block
+    ActivityOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get current POW20 balance of a wallet
+    CurrentBalance {
+        /// POW20 ticker
         #[arg(long)]
         ticker: String,
         /// Bitcoin address
@@ -1461,13 +1646,13 @@ pub enum OpiCommands {
     },
     /// Get valid TX notes for a ticker
     ValidTxNotesOfTicker {
-        /// BRC-20 ticker
+        /// POW20 ticker
         #[arg(long)]
         ticker: String,
     },
-    /// Get holders of a BRC-20 ticker
+    /// Get holders of a POW20 ticker
     Holders {
-        /// BRC-20 ticker
+        /// POW20 ticker
         #[arg(long)]
         ticker: String,
     },
@@ -1479,19 +1664,35 @@ pub enum OpiCommands {
     },
     /// Get hash of all current balances
     HashOfAllCurrentBalances,
-    /// Get events for an inscription
-    Event {
-        /// Inscription ID
+}
+
+/// OPI SNS (Sats Names Service) subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiSnsCommands {
+    /// Get current indexed block height
+    BlockHeight,
+    /// Get hash of all activity at a block height
+    HashOfAllActivity {
+        /// Block height to query
         #[arg(long)]
-        inscription_id: String,
+        block_height: u64,
     },
-    /// Get client IP (for debugging)
-    Ip,
-    /// Make a raw request to OPI endpoint
-    Raw {
-        /// Endpoint path (e.g., "v1/brc20/block_height")
-        endpoint: String,
+    /// Get hash of all registered names
+    HashOfAllRegisteredNames,
+    /// Get info about an SNS name
+    Info {
+        /// SNS name to query
+        #[arg(long)]
+        name: String,
     },
+    /// Get inscriptions of a domain
+    InscriptionsOfDomain {
+        /// Domain to query
+        #[arg(long)]
+        domain: String,
+    },
+    /// Get registered namespaces
+    RegisteredNamespaces,
 }
 
 /// Runestone subcommands

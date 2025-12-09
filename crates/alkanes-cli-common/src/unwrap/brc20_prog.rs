@@ -382,8 +382,6 @@ pub fn payment_to_pending_unwrap(payment: crate::brc20_prog::Payment, network: b
 /// Each struct has the format:
 /// [txid(32)][vout(32)][value(32)][offset_to_recipient(32)][height(32)][recipient_len(32)][recipient_data...]
 pub fn parse_abi_encoded_payments(bytes: &[u8]) -> Result<Vec<crate::brc20_prog::Payment>> {
-    use alloy_primitives::U256;
-
     if bytes.is_empty() {
         log::debug!("[parse_abi_encoded_payments] Empty response, returning empty array");
         return Ok(vec![]);
@@ -391,124 +389,22 @@ pub fn parse_abi_encoded_payments(bytes: &[u8]) -> Result<Vec<crate::brc20_prog:
 
     log::debug!("[parse_abi_encoded_payments] Response length: {} bytes", bytes.len());
 
-    // First try alloy's ABI decoder, fall back to manual parsing if it fails
-    match try_alloy_decode(bytes) {
-        Ok(payments) => {
-            log::debug!("[parse_abi_encoded_payments] Alloy decoder succeeded with {} payments", payments.len());
-            return Ok(payments);
-        }
-        Err(e) => {
-            log::debug!("[parse_abi_encoded_payments] Alloy decoder failed: {}, trying manual decode", e);
+    // Debug: Print the first 512 bytes as hex dump to analyze structure
+    if bytes.len() >= 512 {
+        log::debug!("[parse_abi_encoded_payments] First 512 bytes hex dump:");
+        for (i, chunk) in bytes[..512].chunks(32).enumerate() {
+            log::debug!("  {:04x}: {}", i * 32, hex::encode(chunk));
         }
     }
 
-    // Manual ABI decoding fallback
-    // Format: [offset_to_array(32)][array_length(32)][offset0(32)][offset1(32)]...[struct0][struct1]...
+    // Use alloy's ABI decoder - panic if it fails since that indicates bytecode bug
+    let mut payments = try_alloy_decode(bytes)
+        .expect("Failed to decode Payment[] ABI - bytecode generation is broken");
 
-    if bytes.len() < 64 {
-        return Err(AlkanesError::RpcError(format!(
-            "Response too short for array header: {} bytes",
-            bytes.len()
-        )));
-    }
+    // Reverse the payments to get chronological order (bytecode iterates backwards)
+    payments.reverse();
 
-    // Read offset to array data (should be 0x20 = 32)
-    let array_offset = U256::from_be_slice(&bytes[0..32]).to::<usize>();
-    log::debug!("[parse_abi_encoded_payments] Array offset: 0x{:x}", array_offset);
-
-    if array_offset >= bytes.len() {
-        return Err(AlkanesError::RpcError(format!(
-            "Array offset {} exceeds response length {}",
-            array_offset, bytes.len()
-        )));
-    }
-
-    // Read array length
-    let array_length = U256::from_be_slice(&bytes[array_offset..array_offset + 32]).to::<usize>();
-    log::debug!("[parse_abi_encoded_payments] Array length: {}", array_length);
-
-    if array_length == 0 {
-        return Ok(vec![]);
-    }
-
-    // Sanity check to avoid excessive memory allocation
-    if array_length > 10000 {
-        return Err(AlkanesError::RpcError(format!(
-            "Array length {} seems unreasonably large",
-            array_length
-        )));
-    }
-
-    // Read offsets for each payment struct
-    let offsets_start = array_offset + 32;
-    let offsets_end = offsets_start + array_length * 32;
-
-    if offsets_end > bytes.len() {
-        return Err(AlkanesError::RpcError(format!(
-            "Not enough bytes for {} offsets: need {}, have {}",
-            array_length, offsets_end, bytes.len()
-        )));
-    }
-
-    let mut payments = Vec::with_capacity(array_length);
-
-    for i in 0..array_length {
-        let offset_pos = offsets_start + i * 32;
-        let struct_offset = U256::from_be_slice(&bytes[offset_pos..offset_pos + 32]).to::<usize>();
-
-        // struct_offset is relative to the start of array content (after the length field)
-        let actual_offset = array_offset + 32 + struct_offset;
-
-        log::debug!("[parse_abi_encoded_payments] Payment {}: offset=0x{:x}, actual=0x{:x}",
-                   i, struct_offset, actual_offset);
-
-        if actual_offset + 160 > bytes.len() {
-            log::warn!("[parse_abi_encoded_payments] Payment {} struct extends beyond buffer, truncating", i);
-            break;
-        }
-
-        // Parse the payment struct
-        // Format: [txid(32)][vout(32)][value(32)][recipient_offset(32)][height(32)][recipient_len(32)][recipient_data...]
-        let mut txid = [0u8; 32];
-        txid.copy_from_slice(&bytes[actual_offset..actual_offset + 32]);
-
-        let vout = U256::from_be_slice(&bytes[actual_offset + 32..actual_offset + 64]).to::<u32>();
-        let value = U256::from_be_slice(&bytes[actual_offset + 64..actual_offset + 96]).to::<u64>();
-        let recipient_offset_in_struct = U256::from_be_slice(&bytes[actual_offset + 96..actual_offset + 128]).to::<usize>();
-        let height = U256::from_be_slice(&bytes[actual_offset + 128..actual_offset + 160]).to::<u64>();
-
-        // Read recipient bytes
-        let recipient_abs_offset = actual_offset + recipient_offset_in_struct;
-
-        let recipient = if recipient_abs_offset + 32 <= bytes.len() {
-            let recipient_len = U256::from_be_slice(&bytes[recipient_abs_offset..recipient_abs_offset + 32]).to::<usize>();
-            let recipient_data_start = recipient_abs_offset + 32;
-            let recipient_data_end = recipient_data_start + recipient_len;
-
-            if recipient_data_end <= bytes.len() {
-                bytes[recipient_data_start..recipient_data_end].to_vec()
-            } else {
-                log::warn!("[parse_abi_encoded_payments] Payment {} recipient data extends beyond buffer", i);
-                vec![]
-            }
-        } else {
-            log::warn!("[parse_abi_encoded_payments] Payment {} recipient offset beyond buffer", i);
-            vec![]
-        };
-
-        log::debug!("[parse_abi_encoded_payments] Payment {}: vout={}, value={}, height={}, recipient_len={}",
-                   i, vout, value, height, recipient.len());
-
-        payments.push(crate::brc20_prog::Payment {
-            txid,
-            vout,
-            value,
-            recipient,
-            height,
-        });
-    }
-
-    log::info!("[parse_abi_encoded_payments] Successfully decoded {} payments manually", payments.len());
+    log::info!("[parse_abi_encoded_payments] Decoded {} payments via alloy (reversed to chronological order)", payments.len());
     Ok(payments)
 }
 

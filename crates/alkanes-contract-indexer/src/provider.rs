@@ -22,6 +22,7 @@ pub async fn build_provider(
         subfrost_api_key: None,  // Not needed for indexer
         provider: network_provider,
         timeout_seconds: 600,
+        jsonrpc_headers: Vec::new(),  // No custom headers needed for indexer
     };
 
     let args = Args {
