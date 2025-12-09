@@ -3887,14 +3887,16 @@ impl WalletProvider for WebProvider {
 #[async_trait(?Send)]
 impl AddressResolver for WebProvider {
     async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
-        // No identifier resolution needed - return input as-is
-        // Identifiers like @name would need ENS/BNS lookup which we don't support
-        Ok(input.to_string())
+        // Use the address_resolver module from alkanes-cli-common to properly resolve
+        // address identifiers like "p2tr:0", "p2wpkh:0", "[self:p2tr:0]", etc.
+        let mut resolver = alkanes_cli_common::address_resolver::AddressResolver::new(self.clone());
+        resolver.resolve_all_identifiers(input).await
     }
 
-    fn contains_identifiers(&self, _input: &str) -> bool {
-        // We don't support any identifier formats (like @name or .btc domains)
-        false
+    fn contains_identifiers(&self, input: &str) -> bool {
+        // Check if the input contains address identifiers like "p2tr:0", "p2wpkh:0", etc.
+        let resolver = alkanes_cli_common::address_resolver::AddressResolver::new(self.clone());
+        resolver.contains_identifiers(input)
     }
 
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
@@ -3911,8 +3913,13 @@ impl AddressResolver for WebProvider {
     }
 
     async fn list_identifiers(&self) -> Result<Vec<String>> {
-        // No identifiers to list
-        Ok(Vec::new())
+        // List supported address type identifiers
+        Ok(vec![
+            "p2tr:0".to_string(),
+            "p2wpkh:0".to_string(),
+            "p2pkh:0".to_string(),
+            "p2sh-p2wpkh:0".to_string(),
+        ])
     }
 }
 
