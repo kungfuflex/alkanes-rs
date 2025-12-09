@@ -2969,9 +2969,13 @@ impl AlkanesProvider for ConcreteProvider {
         out_point_pb.vout = vout;
 
         let hex_input = format!("0x{}", hex::encode(out_point_pb.encode_to_vec()));
+        log::debug!("Trace request for outpoint {}:{} - hex_input: {}", parts[0], vout, hex_input);
         let response_bytes = self.metashrew_view_call("trace", &hex_input, "latest").await?;
-        
+
+        log::debug!("Trace response: {} bytes", response_bytes.len());
+
         if response_bytes.is_empty() {
+            log::debug!("Trace response empty for {}:{}", parts[0], vout);
             return Ok(alkanes_pb::Trace::default());
         }
         

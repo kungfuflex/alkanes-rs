@@ -42,12 +42,12 @@ impl AlkanesRuntimeContext {
         let message_copy = message.clone();
         let incoming_alkanes = message_copy.runes.clone().into();
         AlkanesRuntimeContext {
-            message: Box::new(message_copy.clone()),
+            message: Box::new(message_copy),
             returndata: vec![],
             incoming_alkanes,
             myself: AlkaneId::default(),
             caller: AlkaneId::default(),
-            trace: message_copy.trace.clone(),
+            trace: Trace::default(),
             inputs: cloned.inputs,
         }
     }
