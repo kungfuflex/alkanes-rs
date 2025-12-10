@@ -133,14 +133,12 @@ export const VERSION = '0.1.0';
  * 
  * @example
  * ```typescript
- * import init, * as wasm from '@alkanes/ts-sdk/wasm';
  * import { initSDK } from '@alkanes/ts-sdk';
- * 
- * await init();
- * const sdk = initSDK(wasm);
+ *
+ * const sdk = await initSDK();
  * ```
  */
-export async function initSDK(wasmModule?: any) {
+export async function initSDK() {
   // Import dynamically to avoid circular dependencies
   const { KeystoreManager, createKeystore, unlockKeystore } = await import('./keystore');
   const { AlkanesWallet, createWallet, createWalletFromMnemonic } = await import('./wallet');
@@ -154,7 +152,7 @@ export async function initSDK(wasmModule?: any) {
     unlockKeystore,
     createWallet,
     createWalletFromMnemonic,
-    createProvider: (config: any) => createProvider(config, wasmModule),
+    createProvider,
     version: VERSION,
   };
 }

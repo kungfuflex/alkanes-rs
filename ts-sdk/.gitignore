@@ -1,11 +1,12 @@
 # Dependencies
 node_modules/
-package-lock.json
+# package-lock.json is tracked for reproducible GitHub installs
 yarn.lock
 
 # Build outputs
-dist/
-build/
+# Note: dist/ and build/ are committed for direct GitHub installs
+# dist/
+# build/
 wasm-pkg/
 *.tsbuildinfo
 
