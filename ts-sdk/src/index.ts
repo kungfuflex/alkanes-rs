@@ -125,6 +125,35 @@ export {
   weightToVsize,
 } from './utils';
 
+// Browser wallet exports
+export {
+  WalletConnector,
+  ConnectedWallet,
+  BROWSER_WALLETS,
+  isWalletInstalled,
+  getInstalledWallets,
+  getWalletById,
+} from './browser-wallets';
+
+export type {
+  BrowserWalletInfo,
+  WalletAccount,
+  PsbtSigningOptions,
+} from './browser-wallets';
+
+// Storage and backup exports
+export {
+  KeystoreStorage,
+  GoogleDriveBackup,
+  formatBackupDate,
+  getRelativeTime,
+} from './storage';
+
+export type {
+  WalletBackupInfo,
+  RestoreWalletResult,
+} from './storage';
+
 // Version
 export const VERSION = '0.1.0';
 
@@ -143,16 +172,31 @@ export async function initSDK() {
   const { KeystoreManager, createKeystore, unlockKeystore } = await import('./keystore');
   const { AlkanesWallet, createWallet, createWalletFromMnemonic } = await import('./wallet');
   const { AlkanesProvider, createProvider } = await import('./provider');
-  
+  const { WalletConnector, ConnectedWallet, BROWSER_WALLETS, isWalletInstalled, getInstalledWallets } = await import('./browser-wallets');
+  const { KeystoreStorage, GoogleDriveBackup } = await import('./storage');
+
   return {
+    // Keystore
     KeystoreManager,
-    AlkanesWallet,
-    AlkanesProvider,
     createKeystore,
     unlockKeystore,
+    // Wallet
+    AlkanesWallet,
     createWallet,
     createWalletFromMnemonic,
+    // Provider
+    AlkanesProvider,
     createProvider,
+    // Browser wallets
+    WalletConnector,
+    ConnectedWallet,
+    BROWSER_WALLETS,
+    isWalletInstalled,
+    getInstalledWallets,
+    // Storage
+    KeystoreStorage,
+    GoogleDriveBackup,
+    // Meta
     version: VERSION,
   };
 }
@@ -162,16 +206,31 @@ export default async function getAlkanesSDK() {
   const { KeystoreManager, createKeystore, unlockKeystore } = await import('./keystore');
   const { AlkanesWallet, createWallet, createWalletFromMnemonic } = await import('./wallet');
   const { AlkanesProvider, createProvider } = await import('./provider');
-  
+  const { WalletConnector, ConnectedWallet, BROWSER_WALLETS, isWalletInstalled, getInstalledWallets } = await import('./browser-wallets');
+  const { KeystoreStorage, GoogleDriveBackup } = await import('./storage');
+
   return {
+    // Keystore
     KeystoreManager,
-    AlkanesWallet,
-    AlkanesProvider,
     createKeystore,
     unlockKeystore,
+    // Wallet
+    AlkanesWallet,
     createWallet,
     createWalletFromMnemonic,
+    // Provider
+    AlkanesProvider,
     createProvider,
+    // Browser wallets
+    WalletConnector,
+    ConnectedWallet,
+    BROWSER_WALLETS,
+    isWalletInstalled,
+    getInstalledWallets,
+    // Storage
+    KeystoreStorage,
+    GoogleDriveBackup,
+    // Meta
     initSDK,
     VERSION,
   };

@@ -1,0 +1,542 @@
+/**
+ * Browser Wallet Detection and Connection
+ *
+ * Provides detection and connection to injected Bitcoin browser wallets
+ * (Unisat, Xverse, Phantom, OKX, Leather, Magic Eden, Wizz, etc.)
+ *
+ * @example
+ * ```typescript
+ * import { WalletConnector, BROWSER_WALLETS } from '@alkanes/ts-sdk';
+ *
+ * const connector = new WalletConnector();
+ * const available = await connector.detectWallets();
+ *
+ * if (available.length > 0) {
+ *   const wallet = await connector.connect(available[0]);
+ *   console.log('Connected:', wallet.address);
+ * }
+ * ```
+ */
+
+/**
+ * Information about a supported browser wallet
+ */
+export interface BrowserWalletInfo {
+  id: string;
+  name: string;
+  icon: string;
+  website: string;
+  injectionKey: string;
+  supportsPsbt: boolean;
+  supportsTaproot: boolean;
+  supportsOrdinals: boolean;
+  mobileSupport: boolean;
+  deepLinkScheme?: string;
+}
+
+/**
+ * Connected wallet account information
+ */
+export interface WalletAccount {
+  address: string;
+  publicKey?: string;
+  addressType?: string;
+}
+
+/**
+ * PSBT signing options
+ */
+export interface PsbtSigningOptions {
+  autoFinalized?: boolean;
+  toSignInputs?: Array<{
+    index: number;
+    address?: string;
+    sighashTypes?: number[];
+    disableTweakedPublicKey?: boolean;
+  }>;
+}
+
+/**
+ * List of supported browser wallets
+ */
+export const BROWSER_WALLETS: BrowserWalletInfo[] = [
+  {
+    id: 'unisat',
+    name: 'Unisat Wallet',
+    icon: '/assets/wallets/unisat.svg',
+    website: 'https://unisat.io/download',
+    injectionKey: 'unisat',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: true,
+    mobileSupport: false,
+  },
+  {
+    id: 'xverse',
+    name: 'Xverse Wallet',
+    icon: '/assets/wallets/xverse.svg',
+    website: 'https://www.xverse.app/download',
+    injectionKey: 'XverseProviders',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: true,
+    mobileSupport: true,
+    deepLinkScheme: 'xverse://',
+  },
+  {
+    id: 'phantom',
+    name: 'Phantom Wallet',
+    icon: '/assets/wallets/phantom.svg',
+    website: 'https://phantom.app/download',
+    injectionKey: 'phantom',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: false,
+    mobileSupport: true,
+    deepLinkScheme: 'phantom://',
+  },
+  {
+    id: 'okx',
+    name: 'OKX Wallet',
+    icon: '/assets/wallets/okx.svg',
+    website: 'https://chromewebstore.google.com/detail/okx-wallet/mcohilncbfahbmgdjkbpemcciiolgcge',
+    injectionKey: 'okxwallet',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: true,
+    mobileSupport: true,
+    deepLinkScheme: 'okx://',
+  },
+  {
+    id: 'leather',
+    name: 'Leather Wallet',
+    icon: '/assets/wallets/leather.svg',
+    website: 'https://leather.io/install-extension',
+    injectionKey: 'LeatherProvider',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: true,
+    mobileSupport: false,
+  },
+  {
+    id: 'magic-eden',
+    name: 'Magic Eden Wallet',
+    icon: '/assets/wallets/magiceden.svg',
+    website: 'https://wallet.magiceden.io/',
+    injectionKey: 'magicEden',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: true,
+    mobileSupport: true,
+    deepLinkScheme: 'magiceden://',
+  },
+  {
+    id: 'wizz',
+    name: 'Wizz Wallet',
+    icon: '/assets/wallets/wizz.svg',
+    website: 'https://wizzwallet.io/#extension',
+    injectionKey: 'wizz',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: true,
+    mobileSupport: false,
+  },
+  {
+    id: 'orange',
+    name: 'Orange Wallet',
+    icon: '/assets/wallets/orange.svg',
+    website: 'https://www.orangewallet.com/',
+    injectionKey: 'orange',
+    supportsPsbt: false,
+    supportsTaproot: false,
+    supportsOrdinals: false,
+    mobileSupport: false,
+  },
+  {
+    id: 'keplr',
+    name: 'Keplr Wallet',
+    icon: '/assets/wallets/keplr.svg',
+    website: 'https://keplr.app/download',
+    injectionKey: 'keplr',
+    supportsPsbt: false,
+    supportsTaproot: false,
+    supportsOrdinals: false,
+    mobileSupport: true,
+    deepLinkScheme: 'keplr://',
+  },
+];
+
+/**
+ * Check if running in browser environment
+ */
+export function isBrowser(): boolean {
+  return typeof window !== 'undefined';
+}
+
+/**
+ * Check if a specific wallet is installed
+ */
+export function isWalletInstalled(wallet: BrowserWalletInfo): boolean {
+  if (!isBrowser()) return false;
+
+  try {
+    const walletObj = (window as any)[wallet.injectionKey];
+    return walletObj !== undefined && walletObj !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get all installed wallets
+ */
+export function getInstalledWallets(): BrowserWalletInfo[] {
+  if (!isBrowser()) return [];
+  return BROWSER_WALLETS.filter(isWalletInstalled);
+}
+
+/**
+ * Get wallet info by ID
+ */
+export function getWalletById(id: string): BrowserWalletInfo | undefined {
+  return BROWSER_WALLETS.find((w) => w.id === id);
+}
+
+/**
+ * Connected browser wallet instance
+ */
+export class ConnectedWallet {
+  private provider: any;
+  public readonly info: BrowserWalletInfo;
+  public readonly account: WalletAccount;
+
+  constructor(info: BrowserWalletInfo, provider: any, account: WalletAccount) {
+    this.info = info;
+    this.provider = provider;
+    this.account = account;
+  }
+
+  /**
+   * Get the wallet's address
+   */
+  get address(): string {
+    return this.account.address;
+  }
+
+  /**
+   * Get the wallet's public key (if available)
+   */
+  get publicKey(): string | undefined {
+    return this.account.publicKey;
+  }
+
+  /**
+   * Sign a message
+   */
+  async signMessage(message: string): Promise<string> {
+    switch (this.info.id) {
+      case 'unisat':
+      case 'wizz':
+        return await this.provider.signMessage(message);
+
+      case 'xverse': {
+        const response = await this.provider.BitcoinProvider.request('signMessage', {
+          address: this.account.address,
+          message,
+        });
+        return response.result.signature;
+      }
+
+      case 'phantom': {
+        const bitcoinProvider = this.provider.bitcoin;
+        const { signature } = await bitcoinProvider.signMessage(
+          this.account.address,
+          new TextEncoder().encode(message)
+        );
+        return signature;
+      }
+
+      case 'okx': {
+        const bitcoinProvider = this.provider.bitcoin;
+        return await bitcoinProvider.signMessage(message, 'ecdsa');
+      }
+
+      case 'leather': {
+        const response = await this.provider.request('signMessage', {
+          message,
+          paymentType: 'p2wpkh',
+        });
+        return response.result.signature;
+      }
+
+      case 'magic-eden': {
+        const bitcoinProvider = this.provider.bitcoin;
+        return await bitcoinProvider.signMessage(message);
+      }
+
+      default:
+        throw new Error(`signMessage not supported for ${this.info.name}`);
+    }
+  }
+
+  /**
+   * Sign a PSBT
+   */
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptions): Promise<string> {
+    if (!this.info.supportsPsbt) {
+      throw new Error(`${this.info.name} does not support PSBT signing`);
+    }
+
+    switch (this.info.id) {
+      case 'unisat':
+      case 'wizz':
+        return await this.provider.signPsbt(psbtHex, options);
+
+      case 'xverse': {
+        const response = await this.provider.BitcoinProvider.request('signPsbt', {
+          psbt: psbtHex,
+          signInputs: options?.toSignInputs,
+          broadcast: false,
+        });
+        return response.result.psbt;
+      }
+
+      case 'phantom': {
+        const bitcoinProvider = this.provider.bitcoin;
+        const psbtBytes = hexToBytes(psbtHex);
+        const { signedPsbt } = await bitcoinProvider.signPSBT(psbtBytes, {
+          inputsToSign: options?.toSignInputs?.map((i) => ({
+            sigHash: i.sighashTypes?.[0],
+            address: i.address || this.account.address,
+            signingIndexes: [i.index],
+          })),
+        });
+        return bytesToHex(signedPsbt);
+      }
+
+      case 'okx': {
+        const bitcoinProvider = this.provider.bitcoin;
+        return await bitcoinProvider.signPsbt(psbtHex, {
+          autoFinalized: options?.autoFinalized ?? true,
+          toSignInputs: options?.toSignInputs,
+        });
+      }
+
+      case 'leather': {
+        const response = await this.provider.request('signPsbt', {
+          hex: psbtHex,
+          signAtIndex: options?.toSignInputs?.map((i) => i.index),
+          broadcast: false,
+        });
+        return response.result.hex;
+      }
+
+      case 'magic-eden': {
+        const bitcoinProvider = this.provider.bitcoin;
+        return await bitcoinProvider.signPsbt(psbtHex, options);
+      }
+
+      default:
+        throw new Error(`signPsbt not supported for ${this.info.name}`);
+    }
+  }
+
+  /**
+   * Get current network
+   */
+  async getNetwork(): Promise<string> {
+    try {
+      switch (this.info.id) {
+        case 'unisat':
+        case 'wizz':
+          return await this.provider.getNetwork();
+
+        case 'xverse': {
+          const response = await this.provider.BitcoinProvider.request('getNetwork');
+          return response.result;
+        }
+
+        default:
+          return 'mainnet';
+      }
+    } catch {
+      return 'mainnet';
+    }
+  }
+
+  /**
+   * Disconnect from the wallet
+   */
+  async disconnect(): Promise<void> {
+    try {
+      if (typeof this.provider.disconnect === 'function') {
+        await this.provider.disconnect();
+      }
+    } catch {
+      // Disconnect not supported or failed - that's okay
+    }
+  }
+}
+
+/**
+ * Wallet connector for detecting and connecting to browser wallets
+ */
+export class WalletConnector {
+  private connectedWallet: ConnectedWallet | null = null;
+
+  /**
+   * Detect all installed wallets
+   */
+  async detectWallets(): Promise<BrowserWalletInfo[]> {
+    if (!isBrowser()) {
+      return [];
+    }
+
+    // Give wallets time to inject
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    return getInstalledWallets();
+  }
+
+  /**
+   * Connect to a specific wallet
+   */
+  async connect(wallet: BrowserWalletInfo): Promise<ConnectedWallet> {
+    if (!isBrowser()) {
+      throw new Error('Not in browser environment');
+    }
+
+    const provider = (window as any)[wallet.injectionKey];
+    if (!provider) {
+      throw new Error(`${wallet.name} is not installed`);
+    }
+
+    let account: WalletAccount;
+
+    switch (wallet.id) {
+      case 'unisat':
+      case 'wizz': {
+        const accounts = await provider.requestAccounts();
+        const publicKey = await provider.getPublicKey();
+        account = {
+          address: accounts[0],
+          publicKey,
+          addressType: 'unknown',
+        };
+        break;
+      }
+
+      case 'xverse': {
+        const response = await provider.BitcoinProvider.request('getAccounts', {
+          purposes: ['ordinals', 'payment'],
+        });
+        const firstAccount = response.result[0];
+        account = {
+          address: firstAccount.address,
+          publicKey: firstAccount.publicKey,
+          addressType: firstAccount.addressType,
+        };
+        break;
+      }
+
+      case 'phantom': {
+        const bitcoinProvider = provider.bitcoin;
+        if (!bitcoinProvider) {
+          throw new Error('Phantom Bitcoin provider not available');
+        }
+        const accounts = await bitcoinProvider.requestAccounts();
+        account = {
+          address: accounts[0].address,
+          publicKey: accounts[0].publicKey,
+          addressType: accounts[0].addressType,
+        };
+        break;
+      }
+
+      case 'okx': {
+        const bitcoinProvider = provider.bitcoin;
+        if (!bitcoinProvider) {
+          throw new Error('OKX Bitcoin provider not available');
+        }
+        const result = await bitcoinProvider.connect();
+        account = {
+          address: result.address,
+          publicKey: result.publicKey,
+        };
+        break;
+      }
+
+      case 'leather': {
+        const response = await provider.request('getAddresses');
+        const bitcoinAddress = response.result.addresses.find(
+          (addr: any) => addr.symbol === 'BTC'
+        );
+        account = {
+          address: bitcoinAddress.address,
+          publicKey: bitcoinAddress.publicKey,
+          addressType: bitcoinAddress.type,
+        };
+        break;
+      }
+
+      case 'magic-eden': {
+        const bitcoinProvider = provider.bitcoin;
+        if (!bitcoinProvider) {
+          throw new Error('Magic Eden Bitcoin provider not available');
+        }
+        const accounts = await bitcoinProvider.connect();
+        account = {
+          address: accounts[0].address,
+          publicKey: accounts[0].publicKey,
+        };
+        break;
+      }
+
+      default:
+        throw new Error(`Connection not implemented for ${wallet.name}`);
+    }
+
+    this.connectedWallet = new ConnectedWallet(wallet, provider, account);
+    return this.connectedWallet;
+  }
+
+  /**
+   * Get currently connected wallet
+   */
+  getConnectedWallet(): ConnectedWallet | null {
+    return this.connectedWallet;
+  }
+
+  /**
+   * Disconnect current wallet
+   */
+  async disconnect(): Promise<void> {
+    if (this.connectedWallet) {
+      await this.connectedWallet.disconnect();
+      this.connectedWallet = null;
+    }
+  }
+
+  /**
+   * Check if a wallet is connected
+   */
+  isConnected(): boolean {
+    return this.connectedWallet !== null;
+  }
+}
+
+// Utility functions
+function hexToBytes(hex: string): Uint8Array {
+  const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}

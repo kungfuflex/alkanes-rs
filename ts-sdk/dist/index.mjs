@@ -63,8 +63,8 @@ var require_utils = __commonJS({
     exports.rotl = rotl;
     exports.byteSwap = byteSwap;
     exports.byteSwap32 = byteSwap32;
-    exports.bytesToHex = bytesToHex2;
-    exports.hexToBytes = hexToBytes2;
+    exports.bytesToHex = bytesToHex3;
+    exports.hexToBytes = hexToBytes3;
     exports.asyncLoop = asyncLoop;
     exports.utf8ToBytes = utf8ToBytes;
     exports.bytesToUtf8 = bytesToUtf8;
@@ -147,7 +147,7 @@ var require_utils = __commonJS({
       typeof Uint8Array.from([]).toHex === "function" && typeof Uint8Array.fromHex === "function"
     ))();
     var hexes = /* @__PURE__ */ Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, "0"));
-    function bytesToHex2(bytes) {
+    function bytesToHex3(bytes) {
       abytes(bytes);
       if (hasHexBuiltin)
         return bytes.toHex();
@@ -167,7 +167,7 @@ var require_utils = __commonJS({
         return ch - (asciis.a - 10);
       return;
     }
-    function hexToBytes2(hex) {
+    function hexToBytes3(hex) {
       if (typeof hex !== "string")
         throw new Error("hex string expected, got " + typeof hex);
       if (hasHexBuiltin)
@@ -46761,6 +46761,865 @@ var init_provider = __esm({
   }
 });
 
+// src/browser-wallets/index.ts
+var browser_wallets_exports = {};
+__export(browser_wallets_exports, {
+  BROWSER_WALLETS: () => BROWSER_WALLETS,
+  ConnectedWallet: () => ConnectedWallet,
+  WalletConnector: () => WalletConnector,
+  getInstalledWallets: () => getInstalledWallets,
+  getWalletById: () => getWalletById,
+  isBrowser: () => isBrowser2,
+  isWalletInstalled: () => isWalletInstalled
+});
+function isBrowser2() {
+  return typeof window !== "undefined";
+}
+function isWalletInstalled(wallet) {
+  if (!isBrowser2()) return false;
+  try {
+    const walletObj = window[wallet.injectionKey];
+    return walletObj !== void 0 && walletObj !== null;
+  } catch {
+    return false;
+  }
+}
+function getInstalledWallets() {
+  if (!isBrowser2()) return [];
+  return BROWSER_WALLETS.filter(isWalletInstalled);
+}
+function getWalletById(id) {
+  return BROWSER_WALLETS.find((w) => w.id === id);
+}
+function hexToBytes2(hex) {
+  const cleanHex = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+function bytesToHex2(bytes) {
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+var BROWSER_WALLETS, ConnectedWallet, WalletConnector;
+var init_browser_wallets = __esm({
+  "src/browser-wallets/index.ts"() {
+    "use strict";
+    BROWSER_WALLETS = [
+      {
+        id: "unisat",
+        name: "Unisat Wallet",
+        icon: "/assets/wallets/unisat.svg",
+        website: "https://unisat.io/download",
+        injectionKey: "unisat",
+        supportsPsbt: true,
+        supportsTaproot: true,
+        supportsOrdinals: true,
+        mobileSupport: false
+      },
+      {
+        id: "xverse",
+        name: "Xverse Wallet",
+        icon: "/assets/wallets/xverse.svg",
+        website: "https://www.xverse.app/download",
+        injectionKey: "XverseProviders",
+        supportsPsbt: true,
+        supportsTaproot: true,
+        supportsOrdinals: true,
+        mobileSupport: true,
+        deepLinkScheme: "xverse://"
+      },
+      {
+        id: "phantom",
+        name: "Phantom Wallet",
+        icon: "/assets/wallets/phantom.svg",
+        website: "https://phantom.app/download",
+        injectionKey: "phantom",
+        supportsPsbt: true,
+        supportsTaproot: true,
+        supportsOrdinals: false,
+        mobileSupport: true,
+        deepLinkScheme: "phantom://"
+      },
+      {
+        id: "okx",
+        name: "OKX Wallet",
+        icon: "/assets/wallets/okx.svg",
+        website: "https://chromewebstore.google.com/detail/okx-wallet/mcohilncbfahbmgdjkbpemcciiolgcge",
+        injectionKey: "okxwallet",
+        supportsPsbt: true,
+        supportsTaproot: true,
+        supportsOrdinals: true,
+        mobileSupport: true,
+        deepLinkScheme: "okx://"
+      },
+      {
+        id: "leather",
+        name: "Leather Wallet",
+        icon: "/assets/wallets/leather.svg",
+        website: "https://leather.io/install-extension",
+        injectionKey: "LeatherProvider",
+        supportsPsbt: true,
+        supportsTaproot: true,
+        supportsOrdinals: true,
+        mobileSupport: false
+      },
+      {
+        id: "magic-eden",
+        name: "Magic Eden Wallet",
+        icon: "/assets/wallets/magiceden.svg",
+        website: "https://wallet.magiceden.io/",
+        injectionKey: "magicEden",
+        supportsPsbt: true,
+        supportsTaproot: true,
+        supportsOrdinals: true,
+        mobileSupport: true,
+        deepLinkScheme: "magiceden://"
+      },
+      {
+        id: "wizz",
+        name: "Wizz Wallet",
+        icon: "/assets/wallets/wizz.svg",
+        website: "https://wizzwallet.io/#extension",
+        injectionKey: "wizz",
+        supportsPsbt: true,
+        supportsTaproot: true,
+        supportsOrdinals: true,
+        mobileSupport: false
+      },
+      {
+        id: "orange",
+        name: "Orange Wallet",
+        icon: "/assets/wallets/orange.svg",
+        website: "https://www.orangewallet.com/",
+        injectionKey: "orange",
+        supportsPsbt: false,
+        supportsTaproot: false,
+        supportsOrdinals: false,
+        mobileSupport: false
+      },
+      {
+        id: "keplr",
+        name: "Keplr Wallet",
+        icon: "/assets/wallets/keplr.svg",
+        website: "https://keplr.app/download",
+        injectionKey: "keplr",
+        supportsPsbt: false,
+        supportsTaproot: false,
+        supportsOrdinals: false,
+        mobileSupport: true,
+        deepLinkScheme: "keplr://"
+      }
+    ];
+    ConnectedWallet = class {
+      constructor(info, provider, account) {
+        this.info = info;
+        this.provider = provider;
+        this.account = account;
+      }
+      /**
+       * Get the wallet's address
+       */
+      get address() {
+        return this.account.address;
+      }
+      /**
+       * Get the wallet's public key (if available)
+       */
+      get publicKey() {
+        return this.account.publicKey;
+      }
+      /**
+       * Sign a message
+       */
+      async signMessage(message) {
+        switch (this.info.id) {
+          case "unisat":
+          case "wizz":
+            return await this.provider.signMessage(message);
+          case "xverse": {
+            const response = await this.provider.BitcoinProvider.request("signMessage", {
+              address: this.account.address,
+              message
+            });
+            return response.result.signature;
+          }
+          case "phantom": {
+            const bitcoinProvider = this.provider.bitcoin;
+            const { signature } = await bitcoinProvider.signMessage(
+              this.account.address,
+              new TextEncoder().encode(message)
+            );
+            return signature;
+          }
+          case "okx": {
+            const bitcoinProvider = this.provider.bitcoin;
+            return await bitcoinProvider.signMessage(message, "ecdsa");
+          }
+          case "leather": {
+            const response = await this.provider.request("signMessage", {
+              message,
+              paymentType: "p2wpkh"
+            });
+            return response.result.signature;
+          }
+          case "magic-eden": {
+            const bitcoinProvider = this.provider.bitcoin;
+            return await bitcoinProvider.signMessage(message);
+          }
+          default:
+            throw new Error(`signMessage not supported for ${this.info.name}`);
+        }
+      }
+      /**
+       * Sign a PSBT
+       */
+      async signPsbt(psbtHex, options) {
+        if (!this.info.supportsPsbt) {
+          throw new Error(`${this.info.name} does not support PSBT signing`);
+        }
+        switch (this.info.id) {
+          case "unisat":
+          case "wizz":
+            return await this.provider.signPsbt(psbtHex, options);
+          case "xverse": {
+            const response = await this.provider.BitcoinProvider.request("signPsbt", {
+              psbt: psbtHex,
+              signInputs: options?.toSignInputs,
+              broadcast: false
+            });
+            return response.result.psbt;
+          }
+          case "phantom": {
+            const bitcoinProvider = this.provider.bitcoin;
+            const psbtBytes = hexToBytes2(psbtHex);
+            const { signedPsbt } = await bitcoinProvider.signPSBT(psbtBytes, {
+              inputsToSign: options?.toSignInputs?.map((i) => ({
+                sigHash: i.sighashTypes?.[0],
+                address: i.address || this.account.address,
+                signingIndexes: [i.index]
+              }))
+            });
+            return bytesToHex2(signedPsbt);
+          }
+          case "okx": {
+            const bitcoinProvider = this.provider.bitcoin;
+            return await bitcoinProvider.signPsbt(psbtHex, {
+              autoFinalized: options?.autoFinalized ?? true,
+              toSignInputs: options?.toSignInputs
+            });
+          }
+          case "leather": {
+            const response = await this.provider.request("signPsbt", {
+              hex: psbtHex,
+              signAtIndex: options?.toSignInputs?.map((i) => i.index),
+              broadcast: false
+            });
+            return response.result.hex;
+          }
+          case "magic-eden": {
+            const bitcoinProvider = this.provider.bitcoin;
+            return await bitcoinProvider.signPsbt(psbtHex, options);
+          }
+          default:
+            throw new Error(`signPsbt not supported for ${this.info.name}`);
+        }
+      }
+      /**
+       * Get current network
+       */
+      async getNetwork() {
+        try {
+          switch (this.info.id) {
+            case "unisat":
+            case "wizz":
+              return await this.provider.getNetwork();
+            case "xverse": {
+              const response = await this.provider.BitcoinProvider.request("getNetwork");
+              return response.result;
+            }
+            default:
+              return "mainnet";
+          }
+        } catch {
+          return "mainnet";
+        }
+      }
+      /**
+       * Disconnect from the wallet
+       */
+      async disconnect() {
+        try {
+          if (typeof this.provider.disconnect === "function") {
+            await this.provider.disconnect();
+          }
+        } catch {
+        }
+      }
+    };
+    WalletConnector = class {
+      constructor() {
+        this.connectedWallet = null;
+      }
+      /**
+       * Detect all installed wallets
+       */
+      async detectWallets() {
+        if (!isBrowser2()) {
+          return [];
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return getInstalledWallets();
+      }
+      /**
+       * Connect to a specific wallet
+       */
+      async connect(wallet) {
+        if (!isBrowser2()) {
+          throw new Error("Not in browser environment");
+        }
+        const provider = window[wallet.injectionKey];
+        if (!provider) {
+          throw new Error(`${wallet.name} is not installed`);
+        }
+        let account;
+        switch (wallet.id) {
+          case "unisat":
+          case "wizz": {
+            const accounts = await provider.requestAccounts();
+            const publicKey = await provider.getPublicKey();
+            account = {
+              address: accounts[0],
+              publicKey,
+              addressType: "unknown"
+            };
+            break;
+          }
+          case "xverse": {
+            const response = await provider.BitcoinProvider.request("getAccounts", {
+              purposes: ["ordinals", "payment"]
+            });
+            const firstAccount = response.result[0];
+            account = {
+              address: firstAccount.address,
+              publicKey: firstAccount.publicKey,
+              addressType: firstAccount.addressType
+            };
+            break;
+          }
+          case "phantom": {
+            const bitcoinProvider = provider.bitcoin;
+            if (!bitcoinProvider) {
+              throw new Error("Phantom Bitcoin provider not available");
+            }
+            const accounts = await bitcoinProvider.requestAccounts();
+            account = {
+              address: accounts[0].address,
+              publicKey: accounts[0].publicKey,
+              addressType: accounts[0].addressType
+            };
+            break;
+          }
+          case "okx": {
+            const bitcoinProvider = provider.bitcoin;
+            if (!bitcoinProvider) {
+              throw new Error("OKX Bitcoin provider not available");
+            }
+            const result = await bitcoinProvider.connect();
+            account = {
+              address: result.address,
+              publicKey: result.publicKey
+            };
+            break;
+          }
+          case "leather": {
+            const response = await provider.request("getAddresses");
+            const bitcoinAddress = response.result.addresses.find(
+              (addr) => addr.symbol === "BTC"
+            );
+            account = {
+              address: bitcoinAddress.address,
+              publicKey: bitcoinAddress.publicKey,
+              addressType: bitcoinAddress.type
+            };
+            break;
+          }
+          case "magic-eden": {
+            const bitcoinProvider = provider.bitcoin;
+            if (!bitcoinProvider) {
+              throw new Error("Magic Eden Bitcoin provider not available");
+            }
+            const accounts = await bitcoinProvider.connect();
+            account = {
+              address: accounts[0].address,
+              publicKey: accounts[0].publicKey
+            };
+            break;
+          }
+          default:
+            throw new Error(`Connection not implemented for ${wallet.name}`);
+        }
+        this.connectedWallet = new ConnectedWallet(wallet, provider, account);
+        return this.connectedWallet;
+      }
+      /**
+       * Get currently connected wallet
+       */
+      getConnectedWallet() {
+        return this.connectedWallet;
+      }
+      /**
+       * Disconnect current wallet
+       */
+      async disconnect() {
+        if (this.connectedWallet) {
+          await this.connectedWallet.disconnect();
+          this.connectedWallet = null;
+        }
+      }
+      /**
+       * Check if a wallet is connected
+       */
+      isConnected() {
+        return this.connectedWallet !== null;
+      }
+    };
+  }
+});
+
+// src/storage/index.ts
+var storage_exports = {};
+__export(storage_exports, {
+  GoogleDriveBackup: () => GoogleDriveBackup,
+  KeystoreStorage: () => KeystoreStorage,
+  formatBackupDate: () => formatBackupDate,
+  getRelativeTime: () => getRelativeTime
+});
+function isBrowser3() {
+  return typeof window !== "undefined" && typeof localStorage !== "undefined";
+}
+function formatBackupDate(timestamp) {
+  try {
+    const date = new Date(timestamp);
+    return date.toLocaleString(void 0, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch {
+    return timestamp;
+  }
+}
+function getRelativeTime(timestamp) {
+  try {
+    const date = new Date(timestamp);
+    const now = /* @__PURE__ */ new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 6e4);
+    const diffHours = Math.floor(diffMs / 36e5);
+    const diffDays = Math.floor(diffMs / 864e5);
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? "s" : ""} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`;
+    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} week${Math.floor(diffDays / 7) > 1 ? "s" : ""} ago`;
+    return `${Math.floor(diffDays / 30)} month${Math.floor(diffDays / 30) > 1 ? "s" : ""} ago`;
+  } catch {
+    return "Unknown";
+  }
+}
+var STORAGE_KEYS, KeystoreStorage, DRIVE_FOLDER_NAME, DRIVE_SCOPES, GoogleDriveBackup;
+var init_storage = __esm({
+  "src/storage/index.ts"() {
+    "use strict";
+    STORAGE_KEYS = {
+      ENCRYPTED_KEYSTORE: "alkanes_encrypted_keystore",
+      WALLET_NETWORK: "alkanes_wallet_network",
+      SESSION_WALLET: "alkanes_session_wallet"
+    };
+    KeystoreStorage = class {
+      /**
+       * Save encrypted keystore to localStorage
+       */
+      saveKeystore(keystoreJson, network) {
+        if (!isBrowser3()) {
+          throw new Error("localStorage not available");
+        }
+        localStorage.setItem(STORAGE_KEYS.ENCRYPTED_KEYSTORE, keystoreJson);
+        localStorage.setItem(STORAGE_KEYS.WALLET_NETWORK, network);
+      }
+      /**
+       * Load encrypted keystore from localStorage
+       */
+      loadKeystore() {
+        if (!isBrowser3()) {
+          return null;
+        }
+        const keystore = localStorage.getItem(STORAGE_KEYS.ENCRYPTED_KEYSTORE);
+        const network = localStorage.getItem(STORAGE_KEYS.WALLET_NETWORK);
+        if (!keystore) {
+          return null;
+        }
+        return {
+          keystore,
+          network: network || "mainnet"
+        };
+      }
+      /**
+       * Check if a keystore exists in localStorage
+       */
+      hasKeystore() {
+        if (!isBrowser3()) {
+          return false;
+        }
+        return localStorage.getItem(STORAGE_KEYS.ENCRYPTED_KEYSTORE) !== null;
+      }
+      /**
+       * Clear keystore from localStorage
+       */
+      clearKeystore() {
+        if (!isBrowser3()) {
+          return;
+        }
+        localStorage.removeItem(STORAGE_KEYS.ENCRYPTED_KEYSTORE);
+        localStorage.removeItem(STORAGE_KEYS.WALLET_NETWORK);
+      }
+      /**
+       * Save wallet state to sessionStorage (survives page navigation, cleared on tab close)
+       */
+      saveSessionWallet(walletState) {
+        if (!isBrowser3()) {
+          return;
+        }
+        sessionStorage.setItem(STORAGE_KEYS.SESSION_WALLET, JSON.stringify(walletState));
+      }
+      /**
+       * Load wallet state from sessionStorage
+       */
+      loadSessionWallet() {
+        if (!isBrowser3()) {
+          return null;
+        }
+        const state = sessionStorage.getItem(STORAGE_KEYS.SESSION_WALLET);
+        if (!state) {
+          return null;
+        }
+        try {
+          return JSON.parse(state);
+        } catch {
+          return null;
+        }
+      }
+      /**
+       * Clear session wallet state
+       */
+      clearSessionWallet() {
+        if (!isBrowser3()) {
+          return;
+        }
+        sessionStorage.removeItem(STORAGE_KEYS.SESSION_WALLET);
+      }
+    };
+    DRIVE_FOLDER_NAME = "__ALKANES_WALLETS";
+    DRIVE_SCOPES = "https://www.googleapis.com/auth/drive.file";
+    GoogleDriveBackup = class {
+      constructor(clientId) {
+        this.accessToken = null;
+        this.gapiInited = false;
+        this.gsiInited = false;
+        this.clientId = clientId || (typeof process !== "undefined" ? process.env.NEXT_PUBLIC_GOOGLE_DRIVE_CLIENT_ID || "" : "");
+      }
+      /**
+       * Check if Google Drive backup is configured
+       */
+      isConfigured() {
+        return !!this.clientId;
+      }
+      /**
+       * Initialize Google API and Identity Services
+       * Must be called before any Drive operations
+       */
+      async initialize() {
+        if (!this.isConfigured()) {
+          throw new Error("Google Drive client ID not configured");
+        }
+        if (!isBrowser3()) {
+          throw new Error("Google Drive backup only available in browser");
+        }
+        await this.initGapi();
+        this.initGsi();
+      }
+      /**
+       * Request OAuth access token from user (opens popup)
+       */
+      async requestAccess() {
+        if (!this.gapiInited) {
+          await this.initGapi();
+        }
+        if (!this.gsiInited) {
+          this.initGsi();
+        }
+        if (this.accessToken) {
+          return this.accessToken;
+        }
+        return new Promise((resolve, reject) => {
+          const google = window.google;
+          const tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: this.clientId,
+            scope: DRIVE_SCOPES,
+            callback: (response) => {
+              if (response.error) {
+                reject(new Error(response.error));
+              } else {
+                this.accessToken = response.access_token;
+                resolve(response.access_token);
+              }
+            }
+          });
+          tokenClient.requestAccessToken({ prompt: "consent" });
+        });
+      }
+      /**
+       * Clear access token and revoke with Google
+       */
+      clearAccess() {
+        const token = this.accessToken;
+        this.accessToken = null;
+        if (isBrowser3() && token) {
+          const google = window.google;
+          if (google?.accounts?.oauth2?.revoke) {
+            google.accounts.oauth2.revoke(token, () => {
+            });
+          }
+        }
+      }
+      /**
+       * Backup wallet to Google Drive
+       */
+      async backupWallet(encryptedKeystore, walletLabel, passwordHint) {
+        const token = await this.requestAccess();
+        const gapi = window.gapi;
+        const rootFolderId = await this.getOrCreateRootFolder();
+        const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+        const folderName = timestamp.replace(/[:.]/g, "-").replace(/Z$/, "Z");
+        const folder = await gapi.client.drive.files.create({
+          resource: {
+            name: folderName,
+            mimeType: "application/vnd.google-apps.folder",
+            parents: [rootFolderId]
+          },
+          fields: "id, webViewLink"
+        });
+        const folderId = folder.result.id;
+        const folderUrl = folder.result.webViewLink;
+        const keystoreData = {
+          version: "1.0",
+          timestamp,
+          encryptedKeystore,
+          walletLabel: walletLabel || "My Bitcoin Wallet",
+          backupMethod: "google-drive-client-side"
+        };
+        await this.uploadFile(
+          token,
+          "keystore.json",
+          JSON.stringify(keystoreData, null, 2),
+          "application/json",
+          folderId
+        );
+        if (passwordHint) {
+          await this.uploadFile(token, "password_hint.txt", passwordHint, "text/plain", folderId);
+        }
+        return { folderId, folderName, timestamp, folderUrl };
+      }
+      /**
+       * List all wallet backups from Google Drive
+       */
+      async listWallets() {
+        const token = await this.requestAccess();
+        const gapi = window.gapi;
+        const rootFolderId = await this.getOrCreateRootFolder();
+        const response = await gapi.client.drive.files.list({
+          q: `'${rootFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+          fields: "files(id, name, createdTime, webViewLink)",
+          orderBy: "createdTime desc"
+        });
+        const wallets = [];
+        for (const folder of response.result.files || []) {
+          try {
+            const keystoreList = await gapi.client.drive.files.list({
+              q: `'${folder.id}' in parents and name='keystore.json' and trashed=false`,
+              fields: "files(id)"
+            });
+            if (!keystoreList.result.files?.length) {
+              continue;
+            }
+            const keystoreFileId = keystoreList.result.files[0].id;
+            const keystoreResponse = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${keystoreFileId}?alt=media`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (!keystoreResponse.ok) continue;
+            const keystoreData = await keystoreResponse.json();
+            const hintList = await gapi.client.drive.files.list({
+              q: `'${folder.id}' in parents and name='password_hint.txt' and trashed=false`,
+              fields: "files(id)"
+            });
+            wallets.push({
+              folderId: folder.id,
+              folderName: folder.name,
+              walletLabel: keystoreData.walletLabel || "My Wallet",
+              timestamp: keystoreData.timestamp || folder.createdTime,
+              createdDate: folder.createdTime,
+              hasPasswordHint: !!hintList.result.files?.length,
+              folderUrl: folder.webViewLink
+            });
+          } catch (error) {
+            console.warn(`Error processing folder ${folder.name}:`, error);
+          }
+        }
+        return wallets;
+      }
+      /**
+       * Restore wallet from Google Drive
+       */
+      async restoreWallet(folderId) {
+        const token = await this.requestAccess();
+        const gapi = window.gapi;
+        const keystoreList = await gapi.client.drive.files.list({
+          q: `'${folderId}' in parents and name='keystore.json' and trashed=false`,
+          fields: "files(id)"
+        });
+        if (!keystoreList.result.files?.length) {
+          throw new Error("Keystore file not found in backup");
+        }
+        const keystoreFileId = keystoreList.result.files[0].id;
+        const keystoreResponse = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${keystoreFileId}?alt=media`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!keystoreResponse.ok) {
+          throw new Error("Failed to download keystore from Google Drive");
+        }
+        const keystoreData = await keystoreResponse.json();
+        let passwordHint = null;
+        try {
+          const hintList = await gapi.client.drive.files.list({
+            q: `'${folderId}' in parents and name='password_hint.txt' and trashed=false`,
+            fields: "files(id)"
+          });
+          if (hintList.result.files?.length) {
+            const hintFileId = hintList.result.files[0].id;
+            const hintResponse = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${hintFileId}?alt=media`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (hintResponse.ok) {
+              passwordHint = await hintResponse.text();
+            }
+          }
+        } catch {
+        }
+        return {
+          encryptedKeystore: keystoreData.encryptedKeystore,
+          passwordHint,
+          walletLabel: keystoreData.walletLabel || "My Wallet",
+          timestamp: keystoreData.timestamp
+        };
+      }
+      /**
+       * Delete a wallet backup from Google Drive
+       */
+      async deleteWallet(folderId) {
+        await this.requestAccess();
+        const gapi = window.gapi;
+        await gapi.client.drive.files.delete({ fileId: folderId });
+      }
+      // Private helpers
+      async initGapi() {
+        if (this.gapiInited) return;
+        return new Promise((resolve, reject) => {
+          const gapi = window.gapi;
+          if (!gapi) {
+            reject(
+              new Error(
+                'Google API not loaded. Add <script src="https://apis.google.com/js/api.js"><\/script> to your page.'
+              )
+            );
+            return;
+          }
+          gapi.load("client", async () => {
+            try {
+              await gapi.client.init({
+                apiKey: "",
+                discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
+              });
+              this.gapiInited = true;
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          });
+        });
+      }
+      initGsi() {
+        if (this.gsiInited) return;
+        const google = window.google;
+        if (!google?.accounts) {
+          throw new Error(
+            'Google Identity Services not loaded. Add <script src="https://accounts.google.com/gsi/client"><\/script> to your page.'
+          );
+        }
+        this.gsiInited = true;
+      }
+      async getOrCreateRootFolder() {
+        const gapi = window.gapi;
+        const response = await gapi.client.drive.files.list({
+          q: `name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+          fields: "files(id, name)",
+          spaces: "drive"
+        });
+        if (response.result.files?.length) {
+          return response.result.files[0].id;
+        }
+        const folder = await gapi.client.drive.files.create({
+          resource: {
+            name: DRIVE_FOLDER_NAME,
+            mimeType: "application/vnd.google-apps.folder"
+          },
+          fields: "id"
+        });
+        return folder.result.id;
+      }
+      async uploadFile(token, fileName, content, mimeType, parentFolderId) {
+        const metadata = {
+          name: fileName,
+          mimeType,
+          parents: [parentFolderId]
+        };
+        const form = new FormData();
+        form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+        form.append("file", new Blob([content], { type: mimeType }));
+        const response = await fetch(
+          "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            body: form
+          }
+        );
+        if (!response.ok) {
+          throw new Error(`Upload failed: ${await response.text()}`);
+        }
+        const result = await response.json();
+        return result.id;
+      }
+    };
+  }
+});
+
 // src/index.ts
 init_keystore();
 init_wallet();
@@ -46888,20 +47747,37 @@ function weightToVsize(weight) {
 }
 
 // src/index.ts
+init_browser_wallets();
+init_storage();
 var VERSION = "0.1.0";
 async function initSDK() {
   const { KeystoreManager: KeystoreManager2, createKeystore: createKeystore2, unlockKeystore: unlockKeystore2 } = await Promise.resolve().then(() => (init_keystore(), keystore_exports));
   const { AlkanesWallet: AlkanesWallet2, createWallet: createWallet2, createWalletFromMnemonic: createWalletFromMnemonic2 } = await Promise.resolve().then(() => (init_wallet(), wallet_exports));
   const { AlkanesProvider: AlkanesProvider2, createProvider: createProvider2 } = await Promise.resolve().then(() => (init_provider(), provider_exports));
+  const { WalletConnector: WalletConnector2, ConnectedWallet: ConnectedWallet2, BROWSER_WALLETS: BROWSER_WALLETS2, isWalletInstalled: isWalletInstalled2, getInstalledWallets: getInstalledWallets2 } = await Promise.resolve().then(() => (init_browser_wallets(), browser_wallets_exports));
+  const { KeystoreStorage: KeystoreStorage2, GoogleDriveBackup: GoogleDriveBackup2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
   return {
+    // Keystore
     KeystoreManager: KeystoreManager2,
-    AlkanesWallet: AlkanesWallet2,
-    AlkanesProvider: AlkanesProvider2,
     createKeystore: createKeystore2,
     unlockKeystore: unlockKeystore2,
+    // Wallet
+    AlkanesWallet: AlkanesWallet2,
     createWallet: createWallet2,
     createWalletFromMnemonic: createWalletFromMnemonic2,
+    // Provider
+    AlkanesProvider: AlkanesProvider2,
     createProvider: createProvider2,
+    // Browser wallets
+    WalletConnector: WalletConnector2,
+    ConnectedWallet: ConnectedWallet2,
+    BROWSER_WALLETS: BROWSER_WALLETS2,
+    isWalletInstalled: isWalletInstalled2,
+    getInstalledWallets: getInstalledWallets2,
+    // Storage
+    KeystoreStorage: KeystoreStorage2,
+    GoogleDriveBackup: GoogleDriveBackup2,
+    // Meta
     version: VERSION
   };
 }
@@ -46909,15 +47785,30 @@ async function getAlkanesSDK() {
   const { KeystoreManager: KeystoreManager2, createKeystore: createKeystore2, unlockKeystore: unlockKeystore2 } = await Promise.resolve().then(() => (init_keystore(), keystore_exports));
   const { AlkanesWallet: AlkanesWallet2, createWallet: createWallet2, createWalletFromMnemonic: createWalletFromMnemonic2 } = await Promise.resolve().then(() => (init_wallet(), wallet_exports));
   const { AlkanesProvider: AlkanesProvider2, createProvider: createProvider2 } = await Promise.resolve().then(() => (init_provider(), provider_exports));
+  const { WalletConnector: WalletConnector2, ConnectedWallet: ConnectedWallet2, BROWSER_WALLETS: BROWSER_WALLETS2, isWalletInstalled: isWalletInstalled2, getInstalledWallets: getInstalledWallets2 } = await Promise.resolve().then(() => (init_browser_wallets(), browser_wallets_exports));
+  const { KeystoreStorage: KeystoreStorage2, GoogleDriveBackup: GoogleDriveBackup2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
   return {
+    // Keystore
     KeystoreManager: KeystoreManager2,
-    AlkanesWallet: AlkanesWallet2,
-    AlkanesProvider: AlkanesProvider2,
     createKeystore: createKeystore2,
     unlockKeystore: unlockKeystore2,
+    // Wallet
+    AlkanesWallet: AlkanesWallet2,
     createWallet: createWallet2,
     createWalletFromMnemonic: createWalletFromMnemonic2,
+    // Provider
+    AlkanesProvider: AlkanesProvider2,
     createProvider: createProvider2,
+    // Browser wallets
+    WalletConnector: WalletConnector2,
+    ConnectedWallet: ConnectedWallet2,
+    BROWSER_WALLETS: BROWSER_WALLETS2,
+    isWalletInstalled: isWalletInstalled2,
+    getInstalledWallets: getInstalledWallets2,
+    // Storage
+    KeystoreStorage: KeystoreStorage2,
+    GoogleDriveBackup: GoogleDriveBackup2,
+    // Meta
     initSDK,
     VERSION
   };
@@ -46927,13 +47818,18 @@ export {
   AlkanesProvider,
   AlkanesRpcClient,
   AlkanesWallet,
+  BROWSER_WALLETS,
   BitcoinRpcClient,
+  ConnectedWallet,
   DERIVATION_PATHS,
   DataApiClient,
   EsploraClient,
+  GoogleDriveBackup,
   KeystoreManager,
+  KeystoreStorage,
   NETWORK_PRESETS,
   VERSION,
+  WalletConnector,
   btcToSatoshis,
   bytesToHex,
   calculateFee,
@@ -46946,12 +47842,17 @@ export {
   delay,
   estimateTxSize,
   formatAlkaneId,
+  formatBackupDate,
   formatTimestamp,
+  getInstalledWallets,
   getNetwork,
+  getRelativeTime,
+  getWalletById,
   hexToBytes,
   initSDK,
   isBrowser,
   isNode,
+  isWalletInstalled,
   parseAlkaneId,
   retry,
   reverseBytes,

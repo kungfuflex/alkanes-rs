@@ -70,7 +70,108 @@ declare module '@alkanes/ts-sdk' {
   export function executeWithBtcWrapUnwrap(...args: any[]): Promise<any>;
   export function wrapBtc(...args: any[]): Promise<any>;
   export function unwrapBtc(...args: any[]): Promise<any>;
-  
+
+  // Browser wallet types
+  export interface BrowserWalletInfo {
+    id: string;
+    name: string;
+    icon: string;
+    website: string;
+    injectionKey: string;
+    supportsPsbt: boolean;
+    supportsTaproot: boolean;
+    supportsOrdinals: boolean;
+    mobileSupport: boolean;
+    deepLinkScheme?: string;
+  }
+
+  export interface WalletAccount {
+    address: string;
+    publicKey?: string;
+    addressType?: string;
+  }
+
+  export interface PsbtSigningOptions {
+    autoFinalized?: boolean;
+    toSignInputs?: Array<{
+      index: number;
+      address?: string;
+      sighashTypes?: number[];
+      disableTweakedPublicKey?: boolean;
+    }>;
+  }
+
+  export class ConnectedWallet {
+    readonly info: BrowserWalletInfo;
+    readonly account: WalletAccount;
+    readonly address: string;
+    readonly publicKey: string | undefined;
+    signMessage(message: string): Promise<string>;
+    signPsbt(psbtHex: string, options?: PsbtSigningOptions): Promise<string>;
+    getNetwork(): Promise<string>;
+    disconnect(): Promise<void>;
+  }
+
+  export class WalletConnector {
+    detectWallets(): Promise<BrowserWalletInfo[]>;
+    connect(wallet: BrowserWalletInfo): Promise<ConnectedWallet>;
+    getConnectedWallet(): ConnectedWallet | null;
+    disconnect(): Promise<void>;
+    isConnected(): boolean;
+  }
+
+  export const BROWSER_WALLETS: BrowserWalletInfo[];
+  export function isWalletInstalled(wallet: BrowserWalletInfo): boolean;
+  export function getInstalledWallets(): BrowserWalletInfo[];
+  export function getWalletById(id: string): BrowserWalletInfo | undefined;
+
+  // Storage types
+  export interface WalletBackupInfo {
+    folderId: string;
+    folderName: string;
+    walletLabel: string;
+    timestamp: string;
+    createdDate: string;
+    hasPasswordHint: boolean;
+    folderUrl: string;
+  }
+
+  export interface RestoreWalletResult {
+    encryptedKeystore: string;
+    passwordHint: string | null;
+    walletLabel: string;
+    timestamp: string;
+  }
+
+  export class KeystoreStorage {
+    saveKeystore(keystoreJson: string, network: string): void;
+    loadKeystore(): { keystore: string; network: string } | null;
+    hasKeystore(): boolean;
+    clearKeystore(): void;
+    saveSessionWallet(walletState: any): void;
+    loadSessionWallet(): any | null;
+    clearSessionWallet(): void;
+  }
+
+  export class GoogleDriveBackup {
+    constructor(clientId?: string);
+    isConfigured(): boolean;
+    initialize(): Promise<void>;
+    requestAccess(): Promise<string>;
+    clearAccess(): void;
+    backupWallet(
+      encryptedKeystore: string,
+      walletLabel?: string,
+      passwordHint?: string
+    ): Promise<{ folderId: string; folderName: string; timestamp: string; folderUrl: string }>;
+    listWallets(): Promise<WalletBackupInfo[]>;
+    restoreWallet(folderId: string): Promise<RestoreWalletResult>;
+    deleteWallet(folderId: string): Promise<void>;
+  }
+
+  export function formatBackupDate(timestamp: string): string;
+  export function getRelativeTime(timestamp: string): string;
+
   // Other exports
   export const VERSION: string;
   export function initSDK(wasmModule?: any): Promise<any>;
