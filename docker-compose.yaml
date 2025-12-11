@@ -10,6 +10,9 @@ services:
       dockerfile: docker/bitcoind/Dockerfile
       context: .
     image: bitcoind:alkanes
+    ports:
+      - "18443:18443"
+      - "18444:18444"
     volumes:
       - bitcoin-data:/root/.bitcoin
     command:
