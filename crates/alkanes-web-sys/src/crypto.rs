@@ -76,14 +76,15 @@ use alloc::{
 
 use async_trait::async_trait;
 use alkanes_cli_common::{AlkanesError, Result};
-use js_sys::{Array, Object, Uint8Array};
+use js_sys::{Array, Object, Uint8Array, Reflect};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{window, Crypto, SubtleCrypto, CryptoKey};
+use web_sys::{Crypto, SubtleCrypto, CryptoKey};
 use sha2::{Sha256, Digest as Sha2Digest};
 use sha3::Sha3_256;
 use rand::RngCore;
 use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead, Nonce};
+use crate::platform;
 
 /// Web crypto implementation using browser Web Crypto API
 ///
@@ -142,18 +143,41 @@ impl WebCrypto {
     /// // Crypto provider is ready to use, will handle API availability automatically
     /// ```
     pub fn new() -> Self {
-        let window = window();
-        let crypto = window.as_ref().and_then(|w| w.crypto().ok());
-        let subtle = crypto.as_ref().and_then(|c| {
-            let s = c.subtle();
-            if s.is_undefined() {
-                None
-            } else {
-                Some(s)
-            }
-        });
-        
-        Self { crypto, subtle }
+        // Use platform abstraction to check if we're in a browser environment
+        if platform::is_browser() {
+            // In browser: try to get Web Crypto API from window
+            let global = js_sys::global();
+            let crypto = Reflect::get(&global, &"crypto".into())
+                .ok()
+                .and_then(|c| c.dyn_into::<Crypto>().ok());
+            let subtle = crypto.as_ref().and_then(|c| {
+                let s = c.subtle();
+                if s.is_undefined() {
+                    None
+                } else {
+                    Some(s)
+                }
+            });
+
+            Self { crypto, subtle }
+        } else {
+            // In Node.js: crypto.subtle is available in newer Node.js versions
+            // Try to get it from globalThis.crypto
+            let global = js_sys::global();
+            let crypto = Reflect::get(&global, &"crypto".into())
+                .ok()
+                .and_then(|c| c.dyn_into::<Crypto>().ok());
+            let subtle = crypto.as_ref().and_then(|c| {
+                let s = c.subtle();
+                if s.is_undefined() {
+                    None
+                } else {
+                    Some(s)
+                }
+            });
+
+            Self { crypto, subtle }
+        }
     }
 
     /// Get the Crypto object or return an error

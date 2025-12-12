@@ -49,18 +49,14 @@
 //! ```
 
 use async_trait::async_trait;
-use alkanes_cli_common::{AlkanesError, Result};
-use wasm_bindgen::prelude::*;
+use alkanes_cli_common::Result;
 use crate::platform;
 
 #[cfg(target_arch = "wasm32")]
 extern crate alloc;
 #[cfg(target_arch = "wasm32")]
 use alloc::{
-    boxed::Box,
-    format,
     string::{String, ToString},
-    vec,
     vec::Vec,
 };
 
@@ -68,7 +64,6 @@ use alloc::{
 use std::{
     string::{String, ToString},
     vec::Vec,
-    format,
 };
 
 /// Web network implementation using browser fetch API
@@ -182,8 +177,8 @@ impl WebNetwork {
 /// Implementation of the [`alkanes_cli_common::NetworkProvider`] trait for web environments
 ///
 /// This implementation provides all the standard network operations using the
-/// browser's fetch API. All operations are async-compatible and handle
-/// the web environment's constraints including CORS and security policies.
+/// platform abstraction layer. All operations are async-compatible and work
+/// in both browser and Node.js environments.
 #[async_trait(?Send)]
 impl alkanes_cli_common::NetworkProvider for WebNetwork {
     /// Perform an HTTP GET request
@@ -203,10 +198,8 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     ///
     /// * [`AlkanesError::Network`] if the request fails
     /// * [`AlkanesError::Network`] if the response has an error status code
-    /// * [`AlkanesError::Network`] if reading the response body fails
     async fn get(&self, url: &str) -> Result<Vec<u8>> {
-        let response = self.fetch_request(url, "GET", None, None).await?;
-        self.response_to_bytes(response).await
+        self.fetch_request(url, "GET", None, None).await
     }
 
     /// Perform an HTTP POST request with a body
@@ -228,10 +221,8 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     ///
     /// * [`AlkanesError::Network`] if the request fails
     /// * [`AlkanesError::Network`] if the response has an error status code
-    /// * [`AlkanesError::Network`] if reading the response body fails
     async fn post(&self, url: &str, body: &[u8], content_type: &str) -> Result<Vec<u8>> {
-        let response = self.fetch_request(url, "POST", Some(body), Some(content_type)).await?;
-        self.response_to_bytes(response).await
+        self.fetch_request(url, "POST", Some(body), Some(content_type)).await
     }
 
     /// Download data from a URL
@@ -251,7 +242,6 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     ///
     /// * [`AlkanesError::Network`] if the request fails
     /// * [`AlkanesError::Network`] if the response has an error status code
-    /// * [`AlkanesError::Network`] if reading the response body fails
     async fn download(&self, url: &str) -> Result<Vec<u8>> {
         self.get(url).await
     }
@@ -276,7 +266,7 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     /// This method never panics and will return `false` for any error condition,
     /// including network failures, CORS issues, or HTTP error status codes.
     async fn is_reachable(&self, url: &str) -> bool {
-        (self.fetch_request(url, "HEAD", None, None).await).is_ok()
+        self.fetch_request(url, "HEAD", None, None).await.is_ok()
     }
 
     /// Get the user agent string
