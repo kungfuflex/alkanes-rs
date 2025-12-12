@@ -14,10 +14,11 @@
 //! - **User Agent**: Configurable user agent string for requests
 //! - **Async Interface**: Fully async API compatible with web environments
 //!
-//! # Browser Compatibility
+//! # Environment Compatibility
 //!
-//! This implementation requires a browser environment with fetch API support.
-//! It will gracefully handle cases where the window object is not available.
+//! This implementation works in both browser and Node.js environments.
+//! It uses the platform abstraction layer to detect the environment and
+//! use the appropriate fetch implementation.
 //!
 //! # Examples
 //!
@@ -49,10 +50,8 @@
 
 use async_trait::async_trait;
 use alkanes_cli_common::{AlkanesError, Result};
-use js_sys::Uint8Array;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
-use web_sys::{Request, RequestInit, RequestMode, Response, window, Headers};
+use crate::platform;
 
 #[cfg(target_arch = "wasm32")]
 extern crate alloc;
@@ -128,8 +127,8 @@ impl WebNetwork {
     /// Make a fetch request with the given parameters
     ///
     /// This is the core method that handles all HTTP requests using the
-    /// browser's fetch API. It sets up proper headers, handles CORS,
-    /// and processes the response.
+    /// platform abstraction layer. It works in both browser and Node.js
+    /// environments by delegating to the platform::fetch function.
     ///
     /// # Arguments
     ///
@@ -140,12 +139,10 @@ impl WebNetwork {
     ///
     /// # Returns
     ///
-    /// A [`web_sys::Response`] object on success
+    /// The response body as bytes
     ///
     /// # Errors
     ///
-    /// * [`AlkanesError::Network`] if the window object is not available
-    /// * [`AlkanesError::Network`] if request creation fails
     /// * [`AlkanesError::Network`] if the fetch operation fails
     /// * [`AlkanesError::Network`] if the response has an error status code
     async fn fetch_request(
@@ -154,83 +151,31 @@ impl WebNetwork {
         method: &str,
         body: Option<&[u8]>,
         content_type: Option<&str>,
-    ) -> Result<Response> {
-        let window = window().ok_or_else(|| AlkanesError::Network("No window object available".to_string()))?;
-
-        let opts = RequestInit::new();
-        opts.set_method(method);
-        opts.set_mode(RequestMode::Cors);
-
-        // Set headers
-        let headers = Headers::new()
-            .map_err(|e| AlkanesError::Network(format!("Failed to create headers: {e:?}")))?;
-        
-        headers.set("User-Agent", &self.user_agent)
-            .map_err(|e| AlkanesError::Network(format!("Failed to set User-Agent: {e:?}")))?;
+    ) -> Result<Vec<u8>> {
+        // Build headers
+        let mut headers = Vec::new();
+        headers.push(("User-Agent", self.user_agent.as_str()));
 
         if let Some(ct) = content_type {
-            headers.set("Content-Type", ct)
-                .map_err(|e| AlkanesError::Network(format!("Failed to set Content-Type: {e:?}")))?;
+            headers.push(("Content-Type", ct));
         }
 
-        opts.set_headers(&headers);
+        // Convert body bytes to string if present
+        let body_str = body.map(|b| {
+            // For binary data, we need to handle this differently
+            // For now, assume UTF-8 text (this works for JSON payloads)
+            String::from_utf8_lossy(b).into_owned()
+        });
 
-        // Set body if provided
-        if let Some(body_bytes) = body {
-            let uint8_array = Uint8Array::new_with_length(body_bytes.len() as u32);
-            uint8_array.copy_from(body_bytes);
-            opts.set_body(&uint8_array);
-        }
+        // Use platform abstraction for fetch
+        let response_text = platform::fetch(
+            url,
+            method,
+            body_str.as_deref(),
+            headers,
+        ).await?;
 
-        let request = Request::new_with_str_and_init(url, &opts)
-            .map_err(|e| AlkanesError::Network(format!("Failed to create request: {e:?}")))?;
-
-        let resp_value = JsFuture::from(window.fetch_with_request(&request))
-            .await
-            .map_err(|e| AlkanesError::Network(format!("Fetch failed: {e:?}")))?;
-
-        let resp: Response = resp_value.dyn_into()
-            .map_err(|e| AlkanesError::Network(format!("Failed to cast response: {e:?}")))?;
-
-        if !resp.ok() {
-            return Err(AlkanesError::Network(format!(
-                "HTTP error: {} {}",
-                resp.status(),
-                resp.status_text()
-            )));
-        }
-
-        Ok(resp)
-    }
-
-    /// Convert a fetch Response to bytes
-    ///
-    /// Reads the response body as an ArrayBuffer and converts it to a Vec<u8>.
-    /// This method handles both text and binary response data.
-    ///
-    /// # Arguments
-    ///
-    /// * `response` - The Response object from a fetch request
-    ///
-    /// # Returns
-    ///
-    /// The response body as a vector of bytes
-    ///
-    /// # Errors
-    ///
-    /// * [`AlkanesError::Network`] if reading the array buffer fails
-    /// * [`AlkanesError::Network`] if converting the buffer to bytes fails
-    async fn response_to_bytes(&self, response: Response) -> Result<Vec<u8>> {
-        let array_buffer = JsFuture::from(response.array_buffer()
-            .map_err(|e| AlkanesError::Network(format!("Failed to get array buffer: {e:?}")))?)
-            .await
-            .map_err(|e| AlkanesError::Network(format!("Failed to read array buffer: {e:?}")))?;
-
-        let uint8_array = Uint8Array::new(&array_buffer);
-        let mut bytes = vec![0u8; uint8_array.length() as usize];
-        uint8_array.copy_to(&mut bytes);
-        
-        Ok(bytes)
+        Ok(response_text.into_bytes())
     }
 }
 
