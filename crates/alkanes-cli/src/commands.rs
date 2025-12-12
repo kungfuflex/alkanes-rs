@@ -865,6 +865,9 @@ pub enum Brc20Prog {
         /// Use experimental EVM bytecode assembler for batch fetching (100x faster!)
         #[arg(long)]
         experimental_asm: bool,
+        /// Use experimental Solidity-compiled bytecode for batch fetching (for comparison)
+        #[arg(long)]
+        experimental_sol: bool,
     },
 }
 
