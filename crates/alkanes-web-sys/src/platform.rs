@@ -201,16 +201,18 @@ impl Clone for PlatformStorage {
 }
 
 /// Perform a fetch request (works in both browser and Node.js)
+///
+/// This function uses the global fetch API which is available in:
+/// - Modern browsers (globalThis.fetch)
+/// - Node.js 18+ (globalThis.fetch)
+/// - Test environments with fetch polyfills
 pub async fn fetch(url: &str, method: &str, body: Option<&str>, headers: Vec<(&str, &str)>) -> Result<String> {
-    // Try Node.js/global fetch first (for tests), fall back to web_sys (for browser)
     use js_sys::{Object, Reflect};
-    
-    // Check if we're in a browser environment by looking for window
+
     let global = js_sys::global();
-    let has_window = Reflect::has(&global, &"window".into()).unwrap_or(false);
-    
-    if !has_window {
-        // Node.js mode: use global fetch
+
+    // Always use global fetch - it works in both browsers and Node.js 18+
+    {
         let opts = Object::new();
         Reflect::set(&opts, &"method".into(), &JsValue::from_str(method))
             .map_err(|_| AlkanesError::Network("Failed to set method".to_string()))?;
@@ -270,47 +272,5 @@ pub async fn fetch(url: &str, method: &str, body: Option<&str>, headers: Vec<(&s
         
         text_value.as_string()
             .ok_or_else(|| AlkanesError::Network("Response is not a string".to_string()))
-    } else {
-        // Browser mode: use web_sys
-        use web_sys::{window, Request, RequestInit, RequestMode, Response};
-        
-        let window = window().ok_or_else(|| AlkanesError::Network("No window object available".to_string()))?;
-        
-        let mut opts = RequestInit::new();
-        opts.method(method);
-        opts.mode(RequestMode::Cors);
-        
-        if let Some(body_str) = body {
-            opts.body(Some(&JsValue::from_str(body_str)));
-        }
-        
-        let request = Request::new_with_str_and_init(url, &opts)
-            .map_err(|e| AlkanesError::Network(format!("Failed to create request: {:?}", e)))?;
-        
-        // Set headers
-        let req_headers = request.headers();
-        for (key, value) in headers {
-            req_headers.set(key, value)
-                .map_err(|e| AlkanesError::Network(format!("Failed to set header: {:?}", e)))?;
-        }
-        
-        let resp_value = JsFuture::from(window.fetch_with_request(&request))
-            .await
-            .map_err(|e| AlkanesError::Network(format!("Fetch failed: {:?}", e)))?;
-        
-        let resp: Response = resp_value.dyn_into()
-            .map_err(|e| AlkanesError::Network(format!("Response conversion failed: {:?}", e)))?;
-        
-        if !resp.ok() {
-            return Err(AlkanesError::Network(format!("HTTP error: {}", resp.status())));
-        }
-        
-        let text = JsFuture::from(resp.text()
-            .map_err(|e| AlkanesError::Network(format!("Failed to get text: {:?}", e)))?)
-            .await
-            .map_err(|e| AlkanesError::Network(format!("Text conversion failed: {:?}", e)))?;
-        
-        text.as_string()
-            .ok_or_else(|| AlkanesError::Network("Response text is not a string".to_string()))
     }
 }

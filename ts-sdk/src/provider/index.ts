@@ -405,7 +405,7 @@ export class AlkanesProvider {
     // Create config override if custom URLs provided
     const configOverride: any = {};
     if (this.rpcUrl !== NETWORK_PRESETS[this.networkPreset]?.rpcUrl) {
-      configOverride.sandshrew_rpc_url = this.rpcUrl;
+      configOverride.jsonrpc_url = this.rpcUrl;
     }
 
     this._provider = new wasm.WebProvider(
