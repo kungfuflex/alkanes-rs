@@ -539,6 +539,7 @@ dependencies = [
  "alkanes-cli-common",
  "alkanes-support",
  "anyhow",
+ "base64 0.22.1",
  "bip39",
  "bitcoin 0.32.7",
  "bitcoin_hashes 0.14.0",

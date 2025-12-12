@@ -4,19 +4,23 @@
 namespace alkanes {
   // Get the version of the alkanes library
   string version();
-  
+
   // Validate a Bitcoin address for a given network
   [Throws=AlkanesError]
   boolean validate_address(string address, Network network);
-  
+
   // Generate a new mnemonic phrase
   [Throws=AlkanesError]
   string generate_mnemonic(WordCount word_count);
-  
+
+  // Validate a mnemonic phrase
+  [Throws=AlkanesError]
+  boolean validate_mnemonic(string mnemonic);
+
   // Parse a Bitcoin address
   [Throws=AlkanesError]
   ParsedAddress parse_address(string address);
-  
+
   // Convert address to script pubkey
   [Throws=AlkanesError]
   string address_to_script_pubkey(string address, Network network);
@@ -59,8 +63,86 @@ enum AlkanesError {
   "SerializationError",
   "TransactionError",
   "AlkanesExecutionError",
+  "CryptoError",
+  "KeystoreError",
   "Generic",
 };
+
+// ============================================================================
+// Keystore - Encrypted wallet storage
+// ============================================================================
+
+// PBKDF2 parameters for key derivation
+dictionary PbkdfParams {
+  string salt;           // Hex-encoded salt
+  string? nonce;         // Hex-encoded AES-GCM nonce
+  u32 iterations;        // PBKDF2 iteration count
+  string? algorithm;     // Symmetric algorithm (e.g., "aes-256-gcm")
+};
+
+// Address information returned from keystore
+dictionary AddressInfo {
+  string derivation_path;
+  string address;
+  string script_type;
+  u32 index;
+  boolean used;
+};
+
+// Keystore interface for encrypted wallet storage
+// This stores the encrypted mnemonic and derived xpubs for address generation
+interface Keystore {
+  // Create a new keystore from a mnemonic phrase
+  // Encrypts the mnemonic with the provided passphrase
+  [Throws=AlkanesError]
+  constructor(string mnemonic, Network network, string passphrase);
+
+  // Load a keystore from JSON string (for mobile storage)
+  [Throws=AlkanesError, Name=from_json]
+  constructor(string json_str);
+
+  // Serialize keystore to JSON string (for mobile storage)
+  [Throws=AlkanesError]
+  string to_json();
+
+  // Get the master fingerprint (for identification)
+  string get_master_fingerprint();
+
+  // Get the creation timestamp
+  u64 get_created_at();
+
+  // Decrypt and return the mnemonic phrase
+  // WARNING: Handle with care - this exposes the seed!
+  [Throws=AlkanesError]
+  string decrypt_mnemonic(string passphrase);
+
+  // Derive addresses without needing the passphrase (uses stored xpubs)
+  // address_type: "p2tr", "p2wpkh", "p2sh-p2wpkh", "p2pkh"
+  // chain: 0 for external (receiving), 1 for internal (change)
+  [Throws=AlkanesError]
+  sequence<AddressInfo> get_addresses(
+    Network network,
+    string address_type,
+    u32 chain,
+    u32 start_index,
+    u32 count
+  );
+
+  // Get a single address at a specific index
+  [Throws=AlkanesError]
+  string get_address(Network network, string address_type, u32 index);
+
+  // Check if keystore has xpub for a given address type and network
+  boolean has_xpub(string address_type, Network network);
+
+  // Get the account xpub for a given address type and network
+  [Throws=AlkanesError]
+  string get_xpub(string address_type, Network network);
+};
+
+// ============================================================================
+// Wallet Configuration and Types
+// ============================================================================
 
 // Wallet configuration
 dictionary WalletConfig {
@@ -74,22 +156,81 @@ interface Wallet {
   // Create a new wallet with optional mnemonic
   [Throws=AlkanesError]
   constructor(WalletConfig config, string? mnemonic);
-  
+
+  // Create a wallet from an existing keystore
+  [Throws=AlkanesError, Name=from_keystore]
+  constructor(Keystore keystore, string passphrase, WalletConfig config);
+
   // Get the wallet's receiving address
   [Throws=AlkanesError]
   string get_address(AddressType address_type, u32 index);
-  
+
   // Get the wallet balance
   [Throws=AlkanesError]
   WalletBalance get_balance();
-  
+
   // Get the mnemonic phrase (if available)
   [Throws=AlkanesError]
   string? get_mnemonic();
-  
+
   // Sync the wallet with the blockchain
   [Throws=AlkanesError]
   void sync();
+
+  // Sign a PSBT (Partially Signed Bitcoin Transaction)
+  // Returns the signed PSBT as base64 string
+  [Throws=AlkanesError]
+  string sign_psbt(string psbt_base64);
+
+  // Sign and finalize a PSBT, returning the raw transaction hex
+  [Throws=AlkanesError]
+  string sign_and_finalize_psbt(string psbt_base64);
+
+  // Sign a raw transaction hex
+  [Throws=AlkanesError]
+  string sign_transaction(string tx_hex);
+
+  // Get the internal (x-only) public key for Taproot
+  [Throws=AlkanesError]
+  string get_internal_key();
+
+  // Export the keystore (encrypted)
+  [Throws=AlkanesError]
+  Keystore export_keystore();
+};
+
+// ============================================================================
+// UTXO and Transaction Types
+// ============================================================================
+
+// UTXO information
+dictionary UtxoInfo {
+  string txid;
+  u32 vout;
+  u64 amount;
+  string address;
+  string script_pubkey_hex;
+  u32 confirmations;
+  boolean frozen;
+};
+
+// Send transaction parameters
+dictionary SendParams {
+  string to_address;
+  u64 amount;
+  f32? fee_rate;
+  boolean send_all;
+  sequence<string>? from_addresses;
+  string? change_address;
+};
+
+// Prepared transaction ready for signing
+dictionary PreparedTransaction {
+  string psbt_base64;
+  u64 fee;
+  u64 input_total;
+  u64 output_total;
+  sequence<UtxoInfo> inputs;
 };
 
 // Wallet balance information

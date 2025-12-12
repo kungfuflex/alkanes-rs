@@ -14,10 +14,11 @@
 //! - **User Agent**: Configurable user agent string for requests
 //! - **Async Interface**: Fully async API compatible with web environments
 //!
-//! # Browser Compatibility
+//! # Environment Compatibility
 //!
-//! This implementation requires a browser environment with fetch API support.
-//! It will gracefully handle cases where the window object is not available.
+//! This implementation works in both browser and Node.js environments.
+//! It uses the platform abstraction layer to detect the environment and
+//! use the appropriate fetch implementation.
 //!
 //! # Examples
 //!
@@ -48,20 +49,14 @@
 //! ```
 
 use async_trait::async_trait;
-use alkanes_cli_common::{AlkanesError, Result};
-use js_sys::Uint8Array;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
-use web_sys::{Request, RequestInit, RequestMode, Response, window, Headers};
+use alkanes_cli_common::Result;
+use crate::platform;
 
 #[cfg(target_arch = "wasm32")]
 extern crate alloc;
 #[cfg(target_arch = "wasm32")]
 use alloc::{
-    boxed::Box,
-    format,
     string::{String, ToString},
-    vec,
     vec::Vec,
 };
 
@@ -69,7 +64,6 @@ use alloc::{
 use std::{
     string::{String, ToString},
     vec::Vec,
-    format,
 };
 
 /// Web network implementation using browser fetch API
@@ -128,8 +122,8 @@ impl WebNetwork {
     /// Make a fetch request with the given parameters
     ///
     /// This is the core method that handles all HTTP requests using the
-    /// browser's fetch API. It sets up proper headers, handles CORS,
-    /// and processes the response.
+    /// platform abstraction layer. It works in both browser and Node.js
+    /// environments by delegating to the platform::fetch function.
     ///
     /// # Arguments
     ///
@@ -140,12 +134,10 @@ impl WebNetwork {
     ///
     /// # Returns
     ///
-    /// A [`web_sys::Response`] object on success
+    /// The response body as bytes
     ///
     /// # Errors
     ///
-    /// * [`AlkanesError::Network`] if the window object is not available
-    /// * [`AlkanesError::Network`] if request creation fails
     /// * [`AlkanesError::Network`] if the fetch operation fails
     /// * [`AlkanesError::Network`] if the response has an error status code
     async fn fetch_request(
@@ -154,91 +146,39 @@ impl WebNetwork {
         method: &str,
         body: Option<&[u8]>,
         content_type: Option<&str>,
-    ) -> Result<Response> {
-        let window = window().ok_or_else(|| AlkanesError::Network("No window object available".to_string()))?;
-
-        let opts = RequestInit::new();
-        opts.set_method(method);
-        opts.set_mode(RequestMode::Cors);
-
-        // Set headers
-        let headers = Headers::new()
-            .map_err(|e| AlkanesError::Network(format!("Failed to create headers: {e:?}")))?;
-        
-        headers.set("User-Agent", &self.user_agent)
-            .map_err(|e| AlkanesError::Network(format!("Failed to set User-Agent: {e:?}")))?;
+    ) -> Result<Vec<u8>> {
+        // Build headers
+        let mut headers = Vec::new();
+        headers.push(("User-Agent", self.user_agent.as_str()));
 
         if let Some(ct) = content_type {
-            headers.set("Content-Type", ct)
-                .map_err(|e| AlkanesError::Network(format!("Failed to set Content-Type: {e:?}")))?;
+            headers.push(("Content-Type", ct));
         }
 
-        opts.set_headers(&headers);
+        // Convert body bytes to string if present
+        let body_str = body.map(|b| {
+            // For binary data, we need to handle this differently
+            // For now, assume UTF-8 text (this works for JSON payloads)
+            String::from_utf8_lossy(b).into_owned()
+        });
 
-        // Set body if provided
-        if let Some(body_bytes) = body {
-            let uint8_array = Uint8Array::new_with_length(body_bytes.len() as u32);
-            uint8_array.copy_from(body_bytes);
-            opts.set_body(&uint8_array);
-        }
+        // Use platform abstraction for fetch
+        let response_text = platform::fetch(
+            url,
+            method,
+            body_str.as_deref(),
+            headers,
+        ).await?;
 
-        let request = Request::new_with_str_and_init(url, &opts)
-            .map_err(|e| AlkanesError::Network(format!("Failed to create request: {e:?}")))?;
-
-        let resp_value = JsFuture::from(window.fetch_with_request(&request))
-            .await
-            .map_err(|e| AlkanesError::Network(format!("Fetch failed: {e:?}")))?;
-
-        let resp: Response = resp_value.dyn_into()
-            .map_err(|e| AlkanesError::Network(format!("Failed to cast response: {e:?}")))?;
-
-        if !resp.ok() {
-            return Err(AlkanesError::Network(format!(
-                "HTTP error: {} {}",
-                resp.status(),
-                resp.status_text()
-            )));
-        }
-
-        Ok(resp)
-    }
-
-    /// Convert a fetch Response to bytes
-    ///
-    /// Reads the response body as an ArrayBuffer and converts it to a Vec<u8>.
-    /// This method handles both text and binary response data.
-    ///
-    /// # Arguments
-    ///
-    /// * `response` - The Response object from a fetch request
-    ///
-    /// # Returns
-    ///
-    /// The response body as a vector of bytes
-    ///
-    /// # Errors
-    ///
-    /// * [`AlkanesError::Network`] if reading the array buffer fails
-    /// * [`AlkanesError::Network`] if converting the buffer to bytes fails
-    async fn response_to_bytes(&self, response: Response) -> Result<Vec<u8>> {
-        let array_buffer = JsFuture::from(response.array_buffer()
-            .map_err(|e| AlkanesError::Network(format!("Failed to get array buffer: {e:?}")))?)
-            .await
-            .map_err(|e| AlkanesError::Network(format!("Failed to read array buffer: {e:?}")))?;
-
-        let uint8_array = Uint8Array::new(&array_buffer);
-        let mut bytes = vec![0u8; uint8_array.length() as usize];
-        uint8_array.copy_to(&mut bytes);
-        
-        Ok(bytes)
+        Ok(response_text.into_bytes())
     }
 }
 
 /// Implementation of the [`alkanes_cli_common::NetworkProvider`] trait for web environments
 ///
 /// This implementation provides all the standard network operations using the
-/// browser's fetch API. All operations are async-compatible and handle
-/// the web environment's constraints including CORS and security policies.
+/// platform abstraction layer. All operations are async-compatible and work
+/// in both browser and Node.js environments.
 #[async_trait(?Send)]
 impl alkanes_cli_common::NetworkProvider for WebNetwork {
     /// Perform an HTTP GET request
@@ -258,10 +198,8 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     ///
     /// * [`AlkanesError::Network`] if the request fails
     /// * [`AlkanesError::Network`] if the response has an error status code
-    /// * [`AlkanesError::Network`] if reading the response body fails
     async fn get(&self, url: &str) -> Result<Vec<u8>> {
-        let response = self.fetch_request(url, "GET", None, None).await?;
-        self.response_to_bytes(response).await
+        self.fetch_request(url, "GET", None, None).await
     }
 
     /// Perform an HTTP POST request with a body
@@ -283,10 +221,8 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     ///
     /// * [`AlkanesError::Network`] if the request fails
     /// * [`AlkanesError::Network`] if the response has an error status code
-    /// * [`AlkanesError::Network`] if reading the response body fails
     async fn post(&self, url: &str, body: &[u8], content_type: &str) -> Result<Vec<u8>> {
-        let response = self.fetch_request(url, "POST", Some(body), Some(content_type)).await?;
-        self.response_to_bytes(response).await
+        self.fetch_request(url, "POST", Some(body), Some(content_type)).await
     }
 
     /// Download data from a URL
@@ -306,7 +242,6 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     ///
     /// * [`AlkanesError::Network`] if the request fails
     /// * [`AlkanesError::Network`] if the response has an error status code
-    /// * [`AlkanesError::Network`] if reading the response body fails
     async fn download(&self, url: &str) -> Result<Vec<u8>> {
         self.get(url).await
     }
@@ -331,7 +266,7 @@ impl alkanes_cli_common::NetworkProvider for WebNetwork {
     /// This method never panics and will return `false` for any error condition,
     /// including network failures, CORS issues, or HTTP error status codes.
     async fn is_reachable(&self, url: &str) -> bool {
-        (self.fetch_request(url, "HEAD", None, None).await).is_ok()
+        self.fetch_request(url, "HEAD", None, None).await.is_ok()
     }
 
     /// Get the user agent string
