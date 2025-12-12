@@ -14,9 +14,9 @@
     },
     "./wasm": {
       "types": "./build/wasm/alkanes_web_sys.d.ts",
-      "import": "./build/wasm/alkanes_web_sys.js",
-      "require": "./build/wasm/alkanes_web_sys.js",
-      "default": "./build/wasm/alkanes_web_sys.js"
+      "import": "./build/wasm/index.js",
+      "require": "./build/wasm/index.cjs",
+      "default": "./build/wasm/index.js"
     }
   },
   "files": [

@@ -265,6 +265,100 @@ export class AlkanesRpcClient {
 }
 
 /**
+ * Metashrew RPC client (uses WebProvider internally)
+ *
+ * Provides low-level access to metashrew_view RPC calls.
+ * For most use cases, prefer the higher-level methods on AlkanesRpcClient.
+ */
+export class MetashrewClient {
+  constructor(private provider: WasmWebProvider) {}
+
+  /**
+   * Get current blockchain height
+   */
+  async getHeight(): Promise<number> {
+    return this.provider.metashrewHeight();
+  }
+
+  /**
+   * Get state root at a specific height
+   */
+  async getStateRoot(height?: number): Promise<string> {
+    return this.provider.metashrewStateRoot(height);
+  }
+
+  /**
+   * Get block hash at a specific height
+   */
+  async getBlockHash(height: number): Promise<string> {
+    return this.provider.metashrewGetBlockHash(height);
+  }
+
+  /**
+   * Call a metashrew view function
+   *
+   * This is the generic low-level method for calling any metashrew_view function.
+   *
+   * @param viewFn - The view function name (e.g., "simulate", "protorunesbyaddress")
+   * @param payload - The hex-encoded payload (with or without 0x prefix)
+   * @param blockTag - The block tag ("latest" or a block height as string)
+   * @returns The hex-encoded response string
+   */
+  async view(viewFn: string, payload: string, blockTag: string = 'latest'): Promise<string> {
+    return this.provider.metashrewView(viewFn, payload, blockTag);
+  }
+}
+
+/**
+ * Lua script execution result
+ */
+export interface LuaEvalResult {
+  calls: number;
+  returns: any;
+  runtime: number;
+}
+
+/**
+ * Lua RPC client (uses WebProvider internally)
+ *
+ * This client provides Lua script execution with automatic scripthash caching.
+ * The luaEval method tries the cached scripthash first (lua_evalsaved),
+ * falling back to the full script (lua_evalscript) if the hash isn't cached.
+ */
+export class LuaClient {
+  constructor(private provider: WasmWebProvider) {}
+
+  /**
+   * Execute a Lua script with automatic scripthash caching
+   *
+   * This is the recommended way to execute Lua scripts. It:
+   * 1. Computes the SHA256 hash of the script
+   * 2. Tries to execute using the cached hash (lua_evalsaved)
+   * 3. Falls back to full script execution (lua_evalscript) if not cached
+   *
+   * @param script - The Lua script content
+   * @param args - Arguments to pass to the script
+   * @returns The script execution result
+   */
+  async eval(script: string, args: any[] = []): Promise<LuaEvalResult> {
+    return this.provider.luaEval(script, args);
+  }
+
+  /**
+   * Execute a Lua script directly (no caching)
+   *
+   * Use this only when you need to bypass the scripthash cache.
+   * For most use cases, prefer the eval() method.
+   *
+   * @param script - The Lua script content
+   * @returns The script execution result
+   */
+  async evalScript(script: string): Promise<any> {
+    return this.provider.luaEvalScript(script);
+  }
+}
+
+/**
  * Data API client (uses WebProvider internally)
  */
 export class DataApiClient {
@@ -355,6 +449,8 @@ export class AlkanesProvider {
   private _esplora: EsploraClient | null = null;
   private _alkanes: AlkanesRpcClient | null = null;
   private _dataApi: DataApiClient | null = null;
+  private _lua: LuaClient | null = null;
+  private _metashrew: MetashrewClient | null = null;
 
   public readonly network: bitcoin.Network;
   public readonly networkType: NetworkType;
@@ -391,13 +487,19 @@ export class AlkanesProvider {
 
   /**
    * Initialize the provider (loads WASM if needed)
+   *
+   * This method handles cross-platform WASM loading for both Node.js and browser environments.
    */
   async initialize(): Promise<void> {
     if (this._provider) return;
 
-    // Dynamic import of WASM module
-    // Path is relative to the ts-sdk package root
+    // Dynamic import of WASM module using cross-platform loader
     const wasm = await import('@alkanes/ts-sdk/wasm');
+
+    // For Node.js, we need to call init() first to load the WASM
+    if (typeof wasm.init === 'function') {
+      await wasm.init();
+    }
 
     // Create provider with appropriate network name
     const providerName = this.networkPreset === 'local' ? 'regtest' : this.networkPreset;
@@ -474,6 +576,38 @@ export class AlkanesProvider {
       this._dataApi = new DataApiClient(this._provider);
     }
     return this._dataApi;
+  }
+
+  /**
+   * Lua script execution client
+   *
+   * Provides Lua script execution with automatic scripthash caching.
+   * This is the recommended way to execute Lua scripts for optimal performance.
+   */
+  get lua(): LuaClient {
+    if (!this._lua) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._lua = new LuaClient(this._provider);
+    }
+    return this._lua;
+  }
+
+  /**
+   * Metashrew RPC client
+   *
+   * Provides low-level access to metashrew_view RPC calls.
+   * For most use cases, prefer the higher-level methods on alkanes or the convenience methods.
+   */
+  get metashrew(): MetashrewClient {
+    if (!this._metashrew) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._metashrew = new MetashrewClient(this._provider);
+    }
+    return this._metashrew;
   }
 
   // ============================================================================

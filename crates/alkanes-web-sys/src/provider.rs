@@ -104,12 +104,12 @@ use alkanes_cli_common::{
     esplora,
 };
 use alkanes_support::proto::alkanes as alkanes_pb;
-use alkanes_cli_common::proto::protorune::{OutpointWithProtocol, OutpointResponse as ProtoruneOutpointResponsePb, Uint128};
+// protorune types are imported locally in functions that need them
 use alkanes_cli_common::alkanes::execute::EnhancedAlkanesExecutor;
 use alkanes_cli_common::index_pointer::StubPointer;
 use alkanes_cli_common::alkanes::balance_sheet::BalanceSheet;
 use core::str::FromStr;
-use bitcoin::hashes::hex::FromHex;
+use bitcoin::hashes::Hash;
 use once_cell::sync::Lazy;
 
 /// Global secp256k1 context for cryptographic operations
@@ -1575,6 +1575,35 @@ impl WebProvider {
         })
     }
 
+    /// Generic metashrew_view call
+    ///
+    /// Calls the metashrew_view RPC method with the given view function, payload, and block tag.
+    /// This is the low-level method for calling any metashrew view function.
+    ///
+    /// # Arguments
+    /// * `view_fn` - The view function name (e.g., "simulate", "protorunesbyaddress")
+    /// * `payload` - The hex-encoded payload (with or without 0x prefix)
+    /// * `block_tag` - The block tag ("latest" or a block height as string)
+    ///
+    /// # Returns
+    /// The hex-encoded response string from the view function
+    #[wasm_bindgen(js_name = metashrewView)]
+    pub fn metashrew_view_js(&self, view_fn: String, payload: String, block_tag: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.sandshrew_rpc_url();
+            let params = serde_json::json!([view_fn, payload, block_tag]);
+            let result = provider.call(&url, "metashrew_view", params, 1).await
+                .map_err(|e| JsValue::from_str(&format!("metashrew_view failed: {}", e)))?;
+
+            // Return the hex string result
+            result.as_str()
+                .map(|s| JsValue::from_str(s))
+                .ok_or_else(|| JsValue::from_str("metashrew_view response was not a string"))
+        })
+    }
+
     // === LUA METHODS ===
 
     #[wasm_bindgen(js_name = luaEvalScript)]
@@ -1588,6 +1617,44 @@ impl WebProvider {
                 .and_then(|r| serde_wasm_bindgen::to_value(&r)
                     .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
                 .map_err(|e| JsValue::from_str(&format!("Eval script failed: {}", e)))
+        })
+    }
+
+    /// Execute a Lua script with arguments, using scripthash caching
+    ///
+    /// This method first tries to use the cached scripthash version (lua_evalsaved),
+    /// and falls back to the full script (lua_evalscript) if the hash isn't cached.
+    /// This is the recommended way to execute Lua scripts for better performance.
+    ///
+    /// # Arguments
+    /// * `script` - The Lua script content
+    /// * `args` - JSON-serialized array of arguments to pass to the script
+    #[wasm_bindgen(js_name = luaEval)]
+    pub fn lua_eval_js(&self, script: String, args: JsValue) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        use alkanes_cli_common::lua_script::{LuaScript, LuaScriptExecutor};
+        let provider = self.clone();
+        future_to_promise(async move {
+            // Parse args from JsValue to Vec<JsonValue>
+            let args_vec: Vec<alkanes_cli_common::JsonValue> = if args.is_null() || args.is_undefined() {
+                vec![]
+            } else {
+                serde_wasm_bindgen::from_value(args)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to parse args: {}", e)))?
+            };
+
+            // Create LuaScript which computes the hash
+            let lua_script = LuaScript::from_string(script);
+
+            // Use the execute_lua_script method which tries cached hash first
+            let response = provider.execute_lua_script(&lua_script, args_vec).await
+                .map_err(|e| JsValue::from_str(&format!("Lua eval failed: {}", e)))?;
+
+            // Use JSON.parse to convert serde_json::Value to JsValue correctly
+            let json_str = serde_json::to_string(&response)
+                .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+            js_sys::JSON::parse(&json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
         })
     }
 
@@ -2273,12 +2340,15 @@ impl WebProvider {
         future_to_promise(async move {
             let url = provider.rpc_config.get_data_api_target().url;
             let body = serde_json::json!({});
-            
+
             let response = provider.rest_call(&url, "get-bitcoin-price", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get bitcoin price failed: {}", e)))?;
-            
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+
+            // Use JSON.parse to convert serde_json::Value to JsValue correctly
+            let json_str = serde_json::to_string(&response)
+                .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+            js_sys::JSON::parse(&json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
         })
     }
 
@@ -4075,47 +4145,153 @@ impl MetashrewRpcProvider for WebProvider {
         block_tag: Option<String>,
         protocol_tag: u128,
     ) -> Result<ProtoruneWalletResponse> {
-        let params = serde_json::json!([address, block_tag, protocol_tag]);
-        let result = self.call(&self.sandshrew_rpc_url(), "protorunesbyaddress", params, 1).await?;
-        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+        use prost::Message;
+        use alkanes_cli_common::proto::protorune as protorune_pb;
+        use alkanes_cli_common::alkanes::balance_sheet::{ProtoruneRuneId, CachedBalanceSheet};
+        use std::collections::BTreeMap;
+
+        // Build the protobuf request (same as alkanes-cli-common)
+        let mut request = protorune_pb::ProtorunesWalletRequest::default();
+        request.wallet = address.as_bytes().to_vec();
+        request.protocol_tag = Some(<u128 as Into<protorune_pb::Uint128>>::into(protocol_tag));
+
+        let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
+        let height = block_tag.as_deref().unwrap_or("latest");
+
+        // Call metashrew_view with the view function name and protobuf-encoded params
+        let params = serde_json::json!(["protorunesbyaddress", hex_input, height]);
+        let result = self.call(&self.sandshrew_rpc_url(), "metashrew_view", params, 1).await?;
+
+        // Parse the hex response
+        let hex_str = result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("metashrew_view result is not a string".to_string()))?;
+
+        if hex_str == "0x" || hex_str.is_empty() {
+            return Ok(ProtoruneWalletResponse { balances: vec![] });
+        }
+
+        let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+        let response_bytes = hex::decode(hex_str)
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode hex response: {}", e)))?;
+
+        // Decode the protobuf response
+        let wallet_response = protorune_pb::WalletResponse::decode(response_bytes.as_slice())
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode protobuf: {}", e)))?;
+
+        // Convert to domain type (same as alkanes-cli-common)
+        let mut balances = vec![];
+        for item in wallet_response.outpoints.into_iter() {
+            let outpoint = item.outpoint.ok_or_else(|| {
+                AlkanesError::Other("missing outpoint in wallet response".to_string())
+            })?;
+            let output = item.output.ok_or_else(|| {
+                AlkanesError::Other("missing output in wallet response".to_string())
+            })?;
+            let balance_sheet_pb = item.balances.ok_or_else(|| {
+                AlkanesError::Other("missing balance sheet in wallet response".to_string())
+            })?;
+            let txid_bytes: [u8; 32] = outpoint.txid.try_into().map_err(|_| {
+                AlkanesError::Other("invalid txid length in wallet response".to_string())
+            })?;
+
+            balances.push(ProtoruneOutpointResponse {
+                output: bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(output.value),
+                    script_pubkey: bitcoin::ScriptBuf::from_bytes(output.script),
+                },
+                outpoint: bitcoin::OutPoint {
+                    txid: bitcoin::Txid::from_byte_array(txid_bytes),
+                    vout: outpoint.vout,
+                },
+                balance_sheet: {
+                    let mut balances_map = BTreeMap::new();
+                    for entry in balance_sheet_pb.entries {
+                        if let Some(rune) = entry.rune {
+                            if let Some(rune_id) = rune.rune_id {
+                                if let (Some(height), Some(txindex), Some(balance)) = (
+                                    rune_id.height,
+                                    rune_id.txindex,
+                                    entry.balance,
+                                ) {
+                                    let protorune_id = ProtoruneRuneId {
+                                        block: height.lo as u128,
+                                        tx: txindex.lo as u128,
+                                    };
+                                    balances_map.insert(protorune_id, balance.lo as u128);
+                                }
+                            }
+                        }
+                    }
+                    BalanceSheet {
+                        cached: CachedBalanceSheet { balances: balances_map },
+                        load_ptrs: vec![],
+                    }
+                },
+            });
+        }
+
+        Ok(ProtoruneWalletResponse { balances })
     }
     
     async fn get_protorunes_by_outpoint(
         &self,
         txid: &str,
         vout: u32,
-        _block_tag: Option<String>,
+        block_tag: Option<String>,
         protocol_tag: u128,
     ) -> Result<ProtoruneOutpointResponse> {
-        let mut outpoint_pb = OutpointWithProtocol::default();
-        outpoint_pb.txid = Vec::from_hex(txid)?;
-        outpoint_pb.vout = vout;
-        outpoint_pb.protocol = Some(Uint128 {
-            lo: protocol_tag as u64,
-            hi: (protocol_tag >> 64) as u64,
-            ..Default::default()
-        }).into();
-
         use prost::Message;
-        let hex_input = hex::encode(outpoint_pb.encode_to_vec());
-        let params = serde_json::json!(["protorunesbyoutpoint", format!("0x{}", hex_input), "latest"]);
+        use std::str::FromStr;
+        use alkanes_cli_common::proto::protorune as protorune_pb;
+        use alkanes_cli_common::alkanes::balance_sheet::{ProtoruneRuneId, CachedBalanceSheet};
+        use std::collections::BTreeMap;
+
+        // Parse txid properly using bitcoin::Txid (handles endianness correctly)
+        let txid_parsed = bitcoin::Txid::from_str(txid)
+            .map_err(|e| AlkanesError::RpcError(format!("Invalid txid: {}", e)))?;
+
+        let mut request = protorune_pb::OutpointWithProtocol::default();
+        // Note: bitcoin::Txid::to_byte_array() returns bytes in little-endian format,
+        // which is what the indexer expects (no need to reverse)
+        request.txid = txid_parsed.to_byte_array().to_vec();
+        request.vout = vout;
+        request.protocol = Some(<u128 as Into<protorune_pb::Uint128>>::into(protocol_tag));
+
+        let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
+        let height = block_tag.as_deref().unwrap_or("latest");
+        let params = serde_json::json!(["protorunesbyoutpoint", hex_input, height]);
 
         let result = self.call(&self.sandshrew_rpc_url(), "metashrew_view", params, 1).await?;
 
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid protorune response: not a string".to_string()))?;
+
+        if hex_str == "0x" || hex_str.is_empty() {
+            return Ok(ProtoruneOutpointResponse::default());
+        }
+
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
 
-        let response_pb = ProtoruneOutpointResponsePb::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
-        // self.logger.info(&format!("Received protorune response: {:?}", response_pb));
+        let response_pb = protorune_pb::OutpointResponse::decode(&bytes[..])
+            .map_err(|e| AlkanesError::Serialization(e.to_string()))?;
 
-        // Convert from the protobuf-generated `BalanceSheet` to the `protorune_support` `BalanceSheet`
+        // Convert from the protobuf-generated `BalanceSheet` to the domain `BalanceSheet`
         let balances_pb = response_pb.balances.unwrap_or_default();
         let balance_sheet = BalanceSheet::<StubPointer>::from(balances_pb);
 
+        // Extract outpoint and output from response
+        let outpoint_parsed = bitcoin::OutPoint { txid: txid_parsed, vout };
+        let output = response_pb.output.map(|o| bitcoin::TxOut {
+            value: bitcoin::Amount::from_sat(o.value),
+            script_pubkey: bitcoin::ScriptBuf::from_bytes(o.script),
+        }).unwrap_or_else(|| bitcoin::TxOut {
+            value: bitcoin::Amount::from_sat(0),
+            script_pubkey: Default::default(),
+        });
+
         Ok(ProtoruneOutpointResponse {
+            output,
+            outpoint: outpoint_parsed,
             balance_sheet,
-            // The other fields are not present in the protobuf response, so they remain default.
-            ..Default::default()
         })
     }
 
@@ -4458,12 +4634,48 @@ impl AlkanesProvider for WebProvider {
         serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<AlkaneBalance>> {
+        use alkanes_cli_common::alkanes::types::AlkaneId;
+        use alkanes_cli_common::alkanes::balance_sheet::BalanceSheetOperations;
+        use std::collections::HashMap;
+
         let addr = match address {
             Some(a) => a.to_string(),
             None => WalletProvider::get_address(self).await?,
         };
-        let result = self.call(&self.sandshrew_rpc_url(), "alkanes_get_balance", serde_json::json!([addr]), 1).await?;
-        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+
+        // Use protorunesbyaddress to get all outpoints with their balance sheets
+        // Protocol tag 1 = alkanes
+        let wallet_response = <Self as MetashrewRpcProvider>::get_protorunes_by_address(
+            self, &addr, None, 1
+        ).await?;
+
+        // Aggregate balances across all outpoints
+        let mut aggregated: HashMap<(u64, u64), (AlkaneId, u128)> = HashMap::new();
+
+        for outpoint_response in wallet_response.balances {
+            for (protorune_id, balance) in outpoint_response.balance_sheet.balances().iter() {
+                let key = (protorune_id.block as u64, protorune_id.tx as u64);
+                let alkane_id = AlkaneId { block: key.0, tx: key.1 };
+
+                aggregated.entry(key)
+                    .and_modify(|(_, existing_balance)| *existing_balance += balance)
+                    .or_insert((alkane_id, *balance));
+            }
+        }
+
+        // Convert to AlkaneBalance entries
+        // Note: name and symbol are not available from protorunesbyaddress, would need separate lookup
+        let result: Vec<AlkaneBalance> = aggregated
+            .into_values()
+            .map(|(alkane_id, balance)| AlkaneBalance {
+                alkane_id,
+                name: String::new(),
+                symbol: String::new(),
+                balance: balance as u64,
+            })
+            .collect();
+
+        Ok(result)
     }
     async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<alkanes_cli_common::alkanes::PendingUnwrap>> {
         let block_tag = block_tag.unwrap_or_else(|| "latest".to_string());

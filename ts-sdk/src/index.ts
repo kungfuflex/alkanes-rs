@@ -62,7 +62,9 @@ export {
   BitcoinRpcClient,
   EsploraClient,
   AlkanesRpcClient,
+  MetashrewClient,
   DataApiClient,
+  LuaClient,
   createProvider,
   NETWORK_PRESETS,
 } from './provider';
@@ -75,6 +77,7 @@ export type {
   CandleInfo,
   HolderInfo,
   ExecuteResult,
+  LuaEvalResult,
 } from './provider';
 
 // Type exports
