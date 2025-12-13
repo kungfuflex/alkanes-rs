@@ -95,7 +95,9 @@ describe('MockWalletAdapter', () => {
 
   it('should sign message', async () => {
     const signature = await adapter.signMessage('Hello', 'bc1qtest');
-    expect(signature).toContain('mock_sig_');
+    // Signature is base64 encoded, decode to verify content
+    const decoded = Buffer.from(signature, 'base64').toString();
+    expect(decoded).toContain('mock_sig_');
   });
 
   it('should sign PSBT', async () => {

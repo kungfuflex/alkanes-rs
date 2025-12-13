@@ -1,0 +1,2 @@
+# Empty - include all files in npm package
+# This overrides .gitignore for npm/pnpm packaging
