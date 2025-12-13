@@ -967,11 +967,39 @@ impl WebProvider {
     pub fn alkanes_by_address_js(&self, address: String, block_tag: Option<String>, protocol_tag: Option<f64>) -> js_sys::Promise {
         use alkanes_cli_common::traits::AlkanesProvider;
         use wasm_bindgen_futures::future_to_promise;
+        use serde::Serialize;
+        use std::collections::BTreeMap;
         let provider = self.clone();
         future_to_promise(async move {
             let tag = protocol_tag.map(|t| t as u128).unwrap_or(1);
             provider.protorunes_by_address(&address, block_tag, tag).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .and_then(|r| {
+                    // Transform the response to use string keys for balance_sheet.cached.balances
+                    // This is necessary because ProtoruneRuneId (a struct) cannot be used as JSON object keys
+                    let transformed: serde_json::Value = serde_json::json!({
+                        "balances": r.balances.iter().map(|balance| {
+                            // Convert ProtoruneRuneId keys to "block:tx" string format
+                            let balances_with_string_keys: BTreeMap<String, String> = balance.balance_sheet.cached.balances
+                                .iter()
+                                .map(|(id, amount)| (format!("{}:{}", id.block, id.tx), amount.to_string()))
+                                .collect();
+                            serde_json::json!({
+                                "output": {
+                                    "value": balance.output.value.to_sat(),
+                                    "script_pubkey": hex::encode(balance.output.script_pubkey.as_bytes())
+                                },
+                                "outpoint": format!("{}:{}", balance.outpoint.txid, balance.outpoint.vout),
+                                "balance_sheet": {
+                                    "cached": {
+                                        "balances": balances_with_string_keys
+                                    }
+                                }
+                            })
+                        }).collect::<Vec<_>>()
+                    });
+                    let serializer = serde_wasm_bindgen::Serializer::json_compatible();
+                    transformed.serialize(&serializer).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string()))
+                })
                 .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
         })
     }
@@ -980,6 +1008,8 @@ impl WebProvider {
     pub fn alkanes_by_outpoint_js(&self, outpoint: String, block_tag: Option<String>, protocol_tag: Option<f64>) -> js_sys::Promise {
         use alkanes_cli_common::traits::AlkanesProvider;
         use wasm_bindgen_futures::future_to_promise;
+        use serde::Serialize;
+        use std::collections::BTreeMap;
         let provider = self.clone();
         future_to_promise(async move {
             let parts: Vec<&str> = outpoint.split(':').collect();
@@ -991,7 +1021,28 @@ impl WebProvider {
                 .map_err(|_| JsValue::from_str("Invalid vout number"))?;
             let tag = protocol_tag.map(|t| t as u128).unwrap_or(1);
             provider.protorunes_by_outpoint(txid, vout, block_tag, tag).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .and_then(|r| {
+                    // Transform the response to use string keys for balance_sheet.cached.balances
+                    // This is necessary because ProtoruneRuneId (a struct) cannot be used as JSON object keys
+                    let balances_with_string_keys: BTreeMap<String, String> = r.balance_sheet.cached.balances
+                        .iter()
+                        .map(|(id, amount)| (format!("{}:{}", id.block, id.tx), amount.to_string()))
+                        .collect();
+                    let transformed: serde_json::Value = serde_json::json!({
+                        "output": {
+                            "value": r.output.value.to_sat(),
+                            "script_pubkey": hex::encode(r.output.script_pubkey.as_bytes())
+                        },
+                        "outpoint": format!("{}:{}", r.outpoint.txid, r.outpoint.vout),
+                        "balance_sheet": {
+                            "cached": {
+                                "balances": balances_with_string_keys
+                            }
+                        }
+                    });
+                    let serializer = serde_wasm_bindgen::Serializer::json_compatible();
+                    transformed.serialize(&serializer).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string()))
+                })
                 .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
         })
     }
