@@ -425,7 +425,7 @@ impl WebProvider {
                     if let Ok(tx_hex) = provider.get_transaction_hex(&esplora_tx.txid).await {
                         if let Ok(tx_bytes) = hex::decode(&tx_hex) {
                             if let Ok(transaction) = bitcoin::consensus::deserialize::<bitcoin::Transaction>(&tx_bytes) {
-                                if let Ok(runestone_result) = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&transaction) {
+                                if let Ok(runestone_result) = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&transaction, provider.network) {
                                     let num_protostones = runestone_result.get("protostones").and_then(|p| p.as_array()).map(|a| a.len()).unwrap_or(0);
                                     if num_protostones > 0 {
                                         if let Some(obj) = tx_data.as_object_mut() {
@@ -1704,9 +1704,9 @@ impl WebProvider {
                 .map_err(|e| JsValue::from_str(&format!("Tx deserialize failed: {}", e)))?;
             
             // Decode runestone
-            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)
+            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx, provider.network)
                 .map_err(|e| JsValue::from_str(&format!("Runestone decode failed: {}", e)))?;
-            
+
             serde_wasm_bindgen::to_value(&result)
                 .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
         })
@@ -1720,15 +1720,15 @@ impl WebProvider {
             // Get transaction hex
             let tx_hex = provider.get_transaction_hex(&txid).await
                 .map_err(|e| JsValue::from_str(&format!("Get tx failed: {}", e)))?;
-            
+
             // Decode transaction
             let tx_bytes = hex::decode(&tx_hex)
                 .map_err(|e| JsValue::from_str(&format!("Hex decode failed: {}", e)))?;
             let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)
                 .map_err(|e| JsValue::from_str(&format!("Tx deserialize failed: {}", e)))?;
-            
+
             // Analyze runestone with full formatting
-            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)
+            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx, provider.network)
                 .map_err(|e| JsValue::from_str(&format!("Runestone analyze failed: {}", e)))?;
             
             serde_wasm_bindgen::to_value(&result)
@@ -4693,7 +4693,7 @@ impl AlkanesProvider for WebProvider {
             .map_err(|e| AlkanesError::Serialization(e.to_string()))?;
         
         // Decode runestone to get protostones
-        let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)
+        let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx, self.network)
             .map_err(|e| AlkanesError::Other(format!("Failed to decode runestone: {}", e)))?;
         
         // Extract number of protostones

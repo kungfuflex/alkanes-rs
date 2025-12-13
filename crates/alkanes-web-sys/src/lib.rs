@@ -49,7 +49,7 @@ pub use wallet_provider::{
 };
 
 #[wasm_bindgen]
-pub fn analyze_psbt(psbt_base64: &str) -> Result<String, JsValue> {
+pub fn analyze_psbt(psbt_base64: &str, network_str: &str) -> Result<String, JsValue> {
     let psbt_bytes = STANDARD.decode(psbt_base64)
         .map_err(|e| JsValue::from_str(&format!("base64 decode error: {}", e)))?;
     let psbt: Psbt = Psbt::deserialize(&psbt_bytes)
@@ -58,7 +58,15 @@ pub fn analyze_psbt(psbt_base64: &str) -> Result<String, JsValue> {
     let tx = psbt.extract_tx()
         .map_err(|e| JsValue::from_str(&format!("PSBT extract_tx error: {}", e)))?;
 
-    let analysis = format_runestone_with_decoded_messages(&tx)
+    let network = match network_str {
+        "mainnet" | "bitcoin" => bitcoin::Network::Bitcoin,
+        "testnet" | "testnet3" => bitcoin::Network::Testnet,
+        "signet" => bitcoin::Network::Signet,
+        "regtest" => bitcoin::Network::Regtest,
+        _ => bitcoin::Network::Bitcoin, // default to mainnet
+    };
+
+    let analysis = format_runestone_with_decoded_messages(&tx, network)
         .map_err(|e| JsValue::from_str(&format!("Runestone analysis error: {}", e)))?;
 
     serde_json::to_string(&analysis)
