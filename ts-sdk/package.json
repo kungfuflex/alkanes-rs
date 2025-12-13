@@ -32,7 +32,11 @@
     "build:vendor": "node scripts/vendor-wasms.js",
     "build:ts": "tsup src/index.ts --format cjs,esm --clean",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
-    "test": "jest",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:live": "LIVE_RPC_TEST=true vitest run",
+    "test:regtest": "LIVE_RPC_TEST=true vitest run tests/provider.test.ts -t 'Regtest'",
+    "test:jest": "jest",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "clean": "rm -rf dist build",
@@ -79,7 +83,8 @@
     "prettier": "^3.3.3",
     "ts-jest": "^29.2.5",
     "tsup": "^8.3.5",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9"
   },
   "peerDependencies": {
     "@oyl/sdk": "*"
