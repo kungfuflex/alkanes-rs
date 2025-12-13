@@ -118,11 +118,13 @@ declare module '@alkanes/ts-sdk' {
   }
 
   export interface AlkaneBalance {
-    id: string;
+    id?: string;
+    alkane_id?: string;
     balance: string;
     name?: string;
     symbol?: string;
     decimals?: number;
+    [key: string]: any;
   }
 
   // Browser wallet types
@@ -560,6 +562,36 @@ declare module '@alkanes/ts-sdk' {
   export class PhantomAdapter extends BaseWalletAdapter {}
   export class MagicEdenAdapter extends BaseWalletAdapter {}
   export class WizzAdapter extends BaseWalletAdapter {}
+
+  // Utility functions
+  export function getNetwork(networkType: string): any;
+  export function validateAddress(address: string, network?: any): boolean;
+  export function satoshisToBTC(satoshis: number): number;
+  export function btcToSatoshis(btc: number): number;
+  export function formatAlkaneId(alkaneId: AlkaneId | string): string;
+  export function parseAlkaneId(alkaneIdStr: string): AlkaneId;
+  export function delay(ms: number): Promise<void>;
+  export function retry<T>(fn: () => Promise<T>, retries?: number, delayMs?: number): Promise<T>;
+  export function calculateFee(vbytes: number, feeRate: number): number;
+  export function estimateTxSize(inputs: number, outputs: number): number;
+  export function hexToBytes(hex: string): Uint8Array;
+  export function bytesToHex(bytes: Uint8Array): string;
+  export function reverseBytes(bytes: Uint8Array): Uint8Array;
+  export function reversedHex(hex: string): string;
+  export function isBrowser(): boolean;
+  export function isNode(): boolean;
+  export function safeJsonParse<T>(json: string, defaultValue: T): T;
+  export function formatTimestamp(timestamp: number): string;
+  export function calculateWeight(vbytes: number): number;
+  export function weightToVsize(weight: number): number;
+
+  // Network presets
+  export const NETWORK_PRESETS: {
+    mainnet: AlkanesProviderConfig;
+    testnet: AlkanesProviderConfig;
+    signet: AlkanesProviderConfig;
+    regtest: AlkanesProviderConfig;
+  };
 
   // Other exports
   export const VERSION: string;
