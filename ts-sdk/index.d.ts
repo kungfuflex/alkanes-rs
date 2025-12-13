@@ -45,22 +45,47 @@ declare module '@alkanes/ts-sdk' {
   export function unlockKeystore(encryptedKeystore: any, password: string): Promise<any>;
   
   // Provider exports
+  export interface AlkanesProviderConfig {
+    network?: string;
+    networkType?: string;
+    url?: string;
+    rpcUrl?: string;
+    dataApiUrl?: string;
+    projectId?: string;
+    version?: string;
+    [key: string]: any;
+  }
+
   export class AlkanesProvider {
-    constructor(config: {
-      url: string;
-      dataApiUrl?: string;
-      network: any;
-      networkType: string;
-      projectId?: string;
-      version?: string;
-      [key: string]: any; // Allow additional properties
-    });
-    getBalance(address: string): Promise<number>;
+    constructor(config: AlkanesProviderConfig);
+    readonly networkType: 'mainnet' | 'testnet' | 'regtest';
+    readonly bitcoin: any;
+    readonly esplora: any;
+    readonly alkanes: any;
+    readonly dataApi: any;
+    readonly lua: any;
+    readonly metashrew: any;
+
+    initialize(): Promise<void>;
+    getBalance(address: string): Promise<{ confirmed: number; unconfirmed: number; utxos: any[] }>;
     getUtxos(address: string): Promise<any[]>;
     getAddressUtxos(address: string, spendStrategy?: any): Promise<any>;
+    broadcastTransaction(txHex: string): Promise<string>;
     broadcastTx(txHex: string): Promise<string>;
-    // Data API methods via alkanes_web_sys.dataapi namespace
-    [key: string]: any; // Allow dynamic access to data API methods
+    getBlockHeight(): Promise<number>;
+    getAddressHistory(address: string): Promise<any[]>;
+    getAddressHistoryWithTraces(address: string): Promise<any[]>;
+    getAlkaneBalance(address: string): Promise<AlkaneBalance[]>;
+    getEnrichedBalances(address: string): Promise<any>;
+    getAlkaneTokenDetails(params: { alkaneId: AlkaneId }): Promise<any>;
+    simulateAlkanes(contractId: string, calldata: number[]): Promise<any>;
+    getAllPools(factoryId: string): Promise<any[]>;
+    getPoolReserves(poolId: string): Promise<any>;
+    getPoolTrades(poolId: string, limit?: number): Promise<any[]>;
+    getPoolCandles(poolId: string, interval?: string, limit?: number): Promise<any[]>;
+    getBitcoinPrice(): Promise<number>;
+    // Allow dynamic access to data API methods
+    [key: string]: any;
   }
   
   export function createProvider(config: any, wasmModule?: any): AlkanesProvider;
