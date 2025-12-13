@@ -71,6 +71,21 @@ declare module '@alkanes/ts-sdk' {
   export function wrapBtc(...args: any[]): Promise<any>;
   export function unwrapBtc(...args: any[]): Promise<any>;
 
+  // UTXO type
+  export interface UTXO {
+    txid: string;
+    vout: number;
+    value: number;
+    scriptPubKey?: string;
+    status?: {
+      confirmed: boolean;
+      block_height?: number;
+      block_hash?: string;
+      block_time?: number;
+    };
+    address?: string;
+  }
+
   // Browser wallet types
   export interface BrowserWalletInfo {
     id: string;
