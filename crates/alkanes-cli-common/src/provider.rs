@@ -3159,35 +3159,53 @@ impl AlkanesProvider for ConcreteProvider {
             Some(a) => a.to_string(),
             None => WalletProvider::get_address(self).await?,
         };
-        let mut request = protorune_pb::WalletRequest::default();
+        // Use protorunesbyaddress with protocol_tag=1 (alkanes)
+        let mut request = protorune_pb::ProtorunesWalletRequest::default();
         request.wallet = addr_str.as_bytes().to_vec();
+        request.protocol_tag = Some(<u128 as Into<protorune_pb::Uint128>>::into(1u128));
         let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
         let response_bytes = self
-            .metashrew_view_call("balancesbyaddress", &hex_input, "latest")
+            .metashrew_view_call("protorunesbyaddress", &hex_input, "latest")
             .await?;
         if response_bytes.is_empty() {
             return Ok(vec![]);
         }
-        let proto_sheet = protorune_pb::BalanceSheet::decode(response_bytes.as_slice())?;
+        let wallet_response = protorune_pb::WalletResponse::decode(response_bytes.as_slice())?;
 
-        let result: Vec<AlkaneBalance> = proto_sheet
-            .entries
+        // Aggregate balances across all outpoints
+        let mut balance_map: std::collections::HashMap<(u64, u64), (String, String, u64)> = std::collections::HashMap::new();
+
+        for item in wallet_response.outpoints.into_iter() {
+            if let Some(balance_sheet_pb) = item.balances {
+                for entry in balance_sheet_pb.entries {
+                    if let Some(rune) = entry.rune {
+                        if let Some(rune_id) = rune.rune_id {
+                            if let (Some(height), Some(txindex), Some(balance)) = (
+                                rune_id.height,
+                                rune_id.txindex,
+                                entry.balance,
+                            ) {
+                                let key = (height.lo, txindex.lo);
+                                let entry = balance_map.entry(key).or_insert((
+                                    rune.name.clone(),
+                                    rune.symbol.clone(),
+                                    0,
+                                ));
+                                entry.2 = entry.2.saturating_add(balance.lo);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let result: Vec<AlkaneBalance> = balance_map
             .into_iter()
-            .map(|item| {
-                let (alkane_id, name, symbol) = item.rune.map_or(
-                    (AlkaneId { block: 0, tx: 0 }, String::new(), String::new()),
-                    |r| {
-                        let id = r.rune_id.map_or(AlkaneId { block: 0, tx: 0 }, |rid| AlkaneId {
-                            block: rid.height.map_or(0, |b| b.lo),
-                            tx: rid.txindex.map_or(0, |t| t.lo),
-                        });
-                        (id, r.name.clone(), r.symbol.clone())
-                    },
-                );
-
-                let balance = item.balance.map_or(0, |b| b.lo);
-
-                AlkaneBalance { alkane_id, name, symbol, balance }
+            .map(|((block, tx), (name, symbol, balance))| AlkaneBalance {
+                alkane_id: AlkaneId { block, tx },
+                name,
+                symbol,
+                balance,
             })
             .collect();
 
