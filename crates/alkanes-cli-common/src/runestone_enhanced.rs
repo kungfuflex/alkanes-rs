@@ -547,12 +547,11 @@ pub fn format_runestone(tx: &Transaction) -> Result<Vec<Protostone>> {
 }
 
 /// Extract address information from script pubkey
-fn extract_address_from_script(script: &bitcoin::Script) -> Option<Value> {
+fn extract_address_from_script(script: &bitcoin::Script, network: bitcoin::Network) -> Option<Value> {
     use bitcoin::Address;
-    use bitcoin::Network;
-    
+
     // Try to convert script to address
-    if let Ok(address) = Address::from_script(script, Network::Bitcoin) {
+    if let Ok(address) = Address::from_script(script, network) {
         let script_type = if script.is_p2pkh() {
             "P2PKH"
         } else if script.is_p2sh() {
@@ -564,7 +563,7 @@ fn extract_address_from_script(script: &bitcoin::Script) -> Option<Value> {
         } else {
             "Unknown"
         };
-        
+
         Some(json!({
             "address": address.to_string(),
             "script_type": script_type
@@ -583,12 +582,13 @@ fn extract_address_from_script(script: &bitcoin::Script) -> Option<Value> {
 /// # Arguments
 ///
 /// * `tx` - The transaction to extract the Runestone from
+/// * `network` - The Bitcoin network (used for address encoding)
 ///
 /// # Returns
 ///
 /// A JSON value containing the protostones with decoded messages, or an error if no valid
 /// Runestone was found in the transaction.
-pub fn format_runestone_with_decoded_messages(tx: &Transaction) -> Result<Value> {
+pub fn format_runestone_with_decoded_messages(tx: &Transaction, network: bitcoin::Network) -> Result<Value> {
     let protostones = format_runestone(tx)?;
     
     // Build comprehensive transaction information
@@ -629,7 +629,7 @@ pub fn format_runestone_with_decoded_messages(tx: &Transaction) -> Result<Value>
             }
         } else {
             // Try to extract address information
-            if let Some(address_info) = extract_address_from_script(&output.script_pubkey) {
+            if let Some(address_info) = extract_address_from_script(&output.script_pubkey, network) {
                 output_info["address"] = address_info["address"].clone();
                 output_info["script_type"] = address_info["script_type"].clone();
             } else {
@@ -645,7 +645,7 @@ pub fn format_runestone_with_decoded_messages(tx: &Transaction) -> Result<Value>
                 }
             }
         }
-        
+
         outputs.push(output_info);
     }
     
@@ -718,7 +718,7 @@ pub fn format_runestone_with_decoded_messages(tx: &Transaction) -> Result<Value>
                         }
                     });
                     
-                    if let Some(address_info) = extract_address_from_script(&dest_output.script_pubkey) {
+                    if let Some(address_info) = extract_address_from_script(&dest_output.script_pubkey, network) {
                         edict_json["destination"]["address"] = address_info["address"].clone();
                     }
                 }
@@ -749,7 +749,7 @@ pub fn format_runestone_with_decoded_messages(tx: &Transaction) -> Result<Value>
                     }
                 });
                 
-                if let Some(address_info) = extract_address_from_script(&pointer_output.script_pubkey) {
+                if let Some(address_info) = extract_address_from_script(&pointer_output.script_pubkey, network) {
                     protostone_json["pointer_destination"]["address"] = address_info["address"].clone();
                 }
             }
@@ -777,7 +777,7 @@ pub fn format_runestone_with_decoded_messages(tx: &Transaction) -> Result<Value>
                     }
                 });
                 
-                if let Some(address_info) = extract_address_from_script(&refund_output.script_pubkey) {
+                if let Some(address_info) = extract_address_from_script(&refund_output.script_pubkey, network) {
                     protostone_json["refund_destination"]["address"] = address_info["address"].clone();
                 }
             }
@@ -790,7 +790,7 @@ pub fn format_runestone_with_decoded_messages(tx: &Transaction) -> Result<Value>
 }
 
 /// Print human-readable, styled runestone information (same as used in deezel runestone command)
-pub fn print_human_readable_runestone(tx: &Transaction, result: &serde_json::Value) {
+pub fn print_human_readable_runestone(tx: &Transaction, result: &serde_json::Value, network: bitcoin::Network) {
     println!("🔍 Transaction Analysis");
     println!("═══════════════════════");
     
@@ -827,7 +827,7 @@ pub fn print_human_readable_runestone(tx: &Transaction, result: &serde_json::Val
             }
         } else {
             // Try to extract address
-            match extract_address_from_script(&output.script_pubkey) {
+            match extract_address_from_script(&output.script_pubkey, network) {
                 Some(address_info) => {
                     println!("     🏠 {}: {}", address_info.get("script_type").and_then(|v| v.as_str()).unwrap_or("Unknown"), address_info.get("address").and_then(|v| v.as_str()).unwrap_or("Unknown"));
                 }
@@ -930,7 +930,7 @@ pub fn print_human_readable_runestone(tx: &Transaction, result: &serde_json::Val
                                         if j == edicts.len() - 1 { "  " } else { "│ " },
                                         output_idx, dest_output.value);
                                     
-                                    if let Some(addr_info) = extract_address_from_script(&dest_output.script_pubkey) {
+                                    if let Some(addr_info) = extract_address_from_script(&dest_output.script_pubkey, network) {
                                         println!("   {}       📍 {}",
                                             if j == edicts.len() - 1 { "  " } else { "│ " },
                                             addr_info.get("address").and_then(|v| v.as_str()).unwrap_or("Unknown"));
@@ -952,7 +952,7 @@ pub fn print_human_readable_runestone(tx: &Transaction, result: &serde_json::Val
                     if pointer_idx < tx.output.len() {
                         let pointer_output = &tx.output[pointer_idx];
                         println!("   └─ 💰 {} sats", pointer_output.value);
-                        if let Some(addr_info) = extract_address_from_script(&pointer_output.script_pubkey) {
+                        if let Some(addr_info) = extract_address_from_script(&pointer_output.script_pubkey, network) {
                             println!("      📍 {}", addr_info.get("address").and_then(|v| v.as_str()).unwrap_or("Unknown"));
                         }
                     }
@@ -964,7 +964,7 @@ pub fn print_human_readable_runestone(tx: &Transaction, result: &serde_json::Val
                     if refund_idx < tx.output.len() {
                         let refund_output = &tx.output[refund_idx];
                         println!("   └─ 💰 {} sats", refund_output.value);
-                        if let Some(addr_info) = extract_address_from_script(&refund_output.script_pubkey) {
+                        if let Some(addr_info) = extract_address_from_script(&refund_output.script_pubkey, network) {
                             println!("      📍 {}", addr_info.get("address").and_then(|v| v.as_str()).unwrap_or("Unknown"));
                         }
                     }

@@ -3095,7 +3095,7 @@ impl SystemRunestone for SystemAlkanes {
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&analysis)?);
                 } else {
-                    let pretty_output = pretty_print_transaction_analysis(&analysis)?;
+                    let pretty_output = pretty_print_transaction_analysis(&analysis, network)?;
                     println!("{pretty_output}");
                 }
                 Ok(())
@@ -3109,7 +3109,7 @@ impl SystemRunestone for SystemAlkanes {
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&analysis)?);
                 } else {
-                    let pretty_output = pretty_print_transaction_analysis(&analysis)?;
+                    let pretty_output = pretty_print_transaction_analysis(&analysis, network)?;
                     println!("{pretty_output}");
                 }
                 Ok(())

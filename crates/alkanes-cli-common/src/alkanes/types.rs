@@ -335,6 +335,8 @@ pub struct ReadyToSignTx {
     pub psbt: bitcoin::psbt::Psbt,
     pub analysis: crate::transaction::TransactionAnalysis,
     pub fee: u64,
+    /// Estimated virtual size in vbytes (includes witness data)
+    pub estimated_vsize: usize,
     pub inspection_result: Option<AlkanesInspectResult>,
 }
 
@@ -362,6 +364,8 @@ pub struct ReadyToSignRevealTx {
     #[serde(with = "serde_psbt")]
     pub psbt: bitcoin::psbt::Psbt,
     pub fee: u64,
+    /// Estimated virtual size in vbytes (includes witness data)
+    pub estimated_vsize: usize,
     pub analysis: crate::transaction::TransactionAnalysis,
     pub commit_txid: String,
     pub commit_fee: u64,

@@ -3204,7 +3204,7 @@ impl AlkanesProvider for ConcreteProvider {
             .map_err(|e| AlkanesError::Serialization(e.to_string()))?;
         
         // Decode runestone to get protostones
-        let result = crate::runestone_enhanced::format_runestone_with_decoded_messages(&tx)
+        let result = crate::runestone_enhanced::format_runestone_with_decoded_messages(&tx, self.get_network())
             .map_err(|e| AlkanesError::Other(format!("Failed to decode runestone: {}", e)))?;
         
         // Extract number of protostones

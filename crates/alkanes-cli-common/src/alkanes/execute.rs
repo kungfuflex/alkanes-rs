@@ -161,6 +161,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 unsigned_tx,
                 &serde_json::to_value(&state.analysis)?,
                 state.fee,
+                state.estimated_vsize,
                 params.raw_output,
             )?;
         }
@@ -216,7 +217,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         // 2. Build the reveal transaction PSBT
         let commit_outpoint = bitcoin::OutPoint { txid: commit_tx.compute_txid(), vout: 0 };
-        let (reveal_psbt, reveal_fee) = self
+        let (reveal_psbt, reveal_fee, reveal_estimated_vsize) = self
             .build_reveal_psbt(
                 &state.params,
                 &state.envelope,
@@ -247,6 +248,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Ok(ExecutionState::ReadyToSignReveal(ReadyToSignRevealTx {
             psbt: reveal_psbt,
             fee: reveal_fee,
+            estimated_vsize: reveal_estimated_vsize,
             analysis,
             commit_txid,
             commit_fee: state.fee,
@@ -269,6 +271,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 unsigned_tx,
                 &serde_json::to_value(&state.analysis)?,
                 state.fee,
+                state.estimated_vsize,
                 state.params.raw_output,
             )?;
         }
@@ -324,7 +327,38 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 required_reveal_amount += amount;
             }
         }
-        let estimated_reveal_fee = 50_000u64;
+
+        // Calculate estimated reveal fee based on actual reveal script size
+        let reveal_script = envelope.build_reveal_script();
+        let reveal_script_size = reveal_script.len();
+
+        // Estimate reveal transaction size:
+        // - Base transaction overhead: ~10 bytes (version, locktime, input/output counts)
+        // - Input (commit UTXO): 36 bytes (outpoint) + 4 bytes (sequence) + 1 byte (scriptsig)
+        // - Witness: signature (64) + script (reveal_script_size) + control block (~33)
+        // - Outputs: recipient outputs + change + OP_RETURN runestone
+        let num_outputs = params.to_addresses.len().max(1) + 2; // at least 1 recipient + change + OP_RETURN
+        let output_size = num_outputs * 43; // ~43 bytes per P2TR output
+        let witness_size = 64 + reveal_script_size + 33;
+        let non_witness_size = 10 + 41 + output_size;
+        let weight = (non_witness_size * 4) + witness_size;
+        let estimated_vsize = (weight + 3) / 4;
+
+        // Use user-specified fee rate or network default
+        let network = self.provider.get_network();
+        let default_fee_rate = match network {
+            bitcoin::Network::Bitcoin => 10.0,
+            bitcoin::Network::Testnet => 5.0,
+            bitcoin::Network::Regtest => 1.0,
+            bitcoin::Network::Signet => 5.0,
+            _ => 5.0,
+        };
+        let fee_rate_sat_vb = params.fee_rate.unwrap_or(default_fee_rate);
+        let estimated_reveal_fee = ((estimated_vsize as f32 * fee_rate_sat_vb) * 1.2).ceil() as u64; // 20% buffer
+
+        log::info!("Reveal script size: {} bytes, estimated vsize: {} vbytes, fee rate: {:.1} sat/vB, estimated fee: {} sats",
+                   reveal_script_size, estimated_vsize, fee_rate_sat_vb, estimated_reveal_fee);
+
         required_reveal_amount += estimated_reveal_fee;
         required_reveal_amount += params.to_addresses.len() as u64 * 546;
 
@@ -541,7 +575,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
         
         let runestone_script = self.construct_runestone_script(&final_protostones, outputs.len())?;
-        let (psbt, fee) = self.build_psbt_and_fee(utxo_selection.outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
+        let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(utxo_selection.outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
 
         // Validate the transaction before returning
         self.validate_transaction(&psbt, &utxo_selection.outpoints, fee, params).await?;
@@ -554,6 +588,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             psbt,
             analysis,
             fee,
+            estimated_vsize,
             inspection_result,
         }))
     }
@@ -1314,7 +1349,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         fee_rate: Option<f32>,
         envelope: Option<&AlkanesEnvelope>,
         first_input_txout: Option<TxOut>,
-    ) -> Result<(Psbt, u64)> {
+    ) -> Result<(Psbt, u64, usize)> {
         use bitcoin::transaction::Version;
     
         if let Some(script) = runestone_script {
@@ -1380,7 +1415,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Use network-appropriate default fee rate (already calculated in build_single_transaction)
         // Keep 600.0 as absolute fallback for commit transactions which may not have network context
         let fee_rate_sat_vb = fee_rate.unwrap_or(10.0); // Lowered from 600.0
-        let estimated_fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
+        let estimated_vsize = temp_tx.vsize();
+        let estimated_fee = (fee_rate_sat_vb * estimated_vsize as f32).ceil() as u64;
         // Add a small buffer (1%) to account for any size differences between temp tx and final signed tx
         let estimated_fee_with_buffer = (estimated_fee as f64 * 1.01).ceil() as u64;
         let capped_fee = estimated_fee_with_buffer.min(MAX_FEE_SATS);
@@ -1427,7 +1463,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             }
         }
         
-        Ok((psbt, capped_fee))
+        Ok((psbt, capped_fee, estimated_vsize))
     }
 
     async fn sign_and_finalize_psbt(&mut self, mut psbt: bitcoin::psbt::Psbt) -> Result<Transaction> {
@@ -1526,7 +1562,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         commit_internal_key: XOnlyPublicKey,
         commit_internal_key_fingerprint: bitcoin::bip32::Fingerprint,
         commit_internal_key_path: &bitcoin::bip32::DerivationPath,
-    ) -> Result<(bitcoin::psbt::Psbt, u64)> {
+    ) -> Result<(bitcoin::psbt::Psbt, u64, usize)> {
         let mut selected_utxos = vec![commit_outpoint];
         let mut total_bitcoin_needed = params.to_addresses.len() as u64 * DUST_LIMIT;
         for req in &params.input_requirements {
@@ -1557,12 +1593,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             script_pubkey: commit_address.script_pubkey(),
         };
         
-        let (mut psbt, fee) = self.build_psbt_and_fee(selected_utxos, outputs, Some(runestone_script), params.fee_rate, Some(envelope), Some(commit_txout)).await?;
-        
+        let (mut psbt, fee, estimated_vsize) = self.build_psbt_and_fee(selected_utxos, outputs, Some(runestone_script), params.fee_rate, Some(envelope), Some(commit_txout)).await?;
+
         let reveal_script = envelope.build_reveal_script();
         let (spend_info, _) = self.create_taproot_spend_info_for_envelope(envelope, commit_internal_key).await?;
         let leaf_hash = bitcoin::taproot::TapLeafHash::from_script(&reveal_script, bitcoin::taproot::LeafVersion::TapScript);
-        
+
         psbt.inputs[0].tap_internal_key = Some(commit_internal_key);
         psbt.inputs[0].tap_scripts.insert(
             spend_info.control_block(&(reveal_script.clone(), bitcoin::taproot::LeafVersion::TapScript)).unwrap(),
@@ -1573,7 +1609,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             (vec![leaf_hash], (commit_internal_key_fingerprint, commit_internal_key_path.clone()))
         );
 
-        Ok((psbt, fee))
+        Ok((psbt, fee, estimated_vsize))
     }
 
     /// Creates the taproot spend info and control block for an envelope.
@@ -1769,6 +1805,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         tx: &Transaction,
         analysis: &serde_json::Value,
         fee: u64,
+        estimated_vsize: usize,
         raw_output: bool,
     ) -> Result<()> {
         if raw_output {
@@ -1778,10 +1815,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             println!("═══════════════════════");
             println!("📋 Transaction ID: {}", tx.compute_txid());
             println!("💰 Estimated Fee: {fee} sats");
-            println!("📊 Transaction Size: {} vbytes", tx.vsize());
-            println!("📈 Fee Rate: {:.2} sat/vB", fee as f64 / tx.vsize() as f64);
+            println!("📊 Transaction Size: {} vbytes (estimated with witness)", estimated_vsize);
+            println!("📈 Fee Rate: {:.2} sat/vB", fee as f64 / estimated_vsize as f64);
 
-            crate::runestone_enhanced::print_human_readable_runestone(tx, analysis);
+            crate::runestone_enhanced::print_human_readable_runestone(tx, analysis, self.provider.get_network());
         }
 
         println!("\n⚠️  TRANSACTION CONFIRMATION");
