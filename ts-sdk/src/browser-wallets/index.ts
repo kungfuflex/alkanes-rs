@@ -18,6 +18,8 @@
  * ```
  */
 
+import { WALLET_ICONS, getWalletIcon } from './icons';
+
 /**
  * Information about a supported browser wallet
  */
@@ -63,7 +65,7 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
     id: 'unisat',
     name: 'Unisat Wallet',
-    icon: '/assets/wallets/unisat.svg',
+    icon: WALLET_ICONS.unisat,
     website: 'https://unisat.io/download',
     injectionKey: 'unisat',
     supportsPsbt: true,
@@ -74,7 +76,7 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
     id: 'xverse',
     name: 'Xverse Wallet',
-    icon: '/assets/wallets/xverse.svg',
+    icon: WALLET_ICONS.xverse,
     website: 'https://www.xverse.app/download',
     injectionKey: 'XverseProviders',
     supportsPsbt: true,
@@ -86,7 +88,7 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
     id: 'phantom',
     name: 'Phantom Wallet',
-    icon: '/assets/wallets/phantom.svg',
+    icon: WALLET_ICONS.phantom,
     website: 'https://phantom.app/download',
     injectionKey: 'phantom',
     supportsPsbt: true,
@@ -98,7 +100,7 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
     id: 'okx',
     name: 'OKX Wallet',
-    icon: '/assets/wallets/okx.svg',
+    icon: WALLET_ICONS.okx,
     website: 'https://chromewebstore.google.com/detail/okx-wallet/mcohilncbfahbmgdjkbpemcciiolgcge',
     injectionKey: 'okxwallet',
     supportsPsbt: true,
@@ -110,7 +112,7 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
     id: 'leather',
     name: 'Leather Wallet',
-    icon: '/assets/wallets/leather.svg',
+    icon: WALLET_ICONS.leather,
     website: 'https://leather.io/install-extension',
     injectionKey: 'LeatherProvider',
     supportsPsbt: true,
@@ -121,7 +123,7 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
     id: 'magic-eden',
     name: 'Magic Eden Wallet',
-    icon: '/assets/wallets/magiceden.svg',
+    icon: WALLET_ICONS['magic-eden'],
     website: 'https://wallet.magiceden.io/',
     injectionKey: 'magicEden',
     supportsPsbt: true,
@@ -133,7 +135,7 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
     id: 'wizz',
     name: 'Wizz Wallet',
-    icon: '/assets/wallets/wizz.svg',
+    icon: WALLET_ICONS.wizz,
     website: 'https://wizzwallet.io/#extension',
     injectionKey: 'wizz',
     supportsPsbt: true,
@@ -144,7 +146,7 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
     id: 'orange',
     name: 'Orange Wallet',
-    icon: '/assets/wallets/orange.svg',
+    icon: WALLET_ICONS.orange,
     website: 'https://www.orangewallet.com/',
     injectionKey: 'orange',
     supportsPsbt: false,
@@ -155,7 +157,7 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
     id: 'keplr',
     name: 'Keplr Wallet',
-    icon: '/assets/wallets/keplr.svg',
+    icon: WALLET_ICONS.keplr,
     website: 'https://keplr.app/download',
     injectionKey: 'keplr',
     supportsPsbt: false,
@@ -385,6 +387,29 @@ export class WalletConnector {
   private connectedWallet: ConnectedWallet | null = null;
 
   /**
+   * Get all supported wallets (static)
+   */
+  static getSupportedWallets(): BrowserWalletInfo[] {
+    return BROWSER_WALLETS;
+  }
+
+  /**
+   * Get wallet info by ID
+   */
+  getWalletInfo(walletId: string): BrowserWalletInfo | undefined {
+    return BROWSER_WALLETS.find((w) => w.id === walletId);
+  }
+
+  /**
+   * Check if a specific wallet is installed
+   */
+  isWalletInstalled(walletId: string): boolean {
+    const wallet = this.getWalletInfo(walletId);
+    if (!wallet) return false;
+    return isWalletInstalled(wallet);
+  }
+
+  /**
    * Detect all installed wallets
    */
   async detectWallets(): Promise<BrowserWalletInfo[]> {
@@ -561,3 +586,6 @@ export type {
   WalletAccountForWasm,
   PsbtSigningOptionsForWasm,
 } from './adapter';
+
+// Re-export wallet icons
+export { WALLET_ICONS, getWalletIcon } from './icons';
