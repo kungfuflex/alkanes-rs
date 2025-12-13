@@ -86,6 +86,20 @@ declare module '@alkanes/ts-sdk' {
     address?: string;
   }
 
+  // Alkane types
+  export interface AlkaneId {
+    block: number;
+    tx: number;
+  }
+
+  export interface AlkaneBalance {
+    id: string;
+    balance: string;
+    name?: string;
+    symbol?: string;
+    decimals?: number;
+  }
+
   // Browser wallet types
   export interface BrowserWalletInfo {
     id: string;
