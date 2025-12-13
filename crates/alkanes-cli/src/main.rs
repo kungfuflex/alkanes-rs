@@ -3556,33 +3556,35 @@ fn to_enhanced_execute_params(args: AlkanesExecute) -> Result<alkanes::types::En
 async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone) -> Result<()> {
     match command {
         Runestone::Analyze { txid, raw } => {
+            let network = system.provider().get_network();
             let tx_hex = system.provider().get_transaction_hex(&txid).await?;
             let tx_bytes = hex::decode(tx_hex)?;
             let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
-            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)?;
-            
+            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx, network)?;
+
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result);
+                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result, network);
             }
         }
         Runestone::Trace { txid, raw } => {
             use alkanes_cli_common::traits::AlkanesProvider;
-            
+
             // Get and analyze transaction
+            let network = system.provider().get_network();
             let tx_hex = system.provider().get_transaction_hex(&txid).await?;
             let tx_bytes = hex::decode(tx_hex)?;
             let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
-            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)?;
-            
+            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx, network)?;
+
             // Print transaction structure
             if !raw {
                 println!("🔍 ═══════════════════════════════════════════════════════════════");
                 println!("🧪           RUNESTONE TRANSACTION TRACE ANALYSIS             🧪");
                 println!("🔍 ═══════════════════════════════════════════════════════════════\n");
                 println!("📝 Transaction ID: {}\n", txid);
-                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result);
+                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result, network);
                 println!("\n🔍 ═══════════════════════════════════════════════════════════════");
                 println!("🧪                   PROTOSTONE TRACES                        🧪");
                 println!("🔍 ═══════════════════════════════════════════════════════════════\n");
@@ -3770,11 +3772,12 @@ async fn execute_esplora_command(
             if runestone_trace {
                 use alkanes_cli_common::traits::AlkanesProvider;
                 use prost::Message;
-                
+
+                let network = provider.get_network();
                 println!("\n🔍 ═══════════════════════════════════════════════════════════════");
                 println!("🧪            RUNESTONE TRACES FOR TRANSACTIONS               🧪");
                 println!("🔍 ═══════════════════════════════════════════════════════════════\n");
-                
+
                 for esplora_tx in &txs {
                     // Check if transaction has an OP_RETURN output
                     let has_op_return = esplora_tx.vout.iter().any(|output| {
@@ -3806,7 +3809,7 @@ async fn execute_esplora_command(
                                 };
                                 
                                 // Try to parse runestone
-                                match alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&transaction) {
+                                match alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&transaction, network) {
                                     Ok(result) => {
                                         // Extract number of protostones
                                         let num_protostones = if let Some(protostones) = result.get("protostones").and_then(|p| p.as_array()) {
