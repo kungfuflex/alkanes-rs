@@ -69,6 +69,7 @@ use serde_json::Value as JsonValue;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{window, js_sys};
+use wasm_bindgen::JsCast;
 use hex;
 use core::str::FromStr;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -1858,5 +1859,467 @@ impl alkanes_cli_common::lua_script::LuaScriptExecutor for BrowserWalletProvider
         args: Vec<alkanes_cli_common::JsonValue>,
     ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
         self.web_provider.lua_evalscript(script_content, args).await
+    }
+}
+
+// ============================================================================
+// JavaScript Wallet Adapter Interface
+// ============================================================================
+// This section provides wasm-bindgen bindings that allow JavaScript to supply
+// wallet adapter objects that implement the required interface for alkanes-rs.
+
+/// JavaScript wallet adapter interface.
+///
+/// This extern type defines the interface that JavaScript wallet adapters must implement.
+/// It allows the TypeScript SDK to supply wallet implementations that can be used
+/// with the BrowserWalletProvider.
+#[wasm_bindgen]
+extern "C" {
+    /// A JavaScript object that implements the wallet adapter interface.
+    ///
+    /// Required methods:
+    /// - `connect(): Promise<{ address: string, publicKey?: string, addressType?: string }>`
+    /// - `disconnect(): Promise<void>`
+    /// - `getAccounts(): Promise<{ address: string, publicKey?: string }[]>`
+    /// - `getNetwork(): Promise<string>`
+    /// - `switchNetwork(network: string): Promise<void>`
+    /// - `signMessage(message: string, address: string): Promise<string>`
+    /// - `signPsbt(psbtHex: string, options?: object): Promise<string>`
+    /// - `signPsbts(psbtHexs: string[], options?: object): Promise<string[]>`
+    /// - `pushTx(txHex: string): Promise<string>`
+    /// - `pushPsbt(psbtHex: string): Promise<string>`
+    /// - `getPublicKey(): Promise<string>`
+    /// - `getBalance(): Promise<number | null>`
+    /// - `getInscriptions(cursor?: number, size?: number): Promise<object>`
+    /// - `getInfo(): { id: string, name: string, ... }`
+    #[wasm_bindgen(typescript_type = "JsWalletAdapter")]
+    pub type JsWalletAdapter;
+
+    // Synchronous getter for wallet info
+    #[wasm_bindgen(method, js_name = "getInfo")]
+    fn get_info_js(this: &JsWalletAdapter) -> JsValue;
+
+    // Async methods return Promises
+    #[wasm_bindgen(method, js_name = "connect")]
+    fn connect_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "disconnect")]
+    fn disconnect_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getAccounts")]
+    fn get_accounts_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getNetwork")]
+    fn get_network_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "switchNetwork")]
+    fn switch_network_js(this: &JsWalletAdapter, network: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "signMessage")]
+    fn sign_message_js(this: &JsWalletAdapter, message: &str, address: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "signPsbt")]
+    fn sign_psbt_js(this: &JsWalletAdapter, psbt_hex: &str, options: JsValue) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "signPsbts")]
+    fn sign_psbts_js(this: &JsWalletAdapter, psbt_hexs: js_sys::Array, options: JsValue) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "pushTx")]
+    fn push_tx_js(this: &JsWalletAdapter, tx_hex: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "pushPsbt")]
+    fn push_psbt_js(this: &JsWalletAdapter, psbt_hex: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getPublicKey")]
+    fn get_public_key_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getBalance")]
+    fn get_balance_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getInscriptions")]
+    fn get_inscriptions_js(this: &JsWalletAdapter, cursor: JsValue, size: JsValue) -> js_sys::Promise;
+}
+
+/// Wrapper for JavaScript wallet adapters that implements WalletBackend
+pub struct JsWalletBackend {
+    adapter: JsWalletAdapter,
+    info: WalletInfo,
+}
+
+impl JsWalletBackend {
+    /// Create a new JsWalletBackend from a JavaScript adapter
+    pub fn new(adapter: JsWalletAdapter) -> Result<Self> {
+        // Get wallet info from the adapter
+        let info_js = adapter.get_info_js();
+        let info: WalletInfo = serde_wasm_bindgen::from_value(info_js)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid wallet info: {e:?}")))?;
+
+        Ok(Self { adapter, info })
+    }
+}
+
+#[async_trait(?Send)]
+impl WalletBackend for JsWalletBackend {
+    fn get_info(&self) -> &WalletInfo {
+        &self.info
+    }
+
+    async fn is_available(&self) -> bool {
+        // If we have the adapter, it's available
+        true
+    }
+
+    async fn connect(&self) -> Result<WalletAccount> {
+        let promise = self.adapter.connect_js();
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Connect failed: {e:?}")))?;
+
+        // Parse the account info from JS
+        let account: WalletAccount = serde_wasm_bindgen::from_value(result)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid account response: {e:?}")))?;
+
+        Ok(account)
+    }
+
+    async fn disconnect(&self) -> Result<()> {
+        let promise = self.adapter.disconnect_js();
+        JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Disconnect failed: {e:?}")))?;
+        Ok(())
+    }
+
+    async fn get_accounts(&self) -> Result<Vec<WalletAccount>> {
+        let promise = self.adapter.get_accounts_js();
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Get accounts failed: {e:?}")))?;
+
+        let accounts: Vec<WalletAccount> = serde_wasm_bindgen::from_value(result)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid accounts response: {e:?}")))?;
+
+        Ok(accounts)
+    }
+
+    async fn get_network(&self) -> Result<WalletNetworkInfo> {
+        let promise = self.adapter.get_network_js();
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Get network failed: {e:?}")))?;
+
+        let network = result.as_string().unwrap_or_else(|| "mainnet".to_string());
+
+        Ok(WalletNetworkInfo {
+            network,
+            chain_id: None,
+        })
+    }
+
+    async fn switch_network(&self, network: &str) -> Result<()> {
+        let promise = self.adapter.switch_network_js(network);
+        JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Switch network failed: {e:?}")))?;
+        Ok(())
+    }
+
+    async fn sign_message(&self, message: &str, address: &str) -> Result<String> {
+        let promise = self.adapter.sign_message_js(message, address);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Sign message failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid signature response".to_string()))
+    }
+
+    async fn sign_psbt(&self, psbt_hex: &str, options: Option<PsbtSigningOptions>) -> Result<String> {
+        let options_js = match options {
+            Some(opts) => serde_wasm_bindgen::to_value(&opts)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to serialize options: {e:?}")))?,
+            None => JsValue::undefined(),
+        };
+
+        let promise = self.adapter.sign_psbt_js(psbt_hex, options_js);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Sign PSBT failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid signed PSBT response".to_string()))
+    }
+
+    async fn sign_psbts(&self, psbt_hexs: Vec<String>, options: Option<PsbtSigningOptions>) -> Result<Vec<String>> {
+        let psbts_array = js_sys::Array::new();
+        for psbt_hex in psbt_hexs {
+            psbts_array.push(&JsValue::from_str(&psbt_hex));
+        }
+
+        let options_js = match options {
+            Some(opts) => serde_wasm_bindgen::to_value(&opts)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to serialize options: {e:?}")))?,
+            None => JsValue::undefined(),
+        };
+
+        let promise = self.adapter.sign_psbts_js(psbts_array, options_js);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Sign PSBTs failed: {e:?}")))?;
+
+        let result_array = result.dyn_into::<js_sys::Array>()
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid PSBTs signature response: {e:?}")))?;
+
+        let mut signed_psbts = Vec::new();
+        for i in 0..result_array.length() {
+            let psbt = result_array.get(i);
+            if let Some(psbt_hex) = psbt.as_string() {
+                signed_psbts.push(psbt_hex);
+            }
+        }
+
+        Ok(signed_psbts)
+    }
+
+    async fn push_tx(&self, tx_hex: &str) -> Result<String> {
+        let promise = self.adapter.push_tx_js(tx_hex);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Push TX failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid push TX response".to_string()))
+    }
+
+    async fn push_psbt(&self, psbt_hex: &str) -> Result<String> {
+        let promise = self.adapter.push_psbt_js(psbt_hex);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Push PSBT failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid push PSBT response".to_string()))
+    }
+
+    async fn get_public_key(&self) -> Result<String> {
+        let promise = self.adapter.get_public_key_js();
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Get public key failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid public key response".to_string()))
+    }
+
+    async fn get_balance(&self) -> Result<Option<u64>> {
+        let promise = self.adapter.get_balance_js();
+        match JsFuture::from(promise).await {
+            Ok(result) => {
+                if result.is_null() || result.is_undefined() {
+                    Ok(None)
+                } else if let Some(balance) = result.as_f64() {
+                    Ok(Some(balance as u64))
+                } else {
+                    Ok(None)
+                }
+            },
+            Err(_) => Ok(None), // Balance not supported
+        }
+    }
+
+    async fn get_inscriptions(&self, cursor: Option<u32>, size: Option<u32>) -> Result<JsonValue> {
+        let cursor_js = match cursor {
+            Some(c) => JsValue::from_f64(c as f64),
+            None => JsValue::undefined(),
+        };
+        let size_js = match size {
+            Some(s) => JsValue::from_f64(s as f64),
+            None => JsValue::undefined(),
+        };
+
+        let promise = self.adapter.get_inscriptions_js(cursor_js, size_js);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Get inscriptions failed: {e:?}")))?;
+
+        // Convert JsValue to JsonValue
+        let result_str = js_sys::JSON::stringify(&result)
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to stringify inscriptions: {e:?}")))?
+            .as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid inscriptions response".to_string()))?;
+
+        serde_json::from_str(&result_str)
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to parse inscriptions JSON: {e}")))
+    }
+}
+
+// ============================================================================
+// WASM-Bindgen Exports for BrowserWalletProvider
+// ============================================================================
+
+/// WASM-exported BrowserWalletProvider that can be created from JavaScript
+#[wasm_bindgen]
+pub struct WasmBrowserWalletProvider {
+    inner: BrowserWalletProvider,
+}
+
+#[wasm_bindgen]
+impl WasmBrowserWalletProvider {
+    /// Create a new BrowserWalletProvider from a JavaScript wallet adapter
+    ///
+    /// @param adapter - A JavaScript object implementing the JsWalletAdapter interface
+    /// @param network - Network string ("mainnet", "testnet", "signet", "regtest")
+    /// @returns Promise<WasmBrowserWalletProvider>
+    #[wasm_bindgen(constructor)]
+    pub async fn new(adapter: JsWalletAdapter, network: String) -> std::result::Result<WasmBrowserWalletProvider, JsValue> {
+        let backend = JsWalletBackend::new(adapter)
+            .map_err(|e| JsValue::from_str(&format!("Failed to create wallet backend: {e}")))?;
+
+        let provider = BrowserWalletProvider::connect_local(Box::new(backend), network)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to connect wallet: {e}")))?;
+
+        Ok(WasmBrowserWalletProvider { inner: provider })
+    }
+
+    /// Get the connected wallet address
+    #[wasm_bindgen(js_name = "getAddress")]
+    pub fn get_address(&self) -> Option<String> {
+        self.inner.current_account().map(|a| a.address.clone())
+    }
+
+    /// Get the wallet public key
+    #[wasm_bindgen(js_name = "getPublicKey")]
+    pub async fn get_public_key(&self) -> std::result::Result<String, JsValue> {
+        self.inner.wallet.get_public_key()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Sign a PSBT (hex encoded)
+    #[wasm_bindgen(js_name = "signPsbt")]
+    pub async fn sign_psbt(&self, psbt_hex: String, options: JsValue) -> std::result::Result<String, JsValue> {
+        let signing_options: Option<PsbtSigningOptions> = if options.is_undefined() || options.is_null() {
+            None
+        } else {
+            Some(serde_wasm_bindgen::from_value(options)
+                .map_err(|e| JsValue::from_str(&format!("Invalid signing options: {e}")))?)
+        };
+
+        self.inner.wallet.sign_psbt(&psbt_hex, signing_options)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Sign a message
+    #[wasm_bindgen(js_name = "signMessage")]
+    pub async fn sign_message(&self, message: String, address: Option<String>) -> std::result::Result<String, JsValue> {
+        let addr = address.or_else(|| self.inner.current_account().map(|a| a.address.clone()))
+            .ok_or_else(|| JsValue::from_str("No address available"))?;
+
+        self.inner.wallet.sign_message(&message, &addr)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Broadcast a transaction
+    #[wasm_bindgen(js_name = "broadcastTransaction")]
+    pub async fn broadcast_transaction(&self, tx_hex: String) -> std::result::Result<String, JsValue> {
+        WalletProvider::broadcast_transaction(&self.inner, tx_hex)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Get balance
+    #[wasm_bindgen(js_name = "getBalance")]
+    pub async fn get_balance(&self) -> std::result::Result<JsValue, JsValue> {
+        let balance = WalletProvider::get_balance(&self.inner, None)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+        serde_wasm_bindgen::to_value(&balance)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {e}")))
+    }
+
+    /// Get UTXOs
+    #[wasm_bindgen(js_name = "getUtxos")]
+    pub async fn get_utxos(&self, include_frozen: bool) -> std::result::Result<JsValue, JsValue> {
+        let utxos = self.inner.get_utxos(include_frozen, None)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+        // Convert to a simpler format for JS
+        let utxo_list: Vec<serde_json::Value> = utxos.iter().map(|(outpoint, info)| {
+            serde_json::json!({
+                "txid": outpoint.txid.to_string(),
+                "vout": outpoint.vout,
+                "amount": info.amount,
+                "script_pubkey": info.script_pubkey.as_ref().map(|s| s.to_hex_string()),
+                "address": &info.address,
+            })
+        }).collect();
+
+        serde_wasm_bindgen::to_value(&utxo_list)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {e}")))
+    }
+
+    /// Get enriched UTXOs with asset information
+    #[wasm_bindgen(js_name = "getEnrichedUtxos")]
+    pub async fn get_enriched_utxos(&self) -> std::result::Result<JsValue, JsValue> {
+        let utxos = WalletProvider::get_enriched_utxos(&self.inner, None)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+        serde_wasm_bindgen::to_value(&utxos)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {e}")))
+    }
+
+    /// Get all balances (BTC + alkanes)
+    #[wasm_bindgen(js_name = "getAllBalances")]
+    pub async fn get_all_balances(&self) -> std::result::Result<JsValue, JsValue> {
+        let balances = WalletProvider::get_all_balances(&self.inner, None)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+        serde_wasm_bindgen::to_value(&balances)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {e}")))
+    }
+
+    /// Get wallet info
+    #[wasm_bindgen(js_name = "getWalletInfo")]
+    pub fn get_wallet_info(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(self.inner.wallet_info())
+            .unwrap_or(JsValue::undefined())
+    }
+
+    /// Get connection status
+    #[wasm_bindgen(js_name = "getConnectionStatus")]
+    pub fn get_connection_status(&self) -> String {
+        match self.inner.connection_status() {
+            WalletConnectionStatus::Disconnected => "disconnected".to_string(),
+            WalletConnectionStatus::Connecting => "connecting".to_string(),
+            WalletConnectionStatus::Connected => "connected".to_string(),
+            WalletConnectionStatus::Error(e) => format!("error: {e}"),
+        }
+    }
+
+    /// Get current network
+    #[wasm_bindgen(js_name = "getNetwork")]
+    pub fn get_network(&self) -> String {
+        match self.inner.get_network() {
+            Network::Bitcoin => "mainnet".to_string(),
+            Network::Testnet => "testnet".to_string(),
+            Network::Signet => "signet".to_string(),
+            Network::Regtest => "regtest".to_string(),
+            _ => "unknown".to_string(),
+        }
+    }
+
+    /// Disconnect from the wallet
+    #[wasm_bindgen(js_name = "disconnect")]
+    pub async fn disconnect(&mut self) -> std::result::Result<(), JsValue> {
+        self.inner.disconnect()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 }

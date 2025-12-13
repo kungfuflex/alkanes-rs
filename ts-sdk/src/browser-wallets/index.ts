@@ -540,3 +540,24 @@ function bytesToHex(bytes: Uint8Array): string {
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
+
+// Re-export wallet adapters
+export {
+  createWalletAdapter,
+  MockWalletAdapter,
+  BaseWalletAdapter,
+  UnisatAdapter,
+  XverseAdapter,
+  OkxAdapter,
+  LeatherAdapter,
+  PhantomAdapter,
+  MagicEdenAdapter,
+  WizzAdapter,
+} from './adapter';
+
+export type {
+  JsWalletAdapter,
+  WalletInfoForWasm,
+  WalletAccountForWasm,
+  PsbtSigningOptionsForWasm,
+} from './adapter';

@@ -1,0 +1,687 @@
+/**
+ * Browser Wallet Adapters for Alkanes WASM Integration
+ *
+ * This module provides wallet adapter classes that bridge between browser wallet extensions
+ * and the WASM BrowserWalletProvider. Each adapter implements the JsWalletAdapter interface
+ * expected by the Rust code.
+ *
+ * @example
+ * ```typescript
+ * import { createWalletAdapter, WasmBrowserWalletProvider } from '@alkanes/ts-sdk';
+ *
+ * // Detect and connect to a wallet
+ * const connector = new WalletConnector();
+ * const wallets = await connector.detectWallets();
+ * const connectedWallet = await connector.connect(wallets[0]);
+ *
+ * // Create an adapter for the WASM provider
+ * const adapter = createWalletAdapter(connectedWallet);
+ *
+ * // Create the WASM provider with the adapter
+ * const wasmProvider = await WasmBrowserWalletProvider.new(adapter, 'mainnet');
+ * ```
+ */
+
+import { ConnectedWallet, BrowserWalletInfo, WalletAccount, PsbtSigningOptions } from './index';
+import * as bitcoin from 'bitcoinjs-lib';
+
+/**
+ * Interface that wallet adapters must implement to work with WASM BrowserWalletProvider.
+ * This matches the JsWalletAdapter type expected by Rust.
+ */
+export interface JsWalletAdapter {
+  /** Get wallet metadata */
+  getInfo(): WalletInfoForWasm;
+
+  /** Connect to the wallet */
+  connect(): Promise<WalletAccountForWasm>;
+
+  /** Disconnect from the wallet */
+  disconnect(): Promise<void>;
+
+  /** Get all connected accounts */
+  getAccounts(): Promise<WalletAccountForWasm[]>;
+
+  /** Get current network */
+  getNetwork(): Promise<string>;
+
+  /** Switch to a different network */
+  switchNetwork(network: string): Promise<void>;
+
+  /** Sign a message */
+  signMessage(message: string, address: string): Promise<string>;
+
+  /** Sign a PSBT (hex encoded) */
+  signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string>;
+
+  /** Sign multiple PSBTs */
+  signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]>;
+
+  /** Push a raw transaction */
+  pushTx(txHex: string): Promise<string>;
+
+  /** Push a signed PSBT */
+  pushPsbt(psbtHex: string): Promise<string>;
+
+  /** Get the wallet's public key */
+  getPublicKey(): Promise<string>;
+
+  /** Get balance (optional) */
+  getBalance(): Promise<number | null>;
+
+  /** Get inscriptions (optional) */
+  getInscriptions(cursor?: number, size?: number): Promise<any>;
+}
+
+/**
+ * Wallet info structure for WASM compatibility
+ */
+export interface WalletInfoForWasm {
+  id: string;
+  name: string;
+  icon: string;
+  website: string;
+  injection_key: string;
+  supports_psbt: boolean;
+  supports_taproot: boolean;
+  supports_ordinals: boolean;
+  mobile_support: boolean;
+  deep_link_scheme?: string;
+}
+
+/**
+ * Account info structure for WASM compatibility
+ */
+export interface WalletAccountForWasm {
+  address: string;
+  public_key?: string;
+  compressed_public_key?: string;
+  address_type: string;
+}
+
+/**
+ * PSBT signing options for WASM compatibility
+ */
+export interface PsbtSigningOptionsForWasm {
+  auto_finalized: boolean;
+  to_sign_inputs?: Array<{
+    index: number;
+    address?: string;
+    sighash_types?: number[];
+    disable_tweaked_public_key?: boolean;
+  }>;
+}
+
+/**
+ * Base wallet adapter that wraps a ConnectedWallet
+ */
+export class BaseWalletAdapter implements JsWalletAdapter {
+  protected wallet: ConnectedWallet;
+
+  constructor(wallet: ConnectedWallet) {
+    this.wallet = wallet;
+  }
+
+  getInfo(): WalletInfoForWasm {
+    const info = this.wallet.info;
+    return {
+      id: info.id,
+      name: info.name,
+      icon: info.icon,
+      website: info.website,
+      injection_key: info.injectionKey,
+      supports_psbt: info.supportsPsbt,
+      supports_taproot: info.supportsTaproot,
+      supports_ordinals: info.supportsOrdinals,
+      mobile_support: info.mobileSupport,
+      deep_link_scheme: info.deepLinkScheme,
+    };
+  }
+
+  async connect(): Promise<WalletAccountForWasm> {
+    // Already connected via ConnectedWallet
+    return {
+      address: this.wallet.address,
+      public_key: this.wallet.publicKey,
+      address_type: this.wallet.account.addressType || 'unknown',
+    };
+  }
+
+  async disconnect(): Promise<void> {
+    await this.wallet.disconnect();
+  }
+
+  async getAccounts(): Promise<WalletAccountForWasm[]> {
+    // Most wallets only expose one account via the standard API
+    return [
+      {
+        address: this.wallet.address,
+        public_key: this.wallet.publicKey,
+        address_type: this.wallet.account.addressType || 'unknown',
+      },
+    ];
+  }
+
+  async getNetwork(): Promise<string> {
+    return this.wallet.getNetwork();
+  }
+
+  async switchNetwork(network: string): Promise<void> {
+    // Most wallets don't support programmatic network switching
+    throw new Error(`${this.wallet.info.name} does not support programmatic network switching`);
+  }
+
+  async signMessage(message: string, address: string): Promise<string> {
+    return this.wallet.signMessage(message);
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    const signingOptions: PsbtSigningOptions | undefined = options
+      ? {
+          autoFinalized: options.auto_finalized,
+          toSignInputs: options.to_sign_inputs?.map((input) => ({
+            index: input.index,
+            address: input.address,
+            sighashTypes: input.sighash_types,
+            disableTweakedPublicKey: input.disable_tweaked_public_key,
+          })),
+        }
+      : undefined;
+
+    return this.wallet.signPsbt(psbtHex, signingOptions);
+  }
+
+  async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
+    // Default implementation signs one at a time
+    const results: string[] = [];
+    for (const psbtHex of psbtHexs) {
+      const signed = await this.signPsbt(psbtHex, options);
+      results.push(signed);
+    }
+    return results;
+  }
+
+  async pushTx(txHex: string): Promise<string> {
+    // Default: broadcast via external service
+    // Most wallets don't have a direct pushTx method
+    throw new Error(`${this.wallet.info.name} does not support direct transaction broadcasting`);
+  }
+
+  async pushPsbt(psbtHex: string): Promise<string> {
+    // Finalize PSBT and extract transaction, then broadcast
+    try {
+      const psbt = bitcoin.Psbt.fromHex(psbtHex);
+      psbt.finalizeAllInputs();
+      const tx = psbt.extractTransaction();
+      return this.pushTx(tx.toHex());
+    } catch (e) {
+      throw new Error(`Failed to push PSBT: ${e}`);
+    }
+  }
+
+  async getPublicKey(): Promise<string> {
+    if (!this.wallet.publicKey) {
+      throw new Error('Public key not available');
+    }
+    return this.wallet.publicKey;
+  }
+
+  async getBalance(): Promise<number | null> {
+    // Not directly available from most wallet APIs
+    return null;
+  }
+
+  async getInscriptions(cursor?: number, size?: number): Promise<any> {
+    // Not available from base wallet API
+    return { list: [], total: 0 };
+  }
+}
+
+/**
+ * Unisat-specific wallet adapter
+ */
+export class UnisatAdapter extends BaseWalletAdapter {
+  private get unisat(): any {
+    return (window as any).unisat;
+  }
+
+  async switchNetwork(network: string): Promise<void> {
+    if (!this.unisat) throw new Error('Unisat not available');
+    // Unisat uses different network names
+    const unisatNetwork = network === 'mainnet' ? 'livenet' : network;
+    await this.unisat.switchNetwork(unisatNetwork);
+  }
+
+  async pushTx(txHex: string): Promise<string> {
+    if (!this.unisat) throw new Error('Unisat not available');
+    return this.unisat.pushTx(txHex);
+  }
+
+  async pushPsbt(psbtHex: string): Promise<string> {
+    if (!this.unisat) throw new Error('Unisat not available');
+    return this.unisat.pushPsbt(psbtHex);
+  }
+
+  async getBalance(): Promise<number | null> {
+    if (!this.unisat) return null;
+    try {
+      const balance = await this.unisat.getBalance();
+      return balance?.total || balance?.confirmed || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getInscriptions(cursor?: number, size?: number): Promise<any> {
+    if (!this.unisat) return { list: [], total: 0 };
+    try {
+      return this.unisat.getInscriptions(cursor || 0, size || 20);
+    } catch {
+      return { list: [], total: 0 };
+    }
+  }
+
+  async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
+    if (!this.unisat) throw new Error('Unisat not available');
+    return this.unisat.signPsbts(psbtHexs, {
+      autoFinalized: options?.auto_finalized ?? true,
+      toSignInputs: options?.to_sign_inputs,
+    });
+  }
+}
+
+/**
+ * Xverse-specific wallet adapter
+ */
+export class XverseAdapter extends BaseWalletAdapter {
+  private get xverse(): any {
+    return (window as any).XverseProviders?.BitcoinProvider;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.xverse) throw new Error('Xverse not available');
+
+    // Xverse prefers base64 format
+    const psbt = bitcoin.Psbt.fromHex(psbtHex);
+    const psbtBase64 = psbt.toBase64();
+
+    const response = await this.xverse.request('signPsbt', {
+      psbt: psbtBase64,
+      signInputs: this.buildXverseSignInputs(psbt, options),
+      broadcast: false,
+    });
+
+    if (response.status === 'success') {
+      // Convert back to hex
+      const signedPsbt = bitcoin.Psbt.fromBase64(response.result.psbt);
+      return signedPsbt.toHex();
+    }
+
+    throw new Error(response.error?.message || 'Xverse signing failed');
+  }
+
+  private buildXverseSignInputs(
+    psbt: bitcoin.Psbt,
+    options?: PsbtSigningOptionsForWasm
+  ): Record<string, number[]> {
+    if (options?.to_sign_inputs) {
+      return options.to_sign_inputs.reduce(
+        (acc: Record<string, number[]>, input) => {
+          const addr = input.address || this.wallet.address;
+          acc[addr] = [...(acc[addr] || []), input.index];
+          return acc;
+        },
+        {}
+      );
+    }
+
+    // Default: sign all inputs with the connected address
+    const inputIndexes: number[] = [];
+    for (let i = 0; i < psbt.data.inputs.length; i++) {
+      inputIndexes.push(i);
+    }
+    return { [this.wallet.address]: inputIndexes };
+  }
+
+  async switchNetwork(network: string): Promise<void> {
+    if (!this.xverse) throw new Error('Xverse not available');
+    // Xverse has a wallet_changeNetwork method
+    const xverseNetwork = network === 'mainnet' ? 'Mainnet' : 'Testnet';
+    await this.xverse.request('wallet_changeNetwork', { name: xverseNetwork });
+  }
+}
+
+/**
+ * OKX-specific wallet adapter
+ */
+export class OkxAdapter extends BaseWalletAdapter {
+  private get okx(): any {
+    return (window as any).okxwallet?.bitcoin;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.okx) throw new Error('OKX wallet not available');
+    return this.okx.signPsbt(psbtHex, {
+      autoFinalized: options?.auto_finalized ?? true,
+      toSignInputs: options?.to_sign_inputs,
+    });
+  }
+
+  async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
+    if (!this.okx) throw new Error('OKX wallet not available');
+    return this.okx.signPsbts(psbtHexs, {
+      autoFinalized: options?.auto_finalized ?? true,
+      toSignInputs: options?.to_sign_inputs,
+    });
+  }
+
+  async pushTx(txHex: string): Promise<string> {
+    if (!this.okx) throw new Error('OKX wallet not available');
+    return this.okx.pushTx(txHex);
+  }
+
+  async pushPsbt(psbtHex: string): Promise<string> {
+    if (!this.okx) throw new Error('OKX wallet not available');
+    return this.okx.pushPsbt(psbtHex);
+  }
+
+  async getBalance(): Promise<number | null> {
+    if (!this.okx) return null;
+    try {
+      const balance = await this.okx.getBalance();
+      return balance?.total || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getInscriptions(cursor?: number, size?: number): Promise<any> {
+    if (!this.okx) return { list: [], total: 0 };
+    try {
+      return this.okx.getInscriptions(cursor || 0, size || 20);
+    } catch {
+      return { list: [], total: 0 };
+    }
+  }
+}
+
+/**
+ * Leather-specific wallet adapter
+ */
+export class LeatherAdapter extends BaseWalletAdapter {
+  private get leather(): any {
+    return (window as any).LeatherProvider;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.leather) throw new Error('Leather wallet not available');
+
+    const response = await this.leather.request('signPsbt', {
+      hex: psbtHex,
+      signAtIndex: options?.to_sign_inputs?.map((i) => i.index),
+      broadcast: false,
+    });
+
+    return response.result.hex;
+  }
+
+  async signMessage(message: string, address: string): Promise<string> {
+    if (!this.leather) throw new Error('Leather wallet not available');
+
+    const response = await this.leather.request('signMessage', {
+      message,
+      paymentType: 'p2wpkh',
+    });
+
+    return response.result.signature;
+  }
+}
+
+/**
+ * Phantom-specific wallet adapter
+ */
+export class PhantomAdapter extends BaseWalletAdapter {
+  private get phantom(): any {
+    return (window as any).phantom?.bitcoin;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.phantom) throw new Error('Phantom Bitcoin not available');
+
+    const psbtBytes = hexToBytes(psbtHex);
+    const { signedPsbt } = await this.phantom.signPSBT(psbtBytes, {
+      inputsToSign: options?.to_sign_inputs?.map((i) => ({
+        sigHash: i.sighash_types?.[0],
+        address: i.address || this.wallet.address,
+        signingIndexes: [i.index],
+      })),
+    });
+
+    return bytesToHex(signedPsbt);
+  }
+
+  async signMessage(message: string, address: string): Promise<string> {
+    if (!this.phantom) throw new Error('Phantom Bitcoin not available');
+
+    const { signature } = await this.phantom.signMessage(
+      address || this.wallet.address,
+      new TextEncoder().encode(message)
+    );
+
+    return signature;
+  }
+}
+
+/**
+ * Magic Eden-specific wallet adapter
+ */
+export class MagicEdenAdapter extends BaseWalletAdapter {
+  private get magicEden(): any {
+    return (window as any).magicEden?.bitcoin;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.magicEden) throw new Error('Magic Eden wallet not available');
+    return this.magicEden.signPsbt(psbtHex, {
+      autoFinalized: options?.auto_finalized ?? true,
+      toSignInputs: options?.to_sign_inputs,
+    });
+  }
+
+  async signMessage(message: string, address: string): Promise<string> {
+    if (!this.magicEden) throw new Error('Magic Eden wallet not available');
+    return this.magicEden.signMessage(message);
+  }
+}
+
+/**
+ * Wizz-specific wallet adapter
+ */
+export class WizzAdapter extends BaseWalletAdapter {
+  private get wizz(): any {
+    return (window as any).wizz;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.wizz) throw new Error('Wizz wallet not available');
+    return this.wizz.signPsbt(psbtHex, {
+      autoFinalized: options?.auto_finalized ?? true,
+      toSignInputs: options?.to_sign_inputs,
+    });
+  }
+
+  async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
+    if (!this.wizz) throw new Error('Wizz wallet not available');
+    return this.wizz.signPsbts(psbtHexs, {
+      autoFinalized: options?.auto_finalized ?? true,
+      toSignInputs: options?.to_sign_inputs,
+    });
+  }
+
+  async pushTx(txHex: string): Promise<string> {
+    if (!this.wizz) throw new Error('Wizz wallet not available');
+    return this.wizz.pushTx(txHex);
+  }
+
+  async getBalance(): Promise<number | null> {
+    if (!this.wizz) return null;
+    try {
+      const balance = await this.wizz.getBalance();
+      return balance?.total || null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Create a wallet adapter for a connected wallet
+ *
+ * @param wallet - The connected wallet instance
+ * @returns A wallet adapter implementing JsWalletAdapter
+ */
+export function createWalletAdapter(wallet: ConnectedWallet): JsWalletAdapter {
+  switch (wallet.info.id) {
+    case 'unisat':
+      return new UnisatAdapter(wallet);
+    case 'xverse':
+      return new XverseAdapter(wallet);
+    case 'okx':
+      return new OkxAdapter(wallet);
+    case 'leather':
+      return new LeatherAdapter(wallet);
+    case 'phantom':
+      return new PhantomAdapter(wallet);
+    case 'magic-eden':
+      return new MagicEdenAdapter(wallet);
+    case 'wizz':
+      return new WizzAdapter(wallet);
+    default:
+      // Use base adapter for unknown wallets
+      return new BaseWalletAdapter(wallet);
+  }
+}
+
+/**
+ * Mock wallet adapter for testing
+ *
+ * This adapter can be used to test the WASM integration without a real wallet.
+ */
+export class MockWalletAdapter implements JsWalletAdapter {
+  private mockAddress: string;
+  private mockPublicKey: string;
+  private mockNetwork: string;
+  private signedPsbts: string[] = [];
+
+  constructor(options?: {
+    address?: string;
+    publicKey?: string;
+    network?: string;
+  }) {
+    this.mockAddress = options?.address || 'bc1qtest1234567890abcdef';
+    this.mockPublicKey = options?.publicKey || '03' + '0'.repeat(64);
+    this.mockNetwork = options?.network || 'mainnet';
+  }
+
+  getInfo(): WalletInfoForWasm {
+    return {
+      id: 'mock',
+      name: 'Mock Wallet',
+      icon: '/assets/wallets/mock.svg',
+      website: 'https://mock.wallet',
+      injection_key: 'mockWallet',
+      supports_psbt: true,
+      supports_taproot: true,
+      supports_ordinals: true,
+      mobile_support: false,
+    };
+  }
+
+  async connect(): Promise<WalletAccountForWasm> {
+    return {
+      address: this.mockAddress,
+      public_key: this.mockPublicKey,
+      address_type: 'p2wpkh',
+    };
+  }
+
+  async disconnect(): Promise<void> {}
+
+  async getAccounts(): Promise<WalletAccountForWasm[]> {
+    return [await this.connect()];
+  }
+
+  async getNetwork(): Promise<string> {
+    return this.mockNetwork;
+  }
+
+  async switchNetwork(network: string): Promise<void> {
+    this.mockNetwork = network;
+  }
+
+  async signMessage(message: string, address: string): Promise<string> {
+    // Return a mock signature (base64 encoded)
+    const mockSig = Buffer.from(`mock_sig_${message.substring(0, 10)}`).toString('base64');
+    return mockSig;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    // For mock, just return the same PSBT (in reality, you'd want to sign it)
+    this.signedPsbts.push(psbtHex);
+    return psbtHex;
+  }
+
+  async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
+    return psbtHexs.map((psbt) => {
+      this.signedPsbts.push(psbt);
+      return psbt;
+    });
+  }
+
+  async pushTx(txHex: string): Promise<string> {
+    // Return a mock txid
+    return '0'.repeat(64);
+  }
+
+  async pushPsbt(psbtHex: string): Promise<string> {
+    return '0'.repeat(64);
+  }
+
+  async getPublicKey(): Promise<string> {
+    return this.mockPublicKey;
+  }
+
+  async getBalance(): Promise<number | null> {
+    return 100000000; // 1 BTC in satoshis
+  }
+
+  async getInscriptions(cursor?: number, size?: number): Promise<any> {
+    return { list: [], total: 0 };
+  }
+
+  /** Get PSBTs that were signed (for testing) */
+  getSignedPsbts(): string[] {
+    return this.signedPsbts;
+  }
+
+  /** Clear signed PSBTs (for testing) */
+  clearSignedPsbts(): void {
+    this.signedPsbts = [];
+  }
+}
+
+// Utility functions
+function hexToBytes(hex: string): Uint8Array {
+  const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}

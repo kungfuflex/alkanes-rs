@@ -136,13 +136,62 @@ export {
   isWalletInstalled,
   getInstalledWallets,
   getWalletById,
+  // Wallet adapters for WASM integration
+  createWalletAdapter,
+  MockWalletAdapter,
+  BaseWalletAdapter,
+  UnisatAdapter,
+  XverseAdapter,
+  OkxAdapter,
+  LeatherAdapter,
+  PhantomAdapter,
+  MagicEdenAdapter,
+  WizzAdapter,
 } from './browser-wallets';
 
 export type {
   BrowserWalletInfo,
   WalletAccount,
   PsbtSigningOptions,
+  // WASM adapter types
+  JsWalletAdapter,
+  WalletInfoForWasm,
+  WalletAccountForWasm,
+  PsbtSigningOptionsForWasm,
 } from './browser-wallets';
+
+// Client module - unified ethers.js-style interface
+export {
+  // Core client
+  AlkanesClient,
+  // Signers
+  AlkanesSigner,
+  KeystoreSigner,
+  BrowserWalletSigner,
+  EventEmittingSigner,
+  // Utilities
+  connectWallet,
+  connectAnyWallet,
+  getAvailableWallets,
+  createReadOnlyProvider,
+  getWalletOptions,
+} from './client';
+
+export type {
+  SignPsbtOptions,
+  SignMessageOptions,
+  SignerAccount,
+  SignedPsbt,
+  SignerEventType,
+  SignerEvents,
+  KeystoreSignerConfig,
+  BrowserWalletSignerConfig,
+  WalletSelection,
+  TransactionResult,
+  BalanceSummary,
+  EnrichedBalance,
+  WalletOption,
+} from './client';
 
 // Storage and backup exports
 export {
@@ -175,7 +224,23 @@ export async function initSDK() {
   const { KeystoreManager, createKeystore, unlockKeystore } = await import('./keystore');
   const { AlkanesWallet, createWallet, createWalletFromMnemonic } = await import('./wallet');
   const { AlkanesProvider, createProvider } = await import('./provider');
-  const { WalletConnector, ConnectedWallet, BROWSER_WALLETS, isWalletInstalled, getInstalledWallets } = await import('./browser-wallets');
+  const {
+    WalletConnector,
+    ConnectedWallet,
+    BROWSER_WALLETS,
+    isWalletInstalled,
+    getInstalledWallets,
+    createWalletAdapter,
+    MockWalletAdapter,
+    BaseWalletAdapter,
+    UnisatAdapter,
+    XverseAdapter,
+    OkxAdapter,
+    LeatherAdapter,
+    PhantomAdapter,
+    MagicEdenAdapter,
+    WizzAdapter,
+  } = await import('./browser-wallets');
   const { KeystoreStorage, GoogleDriveBackup } = await import('./storage');
 
   return {
@@ -196,6 +261,17 @@ export async function initSDK() {
     BROWSER_WALLETS,
     isWalletInstalled,
     getInstalledWallets,
+    // Wallet adapters for WASM integration
+    createWalletAdapter,
+    MockWalletAdapter,
+    BaseWalletAdapter,
+    UnisatAdapter,
+    XverseAdapter,
+    OkxAdapter,
+    LeatherAdapter,
+    PhantomAdapter,
+    MagicEdenAdapter,
+    WizzAdapter,
     // Storage
     KeystoreStorage,
     GoogleDriveBackup,
@@ -209,7 +285,23 @@ export default async function getAlkanesSDK() {
   const { KeystoreManager, createKeystore, unlockKeystore } = await import('./keystore');
   const { AlkanesWallet, createWallet, createWalletFromMnemonic } = await import('./wallet');
   const { AlkanesProvider, createProvider } = await import('./provider');
-  const { WalletConnector, ConnectedWallet, BROWSER_WALLETS, isWalletInstalled, getInstalledWallets } = await import('./browser-wallets');
+  const {
+    WalletConnector,
+    ConnectedWallet,
+    BROWSER_WALLETS,
+    isWalletInstalled,
+    getInstalledWallets,
+    createWalletAdapter,
+    MockWalletAdapter,
+    BaseWalletAdapter,
+    UnisatAdapter,
+    XverseAdapter,
+    OkxAdapter,
+    LeatherAdapter,
+    PhantomAdapter,
+    MagicEdenAdapter,
+    WizzAdapter,
+  } = await import('./browser-wallets');
   const { KeystoreStorage, GoogleDriveBackup } = await import('./storage');
 
   return {
@@ -230,6 +322,17 @@ export default async function getAlkanesSDK() {
     BROWSER_WALLETS,
     isWalletInstalled,
     getInstalledWallets,
+    // Wallet adapters for WASM integration
+    createWalletAdapter,
+    MockWalletAdapter,
+    BaseWalletAdapter,
+    UnisatAdapter,
+    XverseAdapter,
+    OkxAdapter,
+    LeatherAdapter,
+    PhantomAdapter,
+    MagicEdenAdapter,
+    WizzAdapter,
     // Storage
     KeystoreStorage,
     GoogleDriveBackup,

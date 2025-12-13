@@ -63,8 +63,8 @@ var require_utils = __commonJS({
     exports.rotl = rotl;
     exports.byteSwap = byteSwap;
     exports.byteSwap32 = byteSwap32;
-    exports.bytesToHex = bytesToHex3;
-    exports.hexToBytes = hexToBytes3;
+    exports.bytesToHex = bytesToHex4;
+    exports.hexToBytes = hexToBytes4;
     exports.asyncLoop = asyncLoop;
     exports.utf8ToBytes = utf8ToBytes;
     exports.bytesToUtf8 = bytesToUtf8;
@@ -147,7 +147,7 @@ var require_utils = __commonJS({
       typeof Uint8Array.from([]).toHex === "function" && typeof Uint8Array.fromHex === "function"
     ))();
     var hexes = /* @__PURE__ */ Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, "0"));
-    function bytesToHex3(bytes) {
+    function bytesToHex4(bytes) {
       abytes(bytes);
       if (hasHexBuiltin)
         return bytes.toHex();
@@ -167,7 +167,7 @@ var require_utils = __commonJS({
         return ch - (asciis.a - 10);
       return;
     }
-    function hexToBytes3(hex) {
+    function hexToBytes4(hex) {
       if (typeof hex !== "string")
         throw new Error("hex string expected, got " + typeof hex);
       if (hasHexBuiltin)
@@ -21876,7 +21876,7 @@ var require_src = __commonJS({
     function salt(password) {
       return "mnemonic" + (password || "");
     }
-    function mnemonicToSeedSync3(mnemonic, password) {
+    function mnemonicToSeedSync4(mnemonic, password) {
       const mnemonicBuffer = Uint8Array.from(Buffer.from(normalize(mnemonic), "utf8"));
       const saltBuffer = Uint8Array.from(Buffer.from(salt(normalize(password)), "utf8"));
       const res = pbkdf2_1.pbkdf2(sha512_1.sha512, mnemonicBuffer, saltBuffer, {
@@ -21885,7 +21885,7 @@ var require_src = __commonJS({
       });
       return Buffer.from(res);
     }
-    exports.mnemonicToSeedSync = mnemonicToSeedSync3;
+    exports.mnemonicToSeedSync = mnemonicToSeedSync4;
     function mnemonicToSeed(mnemonic, password) {
       const mnemonicBuffer = Uint8Array.from(Buffer.from(normalize(mnemonic), "utf8"));
       const saltBuffer = Uint8Array.from(Buffer.from(salt(normalize(password)), "utf8"));
@@ -21960,7 +21960,7 @@ var require_src = __commonJS({
       return wordlist[0] === "\u3042\u3044\u3053\u304F\u3057\u3093" ? words.join("\u3000") : words.join(" ");
     }
     exports.entropyToMnemonic = entropyToMnemonic;
-    function generateMnemonic2(strength, rng, wordlist) {
+    function generateMnemonic3(strength, rng, wordlist) {
       strength = strength || 128;
       if (strength % 32 !== 0) {
         throw new TypeError(INVALID_ENTROPY);
@@ -21968,8 +21968,8 @@ var require_src = __commonJS({
       rng = rng || ((size) => Buffer.from(utils_1.randomBytes(size)));
       return entropyToMnemonic(rng(strength / 8), wordlist);
     }
-    exports.generateMnemonic = generateMnemonic2;
-    function validateMnemonic3(mnemonic, wordlist) {
+    exports.generateMnemonic = generateMnemonic3;
+    function validateMnemonic4(mnemonic, wordlist) {
       try {
         mnemonicToEntropy(mnemonic, wordlist);
       } catch (e) {
@@ -21977,7 +21977,7 @@ var require_src = __commonJS({
       }
       return true;
     }
-    exports.validateMnemonic = validateMnemonic3;
+    exports.validateMnemonic = validateMnemonic4;
     function setDefaultWordlist(language) {
       const result = _wordlists_1.wordlists[language];
       if (result) {
@@ -27176,7 +27176,7 @@ var require_ecc_lib = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getEccLib = exports.initEccLib = void 0;
     var _ECCLIB_CACHE = {};
-    function initEccLib2(eccLib, opts) {
+    function initEccLib3(eccLib, opts) {
       if (!eccLib) {
         _ECCLIB_CACHE.eccLib = eccLib;
       } else if (eccLib !== _ECCLIB_CACHE.eccLib) {
@@ -27185,7 +27185,7 @@ var require_ecc_lib = __commonJS({
         _ECCLIB_CACHE.eccLib = eccLib;
       }
     }
-    exports.initEccLib = initEccLib2;
+    exports.initEccLib = initEccLib3;
     function getEccLib() {
       if (!_ECCLIB_CACHE.eccLib)
         throw new Error(
@@ -27195,41 +27195,41 @@ var require_ecc_lib = __commonJS({
     }
     exports.getEccLib = getEccLib;
     var h = (hex) => Buffer.from(hex, "hex");
-    function verifyEcc(ecc3) {
-      assert(typeof ecc3.isXOnlyPoint === "function");
+    function verifyEcc(ecc4) {
+      assert(typeof ecc4.isXOnlyPoint === "function");
       assert(
-        ecc3.isXOnlyPoint(
+        ecc4.isXOnlyPoint(
           h("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
         )
       );
       assert(
-        ecc3.isXOnlyPoint(
+        ecc4.isXOnlyPoint(
           h("fffffffffffffffffffffffffffffffffffffffffffffffffffffffeeffffc2e")
         )
       );
       assert(
-        ecc3.isXOnlyPoint(
+        ecc4.isXOnlyPoint(
           h("f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9")
         )
       );
       assert(
-        ecc3.isXOnlyPoint(
+        ecc4.isXOnlyPoint(
           h("0000000000000000000000000000000000000000000000000000000000000001")
         )
       );
       assert(
-        !ecc3.isXOnlyPoint(
+        !ecc4.isXOnlyPoint(
           h("0000000000000000000000000000000000000000000000000000000000000000")
         )
       );
       assert(
-        !ecc3.isXOnlyPoint(
+        !ecc4.isXOnlyPoint(
           h("fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f")
         )
       );
-      assert(typeof ecc3.xOnlyPointAddTweak === "function");
+      assert(typeof ecc4.xOnlyPointAddTweak === "function");
       tweakAddVectors.forEach((t) => {
-        const r = ecc3.xOnlyPointAddTweak(h(t.pubkey), h(t.tweak));
+        const r = ecc4.xOnlyPointAddTweak(h(t.pubkey), h(t.tweak));
         if (t.result === null) {
           assert(r === null);
         } else {
@@ -27974,8 +27974,8 @@ var require_address = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.toOutputScript = exports.fromOutputScript = exports.toBech32 = exports.toBase58Check = exports.fromBech32 = exports.fromBase58Check = void 0;
-    var networks5 = require_networks();
-    var payments2 = require_payments();
+    var networks7 = require_networks();
+    var payments3 = require_payments();
     var bscript = require_script();
     var types_1 = require_types();
     var bech32_1 = require_dist();
@@ -28048,25 +28048,25 @@ var require_address = __commonJS({
     }
     exports.toBech32 = toBech32;
     function fromOutputScript(output, network) {
-      network = network || networks5.bitcoin;
+      network = network || networks7.bitcoin;
       try {
-        return payments2.p2pkh({ output, network }).address;
+        return payments3.p2pkh({ output, network }).address;
       } catch (e) {
       }
       try {
-        return payments2.p2sh({ output, network }).address;
+        return payments3.p2sh({ output, network }).address;
       } catch (e) {
       }
       try {
-        return payments2.p2wpkh({ output, network }).address;
+        return payments3.p2wpkh({ output, network }).address;
       } catch (e) {
       }
       try {
-        return payments2.p2wsh({ output, network }).address;
+        return payments3.p2wsh({ output, network }).address;
       } catch (e) {
       }
       try {
-        return payments2.p2tr({ output, network }).address;
+        return payments3.p2tr({ output, network }).address;
       } catch (e) {
       }
       try {
@@ -28077,7 +28077,7 @@ var require_address = __commonJS({
     }
     exports.fromOutputScript = fromOutputScript;
     function toOutputScript(address2, network) {
-      network = network || networks5.bitcoin;
+      network = network || networks7.bitcoin;
       let decodeBase58;
       let decodeBech32;
       try {
@@ -28086,9 +28086,9 @@ var require_address = __commonJS({
       }
       if (decodeBase58) {
         if (decodeBase58.version === network.pubKeyHash)
-          return payments2.p2pkh({ hash: decodeBase58.hash }).output;
+          return payments3.p2pkh({ hash: decodeBase58.hash }).output;
         if (decodeBase58.version === network.scriptHash)
-          return payments2.p2sh({ hash: decodeBase58.hash }).output;
+          return payments3.p2sh({ hash: decodeBase58.hash }).output;
       } else {
         try {
           decodeBech32 = fromBech32(address2);
@@ -28099,12 +28099,12 @@ var require_address = __commonJS({
             throw new Error(address2 + " has an invalid prefix");
           if (decodeBech32.version === 0) {
             if (decodeBech32.data.length === 20)
-              return payments2.p2wpkh({ hash: decodeBech32.data }).output;
+              return payments3.p2wpkh({ hash: decodeBech32.data }).output;
             if (decodeBech32.data.length === 32)
-              return payments2.p2wsh({ hash: decodeBech32.data }).output;
+              return payments3.p2wsh({ hash: decodeBech32.data }).output;
           } else if (decodeBech32.version === 1) {
             if (decodeBech32.data.length === 32)
-              return payments2.p2tr({ pubkey: decodeBech32.data }).output;
+              return payments3.p2tr({ pubkey: decodeBech32.data }).output;
           } else if (decodeBech32.version >= FUTURE_SEGWIT_MIN_VERSION && decodeBech32.version <= FUTURE_SEGWIT_MAX_VERSION && decodeBech32.data.length >= FUTURE_SEGWIT_MIN_SIZE && decodeBech32.data.length <= FUTURE_SEGWIT_MAX_SIZE) {
             console.warn(FUTURE_SEGWIT_VERSION_WARNING);
             return bscript.compile([
@@ -30689,7 +30689,7 @@ var require_psbt = __commonJS({
     var parser_1 = require_parser();
     var typeFields_1 = require_typeFields();
     var utils_1 = require_utils2();
-    var Psbt2 = class {
+    var Psbt4 = class {
       constructor(tx) {
         this.inputs = [];
         this.outputs = [];
@@ -30825,7 +30825,7 @@ var require_psbt = __commonJS({
         return this.globalMap.unsignedTx.toBuffer();
       }
     };
-    exports.Psbt = Psbt2;
+    exports.Psbt = Psbt4;
   }
 });
 
@@ -30839,7 +30839,7 @@ var require_psbtutils = __commonJS({
     var bscript = require_script();
     var transaction_1 = require_transaction();
     var crypto_1 = require_crypto2();
-    var payments2 = require_payments();
+    var payments3 = require_payments();
     function isPaymentFactory(payment) {
       return (script) => {
         try {
@@ -30850,13 +30850,13 @@ var require_psbtutils = __commonJS({
         }
       };
     }
-    exports.isP2MS = isPaymentFactory(payments2.p2ms);
-    exports.isP2PK = isPaymentFactory(payments2.p2pk);
-    exports.isP2PKH = isPaymentFactory(payments2.p2pkh);
-    exports.isP2WPKH = isPaymentFactory(payments2.p2wpkh);
-    exports.isP2WSHScript = isPaymentFactory(payments2.p2wsh);
-    exports.isP2SHScript = isPaymentFactory(payments2.p2sh);
-    exports.isP2TR = isPaymentFactory(payments2.p2tr);
+    exports.isP2MS = isPaymentFactory(payments3.p2ms);
+    exports.isP2PK = isPaymentFactory(payments3.p2pk);
+    exports.isP2PKH = isPaymentFactory(payments3.p2pkh);
+    exports.isP2WPKH = isPaymentFactory(payments3.p2wpkh);
+    exports.isP2WSHScript = isPaymentFactory(payments3.p2wsh);
+    exports.isP2SHScript = isPaymentFactory(payments3.p2sh);
+    exports.isP2TR = isPaymentFactory(payments3.p2tr);
     function witnessStackToScriptWitness(witness) {
       let buffer = Buffer.allocUnsafe(0);
       function writeSlice(slice) {
@@ -31223,7 +31223,7 @@ var require_psbt2 = __commonJS({
     var address_1 = require_address();
     var bufferutils_1 = require_bufferutils();
     var networks_1 = require_networks();
-    var payments2 = require_payments();
+    var payments3 = require_payments();
     var bip341_1 = require_bip341();
     var bscript = require_script();
     var transaction_1 = require_transaction();
@@ -31243,7 +31243,7 @@ var require_psbt2 = __commonJS({
       maximumFeeRate: 5e3
       // satoshi per byte
     };
-    var Psbt2 = class _Psbt {
+    var Psbt4 = class _Psbt {
       static fromBase64(data, opts = {}) {
         const buffer = Buffer.from(data, "base64");
         return this.fromBuffer(buffer, opts);
@@ -31494,7 +31494,7 @@ var require_psbt2 = __commonJS({
             `Cannot finalize input #${inputIndex}. Missing withness utxo.`
           );
         if (input.tapKeySig) {
-          const payment = payments2.p2tr({
+          const payment = payments3.p2tr({
             output: input.witnessUtxo.script,
             signature: input.tapKeySig
           });
@@ -32006,7 +32006,7 @@ var require_psbt2 = __commonJS({
         return this;
       }
     };
-    exports.Psbt = Psbt2;
+    exports.Psbt = Psbt4;
     var transactionFromBuffer = (buffer) => new PsbtTransaction(buffer);
     var PsbtTransaction = class {
       constructor(buffer = Buffer.from([2, 0, 0, 0, 0, 0, 0, 0, 0, 0])) {
@@ -32047,7 +32047,7 @@ var require_psbt2 = __commonJS({
         case "witnesspubkeyhash":
           return hasSigs(1, input.partialSig);
         case "multisig":
-          const p2ms = payments2.p2ms({ output: script });
+          const p2ms = payments3.p2ms({ output: script });
           return hasSigs(p2ms.m, input.partialSig, p2ms.pubkeys);
         default:
           return false;
@@ -32151,9 +32151,9 @@ var require_psbt2 = __commonJS({
         }
       };
     }
-    var checkRedeemScript = scriptCheckerFactory(payments2.p2sh, "Redeem script");
+    var checkRedeemScript = scriptCheckerFactory(payments3.p2sh, "Redeem script");
     var checkWitnessScript = scriptCheckerFactory(
-      payments2.p2wsh,
+      payments3.p2wsh,
       "Witness script"
     );
     function getTxCacheValue(key, name, inputs, c) {
@@ -32190,8 +32190,8 @@ var require_psbt2 = __commonJS({
       let finalScriptSig;
       let finalScriptWitness;
       const payment = getPayment(script, scriptType, partialSig);
-      const p2wsh = !isP2WSH ? null : payments2.p2wsh({ redeem: payment });
-      const p2sh = !isP2SH ? null : payments2.p2sh({ redeem: p2wsh || payment });
+      const p2wsh = !isP2WSH ? null : payments3.p2wsh({ redeem: payment });
+      const p2sh = !isP2SH ? null : payments3.p2sh({ redeem: p2wsh || payment });
       if (isSegwit) {
         if (p2wsh) {
           finalScriptWitness = (0, psbtutils_1.witnessStackToScriptWitness)(
@@ -32273,7 +32273,7 @@ var require_psbt2 = __commonJS({
           sighashType
         );
       } else if ((0, psbtutils_1.isP2WPKH)(meaningfulScript)) {
-        const signingScript = payments2.p2pkh({
+        const signingScript = payments3.p2pkh({
           hash: meaningfulScript.slice(2)
         }).output;
         hash = unsignedTx.hashForWitnessV0(
@@ -32386,26 +32386,26 @@ var require_psbt2 = __commonJS({
       switch (scriptType) {
         case "multisig":
           const sigs = getSortedSigs(script, partialSig);
-          payment = payments2.p2ms({
+          payment = payments3.p2ms({
             output: script,
             signatures: sigs
           });
           break;
         case "pubkey":
-          payment = payments2.p2pk({
+          payment = payments3.p2pk({
             output: script,
             signature: partialSig[0].signature
           });
           break;
         case "pubkeyhash":
-          payment = payments2.p2pkh({
+          payment = payments3.p2pkh({
             output: script,
             pubkey: partialSig[0].pubkey,
             signature: partialSig[0].signature
           });
           break;
         case "witnesspubkeyhash":
-          payment = payments2.p2wpkh({
+          payment = payments3.p2wpkh({
             output: script,
             pubkey: partialSig[0].pubkey,
             signature: partialSig[0].signature
@@ -32473,7 +32473,7 @@ var require_psbt2 = __commonJS({
       return signers;
     }
     function getSortedSigs(script, partialSig) {
-      const p2ms = payments2.p2ms({ output: script });
+      const p2ms = payments3.p2ms({ output: script });
       return p2ms.pubkeys.map((pk) => {
         return (partialSig.filter((ps) => {
           return ps.pubkey.equals(pk);
@@ -32715,12 +32715,12 @@ var require_src3 = __commonJS({
     exports.initEccLib = exports.Transaction = exports.opcodes = exports.Psbt = exports.Block = exports.script = exports.payments = exports.networks = exports.crypto = exports.address = void 0;
     var address2 = require_address();
     exports.address = address2;
-    var crypto2 = require_crypto2();
-    exports.crypto = crypto2;
-    var networks5 = require_networks();
-    exports.networks = networks5;
-    var payments2 = require_payments();
-    exports.payments = payments2;
+    var crypto3 = require_crypto2();
+    exports.crypto = crypto3;
+    var networks7 = require_networks();
+    exports.networks = networks7;
+    var payments3 = require_payments();
+    exports.payments = payments3;
     var script = require_script();
     exports.script = script;
     var block_1 = require_block();
@@ -32790,35 +32790,35 @@ var require_testecc = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.testEcc = void 0;
     var h = (hex) => Buffer.from(hex, "hex");
-    function testEcc(ecc3) {
-      assert(ecc3.isPoint(h("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")));
-      assert(!ecc3.isPoint(h("030000000000000000000000000000000000000000000000000000000000000005")));
-      assert(ecc3.isPrivate(h("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")));
-      assert(ecc3.isPrivate(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")));
-      assert(!ecc3.isPrivate(h("0000000000000000000000000000000000000000000000000000000000000000")));
-      assert(!ecc3.isPrivate(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141")));
-      assert(!ecc3.isPrivate(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364142")));
-      assert(Buffer.from(ecc3.pointFromScalar(h("b1121e4088a66a28f5b6b0f5844943ecd9f610196d7bb83b25214b60452c09af"))).equals(h("02b07ba9dca9523b7ef4bd97703d43d20399eb698e194704791a25ce77a400df99")));
-      if (ecc3.xOnlyPointAddTweak) {
-        assert(ecc3.xOnlyPointAddTweak(h("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"), h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")) === null);
-        let xOnlyRes = ecc3.xOnlyPointAddTweak(h("1617d38ed8d8657da4d4761e8057bc396ea9e4b9d29776d4be096016dbd2509b"), h("a8397a935f0dfceba6ba9618f6451ef4d80637abf4e6af2669fbc9de6a8fd2ac"));
+    function testEcc(ecc4) {
+      assert(ecc4.isPoint(h("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")));
+      assert(!ecc4.isPoint(h("030000000000000000000000000000000000000000000000000000000000000005")));
+      assert(ecc4.isPrivate(h("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")));
+      assert(ecc4.isPrivate(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")));
+      assert(!ecc4.isPrivate(h("0000000000000000000000000000000000000000000000000000000000000000")));
+      assert(!ecc4.isPrivate(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141")));
+      assert(!ecc4.isPrivate(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364142")));
+      assert(Buffer.from(ecc4.pointFromScalar(h("b1121e4088a66a28f5b6b0f5844943ecd9f610196d7bb83b25214b60452c09af"))).equals(h("02b07ba9dca9523b7ef4bd97703d43d20399eb698e194704791a25ce77a400df99")));
+      if (ecc4.xOnlyPointAddTweak) {
+        assert(ecc4.xOnlyPointAddTweak(h("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"), h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")) === null);
+        let xOnlyRes = ecc4.xOnlyPointAddTweak(h("1617d38ed8d8657da4d4761e8057bc396ea9e4b9d29776d4be096016dbd2509b"), h("a8397a935f0dfceba6ba9618f6451ef4d80637abf4e6af2669fbc9de6a8fd2ac"));
         assert(Buffer.from(xOnlyRes.xOnlyPubkey).equals(h("e478f99dab91052ab39a33ea35fd5e6e4933f4d28023cd597c9a1f6760346adf")) && xOnlyRes.parity === 1);
-        xOnlyRes = ecc3.xOnlyPointAddTweak(h("2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991"), h("823c3cd2142744b075a87eade7e1b8678ba308d566226a0056ca2b7a76f86b47"));
+        xOnlyRes = ecc4.xOnlyPointAddTweak(h("2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991"), h("823c3cd2142744b075a87eade7e1b8678ba308d566226a0056ca2b7a76f86b47"));
       }
-      assert(Buffer.from(ecc3.pointAddScalar(h("0379be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"), h("0000000000000000000000000000000000000000000000000000000000000003"))).equals(h("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")));
-      assert(Buffer.from(ecc3.privateAdd(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413e"), h("0000000000000000000000000000000000000000000000000000000000000002"))).equals(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")));
-      if (ecc3.privateNegate) {
-        assert(Buffer.from(ecc3.privateNegate(h("0000000000000000000000000000000000000000000000000000000000000001"))).equals(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")));
-        assert(Buffer.from(ecc3.privateNegate(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413e"))).equals(h("0000000000000000000000000000000000000000000000000000000000000003")));
-        assert(Buffer.from(ecc3.privateNegate(h("b1121e4088a66a28f5b6b0f5844943ecd9f610196d7bb83b25214b60452c09af"))).equals(h("4eede1bf775995d70a494f0a7bb6bc11e0b8cccd41cce8009ab1132c8b0a3792")));
+      assert(Buffer.from(ecc4.pointAddScalar(h("0379be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"), h("0000000000000000000000000000000000000000000000000000000000000003"))).equals(h("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")));
+      assert(Buffer.from(ecc4.privateAdd(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413e"), h("0000000000000000000000000000000000000000000000000000000000000002"))).equals(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")));
+      if (ecc4.privateNegate) {
+        assert(Buffer.from(ecc4.privateNegate(h("0000000000000000000000000000000000000000000000000000000000000001"))).equals(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")));
+        assert(Buffer.from(ecc4.privateNegate(h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413e"))).equals(h("0000000000000000000000000000000000000000000000000000000000000003")));
+        assert(Buffer.from(ecc4.privateNegate(h("b1121e4088a66a28f5b6b0f5844943ecd9f610196d7bb83b25214b60452c09af"))).equals(h("4eede1bf775995d70a494f0a7bb6bc11e0b8cccd41cce8009ab1132c8b0a3792")));
       }
-      assert(Buffer.from(ecc3.sign(h("5e9f0a0d593efdcf78ac923bc3313e4e7d408d574354ee2b3288c0da9fbba6ed"), h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140"))).equals(h("54c4a33c6423d689378f160a7ff8b61330444abb58fb470f96ea16d99d4a2fed07082304410efa6b2943111b6a4e0aaa7b7db55a07e9861d1fb3cb1f421044a5")));
-      assert(ecc3.verify(h("5e9f0a0d593efdcf78ac923bc3313e4e7d408d574354ee2b3288c0da9fbba6ed"), h("0379be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"), h("54c4a33c6423d689378f160a7ff8b61330444abb58fb470f96ea16d99d4a2fed07082304410efa6b2943111b6a4e0aaa7b7db55a07e9861d1fb3cb1f421044a5")));
-      if (ecc3.signSchnorr) {
-        assert(Buffer.from(ecc3.signSchnorr(h("7e2d58d8b3bcdf1abadec7829054f90dda9805aab56c77333024b9d0a508b75c"), h("c90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b14e5c9"), h("c87aa53824b4d7ae2eb035a2b5bbbccc080e76cdc6d1692c4b0b62d798e6d906"))).equals(h("5831aaeed7b44bb74e5eab94ba9d4294c49bcf2a60728d8b4c200f50dd313c1bab745879a5ad954a72c45a91c3a51d3c7adea98d82f8481e0e1e03674a6f3fb7")));
+      assert(Buffer.from(ecc4.sign(h("5e9f0a0d593efdcf78ac923bc3313e4e7d408d574354ee2b3288c0da9fbba6ed"), h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140"))).equals(h("54c4a33c6423d689378f160a7ff8b61330444abb58fb470f96ea16d99d4a2fed07082304410efa6b2943111b6a4e0aaa7b7db55a07e9861d1fb3cb1f421044a5")));
+      assert(ecc4.verify(h("5e9f0a0d593efdcf78ac923bc3313e4e7d408d574354ee2b3288c0da9fbba6ed"), h("0379be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"), h("54c4a33c6423d689378f160a7ff8b61330444abb58fb470f96ea16d99d4a2fed07082304410efa6b2943111b6a4e0aaa7b7db55a07e9861d1fb3cb1f421044a5")));
+      if (ecc4.signSchnorr) {
+        assert(Buffer.from(ecc4.signSchnorr(h("7e2d58d8b3bcdf1abadec7829054f90dda9805aab56c77333024b9d0a508b75c"), h("c90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b14e5c9"), h("c87aa53824b4d7ae2eb035a2b5bbbccc080e76cdc6d1692c4b0b62d798e6d906"))).equals(h("5831aaeed7b44bb74e5eab94ba9d4294c49bcf2a60728d8b4c200f50dd313c1bab745879a5ad954a72c45a91c3a51d3c7adea98d82f8481e0e1e03674a6f3fb7")));
       }
-      if (ecc3.verifySchnorr) {
-        assert(ecc3.verifySchnorr(h("7e2d58d8b3bcdf1abadec7829054f90dda9805aab56c77333024b9d0a508b75c"), h("dd308afec5777e13121fa72b9cc1b7cc0139715309b086c960e18fd969774eb8"), h("5831aaeed7b44bb74e5eab94ba9d4294c49bcf2a60728d8b4c200f50dd313c1bab745879a5ad954a72c45a91c3a51d3c7adea98d82f8481e0e1e03674a6f3fb7")));
+      if (ecc4.verifySchnorr) {
+        assert(ecc4.verifySchnorr(h("7e2d58d8b3bcdf1abadec7829054f90dda9805aab56c77333024b9d0a508b75c"), h("dd308afec5777e13121fa72b9cc1b7cc0139715309b086c960e18fd969774eb8"), h("5831aaeed7b44bb74e5eab94ba9d4294c49bcf2a60728d8b4c200f50dd313c1bab745879a5ad954a72c45a91c3a51d3c7adea98d82f8481e0e1e03674a6f3fb7")));
       }
     }
     exports.testEcc = testEcc;
@@ -41682,7 +41682,7 @@ var require_bip32 = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.BIP32Factory = void 0;
-    var crypto2 = require_crypto3();
+    var crypto3 = require_crypto3();
     var testecc_1 = require_testecc();
     var base_1 = require_lib();
     var sha256_1 = require_sha256();
@@ -41693,8 +41693,8 @@ var require_bip32 = __commonJS({
       encode: (data) => _bs58check.encode(Uint8Array.from(data)),
       decode: (str) => Buffer.from(_bs58check.decode(str))
     };
-    function BIP32Factory3(ecc3) {
-      (0, testecc_1.testEcc)(ecc3);
+    function BIP32Factory4(ecc4) {
+      (0, testecc_1.testEcc)(ecc4);
       const UINT256_TYPE = typeforce.BufferN(32);
       const NETWORK_TYPE = typeforce.compile({
         wif: typeforce.UInt8,
@@ -41733,7 +41733,7 @@ var require_bip32 = __commonJS({
         }
         get publicKey() {
           if (this.__Q === void 0)
-            this.__Q = Buffer.from(ecc3.pointFromScalar(this.__D, true));
+            this.__Q = Buffer.from(ecc4.pointFromScalar(this.__D, true));
           return this.__Q;
         }
         get privateKey() {
@@ -41745,15 +41745,15 @@ var require_bip32 = __commonJS({
           if (lowR === void 0)
             lowR = this.lowR;
           if (lowR === false) {
-            return Buffer.from(ecc3.sign(hash, this.privateKey));
+            return Buffer.from(ecc4.sign(hash, this.privateKey));
           } else {
-            let sig = Buffer.from(ecc3.sign(hash, this.privateKey));
+            let sig = Buffer.from(ecc4.sign(hash, this.privateKey));
             const extraData = Buffer.alloc(32, 0);
             let counter = 0;
             while (sig[0] > 127) {
               counter++;
               extraData.writeUIntLE(counter, 0, 6);
-              sig = Buffer.from(ecc3.sign(hash, this.privateKey, extraData));
+              sig = Buffer.from(ecc4.sign(hash, this.privateKey, extraData));
             }
             return sig;
           }
@@ -41761,17 +41761,17 @@ var require_bip32 = __commonJS({
         signSchnorr(hash) {
           if (!this.privateKey)
             throw new Error("Missing private key");
-          if (!ecc3.signSchnorr)
+          if (!ecc4.signSchnorr)
             throw new Error("signSchnorr not supported by ecc library");
-          return Buffer.from(ecc3.signSchnorr(hash, this.privateKey));
+          return Buffer.from(ecc4.signSchnorr(hash, this.privateKey));
         }
         verify(hash, signature) {
-          return ecc3.verify(hash, this.publicKey, signature);
+          return ecc4.verify(hash, this.publicKey, signature);
         }
         verifySchnorr(hash, signature) {
-          if (!ecc3.verifySchnorr)
+          if (!ecc4.verifySchnorr)
             throw new Error("verifySchnorr not supported by ecc library");
-          return ecc3.verifySchnorr(hash, this.publicKey.subarray(1, 33), signature);
+          return ecc4.verifySchnorr(hash, this.publicKey.subarray(1, 33), signature);
         }
       }
       class BIP32 extends Bip32Signer {
@@ -41794,7 +41794,7 @@ var require_bip32 = __commonJS({
           return this.__PARENT_FINGERPRINT;
         }
         get identifier() {
-          return crypto2.hash160(this.publicKey);
+          return crypto3.hash160(this.publicKey);
         }
         get fingerprint() {
           return this.identifier.slice(0, 4);
@@ -41847,19 +41847,19 @@ var require_bip32 = __commonJS({
             this.publicKey.copy(data, 0);
             data.writeUInt32BE(index, 33);
           }
-          const I = crypto2.hmacSHA512(this.chainCode, data);
+          const I = crypto3.hmacSHA512(this.chainCode, data);
           const IL = I.slice(0, 32);
           const IR = I.slice(32);
-          if (!ecc3.isPrivate(IL))
+          if (!ecc4.isPrivate(IL))
             return this.derive(index + 1);
           let hd;
           if (!this.isNeutered()) {
-            const ki = Buffer.from(ecc3.privateAdd(this.privateKey, IL));
+            const ki = Buffer.from(ecc4.privateAdd(this.privateKey, IL));
             if (ki == null)
               return this.derive(index + 1);
             hd = fromPrivateKeyLocal(ki, IR, this.network, this.depth + 1, index, this.fingerprint.readUInt32BE(0));
           } else {
-            const Ki = Buffer.from(ecc3.pointAddScalar(this.publicKey, IL, true));
+            const Ki = Buffer.from(ecc4.pointAddScalar(this.publicKey, IL, true));
             if (Ki === null)
               return this.derive(index + 1);
             hd = fromPublicKeyLocal(Ki, IR, this.network, this.depth + 1, index, this.fingerprint.readUInt32BE(0));
@@ -41896,9 +41896,9 @@ var require_bip32 = __commonJS({
         }
         tweakFromPublicKey(t) {
           const xOnlyPubKey = toXOnly(this.publicKey);
-          if (!ecc3.xOnlyPointAddTweak)
+          if (!ecc4.xOnlyPointAddTweak)
             throw new Error("xOnlyPointAddTweak not supported by ecc library");
-          const tweakedPublicKey = ecc3.xOnlyPointAddTweak(xOnlyPubKey, t);
+          const tweakedPublicKey = ecc4.xOnlyPointAddTweak(xOnlyPubKey, t);
           if (!tweakedPublicKey || tweakedPublicKey.xOnlyPubkey === null)
             throw new Error("Cannot tweak public key!");
           const parityByte = Buffer.from([
@@ -41915,12 +41915,12 @@ var require_bip32 = __commonJS({
           const privateKey = (() => {
             if (!hasOddY)
               return this.privateKey;
-            else if (!ecc3.privateNegate)
+            else if (!ecc4.privateNegate)
               throw new Error("privateNegate not supported by ecc library");
             else
-              return ecc3.privateNegate(this.privateKey);
+              return ecc4.privateNegate(this.privateKey);
           })();
-          const tweakedPrivateKey = ecc3.privateAdd(privateKey, t);
+          const tweakedPrivateKey = ecc4.privateAdd(privateKey, t);
           if (!tweakedPrivateKey)
             throw new Error("Invalid tweaked private key!");
           return new Bip32Signer(Buffer.from(tweakedPrivateKey), void 0);
@@ -41965,7 +41965,7 @@ var require_bip32 = __commonJS({
           chainCode: UINT256_TYPE
         }, { privateKey, chainCode });
         network = network || BITCOIN;
-        if (!ecc3.isPrivate(privateKey))
+        if (!ecc4.isPrivate(privateKey))
           throw new TypeError("Private key not in range [1, n)");
         return new BIP32(privateKey, void 0, chainCode, network, depth, index, parentFingerprint);
       }
@@ -41978,7 +41978,7 @@ var require_bip32 = __commonJS({
           chainCode: UINT256_TYPE
         }, { publicKey, chainCode });
         network = network || BITCOIN;
-        if (!ecc3.isPoint(publicKey))
+        if (!ecc4.isPoint(publicKey))
           throw new TypeError("Point is not on the curve");
         return new BIP32(void 0, publicKey, chainCode, network, depth, index, parentFingerprint);
       }
@@ -41989,7 +41989,7 @@ var require_bip32 = __commonJS({
         if (seed.length > 64)
           throw new TypeError("Seed should be at most 512 bits");
         network = network || BITCOIN;
-        const I = crypto2.hmacSHA512(Buffer.from("Bitcoin seed", "utf8"), seed);
+        const I = crypto3.hmacSHA512(Buffer.from("Bitcoin seed", "utf8"), seed);
         const IL = I.slice(0, 32);
         const IR = I.slice(32);
         return fromPrivateKey(IL, IR, network);
@@ -42001,7 +42001,7 @@ var require_bip32 = __commonJS({
         fromPrivateKey
       };
     }
-    exports.BIP32Factory = BIP32Factory3;
+    exports.BIP32Factory = BIP32Factory4;
   }
 });
 
@@ -45049,7 +45049,7 @@ var require_dist2 = __commonJS({
         recoveryId: sig.recovery
       };
     }
-    function signSchnorr(h, d, e) {
+    function signSchnorr2(h, d, e) {
       if (!isPrivate(d)) {
         throw new Error(THROW_BAD_PRIVATE);
       }
@@ -45119,7 +45119,7 @@ var require_dist2 = __commonJS({
     exports.recover = recover;
     exports.sign = sign;
     exports.signRecoverable = signRecoverable;
-    exports.signSchnorr = signSchnorr;
+    exports.signSchnorr = signSchnorr2;
     exports.verify = verify;
     exports.verifySchnorr = verifySchnorr;
     exports.xOnlyPointAddTweak = xOnlyPointAddTweak;
@@ -45316,19 +45316,19 @@ var init_keystore = __esm({
        * Pure JS encryption implementation (fallback)
        */
       async exportKeystoreJS(keystore, password, options) {
-        const crypto2 = await this.getCrypto();
-        const salt = crypto2.getRandomValues(new Uint8Array(DEFAULT_SALT_SIZE));
-        const nonce = crypto2.getRandomValues(new Uint8Array(DEFAULT_NONCE_SIZE));
+        const crypto3 = await this.getCrypto();
+        const salt = crypto3.getRandomValues(new Uint8Array(DEFAULT_SALT_SIZE));
+        const nonce = crypto3.getRandomValues(new Uint8Array(DEFAULT_NONCE_SIZE));
         const encoder = new TextEncoder();
         const passwordBuffer = encoder.encode(password);
-        const keyMaterial = await crypto2.subtle.importKey(
+        const keyMaterial = await crypto3.subtle.importKey(
           "raw",
           passwordBuffer,
           "PBKDF2",
           false,
           ["deriveBits", "deriveKey"]
         );
-        const key = await crypto2.subtle.deriveKey(
+        const key = await crypto3.subtle.deriveKey(
           {
             name: "PBKDF2",
             salt,
@@ -45341,7 +45341,7 @@ var init_keystore = __esm({
           ["encrypt"]
         );
         const mnemonicBuffer = encoder.encode(keystore.mnemonic);
-        const encryptedBuffer = await crypto2.subtle.encrypt(
+        const encryptedBuffer = await crypto3.subtle.encrypt(
           { name: "AES-GCM", iv: nonce },
           key,
           mnemonicBuffer
@@ -45369,20 +45369,20 @@ var init_keystore = __esm({
        * Pure JS decryption implementation (fallback)
        */
       async importKeystoreJS(encrypted, password, options) {
-        const crypto2 = await this.getCrypto();
+        const crypto3 = await this.getCrypto();
         const encoder = new TextEncoder();
         const decoder = new TextDecoder();
         const salt = this.hexToBuffer(encrypted.pbkdf2_params.salt);
         const nonce = encrypted.pbkdf2_params.nonce ? this.hexToBuffer(encrypted.pbkdf2_params.nonce) : new Uint8Array(DEFAULT_NONCE_SIZE);
         const passwordBuffer = encoder.encode(password);
-        const keyMaterial = await crypto2.subtle.importKey(
+        const keyMaterial = await crypto3.subtle.importKey(
           "raw",
           passwordBuffer,
           "PBKDF2",
           false,
           ["deriveBits", "deriveKey"]
         );
-        const key = await crypto2.subtle.deriveKey(
+        const key = await crypto3.subtle.deriveKey(
           {
             name: "PBKDF2",
             salt,
@@ -45396,7 +45396,7 @@ var init_keystore = __esm({
         );
         try {
           const encryptedBuffer = this.hexToBuffer(encrypted.encrypted_mnemonic);
-          const decryptedBuffer = await crypto2.subtle.decrypt(
+          const decryptedBuffer = await crypto3.subtle.decrypt(
             { name: "AES-GCM", iv: nonce },
             key,
             encryptedBuffer
@@ -45549,8 +45549,8 @@ var require_browser3 = __commonJS({
       throw new Error("Secure random number generation is not supported by this browser.\nUse Chrome, Firefox or Internet Explorer 11");
     }
     var Buffer2 = require_safe_buffer().Buffer;
-    var crypto2 = global.crypto || global.msCrypto;
-    if (crypto2 && crypto2.getRandomValues) {
+    var crypto3 = global.crypto || global.msCrypto;
+    if (crypto3 && crypto3.getRandomValues) {
       module.exports = randomBytes;
     } else {
       module.exports = oldBrowser;
@@ -45561,10 +45561,10 @@ var require_browser3 = __commonJS({
       if (size > 0) {
         if (size > MAX_BYTES) {
           for (var generated = 0; generated < size; generated += MAX_BYTES) {
-            crypto2.getRandomValues(bytes.slice(generated, generated + MAX_BYTES));
+            crypto3.getRandomValues(bytes.slice(generated, generated + MAX_BYTES));
           }
         } else {
-          crypto2.getRandomValues(bytes);
+          crypto3.getRandomValues(bytes);
         }
       }
       if (typeof cb === "function") {
@@ -45584,45 +45584,45 @@ var require_testecc2 = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.testEcc = void 0;
     var h = (hex) => Buffer.from(hex, "hex");
-    function testEcc(ecc3) {
+    function testEcc(ecc4) {
       assert(
-        ecc3.isPoint(
+        ecc4.isPoint(
           h("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
         )
       );
       assert(
-        !ecc3.isPoint(
+        !ecc4.isPoint(
           h("030000000000000000000000000000000000000000000000000000000000000005")
         )
       );
       assert(
-        ecc3.isPrivate(
+        ecc4.isPrivate(
           h("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
         )
       );
       assert(
-        ecc3.isPrivate(
+        ecc4.isPrivate(
           h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")
         )
       );
       assert(
-        !ecc3.isPrivate(
+        !ecc4.isPrivate(
           h("0000000000000000000000000000000000000000000000000000000000000000")
         )
       );
       assert(
-        !ecc3.isPrivate(
+        !ecc4.isPrivate(
           h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141")
         )
       );
       assert(
-        !ecc3.isPrivate(
+        !ecc4.isPrivate(
           h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364142")
         )
       );
       assert(
         Buffer.from(
-          ecc3.privateAdd(
+          ecc4.privateAdd(
             h("0000000000000000000000000000000000000000000000000000000000000001"),
             h("0000000000000000000000000000000000000000000000000000000000000000")
           )
@@ -45631,14 +45631,14 @@ var require_testecc2 = __commonJS({
         )
       );
       assert(
-        ecc3.privateAdd(
+        ecc4.privateAdd(
           h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413e"),
           h("0000000000000000000000000000000000000000000000000000000000000003")
         ) === null
       );
       assert(
         Buffer.from(
-          ecc3.privateAdd(
+          ecc4.privateAdd(
             h("e211078564db65c3ce7704f08262b1f38f1ef412ad15b5ac2d76657a63b2c500"),
             h("b51fbb69051255d1becbd683de5848242a89c229348dd72896a87ada94ae8665")
           )
@@ -45648,7 +45648,7 @@ var require_testecc2 = __commonJS({
       );
       assert(
         Buffer.from(
-          ecc3.privateNegate(
+          ecc4.privateNegate(
             h("0000000000000000000000000000000000000000000000000000000000000001")
           )
         ).equals(
@@ -45657,7 +45657,7 @@ var require_testecc2 = __commonJS({
       );
       assert(
         Buffer.from(
-          ecc3.privateNegate(
+          ecc4.privateNegate(
             h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413e")
           )
         ).equals(
@@ -45666,7 +45666,7 @@ var require_testecc2 = __commonJS({
       );
       assert(
         Buffer.from(
-          ecc3.privateNegate(
+          ecc4.privateNegate(
             h("b1121e4088a66a28f5b6b0f5844943ecd9f610196d7bb83b25214b60452c09af")
           )
         ).equals(
@@ -45675,7 +45675,7 @@ var require_testecc2 = __commonJS({
       );
       assert(
         Buffer.from(
-          ecc3.pointCompress(
+          ecc4.pointCompress(
             h(
               "0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"
             ),
@@ -45687,7 +45687,7 @@ var require_testecc2 = __commonJS({
       );
       assert(
         Buffer.from(
-          ecc3.pointCompress(
+          ecc4.pointCompress(
             h(
               "0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"
             ),
@@ -45701,7 +45701,7 @@ var require_testecc2 = __commonJS({
       );
       assert(
         Buffer.from(
-          ecc3.pointCompress(
+          ecc4.pointCompress(
             h("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
             true
           )
@@ -45711,7 +45711,7 @@ var require_testecc2 = __commonJS({
       );
       assert(
         Buffer.from(
-          ecc3.pointCompress(
+          ecc4.pointCompress(
             h("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
             false
           )
@@ -45723,7 +45723,7 @@ var require_testecc2 = __commonJS({
       );
       assert(
         Buffer.from(
-          ecc3.pointFromScalar(
+          ecc4.pointFromScalar(
             h("b1121e4088a66a28f5b6b0f5844943ecd9f610196d7bb83b25214b60452c09af")
           )
         ).equals(
@@ -45731,12 +45731,12 @@ var require_testecc2 = __commonJS({
         )
       );
       assert(
-        ecc3.xOnlyPointAddTweak(
+        ecc4.xOnlyPointAddTweak(
           h("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
           h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")
         ) === null
       );
-      let xOnlyRes = ecc3.xOnlyPointAddTweak(
+      let xOnlyRes = ecc4.xOnlyPointAddTweak(
         h("1617d38ed8d8657da4d4761e8057bc396ea9e4b9d29776d4be096016dbd2509b"),
         h("a8397a935f0dfceba6ba9618f6451ef4d80637abf4e6af2669fbc9de6a8fd2ac")
       );
@@ -45745,7 +45745,7 @@ var require_testecc2 = __commonJS({
           h("e478f99dab91052ab39a33ea35fd5e6e4933f4d28023cd597c9a1f6760346adf")
         ) && xOnlyRes.parity === 1
       );
-      xOnlyRes = ecc3.xOnlyPointAddTweak(
+      xOnlyRes = ecc4.xOnlyPointAddTweak(
         h("2c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991"),
         h("823c3cd2142744b075a87eade7e1b8678ba308d566226a0056ca2b7a76f86b47")
       );
@@ -45756,7 +45756,7 @@ var require_testecc2 = __commonJS({
       );
       assert(
         Buffer.from(
-          ecc3.sign(
+          ecc4.sign(
             h("5e9f0a0d593efdcf78ac923bc3313e4e7d408d574354ee2b3288c0da9fbba6ed"),
             h("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140")
           )
@@ -45767,7 +45767,7 @@ var require_testecc2 = __commonJS({
         )
       );
       assert(
-        ecc3.verify(
+        ecc4.verify(
           h("5e9f0a0d593efdcf78ac923bc3313e4e7d408d574354ee2b3288c0da9fbba6ed"),
           h("0379be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
           h(
@@ -45775,10 +45775,10 @@ var require_testecc2 = __commonJS({
           )
         )
       );
-      if (ecc3.signSchnorr) {
+      if (ecc4.signSchnorr) {
         assert(
           Buffer.from(
-            ecc3.signSchnorr(
+            ecc4.signSchnorr(
               h("7e2d58d8b3bcdf1abadec7829054f90dda9805aab56c77333024b9d0a508b75c"),
               h("c90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b14e5c9"),
               h("c87aa53824b4d7ae2eb035a2b5bbbccc080e76cdc6d1692c4b0b62d798e6d906")
@@ -45790,9 +45790,9 @@ var require_testecc2 = __commonJS({
           )
         );
       }
-      if (ecc3.verifySchnorr) {
+      if (ecc4.verifySchnorr) {
         assert(
-          ecc3.verifySchnorr(
+          ecc4.verifySchnorr(
             h("7e2d58d8b3bcdf1abadec7829054f90dda9805aab56c77333024b9d0a508b75c"),
             h("dd308afec5777e13121fa72b9cc1b7cc0139715309b086c960e18fd969774eb8"),
             h(
@@ -45815,8 +45815,8 @@ var require_ecpair = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ECPairFactory = exports.networks = void 0;
-    var networks5 = require_networks2();
-    exports.networks = networks5;
+    var networks7 = require_networks2();
+    exports.networks = networks7;
     var types = require_types2();
     var randomBytes = require_browser3();
     var wif = require_wif();
@@ -45828,22 +45828,22 @@ var require_ecpair = __commonJS({
       })
     );
     var toXOnly = (pubKey) => pubKey.length === 32 ? pubKey : pubKey.slice(1, 33);
-    function ECPairFactory2(ecc3) {
-      (0, testecc_1.testEcc)(ecc3);
+    function ECPairFactory3(ecc4) {
+      (0, testecc_1.testEcc)(ecc4);
       function isPoint(maybePoint) {
-        return ecc3.isPoint(maybePoint);
+        return ecc4.isPoint(maybePoint);
       }
       function fromPrivateKey(buffer, options) {
         types.typeforce(types.Buffer256bit, buffer);
-        if (!ecc3.isPrivate(buffer))
+        if (!ecc4.isPrivate(buffer))
           throw new TypeError("Private key not in range [1, n)");
         types.typeforce(isOptions, options);
-        return new ECPair2(buffer, void 0, options);
+        return new ECPair3(buffer, void 0, options);
       }
       function fromPublicKey(buffer, options) {
-        types.typeforce(ecc3.isPoint, buffer);
+        types.typeforce(ecc4.isPoint, buffer);
         types.typeforce(isOptions, options);
-        return new ECPair2(void 0, buffer, options);
+        return new ECPair3(void 0, buffer, options);
       }
       function fromWIF(wifString, network) {
         const decoded = wif.decode(wifString);
@@ -45854,7 +45854,7 @@ var require_ecpair = __commonJS({
           }).pop();
           if (!network) throw new Error("Unknown network version");
         } else {
-          network = network || networks5.bitcoin;
+          network = network || networks7.bitcoin;
           if (version !== network.wif) throw new Error("Invalid network version");
         }
         return fromPrivateKey(decoded.privateKey, {
@@ -45870,10 +45870,10 @@ var require_ecpair = __commonJS({
         do {
           d = rng(32);
           types.typeforce(types.Buffer256bit, d);
-        } while (!ecc3.isPrivate(d));
+        } while (!ecc4.isPrivate(d));
         return fromPrivateKey(d, options);
       }
-      class ECPair2 {
+      class ECPair3 {
         constructor(__D, __Q, options) {
           __publicField(this, "__D");
           __publicField(this, "__Q");
@@ -45885,16 +45885,16 @@ var require_ecpair = __commonJS({
           this.lowR = false;
           if (options === void 0) options = {};
           this.compressed = options.compressed === void 0 ? true : options.compressed;
-          this.network = options.network || networks5.bitcoin;
+          this.network = options.network || networks7.bitcoin;
           if (__Q !== void 0)
-            this.__Q = Buffer.from(ecc3.pointCompress(__Q, this.compressed));
+            this.__Q = Buffer.from(ecc4.pointCompress(__Q, this.compressed));
         }
         get privateKey() {
           return this.__D;
         }
         get publicKey() {
           if (!this.__Q) {
-            const p = ecc3.pointFromScalar(this.__D, this.compressed);
+            const p = ecc4.pointFromScalar(this.__D, this.compressed);
             this.__Q = Buffer.from(p);
           }
           return this.__Q;
@@ -45911,36 +45911,36 @@ var require_ecpair = __commonJS({
           if (!this.__D) throw new Error("Missing private key");
           if (lowR === void 0) lowR = this.lowR;
           if (lowR === false) {
-            return Buffer.from(ecc3.sign(hash, this.__D));
+            return Buffer.from(ecc4.sign(hash, this.__D));
           } else {
-            let sig = ecc3.sign(hash, this.__D);
+            let sig = ecc4.sign(hash, this.__D);
             const extraData = Buffer.alloc(32, 0);
             let counter = 0;
             while (sig[0] > 127) {
               counter++;
               extraData.writeUIntLE(counter, 0, 6);
-              sig = ecc3.sign(hash, this.__D, extraData);
+              sig = ecc4.sign(hash, this.__D, extraData);
             }
             return Buffer.from(sig);
           }
         }
         signSchnorr(hash) {
           if (!this.privateKey) throw new Error("Missing private key");
-          if (!ecc3.signSchnorr)
+          if (!ecc4.signSchnorr)
             throw new Error("signSchnorr not supported by ecc library");
-          return Buffer.from(ecc3.signSchnorr(hash, this.privateKey));
+          return Buffer.from(ecc4.signSchnorr(hash, this.privateKey));
         }
         verify(hash, signature) {
-          return ecc3.verify(hash, this.publicKey, signature);
+          return ecc4.verify(hash, this.publicKey, signature);
         }
         verifySchnorr(hash, signature) {
-          if (!ecc3.verifySchnorr)
+          if (!ecc4.verifySchnorr)
             throw new Error("verifySchnorr not supported by ecc library");
-          return ecc3.verifySchnorr(hash, this.publicKey.subarray(1, 33), signature);
+          return ecc4.verifySchnorr(hash, this.publicKey.subarray(1, 33), signature);
         }
         tweakFromPublicKey(t) {
           const xOnlyPubKey = toXOnly(this.publicKey);
-          const tweakedPublicKey = ecc3.xOnlyPointAddTweak(xOnlyPubKey, t);
+          const tweakedPublicKey = ecc4.xOnlyPointAddTweak(xOnlyPubKey, t);
           if (!tweakedPublicKey || tweakedPublicKey.xOnlyPubkey === null)
             throw new Error("Cannot tweak public key!");
           const parityByte = Buffer.from([
@@ -45953,8 +45953,8 @@ var require_ecpair = __commonJS({
         }
         tweakFromPrivateKey(t) {
           const hasOddY = this.publicKey[0] === 3 || this.publicKey[0] === 4 && (this.publicKey[64] & 1) === 1;
-          const privateKey = hasOddY ? ecc3.privateNegate(this.privateKey) : this.privateKey;
-          const tweakedPrivateKey = ecc3.privateAdd(privateKey, t);
+          const privateKey = hasOddY ? ecc4.privateNegate(this.privateKey) : this.privateKey;
+          const tweakedPrivateKey = ecc4.privateAdd(privateKey, t);
           if (!tweakedPrivateKey) throw new Error("Invalid tweaked private key!");
           return fromPrivateKey(Buffer.from(tweakedPrivateKey), {
             network: this.network,
@@ -45970,7 +45970,7 @@ var require_ecpair = __commonJS({
         makeRandom
       };
     }
-    exports.ECPairFactory = ECPairFactory2;
+    exports.ECPairFactory = ECPairFactory3;
   }
 });
 
@@ -46868,12 +46868,454 @@ var init_provider = __esm({
   }
 });
 
+// src/browser-wallets/adapter.ts
+function createWalletAdapter(wallet) {
+  switch (wallet.info.id) {
+    case "unisat":
+      return new UnisatAdapter(wallet);
+    case "xverse":
+      return new XverseAdapter(wallet);
+    case "okx":
+      return new OkxAdapter(wallet);
+    case "leather":
+      return new LeatherAdapter(wallet);
+    case "phantom":
+      return new PhantomAdapter(wallet);
+    case "magic-eden":
+      return new MagicEdenAdapter(wallet);
+    case "wizz":
+      return new WizzAdapter(wallet);
+    default:
+      return new BaseWalletAdapter(wallet);
+  }
+}
+function hexToBytes2(hex) {
+  const cleanHex = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+function bytesToHex2(bytes) {
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+var bitcoin5, BaseWalletAdapter, UnisatAdapter, XverseAdapter, OkxAdapter, LeatherAdapter, PhantomAdapter, MagicEdenAdapter, WizzAdapter, MockWalletAdapter;
+var init_adapter = __esm({
+  "src/browser-wallets/adapter.ts"() {
+    "use strict";
+    bitcoin5 = __toESM(require_src3());
+    BaseWalletAdapter = class {
+      constructor(wallet) {
+        this.wallet = wallet;
+      }
+      getInfo() {
+        const info = this.wallet.info;
+        return {
+          id: info.id,
+          name: info.name,
+          icon: info.icon,
+          website: info.website,
+          injection_key: info.injectionKey,
+          supports_psbt: info.supportsPsbt,
+          supports_taproot: info.supportsTaproot,
+          supports_ordinals: info.supportsOrdinals,
+          mobile_support: info.mobileSupport,
+          deep_link_scheme: info.deepLinkScheme
+        };
+      }
+      async connect() {
+        return {
+          address: this.wallet.address,
+          public_key: this.wallet.publicKey,
+          address_type: this.wallet.account.addressType || "unknown"
+        };
+      }
+      async disconnect() {
+        await this.wallet.disconnect();
+      }
+      async getAccounts() {
+        return [
+          {
+            address: this.wallet.address,
+            public_key: this.wallet.publicKey,
+            address_type: this.wallet.account.addressType || "unknown"
+          }
+        ];
+      }
+      async getNetwork() {
+        return this.wallet.getNetwork();
+      }
+      async switchNetwork(network) {
+        throw new Error(`${this.wallet.info.name} does not support programmatic network switching`);
+      }
+      async signMessage(message, address2) {
+        return this.wallet.signMessage(message);
+      }
+      async signPsbt(psbtHex, options) {
+        const signingOptions = options ? {
+          autoFinalized: options.auto_finalized,
+          toSignInputs: options.to_sign_inputs?.map((input) => ({
+            index: input.index,
+            address: input.address,
+            sighashTypes: input.sighash_types,
+            disableTweakedPublicKey: input.disable_tweaked_public_key
+          }))
+        } : void 0;
+        return this.wallet.signPsbt(psbtHex, signingOptions);
+      }
+      async signPsbts(psbtHexs, options) {
+        const results = [];
+        for (const psbtHex of psbtHexs) {
+          const signed = await this.signPsbt(psbtHex, options);
+          results.push(signed);
+        }
+        return results;
+      }
+      async pushTx(txHex) {
+        throw new Error(`${this.wallet.info.name} does not support direct transaction broadcasting`);
+      }
+      async pushPsbt(psbtHex) {
+        try {
+          const psbt = bitcoin5.Psbt.fromHex(psbtHex);
+          psbt.finalizeAllInputs();
+          const tx = psbt.extractTransaction();
+          return this.pushTx(tx.toHex());
+        } catch (e) {
+          throw new Error(`Failed to push PSBT: ${e}`);
+        }
+      }
+      async getPublicKey() {
+        if (!this.wallet.publicKey) {
+          throw new Error("Public key not available");
+        }
+        return this.wallet.publicKey;
+      }
+      async getBalance() {
+        return null;
+      }
+      async getInscriptions(cursor, size) {
+        return { list: [], total: 0 };
+      }
+    };
+    UnisatAdapter = class extends BaseWalletAdapter {
+      get unisat() {
+        return window.unisat;
+      }
+      async switchNetwork(network) {
+        if (!this.unisat) throw new Error("Unisat not available");
+        const unisatNetwork = network === "mainnet" ? "livenet" : network;
+        await this.unisat.switchNetwork(unisatNetwork);
+      }
+      async pushTx(txHex) {
+        if (!this.unisat) throw new Error("Unisat not available");
+        return this.unisat.pushTx(txHex);
+      }
+      async pushPsbt(psbtHex) {
+        if (!this.unisat) throw new Error("Unisat not available");
+        return this.unisat.pushPsbt(psbtHex);
+      }
+      async getBalance() {
+        if (!this.unisat) return null;
+        try {
+          const balance = await this.unisat.getBalance();
+          return balance?.total || balance?.confirmed || null;
+        } catch {
+          return null;
+        }
+      }
+      async getInscriptions(cursor, size) {
+        if (!this.unisat) return { list: [], total: 0 };
+        try {
+          return this.unisat.getInscriptions(cursor || 0, size || 20);
+        } catch {
+          return { list: [], total: 0 };
+        }
+      }
+      async signPsbts(psbtHexs, options) {
+        if (!this.unisat) throw new Error("Unisat not available");
+        return this.unisat.signPsbts(psbtHexs, {
+          autoFinalized: options?.auto_finalized ?? true,
+          toSignInputs: options?.to_sign_inputs
+        });
+      }
+    };
+    XverseAdapter = class extends BaseWalletAdapter {
+      get xverse() {
+        return window.XverseProviders?.BitcoinProvider;
+      }
+      async signPsbt(psbtHex, options) {
+        if (!this.xverse) throw new Error("Xverse not available");
+        const psbt = bitcoin5.Psbt.fromHex(psbtHex);
+        const psbtBase64 = psbt.toBase64();
+        const response = await this.xverse.request("signPsbt", {
+          psbt: psbtBase64,
+          signInputs: this.buildXverseSignInputs(psbt, options),
+          broadcast: false
+        });
+        if (response.status === "success") {
+          const signedPsbt = bitcoin5.Psbt.fromBase64(response.result.psbt);
+          return signedPsbt.toHex();
+        }
+        throw new Error(response.error?.message || "Xverse signing failed");
+      }
+      buildXverseSignInputs(psbt, options) {
+        if (options?.to_sign_inputs) {
+          return options.to_sign_inputs.reduce(
+            (acc, input) => {
+              const addr = input.address || this.wallet.address;
+              acc[addr] = [...acc[addr] || [], input.index];
+              return acc;
+            },
+            {}
+          );
+        }
+        const inputIndexes = [];
+        for (let i = 0; i < psbt.data.inputs.length; i++) {
+          inputIndexes.push(i);
+        }
+        return { [this.wallet.address]: inputIndexes };
+      }
+      async switchNetwork(network) {
+        if (!this.xverse) throw new Error("Xverse not available");
+        const xverseNetwork = network === "mainnet" ? "Mainnet" : "Testnet";
+        await this.xverse.request("wallet_changeNetwork", { name: xverseNetwork });
+      }
+    };
+    OkxAdapter = class extends BaseWalletAdapter {
+      get okx() {
+        return window.okxwallet?.bitcoin;
+      }
+      async signPsbt(psbtHex, options) {
+        if (!this.okx) throw new Error("OKX wallet not available");
+        return this.okx.signPsbt(psbtHex, {
+          autoFinalized: options?.auto_finalized ?? true,
+          toSignInputs: options?.to_sign_inputs
+        });
+      }
+      async signPsbts(psbtHexs, options) {
+        if (!this.okx) throw new Error("OKX wallet not available");
+        return this.okx.signPsbts(psbtHexs, {
+          autoFinalized: options?.auto_finalized ?? true,
+          toSignInputs: options?.to_sign_inputs
+        });
+      }
+      async pushTx(txHex) {
+        if (!this.okx) throw new Error("OKX wallet not available");
+        return this.okx.pushTx(txHex);
+      }
+      async pushPsbt(psbtHex) {
+        if (!this.okx) throw new Error("OKX wallet not available");
+        return this.okx.pushPsbt(psbtHex);
+      }
+      async getBalance() {
+        if (!this.okx) return null;
+        try {
+          const balance = await this.okx.getBalance();
+          return balance?.total || null;
+        } catch {
+          return null;
+        }
+      }
+      async getInscriptions(cursor, size) {
+        if (!this.okx) return { list: [], total: 0 };
+        try {
+          return this.okx.getInscriptions(cursor || 0, size || 20);
+        } catch {
+          return { list: [], total: 0 };
+        }
+      }
+    };
+    LeatherAdapter = class extends BaseWalletAdapter {
+      get leather() {
+        return window.LeatherProvider;
+      }
+      async signPsbt(psbtHex, options) {
+        if (!this.leather) throw new Error("Leather wallet not available");
+        const response = await this.leather.request("signPsbt", {
+          hex: psbtHex,
+          signAtIndex: options?.to_sign_inputs?.map((i) => i.index),
+          broadcast: false
+        });
+        return response.result.hex;
+      }
+      async signMessage(message, address2) {
+        if (!this.leather) throw new Error("Leather wallet not available");
+        const response = await this.leather.request("signMessage", {
+          message,
+          paymentType: "p2wpkh"
+        });
+        return response.result.signature;
+      }
+    };
+    PhantomAdapter = class extends BaseWalletAdapter {
+      get phantom() {
+        return window.phantom?.bitcoin;
+      }
+      async signPsbt(psbtHex, options) {
+        if (!this.phantom) throw new Error("Phantom Bitcoin not available");
+        const psbtBytes = hexToBytes2(psbtHex);
+        const { signedPsbt } = await this.phantom.signPSBT(psbtBytes, {
+          inputsToSign: options?.to_sign_inputs?.map((i) => ({
+            sigHash: i.sighash_types?.[0],
+            address: i.address || this.wallet.address,
+            signingIndexes: [i.index]
+          }))
+        });
+        return bytesToHex2(signedPsbt);
+      }
+      async signMessage(message, address2) {
+        if (!this.phantom) throw new Error("Phantom Bitcoin not available");
+        const { signature } = await this.phantom.signMessage(
+          address2 || this.wallet.address,
+          new TextEncoder().encode(message)
+        );
+        return signature;
+      }
+    };
+    MagicEdenAdapter = class extends BaseWalletAdapter {
+      get magicEden() {
+        return window.magicEden?.bitcoin;
+      }
+      async signPsbt(psbtHex, options) {
+        if (!this.magicEden) throw new Error("Magic Eden wallet not available");
+        return this.magicEden.signPsbt(psbtHex, {
+          autoFinalized: options?.auto_finalized ?? true,
+          toSignInputs: options?.to_sign_inputs
+        });
+      }
+      async signMessage(message, address2) {
+        if (!this.magicEden) throw new Error("Magic Eden wallet not available");
+        return this.magicEden.signMessage(message);
+      }
+    };
+    WizzAdapter = class extends BaseWalletAdapter {
+      get wizz() {
+        return window.wizz;
+      }
+      async signPsbt(psbtHex, options) {
+        if (!this.wizz) throw new Error("Wizz wallet not available");
+        return this.wizz.signPsbt(psbtHex, {
+          autoFinalized: options?.auto_finalized ?? true,
+          toSignInputs: options?.to_sign_inputs
+        });
+      }
+      async signPsbts(psbtHexs, options) {
+        if (!this.wizz) throw new Error("Wizz wallet not available");
+        return this.wizz.signPsbts(psbtHexs, {
+          autoFinalized: options?.auto_finalized ?? true,
+          toSignInputs: options?.to_sign_inputs
+        });
+      }
+      async pushTx(txHex) {
+        if (!this.wizz) throw new Error("Wizz wallet not available");
+        return this.wizz.pushTx(txHex);
+      }
+      async getBalance() {
+        if (!this.wizz) return null;
+        try {
+          const balance = await this.wizz.getBalance();
+          return balance?.total || null;
+        } catch {
+          return null;
+        }
+      }
+    };
+    MockWalletAdapter = class {
+      constructor(options) {
+        this.signedPsbts = [];
+        this.mockAddress = options?.address || "bc1qtest1234567890abcdef";
+        this.mockPublicKey = options?.publicKey || "03" + "0".repeat(64);
+        this.mockNetwork = options?.network || "mainnet";
+      }
+      getInfo() {
+        return {
+          id: "mock",
+          name: "Mock Wallet",
+          icon: "/assets/wallets/mock.svg",
+          website: "https://mock.wallet",
+          injection_key: "mockWallet",
+          supports_psbt: true,
+          supports_taproot: true,
+          supports_ordinals: true,
+          mobile_support: false
+        };
+      }
+      async connect() {
+        return {
+          address: this.mockAddress,
+          public_key: this.mockPublicKey,
+          address_type: "p2wpkh"
+        };
+      }
+      async disconnect() {
+      }
+      async getAccounts() {
+        return [await this.connect()];
+      }
+      async getNetwork() {
+        return this.mockNetwork;
+      }
+      async switchNetwork(network) {
+        this.mockNetwork = network;
+      }
+      async signMessage(message, address2) {
+        const mockSig = Buffer.from(`mock_sig_${message.substring(0, 10)}`).toString("base64");
+        return mockSig;
+      }
+      async signPsbt(psbtHex, options) {
+        this.signedPsbts.push(psbtHex);
+        return psbtHex;
+      }
+      async signPsbts(psbtHexs, options) {
+        return psbtHexs.map((psbt) => {
+          this.signedPsbts.push(psbt);
+          return psbt;
+        });
+      }
+      async pushTx(txHex) {
+        return "0".repeat(64);
+      }
+      async pushPsbt(psbtHex) {
+        return "0".repeat(64);
+      }
+      async getPublicKey() {
+        return this.mockPublicKey;
+      }
+      async getBalance() {
+        return 1e8;
+      }
+      async getInscriptions(cursor, size) {
+        return { list: [], total: 0 };
+      }
+      /** Get PSBTs that were signed (for testing) */
+      getSignedPsbts() {
+        return this.signedPsbts;
+      }
+      /** Clear signed PSBTs (for testing) */
+      clearSignedPsbts() {
+        this.signedPsbts = [];
+      }
+    };
+  }
+});
+
 // src/browser-wallets/index.ts
 var browser_wallets_exports = {};
 __export(browser_wallets_exports, {
   BROWSER_WALLETS: () => BROWSER_WALLETS,
+  BaseWalletAdapter: () => BaseWalletAdapter,
   ConnectedWallet: () => ConnectedWallet,
+  LeatherAdapter: () => LeatherAdapter,
+  MagicEdenAdapter: () => MagicEdenAdapter,
+  MockWalletAdapter: () => MockWalletAdapter,
+  OkxAdapter: () => OkxAdapter,
+  PhantomAdapter: () => PhantomAdapter,
+  UnisatAdapter: () => UnisatAdapter,
   WalletConnector: () => WalletConnector,
+  WizzAdapter: () => WizzAdapter,
+  XverseAdapter: () => XverseAdapter,
+  createWalletAdapter: () => createWalletAdapter,
   getInstalledWallets: () => getInstalledWallets,
   getWalletById: () => getWalletById,
   isBrowser: () => isBrowser2,
@@ -46898,7 +47340,7 @@ function getInstalledWallets() {
 function getWalletById(id) {
   return BROWSER_WALLETS.find((w) => w.id === id);
 }
-function hexToBytes2(hex) {
+function hexToBytes3(hex) {
   const cleanHex = hex.startsWith("0x") ? hex.slice(2) : hex;
   const bytes = new Uint8Array(cleanHex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
@@ -46906,13 +47348,14 @@ function hexToBytes2(hex) {
   }
   return bytes;
 }
-function bytesToHex2(bytes) {
+function bytesToHex3(bytes) {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 var BROWSER_WALLETS, ConnectedWallet, WalletConnector;
 var init_browser_wallets = __esm({
   "src/browser-wallets/index.ts"() {
     "use strict";
+    init_adapter();
     BROWSER_WALLETS = [
       {
         id: "unisat",
@@ -47100,7 +47543,7 @@ var init_browser_wallets = __esm({
           }
           case "phantom": {
             const bitcoinProvider = this.provider.bitcoin;
-            const psbtBytes = hexToBytes2(psbtHex);
+            const psbtBytes = hexToBytes3(psbtHex);
             const { signedPsbt } = await bitcoinProvider.signPSBT(psbtBytes, {
               inputsToSign: options?.toSignInputs?.map((i) => ({
                 sigHash: i.sighashTypes?.[0],
@@ -47108,7 +47551,7 @@ var init_browser_wallets = __esm({
                 signingIndexes: [i.index]
               }))
             });
-            return bytesToHex2(signedPsbt);
+            return bytesToHex3(signedPsbt);
           }
           case "okx": {
             const bitcoinProvider = this.provider.bitcoin;
@@ -47855,13 +48298,995 @@ function weightToVsize(weight) {
 
 // src/index.ts
 init_browser_wallets();
+
+// src/client/signer.ts
+var bitcoin6 = __toESM(require_src3());
+var AlkanesSigner = class {
+  // Helper methods
+  /**
+   * Parse PSBT from hex or base64
+   */
+  parsePsbt(psbt) {
+    if (/^[0-9a-fA-F]+$/.test(psbt)) {
+      return bitcoin6.Psbt.fromHex(psbt);
+    }
+    return bitcoin6.Psbt.fromBase64(psbt);
+  }
+  /**
+   * Get bitcoinjs network object
+   */
+  getBitcoinNetwork(network) {
+    switch (network) {
+      case "mainnet":
+        return bitcoin6.networks.bitcoin;
+      case "testnet":
+        return bitcoin6.networks.testnet;
+      case "signet":
+        return bitcoin6.networks.testnet;
+      // Signet uses testnet params
+      case "regtest":
+        return bitcoin6.networks.regtest;
+      default:
+        return bitcoin6.networks.bitcoin;
+    }
+  }
+  /**
+   * Convert PSBT to both hex and base64 formats
+   */
+  formatSignedPsbt(psbt, options) {
+    const result = {
+      psbtHex: psbt.toHex(),
+      psbtBase64: psbt.toBase64()
+    };
+    if (options?.extractTx && options?.finalize) {
+      try {
+        result.txHex = psbt.extractTransaction().toHex();
+      } catch {
+      }
+    }
+    return result;
+  }
+};
+var EventEmittingSigner = class extends AlkanesSigner {
+  constructor() {
+    super(...arguments);
+    this.listeners = /* @__PURE__ */ new Map();
+  }
+  on(event, callback) {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, /* @__PURE__ */ new Set());
+    }
+    this.listeners.get(event).add(callback);
+  }
+  off(event, callback) {
+    this.listeners.get(event)?.delete(callback);
+  }
+  emit(event, ...args) {
+    this.listeners.get(event)?.forEach((callback) => callback(...args));
+  }
+};
+
+// src/client/keystore-signer.ts
+var bitcoin7 = __toESM(require_src3());
+var bip393 = __toESM(require_src());
+var import_bip323 = __toESM(require_src5());
+var import_ecpair2 = __toESM(require_src6());
+var ecc3 = __toESM(require_dist2());
+init_keystore();
+init_wallet();
+bitcoin7.initEccLib(ecc3);
+var bip323 = (0, import_bip323.default)(ecc3);
+var ECPair2 = (0, import_ecpair2.ECPairFactory)(ecc3);
+var KeystoreSigner = class _KeystoreSigner extends AlkanesSigner {
+  constructor(mnemonic, config) {
+    super();
+    this.mnemonic = mnemonic;
+    this.network = config.network;
+    this.bitcoinNetwork = this.getBitcoinNetwork(config.network);
+    this.addressType = config.addressType || "p2wpkh" /* P2WPKH */;
+    this.accountIndex = config.accountIndex || 0;
+    this.addressIndex = config.addressIndex || 0;
+    const seed = bip393.mnemonicToSeedSync(mnemonic);
+    this.root = bip323.fromSeed(seed, this.bitcoinNetwork);
+  }
+  /**
+   * Create signer from mnemonic phrase
+   */
+  static fromMnemonic(mnemonic, config) {
+    if (!bip393.validateMnemonic(mnemonic)) {
+      throw new Error("Invalid mnemonic phrase");
+    }
+    return new _KeystoreSigner(mnemonic, config);
+  }
+  /**
+   * Create signer from encrypted keystore JSON
+   */
+  static async fromEncrypted(keystoreJson, password, config) {
+    const manager = new KeystoreManager();
+    const keystore = await manager.importKeystore(keystoreJson, password, { validate: true });
+    return new _KeystoreSigner(keystore.mnemonic, {
+      network: config?.network || keystore.network,
+      addressType: config?.addressType,
+      accountIndex: config?.accountIndex,
+      addressIndex: config?.addressIndex
+    });
+  }
+  /**
+   * Create signer from Keystore object
+   */
+  static fromKeystore(keystore, config) {
+    return new _KeystoreSigner(keystore.mnemonic, {
+      network: config?.network || keystore.network,
+      addressType: config?.addressType,
+      accountIndex: config?.accountIndex,
+      addressIndex: config?.addressIndex
+    });
+  }
+  /**
+   * Generate a new keystore signer with a fresh mnemonic
+   */
+  static generate(config, wordCount = 12) {
+    const strength = wordCount === 12 ? 128 : 256;
+    const mnemonic = bip393.generateMnemonic(strength);
+    return new _KeystoreSigner(mnemonic, config);
+  }
+  getSignerType() {
+    return "keystore";
+  }
+  async isConnected() {
+    return true;
+  }
+  async disconnect() {
+    this.cachedAccount = void 0;
+  }
+  async getAccount() {
+    if (this.cachedAccount) {
+      return this.cachedAccount;
+    }
+    const { address: address2, publicKey, addressType } = this.deriveAddressInfo(
+      this.addressType,
+      this.addressIndex
+    );
+    this.cachedAccount = {
+      address: address2,
+      publicKey,
+      addressType
+    };
+    return this.cachedAccount;
+  }
+  async getAddress() {
+    const account = await this.getAccount();
+    return account.address;
+  }
+  async getPublicKey() {
+    const account = await this.getAccount();
+    return account.publicKey;
+  }
+  async signMessage(message, options) {
+    const node = this.getSigningNode(options?.address);
+    const keyPair = ECPair2.fromPrivateKey(node.privateKey, { network: this.bitcoinNetwork });
+    const messageBuffer = Buffer.from(message, "utf8");
+    const hash = bitcoin7.crypto.sha256(messageBuffer);
+    const signature = keyPair.sign(hash);
+    return signature.toString("base64");
+  }
+  async signPsbt(psbt, options) {
+    const psbtObj = this.parsePsbt(psbt);
+    if (options?.inputsToSign) {
+      for (const input of options.inputsToSign) {
+        const node = this.getSigningNode(input.address);
+        const keyPair = ECPair2.fromPrivateKey(node.privateKey, { network: this.bitcoinNetwork });
+        try {
+          if (input.sighashTypes) {
+            psbtObj.signInput(input.index, keyPair, input.sighashTypes);
+          } else {
+            psbtObj.signInput(input.index, keyPair);
+          }
+        } catch (e) {
+          console.warn(`Could not sign input ${input.index}:`, e);
+        }
+      }
+    } else {
+      this.signAllInputs(psbtObj);
+    }
+    if (options?.finalize !== false) {
+      try {
+        psbtObj.finalizeAllInputs();
+      } catch {
+      }
+    }
+    return this.formatSignedPsbt(psbtObj, options);
+  }
+  async signPsbts(psbts, options) {
+    const results = [];
+    for (const psbt of psbts) {
+      const signed = await this.signPsbt(psbt, options);
+      results.push(signed);
+    }
+    return results;
+  }
+  /**
+   * Export the mnemonic (use with caution!)
+   */
+  exportMnemonic() {
+    return this.mnemonic;
+  }
+  /**
+   * Export to encrypted keystore JSON
+   */
+  async exportToKeystore(password) {
+    const manager = new KeystoreManager();
+    const keystore = manager.createKeystore(this.mnemonic, { network: this.network });
+    const encrypted = await manager.exportKeystore(keystore, password, { pretty: true });
+    return typeof encrypted === "string" ? encrypted : JSON.stringify(encrypted, null, 2);
+  }
+  /**
+   * Derive address at specific path
+   */
+  deriveAddress(addressType = "p2wpkh" /* P2WPKH */, index = 0, change = 0) {
+    return this.deriveAddressInfo(addressType, index, change).address;
+  }
+  /**
+   * Get multiple addresses
+   */
+  getAddresses(count = 10, addressType = "p2wpkh" /* P2WPKH */) {
+    const addresses = [];
+    for (let i = 0; i < count; i++) {
+      addresses.push({
+        address: this.deriveAddress(addressType, i),
+        index: i
+      });
+    }
+    return addresses;
+  }
+  // Private methods
+  getDerivationPath(addressType) {
+    const coinType = this.bitcoinNetwork === bitcoin7.networks.bitcoin ? 0 : 1;
+    switch (addressType) {
+      case "p2pkh" /* P2PKH */:
+        return `m/44'/${coinType}'/${this.accountIndex}'`;
+      case "p2sh" /* P2SH */:
+        return `m/49'/${coinType}'/${this.accountIndex}'`;
+      case "p2wpkh" /* P2WPKH */:
+        return `m/84'/${coinType}'/${this.accountIndex}'`;
+      case "p2tr" /* P2TR */:
+        return `m/86'/${coinType}'/${this.accountIndex}'`;
+      default:
+        return `m/84'/${coinType}'/${this.accountIndex}'`;
+    }
+  }
+  deriveAddressInfo(addressType, index, change = 0) {
+    const basePath = this.getDerivationPath(addressType);
+    const node = this.root.derivePath(`${basePath}/${change}/${index}`);
+    const pubkey = node.publicKey;
+    let address2;
+    switch (addressType) {
+      case "p2pkh" /* P2PKH */:
+        address2 = bitcoin7.payments.p2pkh({ pubkey, network: this.bitcoinNetwork }).address;
+        break;
+      case "p2wpkh" /* P2WPKH */:
+        address2 = bitcoin7.payments.p2wpkh({ pubkey, network: this.bitcoinNetwork }).address;
+        break;
+      case "p2tr" /* P2TR */:
+        const internalPubkey = pubkey.slice(1, 33);
+        address2 = bitcoin7.payments.p2tr({
+          internalPubkey,
+          network: this.bitcoinNetwork
+        }).address;
+        break;
+      default:
+        address2 = bitcoin7.payments.p2wpkh({ pubkey, network: this.bitcoinNetwork }).address;
+    }
+    return {
+      address: address2,
+      publicKey: pubkey.toString("hex"),
+      addressType
+    };
+  }
+  getSigningNode(address2) {
+    const basePath = this.getDerivationPath(this.addressType);
+    return this.root.derivePath(`${basePath}/0/${this.addressIndex}`);
+  }
+  signAllInputs(psbt) {
+    const node = this.getSigningNode();
+    const keyPair = ECPair2.fromPrivateKey(node.privateKey, { network: this.bitcoinNetwork });
+    for (let i = 0; i < psbt.data.inputs.length; i++) {
+      try {
+        psbt.signInput(i, keyPair);
+      } catch {
+      }
+    }
+    if (this.addressType === "p2tr" /* P2TR */) {
+      const taprootKeyPair = this.getTaprootSigner(node);
+      for (let i = 0; i < psbt.data.inputs.length; i++) {
+        try {
+          psbt.signInput(i, taprootKeyPair);
+        } catch {
+        }
+      }
+    }
+  }
+  getTaprootSigner(node) {
+    const privateKey = node.privateKey;
+    const publicKey = node.publicKey.slice(1);
+    return {
+      publicKey: node.publicKey,
+      sign: (hash) => {
+        const keyPair = ECPair2.fromPrivateKey(privateKey, { network: this.bitcoinNetwork });
+        return keyPair.sign(hash);
+      },
+      signSchnorr: (hash) => {
+        const signature = ecc3.signSchnorr(hash, privateKey);
+        return Buffer.from(signature);
+      }
+    };
+  }
+};
+
+// src/client/browser-wallet-signer.ts
+init_browser_wallets();
+var BrowserWalletSigner = class _BrowserWalletSigner extends EventEmittingSigner {
+  constructor(wallet, adapter, network, config) {
+    super();
+    this.wallet = wallet;
+    this.adapter = adapter;
+    this.network = network;
+    this.config = config;
+    this.setupEventListeners();
+  }
+  /**
+   * Get list of available (installed) wallets
+   */
+  static async getAvailableWallets() {
+    const connector = new WalletConnector();
+    return connector.detectWallets();
+  }
+  /**
+   * Get list of all supported wallets (installed or not)
+   */
+  static getSupportedWallets() {
+    return WalletConnector.getSupportedWallets();
+  }
+  /**
+   * Check if a specific wallet is installed
+   */
+  static isWalletInstalled(walletId) {
+    const connector = new WalletConnector();
+    return connector.isWalletInstalled(walletId);
+  }
+  /**
+   * Connect to a specific wallet by ID
+   *
+   * @param walletId - Wallet identifier (e.g., 'unisat', 'xverse')
+   * @param config - Signer configuration
+   * @returns Connected BrowserWalletSigner
+   */
+  static async connect(walletId, config = {}) {
+    const connector = new WalletConnector();
+    const walletInfo = connector.getWalletInfo(walletId);
+    if (!walletInfo) {
+      throw new Error(`Unknown wallet: ${walletId}`);
+    }
+    if (!connector.isWalletInstalled(walletId)) {
+      throw new Error(`${walletInfo.name} is not installed`);
+    }
+    const wallet = await connector.connect(walletInfo);
+    const adapter = createWalletAdapter(wallet);
+    const network = await adapter.getNetwork();
+    return new _BrowserWalletSigner(
+      wallet,
+      adapter,
+      network,
+      config
+    );
+  }
+  /**
+   * Connect to any available wallet
+   * Returns the first available wallet or throws if none found
+   */
+  static async connectAny(config = {}) {
+    const availableWallets = await _BrowserWalletSigner.getAvailableWallets();
+    if (availableWallets.length === 0) {
+      throw new Error("No Bitcoin wallets detected. Please install a wallet extension.");
+    }
+    return _BrowserWalletSigner.connect(availableWallets[0].id, config);
+  }
+  /**
+   * Connect using a pre-connected wallet
+   */
+  static fromConnectedWallet(wallet, config = {}) {
+    const adapter = createWalletAdapter(wallet);
+    const network = wallet.getNetwork();
+    return new _BrowserWalletSigner(wallet, adapter, network, config);
+  }
+  getSignerType() {
+    return `browser:${this.wallet.info.id}`;
+  }
+  /**
+   * Get the underlying wallet info
+   */
+  getWalletInfo() {
+    return this.wallet.info;
+  }
+  /**
+   * Get the underlying wallet adapter (for WASM integration)
+   */
+  getAdapter() {
+    return this.adapter;
+  }
+  async isConnected() {
+    try {
+      await this.adapter.getAccounts();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async disconnect() {
+    if (this.eventCleanup) {
+      this.eventCleanup();
+    }
+    await this.wallet.disconnect();
+    this.emit("disconnect");
+  }
+  async getAccount() {
+    const accounts = await this.adapter.getAccounts();
+    if (accounts.length === 0) {
+      throw new Error("No accounts available");
+    }
+    const primary = accounts[0];
+    return {
+      address: primary.address,
+      publicKey: primary.public_key || "",
+      addressType: primary.address_type
+    };
+  }
+  async getAddress() {
+    const account = await this.getAccount();
+    return account.address;
+  }
+  async getPublicKey() {
+    return this.adapter.getPublicKey();
+  }
+  async signMessage(message, options) {
+    const address2 = options?.address || await this.getAddress();
+    return this.adapter.signMessage(message, address2);
+  }
+  async signPsbt(psbt, options) {
+    let psbtHex = psbt;
+    if (!this.isHex(psbt)) {
+      const psbtObj = this.parsePsbt(psbt);
+      psbtHex = psbtObj.toHex();
+    }
+    const adapterOptions = options?.inputsToSign ? {
+      auto_finalized: options.finalize !== false,
+      to_sign_inputs: options.inputsToSign.map((input) => ({
+        index: input.index,
+        address: input.address,
+        sighash_types: input.sighashTypes
+      }))
+    } : {
+      auto_finalized: options?.finalize !== false
+    };
+    const signedHex = await this.adapter.signPsbt(psbtHex, adapterOptions);
+    const signedPsbt = this.parsePsbt(signedHex);
+    const result = {
+      psbtHex: signedPsbt.toHex(),
+      psbtBase64: signedPsbt.toBase64()
+    };
+    if (options?.extractTx && options?.finalize !== false) {
+      try {
+        result.txHex = signedPsbt.extractTransaction().toHex();
+      } catch {
+      }
+    }
+    return result;
+  }
+  async signPsbts(psbts, options) {
+    const psbtHexs = psbts.map((psbt) => {
+      if (this.isHex(psbt)) return psbt;
+      return this.parsePsbt(psbt).toHex();
+    });
+    const adapterOptions = {
+      auto_finalized: options?.finalize !== false,
+      to_sign_inputs: options?.inputsToSign?.map((input) => ({
+        index: input.index,
+        address: input.address,
+        sighash_types: input.sighashTypes
+      }))
+    };
+    const signedHexs = await this.adapter.signPsbts(psbtHexs, adapterOptions);
+    return signedHexs.map((signedHex) => {
+      const signedPsbt = this.parsePsbt(signedHex);
+      const result = {
+        psbtHex: signedPsbt.toHex(),
+        psbtBase64: signedPsbt.toBase64()
+      };
+      if (options?.extractTx && options?.finalize !== false) {
+        try {
+          result.txHex = signedPsbt.extractTransaction().toHex();
+        } catch {
+        }
+      }
+      return result;
+    });
+  }
+  /**
+   * Push a transaction to the network (if wallet supports it)
+   */
+  async pushTransaction(txHex) {
+    return this.adapter.pushTx(txHex);
+  }
+  /**
+   * Push a signed PSBT to the network (if wallet supports it)
+   */
+  async pushPsbt(psbtHex) {
+    return this.adapter.pushPsbt(psbtHex);
+  }
+  /**
+   * Get wallet balance (if wallet supports it)
+   */
+  async getBalance() {
+    return this.adapter.getBalance();
+  }
+  /**
+   * Get inscriptions (if wallet supports it)
+   */
+  async getInscriptions(cursor, size) {
+    return this.adapter.getInscriptions(cursor, size);
+  }
+  /**
+   * Switch network (if wallet supports it)
+   */
+  async switchNetwork(network) {
+    await this.adapter.switchNetwork(network);
+    this.network = network;
+    this.emit("networkChanged", network);
+  }
+  // Private methods
+  isHex(str) {
+    return /^[0-9a-fA-F]+$/.test(str);
+  }
+  setupEventListeners() {
+    const injectedWallet = this.getInjectedWallet();
+    if (!injectedWallet) return;
+    const accountsHandler = (accounts) => {
+      this.emit("accountsChanged", accounts);
+    };
+    const networkHandler = (network) => {
+      this.emit("networkChanged", network);
+    };
+    if (injectedWallet.on) {
+      injectedWallet.on("accountsChanged", accountsHandler);
+      injectedWallet.on("networkChanged", networkHandler);
+      this.eventCleanup = () => {
+        injectedWallet.removeListener?.("accountsChanged", accountsHandler);
+        injectedWallet.removeListener?.("networkChanged", networkHandler);
+      };
+    }
+  }
+  getInjectedWallet() {
+    const win = typeof window !== "undefined" ? window : void 0;
+    if (!win) return void 0;
+    const walletId = this.wallet.info.id;
+    switch (walletId) {
+      case "unisat":
+        return win.unisat;
+      case "xverse":
+        return win.XverseProviders?.BitcoinProvider;
+      case "okx":
+        return win.okxwallet?.bitcoin;
+      case "leather":
+        return win.LeatherProvider;
+      case "phantom":
+        return win.phantom?.bitcoin;
+      case "magic-eden":
+        return win.magicEden?.bitcoin;
+      case "wizz":
+        return win.wizz;
+      default:
+        return win[this.wallet.info.injectionKey];
+    }
+  }
+};
+async function getWalletOptions() {
+  const supported = BrowserWalletSigner.getSupportedWallets();
+  const available = await BrowserWalletSigner.getAvailableWallets();
+  const availableIds = new Set(available.map((w) => w.id));
+  return supported.map((wallet) => ({
+    id: wallet.id,
+    name: wallet.name,
+    icon: wallet.icon,
+    installed: availableIds.has(wallet.id),
+    info: wallet
+  }));
+}
+
+// src/client/client.ts
+init_provider();
+var AlkanesClient = class _AlkanesClient {
+  constructor(provider, signer) {
+    this.provider = provider;
+    this.signer = signer;
+  }
+  // ============================================================================
+  // STATIC FACTORY METHODS
+  // ============================================================================
+  /**
+   * Create client with a browser wallet signer
+   *
+   * @param walletId - Wallet to connect to (e.g., 'unisat', 'xverse')
+   * @param network - Network to use (default: autodetect from wallet)
+   */
+  static async withBrowserWallet(walletId, network, signerConfig) {
+    const signer = await BrowserWalletSigner.connect(walletId, signerConfig);
+    const networkToUse = network || signer.network;
+    const provider = new AlkanesProvider({ network: networkToUse });
+    await provider.initialize();
+    return new _AlkanesClient(provider, signer);
+  }
+  /**
+   * Create client with any available browser wallet
+   */
+  static async withAnyBrowserWallet(network, signerConfig) {
+    const signer = await BrowserWalletSigner.connectAny(signerConfig);
+    const networkToUse = network || signer.network;
+    const provider = new AlkanesProvider({ network: networkToUse });
+    await provider.initialize();
+    return new _AlkanesClient(provider, signer);
+  }
+  /**
+   * Create client with an encrypted keystore
+   *
+   * @param keystoreJson - Encrypted keystore JSON
+   * @param password - Decryption password
+   * @param network - Network to use
+   */
+  static async withKeystore(keystoreJson, password, network = "mainnet", signerConfig) {
+    const signer = await KeystoreSigner.fromEncrypted(keystoreJson, password, {
+      network,
+      ...signerConfig
+    });
+    const provider = new AlkanesProvider({ network });
+    await provider.initialize();
+    return new _AlkanesClient(provider, signer);
+  }
+  /**
+   * Create client with a mnemonic phrase
+   *
+   * @param mnemonic - BIP39 mnemonic phrase
+   * @param network - Network to use
+   */
+  static withMnemonic(mnemonic, network = "mainnet", signerConfig) {
+    const signer = KeystoreSigner.fromMnemonic(mnemonic, {
+      network,
+      ...signerConfig
+    });
+    const provider = new AlkanesProvider({ network });
+    return new _AlkanesClient(provider, signer);
+  }
+  /**
+   * Create client with a Keystore object
+   */
+  static fromKeystore(keystore, network, signerConfig) {
+    const networkToUse = network || keystore.network;
+    const signer = KeystoreSigner.fromKeystore(keystore, {
+      network: networkToUse,
+      ...signerConfig
+    });
+    const provider = new AlkanesProvider({ network: networkToUse });
+    return new _AlkanesClient(provider, signer);
+  }
+  /**
+   * Generate a new wallet with fresh mnemonic
+   */
+  static generate(network = "mainnet", wordCount = 12, signerConfig) {
+    const signer = KeystoreSigner.generate(
+      {
+        network,
+        ...signerConfig
+      },
+      wordCount
+    );
+    const provider = new AlkanesProvider({ network });
+    return new _AlkanesClient(provider, signer);
+  }
+  // ============================================================================
+  // INITIALIZATION
+  // ============================================================================
+  /**
+   * Initialize the provider (required before blockchain operations)
+   */
+  async initialize() {
+    await this.provider.initialize();
+  }
+  /**
+   * Check if connected and ready
+   */
+  async isReady() {
+    try {
+      const signerConnected = await this.signer.isConnected();
+      await this.provider.getBlockHeight();
+      return signerConnected;
+    } catch {
+      return false;
+    }
+  }
+  // ============================================================================
+  // ACCOUNT METHODS (from Signer)
+  // ============================================================================
+  /**
+   * Get the primary address
+   */
+  async getAddress() {
+    return this.signer.getAddress();
+  }
+  /**
+   * Get the public key
+   */
+  async getPublicKey() {
+    return this.signer.getPublicKey();
+  }
+  /**
+   * Get full account info
+   */
+  async getAccount() {
+    return this.signer.getAccount();
+  }
+  /**
+   * Get the signer type
+   */
+  getSignerType() {
+    return this.signer.getSignerType();
+  }
+  /**
+   * Get the network type
+   */
+  getNetwork() {
+    return this.provider.networkType;
+  }
+  // ============================================================================
+  // BALANCE METHODS (from Provider, for current address)
+  // ============================================================================
+  /**
+   * Get BTC balance for the current address
+   */
+  async getBalance(address2) {
+    const addr = address2 || await this.getAddress();
+    const result = await this.provider.getBalance(addr);
+    return {
+      confirmed: result.confirmed,
+      unconfirmed: result.unconfirmed,
+      total: result.confirmed + result.unconfirmed,
+      utxos: result.utxos
+    };
+  }
+  /**
+   * Get enriched balances (BTC + alkanes) for the current address
+   */
+  async getEnrichedBalances(address2) {
+    const addr = address2 || await this.getAddress();
+    return this.provider.getEnrichedBalances(addr);
+  }
+  /**
+   * Get alkane token balances for the current address
+   */
+  async getAlkaneBalances(address2) {
+    const addr = address2 || await this.getAddress();
+    return this.provider.getAlkaneBalance(addr);
+  }
+  /**
+   * Get UTXOs for the current address
+   */
+  async getUtxos(address2) {
+    const addr = address2 || await this.getAddress();
+    const balance = await this.provider.getBalance(addr);
+    return balance.utxos;
+  }
+  // ============================================================================
+  // SIGNING METHODS (from Signer)
+  // ============================================================================
+  /**
+   * Sign a message
+   */
+  async signMessage(message, options) {
+    return this.signer.signMessage(message, options);
+  }
+  /**
+   * Sign a PSBT
+   */
+  async signPsbt(psbt, options) {
+    return this.signer.signPsbt(psbt, options);
+  }
+  /**
+   * Sign multiple PSBTs
+   */
+  async signPsbts(psbts, options) {
+    return this.signer.signPsbts(psbts, options);
+  }
+  // ============================================================================
+  // TRANSACTION METHODS (Signing + Broadcasting)
+  // ============================================================================
+  /**
+   * Sign and broadcast a PSBT
+   *
+   * @param psbt - PSBT in hex or base64 format
+   * @param options - Signing options
+   * @returns Transaction result with txid
+   */
+  async sendTransaction(psbt, options) {
+    const signed = await this.signer.signPsbt(psbt, {
+      ...options,
+      finalize: true,
+      extractTx: true
+    });
+    if (!signed.txHex) {
+      throw new Error("Failed to extract transaction from signed PSBT");
+    }
+    const txid = await this.provider.broadcastTransaction(signed.txHex);
+    return {
+      txid,
+      rawTx: signed.txHex,
+      broadcast: true
+    };
+  }
+  /**
+   * Sign a PSBT without broadcasting (returns signed hex)
+   */
+  async signTransaction(psbt, options) {
+    return this.signer.signPsbt(psbt, {
+      ...options,
+      finalize: true
+    });
+  }
+  /**
+   * Broadcast a raw transaction
+   */
+  async broadcastTransaction(txHex) {
+    return this.provider.broadcastTransaction(txHex);
+  }
+  // ============================================================================
+  // ALKANES METHODS
+  // ============================================================================
+  /**
+   * Get current block height
+   */
+  async getBlockHeight() {
+    return this.provider.getBlockHeight();
+  }
+  /**
+   * Get transaction history for the current address
+   */
+  async getTransactionHistory(address2) {
+    const addr = address2 || await this.getAddress();
+    return this.provider.getAddressHistory(addr);
+  }
+  /**
+   * Get transaction history with alkane traces
+   */
+  async getTransactionHistoryWithTraces(address2) {
+    const addr = address2 || await this.getAddress();
+    return this.provider.getAddressHistoryWithTraces(addr);
+  }
+  /**
+   * Get alkane token details
+   */
+  async getAlkaneTokenDetails(alkaneId) {
+    return this.provider.getAlkaneTokenDetails({ alkaneId });
+  }
+  /**
+   * Simulate an alkanes contract call
+   */
+  async simulateAlkanes(contractId, calldata) {
+    return this.provider.simulateAlkanes(contractId, calldata);
+  }
+  // ============================================================================
+  // AMM/DEX METHODS
+  // ============================================================================
+  /**
+   * Get all AMM pools
+   */
+  async getPools(factoryId) {
+    return this.provider.getAllPools(factoryId);
+  }
+  /**
+   * Get pool reserves
+   */
+  async getPoolReserves(poolId) {
+    return this.provider.getPoolReserves(poolId);
+  }
+  /**
+   * Get pool trade history
+   */
+  async getPoolTrades(poolId, limit) {
+    return this.provider.getPoolTrades(poolId, limit);
+  }
+  /**
+   * Get pool candle data
+   */
+  async getPoolCandles(poolId, interval, limit) {
+    return this.provider.getPoolCandles(poolId, interval, limit);
+  }
+  // ============================================================================
+  // UTILITY METHODS
+  // ============================================================================
+  /**
+   * Get Bitcoin price in USD
+   */
+  async getBitcoinPrice() {
+    return this.provider.getBitcoinPrice();
+  }
+  /**
+   * Disconnect the signer
+   */
+  async disconnect() {
+    await this.signer.disconnect();
+  }
+  /**
+   * Get underlying provider sub-clients
+   */
+  get bitcoin() {
+    return this.provider.bitcoin;
+  }
+  get esplora() {
+    return this.provider.esplora;
+  }
+  get alkanes() {
+    return this.provider.alkanes;
+  }
+  get dataApi() {
+    return this.provider.dataApi;
+  }
+  get lua() {
+    return this.provider.lua;
+  }
+  get metashrew() {
+    return this.provider.metashrew;
+  }
+};
+async function getAvailableWallets() {
+  const options = await getWalletOptions();
+  return options.map((opt) => ({
+    id: opt.id,
+    name: opt.name,
+    icon: opt.icon,
+    installed: opt.installed
+  }));
+}
+async function connectWallet(walletId, network) {
+  return AlkanesClient.withBrowserWallet(walletId, network);
+}
+async function connectAnyWallet(network) {
+  return AlkanesClient.withAnyBrowserWallet(network);
+}
+function createReadOnlyProvider(network = "mainnet") {
+  return new AlkanesProvider({ network });
+}
+
+// src/index.ts
 init_storage();
 var VERSION = "0.1.0";
 async function initSDK() {
   const { KeystoreManager: KeystoreManager2, createKeystore: createKeystore2, unlockKeystore: unlockKeystore2 } = await Promise.resolve().then(() => (init_keystore(), keystore_exports));
   const { AlkanesWallet: AlkanesWallet2, createWallet: createWallet2, createWalletFromMnemonic: createWalletFromMnemonic2 } = await Promise.resolve().then(() => (init_wallet(), wallet_exports));
   const { AlkanesProvider: AlkanesProvider2, createProvider: createProvider2 } = await Promise.resolve().then(() => (init_provider(), provider_exports));
-  const { WalletConnector: WalletConnector2, ConnectedWallet: ConnectedWallet2, BROWSER_WALLETS: BROWSER_WALLETS2, isWalletInstalled: isWalletInstalled2, getInstalledWallets: getInstalledWallets2 } = await Promise.resolve().then(() => (init_browser_wallets(), browser_wallets_exports));
+  const {
+    WalletConnector: WalletConnector2,
+    ConnectedWallet: ConnectedWallet3,
+    BROWSER_WALLETS: BROWSER_WALLETS2,
+    isWalletInstalled: isWalletInstalled2,
+    getInstalledWallets: getInstalledWallets2,
+    createWalletAdapter: createWalletAdapter2,
+    MockWalletAdapter: MockWalletAdapter2,
+    BaseWalletAdapter: BaseWalletAdapter2,
+    UnisatAdapter: UnisatAdapter2,
+    XverseAdapter: XverseAdapter2,
+    OkxAdapter: OkxAdapter2,
+    LeatherAdapter: LeatherAdapter2,
+    PhantomAdapter: PhantomAdapter2,
+    MagicEdenAdapter: MagicEdenAdapter2,
+    WizzAdapter: WizzAdapter2
+  } = await Promise.resolve().then(() => (init_browser_wallets(), browser_wallets_exports));
   const { KeystoreStorage: KeystoreStorage2, GoogleDriveBackup: GoogleDriveBackup2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
   return {
     // Keystore
@@ -47877,10 +49302,21 @@ async function initSDK() {
     createProvider: createProvider2,
     // Browser wallets
     WalletConnector: WalletConnector2,
-    ConnectedWallet: ConnectedWallet2,
+    ConnectedWallet: ConnectedWallet3,
     BROWSER_WALLETS: BROWSER_WALLETS2,
     isWalletInstalled: isWalletInstalled2,
     getInstalledWallets: getInstalledWallets2,
+    // Wallet adapters for WASM integration
+    createWalletAdapter: createWalletAdapter2,
+    MockWalletAdapter: MockWalletAdapter2,
+    BaseWalletAdapter: BaseWalletAdapter2,
+    UnisatAdapter: UnisatAdapter2,
+    XverseAdapter: XverseAdapter2,
+    OkxAdapter: OkxAdapter2,
+    LeatherAdapter: LeatherAdapter2,
+    PhantomAdapter: PhantomAdapter2,
+    MagicEdenAdapter: MagicEdenAdapter2,
+    WizzAdapter: WizzAdapter2,
     // Storage
     KeystoreStorage: KeystoreStorage2,
     GoogleDriveBackup: GoogleDriveBackup2,
@@ -47892,7 +49328,23 @@ async function getAlkanesSDK() {
   const { KeystoreManager: KeystoreManager2, createKeystore: createKeystore2, unlockKeystore: unlockKeystore2 } = await Promise.resolve().then(() => (init_keystore(), keystore_exports));
   const { AlkanesWallet: AlkanesWallet2, createWallet: createWallet2, createWalletFromMnemonic: createWalletFromMnemonic2 } = await Promise.resolve().then(() => (init_wallet(), wallet_exports));
   const { AlkanesProvider: AlkanesProvider2, createProvider: createProvider2 } = await Promise.resolve().then(() => (init_provider(), provider_exports));
-  const { WalletConnector: WalletConnector2, ConnectedWallet: ConnectedWallet2, BROWSER_WALLETS: BROWSER_WALLETS2, isWalletInstalled: isWalletInstalled2, getInstalledWallets: getInstalledWallets2 } = await Promise.resolve().then(() => (init_browser_wallets(), browser_wallets_exports));
+  const {
+    WalletConnector: WalletConnector2,
+    ConnectedWallet: ConnectedWallet3,
+    BROWSER_WALLETS: BROWSER_WALLETS2,
+    isWalletInstalled: isWalletInstalled2,
+    getInstalledWallets: getInstalledWallets2,
+    createWalletAdapter: createWalletAdapter2,
+    MockWalletAdapter: MockWalletAdapter2,
+    BaseWalletAdapter: BaseWalletAdapter2,
+    UnisatAdapter: UnisatAdapter2,
+    XverseAdapter: XverseAdapter2,
+    OkxAdapter: OkxAdapter2,
+    LeatherAdapter: LeatherAdapter2,
+    PhantomAdapter: PhantomAdapter2,
+    MagicEdenAdapter: MagicEdenAdapter2,
+    WizzAdapter: WizzAdapter2
+  } = await Promise.resolve().then(() => (init_browser_wallets(), browser_wallets_exports));
   const { KeystoreStorage: KeystoreStorage2, GoogleDriveBackup: GoogleDriveBackup2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
   return {
     // Keystore
@@ -47908,10 +49360,21 @@ async function getAlkanesSDK() {
     createProvider: createProvider2,
     // Browser wallets
     WalletConnector: WalletConnector2,
-    ConnectedWallet: ConnectedWallet2,
+    ConnectedWallet: ConnectedWallet3,
     BROWSER_WALLETS: BROWSER_WALLETS2,
     isWalletInstalled: isWalletInstalled2,
     getInstalledWallets: getInstalledWallets2,
+    // Wallet adapters for WASM integration
+    createWalletAdapter: createWalletAdapter2,
+    MockWalletAdapter: MockWalletAdapter2,
+    BaseWalletAdapter: BaseWalletAdapter2,
+    UnisatAdapter: UnisatAdapter2,
+    XverseAdapter: XverseAdapter2,
+    OkxAdapter: OkxAdapter2,
+    LeatherAdapter: LeatherAdapter2,
+    PhantomAdapter: PhantomAdapter2,
+    MagicEdenAdapter: MagicEdenAdapter2,
+    WizzAdapter: WizzAdapter2,
     // Storage
     KeystoreStorage: KeystoreStorage2,
     GoogleDriveBackup: GoogleDriveBackup2,
@@ -47922,30 +49385,48 @@ async function getAlkanesSDK() {
 }
 export {
   AddressType,
+  AlkanesClient,
   AlkanesProvider,
   AlkanesRpcClient,
+  AlkanesSigner,
   AlkanesWallet,
   BROWSER_WALLETS,
+  BaseWalletAdapter,
   BitcoinRpcClient,
+  BrowserWalletSigner,
   ConnectedWallet,
   DERIVATION_PATHS,
   DataApiClient,
   EsploraClient,
+  EventEmittingSigner,
   GoogleDriveBackup,
   KeystoreManager,
+  KeystoreSigner,
   KeystoreStorage,
+  LeatherAdapter,
   LuaClient,
+  MagicEdenAdapter,
   MetashrewClient,
+  MockWalletAdapter,
   NETWORK_PRESETS,
+  OkxAdapter,
+  PhantomAdapter,
+  UnisatAdapter,
   VERSION,
   WalletConnector,
+  WizzAdapter,
+  XverseAdapter,
   btcToSatoshis,
   bytesToHex,
   calculateFee,
   calculateWeight,
+  connectAnyWallet,
+  connectWallet,
   createKeystore,
   createProvider,
+  createReadOnlyProvider,
   createWallet,
+  createWalletAdapter,
   createWalletFromMnemonic,
   getAlkanesSDK as default,
   delay,
@@ -47953,10 +49434,12 @@ export {
   formatAlkaneId,
   formatBackupDate,
   formatTimestamp,
+  getAvailableWallets,
   getInstalledWallets,
   getNetwork,
   getRelativeTime,
   getWalletById,
+  getWalletOptions,
   hexToBytes,
   initSDK,
   isBrowser,

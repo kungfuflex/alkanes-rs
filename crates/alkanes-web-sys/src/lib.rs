@@ -37,6 +37,17 @@ pub mod utils;
 pub mod wallet_provider;
 pub mod keystore_wallet;
 
+// Re-export wallet provider types for easier access
+pub use wallet_provider::{
+    WasmBrowserWalletProvider,
+    WalletInfo,
+    WalletAccount,
+    WalletNetworkInfo,
+    PsbtSigningOptions,
+    PsbtSigningInput,
+    WalletConnectionStatus,
+};
+
 #[wasm_bindgen]
 pub fn analyze_psbt(psbt_base64: &str) -> Result<String, JsValue> {
     let psbt_bytes = STANDARD.decode(psbt_base64)
