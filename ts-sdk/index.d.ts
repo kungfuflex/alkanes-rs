@@ -172,6 +172,341 @@ declare module '@alkanes/ts-sdk' {
   export function formatBackupDate(timestamp: string): string;
   export function getRelativeTime(timestamp: string): string;
 
+  // ============================================================================
+  // Client Module - Unified ethers.js-style interface
+  // ============================================================================
+
+  // Network type
+  export type NetworkType = 'mainnet' | 'testnet' | 'regtest';
+
+  // Signer interfaces
+  export interface SignerAccount {
+    address: string;
+    publicKey: string;
+    addressType?: string;
+  }
+
+  export interface SignPsbtOptions {
+    finalize?: boolean;
+    extractTx?: boolean;
+    inputsToSign?: Array<{
+      index: number;
+      address?: string;
+      sighashTypes?: number[];
+    }>;
+  }
+
+  export interface SignMessageOptions {
+    address?: string;
+  }
+
+  export interface SignedPsbt {
+    psbtHex: string;
+    psbtBase64: string;
+    txHex?: string;
+  }
+
+  export type SignerEventType = 'accountsChanged' | 'networkChanged' | 'disconnect';
+  export type SignerEvents = {
+    accountsChanged: (accounts: string[]) => void;
+    networkChanged: (network: string) => void;
+    disconnect: () => void;
+  };
+
+  // Abstract signer base class
+  export abstract class AlkanesSigner {
+    abstract readonly network: NetworkType;
+    abstract getAccount(): Promise<SignerAccount>;
+    abstract getAddress(): Promise<string>;
+    abstract getPublicKey(): Promise<string>;
+    abstract signMessage(message: string, options?: SignMessageOptions): Promise<string>;
+    abstract signPsbt(psbt: string, options?: SignPsbtOptions): Promise<SignedPsbt>;
+    abstract signPsbts(psbts: string[], options?: SignPsbtOptions): Promise<SignedPsbt[]>;
+    abstract isConnected(): Promise<boolean>;
+    abstract disconnect(): Promise<void>;
+    abstract getSignerType(): string;
+    protected parsePsbt(psbt: string): any;
+  }
+
+  // Event emitting signer
+  export abstract class EventEmittingSigner extends AlkanesSigner {
+    on<E extends SignerEventType>(event: E, callback: SignerEvents[E]): void;
+    off<E extends SignerEventType>(event: E, callback: SignerEvents[E]): void;
+    protected emit<E extends SignerEventType>(event: E, ...args: any[]): void;
+  }
+
+  // Keystore signer config
+  export interface KeystoreSignerConfig {
+    network: NetworkType;
+    addressType?: 'p2wpkh' | 'p2tr' | 'p2pkh' | 'p2sh-p2wpkh';
+    accountIndex?: number;
+    addressIndex?: number;
+  }
+
+  // Keystore signer
+  export class KeystoreSigner extends AlkanesSigner {
+    static fromMnemonic(mnemonic: string, config?: Partial<KeystoreSignerConfig>): KeystoreSigner;
+    static fromEncrypted(keystoreJson: string, password: string, config?: Partial<KeystoreSignerConfig>): Promise<KeystoreSigner>;
+    static fromKeystore(keystore: any, config?: Partial<KeystoreSignerConfig>): KeystoreSigner;
+    static generate(config?: Partial<KeystoreSignerConfig>, wordCount?: 12 | 24): KeystoreSigner;
+
+    readonly network: NetworkType;
+    getAccount(): Promise<SignerAccount>;
+    getAddress(): Promise<string>;
+    getPublicKey(): Promise<string>;
+    signMessage(message: string, options?: SignMessageOptions): Promise<string>;
+    signPsbt(psbt: string, options?: SignPsbtOptions): Promise<SignedPsbt>;
+    signPsbts(psbts: string[], options?: SignPsbtOptions): Promise<SignedPsbt[]>;
+    isConnected(): Promise<boolean>;
+    disconnect(): Promise<void>;
+    getSignerType(): string;
+
+    exportMnemonic(): string;
+    exportToKeystore(password: string): Promise<string>;
+    deriveAddress(type: 'p2wpkh' | 'p2tr' | 'p2pkh' | 'p2sh-p2wpkh', index: number): {
+      address: string;
+      publicKey: string;
+      path: string;
+    };
+    getAddresses(count: number): Array<{ index: number; address: string; publicKey: string; path: string }>;
+  }
+
+  // Browser wallet signer config
+  export interface BrowserWalletSignerConfig {
+    autoReconnect?: boolean;
+    preferredAddressType?: 'payment' | 'ordinals' | 'both';
+  }
+
+  export interface WalletSelection {
+    walletId: string;
+    walletName: string;
+    walletInfo: BrowserWalletInfo;
+  }
+
+  // Browser wallet signer
+  export class BrowserWalletSigner extends EventEmittingSigner {
+    static getAvailableWallets(): Promise<BrowserWalletInfo[]>;
+    static getSupportedWallets(): BrowserWalletInfo[];
+    static isWalletInstalled(walletId: string): boolean;
+    static connect(walletId: string, config?: BrowserWalletSignerConfig): Promise<BrowserWalletSigner>;
+    static connectAny(config?: BrowserWalletSignerConfig): Promise<BrowserWalletSigner>;
+    static fromConnectedWallet(wallet: ConnectedWallet, config?: BrowserWalletSignerConfig): BrowserWalletSigner;
+
+    readonly network: NetworkType;
+    getSignerType(): string;
+    getWalletInfo(): BrowserWalletInfo;
+    getAdapter(): any; // JsWalletAdapter for WASM integration
+    getAccount(): Promise<SignerAccount>;
+    getAddress(): Promise<string>;
+    getPublicKey(): Promise<string>;
+    signMessage(message: string, options?: SignMessageOptions): Promise<string>;
+    signPsbt(psbt: string, options?: SignPsbtOptions): Promise<SignedPsbt>;
+    signPsbts(psbts: string[], options?: SignPsbtOptions): Promise<SignedPsbt[]>;
+    isConnected(): Promise<boolean>;
+    disconnect(): Promise<void>;
+
+    pushTransaction(txHex: string): Promise<string>;
+    pushPsbt(psbtHex: string): Promise<string>;
+    getBalance(): Promise<number | null>;
+    getInscriptions(cursor?: number, size?: number): Promise<any>;
+    switchNetwork(network: NetworkType): Promise<void>;
+  }
+
+  // Transaction result
+  export interface TransactionResult {
+    txid: string;
+    rawTx: string;
+    broadcast: boolean;
+  }
+
+  // Balance summary
+  export interface BalanceSummary {
+    confirmed: number;
+    unconfirmed: number;
+    total: number;
+    utxos: any[];
+  }
+
+  export interface EnrichedBalance extends BalanceSummary {
+    alkanes: any[];
+  }
+
+  // Wallet option for UI
+  export interface WalletOption {
+    id: string;
+    name: string;
+    icon: string;
+    installed: boolean;
+  }
+
+  // Unified AlkanesClient
+  export class AlkanesClient {
+    constructor(provider: AlkanesProvider, signer: AlkanesSigner);
+
+    readonly provider: AlkanesProvider;
+    readonly signer: AlkanesSigner;
+
+    // Static factory methods
+    static withBrowserWallet(walletId: string, network?: string, signerConfig?: BrowserWalletSignerConfig): Promise<AlkanesClient>;
+    static withAnyBrowserWallet(network?: string, signerConfig?: BrowserWalletSignerConfig): Promise<AlkanesClient>;
+    static withKeystore(keystoreJson: string, password: string, network?: string, signerConfig?: Partial<KeystoreSignerConfig>): Promise<AlkanesClient>;
+    static withMnemonic(mnemonic: string, network?: string, signerConfig?: Partial<KeystoreSignerConfig>): AlkanesClient;
+    static fromKeystore(keystore: any, network?: string, signerConfig?: Partial<KeystoreSignerConfig>): AlkanesClient;
+    static generate(network?: string, wordCount?: 12 | 24, signerConfig?: Partial<KeystoreSignerConfig>): AlkanesClient;
+
+    // Initialization
+    initialize(): Promise<void>;
+    isReady(): Promise<boolean>;
+
+    // Account methods (from Signer)
+    getAddress(): Promise<string>;
+    getPublicKey(): Promise<string>;
+    getAccount(): Promise<SignerAccount>;
+    getSignerType(): string;
+    getNetwork(): NetworkType;
+
+    // Balance methods (from Provider)
+    getBalance(address?: string): Promise<BalanceSummary>;
+    getEnrichedBalances(address?: string): Promise<any>;
+    getAlkaneBalances(address?: string): Promise<any[]>;
+    getUtxos(address?: string): Promise<any[]>;
+
+    // Signing methods (from Signer)
+    signMessage(message: string, options?: SignMessageOptions): Promise<string>;
+    signPsbt(psbt: string, options?: SignPsbtOptions): Promise<SignedPsbt>;
+    signPsbts(psbts: string[], options?: SignPsbtOptions): Promise<SignedPsbt[]>;
+
+    // Transaction methods
+    sendTransaction(psbt: string, options?: SignPsbtOptions): Promise<TransactionResult>;
+    signTransaction(psbt: string, options?: SignPsbtOptions): Promise<SignedPsbt>;
+    broadcastTransaction(txHex: string): Promise<string>;
+
+    // Alkanes methods
+    getBlockHeight(): Promise<number>;
+    getTransactionHistory(address?: string): Promise<any[]>;
+    getTransactionHistoryWithTraces(address?: string): Promise<any[]>;
+    getAlkaneTokenDetails(alkaneId: any): Promise<any>;
+    simulateAlkanes(contractId: string, calldata: number[]): Promise<any>;
+
+    // AMM/DEX methods
+    getPools(factoryId: string): Promise<any[]>;
+    getPoolReserves(poolId: string): Promise<any>;
+    getPoolTrades(poolId: string, limit?: number): Promise<any[]>;
+    getPoolCandles(poolId: string, interval?: string, limit?: number): Promise<any[]>;
+
+    // Utility methods
+    getBitcoinPrice(): Promise<number>;
+    disconnect(): Promise<void>;
+
+    // Sub-clients
+    readonly bitcoin: any;
+    readonly esplora: any;
+    readonly alkanes: any;
+    readonly dataApi: any;
+    readonly lua: any;
+    readonly metashrew: any;
+  }
+
+  // Connect wallet utilities
+  export function getAvailableWallets(): Promise<WalletOption[]>;
+  export function connectWallet(walletId: string, network?: string): Promise<AlkanesClient>;
+  export function connectAnyWallet(network?: string): Promise<AlkanesClient>;
+  export function createReadOnlyProvider(network?: string): AlkanesProvider;
+  export function getWalletOptions(): Promise<Array<{
+    id: string;
+    name: string;
+    icon: string;
+    installed: boolean;
+    info: BrowserWalletInfo;
+  }>>;
+
+  // WASM wallet adapter types
+  export interface JsWalletAdapter {
+    getInfo(): any;
+    connect(): Promise<any>;
+    disconnect(): Promise<void>;
+    getAccounts(): Promise<any[]>;
+    getNetwork(): Promise<string>;
+    getPublicKey(): Promise<string>;
+    getBalance(): Promise<number | null>;
+    signMessage(message: string, address: string): Promise<string>;
+    signPsbt(psbtHex: string, options?: any): Promise<string>;
+    signPsbts(psbtHexs: string[], options?: any): Promise<string[]>;
+    pushTx(txHex: string): Promise<string>;
+    pushPsbt(psbtHex: string): Promise<string>;
+    switchNetwork(network: string): Promise<void>;
+    getInscriptions(cursor?: number, size?: number): Promise<any>;
+  }
+
+  export interface WalletInfoForWasm {
+    id: string;
+    name: string;
+    icon: string;
+    injection_key: string;
+    supports_psbt: boolean;
+    supports_taproot: boolean;
+    supports_ordinals: boolean;
+    mobile_support: boolean;
+  }
+
+  export interface WalletAccountForWasm {
+    address: string;
+    public_key?: string;
+    address_type?: string;
+  }
+
+  export interface PsbtSigningOptionsForWasm {
+    auto_finalized?: boolean;
+    to_sign_inputs?: Array<{
+      index: number;
+      address?: string;
+      sighash_types?: number[];
+    }>;
+  }
+
+  export function createWalletAdapter(wallet: ConnectedWallet): JsWalletAdapter;
+  export class MockWalletAdapter implements JsWalletAdapter {
+    constructor(network?: string, address?: string);
+    getInfo(): any;
+    connect(): Promise<any>;
+    disconnect(): Promise<void>;
+    getAccounts(): Promise<any[]>;
+    getNetwork(): Promise<string>;
+    getPublicKey(): Promise<string>;
+    getBalance(): Promise<number | null>;
+    signMessage(message: string, address: string): Promise<string>;
+    signPsbt(psbtHex: string, options?: any): Promise<string>;
+    signPsbts(psbtHexs: string[], options?: any): Promise<string[]>;
+    pushTx(txHex: string): Promise<string>;
+    pushPsbt(psbtHex: string): Promise<string>;
+    switchNetwork(network: string): Promise<void>;
+    getInscriptions(cursor?: number, size?: number): Promise<any>;
+  }
+  export class BaseWalletAdapter implements JsWalletAdapter {
+    constructor(wallet: ConnectedWallet);
+    getInfo(): any;
+    connect(): Promise<any>;
+    disconnect(): Promise<void>;
+    getAccounts(): Promise<any[]>;
+    getNetwork(): Promise<string>;
+    getPublicKey(): Promise<string>;
+    getBalance(): Promise<number | null>;
+    signMessage(message: string, address: string): Promise<string>;
+    signPsbt(psbtHex: string, options?: any): Promise<string>;
+    signPsbts(psbtHexs: string[], options?: any): Promise<string[]>;
+    pushTx(txHex: string): Promise<string>;
+    pushPsbt(psbtHex: string): Promise<string>;
+    switchNetwork(network: string): Promise<void>;
+    getInscriptions(cursor?: number, size?: number): Promise<any>;
+  }
+  export class UnisatAdapter extends BaseWalletAdapter {}
+  export class XverseAdapter extends BaseWalletAdapter {}
+  export class OkxAdapter extends BaseWalletAdapter {}
+  export class LeatherAdapter extends BaseWalletAdapter {}
+  export class PhantomAdapter extends BaseWalletAdapter {}
+  export class MagicEdenAdapter extends BaseWalletAdapter {}
+  export class WizzAdapter extends BaseWalletAdapter {}
+
   // Other exports
   export const VERSION: string;
   export function initSDK(wasmModule?: any): Promise<any>;
