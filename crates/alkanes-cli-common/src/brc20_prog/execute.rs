@@ -72,22 +72,25 @@ impl<'a> Brc20ProgExecutor<'a> {
             self.provider.sync().await?;
         }
 
-        // For deploy operations, execute activation transaction
-        let (activation_txid, activation_fee) = {
-            log::info!("Executing activation transaction");
-            
+        // For deploy operations, optionally execute activation transaction
+        let (activation_txid, activation_fee) = if params.use_activation {
+            log::info!("Executing activation transaction (3-tx pattern)");
+
             let (act_txid, act_fee) = self
                 .build_and_broadcast_activation(&params, reveal_inscription_outpoint, reveal_inscription_output)
                 .await?;
-            
+
             log::info!("✅ Activation transaction broadcast: {act_txid}");
-            
+
             if params.mine_enabled {
                 self.mine_blocks_if_regtest(&params).await?;
                 self.provider.sync().await?;
             }
-            
+
             (Some(act_txid.to_string()), Some(act_fee))
+        } else {
+            log::info!("Skipping activation transaction (using 2-tx pattern with OP_RETURN in reveal)");
+            (None, None)
         };
 
         Ok(Brc20ProgExecuteResult {
@@ -182,22 +185,38 @@ impl<'a> Brc20ProgExecutor<'a> {
         let change_address = Address::from_str(&change_address_str)?
             .require_network(self.provider.get_network())?;
 
-        // Send inscription to wallet address with 546 sat (first sat of utxo)
-        let outputs = {
-            log::info!("Creating inscription output to wallet address with 546 sat");
-            
-            // First output: inscription at first sat (of 546 sat utxo)
+        // Create outputs based on activation mode
+        let outputs = if params.use_activation {
+            // 3-tx pattern: Create 546-sat inscription UTXO for later activation
+            log::info!("Creating 546-sat inscription output (will be spent to OP_RETURN in activation tx)");
+
             let inscription_output = TxOut {
                 value: bitcoin::Amount::from_sat(546),
                 script_pubkey: change_address.script_pubkey(),
             };
-            
+
             let change_output = TxOut {
                 value: bitcoin::Amount::from_sat(1), // Placeholder, will be updated later
                 script_pubkey: change_address.script_pubkey(),
             };
-            
+
             vec![inscription_output, change_output]
+        } else {
+            // 2-tx pattern: Output directly to OP_RETURN with 1 sat
+            log::info!("Creating OP_RETURN output directly in reveal tx (2-tx pattern)");
+
+            let op_return_script = self.create_brc20prog_op_return();
+            let op_return_output = TxOut {
+                value: bitcoin::Amount::from_sat(1),
+                script_pubkey: op_return_script,
+            };
+
+            let change_output = TxOut {
+                value: bitcoin::Amount::from_sat(1), // Placeholder, will be updated later
+                script_pubkey: change_address.script_pubkey(),
+            };
+
+            vec![op_return_output, change_output]
         };
 
         // Build reveal PSBT with script-path spending
@@ -224,11 +243,11 @@ impl<'a> Brc20ProgExecutor<'a> {
             .await?;
 
         let reveal_txid = reveal_tx.compute_txid();
-        
-        // For deploy operations, the inscription is at vout 0 (first output)
+
+        // Inscription outpoint depends on the pattern
         let inscription_outpoint = OutPoint {
             txid: reveal_txid,
-            vout: 0,
+            vout: 0, // First output in both patterns
         };
 
         Ok((reveal_txid, reveal_fee, inscription_outpoint, reveal_tx.output[0].clone()))

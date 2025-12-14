@@ -25,6 +25,8 @@ pub struct Brc20ProgDeployParams {
     pub mine_enabled: bool,
     /// Automatically confirm the transaction preview
     pub auto_confirm: bool,
+    /// Use 3-transaction activation pattern (commit-reveal-activation) instead of 2-transaction (commit-reveal)
+    pub use_activation: bool,
 }
 
 /// Parameters for calling a BRC20-prog contract (transact subcommand)
@@ -71,6 +73,8 @@ pub struct Brc20ProgExecuteParams {
     pub mine_enabled: bool,
     /// Automatically confirm the transaction preview
     pub auto_confirm: bool,
+    /// Use 3-transaction activation pattern (commit-reveal-activation) instead of 2-transaction (commit-reveal)
+    pub use_activation: bool,
 }
 
 /// Result of a BRC20-prog execution

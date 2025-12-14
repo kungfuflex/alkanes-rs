@@ -2124,6 +2124,23 @@ impl SystemWallet for SystemAlkanes {
                println!("{backup}");
                Ok(())
            },
+           WalletCommands::Mnemonic => {
+               let mnemonic = provider.get_mnemonic().await?;
+               match mnemonic {
+                   Some(words) => {
+                       println!("🔑 Wallet Mnemonic");
+                       println!("═══════════════════");
+                       println!("{words}");
+                       println!();
+                       println!("⚠️  WARNING: Keep this mnemonic safe and private!");
+                       println!("   Anyone with this mnemonic can access your funds.");
+                       Ok(())
+                   },
+                   None => {
+                       Err(AlkanesError::Wallet("Wallet is not unlocked or no mnemonic available".to_string()).into())
+                   }
+               }
+           },
            WalletCommands::ListIdentifiers => {
                let identifiers = provider.list_identifiers().await?;
                println!("🏷️  Address Identifiers");

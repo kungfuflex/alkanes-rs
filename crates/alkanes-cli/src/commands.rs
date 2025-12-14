@@ -568,6 +568,9 @@ pub enum Brc20Prog {
         /// Automatically confirm the transaction preview
         #[arg(long, short = 'y')]
         auto_confirm: bool,
+        /// Skip activation transaction and use 2-transaction pattern (commit-reveal with OP_RETURN)
+        #[arg(long)]
+        no_activation: bool,
     },
     /// Call a BRC20-prog contract function
     Transact {

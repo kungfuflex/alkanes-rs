@@ -111,9 +111,13 @@ impl Keystore {
             let testnet_xpub = Xpub::from_priv(&secp, &testnet_xpriv);
             account_xpubs.insert(format!("{}:testnet", address_type), testnet_xpub.to_string());
         }
-        
-        // Default account_xpub for backward compatibility (use p2tr mainnet)
-        let default_account_xpub = account_xpubs.get("p2tr:mainnet").unwrap().clone();
+
+        // Set account_xpub for backward compatibility with old code paths
+        // Use P2TR xpub for the current network
+        let network_suffix = if network == bitcoin::Network::Bitcoin { "mainnet" } else { "testnet" };
+        let default_account_xpub = account_xpubs.get(&format!("p2tr:{}", network_suffix))
+            .cloned()
+            .unwrap_or_default();
 
         // 4. Store standard HD path templates (with placeholder for coin_type)
         let mut hd_paths = BTreeMap::new();
@@ -200,11 +204,11 @@ impl Keystore {
         // Get the account xpub for this address type and network
         // First try the new account_xpubs map with network suffix
         // Then try without suffix (for old keystores created with single network)
-        // Finally fall back to legacy account_xpub field
+        // Finally fall back to legacy account_xpub field (if not empty)
         let account_xpub_str = self.account_xpubs.get(&xpub_key)
             .or_else(|| self.account_xpubs.get(address_type))
             .map(|s| s.as_str())
-            .or(Some(self.account_xpub.as_str()))
+            .or_else(|| if !self.account_xpub.is_empty() { Some(self.account_xpub.as_str()) } else { None })
             .ok_or_else(|| AlkanesError::Wallet(format!("No xpub found for address type: {} on network: {}", address_type, network_suffix)))?;
         
         let account_xpub = Xpub::from_str(account_xpub_str)?;

@@ -783,7 +783,16 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
             println!("Transaction sent: {txid}");
         }
         WalletCommands::Balance { addresses, raw } => {
-            let balance = WalletProvider::get_balance(system.provider(), addresses).await?;
+            let resolved_addresses = if let Some(addrs) = addresses {
+                let mut resolved = Vec::new();
+                for addr in addrs {
+                    resolved.push(system.provider().resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+            let balance = WalletProvider::get_balance(system.provider(), resolved_addresses).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&balance)?);
             } else {
@@ -792,7 +801,12 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
             }
         }
         WalletCommands::History { count, address, raw } => {
-            let history = system.provider().get_history(count, address).await?;
+            let resolved_address = if let Some(addr) = address {
+                Some(system.provider().resolve_all_identifiers(&addr).await?)
+            } else {
+                None
+            };
+            let history = system.provider().get_history(count, resolved_address).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&history)?);
             } else {
@@ -4255,7 +4269,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
     let provider = system.provider_mut();
 
     match command {
-        Brc20Prog::DeployContract { foundry_json_path, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
+        Brc20Prog::DeployContract { foundry_json_path, from, change, fee_rate, raw, trace, mine, auto_confirm, no_activation } => {
             let contract_data = parse_foundry_json(&foundry_json_path)?;
             let bytecode = extract_deployment_bytecode(&contract_data)?;
 
@@ -4272,7 +4286,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             } else {
                 None
             };
-            
+
             let resolved_change = if let Some(change_addr) = change {
                 Some(provider.resolve_all_identifiers(&change_addr).await?)
             } else {
@@ -4288,6 +4302,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 trace_enabled: trace,
                 mine_enabled: mine,
                 auto_confirm: auto_confirm,
+                use_activation: !no_activation, // Default is true (3-tx pattern), false with --no-activation
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4326,7 +4341,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             } else {
                 None
             };
-            
+
             let resolved_change = if let Some(change_addr) = change {
                 Some(provider.resolve_all_identifiers(&change_addr).await?)
             } else {
@@ -4342,6 +4357,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 trace_enabled: trace,
                 mine_enabled: mine,
                 auto_confirm: auto_confirm,
+                use_activation: false, // Activation not needed for contract calls
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);

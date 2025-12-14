@@ -104,6 +104,7 @@ impl<'a> Brc20ProgWrapBtcExecutor<'a> {
             trace_enabled: params.trace_enabled,
             mine_enabled: params.mine_enabled,
             auto_confirm: params.auto_confirm,
+            use_activation: false, // Use 2-tx pattern for wrap-btc
         };
 
         let mut brc20_executor = Brc20ProgExecutor::new(self.provider);

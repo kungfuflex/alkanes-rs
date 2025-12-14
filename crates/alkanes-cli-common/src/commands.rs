@@ -358,6 +358,8 @@ pub enum WalletCommands {
     Sync,
     /// Backup wallet
     Backup,
+    /// Get the mnemonic for the wallet
+    Mnemonic,
     /// List address identifiers
     ListIdentifiers,
 }
