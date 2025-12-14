@@ -124,6 +124,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: SubfrostCommands,
     },
+    /// ESPO indexer operations (alkanes balance indexer with PostgreSQL backend)
+    Espo {
+        #[command(subcommand)]
+        command: EspoCommands,
+    },
 }
 
 impl From<RunestoneCommands> for Commands {
@@ -1291,4 +1296,80 @@ pub enum SubfrostCommands {
         #[arg(long)]
         raw: bool,
     },
+}
+
+/// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum EspoCommands {
+    /// Get current ESPO indexer height
+    Height {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkanes balances for an address
+    Balances {
+        /// Address to query balances for
+        address: String,
+        /// Include outpoint details in response
+        #[arg(long)]
+        include_outpoints: bool,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get outpoints containing alkanes for an address
+    Outpoints {
+        /// Address to query outpoints for
+        address: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkanes balances at a specific outpoint
+    Outpoint {
+        /// Outpoint (format: txid:vout)
+        outpoint: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get holders of an alkane token
+    Holders {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u64,
+        /// Items per page (default: 100)
+        #[arg(long, default_value = "100")]
+        limit: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get holder count for an alkane
+    HoldersCount {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get storage keys for an alkane contract
+    Keys {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u64,
+        /// Items per page (default: 100)
+        #[arg(long, default_value = "100")]
+        limit: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Ping the ESPO server
+    Ping,
 }

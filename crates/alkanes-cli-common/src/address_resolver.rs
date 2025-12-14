@@ -449,7 +449,7 @@ mod standalone_impls {
     use crate::traits::{
         JsonRpcProvider, StorageProvider, CryptoProvider, TimeProvider, LogProvider,
         WalletProvider, BitcoinRpcProvider, MetashrewRpcProvider, MetashrewProvider,
-        EsploraProvider, RunestoneProvider, AlkanesProvider, MonitorProvider, 
+        EsploraProvider, EspoProvider, RunestoneProvider, AlkanesProvider, MonitorProvider,
         KeystoreProvider, OrdProvider, SendParams, UtxoInfo, TransactionInfo,
         FeeEstimate, FeeRates, WalletBalance, WalletConfig, WalletInfo, AddressInfo,
         BlockEvent, KeystoreAddress, KeystoreInfo,
@@ -861,6 +861,35 @@ impl EsploraProvider for StandaloneAddressResolver {
     }
     async fn get_fee_estimates(&self) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Esplora API".to_string()))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait(?Send)]
+impl EspoProvider for StandaloneAddressResolver {
+    async fn get_espo_height(&self) -> Result<u64> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_address_balances(&self, _address: &str, _include_outpoints: bool) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_address_outpoints(&self, _address: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_outpoint_balances(&self, _outpoint: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_holders(&self, _alkane_id: &str, _page: u64, _limit: u64) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_holders_count(&self, _alkane_id: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_keys(&self, _alkane_id: &str, _page: u64, _limit: u64) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn ping(&self) -> Result<String> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
     }
 }
 

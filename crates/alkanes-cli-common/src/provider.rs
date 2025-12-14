@@ -214,6 +214,7 @@ impl ConcreteProvider {
             metashrew_rpc_url: Some(metashrew_rpc_url),
             brc20_prog_rpc_url,
             data_api_url: None,
+            espo_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers,
@@ -281,6 +282,7 @@ impl ConcreteProvider {
             metashrew_rpc_url: Some(metashrew_rpc_url),
             brc20_prog_rpc_url,
             data_api_url: None,
+            espo_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers,
@@ -4562,5 +4564,104 @@ impl LuaScriptExecutor for ConcreteProvider {
         args: Vec<JsonValue>,
     ) -> Result<JsonValue> {
         self.lua_evalscript_internal(script_content, args).await
+    }
+}
+
+// Implement EspoProvider for ConcreteProvider
+// Note: espo-pg uses object parameters {"key": "value"} rather than array parameters
+#[async_trait(?Send)]
+impl EspoProvider for ConcreteProvider {
+    async fn get_espo_height(&self) -> Result<u64> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling get_espo_height at {}", target.url);
+
+        let result = self.call(&target.url, "get_espo_height", json!({}), 1).await?;
+
+        // Handle format: {"height": N}
+        if let Some(height) = result.get("height").and_then(|v| v.as_u64()) {
+            return Ok(height);
+        }
+        // Handle direct number response
+        if let Some(height) = result.as_u64() {
+            return Ok(height);
+        }
+
+        Err(AlkanesError::RpcError(format!("Invalid get_espo_height response: {:?}", result)))
+    }
+
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling get_address_balances for {} (include_outpoints={}) at {}",
+            address, include_outpoints, target.url);
+
+        self.call(&target.url, "get_address_balances", json!({
+            "address": address,
+            "include_outpoints": include_outpoints
+        }), 1).await
+    }
+
+    async fn get_address_outpoints(&self, address: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling get_address_outpoints for {} at {}", address, target.url);
+
+        self.call(&target.url, "get_address_outpoints", json!({
+            "address": address
+        }), 1).await
+    }
+
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling get_outpoint_balances for {} at {}", outpoint, target.url);
+
+        self.call(&target.url, "get_outpoint_balances", json!({
+            "outpoint": outpoint
+        }), 1).await
+    }
+
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling get_holders for {} (page={}, limit={}) at {}",
+            alkane_id, page, limit, target.url);
+
+        self.call(&target.url, "get_holders", json!({
+            "alkane": alkane_id,
+            "page": page,
+            "limit": limit
+        }), 1).await
+    }
+
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling get_holders_count for {} at {}", alkane_id, target.url);
+
+        self.call(&target.url, "get_holders_count", json!({
+            "alkane": alkane_id
+        }), 1).await
+    }
+
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling get_keys for {} (page={}, limit={}) at {}",
+            alkane_id, page, limit, target.url);
+
+        self.call(&target.url, "get_keys", json!({
+            "alkane": alkane_id,
+            "page": page,
+            "limit": limit,
+            "try_decode_utf8": true
+        }), 1).await
+    }
+
+    async fn ping(&self) -> Result<String> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ping at {}", target.url);
+
+        let result = self.call(&target.url, "ping", json!({}), 1).await?;
+
+        if let Some(s) = result.as_str() {
+            return Ok(s.to_string());
+        }
+
+        Ok(result.to_string())
     }
 }

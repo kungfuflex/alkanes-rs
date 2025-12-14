@@ -19,6 +19,7 @@ pub async fn build_provider(
         titan_api_url: None,
         data_api_url: None,  // Not used by indexer
         brc20_prog_rpc_url: None,  // Not used by indexer
+        espo_rpc_url: None,  // Not used by indexer
         subfrost_api_key: None,  // Not needed for indexer
         provider: network_provider,
         timeout_seconds: 600,

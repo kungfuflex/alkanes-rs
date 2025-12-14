@@ -129,6 +129,10 @@ pub struct RpcConfig {
     #[arg(long)]
     pub data_api_url: Option<String>,
 
+    /// ESPO RPC URL (for alkanes balance indexer, defaults to jsonrpc_url + /espo)
+    #[arg(long)]
+    pub espo_rpc_url: Option<String>,
+
     /// Subfrost API Key (optional, can also be set via SUBFROST_API_KEY environment variable)
     #[arg(long)]
     pub subfrost_api_key: Option<String>,
@@ -335,6 +339,38 @@ impl RpcConfig {
         }
     }
     
+    /// Get default ESPO RPC URL for the network
+    /// Derives from jsonrpc_url with /espo path appended
+    pub fn get_default_espo_rpc_url(&self) -> Option<String> {
+        self.get_effective_jsonrpc_url()
+            .or_else(|| Some(self.get_default_jsonrpc_url()))
+            .map(|url| {
+                let base = url.trim_end_matches('/');
+                format!("{}/espo", base)
+            })
+    }
+
+    /// Get the RPC target for ESPO operations (alkanes balance indexer)
+    /// Priority: espo_rpc_url > jsonrpc_url + /espo > default jsonrpc + /espo
+    pub fn get_espo_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.espo_rpc_url {
+            RpcTarget {
+                url: url.clone(),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        } else if let Some(url) = self.get_default_espo_rpc_url() {
+            RpcTarget {
+                url,
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        } else {
+            RpcTarget {
+                url: format!("{}/espo", self.get_default_jsonrpc_url()),
+                backend_type: RpcBackendType::JsonRpc,
+            }
+        }
+    }
+
     /// Get the RPC target for Alkanes operations (view functions, protorunes, etc.)
     /// Priority: titan_api_url (REST) > jsonrpc_url (JSONRPC) > default jsonrpc
     pub fn get_alkanes_rpc_target(&self) -> RpcTarget {
@@ -388,6 +424,7 @@ impl Default for RpcConfig {
             metashrew_rpc_url: Some("http://localhost:18888".to_string()),
             brc20_prog_rpc_url: None,
             data_api_url: None,
+            espo_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers: Vec::new(),

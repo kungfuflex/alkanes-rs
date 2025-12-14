@@ -663,6 +663,57 @@ pub trait EsploraProvider {
     async fn get_fee_estimates(&self) -> Result<JsonValue>;
 }
 
+/// Trait for ESPO indexer operations (alkanes balance indexer with PostgreSQL backend)
+///
+/// Method names and parameters match the espo-pg JSON-RPC API:
+/// - `get_espo_height` - Returns current indexer height
+/// - `get_address_balances` - Returns alkane balances for an address
+/// - `get_address_outpoints` - Returns outpoints containing alkanes for an address
+/// - `get_outpoint_balances` - Returns alkane balances at a specific outpoint
+/// - `get_holders` - Returns holders of an alkane token with pagination
+/// - `get_holders_count` - Returns total holder count for an alkane
+/// - `get_keys` - Returns storage keys for an alkane contract with pagination
+#[async_trait(?Send)]
+pub trait EspoProvider {
+    /// Get current ESPO indexer height
+    /// Returns: {"height": N}
+    async fn get_espo_height(&self) -> Result<u64>;
+
+    /// Get alkanes balances for an address
+    /// Params: {"address": "...", "include_outpoints": bool}
+    /// Returns: {"ok": true, "address": "...", "balances": {"block:tx": "amount", ...}, "outpoints": [...]}
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<JsonValue>;
+
+    /// Get outpoints containing alkanes for an address
+    /// Params: {"address": "..."}
+    /// Returns: {"ok": true, "address": "...", "outpoints": [{"outpoint": "...", "entries": [...]}]}
+    async fn get_address_outpoints(&self, address: &str) -> Result<JsonValue>;
+
+    /// Get alkanes balances at a specific outpoint
+    /// Params: {"outpoint": "txid:vout"}
+    /// Returns: {"ok": true, "outpoint": "...", "items": [{"outpoint": "...", "entries": [...]}]}
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<JsonValue>;
+
+    /// Get holders of an alkane token with pagination
+    /// Params: {"alkane": "block:tx", "page": N, "limit": N}
+    /// Returns: {"ok": true, "alkane": "...", "page": N, "limit": N, "total": N, "has_more": bool, "items": [...]}
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue>;
+
+    /// Get holder count for an alkane
+    /// Params: {"alkane": "block:tx"}
+    /// Returns: {"ok": true, "count": N}
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<JsonValue>;
+
+    /// Get storage keys for an alkane contract with pagination
+    /// Params: {"alkane": "block:tx", "page": N, "limit": N, "try_decode_utf8": bool}
+    /// Returns: {"ok": true, "alkane": "...", "page": N, "limit": N, "total": N, "has_more": bool, "items": {...}}
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue>;
+
+    /// Ping the ESPO server
+    /// Returns: "pong"
+    async fn ping(&self) -> Result<String>;
+}
+
 /// Trait for runestone operations
 #[async_trait(?Send)]
 pub trait RunestoneProvider {
@@ -815,6 +866,7 @@ pub trait DeezelProvider:
     MetashrewRpcProvider +
     MetashrewProvider +
     EsploraProvider +
+    EspoProvider +
     RunestoneProvider +
     AlkanesProvider +
     MonitorProvider +
@@ -1308,6 +1360,34 @@ impl<T: DeezelProvider + ?Sized> EsploraProvider for Box<T> {
 }
 
 #[async_trait(?Send)]
+impl<T: DeezelProvider + ?Sized> EspoProvider for Box<T> {
+    async fn get_espo_height(&self) -> Result<u64> {
+        (**self).get_espo_height().await
+    }
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<serde_json::Value> {
+        (**self).get_address_balances(address, include_outpoints).await
+    }
+    async fn get_address_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        (**self).get_address_outpoints(address).await
+    }
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
+        (**self).get_outpoint_balances(outpoint).await
+    }
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        (**self).get_holders(alkane_id, page, limit).await
+    }
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        (**self).get_holders_count(alkane_id).await
+    }
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        (**self).get_keys(alkane_id, page, limit).await
+    }
+    async fn ping(&self) -> Result<String> {
+        (**self).ping().await
+    }
+}
+
+#[async_trait(?Send)]
 impl<T: DeezelProvider + ?Sized> RunestoneProvider for Box<T> {
    async fn decode_runestone(&self, tx: &bitcoin::Transaction) -> Result<serde_json::Value> {
        (**self).decode_runestone(tx).await
@@ -1603,6 +1683,14 @@ pub trait SystemEsplora {
    async fn execute_esplora_command(&self, command: crate::commands::EsploraCommands) -> Result<()>;
 }
 
+/// Trait for system-level ESPO operations
+#[cfg(feature = "std")]
+#[async_trait(?Send)]
+pub trait SystemEspo {
+   /// Execute an espo command
+   async fn execute_espo_command(&self, command: crate::commands::EspoCommands) -> Result<()>;
+}
+
 /// Trait for system-level PGP operations
 #[cfg(feature = "std")]
 
@@ -1618,6 +1706,7 @@ pub trait System:
    SystemProtorunes +
    SystemMonitor +
    SystemEsplora +
+   SystemEspo +
    Send + Sync
 {
    /// Get the underlying provider

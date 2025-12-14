@@ -1704,6 +1704,41 @@ impl KeystoreProvider for BrowserWalletProvider {
    }
 
 #[async_trait(?Send)]
+impl EspoProvider for BrowserWalletProvider {
+    async fn get_espo_height(&self) -> Result<u64> {
+        self.web_provider.get_espo_height().await
+    }
+
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<serde_json::Value> {
+        self.web_provider.get_address_balances(address, include_outpoints).await
+    }
+
+    async fn get_address_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_address_outpoints(address).await
+    }
+
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_outpoint_balances(outpoint).await
+    }
+
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        self.web_provider.get_holders(alkane_id, page, limit).await
+    }
+
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_holders_count(alkane_id).await
+    }
+
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        self.web_provider.get_keys(alkane_id, page, limit).await
+    }
+
+    async fn ping(&self) -> Result<String> {
+        self.web_provider.ping().await
+    }
+}
+
+#[async_trait(?Send)]
 impl DeezelProvider for BrowserWalletProvider {
     fn provider_name(&self) -> &str {
         "browser_wallet"

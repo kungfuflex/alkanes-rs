@@ -190,6 +190,7 @@ impl WebProvider {
             metashrew_rpc_url: None,
             brc20_prog_rpc_url: None,
             data_api_url: None,
+            espo_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers: Vec::new(),
@@ -2625,6 +2626,7 @@ impl WebProvider {
             metashrew_rpc_url: Some(params.metashrew_rpc_url.clone()),
             brc20_prog_rpc_url: None,
             data_api_url: None,
+            espo_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers: Vec::new(),
@@ -2655,6 +2657,7 @@ impl WebProvider {
            metashrew_rpc_url: Some(params.metashrew_rpc_url.clone()),
            brc20_prog_rpc_url: None,
            data_api_url: None,
+           espo_rpc_url: None,
            subfrost_api_key: None,
            timeout_seconds: 600,
            jsonrpc_headers: Vec::new(),
@@ -2695,6 +2698,7 @@ impl WebProvider {
             metashrew_rpc_url: Some(url.to_string()),
             brc20_prog_rpc_url: None,
             data_api_url: None,
+            espo_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers: Vec::new(),
@@ -5143,5 +5147,79 @@ impl DeezelProvider for WebProvider {
             }
             _ => Err(AlkanesError::Other("Unexpected execution state".to_string())),
         }
+    }
+}
+
+#[async_trait(?Send)]
+impl alkanes_cli_common::traits::EspoProvider for WebProvider {
+    async fn get_espo_height(&self) -> Result<u64> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let result = self.call(&target.url, "get_espo_height", serde_json::json!({}), 1).await?;
+        // Handle {"height": N} format
+        if let Some(height) = result.get("height").and_then(|v| v.as_u64()) {
+            return Ok(height);
+        }
+        // Handle direct number response
+        if let Some(height) = result.as_u64() {
+            return Ok(height);
+        }
+        Err(AlkanesError::RpcError(format!("Invalid get_espo_height response: {:?}", result)))
+    }
+
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "get_address_balances", serde_json::json!({
+            "address": address,
+            "include_outpoints": include_outpoints
+        }), 1).await
+    }
+
+    async fn get_address_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "get_address_outpoints", serde_json::json!({
+            "address": address
+        }), 1).await
+    }
+
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "get_outpoint_balances", serde_json::json!({
+            "outpoint": outpoint
+        }), 1).await
+    }
+
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "get_holders", serde_json::json!({
+            "alkane": alkane_id,
+            "page": page,
+            "limit": limit
+        }), 1).await
+    }
+
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "get_holders_count", serde_json::json!({
+            "alkane": alkane_id
+        }), 1).await
+    }
+
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "get_keys", serde_json::json!({
+            "alkane": alkane_id,
+            "page": page,
+            "limit": limit,
+            "try_decode_utf8": true
+        }), 1).await
+    }
+
+    async fn ping(&self) -> Result<String> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let result = self.call(&target.url, "ping", serde_json::json!({}), 1).await?;
+        if let Some(s) = result.as_str() {
+            return Ok(s.to_string());
+        }
+        Ok(result.to_string())
     }
 }

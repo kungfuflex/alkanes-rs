@@ -719,6 +719,34 @@ impl EsploraProvider for SystemAlkanes {
 }
 
 #[async_trait(?Send)]
+impl EspoProvider for SystemAlkanes {
+    async fn get_espo_height(&self) -> Result<u64> {
+        self.provider.get_espo_height().await
+    }
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_address_balances(address, include_outpoints).await
+    }
+    async fn get_address_outpoints(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_address_outpoints(address).await
+    }
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_outpoint_balances(outpoint).await
+    }
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_holders(alkane_id, page, limit).await
+    }
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_holders_count(alkane_id).await
+    }
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_keys(alkane_id, page, limit).await
+    }
+    async fn ping(&self) -> Result<String> {
+        self.provider.ping().await
+    }
+}
+
+#[async_trait(?Send)]
 impl RunestoneProvider for SystemAlkanes {
     async fn decode_runestone(&self, tx: &bitcoin::Transaction) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.decode_runestone(tx).await
@@ -3709,6 +3737,184 @@ impl SystemOrd for SystemAlkanes {
                     println!("Transaction {}:
 {}", txid, serde_json::to_string_pretty(&result)?);
                 }
+                Ok(())
+            },
+        };
+        res.map_err(|e| AlkanesError::Wallet(e.to_string()))
+    }
+}
+
+#[async_trait(?Send)]
+impl SystemEspo for SystemAlkanes {
+    async fn execute_espo_command(&self, command: EspoCommands) -> alkanes_cli_common::Result<()> {
+        let provider = &self.provider;
+        let res: anyhow::Result<()> = match command {
+            EspoCommands::Height { raw } => {
+                let height = provider.get_espo_height().await?;
+                if raw {
+                    println!("{}", height);
+                } else {
+                    println!("📊 ESPO Indexer Height: {}", height);
+                }
+                Ok(())
+            },
+            EspoCommands::Balances { address, include_outpoints, raw } => {
+                let result = provider.get_address_balances(&address, include_outpoints).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("💰 Alkanes Balances for {}:", address);
+                    // Pretty print the balances
+                    if let Some(balances) = result.get("balances").and_then(|v| v.as_object()) {
+                        if balances.is_empty() {
+                            println!("  (no balances)");
+                        } else {
+                            for (alkane, amount) in balances {
+                                println!("  {} : {}", alkane, amount);
+                            }
+                        }
+                    }
+                    if include_outpoints {
+                        if let Some(outpoints) = result.get("outpoints").and_then(|v| v.as_array()) {
+                            println!("\n📍 Outpoints:");
+                            for op in outpoints {
+                                if let Some(outpoint) = op.get("outpoint").and_then(|v| v.as_str()) {
+                                    println!("  {}", outpoint);
+                                    if let Some(entries) = op.get("entries").and_then(|v| v.as_array()) {
+                                        for entry in entries {
+                                            let alkane = entry.get("alkane").and_then(|v| v.as_str()).unwrap_or("?");
+                                            let amount = entry.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
+                                            println!("    {} : {}", alkane, amount);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::Outpoints { address, raw } => {
+                let result = provider.get_address_outpoints(&address).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("📍 Outpoints with Alkanes for {}:", address);
+                    if let Some(outpoints) = result.get("outpoints").and_then(|v| v.as_array()) {
+                        if outpoints.is_empty() {
+                            println!("  (no outpoints)");
+                        } else {
+                            for op in outpoints {
+                                if let Some(outpoint) = op.get("outpoint").and_then(|v| v.as_str()) {
+                                    println!("  {}", outpoint);
+                                    if let Some(entries) = op.get("entries").and_then(|v| v.as_array()) {
+                                        for entry in entries {
+                                            let alkane = entry.get("alkane").and_then(|v| v.as_str()).unwrap_or("?");
+                                            let amount = entry.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
+                                            println!("    {} : {}", alkane, amount);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::Outpoint { outpoint, raw } => {
+                let result = provider.get_outpoint_balances(&outpoint).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("📦 Alkanes at {}:", outpoint);
+                    if let Some(items) = result.get("items").and_then(|v| v.as_array()) {
+                        for item in items {
+                            if let Some(entries) = item.get("entries").and_then(|v| v.as_array()) {
+                                if entries.is_empty() {
+                                    println!("  (no alkanes)");
+                                } else {
+                                    for entry in entries {
+                                        let alkane = entry.get("alkane").and_then(|v| v.as_str()).unwrap_or("?");
+                                        let amount = entry.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
+                                        println!("  {} : {}", alkane, amount);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::Holders { alkane_id, page, limit, raw } => {
+                let result = provider.get_holders(&alkane_id, page, limit).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let has_more = result.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false);
+                    println!("👥 Holders of {} (page {}, showing {} of {}):", alkane_id, page, limit, total);
+                    if let Some(items) = result.get("items").and_then(|v| v.as_array()) {
+                        if items.is_empty() {
+                            println!("  (no holders)");
+                        } else {
+                            for holder in items {
+                                let address = holder.get("address").and_then(|v| v.as_str()).unwrap_or("?");
+                                let amount = holder.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
+                                println!("  {} : {}", address, amount);
+                            }
+                        }
+                    }
+                    if has_more {
+                        println!("\n  (more results available, use --page {})", page + 1);
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::HoldersCount { alkane_id, raw } => {
+                let result = provider.get_holders_count(&alkane_id).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    let count = result.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                    println!("👥 {} has {} holders", alkane_id, count);
+                }
+                Ok(())
+            },
+            EspoCommands::Keys { alkane_id, page, limit, raw } => {
+                let result = provider.get_keys(&alkane_id, page, limit).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let has_more = result.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false);
+                    println!("🔑 Storage Keys for {} (page {}, showing {} of {}):", alkane_id, page, limit, total);
+                    if let Some(items) = result.get("items").and_then(|v| v.as_object()) {
+                        if items.is_empty() {
+                            println!("  (no keys)");
+                        } else {
+                            for (key, value) in items {
+                                println!("  {}:", key);
+                                if let Some(val_hex) = value.get("value_hex").and_then(|v| v.as_str()) {
+                                    println!("    hex: {}", val_hex);
+                                }
+                                if let Some(val_str) = value.get("value_str").and_then(|v| v.as_str()) {
+                                    println!("    str: {}", val_str);
+                                }
+                                if let Some(val_u128) = value.get("value_u128").and_then(|v| v.as_str()) {
+                                    println!("    u128: {}", val_u128);
+                                }
+                            }
+                        }
+                    }
+                    if has_more {
+                        println!("\n  (more results available, use --page {})", page + 1);
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::Ping => {
+                let result = provider.ping().await?;
+                println!("🏓 {}", result);
                 Ok(())
             },
         };

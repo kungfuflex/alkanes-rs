@@ -121,6 +121,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
             unreachable!("OPI commands should be handled in main()")
         }
         Commands::Subfrost(cmd) => execute_subfrost_command(system.provider(), cmd).await,
+        Commands::Espo(cmd) => execute_espo_command(system.provider(), cmd.into()).await,
     }
 }
 
@@ -5101,5 +5102,146 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             Ok(())
         }
     }
+}
+
+async fn execute_espo_command(
+    provider: &dyn DeezelProvider,
+    command: alkanes_cli_common::commands::EspoCommands,
+) -> anyhow::Result<()> {
+    use alkanes_cli_common::commands::EspoCommands;
+    use alkanes_cli_common::traits::EspoProvider;
+
+    match command {
+        EspoCommands::Height { raw } => {
+            let height = provider.get_espo_height().await?;
+            if raw {
+                println!("{}", height);
+            } else {
+                println!("ESPO Indexer Height: {}", height);
+            }
+        }
+        EspoCommands::Balances { address, include_outpoints, raw } => {
+            let result = provider.get_address_balances(&address, include_outpoints).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Alkanes Balances for {}:", address);
+                if let Some(balances) = result.get("balances").and_then(|v| v.as_object()) {
+                    for (alkane_id, balance) in balances {
+                        println!("  {}: {}", alkane_id, balance);
+                    }
+                    if balances.is_empty() {
+                        println!("  (no balances)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::Outpoints { address, raw } => {
+            let result = provider.get_address_outpoints(&address).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Outpoints with Alkanes for {}:", address);
+                if let Some(outpoints) = result.get("outpoints").and_then(|v| v.as_array()) {
+                    for outpoint in outpoints {
+                        if let Some(op_str) = outpoint.as_str() {
+                            println!("  {}", op_str);
+                        } else {
+                            println!("  {}", outpoint);
+                        }
+                    }
+                    if outpoints.is_empty() {
+                        println!("  (no outpoints)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::Outpoint { outpoint, raw } => {
+            let result = provider.get_outpoint_balances(&outpoint).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Alkanes at {}:", outpoint);
+                if let Some(balances) = result.get("balances").and_then(|v| v.as_object()) {
+                    for (alkane_id, balance) in balances {
+                        println!("  {}: {}", alkane_id, balance);
+                    }
+                    if balances.is_empty() {
+                        println!("  (no alkanes)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::Holders { alkane_id, page, limit, raw } => {
+            let result = provider.get_holders(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Holders of {} (page {}, limit {}):", alkane_id, page, limit);
+                if let Some(holders) = result.get("holders").and_then(|v| v.as_array()) {
+                    for holder in holders {
+                        if let Some(obj) = holder.as_object() {
+                            let addr = obj.get("address").and_then(|v| v.as_str()).unwrap_or("?");
+                            let default_balance = serde_json::json!("?");
+                            let balance = obj.get("balance").unwrap_or(&default_balance);
+                            println!("  {}: {}", addr, balance);
+                        } else {
+                            println!("  {}", holder);
+                        }
+                    }
+                    if holders.is_empty() {
+                        println!("  (no holders)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::HoldersCount { alkane_id, raw } => {
+            let result = provider.get_holders_count(&alkane_id).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                if let Some(count) = result.get("count").and_then(|v| v.as_u64()) {
+                    println!("Holder count for {}: {}", alkane_id, count);
+                } else {
+                    println!("Holder count for {}: {}", alkane_id, result);
+                }
+            }
+        }
+        EspoCommands::Keys { alkane_id, page, limit, raw } => {
+            let result = provider.get_keys(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Storage keys for {} (page {}, limit {}):", alkane_id, page, limit);
+                if let Some(keys) = result.get("keys").and_then(|v| v.as_array()) {
+                    for key in keys {
+                        if let Some(key_str) = key.as_str() {
+                            println!("  {}", key_str);
+                        } else {
+                            println!("  {}", key);
+                        }
+                    }
+                    if keys.is_empty() {
+                        println!("  (no keys)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::Ping => {
+            let result = provider.ping().await?;
+            println!("{}", result);
+        }
+    }
+    Ok(())
 }
 

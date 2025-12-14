@@ -83,6 +83,9 @@ pub struct DeezelCommands {
     /// Format: "Header-Name: Header-Value" (e.g., "Host: regtest.subfrost.io")
     #[arg(long = "opi-header", value_name = "HEADER")]
     pub opi_headers: Vec<String>,
+    /// ESPO RPC URL (for alkanes balance indexer, defaults to jsonrpc_url + /espo)
+    #[arg(long)]
+    pub espo_rpc_url: Option<String>,
     /// Network provider
     #[arg(short, long, default_value = "regtest")]
     pub provider: String,
@@ -133,6 +136,9 @@ pub enum Commands {
     /// Subfrost operations (frBTC unwrap utilities)
     #[command(subcommand)]
     Subfrost(SubfrostCommands),
+    /// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
+    #[command(subcommand)]
+    Espo(EspoCommands),
 }
 
 /// Lua script subcommands
@@ -2039,6 +2045,88 @@ pub enum SubfrostCommands {
     },
 }
 
+/// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum EspoCommands {
+    /// Get current ESPO indexer height
+    Height {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkanes balances for an address
+    Balances {
+        /// Address to query balances for
+        address: String,
+        /// Include outpoint details in response
+        #[arg(long)]
+        include_outpoints: bool,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get outpoints containing alkanes for an address
+    Outpoints {
+        /// Address to query outpoints for
+        address: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkanes balances at a specific outpoint
+    Outpoint {
+        /// Outpoint (format: txid:vout)
+        outpoint: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get holders of an alkane token
+    Holders {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u64,
+        /// Items per page (default: 100)
+        #[arg(long, default_value = "100")]
+        limit: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get holder count for an alkane
+    HoldersCount {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get storage keys for an alkane contract
+    Keys {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u64,
+        /// Items per page (default: 100)
+        #[arg(long, default_value = "100")]
+        limit: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Ping the ESPO server
+    Ping,
+}
+
+impl From<EspoCommands> for alkanes_cli_common::commands::EspoCommands {
+    fn from(cmd: EspoCommands) -> Self {
+        serde_json::from_value(serde_json::to_value(cmd).unwrap()).unwrap()
+    }
+}
+
 impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
     fn from(args: &DeezelCommands) -> Self {
         alkanes_cli_common::commands::Args {
@@ -2060,6 +2148,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 brc20_prog_rpc_url: args.brc20_prog_rpc_url.clone(),
                 subfrost_api_key: args.subfrost_api_key.clone(),
                 data_api_url: None,  // Not used in deezel commands
+                espo_rpc_url: args.espo_rpc_url.clone(),
                 timeout_seconds: 600,
                 jsonrpc_headers: args.jsonrpc_headers.clone(),
             },
