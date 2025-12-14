@@ -4357,7 +4357,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 trace_enabled: trace,
                 mine_enabled: mine,
                 auto_confirm: auto_confirm,
-                use_activation: false, // Activation not needed for contract calls
+                use_activation: true, // Use 3-tx pattern (required for brc20-prog indexing)
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
