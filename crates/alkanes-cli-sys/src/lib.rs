@@ -3989,6 +3989,98 @@ impl SystemEspo for SystemAlkanes {
                 println!("🏓 {}", result);
                 Ok(())
             },
+            EspoCommands::AmmdataPing => {
+                let result = provider.ammdata_ping().await?;
+                println!("🏓 {}", result);
+                Ok(())
+            },
+            EspoCommands::Candles { pool, timeframe, side, limit, page, raw } => {
+                let result = provider.get_candles(
+                    &pool,
+                    timeframe.as_deref(),
+                    side.as_deref(),
+                    limit,
+                    page,
+                ).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("📊 Candles for pool {}:", pool);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::Trades { pool, limit, page, side, filter_side, sort, dir, raw } => {
+                let result = provider.get_trades(
+                    &pool,
+                    limit,
+                    page,
+                    side.as_deref(),
+                    filter_side.as_deref(),
+                    sort.as_deref(),
+                    dir.as_deref(),
+                ).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("💱 Trades for pool {}:", pool);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::Pools { limit, page, raw } => {
+                let result = provider.get_pools(limit, page).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("🏊 All pools:");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::FindBestSwapPath {
+                token_in,
+                token_out,
+                mode,
+                amount_in,
+                amount_out,
+                amount_out_min,
+                amount_in_max,
+                available_in,
+                fee_bps,
+                max_hops,
+                raw
+            } => {
+                let result = provider.find_best_swap_path(
+                    &token_in,
+                    &token_out,
+                    mode.as_deref(),
+                    amount_in.as_deref(),
+                    amount_out.as_deref(),
+                    amount_out_min.as_deref(),
+                    amount_in_max.as_deref(),
+                    available_in.as_deref(),
+                    fee_bps,
+                    max_hops,
+                ).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("🔀 Best swap path from {} to {}:", token_in, token_out);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::GetBestMevSwap { token, fee_bps, max_hops, raw } => {
+                let result = provider.get_best_mev_swap(&token, fee_bps, max_hops).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("🤖 Best MEV swap for token {}:", token);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
         };
         res.map_err(|e| AlkanesError::Wallet(e.to_string()))
     }

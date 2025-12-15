@@ -4591,10 +4591,10 @@ impl EspoProvider for ConcreteProvider {
 
     async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<JsonValue> {
         let target = self.rpc_config.get_espo_rpc_target();
-        log::info!("[EspoProvider] Calling get_address_balances for {} (include_outpoints={}) at {}",
+        log::info!("[EspoProvider] Calling essentials.get_address_balances for {} (include_outpoints={}) at {}",
             address, include_outpoints, target.url);
 
-        self.call(&target.url, "get_address_balances", json!({
+        self.call(&target.url, "essentials.get_address_balances", json!({
             "address": address,
             "include_outpoints": include_outpoints
         }), 1).await
@@ -4602,28 +4602,28 @@ impl EspoProvider for ConcreteProvider {
 
     async fn get_address_outpoints(&self, address: &str) -> Result<JsonValue> {
         let target = self.rpc_config.get_espo_rpc_target();
-        log::info!("[EspoProvider] Calling get_address_outpoints for {} at {}", address, target.url);
+        log::info!("[EspoProvider] Calling essentials.get_address_outpoints for {} at {}", address, target.url);
 
-        self.call(&target.url, "get_address_outpoints", json!({
+        self.call(&target.url, "essentials.get_address_outpoints", json!({
             "address": address
         }), 1).await
     }
 
     async fn get_outpoint_balances(&self, outpoint: &str) -> Result<JsonValue> {
         let target = self.rpc_config.get_espo_rpc_target();
-        log::info!("[EspoProvider] Calling get_outpoint_balances for {} at {}", outpoint, target.url);
+        log::info!("[EspoProvider] Calling essentials.get_outpoint_balances for {} at {}", outpoint, target.url);
 
-        self.call(&target.url, "get_outpoint_balances", json!({
+        self.call(&target.url, "essentials.get_outpoint_balances", json!({
             "outpoint": outpoint
         }), 1).await
     }
 
     async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue> {
         let target = self.rpc_config.get_espo_rpc_target();
-        log::info!("[EspoProvider] Calling get_holders for {} (page={}, limit={}) at {}",
+        log::info!("[EspoProvider] Calling essentials.get_holders for {} (page={}, limit={}) at {}",
             alkane_id, page, limit, target.url);
 
-        self.call(&target.url, "get_holders", json!({
+        self.call(&target.url, "essentials.get_holders", json!({
             "alkane": alkane_id,
             "page": page,
             "limit": limit
@@ -4632,19 +4632,19 @@ impl EspoProvider for ConcreteProvider {
 
     async fn get_holders_count(&self, alkane_id: &str) -> Result<JsonValue> {
         let target = self.rpc_config.get_espo_rpc_target();
-        log::info!("[EspoProvider] Calling get_holders_count for {} at {}", alkane_id, target.url);
+        log::info!("[EspoProvider] Calling essentials.get_holders_count for {} at {}", alkane_id, target.url);
 
-        self.call(&target.url, "get_holders_count", json!({
+        self.call(&target.url, "essentials.get_holders_count", json!({
             "alkane": alkane_id
         }), 1).await
     }
 
     async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue> {
         let target = self.rpc_config.get_espo_rpc_target();
-        log::info!("[EspoProvider] Calling get_keys for {} (page={}, limit={}) at {}",
+        log::info!("[EspoProvider] Calling essentials.get_keys for {} (page={}, limit={}) at {}",
             alkane_id, page, limit, target.url);
 
-        self.call(&target.url, "get_keys", json!({
+        self.call(&target.url, "essentials.get_keys", json!({
             "alkane": alkane_id,
             "page": page,
             "limit": limit,
@@ -4654,9 +4654,9 @@ impl EspoProvider for ConcreteProvider {
 
     async fn ping(&self) -> Result<String> {
         let target = self.rpc_config.get_espo_rpc_target();
-        log::info!("[EspoProvider] Calling ping at {}", target.url);
+        log::info!("[EspoProvider] Calling essentials.ping at {}", target.url);
 
-        let result = self.call(&target.url, "ping", json!({}), 1).await?;
+        let result = self.call(&target.url, "essentials.ping", json!({}), 1).await?;
 
         if let Some(s) = result.as_str() {
             return Ok(s.to_string());

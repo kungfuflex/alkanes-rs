@@ -2122,6 +2122,114 @@ pub enum EspoCommands {
     },
     /// Ping the ESPO server
     Ping,
+    /// Ping the AMM Data module
+    AmmdataPing,
+    /// Get OHLCV candlestick data for a pool
+    Candles {
+        /// Pool ID (format: block:tx)
+        pool: String,
+        /// Timeframe (e.g., "10m", "1h", "1d", "1w", "1M")
+        #[arg(long)]
+        timeframe: Option<String>,
+        /// Side ("base" or "quote")
+        #[arg(long)]
+        side: Option<String>,
+        /// Items per page
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Page number
+        #[arg(long)]
+        page: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get trade history for a pool
+    Trades {
+        /// Pool ID (format: block:tx)
+        pool: String,
+        /// Items per page
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Page number
+        #[arg(long)]
+        page: Option<u64>,
+        /// Side ("base" or "quote")
+        #[arg(long)]
+        side: Option<String>,
+        /// Filter side ("buy", "sell", or "all")
+        #[arg(long)]
+        filter_side: Option<String>,
+        /// Sort field
+        #[arg(long)]
+        sort: Option<String>,
+        /// Direction ("asc" or "desc")
+        #[arg(long)]
+        dir: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all pools with pagination
+    Pools {
+        /// Items per page
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Page number
+        #[arg(long)]
+        page: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Find the best swap path between two tokens
+    FindBestSwapPath {
+        /// Input token (format: block:tx)
+        token_in: String,
+        /// Output token (format: block:tx)
+        token_out: String,
+        /// Mode ("exact_in", "exact_out", or "implicit")
+        #[arg(long)]
+        mode: Option<String>,
+        /// Amount in (as string to preserve precision)
+        #[arg(long)]
+        amount_in: Option<String>,
+        /// Amount out (as string to preserve precision)
+        #[arg(long)]
+        amount_out: Option<String>,
+        /// Minimum amount out (as string to preserve precision)
+        #[arg(long)]
+        amount_out_min: Option<String>,
+        /// Maximum amount in (as string to preserve precision)
+        #[arg(long)]
+        amount_in_max: Option<String>,
+        /// Available amount in (as string to preserve precision)
+        #[arg(long)]
+        available_in: Option<String>,
+        /// Fee in basis points
+        #[arg(long)]
+        fee_bps: Option<u64>,
+        /// Maximum number of hops
+        #[arg(long)]
+        max_hops: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Find the best MEV swap opportunity for a token
+    GetBestMevSwap {
+        /// Token (format: block:tx)
+        token: String,
+        /// Fee in basis points
+        #[arg(long)]
+        fee_bps: Option<u64>,
+        /// Maximum number of hops
+        #[arg(long)]
+        max_hops: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl From<EspoCommands> for alkanes_cli_common::commands::EspoCommands {
