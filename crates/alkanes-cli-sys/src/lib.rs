@@ -744,6 +744,61 @@ impl EspoProvider for SystemAlkanes {
     async fn ping(&self) -> Result<String> {
         self.provider.ping().await
     }
+    async fn ammdata_ping(&self) -> Result<String> {
+        self.provider.ammdata_ping().await
+    }
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_candles(pool, timeframe, side, limit, page).await
+    }
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_trades(pool, limit, page, side, filter_side, sort, dir).await
+    }
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_pools(limit, page).await
+    }
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.find_best_swap_path(token_in, token_out, mode, amount_in, amount_out, amount_out_min, amount_in_max, available_in, fee_bps, max_hops).await
+    }
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_best_mev_swap(token, fee_bps, max_hops).await
+    }
 }
 
 #[async_trait(?Send)]

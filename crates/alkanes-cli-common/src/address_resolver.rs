@@ -891,6 +891,61 @@ impl EspoProvider for StandaloneAddressResolver {
     async fn ping(&self) -> Result<String> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
     }
+    async fn ammdata_ping(&self) -> Result<String> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_candles(
+        &self,
+        _pool: &str,
+        _timeframe: Option<&str>,
+        _side: Option<&str>,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_trades(
+        &self,
+        _pool: &str,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+        _side: Option<&str>,
+        _filter_side: Option<&str>,
+        _sort: Option<&str>,
+        _dir: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_pools(
+        &self,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn find_best_swap_path(
+        &self,
+        _token_in: &str,
+        _token_out: &str,
+        _mode: Option<&str>,
+        _amount_in: Option<&str>,
+        _amount_out: Option<&str>,
+        _amount_out_min: Option<&str>,
+        _amount_in_max: Option<&str>,
+        _available_in: Option<&str>,
+        _fee_bps: Option<u64>,
+        _max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_best_mev_swap(
+        &self,
+        _token: &str,
+        _fee_bps: Option<u64>,
+        _max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

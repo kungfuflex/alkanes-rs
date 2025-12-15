@@ -1,0 +1,204 @@
+name: Publish TypeScript SDK
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - 'ts-sdk/**'
+      - 'crates/alkanes-web-sys/**'
+      - 'prod_wasms/**'
+      - '.github/workflows/publish-npm.yml'
+
+env:
+  NODE_VERSION: '20'
+  RUST_VERSION: 'stable'
+  WASM_PACK_VERSION: '0.13.1'
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Required for OIDC/Workload Identity
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for version info
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/alkanes-web-sys/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+
+      - name: Install wasm-pack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh -s -- -f
+          wasm-pack --version
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'ts-sdk/package-lock.json'
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: 'access_token'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify GCP authentication
+        run: |
+          gcloud auth list
+          gcloud config list
+
+      - name: Generate version
+        id: version
+        run: |
+          TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          VERSION="0.1.0-dev.${TIMESTAMP}.${SHORT_SHA}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Generated version: ${VERSION}"
+
+      - name: Configure npm authentication
+        run: |
+          cd ts-sdk
+          cat > .npmrc <<EOF
+          @alkanes:registry=https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+          //us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/:_authToken=$(gcloud auth print-access-token)
+          //us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/:always-auth=true
+          EOF
+          echo "npm configuration created"
+
+      - name: Update package.json version
+        working-directory: ts-sdk
+        run: |
+          npm version ${{ steps.version.outputs.version }} --no-git-tag-version --allow-same-version
+          echo "Updated package.json to version ${{ steps.version.outputs.version }}"
+          cat package.json | grep '"version"'
+
+      - name: Install dependencies
+        working-directory: ts-sdk
+        run: |
+          npm ci
+          echo "Dependencies installed"
+
+      - name: Build WASM from alkanes-web-sys
+        working-directory: crates/alkanes-web-sys
+        run: |
+          echo "Building WASM with wasm-pack..."
+          wasm-pack build --target bundler --out-dir ../../ts-sdk/build/wasm
+          echo "WASM build complete"
+          ls -lh ../../ts-sdk/build/wasm/
+
+      - name: Vendor production WASMs
+        working-directory: ts-sdk
+        run: |
+          echo "Vendoring production contract WASMs..."
+          npm run build:vendor
+          echo "Production WASMs vendored"
+          ls -lh build/contracts/ | head -20
+
+      - name: Build TypeScript SDK
+        working-directory: ts-sdk
+        run: |
+          echo "Building TypeScript SDK..."
+          npm run build:ts
+          echo "TypeScript build complete"
+          ls -lh dist/
+
+      - name: Verify build artifacts
+        working-directory: ts-sdk
+        run: |
+          echo "=== Build artifacts verification ==="
+          echo "WASM module:"
+          ls -lh build/wasm/alkanes_web_sys_bg.wasm
+          echo ""
+          echo "TypeScript bundles:"
+          ls -lh dist/
+          echo ""
+          echo "Package contents:"
+          npm pack --dry-run
+
+      - name: Publish to Artifact Registry
+        working-directory: ts-sdk
+        run: |
+          echo "Publishing @alkanes/ts-sdk@${{ steps.version.outputs.version }}..."
+          npm publish --registry=https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/ --access=public
+          echo "Package published successfully"
+
+      - name: Tag as latest-dev
+        working-directory: ts-sdk
+        continue-on-error: true
+        run: |
+          echo "Tagging as latest-dev..."
+          npm dist-tag add @alkanes/ts-sdk@${{ steps.version.outputs.version }} latest-dev \
+            --registry=https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+          echo "Tagged as latest-dev"
+
+      - name: Output published version
+        run: |
+          echo "=== Publication Summary ==="
+          echo "✅ Published: @alkanes/ts-sdk@${{ steps.version.outputs.version }}"
+          echo "📦 Registry: https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/"
+          echo "🔗 Install with:"
+          echo "   npm config set @alkanes:registry https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/"
+          echo "   npm install @alkanes/ts-sdk@${{ steps.version.outputs.version }}"
+          echo ""
+          echo "Or install latest dev version:"
+          echo "   npm install @alkanes/ts-sdk@latest-dev"
+
+      - name: Create summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## 📦 TypeScript SDK Published
+
+          **Version:** \`${{ steps.version.outputs.version }}\`
+          **Registry:** [Google Artifact Registry](https://console.cloud.google.com/artifacts/npm/distributable-octet-pipeline/us-central1/npm-packages/@alkanes/ts-sdk?project=distributable-octet-pipeline)
+          **Commit:** \`${GITHUB_SHA:0:7}\`
+
+          ### Installation
+
+          \`\`\`bash
+          # Configure npm
+          npm config set @alkanes:registry https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+
+          # Authenticate (requires gcloud)
+          npm config set //us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/:_authToken \$(gcloud auth print-access-token)
+
+          # Install
+          npm install @alkanes/ts-sdk@${{ steps.version.outputs.version }}
+
+          # Or install latest dev version
+          npm install @alkanes/ts-sdk@latest-dev
+          \`\`\`
+
+          ### Build Details
+
+          - **WASM built from:** \`crates/alkanes-web-sys\`
+          - **Production WASMs vendored:** ✅
+          - **TypeScript compiled:** ✅
+          - **Package size:** ~7-8MB (includes WASM + contracts)
+          EOF

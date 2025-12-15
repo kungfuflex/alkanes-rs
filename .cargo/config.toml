@@ -3,3 +3,12 @@
 # Default configuration for wasm32-unknown-unknown target
 [target.wasm32-unknown-unknown]
 runner = "wasm-bindgen-test-runner"
+
+# Alkanes private registry (Google Cloud Artifact Registry)
+# This allows publishing and consuming crates from the private registry
+[registries.alkanes]
+index = "sparse+https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/"
+
+# Git fetch configuration
+[net]
+git-fetch-with-cli = true
