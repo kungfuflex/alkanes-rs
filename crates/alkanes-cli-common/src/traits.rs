@@ -712,6 +712,74 @@ pub trait EspoProvider {
     /// Ping the ESPO server
     /// Returns: "pong"
     async fn ping(&self) -> Result<String>;
+
+    // ==================== AMM Data Module Methods ====================
+
+    /// Ping the AMM Data module
+    /// Returns: "pong"
+    async fn ammdata_ping(&self) -> Result<String>;
+
+    /// Get OHLCV candlestick data for a pool
+    /// Params: {"pool": "block:tx", "timeframe": "10m" | "1h" | "1d" | "1w" | "1M", "side": "base" | "quote", "limit": N, "page": N}
+    /// Returns: {"ok": true, "pool": "...", "timeframe": "...", "side": "...", "page": N, "limit": N, "total": N, "has_more": bool, "candles": [...]}
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<JsonValue>;
+
+    /// Get trade history for a pool
+    /// Params: {"pool": "block:tx", "limit": N, "page": N, "side": "base" | "quote", "filter_side": "buy" | "sell" | "all", "sort": "...", "dir": "asc" | "desc"}
+    /// Returns: {"ok": true, "pool": "...", "side": "...", "filter_side": "...", "sort": "...", "dir": "...", "page": N, "limit": N, "total": N, "has_more": bool, "trades": [...]}
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<JsonValue>;
+
+    /// Get all pools with pagination
+    /// Params: {"limit": N, "page": N}
+    /// Returns: {"ok": true, "page": N, "limit": N, "total": N, "has_more": bool, "pools": {...}}
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<JsonValue>;
+
+    /// Find the best swap path between two tokens
+    /// Params: {"token_in": "block:tx", "token_out": "block:tx", "mode": "exact_in" | "exact_out" | "implicit", "amount_in": N, "amount_out": N, "amount_out_min": N, "amount_in_max": N, "available_in": N, "fee_bps": N, "max_hops": N}
+    /// Returns: {"ok": true, "mode": "...", "token_in": "...", "token_out": "...", "fee_bps": N, "max_hops": N, "amount_in": "...", "amount_out": "...", "hops": [...]}
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<JsonValue>;
+
+    /// Find the best MEV swap opportunity for a token
+    /// Params: {"token": "block:tx", "fee_bps": N, "max_hops": N}
+    /// Returns: {"ok": true, "token": "...", "fee_bps": N, "max_hops": N, "amount_in": "...", "amount_out": "...", "profit": "...", "hops": [...]}
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<JsonValue>;
 }
 
 /// Trait for runestone operations
@@ -1384,6 +1452,61 @@ impl<T: DeezelProvider + ?Sized> EspoProvider for Box<T> {
     }
     async fn ping(&self) -> Result<String> {
         (**self).ping().await
+    }
+    async fn ammdata_ping(&self) -> Result<String> {
+        (**self).ammdata_ping().await
+    }
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        (**self).get_candles(pool, timeframe, side, limit, page).await
+    }
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        (**self).get_trades(pool, limit, page, side, filter_side, sort, dir).await
+    }
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        (**self).get_pools(limit, page).await
+    }
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        (**self).find_best_swap_path(token_in, token_out, mode, amount_in, amount_out, amount_out_min, amount_in_max, available_in, fee_bps, max_hops).await
+    }
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        (**self).get_best_mev_swap(token, fee_bps, max_hops).await
     }
 }
 

@@ -46243,6 +46243,7 @@ __export(provider_exports, {
   BitcoinRpcClient: () => BitcoinRpcClient,
   DataApiClient: () => DataApiClient,
   EsploraClient: () => EsploraClient,
+  EspoClient: () => EspoClient,
   LuaClient: () => LuaClient,
   MetashrewClient: () => MetashrewClient,
   NETWORK_PRESETS: () => NETWORK_PRESETS,
@@ -46251,7 +46252,7 @@ __export(provider_exports, {
 function createProvider(config) {
   return new AlkanesProvider(config);
 }
-var bitcoin3, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, LuaClient, DataApiClient, AlkanesProvider;
+var bitcoin3, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, LuaClient, DataApiClient, EspoClient, AlkanesProvider;
 var init_provider = __esm({
   "src/provider/index.ts"() {
     "use strict";
@@ -46522,6 +46523,171 @@ var init_provider = __esm({
         return this.provider.dataApiGetBitcoinMarketChart(days);
       }
     };
+    EspoClient = class {
+      constructor(provider) {
+        this.provider = provider;
+      }
+      // ============================================================================
+      // ESSENTIALS MODULE
+      // ============================================================================
+      /**
+       * Get current Espo indexer height
+       */
+      async getHeight() {
+        return this.provider.espoGetHeight();
+      }
+      /**
+       * Ping the Espo server
+       */
+      async ping() {
+        return this.provider.espoPing();
+      }
+      /**
+       * Get alkanes balances for an address
+       * @param address - Bitcoin address
+       * @param includeOutpoints - Include detailed outpoint information
+       */
+      async getAddressBalances(address2, includeOutpoints = false) {
+        return this.provider.espoGetAddressBalances(address2, includeOutpoints);
+      }
+      /**
+       * Get outpoints containing alkanes for an address
+       * @param address - Bitcoin address
+       */
+      async getAddressOutpoints(address2) {
+        return this.provider.espoGetAddressOutpoints(address2);
+      }
+      /**
+       * Get alkanes balances at a specific outpoint
+       * @param outpoint - Outpoint in format "txid:vout"
+       */
+      async getOutpointBalances(outpoint) {
+        return this.provider.espoGetOutpointBalances(outpoint);
+      }
+      /**
+       * Get holders of an alkane token with pagination
+       * @param alkaneId - Alkane ID in format "block:tx"
+       * @param page - Page number (default: 0)
+       * @param limit - Items per page (default: 100)
+       */
+      async getHolders(alkaneId, page = 0, limit = 100) {
+        return this.provider.espoGetHolders(alkaneId, BigInt(page), BigInt(limit));
+      }
+      /**
+       * Get total holder count for an alkane
+       * @param alkaneId - Alkane ID in format "block:tx"
+       */
+      async getHoldersCount(alkaneId) {
+        return this.provider.espoGetHoldersCount(alkaneId);
+      }
+      /**
+       * Get storage keys for an alkane contract with pagination
+       * @param alkaneId - Alkane ID in format "block:tx"
+       * @param page - Page number (default: 0)
+       * @param limit - Items per page (default: 100)
+       */
+      async getKeys(alkaneId, page = 0, limit = 100) {
+        return this.provider.espoGetKeys(alkaneId, BigInt(page), BigInt(limit));
+      }
+      // ============================================================================
+      // AMM DATA MODULE
+      // ============================================================================
+      /**
+       * Ping the AMM Data module
+       */
+      async ammdataPing() {
+        return this.provider.espoAmmdataPing();
+      }
+      /**
+       * Get OHLCV candlestick data for a pool
+       * @param pool - Pool ID in format "block:tx"
+       * @param timeframe - Candle timeframe: "10m" | "1h" | "1d" | "1w" | "1M"
+       * @param side - Price side: "base" | "quote"
+       * @param limit - Number of candles (default: 100)
+       * @param page - Page number (default: 0)
+       */
+      async getCandles(pool, timeframe, side, limit, page) {
+        return this.provider.espoGetCandles(
+          pool,
+          timeframe,
+          side,
+          limit !== void 0 ? BigInt(limit) : void 0,
+          page !== void 0 ? BigInt(page) : void 0
+        );
+      }
+      /**
+       * Get trade history for a pool
+       * @param pool - Pool ID in format "block:tx"
+       * @param limit - Number of trades (default: 100)
+       * @param page - Page number (default: 0)
+       * @param side - Price side: "base" | "quote"
+       * @param filterSide - Filter by trade side: "buy" | "sell" | "all"
+       * @param sort - Sort field
+       * @param dir - Sort direction: "asc" | "desc"
+       */
+      async getTrades(pool, limit, page, side, filterSide, sort, dir) {
+        return this.provider.espoGetTrades(
+          pool,
+          limit !== void 0 ? BigInt(limit) : void 0,
+          page !== void 0 ? BigInt(page) : void 0,
+          side,
+          filterSide,
+          sort,
+          dir
+        );
+      }
+      /**
+       * Get all pools with pagination
+       * @param limit - Number of pools (default: 100)
+       * @param page - Page number (default: 0)
+       */
+      async getPools(limit, page) {
+        return this.provider.espoGetPools(
+          limit !== void 0 ? BigInt(limit) : void 0,
+          page !== void 0 ? BigInt(page) : void 0
+        );
+      }
+      /**
+       * Find the best swap path between two tokens
+       * @param tokenIn - Input token ID
+       * @param tokenOut - Output token ID
+       * @param mode - Swap mode: "exact_in" | "exact_out" | "implicit"
+       * @param amountIn - Input amount
+       * @param amountOut - Output amount
+       * @param amountOutMin - Minimum output amount
+       * @param amountInMax - Maximum input amount
+       * @param availableIn - Available input amount
+       * @param feeBps - Fee in basis points
+       * @param maxHops - Maximum swap hops
+       */
+      async findBestSwapPath(tokenIn, tokenOut, mode, amountIn, amountOut, amountOutMin, amountInMax, availableIn, feeBps, maxHops) {
+        return this.provider.espoFindBestSwapPath(
+          tokenIn,
+          tokenOut,
+          mode,
+          amountIn,
+          amountOut,
+          amountOutMin,
+          amountInMax,
+          availableIn,
+          feeBps !== void 0 ? BigInt(feeBps) : void 0,
+          maxHops !== void 0 ? BigInt(maxHops) : void 0
+        );
+      }
+      /**
+       * Find the best MEV swap opportunity for a token
+       * @param token - Token ID
+       * @param feeBps - Fee in basis points
+       * @param maxHops - Maximum swap hops
+       */
+      async getBestMevSwap(token, feeBps, maxHops) {
+        return this.provider.espoGetBestMevSwap(
+          token,
+          feeBps !== void 0 ? BigInt(feeBps) : void 0,
+          maxHops !== void 0 ? BigInt(maxHops) : void 0
+        );
+      }
+    };
     AlkanesProvider = class {
       constructor(config) {
         this._provider = null;
@@ -46529,6 +46695,7 @@ var init_provider = __esm({
         this._esplora = null;
         this._alkanes = null;
         this._dataApi = null;
+        this._espo = null;
         this._lua = null;
         this._metashrew = null;
         const preset = NETWORK_PRESETS[config.network] || NETWORK_PRESETS["mainnet"];
@@ -46629,6 +46796,22 @@ var init_provider = __esm({
           this._dataApi = new DataApiClient(this._provider);
         }
         return this._dataApi;
+      }
+      /**
+       * Espo client
+       *
+       * Provides access to Espo indexer for alkanes data and AMM analytics.
+       * - Essentials module: balances, holders, storage keys
+       * - AMM Data module: candles, trades, pools, swap routing
+       */
+      get espo() {
+        if (!this._espo) {
+          if (!this._provider) {
+            throw new Error("Provider not initialized. Call initialize() first.");
+          }
+          this._espo = new EspoClient(this._provider);
+        }
+        return this._espo;
       }
       /**
        * Lua script execution client
@@ -48613,6 +48796,19 @@ var KeystoreSigner = class _KeystoreSigner extends AlkanesSigner {
     return this.deriveAddressInfo(addressType, index, change).address;
   }
   /**
+   * Get address info including derivation path
+   */
+  getAddressInfo(addressType = "p2wpkh" /* P2WPKH */, index = 0) {
+    const normalizedType = typeof addressType === "string" ? addressType : addressType;
+    const info = this.deriveAddressInfo(normalizedType, index);
+    const path = this.getFullDerivationPath(normalizedType, index);
+    return {
+      address: info.address,
+      publicKey: info.publicKey,
+      path
+    };
+  }
+  /**
    * Get multiple addresses
    */
   getAddresses(count = 10, addressType = "p2wpkh" /* P2WPKH */) {
@@ -48640,6 +48836,10 @@ var KeystoreSigner = class _KeystoreSigner extends AlkanesSigner {
       default:
         return `m/84'/${coinType}'/${this.accountIndex}'`;
     }
+  }
+  getFullDerivationPath(addressType, index, change = 0) {
+    const basePath = this.getDerivationPath(addressType);
+    return `${basePath}/${change}/${index}`;
   }
   deriveAddressInfo(addressType, index, change = 0) {
     const basePath = this.getDerivationPath(addressType);

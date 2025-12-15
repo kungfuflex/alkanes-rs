@@ -5217,4 +5217,149 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
         }
         Ok(result.to_string())
     }
+
+    async fn ammdata_ping(&self) -> Result<String> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let result = self.call(&target.url, "ammdata.ping", serde_json::json!({}), 1).await?;
+        if let Some(s) = result.as_str() {
+            return Ok(s.to_string());
+        }
+        Ok(result.to_string())
+    }
+
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({ "pool": pool });
+        if let Some(tf) = timeframe {
+            params["timeframe"] = serde_json::json!(tf);
+        }
+        if let Some(s) = side {
+            params["side"] = serde_json::json!(s);
+        }
+        if let Some(l) = limit {
+            params["limit"] = serde_json::json!(l);
+        }
+        if let Some(p) = page {
+            params["page"] = serde_json::json!(p);
+        }
+        self.call(&target.url, "ammdata.get_candles", params, 1).await
+    }
+
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({ "pool": pool });
+        if let Some(l) = limit {
+            params["limit"] = serde_json::json!(l);
+        }
+        if let Some(p) = page {
+            params["page"] = serde_json::json!(p);
+        }
+        if let Some(s) = side {
+            params["side"] = serde_json::json!(s);
+        }
+        if let Some(fs) = filter_side {
+            params["filter_side"] = serde_json::json!(fs);
+        }
+        if let Some(s) = sort {
+            params["sort"] = serde_json::json!(s);
+        }
+        if let Some(d) = dir {
+            params["dir"] = serde_json::json!(d);
+        }
+        self.call(&target.url, "ammdata.get_trades", params, 1).await
+    }
+
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({});
+        if let Some(l) = limit {
+            params["limit"] = serde_json::json!(l);
+        }
+        if let Some(p) = page {
+            params["page"] = serde_json::json!(p);
+        }
+        self.call(&target.url, "ammdata.get_pools", params, 1).await
+    }
+
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({
+            "token_in": token_in,
+            "token_out": token_out
+        });
+        if let Some(m) = mode {
+            params["mode"] = serde_json::json!(m);
+        }
+        if let Some(ai) = amount_in {
+            params["amount_in"] = serde_json::json!(ai);
+        }
+        if let Some(ao) = amount_out {
+            params["amount_out"] = serde_json::json!(ao);
+        }
+        if let Some(aom) = amount_out_min {
+            params["amount_out_min"] = serde_json::json!(aom);
+        }
+        if let Some(aim) = amount_in_max {
+            params["amount_in_max"] = serde_json::json!(aim);
+        }
+        if let Some(av) = available_in {
+            params["available_in"] = serde_json::json!(av);
+        }
+        if let Some(f) = fee_bps {
+            params["fee_bps"] = serde_json::json!(f);
+        }
+        if let Some(h) = max_hops {
+            params["max_hops"] = serde_json::json!(h);
+        }
+        self.call(&target.url, "ammdata.find_best_swap_path", params, 1).await
+    }
+
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({ "token": token });
+        if let Some(f) = fee_bps {
+            params["fee_bps"] = serde_json::json!(f);
+        }
+        if let Some(h) = max_hops {
+            params["max_hops"] = serde_json::json!(h);
+        }
+        self.call(&target.url, "ammdata.get_best_mev_swap", params, 1).await
+    }
 }

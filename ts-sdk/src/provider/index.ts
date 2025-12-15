@@ -439,6 +439,223 @@ export class DataApiClient {
 }
 
 /**
+ * Espo client (uses WebProvider internally)
+ *
+ * Provides access to Espo indexer for alkanes data and AMM analytics.
+ * Methods are organized into two modules:
+ * - Essentials: Core alkanes data (balances, holders, storage keys)
+ * - AMM Data: Trading and liquidity analytics (candles, trades, pools, swaps)
+ */
+export class EspoClient {
+  constructor(private provider: WasmWebProvider) {}
+
+  // ============================================================================
+  // ESSENTIALS MODULE
+  // ============================================================================
+
+  /**
+   * Get current Espo indexer height
+   */
+  async getHeight(): Promise<number> {
+    return this.provider.espoGetHeight();
+  }
+
+  /**
+   * Ping the Espo server
+   */
+  async ping(): Promise<string> {
+    return this.provider.espoPing();
+  }
+
+  /**
+   * Get alkanes balances for an address
+   * @param address - Bitcoin address
+   * @param includeOutpoints - Include detailed outpoint information
+   */
+  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<any> {
+    return this.provider.espoGetAddressBalances(address, includeOutpoints);
+  }
+
+  /**
+   * Get outpoints containing alkanes for an address
+   * @param address - Bitcoin address
+   */
+  async getAddressOutpoints(address: string): Promise<any> {
+    return this.provider.espoGetAddressOutpoints(address);
+  }
+
+  /**
+   * Get alkanes balances at a specific outpoint
+   * @param outpoint - Outpoint in format "txid:vout"
+   */
+  async getOutpointBalances(outpoint: string): Promise<any> {
+    return this.provider.espoGetOutpointBalances(outpoint);
+  }
+
+  /**
+   * Get holders of an alkane token with pagination
+   * @param alkaneId - Alkane ID in format "block:tx"
+   * @param page - Page number (default: 0)
+   * @param limit - Items per page (default: 100)
+   */
+  async getHolders(alkaneId: string, page: number = 0, limit: number = 100): Promise<any> {
+    return this.provider.espoGetHolders(alkaneId, BigInt(page), BigInt(limit));
+  }
+
+  /**
+   * Get total holder count for an alkane
+   * @param alkaneId - Alkane ID in format "block:tx"
+   */
+  async getHoldersCount(alkaneId: string): Promise<number> {
+    return this.provider.espoGetHoldersCount(alkaneId);
+  }
+
+  /**
+   * Get storage keys for an alkane contract with pagination
+   * @param alkaneId - Alkane ID in format "block:tx"
+   * @param page - Page number (default: 0)
+   * @param limit - Items per page (default: 100)
+   */
+  async getKeys(alkaneId: string, page: number = 0, limit: number = 100): Promise<any> {
+    return this.provider.espoGetKeys(alkaneId, BigInt(page), BigInt(limit));
+  }
+
+  // ============================================================================
+  // AMM DATA MODULE
+  // ============================================================================
+
+  /**
+   * Ping the AMM Data module
+   */
+  async ammdataPing(): Promise<string> {
+    return this.provider.espoAmmdataPing();
+  }
+
+  /**
+   * Get OHLCV candlestick data for a pool
+   * @param pool - Pool ID in format "block:tx"
+   * @param timeframe - Candle timeframe: "10m" | "1h" | "1d" | "1w" | "1M"
+   * @param side - Price side: "base" | "quote"
+   * @param limit - Number of candles (default: 100)
+   * @param page - Page number (default: 0)
+   */
+  async getCandles(
+    pool: string,
+    timeframe?: string,
+    side?: string,
+    limit?: number,
+    page?: number
+  ): Promise<any> {
+    return this.provider.espoGetCandles(
+      pool,
+      timeframe,
+      side,
+      limit !== undefined ? BigInt(limit) : undefined,
+      page !== undefined ? BigInt(page) : undefined
+    );
+  }
+
+  /**
+   * Get trade history for a pool
+   * @param pool - Pool ID in format "block:tx"
+   * @param limit - Number of trades (default: 100)
+   * @param page - Page number (default: 0)
+   * @param side - Price side: "base" | "quote"
+   * @param filterSide - Filter by trade side: "buy" | "sell" | "all"
+   * @param sort - Sort field
+   * @param dir - Sort direction: "asc" | "desc"
+   */
+  async getTrades(
+    pool: string,
+    limit?: number,
+    page?: number,
+    side?: string,
+    filterSide?: string,
+    sort?: string,
+    dir?: string
+  ): Promise<any> {
+    return this.provider.espoGetTrades(
+      pool,
+      limit !== undefined ? BigInt(limit) : undefined,
+      page !== undefined ? BigInt(page) : undefined,
+      side,
+      filterSide,
+      sort,
+      dir
+    );
+  }
+
+  /**
+   * Get all pools with pagination
+   * @param limit - Number of pools (default: 100)
+   * @param page - Page number (default: 0)
+   */
+  async getPools(limit?: number, page?: number): Promise<any> {
+    return this.provider.espoGetPools(
+      limit !== undefined ? BigInt(limit) : undefined,
+      page !== undefined ? BigInt(page) : undefined
+    );
+  }
+
+  /**
+   * Find the best swap path between two tokens
+   * @param tokenIn - Input token ID
+   * @param tokenOut - Output token ID
+   * @param mode - Swap mode: "exact_in" | "exact_out" | "implicit"
+   * @param amountIn - Input amount
+   * @param amountOut - Output amount
+   * @param amountOutMin - Minimum output amount
+   * @param amountInMax - Maximum input amount
+   * @param availableIn - Available input amount
+   * @param feeBps - Fee in basis points
+   * @param maxHops - Maximum swap hops
+   */
+  async findBestSwapPath(
+    tokenIn: string,
+    tokenOut: string,
+    mode?: string,
+    amountIn?: string,
+    amountOut?: string,
+    amountOutMin?: string,
+    amountInMax?: string,
+    availableIn?: string,
+    feeBps?: number,
+    maxHops?: number
+  ): Promise<any> {
+    return this.provider.espoFindBestSwapPath(
+      tokenIn,
+      tokenOut,
+      mode,
+      amountIn,
+      amountOut,
+      amountOutMin,
+      amountInMax,
+      availableIn,
+      feeBps !== undefined ? BigInt(feeBps) : undefined,
+      maxHops !== undefined ? BigInt(maxHops) : undefined
+    );
+  }
+
+  /**
+   * Find the best MEV swap opportunity for a token
+   * @param token - Token ID
+   * @param feeBps - Fee in basis points
+   * @param maxHops - Maximum swap hops
+   */
+  async getBestMevSwap(
+    token: string,
+    feeBps?: number,
+    maxHops?: number
+  ): Promise<any> {
+    return this.provider.espoGetBestMevSwap(
+      token,
+      feeBps !== undefined ? BigInt(feeBps) : undefined,
+      maxHops !== undefined ? BigInt(maxHops) : undefined
+    );
+  }
+}
+
+/**
  * Main Alkanes Provider
  *
  * Provides a unified interface to all Alkanes functionality:
@@ -446,6 +663,9 @@ export class DataApiClient {
  * - Esplora API operations
  * - Alkanes smart contract operations
  * - Data API for analytics and trading data
+ * - Espo indexer for alkanes data and AMM analytics
+ * - Lua script execution with caching
+ * - Metashrew low-level RPC access
  */
 export class AlkanesProvider {
   private _provider: WasmWebProvider | null = null;
@@ -453,6 +673,7 @@ export class AlkanesProvider {
   private _esplora: EsploraClient | null = null;
   private _alkanes: AlkanesRpcClient | null = null;
   private _dataApi: DataApiClient | null = null;
+  private _espo: EspoClient | null = null;
   private _lua: LuaClient | null = null;
   private _metashrew: MetashrewClient | null = null;
 
@@ -579,6 +800,23 @@ export class AlkanesProvider {
       this._dataApi = new DataApiClient(this._provider);
     }
     return this._dataApi;
+  }
+
+  /**
+   * Espo client
+   *
+   * Provides access to Espo indexer for alkanes data and AMM analytics.
+   * - Essentials module: balances, holders, storage keys
+   * - AMM Data module: candles, trades, pools, swap routing
+   */
+  get espo(): EspoClient {
+    if (!this._espo) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._espo = new EspoClient(this._provider);
+    }
+    return this._espo;
   }
 
   /**
