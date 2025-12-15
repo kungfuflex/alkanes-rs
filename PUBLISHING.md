@@ -49,21 +49,19 @@ No authentication needed! Just install and use.
 
 ### Install Rust Crates (cargo)
 
-**Option 1: Git dependencies (Simplest)**
+Use **git dependencies** (recommended - Artifact Registry doesn't support Cargo format):
+
 ```toml
+# In your Cargo.toml
 [dependencies]
 alkanes = { git = "https://github.com/kungfuflex/alkanes-rs", branch = "develop" }
+alkanes-runtime = { git = "https://github.com/kungfuflex/alkanes-rs", branch = "develop" }
 ```
 
-**Option 2: Public registry**
+**Or use a specific commit:**
 ```toml
-# Add to ~/.cargo/config.toml (one-time)
-[registries.alkanes]
-index = "sparse+https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/"
-
-# Then in your Cargo.toml
 [dependencies]
-alkanes = { version = "10.0.0", registry = "alkanes" }
+alkanes = { git = "https://github.com/kungfuflex/alkanes-rs", rev = "2e5c0ea" }
 ```
 
 No authentication needed!
@@ -88,6 +86,8 @@ git push origin develop
 
 The following workflows will trigger:
 
+**Active Workflow:**
+
 1. **`.github/workflows/publish-npm.yml`** - Publishes TypeScript SDK
    - Triggers when: `ts-sdk/`, `crates/alkanes-web-sys/`, or `prod_wasms/` changes
    - Version format: `0.1.0-dev.TIMESTAMP.SHA` (e.g., `0.1.0-dev.20251215143022.2e5c0ea`)
@@ -98,11 +98,11 @@ The following workflows will trigger:
      4. Publish to Artifact Registry
    - Tags: `latest-dev` always points to latest version
 
-2. **`.github/workflows/publish-cargo.yml`** - Publishes all Rust crates
-   - Triggers when: `crates/`, `Cargo.toml`, or `Cargo.lock` changes
-   - Version: Workspace version `10.0.0` with metadata `+dev.TIMESTAMP.SHA`
-   - Publishes 31 crates in dependency order
-   - Skips already-published versions
+**Reference Only:**
+
+2. **`.github/workflows/publish-cargo.yml`** - Example workflow for Rust crates
+   - ⚠️ **Not active** - Artifact Registry doesn't support Cargo format
+   - Use git dependencies instead (see installation instructions above)
 
 ### Monitoring Workflow Runs
 
