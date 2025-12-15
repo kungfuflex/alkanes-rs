@@ -258,6 +258,28 @@ export class KeystoreSigner extends AlkanesSigner {
   }
 
   /**
+   * Get address info including derivation path
+   */
+  getAddressInfo(
+    addressType: AddressType | string = AddressType.P2WPKH,
+    index: number = 0
+  ): { address: string; publicKey: string; path: string } {
+    // Normalize addressType to AddressType enum
+    const normalizedType = typeof addressType === 'string'
+      ? (addressType as AddressType)
+      : addressType;
+
+    const info = this.deriveAddressInfo(normalizedType, index);
+    const path = this.getFullDerivationPath(normalizedType, index);
+
+    return {
+      address: info.address,
+      publicKey: info.publicKey,
+      path,
+    };
+  }
+
+  /**
    * Get multiple addresses
    */
   getAddresses(
@@ -291,6 +313,11 @@ export class KeystoreSigner extends AlkanesSigner {
       default:
         return `m/84'/${coinType}'/${this.accountIndex}'`;
     }
+  }
+
+  private getFullDerivationPath(addressType: AddressType, index: number, change: number = 0): string {
+    const basePath = this.getDerivationPath(addressType);
+    return `${basePath}/${change}/${index}`;
   }
 
   private deriveAddressInfo(

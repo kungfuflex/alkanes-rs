@@ -319,6 +319,11 @@ declare module '@alkanes/ts-sdk' {
 
     exportMnemonic(): string;
     exportToKeystore(password: string): Promise<string>;
+    getAddressInfo(addressType: AddressType | string, index?: number): {
+      address: string;
+      publicKey: string;
+      path: string;
+    };
     deriveAddress(type: 'p2wpkh' | 'p2tr' | 'p2pkh' | 'p2sh-p2wpkh', index: number): {
       address: string;
       publicKey: string;
