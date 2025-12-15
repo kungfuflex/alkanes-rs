@@ -247,6 +247,10 @@ export class AlkanesRpcClient {
     return this.provider.alkanesTrace(outpoint);
   }
 
+  async traceBlock(height: number): Promise<any> {
+    return this.provider.traceBlock(height);
+  }
+
   async view(contractId: string, viewFn: string, params?: Uint8Array, blockTag?: string): Promise<any> {
     return this.provider.alkanesView(contractId, viewFn, params, blockTag);
   }
@@ -504,15 +508,14 @@ export class AlkanesProvider {
     // Create provider with appropriate network name
     const providerName = this.networkPreset === 'local' ? 'regtest' : this.networkPreset;
 
-    // Create config override if custom URLs provided
-    const configOverride: any = {};
-    if (this.rpcUrl !== NETWORK_PRESETS[this.networkPreset]?.rpcUrl) {
-      configOverride.jsonrpc_url = this.rpcUrl;
-    }
+    // Always pass rpcUrl as config override to ensure it's used
+    const configOverride: any = {
+      jsonrpc_url: this.rpcUrl
+    };
 
     this._provider = new wasm.WebProvider(
       providerName,
-      Object.keys(configOverride).length > 0 ? configOverride : undefined
+      configOverride
     );
   }
 

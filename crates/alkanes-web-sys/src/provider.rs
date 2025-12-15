@@ -964,6 +964,18 @@ impl WebProvider {
         })
     }
 
+    #[wasm_bindgen(js_name = traceBlock)]
+    pub fn trace_block_js(&self, height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.trace_block(height as u64).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
     #[wasm_bindgen(js_name = alkanesByAddress)]
     pub fn alkanes_by_address_js(&self, address: String, block_tag: Option<String>, protocol_tag: Option<f64>) -> js_sys::Promise {
         use alkanes_cli_common::traits::AlkanesProvider;
@@ -1091,10 +1103,15 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            provider.get_address_txs(&address).await
-                .and_then(|r| serde_wasm_bindgen::to_value(&r)
-                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
-                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+            let result = provider.get_address_txs(&address).await
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))?;
+
+            // Serialize to JSON string and parse in JavaScript to preserve structure
+            let json_string = serde_json::to_string(&result)
+                .map_err(|e| JsValue::from_str(&format!("JSON serialization failed: {}", e)))?;
+
+            js_sys::JSON::parse(&json_string)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
         })
     }
 
@@ -4609,10 +4626,26 @@ impl AlkanesProvider for WebProvider {
     }
     async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent> {
         use prost::Message;
-        let result = self.call(&self.sandshrew_rpc_url(), "alkanes_trace_block", serde_json::json!([height]), 1).await?;
+        use alkanes_support::proto::alkanes::TraceBlockRequest;
+
+        // Create TraceBlockRequest protobuf message
+        let request = TraceBlockRequest { block: height };
+        let mut buf = Vec::new();
+        request.encode(&mut buf).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
+        let request_hex = format!("0x{}", hex::encode(&buf));
+
+        // Call metashrew_view with ["traceblock", request_hex, "latest"]
+        let result = self.call(
+            &self.sandshrew_rpc_url(),
+            "metashrew_view",
+            serde_json::json!(["traceblock", request_hex, "latest"]),
+            1
+        ).await?;
+
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid trace block response".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
-        alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent::decode(&bytes[..]).map_err(|e| AlkanesError::Serialization(e.to_string()))
+        alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent::decode(&bytes[..])
+            .map_err(|e| AlkanesError::Serialization(e.to_string()))
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         use alkanes_cli_common::proto::alkanes::{BytecodeRequest, AlkaneId, Uint128};

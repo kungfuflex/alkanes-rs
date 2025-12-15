@@ -15,6 +15,7 @@ export default defineConfig({
     // WASM module - loaded separately via package exports
     '@alkanes/ts-sdk/wasm',
     '../../build/wasm/alkanes_web_sys',
+    '../../build/wasm/alkanes_web_sys.js',
     '../build/wasm/alkanes_web_sys',
     './build/wasm/alkanes_web_sys',
   ],

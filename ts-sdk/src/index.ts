@@ -126,6 +126,14 @@ export {
   formatTimestamp,
   calculateWeight,
   weightToVsize,
+  // WASM utilities
+  analyzeRunestone,
+} from './utils';
+
+export type {
+  Protostone,
+  ProtostoneEdict,
+  RunestoneAnalysisResult,
 } from './utils';
 
 // Browser wallet exports

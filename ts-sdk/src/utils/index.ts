@@ -213,3 +213,11 @@ export function calculateWeight(baseSize: number, witnessSize: number): number {
 export function weightToVsize(weight: number): number {
   return Math.ceil(weight / 4);
 }
+
+// Re-export WASM utilities
+export {
+  analyzeRunestone,
+  type Protostone,
+  type ProtostoneEdict,
+  type RunestoneAnalysisResult,
+} from './wasm';

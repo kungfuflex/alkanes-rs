@@ -15,7 +15,8 @@
 
 use wasm_bindgen::prelude::*;
 use bitcoin::psbt::Psbt;
-use alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages;
+use bitcoin::Transaction;
+use alkanes_cli_common::runestone_enhanced::{format_runestone_with_decoded_messages, format_runestone};
 use alkanes_cli_common::alkanes::inspector::analysis::perform_fuzzing_analysis;
 use alkanes_cli_common::alkanes::types::AlkaneId;
 use js_sys::Promise;
@@ -130,4 +131,53 @@ pub fn get_alkane_bytecode(network: &str, block: f64, tx: f64, block_tag: &str) 
             Err(e) => Err(JsValue::from_str(&format!("get_bytecode failed: {:?}", e))),
         }
     })
+}
+
+/// Analyze a transaction's runestone to extract Protostones
+///
+/// This function takes a raw transaction hex string, decodes it, and extracts
+/// all Protostones from the transaction's OP_RETURN output.
+///
+/// # Arguments
+///
+/// * `tx_hex` - Hexadecimal string of the raw transaction (with or without "0x" prefix)
+///
+/// # Returns
+///
+/// A JSON string containing:
+/// - `protostone_count`: Number of Protostones found
+/// - `protostones`: Array of Protostone objects with their details
+///
+/// # Example
+///
+/// ```javascript
+/// const result = analyze_runestone(txHex);
+/// const data = JSON.parse(result);
+/// console.log(`Found ${data.protostone_count} Protostones`);
+/// ```
+#[wasm_bindgen]
+pub fn analyze_runestone(tx_hex: &str) -> Result<String, JsValue> {
+    // Strip "0x" prefix if present
+    let hex_str = tx_hex.strip_prefix("0x").unwrap_or(tx_hex);
+
+    // Decode hex to bytes
+    let tx_bytes = hex::decode(hex_str)
+        .map_err(|e| JsValue::from_str(&format!("hex decode error: {}", e)))?;
+
+    // Deserialize transaction
+    let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes)
+        .map_err(|e| JsValue::from_str(&format!("transaction deserialize error: {}", e)))?;
+
+    // Extract Protostones from the transaction
+    let protostones = format_runestone(&tx)
+        .map_err(|e| JsValue::from_str(&format!("runestone analysis error: {}", e)))?;
+
+    // Build response JSON
+    let response = serde_json::json!({
+        "protostone_count": protostones.len(),
+        "protostones": protostones,
+    });
+
+    serde_json::to_string(&response)
+        .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
 }

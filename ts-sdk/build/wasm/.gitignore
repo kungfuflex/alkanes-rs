@@ -1,7 +1,1 @@
-# Ignore WASM build artifacts in git (they're compiled from Rust)
-*.wasm
-*.js
-*.d.ts
-index.cjs
-package.json
-README.md
+*
