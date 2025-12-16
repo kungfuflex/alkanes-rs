@@ -174,11 +174,16 @@ impl<'a> Brc20ProgExecutor<'a> {
         // Create the envelope with the JSON payload
         let envelope = Brc20ProgEnvelope::new(params.inscription_content.as_bytes().to_vec());
 
-        // Build and execute commit transaction
-        let (commit_txid, commit_fee, commit_outpoint, commit_output, internal_key) =
-            self.build_and_broadcast_commit(&params, &envelope).await?;
-
-        log::info!("✅ Commit transaction broadcast: {commit_txid}");
+        // Check if resuming from existing commit
+        let (commit_txid, commit_fee, commit_outpoint, commit_output, internal_key) = if let Some(ref resume_txid) = params.resume_from_commit {
+            log::info!("🔄 Resuming from existing commit transaction: {}", resume_txid);
+            self.resume_from_commit(resume_txid, &params, &envelope).await?
+        } else {
+            // Build and execute commit transaction
+            let result = self.build_and_broadcast_commit(&params, &envelope).await?;
+            log::info!("✅ Commit transaction broadcast: {}", result.0);
+            result
+        };
 
         // Apply CPFP strategy if enabled
         if let Some(super::types::AntiFrontrunningStrategy::Cpfp) = params.strategy {
@@ -270,6 +275,52 @@ impl<'a> Brc20ProgExecutor<'a> {
             outputs_created: vec![],
             traces: None,
         })
+    }
+
+    /// Resume execution from an existing commit transaction
+    async fn resume_from_commit(
+        &mut self,
+        commit_txid: &str,
+        params: &Brc20ProgExecuteParams,
+        envelope: &Brc20ProgEnvelope,
+    ) -> Result<(Txid, u64, OutPoint, TxOut, XOnlyPublicKey)> {
+        log::info!("   Fetching commit transaction...");
+
+        // Get the commit transaction
+        let commit_tx_hex = self.provider.get_tx_hex(commit_txid).await?;
+        let commit_tx_bytes = hex::decode(&commit_tx_hex)?;
+        let commit_tx: Transaction = bitcoin::consensus::deserialize(&commit_tx_bytes)?;
+
+        // Get the commit output (should be at index 0)
+        let commit_output = commit_tx.output.get(0)
+            .ok_or_else(|| AlkanesError::Wallet("Commit transaction has no outputs".to_string()))?
+            .clone();
+
+        let commit_txid_parsed = Txid::from_str(commit_txid)?;
+        let commit_outpoint = OutPoint {
+            txid: commit_txid_parsed,
+            vout: 0,
+        };
+
+        log::info!("   Commit output value: {} sats", commit_output.value.to_sat());
+        log::info!("   Commit script pubkey: {}", commit_output.script_pubkey);
+
+        // Get the internal key from the wallet (we need this to spend the taproot output)
+        let (internal_key, _) = self.provider.get_internal_key().await?;
+
+        // Verify that the commit address matches what we expect
+        let expected_commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
+        if commit_output.script_pubkey != expected_commit_address.script_pubkey() {
+            log::warn!("   ⚠️  Warning: Commit output script doesn't match expected taproot script");
+            log::warn!("   This might indicate the inscription content doesn't match the commit");
+        }
+
+        log::info!("   ✅ Successfully loaded commit transaction");
+
+        // Estimate commit fee (we don't have the exact fee, but we can estimate)
+        let commit_fee = 0u64; // We don't know the exact fee when resuming
+
+        Ok((commit_txid_parsed, commit_fee, commit_outpoint, commit_output, internal_key))
     }
 
     /// Build and broadcast the commit transaction
@@ -392,13 +443,17 @@ impl<'a> Brc20ProgExecutor<'a> {
         let estimated_reveal_vsize = 10 + 200 + (2 * 43); // base + script-path input + 2 outputs
         let rebar_payment = self.calculate_rebar_payment(estimated_reveal_vsize, params).await?;
 
-        // Calculate locktime for CLTV strategy
+        // Calculate locktime for CLTV strategy and wait for it to be reached
         let locktime = if let Some(super::types::AntiFrontrunningStrategy::CheckLockTimeVerify) = params.strategy {
             use crate::traits::BitcoinRpcProvider;
             let current_height = self.provider.get_block_count().await?;
             let locktime_height = current_height + 6; // Wait 6 blocks after current height
-            log::info!("🔒 CLTV: Reveal transaction locked until block {}", locktime_height);
-            log::info!("   Current height: {}, locktime: +6 blocks", current_height);
+            log::info!("🔒 CLTV: Reveal transaction will be locked until block {}", locktime_height);
+            log::info!("   Current height: {}, waiting for +6 blocks", current_height);
+
+            // Wait for the locktime to be reached
+            self.wait_for_block_height(locktime_height, params).await?;
+
             Some(locktime_height as u32)
         } else {
             None
@@ -1610,6 +1665,44 @@ impl<'a> Brc20ProgExecutor<'a> {
             self.provider.generate_to_address(1, &address).await?;
         }
         Ok(())
+    }
+
+    /// Wait for blockchain to reach a specific height
+    async fn wait_for_block_height(&self, target_height: u64, params: &Brc20ProgExecuteParams) -> Result<()> {
+        use crate::traits::BitcoinRpcProvider;
+
+        // On regtest, mine blocks to reach target height
+        if self.provider.get_network() == bitcoin::Network::Regtest && params.mine_enabled {
+            let current_height = self.provider.get_block_count().await?;
+            let blocks_to_mine = target_height.saturating_sub(current_height);
+
+            if blocks_to_mine > 0 {
+                log::info!("   Mining {} blocks to reach target height {}", blocks_to_mine, target_height);
+                for _ in 0..blocks_to_mine {
+                    self.mine_blocks_if_regtest(params).await?;
+                }
+                self.provider.sync().await?;
+            }
+            return Ok(());
+        }
+
+        // On mainnet/testnet, poll until we reach the target height
+        log::info!("   Polling for block height {}...", target_height);
+
+        loop {
+            let current_height = self.provider.get_block_count().await?;
+
+            if current_height >= target_height {
+                log::info!("   ✅ Block height {} reached", current_height);
+                return Ok(());
+            }
+
+            let blocks_remaining = target_height.saturating_sub(current_height);
+            log::info!("   Current height: {}, waiting for {} more blocks", current_height, blocks_remaining);
+
+            // Wait 30 seconds before checking again (average block time ~10 min, but check more frequently)
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        }
     }
 
     /// Wait for a transaction to be confirmed (mined in a block)

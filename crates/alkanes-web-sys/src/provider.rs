@@ -1367,6 +1367,58 @@ impl WebProvider {
         })
     }
 
+    #[wasm_bindgen(js_name = bitcoindGetRawMempool)]
+    pub fn bitcoind_get_raw_mempool_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::BitcoinRpcProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_raw_mempool().await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = bitcoindGetTxOut)]
+    pub fn bitcoind_get_tx_out_js(&self, txid: String, vout: u32, include_mempool: bool) -> js_sys::Promise {
+        use alkanes_cli_common::traits::BitcoinRpcProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_tx_out(&txid, vout, include_mempool).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = bitcoindDecodeRawTransaction)]
+    pub fn bitcoind_decode_raw_transaction_js(&self, hex: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::BitcoinRpcProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.decode_raw_transaction(&hex).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = bitcoindDecodePsbt)]
+    pub fn bitcoind_decode_psbt_js(&self, psbt: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::BitcoinRpcProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.decode_psbt(&psbt).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
     // === ALKANES METHODS (additional) ===
 
     #[wasm_bindgen(js_name = alkanesView)]
@@ -4499,6 +4551,16 @@ impl BitcoinRpcProvider for WebProvider {
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
         let params = serde_json::json!([txid, vout, include_mempool]);
         self.call(&self.sandshrew_rpc_url(), "gettxout", params, 1).await
+    }
+
+    async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue> {
+        let params = serde_json::json!([hex]);
+        self.call(&self.bitcoin_rpc_url(), "decoderawtransaction", params, 1).await
+    }
+
+    async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue> {
+        let params = serde_json::json!([psbt]);
+        self.call(&self.bitcoin_rpc_url(), "decodepsbt", params, 1).await
     }
 }
 

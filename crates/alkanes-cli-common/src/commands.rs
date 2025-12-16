@@ -796,6 +796,9 @@ pub enum Brc20ProgCommands {
         /// Anti-frontrunning strategy: checklocktimeverify, cpfp, presign, or rbf
         #[arg(long, value_name = "STRATEGY")]
         strategy: Option<String>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
     },
     /// Call a BRC20-prog contract function (transact)
     Transact {
@@ -842,6 +845,9 @@ pub enum Brc20ProgCommands {
         /// Anti-frontrunning strategy: checklocktimeverify, cpfp, presign, or rbf
         #[arg(long, value_name = "STRATEGY")]
         strategy: Option<String>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
     },
     /// Wrap BTC to frBTC and execute in brc20-prog (wrapAndExecute2)
     WrapBtc {

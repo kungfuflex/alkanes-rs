@@ -1309,6 +1309,14 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
         self.web_provider.get_tx_out(txid, vout, include_mempool).await
     }
+
+    async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue> {
+        self.web_provider.decode_raw_transaction(hex).await
+    }
+
+    async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue> {
+        self.web_provider.decode_psbt(psbt).await
+    }
 }
 
 #[async_trait(?Send)]

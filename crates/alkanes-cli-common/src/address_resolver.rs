@@ -726,6 +726,14 @@ impl BitcoinRpcProvider for StandaloneAddressResolver {
     async fn get_tx_out(&self, _txid: &str, _vout: u32, _include_mempool: bool) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }
+
+    async fn decode_raw_transaction(&self, _hex: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
+    }
+
+    async fn decode_psbt(&self, _psbt: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

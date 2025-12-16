@@ -4031,11 +4031,27 @@ impl BitcoinRpcProvider for ConcreteProvider {
     }
 
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([txid, vout, include_mempool]);
         self.call(&rpc_url, "gettxout", params, 1).await
+    }
+
+    async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([hex]);
+        self.call(&rpc_url, "decoderawtransaction", params, 1).await
+    }
+
+    async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([psbt]);
+        self.call(&rpc_url, "decodepsbt", params, 1).await
     }
 }
 

@@ -109,6 +109,7 @@ impl<'a> Brc20ProgWrapBtcExecutor<'a> {
             use_rebar: false,
             rebar_tier: None,
             strategy: None,
+            resume_from_commit: None,
         };
 
         let mut brc20_executor = Brc20ProgExecutor::new(self.provider);

@@ -113,6 +113,8 @@ pub struct Brc20ProgExecuteParams {
     pub rebar_tier: Option<u8>,
     /// Anti-frontrunning strategy to use
     pub strategy: Option<AntiFrontrunningStrategy>,
+    /// Resume from existing commit transaction (commit txid)
+    pub resume_from_commit: Option<String>,
 }
 
 /// Result of a BRC20-prog execution

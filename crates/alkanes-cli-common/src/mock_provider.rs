@@ -560,6 +560,14 @@ impl BitcoinRpcProvider for MockProvider {
         Ok(JsonValue::Null)
     }
 
+    async fn decode_raw_transaction(&self, _hex: &str) -> Result<JsonValue> {
+        Ok(JsonValue::Null)
+    }
+
+    async fn decode_psbt(&self, _psbt: &str) -> Result<JsonValue> {
+        Ok(JsonValue::Null)
+    }
+
     async fn get_mempool_info(&self) -> Result<JsonValue> {
         Ok(serde_json::json!({"size": 1000}))
     }

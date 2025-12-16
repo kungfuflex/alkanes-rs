@@ -518,6 +518,12 @@ pub trait BitcoinRpcProvider {
 
     /// Get tx out
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue>;
+
+    /// Decode raw transaction
+    async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue>;
+
+    /// Decode PSBT
+    async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue>;
 }
 
 /// Trait for bitcoind RPC operations using bitcoincore_rpc_json types
@@ -1280,6 +1286,14 @@ impl<T: DeezelProvider + ?Sized> BitcoinRpcProvider for Box<T> {
 
    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
        (**self).get_tx_out(txid, vout, include_mempool).await
+   }
+
+   async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue> {
+       (**self).decode_raw_transaction(hex).await
+   }
+
+   async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue> {
+       (**self).decode_psbt(psbt).await
    }
 }
 
