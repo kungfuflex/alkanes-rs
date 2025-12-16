@@ -46,6 +46,36 @@ async function getAccessToken() {
   });
 }
 
+// Fetch package metadata
+async function getPackageMetadata(packageName, token) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: ARTIFACT_REGISTRY,
+      path: `/${PROJECT}/${REPOSITORY}/${packageName}`,
+      headers: {
+        'Host': ARTIFACT_REGISTRY,
+        'Authorization': `Bearer ${token}`
+      }
+    };
+
+    https.get(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            resolve(JSON.parse(data));
+          } catch (err) {
+            reject(new Error('Failed to parse package metadata'));
+          }
+        } else {
+          reject(new Error(`Package not found: ${res.statusCode}`));
+        }
+      });
+    }).on('error', reject);
+  });
+}
+
 // Proxy server
 const server = http.createServer(async (req, res) => {
   // Health check
@@ -59,7 +89,75 @@ const server = http.createServer(async (req, res) => {
     // Get access token
     const token = await getAccessToken();
 
-    // Proxy request to Artifact Registry
+    // Handle /dist/{package} endpoint - direct tarball download
+    if (req.url.startsWith('/dist/')) {
+      const packageName = req.url.substring(6); // Remove '/dist/'
+      console.log(`Fetching tarball for ${packageName}`);
+
+      // Get package metadata
+      const metadata = await getPackageMetadata(packageName, token);
+      const latestVersion = metadata['dist-tags'].latest;
+      const tarballUrl = metadata.versions[latestVersion].dist.tarball;
+
+      // Extract path from tarball URL
+      const tarballPath = new URL(tarballUrl).pathname;
+
+      // Proxy tarball request (follow redirects)
+      const options = {
+        hostname: ARTIFACT_REGISTRY,
+        path: tarballPath,
+        headers: {
+          'Host': ARTIFACT_REGISTRY,
+          'Authorization': `Bearer ${token}`
+        }
+      };
+
+      const proxyReq = https.get(options, (proxyRes) => {
+        // Follow redirects (307, 302, 301)
+        if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+          const redirectUrl = proxyRes.headers.location;
+          console.log(`Following redirect to: ${redirectUrl}`);
+
+          // Build redirect options (handle both relative and absolute URLs)
+          const redirectOptions = redirectUrl.startsWith('http')
+            ? redirectUrl  // Absolute URL
+            : {            // Relative path
+                hostname: ARTIFACT_REGISTRY,
+                path: redirectUrl,
+                headers: {
+                  'Host': ARTIFACT_REGISTRY,
+                  'Authorization': `Bearer ${token}`
+                }
+              };
+
+          https.get(redirectOptions, (finalRes) => {
+            res.writeHead(finalRes.statusCode, {
+              'Content-Type': finalRes.headers['content-type'] || 'application/octet-stream',
+              'Content-Length': finalRes.headers['content-length']
+            });
+            finalRes.pipe(res);
+          }).on('error', (err) => {
+            console.error('Redirect fetch error:', err);
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Failed to fetch tarball from redirect', details: err.message }));
+          });
+        } else {
+          // Direct response
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+        }
+      });
+
+      proxyReq.on('error', (err) => {
+        console.error('Tarball fetch error:', err);
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to fetch tarball', details: err.message }));
+      });
+
+      return;
+    }
+
+    // Default: proxy request to Artifact Registry
     const options = {
       hostname: ARTIFACT_REGISTRY,
       path: `/${PROJECT}/${REPOSITORY}${req.url}`,
