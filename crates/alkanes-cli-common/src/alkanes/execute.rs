@@ -602,7 +602,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         params: &EnhancedExecuteParams,
     ) -> Result<()> {
         let tx = &psbt.unsigned_tx;
-        
+
         // 1. Calculate total input value
         let mut total_input_value = 0u64;
         for outpoint in selected_utxos {
@@ -726,7 +726,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
     async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>) -> Result<UtxoSelectionResult> {
         use crate::traits::AddressResolver;
-        
+
         log::info!("Selecting UTXOs for {} requirements", requirements.len());
         if let Some(addrs) = from_addresses {
             log::info!("Sourcing UTXOs from: {addrs:?}");
@@ -757,7 +757,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     log::debug!("Skipping frozen UTXO: {}:{}", info.txid, info.vout);
                     return false;
                 }
-                
+
                 // Filter out immature coinbase outputs
                 if info.is_coinbase && info.confirmations < COINBASE_MATURITY {
                     log::debug!(
@@ -766,11 +766,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     );
                     return false;
                 }
-                
+
                 true
             })
             .collect();
-        
+
         log::info!("Found {} spendable (non-frozen) wallet UTXOs", spendable_utxos.len());
 
         let mut selected_outpoints = Vec::new();
