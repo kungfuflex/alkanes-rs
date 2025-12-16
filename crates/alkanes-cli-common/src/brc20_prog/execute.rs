@@ -824,8 +824,12 @@ impl<'a> Brc20ProgExecutor<'a> {
             let response_json: serde_json::Value = serde_json::from_str(&response_text)
                 .map_err(|e| AlkanesError::Network(format!("Failed to parse Slipstream response: {}", e)))?;
 
-            // Extract txid from response
-            if let Some(txid) = response_json.get("txid").and_then(|v| v.as_str()) {
+            // Extract txid from response (it's in the "message" field)
+            if let Some(txid) = response_json.get("message").and_then(|v| v.as_str()) {
+                log::info!("✅ Transaction submitted to MARA Slipstream successfully!");
+                Ok(txid.to_string())
+            } else if let Some(txid) = response_json.get("txid").and_then(|v| v.as_str()) {
+                // Fallback to "txid" field in case API changes
                 log::info!("✅ Transaction submitted to MARA Slipstream successfully!");
                 Ok(txid.to_string())
             } else {
