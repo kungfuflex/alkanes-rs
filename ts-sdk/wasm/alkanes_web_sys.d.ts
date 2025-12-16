@@ -319,6 +319,7 @@ export class WebProvider {
   esploraGetBlocksTipHash(): Promise<any>;
   esploraGetAddressUtxo(address: string): Promise<any>;
   esploraGetAddressTxs(address: string): Promise<any>;
+  esploraGetAddressTxsChain(address: string, last_seen_txid?: string | null): Promise<any>;
   esploraGetFeeEstimates(): Promise<any>;
   esploraBroadcastTx(tx_hex: string): Promise<any>;
   esploraGetTxHex(txid: string): Promise<any>;

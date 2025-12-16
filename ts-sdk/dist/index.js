@@ -46902,11 +46902,27 @@ var init_provider = __esm({
         };
       }
       /**
-       * Get transaction history for an address
+       * Get transaction history for an address (first page, max 25 transactions)
        */
       async getAddressHistory(address2) {
         const provider = await this.getProvider();
         return provider.getAddressTxs(address2);
+      }
+      /**
+       * Get transaction history for an address from Esplora (first page, max 25 transactions)
+       */
+      async getAddressTxs(address2) {
+        const provider = await this.getProvider();
+        return provider.esploraGetAddressTxs(address2);
+      }
+      /**
+       * Get next page of transaction history for an address
+       * @param address The address to fetch transactions for
+       * @param lastSeenTxid The last transaction ID from the previous page (undefined for first page)
+       */
+      async getAddressTxsChain(address2, lastSeenTxid) {
+        const provider = await this.getProvider();
+        return provider.esploraGetAddressTxsChain(address2, lastSeenTxid);
       }
       /**
        * Get address history with alkane traces

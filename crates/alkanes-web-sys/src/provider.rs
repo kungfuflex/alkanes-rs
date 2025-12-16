@@ -1119,6 +1119,24 @@ impl WebProvider {
         })
     }
 
+    #[wasm_bindgen(js_name = esploraGetAddressTxsChain)]
+    pub fn esplora_get_address_txs_chain_js(&self, address: String, last_seen_txid: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_address_txs_chain(&address, last_seen_txid.as_deref()).await
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))?;
+
+            // Serialize to JSON string and parse in JavaScript to preserve structure
+            let json_string = serde_json::to_string(&result)
+                .map_err(|e| JsValue::from_str(&format!("JSON serialization failed: {}", e)))?;
+
+            js_sys::JSON::parse(&json_string)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
+        })
+    }
+
     #[wasm_bindgen(js_name = esploraGetFeeEstimates)]
     pub fn esplora_get_fee_estimates_js(&self) -> js_sys::Promise {
         use alkanes_cli_common::traits::EsploraProvider;

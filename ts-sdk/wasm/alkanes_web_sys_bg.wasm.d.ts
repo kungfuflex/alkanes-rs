@@ -41,6 +41,7 @@ export const webprovider_esploraGetBlocksTipHeight: (a: number) => any;
 export const webprovider_esploraGetBlocksTipHash: (a: number) => any;
 export const webprovider_esploraGetAddressUtxo: (a: number, b: number, c: number) => any;
 export const webprovider_esploraGetAddressTxs: (a: number, b: number, c: number) => any;
+export const webprovider_esploraGetAddressTxsChain: (a: number, b: number, c: number, d: number, e: number) => any;
 export const webprovider_esploraGetFeeEstimates: (a: number) => any;
 export const webprovider_esploraBroadcastTx: (a: number, b: number, c: number) => any;
 export const webprovider_esploraGetTxHex: (a: number, b: number, c: number) => any;

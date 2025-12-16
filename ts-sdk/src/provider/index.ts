@@ -918,11 +918,29 @@ export class AlkanesProvider {
   }
 
   /**
-   * Get transaction history for an address
+   * Get transaction history for an address (first page, max 25 transactions)
    */
   async getAddressHistory(address: string): Promise<any[]> {
     const provider = await this.getProvider();
     return provider.getAddressTxs(address);
+  }
+
+  /**
+   * Get transaction history for an address from Esplora (first page, max 25 transactions)
+   */
+  async getAddressTxs(address: string): Promise<any[]> {
+    const provider = await this.getProvider();
+    return provider.esploraGetAddressTxs(address);
+  }
+
+  /**
+   * Get next page of transaction history for an address
+   * @param address The address to fetch transactions for
+   * @param lastSeenTxid The last transaction ID from the previous page (undefined for first page)
+   */
+  async getAddressTxsChain(address: string, lastSeenTxid?: string): Promise<any[]> {
+    const provider = await this.getProvider();
+    return provider.esploraGetAddressTxsChain(address, lastSeenTxid);
   }
 
   /**

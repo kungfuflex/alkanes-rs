@@ -1277,6 +1277,19 @@ export class WebProvider {
         return ret;
     }
     /**
+     * @param {string} address
+     * @param {string | null} [last_seen_txid]
+     * @returns {Promise<any>}
+     */
+    esploraGetAddressTxsChain(address, last_seen_txid) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(last_seen_txid) ? 0 : passStringToWasm0(last_seen_txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetAddressTxsChain(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
      * @returns {Promise<any>}
      */
     esploraGetFeeEstimates() {
@@ -2897,15 +2910,15 @@ export function __wbindgen_cast_2241b6af4c4b2941(arg0, arg1) {
     return ret;
 };
 
-export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
-    // Cast intrinsic for `U64 -> Externref`.
-    const ret = BigInt.asUintN(64, arg0);
+export function __wbindgen_cast_286f901348db8c35(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3169, function: Function { arguments: [Externref], shim_idx: 3170, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 
-export function __wbindgen_cast_4df4f6c825444549(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3166, function: Function { arguments: [Externref], shim_idx: 3167, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
+export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
+    // Cast intrinsic for `U64 -> Externref`.
+    const ret = BigInt.asUintN(64, arg0);
     return ret;
 };
 
