@@ -135,6 +135,14 @@ jobs:
           echo "TypeScript build complete"
           ls -lh dist/
 
+      - name: Prepare WASM for packaging
+        working-directory: ts-sdk
+        run: |
+          echo "Removing .gitignore from build/wasm to ensure npm includes WASM files..."
+          rm -f build/wasm/.gitignore
+          echo "WASM directory ready for packaging"
+          ls -la build/wasm/
+
       - name: Verify build artifacts
         working-directory: ts-sdk
         run: |
