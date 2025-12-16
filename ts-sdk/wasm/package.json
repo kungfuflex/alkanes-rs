@@ -1,0 +1,17 @@
+{
+  "name": "alkanes-web-sys",
+  "type": "module",
+  "version": "10.0.0",
+  "files": [
+    "alkanes_web_sys_bg.wasm",
+    "alkanes_web_sys.js",
+    "alkanes_web_sys_bg.js",
+    "alkanes_web_sys.d.ts"
+  ],
+  "main": "alkanes_web_sys.js",
+  "types": "alkanes_web_sys.d.ts",
+  "sideEffects": [
+    "./alkanes_web_sys.js",
+    "./snippets/*"
+  ]
+}
