@@ -21,7 +21,8 @@
   },
   "files": [
     "dist",
-    "build",
+    "build/**",
+    "build/wasm/**",
     "index.d.ts",
     "README.md",
     "LICENSE"
