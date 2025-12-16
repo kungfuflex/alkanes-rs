@@ -104,8 +104,8 @@ update_cname() {
 }
 
 # Create CNAME record for pkg.alkanes.build pointing to Cloud Run
-# Proxied=true to use Cloudflare SSL and caching
-update_cname "pkg" "${CLOUD_RUN_URL}" "true"
+# Proxied=false to allow Cloud Run to handle requests directly (Cloudflare proxy breaks it)
+update_cname "pkg" "${CLOUD_RUN_URL}" "false"
 
 echo ""
 echo -e "${GREEN}=== DNS Configuration Complete ===${NC}"
