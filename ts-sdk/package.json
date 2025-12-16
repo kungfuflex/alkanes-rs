@@ -13,16 +13,16 @@
       "default": "./dist/index.mjs"
     },
     "./wasm": {
-      "types": "./build/wasm/alkanes_web_sys.d.ts",
-      "import": "./build/wasm/index.js",
-      "require": "./build/wasm/index.cjs",
-      "default": "./build/wasm/index.js"
+      "types": "./wasm/alkanes_web_sys.d.ts",
+      "import": "./wasm/index.js",
+      "require": "./wasm/index.cjs",
+      "default": "./wasm/index.js"
     }
   },
   "files": [
     "dist",
-    "build/**",
-    "build/wasm/**",
+    "build",
+    "wasm",
     "index.d.ts",
     "README.md",
     "LICENSE"

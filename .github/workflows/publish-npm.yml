@@ -115,11 +115,11 @@ jobs:
         working-directory: crates/alkanes-web-sys
         run: |
           echo "Building WASM with wasm-pack..."
-          wasm-pack build --target bundler --out-dir ../../ts-sdk/build/wasm
+          wasm-pack build --target bundler --out-dir ../../ts-sdk/wasm
           echo "Removing ignore files created by wasm-pack to ensure npm includes WASM files..."
-          rm -f ../../ts-sdk/build/wasm/.gitignore ../../ts-sdk/build/wasm/.npmignore
+          rm -f ../../ts-sdk/wasm/.gitignore ../../ts-sdk/wasm/.npmignore
           echo "WASM build complete"
-          ls -lh ../../ts-sdk/build/wasm/
+          ls -lh ../../ts-sdk/wasm/
 
       - name: Vendor production WASMs
         working-directory: ts-sdk
@@ -137,20 +137,12 @@ jobs:
           echo "TypeScript build complete"
           ls -lh dist/
 
-      - name: Prepare WASM for packaging
-        working-directory: ts-sdk
-        run: |
-          echo "Removing .gitignore from build/wasm to ensure npm includes WASM files..."
-          rm -f build/wasm/.gitignore
-          echo "WASM directory ready for packaging"
-          ls -la build/wasm/
-
       - name: Verify build artifacts
         working-directory: ts-sdk
         run: |
           echo "=== Build artifacts verification ==="
           echo "WASM module:"
-          ls -lh build/wasm/alkanes_web_sys_bg.wasm
+          ls -lh wasm/alkanes_web_sys_bg.wasm
           echo ""
           echo "TypeScript bundles:"
           ls -lh dist/
