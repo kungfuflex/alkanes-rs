@@ -241,6 +241,21 @@ function passArrayJsValueToWasm0(array, malloc) {
     return ptr;
 }
 /**
+ * Asynchronously encrypts data using the Web Crypto API.
+ * @param {string} mnemonic
+ * @param {string} passphrase
+ * @returns {Promise<any>}
+ */
+export function encryptMnemonic(mnemonic, passphrase) {
+    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
  * @param {string} psbt_base64
  * @param {string} network_str
  * @returns {string}
@@ -349,18 +364,55 @@ export function analyze_runestone(tx_hex) {
 }
 
 /**
- * Asynchronously encrypts data using the Web Crypto API.
- * @param {string} mnemonic
- * @param {string} passphrase
- * @returns {Promise<any>}
+ * Decode a PSBT (Partially Signed Bitcoin Transaction) from base64
+ *
+ * This function decodes a PSBT from its base64 representation and returns
+ * a JSON object containing detailed information about the transaction,
+ * inputs, outputs, and PSBT-specific fields.
+ *
+ * # Arguments
+ *
+ * * `psbt_base64` - Base64 encoded PSBT string
+ *
+ * # Returns
+ *
+ * A JSON string containing the decoded PSBT information including:
+ * - Transaction details (txid, version, locktime, inputs, outputs)
+ * - Global PSBT data (xpubs)
+ * - Per-input data (witness UTXOs, scripts, signatures, derivation paths)
+ * - Per-output data (scripts, derivation paths)
+ * - Fee information (if calculable)
+ *
+ * # Example
+ *
+ * ```javascript
+ * const decodedPsbt = decode_psbt(psbtBase64);
+ * const data = JSON.parse(decodedPsbt);
+ * console.log(`TXID: ${data.tx.txid}`);
+ * console.log(`Fee: ${data.fee} sats`);
+ * ```
+ * @param {string} psbt_base64
+ * @returns {string}
  */
-export function encryptMnemonic(mnemonic, passphrase) {
-    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
-    return ret;
+export function decode_psbt(psbt_base64) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(psbt_base64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.decode_psbt(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2) {
@@ -2845,15 +2897,15 @@ export function __wbindgen_cast_2241b6af4c4b2941(arg0, arg1) {
     return ret;
 };
 
-export function __wbindgen_cast_445472a7878ebf0d(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3157, function: Function { arguments: [Externref], shim_idx: 3158, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
-    return ret;
-};
-
 export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     // Cast intrinsic for `U64 -> Externref`.
     const ret = BigInt.asUintN(64, arg0);
+    return ret;
+};
+
+export function __wbindgen_cast_4df4f6c825444549(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3166, function: Function { arguments: [Externref], shim_idx: 3167, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 

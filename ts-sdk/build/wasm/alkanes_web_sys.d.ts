@@ -1,5 +1,9 @@
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export function analyze_psbt(psbt_base64: string, network_str: string): string;
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
 export function get_alkane_bytecode(network: string, block: number, tx: number, block_tag: string): Promise<any>;
@@ -29,9 +33,35 @@ export function get_alkane_bytecode(network: string, block: number, tx: number, 
  */
 export function analyze_runestone(tx_hex: string): string;
 /**
- * Asynchronously encrypts data using the Web Crypto API.
+ * Decode a PSBT (Partially Signed Bitcoin Transaction) from base64
+ *
+ * This function decodes a PSBT from its base64 representation and returns
+ * a JSON object containing detailed information about the transaction,
+ * inputs, outputs, and PSBT-specific fields.
+ *
+ * # Arguments
+ *
+ * * `psbt_base64` - Base64 encoded PSBT string
+ *
+ * # Returns
+ *
+ * A JSON string containing the decoded PSBT information including:
+ * - Transaction details (txid, version, locktime, inputs, outputs)
+ * - Global PSBT data (xpubs)
+ * - Per-input data (witness UTXOs, scripts, signatures, derivation paths)
+ * - Per-output data (scripts, derivation paths)
+ * - Fee information (if calculable)
+ *
+ * # Example
+ *
+ * ```javascript
+ * const decodedPsbt = decode_psbt(psbtBase64);
+ * const data = JSON.parse(decodedPsbt);
+ * console.log(`TXID: ${data.tx.txid}`);
+ * console.log(`Fee: ${data.fee} sats`);
+ * ```
  */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
+export function decode_psbt(psbt_base64: string): string;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;

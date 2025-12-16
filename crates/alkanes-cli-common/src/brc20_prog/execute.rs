@@ -41,14 +41,20 @@ impl<'a> Brc20ProgExecutor<'a> {
             self.build_and_broadcast_commit(&params, &envelope).await?;
 
         log::info!("✅ Commit transaction broadcast: {commit_txid}");
-        
-        log::info!("Waiting a while for esplora to index the commit transaction...");
-        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 
-        // Mine a block if on regtest
-        if params.mine_enabled {
-            self.mine_blocks_if_regtest(&params).await?;
-            self.provider.sync().await?;
+        // For slipstream/rebar, we must wait for the transaction to be mined before continuing
+        if params.use_slipstream || params.use_rebar {
+            log::info!("⏳ Waiting for commit transaction to be mined (required for slipstream/rebar)...");
+            self.wait_for_confirmation(&commit_txid.to_string(), &params).await?;
+        } else {
+            log::info!("Waiting a while for esplora to index the commit transaction...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+
+            // Mine a block if on regtest
+            if params.mine_enabled {
+                self.mine_blocks_if_regtest(&params).await?;
+                self.provider.sync().await?;
+            }
         }
 
         // Build and execute reveal transaction
@@ -63,13 +69,19 @@ impl<'a> Brc20ProgExecutor<'a> {
             .await?;
 
         log::info!("✅ Reveal transaction broadcast: {reveal_txid}");
-        
-        log::info!("Waiting a while for esplora to index the reveal transaction...");
-        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 
-        if params.mine_enabled {
-            self.mine_blocks_if_regtest(&params).await?;
-            self.provider.sync().await?;
+        // For slipstream/rebar, we must wait for the transaction to be mined before continuing
+        if params.use_slipstream || params.use_rebar {
+            log::info!("⏳ Waiting for reveal transaction to be mined (required for slipstream/rebar)...");
+            self.wait_for_confirmation(&reveal_txid.to_string(), &params).await?;
+        } else {
+            log::info!("Waiting a while for esplora to index the reveal transaction...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+
+            if params.mine_enabled {
+                self.mine_blocks_if_regtest(&params).await?;
+                self.provider.sync().await?;
+            }
         }
 
         // For deploy operations, optionally execute activation transaction
@@ -82,7 +94,11 @@ impl<'a> Brc20ProgExecutor<'a> {
 
             log::info!("✅ Activation transaction broadcast: {act_txid}");
 
-            if params.mine_enabled {
+            // For slipstream/rebar, we must wait for the transaction to be mined
+            if params.use_slipstream || params.use_rebar {
+                log::info!("⏳ Waiting for activation transaction to be mined (required for slipstream/rebar)...");
+                self.wait_for_confirmation(&act_txid.to_string(), &params).await?;
+            } else if params.mine_enabled {
                 self.mine_blocks_if_regtest(&params).await?;
                 self.provider.sync().await?;
             }
@@ -293,9 +309,12 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // We need additional UTXOs to pay for the transaction fee
         let estimated_activation_fee = 10_000u64; // Generous estimate
-        let funding_utxos = self.select_utxos_for_amount(
+        // Exclude the reveal transaction outputs since they might not be indexed yet
+        let exclude_txid = inscription_outpoint.txid;
+        let funding_utxos = self.select_utxos_for_amount_excluding(
             estimated_activation_fee,
             &params.from_addresses,
+            &[exclude_txid],
         ).await?;
 
         // Build the activation transaction
@@ -442,12 +461,24 @@ impl<'a> Brc20ProgExecutor<'a> {
         amount: u64,
         from_addresses: &Option<Vec<String>>,
     ) -> Result<Vec<OutPoint>> {
+        self.select_utxos_for_amount_excluding(amount, from_addresses, &[]).await
+    }
+
+    /// Select UTXOs for a specific Bitcoin amount, excluding specific transactions
+    async fn select_utxos_for_amount_excluding(
+        &self,
+        amount: u64,
+        from_addresses: &Option<Vec<String>>,
+        exclude_txids: &[Txid],
+    ) -> Result<Vec<OutPoint>> {
         log::info!("Selecting UTXOs for {} sats", amount);
 
         let utxos = self.provider.get_utxos(true, from_addresses.clone()).await?;
         let spendable_utxos: Vec<(OutPoint, UtxoInfo)> = utxos
             .into_iter()
-            .filter(|(_, info)| !info.frozen)
+            .filter(|(outpoint, info)| {
+                !info.frozen && !exclude_txids.contains(&outpoint.txid)
+            })
             .collect();
 
         log::info!("Found {} spendable UTXOs", spendable_utxos.len());
@@ -788,6 +819,62 @@ impl<'a> Brc20ProgExecutor<'a> {
             self.provider.generate_to_address(1, &address).await?;
         }
         Ok(())
+    }
+
+    /// Wait for a transaction to be confirmed (mined in a block)
+    /// This is required when using slipstream or rebar since they don't propagate to mempool
+    async fn wait_for_confirmation(&self, txid: &str, params: &Brc20ProgExecuteParams) -> Result<()> {
+        let max_attempts = 120; // 10 minutes max wait (120 * 5 seconds)
+        let mut attempts = 0;
+
+        // On regtest, mine a block immediately
+        if self.provider.get_network() == bitcoin::Network::Regtest && params.mine_enabled {
+            self.mine_blocks_if_regtest(params).await?;
+            self.provider.sync().await?;
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            return Ok(());
+        }
+
+        log::info!("Checking for confirmation every 5 seconds (max 10 minutes)...");
+
+        loop {
+            attempts += 1;
+
+            // Try to get the transaction status
+            match self.provider.get_tx_status(txid).await {
+                Ok(status) => {
+                    // Parse the status JSON - esplora returns {"confirmed": bool, "block_height": number, ...}
+                    let confirmed = status.get("confirmed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    if confirmed {
+                        let block_height = status.get("block_height")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        log::info!("✅ Transaction confirmed in block {}", block_height);
+                        // Give the indexer a moment to process the block
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        self.provider.sync().await?;
+                        return Ok(());
+                    } else {
+                        log::debug!("Transaction still in mempool, waiting...");
+                    }
+                }
+                Err(e) => {
+                    log::debug!("Transaction not found yet: {}", e);
+                }
+            }
+
+            if attempts >= max_attempts {
+                return Err(AlkanesError::Network(format!(
+                    "Timeout waiting for transaction {} to be confirmed after {} attempts",
+                    txid, attempts
+                )));
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
     }
 
     /// Broadcast transaction with optional slipstream or rebar
