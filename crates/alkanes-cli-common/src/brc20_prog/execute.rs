@@ -17,6 +17,12 @@ use super::types::{Brc20ProgExecuteParams, Brc20ProgExecuteResult};
 const MAX_FEE_SATS: u64 = 100_000;
 const DUST_LIMIT: u64 = 546;
 
+/// Rebar payment information
+struct RebarPaymentInfo {
+    payment_address: Address,
+    payment_amount: u64,
+}
+
 /// BRC20-Prog executor for contract operations
 pub struct Brc20ProgExecutor<'a> {
     pub provider: &'a mut dyn DeezelProvider,
@@ -151,12 +157,17 @@ impl<'a> Brc20ProgExecutor<'a> {
             script_pubkey: commit_address.script_pubkey(),
         };
 
+        // Calculate Rebar payment if needed (estimate tx size first)
+        let estimated_commit_vsize = 10 + (funding_utxos.len() * 107) + (2 * 43); // base + inputs + 2 outputs
+        let rebar_payment = self.calculate_rebar_payment(estimated_commit_vsize, params).await?;
+
         let (commit_psbt, commit_fee) = self
             .build_commit_psbt(
                 funding_utxos,
                 commit_output.clone(),
                 params.fee_rate,
                 &params.change_address,
+                rebar_payment,
             )
             .await?;
 
@@ -233,6 +244,10 @@ impl<'a> Brc20ProgExecutor<'a> {
             vec![op_return_output, change_output]
         };
 
+        // Calculate Rebar payment if needed (estimate tx size first)
+        let estimated_reveal_vsize = 10 + 200 + (2 * 43); // base + script-path input + 2 outputs
+        let rebar_payment = self.calculate_rebar_payment(estimated_reveal_vsize, params).await?;
+
         // Build reveal PSBT with script-path spending
         let (mut reveal_psbt, reveal_fee) = self
             .build_reveal_psbt(
@@ -241,6 +256,7 @@ impl<'a> Brc20ProgExecutor<'a> {
                 params.fee_rate,
                 Some(envelope),
                 commit_internal_key,
+                rebar_payment,
             )
             .await?;
 
@@ -333,14 +349,23 @@ impl<'a> Brc20ProgExecutor<'a> {
             input_txouts.push(utxo);
         }
 
+        // Calculate Rebar payment if needed (estimate tx size first)
+        let estimated_activation_inputs = all_inputs.len();
+        let estimated_activation_vsize = 10 + (estimated_activation_inputs * 107) + (2 * 43);
+        let rebar_payment = self.calculate_rebar_payment(estimated_activation_vsize, params).await?;
+
         // Build a temporary transaction to estimate size
-        let temp_outputs = vec![
-            op_return_output.clone(),
-            TxOut {
-                value: bitcoin::Amount::from_sat(0),
-                script_pubkey: change_address.script_pubkey(),
-            },
-        ];
+        let mut temp_outputs = vec![op_return_output.clone()];
+        if let Some(ref rebar) = rebar_payment {
+            temp_outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(rebar.payment_amount),
+                script_pubkey: rebar.payment_address.script_pubkey(),
+            });
+        }
+        temp_outputs.push(TxOut {
+            value: bitcoin::Amount::from_sat(0),
+            script_pubkey: change_address.script_pubkey(),
+        });
 
         let mut temp_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,
@@ -362,12 +387,20 @@ impl<'a> Brc20ProgExecutor<'a> {
             input.witness.push([0u8; 65]);
         }
 
-        let fee_rate_sat_vb = params.fee_rate.unwrap_or(600.0);
-        let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
+        // For Rebar, fee to miners is 0 (payment goes to Rebar output)
+        let fee = if rebar_payment.is_some() {
+            0
+        } else {
+            let fee_rate_sat_vb = params.fee_rate.unwrap_or(600.0);
+            (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64
+        };
+
+        let rebar_payment_amount = rebar_payment.as_ref().map(|r| r.payment_amount).unwrap_or(0);
 
         // Calculate change
         let change_value = total_input_value
             .saturating_sub(1)  // OP_RETURN output
+            .saturating_sub(rebar_payment_amount)
             .saturating_sub(fee);
 
         if change_value < 546 {
@@ -381,7 +414,15 @@ impl<'a> Brc20ProgExecutor<'a> {
             script_pubkey: change_address.script_pubkey(),
         };
 
-        let final_outputs = vec![op_return_output, change_output];
+        // Build final outputs list including Rebar payment if needed
+        let mut final_outputs = vec![op_return_output];
+        if let Some(rebar) = rebar_payment {
+            final_outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(rebar.payment_amount),
+                script_pubkey: rebar.payment_address.script_pubkey(),
+            });
+        }
+        final_outputs.push(change_output);
 
         // Build the final PSBT
         let unsigned_tx = Transaction {
@@ -455,6 +496,38 @@ impl<'a> Brc20ProgExecutor<'a> {
             .into_script()
     }
 
+    /// Calculate Rebar payment information for a transaction
+    async fn calculate_rebar_payment(&self, tx_vsize: usize, params: &Brc20ProgExecuteParams) -> Result<Option<RebarPaymentInfo>> {
+        if !params.use_rebar {
+            return Ok(None);
+        }
+
+        log::info!("🔒 Querying Rebar Shield for payment info...");
+        use crate::provider::rebar;
+
+        let rebar_info = rebar::query_info().await
+            .map_err(|e| AlkanesError::Network(format!("Failed to query Rebar info: {}", e)))?;
+
+        let tier_index = params.rebar_tier.unwrap_or(1);
+        let tier = rebar::get_tier(&rebar_info, tier_index)
+            .map_err(|e| AlkanesError::Network(format!("Failed to get Rebar tier: {}", e)))?;
+
+        let payment_amount = rebar::calculate_payment(tx_vsize, tier);
+
+        log::info!("   Rebar tier {}: {} sat/vB @ {:.0}% hashrate",
+                   tier_index, tier.feerate, tier.estimated_hashrate * 100.0);
+        log::info!("   Payment amount: {} sats", payment_amount);
+        log::info!("   Payment address: {}", rebar_info.payment.p2wpkh);
+
+        let payment_address = Address::from_str(&rebar_info.payment.p2wpkh)?
+            .require_network(self.provider.get_network())?;
+
+        Ok(Some(RebarPaymentInfo {
+            payment_address,
+            payment_amount,
+        }))
+    }
+
     /// Select UTXOs for a specific Bitcoin amount
     async fn select_utxos_for_amount(
         &self,
@@ -517,6 +590,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         commit_output: TxOut,
         fee_rate: Option<f32>,
         change_address: &Option<String>,
+        rebar_payment: Option<RebarPaymentInfo>,
     ) -> Result<(Psbt, u64)> {
         let mut total_input_value = 0;
         let mut input_txouts = Vec::new();
@@ -542,7 +616,16 @@ impl<'a> Brc20ProgExecutor<'a> {
             value: bitcoin::Amount::from_sat(0),
             script_pubkey: change_addr.script_pubkey(),
         };
-        let temp_outputs = vec![commit_output.clone(), temp_change_output];
+
+        // Build temp outputs list including Rebar payment if needed
+        let mut temp_outputs = vec![commit_output.clone()];
+        if let Some(ref rebar) = rebar_payment {
+            temp_outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(rebar.payment_amount),
+                script_pubkey: rebar.payment_address.script_pubkey(),
+            });
+        }
+        temp_outputs.push(temp_change_output);
 
         let mut temp_tx_for_size = Transaction {
             version: bitcoin::transaction::Version::TWO,
@@ -556,17 +639,25 @@ impl<'a> Brc20ProgExecutor<'a> {
                     witness: bitcoin::Witness::new(),
                 })
                 .collect(),
-            output: temp_outputs,
+            output: temp_outputs.clone(),
         };
         for input in &mut temp_tx_for_size.input {
             input.witness.push([0u8; 65]);
         }
 
-        let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
-        let fee = (fee_rate_sat_vb * temp_tx_for_size.vsize() as f32).ceil() as u64;
+        // For Rebar, fee to miners is 0 (payment goes to Rebar output)
+        let fee = if rebar_payment.is_some() {
+            0
+        } else {
+            let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+            (fee_rate_sat_vb * temp_tx_for_size.vsize() as f32).ceil() as u64
+        };
+
+        let rebar_payment_amount = rebar_payment.as_ref().map(|r| r.payment_amount).unwrap_or(0);
 
         let change_value = total_input_value
             .saturating_sub(commit_output.value.to_sat())
+            .saturating_sub(rebar_payment_amount)
             .saturating_sub(fee);
         if change_value < 546 {
             return Err(AlkanesError::Wallet(
@@ -578,7 +669,16 @@ impl<'a> Brc20ProgExecutor<'a> {
             value: bitcoin::Amount::from_sat(change_value),
             script_pubkey: change_addr.script_pubkey(),
         };
-        let final_outputs = vec![commit_output, final_change_output];
+
+        // Build final outputs list including Rebar payment if needed
+        let mut final_outputs = vec![commit_output];
+        if let Some(rebar) = rebar_payment {
+            final_outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(rebar.payment_amount),
+                script_pubkey: rebar.payment_address.script_pubkey(),
+            });
+        }
+        final_outputs.push(final_change_output);
 
         let unsigned_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,
@@ -618,6 +718,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         fee_rate: Option<f32>,
         envelope: Option<&Brc20ProgEnvelope>,
         commit_internal_key: XOnlyPublicKey,
+        rebar_payment: Option<RebarPaymentInfo>,
     ) -> Result<(Psbt, u64)> {
         use bitcoin::transaction::Version;
 
@@ -666,9 +767,22 @@ impl<'a> Brc20ProgExecutor<'a> {
             input.witness.push([0u8; 65]);
         }
 
-        let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
-        let estimated_fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
-        let capped_fee = estimated_fee.min(MAX_FEE_SATS);
+        // For Rebar, fee to miners is 0 (payment goes to Rebar output)
+        let capped_fee = if rebar_payment.is_some() {
+            0
+        } else {
+            let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+            let estimated_fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
+            estimated_fee.min(MAX_FEE_SATS)
+        };
+
+        // Add Rebar payment output if needed
+        if let Some(ref rebar) = rebar_payment {
+            outputs.insert(outputs.len() - 1, TxOut {
+                value: bitcoin::Amount::from_sat(rebar.payment_amount),
+                script_pubkey: rebar.payment_address.script_pubkey(),
+            });
+        }
 
         let total_output_value_sans_change: u64 = outputs
             .iter()
@@ -823,10 +937,8 @@ impl<'a> Brc20ProgExecutor<'a> {
 
     /// Wait for a transaction to be confirmed (mined in a block)
     /// This is required when using slipstream or rebar since they don't propagate to mempool
+    /// Note: For slipstream/rebar, there is NO timeout - it will wait indefinitely for confirmation
     async fn wait_for_confirmation(&self, txid: &str, params: &Brc20ProgExecuteParams) -> Result<()> {
-        let max_attempts = 120; // 10 minutes max wait (120 * 5 seconds)
-        let mut attempts = 0;
-
         // On regtest, mine a block immediately
         if self.provider.get_network() == bitcoin::Network::Regtest && params.mine_enabled {
             self.mine_blocks_if_regtest(params).await?;
@@ -835,10 +947,18 @@ impl<'a> Brc20ProgExecutor<'a> {
             return Ok(());
         }
 
-        log::info!("Checking for confirmation every 5 seconds (max 10 minutes)...");
+        log::info!("⏳ Polling for confirmation every 5 seconds (no timeout for slipstream/rebar)...");
+        log::info!("   Transaction may take hours or days to confirm depending on network conditions");
+
+        let mut attempts = 0;
 
         loop {
             attempts += 1;
+
+            // Log progress every 60 attempts (5 minutes)
+            if attempts % 60 == 0 {
+                log::info!("   Still waiting... ({} checks, ~{} minutes elapsed)", attempts, attempts * 5 / 60);
+            }
 
             // Try to get the transaction status
             match self.provider.get_tx_status(txid).await {
@@ -852,7 +972,7 @@ impl<'a> Brc20ProgExecutor<'a> {
                         let block_height = status.get("block_height")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0);
-                        log::info!("✅ Transaction confirmed in block {}", block_height);
+                        log::info!("✅ Transaction confirmed in block {} after {} checks", block_height, attempts);
                         // Give the indexer a moment to process the block
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         self.provider.sync().await?;
@@ -864,13 +984,6 @@ impl<'a> Brc20ProgExecutor<'a> {
                 Err(e) => {
                     log::debug!("Transaction not found yet: {}", e);
                 }
-            }
-
-            if attempts >= max_attempts {
-                return Err(AlkanesError::Network(format!(
-                    "Timeout waiting for transaction {} to be confirmed after {} attempts",
-                    txid, attempts
-                )));
             }
 
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;

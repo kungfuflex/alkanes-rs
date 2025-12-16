@@ -31,6 +31,8 @@ pub struct Brc20ProgDeployParams {
     pub use_slipstream: bool,
     /// Use Rebar Shield for private transaction relay
     pub use_rebar: bool,
+    /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+    pub rebar_tier: Option<u8>,
 }
 
 /// Parameters for calling a BRC20-prog contract (transact subcommand)
@@ -60,6 +62,8 @@ pub struct Brc20ProgTransactParams {
     pub use_slipstream: bool,
     /// Use Rebar Shield for private transaction relay
     pub use_rebar: bool,
+    /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+    pub rebar_tier: Option<u8>,
 }
 
 /// Generic execution parameters for BRC20-prog operations
@@ -87,6 +91,8 @@ pub struct Brc20ProgExecuteParams {
     pub use_slipstream: bool,
     /// Use Rebar Shield for private transaction relay
     pub use_rebar: bool,
+    /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+    pub rebar_tier: Option<u8>,
 }
 
 /// Result of a BRC20-prog execution

@@ -107,6 +107,7 @@ impl<'a> Brc20ProgWrapBtcExecutor<'a> {
             use_activation: false, // Use 2-tx pattern for wrap-btc
             use_slipstream: false,
             use_rebar: false,
+            rebar_tier: None,
         };
 
         let mut brc20_executor = Brc20ProgExecutor::new(self.provider);

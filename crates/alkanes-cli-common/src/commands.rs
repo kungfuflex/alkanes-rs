@@ -790,6 +790,9 @@ pub enum Brc20ProgCommands {
         /// Use Rebar Shield for private transaction relay (requires payment output in tx)
         #[arg(long)]
         use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
     },
     /// Call a BRC20-prog contract function (transact)
     Transact {
@@ -830,6 +833,9 @@ pub enum Brc20ProgCommands {
         /// Use Rebar Shield for private transaction relay (requires payment output in tx)
         #[arg(long)]
         use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
     },
     /// Wrap BTC to frBTC and execute in brc20-prog (wrapAndExecute2)
     WrapBtc {
