@@ -12,7 +12,7 @@ async function getWasmModule() {
   if (!wasmModule) {
     // Dynamic import to avoid bundling issues
     // Use package-relative path for proper resolution
-    wasmModule = await import(/* webpackIgnore: true */ '@alkanes/ts-sdk/wasm');
+    wasmModule = await import(/* webpackIgnore: true */ /* @vite-ignore */ '@alkanes/ts-sdk/wasm');
   }
   return wasmModule;
 }

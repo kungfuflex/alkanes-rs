@@ -719,7 +719,7 @@ export class AlkanesProvider {
     if (this._provider) return;
 
     // Dynamic import of WASM module using cross-platform loader
-    const wasm = await import('@alkanes/ts-sdk/wasm');
+    const wasm = await import(/* @vite-ignore */ '@alkanes/ts-sdk/wasm');
 
     // For Node.js, we need to call init() first to load the WASM
     if (typeof wasm.init === 'function') {
