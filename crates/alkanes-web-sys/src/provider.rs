@@ -2551,6 +2551,277 @@ impl WebProvider {
                 .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
         })
     }
+
+    // ============================================================================
+    // ESPO INDEXER METHODS
+    // ============================================================================
+
+    /// Get current ESPO indexer height
+    #[wasm_bindgen(js_name = espoGetHeight)]
+    pub fn espo_get_height_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_espo_height().await
+                .map(|h| JsValue::from_f64(h as f64))
+                .map_err(|e| JsValue::from_str(&format!("ESPO get height failed: {}", e)))
+        })
+    }
+
+    /// Ping the ESPO essentials module
+    #[wasm_bindgen(js_name = espoPing)]
+    pub fn espo_ping_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.ping().await
+                .map(|s| JsValue::from_str(&s))
+                .map_err(|e| JsValue::from_str(&format!("ESPO ping failed: {}", e)))
+        })
+    }
+
+    /// Get alkanes balances for an address from ESPO
+    #[wasm_bindgen(js_name = espoGetAddressBalances)]
+    pub fn espo_get_address_balances_js(&self, address: String, include_outpoints: bool) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_address_balances(&address, include_outpoints).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get address balances failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get outpoints containing alkanes for an address from ESPO
+    #[wasm_bindgen(js_name = espoGetAddressOutpoints)]
+    pub fn espo_get_address_outpoints_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_address_outpoints(&address).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get address outpoints failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkanes balances at a specific outpoint from ESPO
+    #[wasm_bindgen(js_name = espoGetOutpointBalances)]
+    pub fn espo_get_outpoint_balances_js(&self, outpoint: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_outpoint_balances(&outpoint).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get outpoint balances failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get holders of an alkane token from ESPO
+    #[wasm_bindgen(js_name = espoGetHolders)]
+    pub fn espo_get_holders_js(&self, alkane_id: String, page: f64, limit: f64) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_holders(&alkane_id, page as u64, limit as u64).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get holders failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get holder count for an alkane from ESPO
+    #[wasm_bindgen(js_name = espoGetHoldersCount)]
+    pub fn espo_get_holders_count_js(&self, alkane_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_holders_count(&alkane_id).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get holders count failed: {}", e)))?;
+
+            // Extract count from JSON response
+            let count = result.get("count")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| JsValue::from_str("Invalid count in response"))?;
+
+            Ok(JsValue::from_f64(count as f64))
+        })
+    }
+
+    /// Get storage keys for an alkane contract from ESPO
+    #[wasm_bindgen(js_name = espoGetKeys)]
+    pub fn espo_get_keys_js(&self, alkane_id: String, page: f64, limit: f64) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_keys(&alkane_id, page as u64, limit as u64).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get keys failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    // ============================================================================
+    // ESPO AMM DATA MODULE METHODS
+    // ============================================================================
+
+    /// Ping the ESPO AMM Data module
+    #[wasm_bindgen(js_name = espoAmmdataPing)]
+    pub fn espo_ammdata_ping_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.ammdata_ping().await
+                .map(|s| JsValue::from_str(&s))
+                .map_err(|e| JsValue::from_str(&format!("ESPO ammdata ping failed: {}", e)))
+        })
+    }
+
+    /// Get OHLCV candlestick data for a pool from ESPO
+    #[wasm_bindgen(js_name = espoGetCandles)]
+    pub fn espo_get_candles_js(
+        &self,
+        pool: String,
+        timeframe: Option<String>,
+        side: Option<String>,
+        limit: Option<f64>,
+        page: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_candles(
+                &pool,
+                timeframe.as_deref(),
+                side.as_deref(),
+                limit.map(|l| l as u64),
+                page.map(|p| p as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get candles failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get trade history for a pool from ESPO
+    #[wasm_bindgen(js_name = espoGetTrades)]
+    pub fn espo_get_trades_js(
+        &self,
+        pool: String,
+        limit: Option<f64>,
+        page: Option<f64>,
+        side: Option<String>,
+        filter_side: Option<String>,
+        sort: Option<String>,
+        dir: Option<String>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_trades(
+                &pool,
+                limit.map(|l| l as u64),
+                page.map(|p| p as u64),
+                side.as_deref(),
+                filter_side.as_deref(),
+                sort.as_deref(),
+                dir.as_deref()
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get trades failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get all pools from ESPO
+    #[wasm_bindgen(js_name = espoGetPools)]
+    pub fn espo_get_pools_js(&self, limit: Option<f64>, page: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_pools(
+                limit.map(|l| l as u64),
+                page.map(|p| p as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get pools failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Find the best swap path between two tokens using ESPO
+    #[wasm_bindgen(js_name = espoFindBestSwapPath)]
+    pub fn espo_find_best_swap_path_js(
+        &self,
+        token_in: String,
+        token_out: String,
+        mode: Option<String>,
+        amount_in: Option<String>,
+        amount_out: Option<String>,
+        amount_out_min: Option<String>,
+        amount_in_max: Option<String>,
+        available_in: Option<String>,
+        fee_bps: Option<f64>,
+        max_hops: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.find_best_swap_path(
+                &token_in,
+                &token_out,
+                mode.as_deref(),
+                amount_in.as_deref(),
+                amount_out.as_deref(),
+                amount_out_min.as_deref(),
+                amount_in_max.as_deref(),
+                available_in.as_deref(),
+                fee_bps.map(|f| f as u64),
+                max_hops.map(|h| h as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO find best swap path failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Find the best MEV swap opportunity for a token using ESPO
+    #[wasm_bindgen(js_name = espoGetBestMevSwap)]
+    pub fn espo_get_best_mev_swap_js(
+        &self,
+        token: String,
+        fee_bps: Option<f64>,
+        max_hops: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_best_mev_swap(
+                &token,
+                fee_bps.map(|f| f as u64),
+                max_hops.map(|h| h as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get best MEV swap failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
 }
 
 
