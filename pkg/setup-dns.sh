@@ -7,8 +7,8 @@ set -e
 
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN}"
 ZONE_NAME="alkanes.build"
-# Cloud Run service URL
-CLOUD_RUN_URL="pkg-proxy-764011556884.us-central1.run.app"
+# Cloud Run custom domain endpoint (for SSL certificate)
+CLOUD_RUN_URL="ghs.googlehosted.com"
 
 # Colors
 GREEN='\033[0;32m'
