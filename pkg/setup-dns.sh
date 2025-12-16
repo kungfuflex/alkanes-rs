@@ -7,8 +7,8 @@ set -e
 
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN}"
 ZONE_NAME="alkanes.build"
-# For Cloud Run custom domains, CNAME must point to ghs.googlehosted.com
-CLOUD_RUN_URL="ghs.googlehosted.com"
+# Cloud Run service URL
+CLOUD_RUN_URL="pkg-proxy-764011556884.us-central1.run.app"
 
 # Colors
 GREEN='\033[0;32m'
@@ -104,8 +104,8 @@ update_cname() {
 }
 
 # Create CNAME record for pkg.alkanes.build pointing to Cloud Run
-# Proxied=false to allow Cloud Run to handle SSL
-update_cname "pkg" "${CLOUD_RUN_URL}" "false"
+# Proxied=true to use Cloudflare SSL and caching
+update_cname "pkg" "${CLOUD_RUN_URL}" "true"
 
 echo ""
 echo -e "${GREEN}=== DNS Configuration Complete ===${NC}"

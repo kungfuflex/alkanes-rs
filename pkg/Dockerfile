@@ -1,10 +1,15 @@
-FROM nginx:alpine
+FROM node:20-alpine
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/nginx.conf
+# Create app directory
+WORKDIR /app
+
+# Copy package files
+COPY package.json ./
+COPY server.js ./
 
 # Cloud Run requires listening on PORT environment variable
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["nginx", "-g", "daemon off;"]
+# Run the proxy
+CMD ["node", "server.js"]

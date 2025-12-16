@@ -1,0 +1,12 @@
+{
+  "name": "artifact-registry-proxy",
+  "version": "1.0.0",
+  "description": "Reverse proxy for Google Artifact Registry with service account authentication",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["proxy", "artifact-registry", "npm"],
+  "author": "Alkanes Team",
+  "license": "MIT"
+}
