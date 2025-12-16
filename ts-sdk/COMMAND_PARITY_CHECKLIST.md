@@ -25,7 +25,7 @@
 | `wallet backup` | ✅ IMPLEMENTED | Backup wallet |
 | `wallet mnemonic` | ✅ IMPLEMENTED | Get wallet mnemonic |
 
-## Bitcoind Commands (14/18 = 78%)
+## Bitcoind Commands (18/18 = 100%) ✅
 
 | Command | Status | Notes |
 |---------|--------|-------|
@@ -43,10 +43,10 @@
 | `bitcoind getblockstats` | ✅ IMPLEMENTED | Get block statistics |
 | `bitcoind estimatesmartfee` | ✅ IMPLEMENTED | Estimate smart fee |
 | `bitcoind getchaintips` | ✅ IMPLEMENTED | Get chain tips |
-| `bitcoind decoderawtransaction` | ⏳ BLOCKED | Needs WASM binding |
-| `bitcoind decodepsbt` | ⏳ BLOCKED | Needs WASM binding |
-| `bitcoind getrawmempool` | ⏳ BLOCKED | Needs WASM binding |
-| `bitcoind gettxout` | ⏳ BLOCKED | Needs WASM binding |
+| `bitcoind decoderawtransaction` | ✅ IMPLEMENTED | Decode raw transaction |
+| `bitcoind decodepsbt` | ✅ IMPLEMENTED | Decode PSBT |
+| `bitcoind getrawmempool` | ✅ IMPLEMENTED | Get raw mempool |
+| `bitcoind gettxout` | ✅ IMPLEMENTED | Get transaction output |
 
 ## Alkanes Commands (0/21 = 0%)
 
@@ -114,10 +114,9 @@
 ## Overall Progress
 
 - **Total Commands**: 190
-- **Implemented**: 33 (19 wallet + 14 bitcoind)
-- **Blocked (needs WASM)**: 4 (bitcoind)
+- **Implemented**: 37 (19 wallet + 18 bitcoind)
 - **Missing**: 153
-- **Progress**: 17.4%
+- **Progress**: 19.5%
 
 ## Priority Implementation Order
 

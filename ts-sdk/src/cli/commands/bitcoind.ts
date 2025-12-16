@@ -363,9 +363,104 @@ export function registerBitcoindCommands(program: Command): void {
       }
     });
 
-  // Note: The following commands are in the Rust CLI but not yet in WASM bindings:
-  // - decoderawtransaction
-  // - decodepsbt
-  // - getrawmempool
-  // - gettxout
+  // decoderawtransaction
+  bitcoind
+    .command('decoderawtransaction <hex>')
+    .description('Decode a raw transaction hex')
+    .action(async (hex, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Decoding transaction...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.bitcoind_decode_raw_transaction_js(hex);
+        const decoded = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(decoded, globalOpts));
+      } catch (err: any) {
+        error(`Failed to decode transaction: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // decodepsbt
+  bitcoind
+    .command('decodepsbt <psbt>')
+    .description('Decode a PSBT (base64)')
+    .action(async (psbt, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Decoding PSBT...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.bitcoind_decode_psbt_js(psbt);
+        const decoded = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(decoded, globalOpts));
+      } catch (err: any) {
+        error(`Failed to decode PSBT: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // getrawmempool
+  bitcoind
+    .command('getrawmempool')
+    .description('Get raw mempool transactions')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting mempool transactions...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.bitcoind_get_raw_mempool_js();
+        const mempool = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(mempool, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get mempool: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // gettxout
+  bitcoind
+    .command('gettxout <txid> <vout>')
+    .description('Get transaction output details')
+    .option('--include-mempool', 'Include mempool transactions', false)
+    .action(async (txid, vout, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting transaction output...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.bitcoind_get_tx_out_js(txid, parseInt(vout), options.includeMempool);
+        const txout = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(txout, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get tx out: ${err.message}`);
+        process.exit(1);
+      }
+    });
 }
