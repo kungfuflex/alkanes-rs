@@ -140,19 +140,38 @@ impl KeystoreManager {
 
     /// Derive addresses dynamically from master public key
     pub fn derive_addresses(&self, keystore: &Keystore, network: Network, script_types: &[&str], start_index: u32, count: u32) -> AnyhowResult<Vec<KeystoreAddress>> {
-        let master_xpub = Xpub::from_str(&keystore.account_xpub)
-            .map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
-        
+        let coin_type_suffix = match network {
+            Network::Bitcoin => "mainnet",
+            _ => "testnet",
+        };
+
         let secp = Secp256k1::new();
         let mut addresses = Vec::new();
-        
+
         for script_type in script_types {
+            // Map script_type to the address type used in account_xpubs
+            let address_type = match *script_type {
+                "p2tr" => "p2tr",
+                "p2wpkh" => "p2wpkh",
+                "p2sh" | "p2sh-p2wpkh" => "p2sh-p2wpkh",
+                "p2pkh" => "p2pkh",
+                "p2wsh" | "p2sh-p2wsh" => "p2tr", // p2wsh uses p2tr account xpub
+                _ => "p2tr", // Default fallback
+            };
+
+            // Select the correct xpub for this script type and network
+            let xpub_key = format!("{}:{}", address_type, coin_type_suffix);
+            let master_xpub = Xpub::from_str(
+                keystore.account_xpubs.get(&xpub_key)
+                    .unwrap_or(&keystore.account_xpub)
+            ).map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
+
             for index in start_index..(start_index + count) {
                 let address = self.derive_single_address(&master_xpub, &secp, network, script_type, 0, index)?;
                 addresses.push(address);
             }
         }
-        
+
         Ok(addresses)
     }
     
@@ -288,25 +307,44 @@ impl KeystoreManager {
     
     /// Derive addresses from keystore metadata without requiring decryption
     pub fn derive_addresses_from_metadata(&self, keystore_metadata: &Keystore, network: Network, script_types: &[&str], start_index: u32, count: u32, custom_network_params: Option<&alkanes_cli_common::network::NetworkParams>) -> AnyhowResult<Vec<KeystoreAddress>> {
-        let master_xpub = Xpub::from_str(&keystore_metadata.account_xpub)
-            .map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
-        
+        let coin_type_suffix = match network {
+            Network::Bitcoin => "mainnet",
+            _ => "testnet",
+        };
+
         let secp = Secp256k1::new();
         let mut addresses = Vec::new();
-        
+
         for script_type in script_types {
+            // Map script_type to the address type used in account_xpubs
+            let address_type = match *script_type {
+                "p2tr" => "p2tr",
+                "p2wpkh" => "p2wpkh",
+                "p2sh" | "p2sh-p2wpkh" => "p2sh-p2wpkh",
+                "p2pkh" => "p2pkh",
+                "p2wsh" | "p2sh-p2wsh" => "p2tr", // p2wsh uses p2tr account xpub
+                _ => "p2tr", // Default fallback
+            };
+
+            // Select the correct xpub for this script type and network
+            let xpub_key = format!("{}:{}", address_type, coin_type_suffix);
+            let master_xpub = Xpub::from_str(
+                keystore_metadata.account_xpubs.get(&xpub_key)
+                    .unwrap_or(&keystore_metadata.account_xpub)
+            ).map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
+
             for index in start_index..(start_index + count) {
                 let mut address = self.derive_single_address(&master_xpub, &secp, network, script_type, 0, index)?;
-                
+
                 // Apply custom network parameters if provided
                 if let Some(network_params) = custom_network_params {
                     address = self.apply_custom_network_params(address, network_params)?;
                 }
-                
+
                 addresses.push(address);
             }
         }
-        
+
         Ok(addresses)
     }
     
