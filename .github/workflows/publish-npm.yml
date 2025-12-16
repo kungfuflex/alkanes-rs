@@ -116,6 +116,8 @@ jobs:
         run: |
           echo "Building WASM with wasm-pack..."
           wasm-pack build --target bundler --out-dir ../../ts-sdk/build/wasm
+          echo "Removing .gitignore created by wasm-pack to ensure npm includes WASM files..."
+          rm -f ../../ts-sdk/build/wasm/.gitignore
           echo "WASM build complete"
           ls -lh ../../ts-sdk/build/wasm/
 
