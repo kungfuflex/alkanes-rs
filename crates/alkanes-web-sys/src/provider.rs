@@ -1760,8 +1760,12 @@ impl WebProvider {
             let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx, provider.network)
                 .map_err(|e| JsValue::from_str(&format!("Runestone decode failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&result)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            // Serialize to JSON string and parse in JavaScript to preserve structure
+            let json_string = serde_json::to_string(&result)
+                .map_err(|e| JsValue::from_str(&format!("JSON serialization failed: {}", e)))?;
+
+            js_sys::JSON::parse(&json_string)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
         })
     }
 
