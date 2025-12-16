@@ -34,10 +34,142 @@ impl<'a> Brc20ProgExecutor<'a> {
         Self { provider }
     }
 
+    /// Execute with Presign strategy: pre-sign all transactions before broadcasting
+    async fn execute_with_presign(&mut self, params: Brc20ProgExecuteParams) -> Result<Brc20ProgExecuteResult> {
+        log::info!("🔐 Presign Strategy: Building and signing all transactions upfront...");
+        log::info!("Inscription content: {}", params.inscription_content);
+
+        // Create the envelope
+        let envelope = Brc20ProgEnvelope::new(params.inscription_content.as_bytes().to_vec());
+
+        // Step 1: Build commit transaction (unsigned)
+        log::info!("📝 Step 1/6: Building commit transaction...");
+        let (commit_psbt, commit_fee, commit_internal_key) = self.build_commit_psbt_for_presign(&params, &envelope).await?;
+
+        // Calculate commit txid from unsigned transaction
+        let commit_tx = commit_psbt.unsigned_tx.clone();
+        let commit_txid = commit_tx.txid();
+        let commit_outpoint = OutPoint { txid: commit_txid, vout: 0 };
+        let commit_output = commit_tx.output[0].clone();
+
+        log::info!("   Commit txid (pre-calculated): {}", commit_txid);
+
+        // Step 2: Build reveal transaction (unsigned, spending future commit output)
+        log::info!("📝 Step 2/6: Building reveal transaction...");
+        let (reveal_psbt, reveal_fee, reveal_inscription_outpoint) = self.build_reveal_psbt_for_presign(
+            &params,
+            &envelope,
+            commit_outpoint,
+            commit_output.clone(),
+            commit_internal_key,
+        ).await?;
+
+        let reveal_tx = reveal_psbt.unsigned_tx.clone();
+        let reveal_txid = reveal_tx.txid();
+        let reveal_inscription_output = reveal_tx.output.iter()
+            .find(|o| o.value.to_sat() == 546 && !o.script_pubkey.is_op_return())
+            .ok_or_else(|| AlkanesError::Wallet("No inscription output found in reveal".to_string()))?
+            .clone();
+
+        log::info!("   Reveal txid (pre-calculated): {}", reveal_txid);
+
+        // Step 3: Build activation transaction (if needed)
+        let (activation_psbt_opt, activation_fee_opt) = if params.use_activation {
+            log::info!("📝 Step 3/6: Building activation transaction...");
+            let (act_psbt, act_fee) = self.build_activation_psbt_for_presign(
+                &params,
+                reveal_inscription_outpoint,
+                reveal_inscription_output,
+            ).await?;
+
+            let act_txid = act_psbt.unsigned_tx.txid();
+            log::info!("   Activation txid (pre-calculated): {}", act_txid);
+            (Some(act_psbt), Some(act_fee))
+        } else {
+            log::info!("📝 Step 3/6: Skipping activation (2-tx pattern)");
+            (None, None)
+        };
+
+        // Step 4: Sign all transactions
+        log::info!("✍️  Step 4/6: Signing all transactions...");
+        let signed_commit = self.sign_and_finalize_psbt(commit_psbt).await?;
+        let signed_reveal = self.sign_and_finalize_reveal_psbt_simple(reveal_psbt, &envelope, commit_internal_key).await?;
+        let signed_activation = if let Some(act_psbt) = activation_psbt_opt {
+            Some(self.sign_and_finalize_psbt(act_psbt).await?)
+        } else {
+            None
+        };
+
+        log::info!("   ✅ All transactions signed");
+
+        // Step 5: Broadcast all transactions at once
+        log::info!("📡 Step 5/6: Broadcasting all transactions simultaneously...");
+
+        let commit_hex = bitcoin::consensus::encode::serialize_hex(&signed_commit);
+        let reveal_hex = bitcoin::consensus::encode::serialize_hex(&signed_reveal);
+
+        let final_commit_txid = self.broadcast_with_options(&commit_hex, &params).await?;
+        log::info!("   ✅ Commit broadcast: {}", final_commit_txid);
+
+        let final_reveal_txid = self.broadcast_with_options(&reveal_hex, &params).await?;
+        log::info!("   ✅ Reveal broadcast: {}", final_reveal_txid);
+
+        let final_activation_txid = if let Some(ref act_tx) = signed_activation {
+            let act_hex = bitcoin::consensus::encode::serialize_hex(act_tx);
+            let txid = self.broadcast_with_options(&act_hex, &params).await?;
+            log::info!("   ✅ Activation broadcast: {}", txid);
+            Some(txid)
+        } else {
+            None
+        };
+
+        // Step 6: Wait for confirmations if needed
+        log::info!("⏳ Step 6/6: Waiting for confirmations...");
+        if params.use_slipstream || params.use_rebar {
+            self.wait_for_confirmation(&final_commit_txid, &params).await?;
+            self.wait_for_confirmation(&final_reveal_txid, &params).await?;
+            if let Some(ref act_txid) = final_activation_txid {
+                self.wait_for_confirmation(act_txid, &params).await?;
+            }
+        }
+
+        log::info!("✅ Presign strategy completed successfully!");
+
+        Ok(Brc20ProgExecuteResult {
+            commit_txid: final_commit_txid,
+            reveal_txid: final_reveal_txid,
+            activation_txid: final_activation_txid,
+            commit_fee,
+            reveal_fee,
+            activation_fee: activation_fee_opt,
+            inputs_used: vec![],
+            outputs_created: vec![],
+            traces: None,
+        })
+    }
+
     /// Execute a BRC20-prog operation (deploy or call) using commit-reveal pattern
     pub async fn execute(&mut self, params: Brc20ProgExecuteParams) -> Result<Brc20ProgExecuteResult> {
         log::info!("Starting BRC20-prog execution");
         log::info!("Inscription content: {}", params.inscription_content);
+
+        // Log anti-frontrunning strategy if enabled
+        if let Some(ref strategy) = params.strategy {
+            use super::types::AntiFrontrunningStrategy;
+            let strategy_name = match strategy {
+                AntiFrontrunningStrategy::CheckLockTimeVerify => "CheckLockTimeVerify (CLTV)",
+                AntiFrontrunningStrategy::Cpfp => "Child-Pays-For-Parent (CPFP)",
+                AntiFrontrunningStrategy::Presign => "Presign all transactions",
+                AntiFrontrunningStrategy::Rbf => "Replace-By-Fee (RBF) monitoring",
+            };
+            log::info!("🛡️  Anti-frontrunning strategy: {}", strategy_name);
+        }
+
+        // Use Presign strategy if enabled (separate execution path)
+        if let Some(super::types::AntiFrontrunningStrategy::Presign) = params.strategy {
+            return self.execute_with_presign(params).await;
+        }
+
 
         // Create the envelope with the JSON payload
         let envelope = Brc20ProgEnvelope::new(params.inscription_content.as_bytes().to_vec());
@@ -47,6 +179,18 @@ impl<'a> Brc20ProgExecutor<'a> {
             self.build_and_broadcast_commit(&params, &envelope).await?;
 
         log::info!("✅ Commit transaction broadcast: {commit_txid}");
+
+        // Apply CPFP strategy if enabled
+        if let Some(super::types::AntiFrontrunningStrategy::Cpfp) = params.strategy {
+            log::info!("🚀 Applying CPFP strategy: broadcasting high-fee child transaction...");
+            self.apply_cpfp_strategy(&commit_txid.to_string(), &params).await?;
+        }
+
+        // Apply RBF monitoring strategy if enabled
+        if let Some(super::types::AntiFrontrunningStrategy::Rbf) = params.strategy {
+            log::info!("🔍 RBF: Starting mempool monitoring for frontrunning attempts...");
+            self.monitor_and_bump_if_frontrun(&commit_txid.to_string(), &envelope, &params).await?;
+        }
 
         // For slipstream/rebar, we must wait for the transaction to be mined before continuing
         if params.use_slipstream || params.use_rebar {
@@ -248,6 +392,18 @@ impl<'a> Brc20ProgExecutor<'a> {
         let estimated_reveal_vsize = 10 + 200 + (2 * 43); // base + script-path input + 2 outputs
         let rebar_payment = self.calculate_rebar_payment(estimated_reveal_vsize, params).await?;
 
+        // Calculate locktime for CLTV strategy
+        let locktime = if let Some(super::types::AntiFrontrunningStrategy::CheckLockTimeVerify) = params.strategy {
+            use crate::traits::BitcoinRpcProvider;
+            let current_height = self.provider.get_block_count().await?;
+            let locktime_height = current_height + 6; // Wait 6 blocks after current height
+            log::info!("🔒 CLTV: Reveal transaction locked until block {}", locktime_height);
+            log::info!("   Current height: {}, locktime: +6 blocks", current_height);
+            Some(locktime_height as u32)
+        } else {
+            None
+        };
+
         // Build reveal PSBT with script-path spending
         let (mut reveal_psbt, reveal_fee) = self
             .build_reveal_psbt(
@@ -257,6 +413,7 @@ impl<'a> Brc20ProgExecutor<'a> {
                 Some(envelope),
                 commit_internal_key,
                 rebar_payment,
+                locktime,
             )
             .await?;
 
@@ -496,6 +653,517 @@ impl<'a> Brc20ProgExecutor<'a> {
             .into_script()
     }
 
+    /// Build commit PSBT for presign strategy (uses final sequences for deterministic txid)
+    async fn build_commit_psbt_for_presign(
+        &mut self,
+        params: &Brc20ProgExecuteParams,
+        envelope: &Brc20ProgEnvelope,
+    ) -> Result<(Psbt, u64, XOnlyPublicKey)> {
+        let (internal_key, _) = self.provider.get_internal_key().await?;
+        let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
+
+        let required_reveal_amount = 10_000u64;
+        let funding_utxos = self.select_utxos_for_amount(
+            required_reveal_amount,
+            &params.from_addresses,
+        ).await?;
+
+        let commit_output = TxOut {
+            value: bitcoin::Amount::from_sat(required_reveal_amount),
+            script_pubkey: commit_address.script_pubkey(),
+        };
+
+        // Build commit with FINAL sequences (no RBF) for deterministic txid
+        let (commit_psbt, commit_fee) = self.build_commit_psbt_final_seq(
+            funding_utxos,
+            commit_output,
+            params.fee_rate,
+            &params.change_address,
+        ).await?;
+
+        Ok((commit_psbt, commit_fee, internal_key))
+    }
+
+    /// Build commit PSBT with final sequences (for presign)
+    async fn build_commit_psbt_final_seq(
+        &mut self,
+        funding_utxos: Vec<OutPoint>,
+        commit_output: TxOut,
+        fee_rate: Option<f32>,
+        change_address: &Option<String>,
+    ) -> Result<(Psbt, u64)> {
+        use bitcoin::psbt::Input as PsbtInput;
+
+        let mut total_input_value = 0u64;
+        let mut input_txouts = Vec::new();
+        for outpoint in &funding_utxos {
+            let utxo = self.provider.get_utxo(outpoint).await?
+                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", outpoint)))?;
+            total_input_value += utxo.value.to_sat();
+            input_txouts.push(TxOut {
+                value: utxo.value,
+                script_pubkey: utxo.script_pubkey.clone(),
+            });
+        }
+
+        let change_address_str = if let Some(ref addr) = change_address {
+            addr.clone()
+        } else {
+            WalletProvider::get_address(self.provider).await?
+        };
+        let change_addr = Address::from_str(&change_address_str)?
+            .require_network(self.provider.get_network())?;
+
+        // Estimate fee
+        let temp_outputs = vec![commit_output.clone(), TxOut {
+            value: bitcoin::Amount::from_sat(0),
+            script_pubkey: change_addr.script_pubkey(),
+        }];
+
+        let temp_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: funding_utxos.iter().map(|outpoint| bitcoin::TxIn {
+                previous_output: *outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::MAX, // FINAL sequence for presign
+                witness: bitcoin::Witness::from_slice(&[vec![0u8; 65]]),
+            }).collect(),
+            output: temp_outputs,
+        };
+
+        let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+        let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
+        let change_value = total_input_value.saturating_sub(commit_output.value.to_sat()).saturating_sub(fee);
+
+        if change_value < 546 {
+            return Err(AlkanesError::Wallet("Not enough funds for commit and change".to_string()));
+        }
+
+        let final_outputs = vec![
+            commit_output,
+            TxOut {
+                value: bitcoin::Amount::from_sat(change_value),
+                script_pubkey: change_addr.script_pubkey(),
+            },
+        ];
+
+        let unsigned_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: funding_utxos.iter().map(|outpoint| bitcoin::TxIn {
+                previous_output: *outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::MAX, // FINAL
+                witness: bitcoin::Witness::new(),
+            }).collect(),
+            output: final_outputs,
+        };
+
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
+        for (i, utxo) in input_txouts.iter().enumerate() {
+            psbt.inputs[i] = PsbtInput {
+                witness_utxo: Some(utxo.clone()),
+                ..Default::default()
+            };
+        }
+
+        Ok((psbt, fee))
+    }
+
+    /// Build reveal PSBT for presign strategy
+    async fn build_reveal_psbt_for_presign(
+        &mut self,
+        params: &Brc20ProgExecuteParams,
+        envelope: &Brc20ProgEnvelope,
+        commit_outpoint: OutPoint,
+        commit_output: TxOut,
+        commit_internal_key: XOnlyPublicKey,
+    ) -> Result<(Psbt, u64, OutPoint)> {
+        let change_address_str = if let Some(ref addr) = params.change_address {
+            addr.clone()
+        } else {
+            WalletProvider::get_address(self.provider).await?
+        };
+        let change_address = Address::from_str(&change_address_str)?
+            .require_network(self.provider.get_network())?;
+
+        let op_return_output = TxOut {
+            value: bitcoin::Amount::from_sat(0),
+            script_pubkey: self.create_brc20prog_op_return(),
+        };
+
+        let change_output = TxOut {
+            value: bitcoin::Amount::from_sat(1), // Placeholder
+            script_pubkey: change_address.script_pubkey(),
+        };
+
+        let outputs = if params.use_activation {
+            // 3-tx pattern: inscription output + change
+            vec![
+                TxOut {
+                    value: bitcoin::Amount::from_sat(546),
+                    script_pubkey: change_address.script_pubkey(),
+                },
+                change_output,
+            ]
+        } else {
+            vec![op_return_output, change_output]
+        };
+
+        let (reveal_psbt, reveal_fee) = self.build_reveal_psbt(
+            vec![(commit_outpoint, commit_output)],
+            outputs,
+            params.fee_rate,
+            Some(envelope),
+            commit_internal_key,
+            None, // No rebar for presign
+            None, // No locktime for presign
+        ).await?;
+
+        let reveal_outpoint = OutPoint {
+            txid: reveal_psbt.unsigned_tx.txid(),
+            vout: 0,
+        };
+
+        Ok((reveal_psbt, reveal_fee, reveal_outpoint))
+    }
+
+    /// Build activation PSBT for presign strategy
+    async fn build_activation_psbt_for_presign(
+        &mut self,
+        params: &Brc20ProgExecuteParams,
+        reveal_inscription_outpoint: OutPoint,
+        reveal_inscription_output: TxOut,
+    ) -> Result<(Psbt, u64)> {
+        use bitcoin::psbt::Input as PsbtInput;
+
+        let change_address_str = if let Some(ref addr) = params.change_address {
+            addr.clone()
+        } else {
+            WalletProvider::get_address(self.provider).await?
+        };
+        let change_address = Address::from_str(&change_address_str)?
+            .require_network(self.provider.get_network())?;
+
+        let op_return_output = TxOut {
+            value: bitcoin::Amount::from_sat(0),
+            script_pubkey: self.create_brc20prog_op_return(),
+        };
+
+        // Estimate fee
+        let temp_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: reveal_inscription_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::MAX,
+                witness: bitcoin::Witness::from_slice(&[vec![0u8; 65]]),
+            }],
+            output: vec![
+                op_return_output.clone(),
+                TxOut {
+                    value: bitcoin::Amount::from_sat(0),
+                    script_pubkey: change_address.script_pubkey(),
+                },
+            ],
+        };
+
+        let fee_rate_sat_vb = params.fee_rate.unwrap_or(600.0);
+        let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
+        let change_value = reveal_inscription_output.value.to_sat().saturating_sub(1).saturating_sub(fee);
+
+        if change_value < 546 {
+            return Err(AlkanesError::Wallet("Not enough funds for activation".to_string()));
+        }
+
+        let final_outputs = vec![
+            op_return_output,
+            TxOut {
+                value: bitcoin::Amount::from_sat(change_value),
+                script_pubkey: change_address.script_pubkey(),
+            },
+        ];
+
+        let unsigned_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: reveal_inscription_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::MAX,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: final_outputs,
+        };
+
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
+        psbt.inputs[0] = PsbtInput {
+            witness_utxo: Some(reveal_inscription_output),
+            ..Default::default()
+        };
+
+        Ok((psbt, fee))
+    }
+
+    /// Simplified reveal PSBT signing (for presign)
+    async fn sign_and_finalize_reveal_psbt_simple(
+        &mut self,
+        mut psbt: Psbt,
+        envelope: &Brc20ProgEnvelope,
+        commit_internal_key: XOnlyPublicKey,
+    ) -> Result<Transaction> {
+        self.sign_and_finalize_reveal_psbt(&mut psbt, envelope, commit_internal_key).await
+    }
+
+    /// Monitor mempool and bump fee if frontrunning detected (RBF strategy)
+    async fn monitor_and_bump_if_frontrun(
+        &mut self,
+        commit_txid: &str,
+        envelope: &Brc20ProgEnvelope,
+        params: &Brc20ProgExecuteParams,
+    ) -> Result<()> {
+        use crate::traits::EsploraProvider;
+
+        // Get the commit transaction to extract its tapscript
+        let commit_tx_hex = self.provider.get_tx_hex(commit_txid).await?;
+        let commit_tx_bytes = hex::decode(&commit_tx_hex)?;
+        let commit_tx: Transaction = bitcoin::consensus::deserialize(&commit_tx_bytes)?;
+
+        // Extract the taproot output script for comparison
+        let commit_script = &commit_tx.output[0].script_pubkey;
+
+        log::info!("   Monitoring for transactions with similar taproot scripts...");
+        log::info!("   Will check mempool every 3 seconds for up to 30 seconds");
+
+        let max_monitoring_attempts = 10; // 30 seconds total
+        let max_rbf_bumps = 3; // Maximum number of fee bumps
+        let mut rbf_bump_count = 0;
+        let mut current_txid = commit_txid.to_string();
+        let mut current_fee_rate = params.fee_rate.unwrap_or(600.0);
+
+        for attempt in 1..=max_monitoring_attempts {
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+            // Check if our transaction is confirmed yet
+            match self.provider.get_tx_status(&current_txid).await {
+                Ok(status) => {
+                    let confirmed = status.get("confirmed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    if confirmed {
+                        log::info!("   ✅ Transaction confirmed - stopping RBF monitoring");
+                        return Ok(());
+                    }
+                }
+                Err(_) => {
+                    // Transaction not found yet, continue monitoring
+                }
+            }
+
+            // Get mempool transactions
+            let mempool_txids = match self.provider.get_mempool_txids().await {
+                Ok(txids) => txids,
+                Err(e) => {
+                    log::warn!("   ⚠️  Failed to fetch mempool: {}", e);
+                    continue;
+                }
+            };
+
+            let mempool_count = mempool_txids.as_array().map(|a| a.len()).unwrap_or(0);
+            log::debug!("   Checking {} mempool transactions...", mempool_count);
+
+            // Check each mempool transaction for similar scripts
+            for mempool_txid_value in mempool_txids.as_array().unwrap_or(&vec![]) {
+                let mempool_txid = mempool_txid_value.as_str().unwrap_or("");
+                if mempool_txid.is_empty() || mempool_txid == current_txid {
+                    continue;
+                }
+
+                // Get the transaction
+                match self.provider.get_tx_hex(mempool_txid).await {
+                    Ok(tx_hex) => {
+                        if let Ok(tx_bytes) = hex::decode(&tx_hex) {
+                            if let Ok(mempool_tx) = bitcoin::consensus::deserialize::<Transaction>(&tx_bytes) {
+                                // Check if any output has a similar taproot script
+                                for output in &mempool_tx.output {
+                                    if output.script_pubkey == *commit_script && mempool_txid != current_txid {
+                                        log::warn!("   ⚠️  FRONTRUNNING DETECTED!");
+                                        log::warn!("   Competing transaction: {}", mempool_txid);
+                                        log::warn!("   Same taproot script detected");
+
+                                        if rbf_bump_count >= max_rbf_bumps {
+                                            log::error!("   ❌ Maximum RBF bumps ({}) reached - cannot bump further", max_rbf_bumps);
+                                            return Err(AlkanesError::Network(format!(
+                                                "Frontrunning detected but max RBF bumps exceeded. Competing tx: {}",
+                                                mempool_txid
+                                            )));
+                                        }
+
+                                        // Bump the fee by 50%
+                                        current_fee_rate *= 1.5;
+                                        rbf_bump_count += 1;
+
+                                        log::warn!("   🚀 Bumping fee to {} sat/vB (bump #{}/{})",
+                                                   current_fee_rate, rbf_bump_count, max_rbf_bumps);
+
+                                        // Rebuild and rebroadcast with higher fee
+                                        match self.rbf_bump_commit(&current_txid, current_fee_rate, params, envelope).await {
+                                            Ok(new_txid) => {
+                                                log::info!("   ✅ RBF replacement broadcast: {}", new_txid);
+                                                current_txid = new_txid;
+                                            }
+                                            Err(e) => {
+                                                log::error!("   ❌ Failed to broadcast RBF replacement: {}", e);
+                                                return Err(e);
+                                            }
+                                        }
+
+                                        // Break to restart monitoring loop with new txid
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
+
+            if attempt % 3 == 0 {
+                log::info!("   Still monitoring... ({}/{})", attempt, max_monitoring_attempts);
+            }
+        }
+
+        log::info!("   Monitoring period complete");
+        Ok(())
+    }
+
+    /// Create RBF replacement transaction with higher fee
+    async fn rbf_bump_commit(
+        &mut self,
+        old_txid: &str,
+        new_fee_rate: f32,
+        params: &Brc20ProgExecuteParams,
+        envelope: &Brc20ProgEnvelope,
+    ) -> Result<String> {
+        // Get the old transaction
+        let old_tx_hex = self.provider.get_tx_hex(old_txid).await?;
+        let old_tx_bytes = hex::decode(&old_tx_hex)?;
+        let old_tx: Transaction = bitcoin::consensus::deserialize(&old_tx_bytes)?;
+
+        // Rebuild commit transaction with same inputs but higher fee
+        let funding_utxos: Vec<OutPoint> = old_tx.input.iter().map(|i| i.previous_output).collect();
+        let commit_output = old_tx.output[0].clone();
+
+        let (new_psbt, _new_fee) = self.build_commit_psbt(
+            funding_utxos,
+            commit_output,
+            Some(new_fee_rate),
+            &params.change_address,
+            None, // No rebar for RBF
+        ).await?;
+
+        // Sign and broadcast
+        let signed_tx = self.sign_and_finalize_psbt(new_psbt).await?;
+        let tx_hex = bitcoin::consensus::encode::serialize_hex(&signed_tx);
+
+        let new_txid = self.broadcast_with_options(&tx_hex, params).await?;
+        Ok(new_txid)
+    }
+
+    /// Apply CPFP (Child-Pays-For-Parent) strategy to accelerate commit transaction
+    async fn apply_cpfp_strategy(&mut self, commit_txid: &str, params: &Brc20ProgExecuteParams) -> Result<()> {
+        use bitcoin::psbt::Input as PsbtInput;
+        use crate::traits::BitcoinRpcProvider;
+
+        // Get the commit transaction to find the change output
+        let commit_tx_hex = self.provider.get_tx_hex(commit_txid).await?;
+        let commit_tx_bytes = hex::decode(&commit_tx_hex)?;
+        let commit_tx: Transaction = bitcoin::consensus::deserialize(&commit_tx_bytes)?;
+
+        // Find the change output (the largest output that's not the commit output at index 0)
+        let change_output_index = if commit_tx.output.len() > 1 {
+            // Assume the last output is the change (after commit and possibly rebar payment)
+            commit_tx.output.len() - 1
+        } else {
+            return Err(AlkanesError::Wallet("No change output found for CPFP".to_string()));
+        };
+
+        let change_output = &commit_tx.output[change_output_index];
+        let change_value = change_output.value.to_sat();
+
+        log::info!("   Found change output: {} sats at index {}", change_value, change_output_index);
+
+        // Create a transaction that spends the change output with high fee
+        // Use 1000 sat/vB to ensure fast confirmation
+        let cpfp_fee_rate = 1000.0;
+        let estimated_cpfp_vsize = 150; // Rough estimate for 1-input, 1-output tx
+        let cpfp_fee = (cpfp_fee_rate * estimated_cpfp_vsize as f32).ceil() as u64;
+
+        if change_value <= cpfp_fee {
+            return Err(AlkanesError::Wallet(format!(
+                "Change output ({} sats) is too small for CPFP fee ({} sats)",
+                change_value, cpfp_fee
+            )));
+        }
+
+        let cpfp_output_value = change_value.saturating_sub(cpfp_fee);
+
+        log::info!("   CPFP fee: {} sats @ {} sat/vB", cpfp_fee, cpfp_fee_rate);
+        log::info!("   Effective package fee rate: {:.1} sat/vB",
+            (cpfp_fee as f64) / ((commit_tx.vsize() + estimated_cpfp_vsize) as f64));
+
+        // Get destination address (use change address or wallet address)
+        let dest_address_str = if let Some(ref change_addr) = params.change_address {
+            change_addr.clone()
+        } else {
+            WalletProvider::get_address(self.provider).await?
+        };
+        let dest_address = Address::from_str(&dest_address_str)?
+            .require_network(self.provider.get_network())?;
+
+        // Build the CPFP transaction
+        let cpfp_outpoint = OutPoint {
+            txid: commit_tx.txid(),
+            vout: change_output_index as u32,
+        };
+
+        let cpfp_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: cpfp_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: bitcoin::Amount::from_sat(cpfp_output_value),
+                script_pubkey: dest_address.script_pubkey(),
+            }],
+        };
+
+        let mut cpfp_psbt = Psbt::from_unsigned_tx(cpfp_tx)?;
+        cpfp_psbt.inputs[0] = PsbtInput {
+            witness_utxo: Some(change_output.clone()),
+            ..Default::default()
+        };
+
+        // Sign and broadcast the CPFP transaction
+        let signed_cpfp_tx = self.sign_and_finalize_psbt(cpfp_psbt).await?;
+        let cpfp_tx_hex = bitcoin::consensus::encode::serialize_hex(&signed_cpfp_tx);
+
+        let cpfp_txid = self.broadcast_with_options(&cpfp_tx_hex, params).await?;
+
+        log::info!("   ✅ CPFP transaction broadcast: {}", cpfp_txid);
+        log::info!("   This accelerates both transactions as a package");
+
+        Ok(())
+    }
+
     /// Calculate Rebar payment information for a transaction
     async fn calculate_rebar_payment(&self, tx_vsize: usize, params: &Brc20ProgExecuteParams) -> Result<Option<RebarPaymentInfo>> {
         if !params.use_rebar {
@@ -719,6 +1387,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         envelope: Option<&Brc20ProgEnvelope>,
         commit_internal_key: XOnlyPublicKey,
         rebar_payment: Option<RebarPaymentInfo>,
+        locktime: Option<u32>,
     ) -> Result<(Psbt, u64)> {
         use bitcoin::transaction::Version;
 
@@ -731,9 +1400,17 @@ impl<'a> Brc20ProgExecutor<'a> {
             input_txouts.push(txout.clone());
         }
 
+        // Use locktime if provided (for CLTV strategy)
+        let tx_locktime = if let Some(height) = locktime {
+            bitcoin::absolute::LockTime::from_height(height)
+                .map_err(|e| AlkanesError::Wallet(format!("Invalid locktime height: {}", e)))?
+        } else {
+            bitcoin::absolute::LockTime::ZERO
+        };
+
         let mut temp_tx = Transaction {
             version: Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
+            lock_time: tx_locktime,
             input: utxos
                 .iter()
                 .map(|outpoint| bitcoin::TxIn {
@@ -803,7 +1480,7 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         let mut psbt = Psbt::from_unsigned_tx(Transaction {
             version: Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
+            lock_time: tx_locktime,
             input: utxos
                 .iter()
                 .map(|outpoint| bitcoin::TxIn {

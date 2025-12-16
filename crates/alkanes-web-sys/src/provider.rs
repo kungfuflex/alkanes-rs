@@ -3609,6 +3609,61 @@ impl EsploraProvider for WebProvider {
 }
 
 #[async_trait(?Send)]
+impl UtxoProvider for WebProvider {
+    async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>> {
+        use alkanes_cli_common::address_parser::AddressParser;
+        use alkanes_cli_common::esplora::EsploraUtxo;
+
+        self.logger.info(&format!("[UtxoProvider] Getting UTXOs for specs: {:?}", spec));
+
+        // Create AddressParser with self as the AddressResolver
+        let parser = AddressParser::new(self.clone());
+
+        let mut all_utxos = Vec::new();
+
+        // Parse each spec and resolve addresses
+        for spec_str in spec {
+            self.logger.info(&format!("[UtxoProvider] Parsing spec: {}", spec_str));
+            let addresses = parser.parse(spec_str).await?;
+            self.logger.info(&format!("[UtxoProvider] Resolved to {} addresses", addresses.len()));
+
+            // Fetch UTXOs for each address
+            for address in addresses {
+                self.logger.info(&format!("[UtxoProvider] Fetching UTXOs for address: {}", address));
+
+                // Use the EsploraProvider trait method to get UTXOs
+                match self.get_address_utxo(&address).await {
+                    Ok(utxos_json) => {
+                        // Parse the JSON response as array of EsploraUtxo
+                        let esplora_utxos: Vec<EsploraUtxo> = serde_json::from_value(utxos_json)
+                            .map_err(|e| AlkanesError::RpcError(format!("Failed to parse UTXOs: {}", e)))?;
+
+                        self.logger.info(&format!("[UtxoProvider] Found {} UTXOs for address {}", esplora_utxos.len(), address));
+
+                        // Convert EsploraUtxo to Utxo
+                        for esplora_utxo in esplora_utxos {
+                            all_utxos.push(Utxo {
+                                txid: esplora_utxo.txid,
+                                vout: esplora_utxo.vout,
+                                amount: esplora_utxo.value,
+                                address: address.clone(),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        // Log error but continue with other addresses
+                        self.logger.warn(&format!("[UtxoProvider] Failed to get UTXOs for address {}: {}", address, e));
+                    }
+                }
+            }
+        }
+
+        self.logger.info(&format!("[UtxoProvider] Total UTXOs found: {}", all_utxos.len()));
+        Ok(all_utxos)
+    }
+}
+
+#[async_trait(?Send)]
 impl WalletProvider for WebProvider {
     async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
         let mnemonic = if let Some(m) = mnemonic {

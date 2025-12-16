@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// Wrapper script for alkanes-bindgen-cli
+require('/data/alkanes-rs/ts-sdk/dist/index.js');

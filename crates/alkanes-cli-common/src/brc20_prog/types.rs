@@ -6,6 +6,20 @@ use alloc::{string::String, vec::Vec};
 #[cfg(feature = "std")]
 use std::{string::String, vec::Vec};
 
+/// Anti-frontrunning strategy for BRC20-Prog transactions
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AntiFrontrunningStrategy {
+    /// Use CheckLockTimeVerify to timelock reveal transaction
+    CheckLockTimeVerify,
+    /// Use Child-Pays-For-Parent to accelerate commit transaction
+    Cpfp,
+    /// Pre-sign all transactions and broadcast together
+    Presign,
+    /// Monitor mempool and use RBF to bump fees if frontrunning detected
+    Rbf,
+}
+
 /// Parameters for deploying a BRC20-prog contract
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Brc20ProgDeployParams {
@@ -33,6 +47,8 @@ pub struct Brc20ProgDeployParams {
     pub use_rebar: bool,
     /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
     pub rebar_tier: Option<u8>,
+    /// Anti-frontrunning strategy to use
+    pub strategy: Option<AntiFrontrunningStrategy>,
 }
 
 /// Parameters for calling a BRC20-prog contract (transact subcommand)
@@ -64,6 +80,8 @@ pub struct Brc20ProgTransactParams {
     pub use_rebar: bool,
     /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
     pub rebar_tier: Option<u8>,
+    /// Anti-frontrunning strategy to use
+    pub strategy: Option<AntiFrontrunningStrategy>,
 }
 
 /// Generic execution parameters for BRC20-prog operations
@@ -93,6 +111,8 @@ pub struct Brc20ProgExecuteParams {
     pub use_rebar: bool,
     /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
     pub rebar_tier: Option<u8>,
+    /// Anti-frontrunning strategy to use
+    pub strategy: Option<AntiFrontrunningStrategy>,
 }
 
 /// Result of a BRC20-prog execution
