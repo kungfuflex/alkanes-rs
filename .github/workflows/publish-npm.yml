@@ -9,6 +9,16 @@ on:
       - 'crates/alkanes-web-sys/**'
       - 'prod_wasms/**'
       - '.github/workflows/publish-npm.yml'
+  pull_request:
+    branches:
+      - develop
+    types:
+      - closed
+    paths:
+      - 'ts-sdk/**'
+      - 'crates/alkanes-web-sys/**'
+      - 'prod_wasms/**'
+      - '.github/workflows/publish-npm.yml'
 
 env:
   NODE_VERSION: '20'
@@ -17,6 +27,8 @@ env:
 
 jobs:
   publish-npm:
+    # Only run on push events or when a PR is merged (not just closed)
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     permissions:
       contents: read
