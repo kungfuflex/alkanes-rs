@@ -176,11 +176,14 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -H "Content-Type: application/json" | jq -r '.result[0].id')
 
-          curl -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache" \
+          echo "Zone ID: ${ZONE_ID}"
+
+          RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache" \
             -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -H "Content-Type: application/json" \
-            --data '{"files":["https://pkg.alkanes.build/dist/@alkanes/ts-sdk"]}'
+            --data '{"prefixes":["pkg.alkanes.build/dist/@alkanes/ts-sdk"]}')
 
+          echo "Response: ${RESPONSE}"
           echo "CloudFlare cache purged"
 
       - name: Output published version
