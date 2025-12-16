@@ -4354,7 +4354,7 @@ impl BitcoinRpcProvider for WebProvider {
     }
     
     async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
-        let params = serde_json::json!([txid, true]);
+        let params = serde_json::json!([txid, false]);
         let result = self.call(&self.sandshrew_rpc_url(), "getrawtransaction", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid transaction hex response".to_string()))
     }
