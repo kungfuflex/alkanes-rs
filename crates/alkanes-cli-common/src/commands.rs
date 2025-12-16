@@ -129,6 +129,14 @@ pub enum Commands {
         #[command(subcommand)]
         command: EspoCommands,
     },
+    /// Decode a PSBT (Partially Signed Bitcoin Transaction) without calling bitcoind
+    Decodepsbt {
+        /// PSBT as base64 string
+        psbt: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl From<RunestoneCommands> for Commands {
@@ -437,6 +445,12 @@ pub enum BitcoindCommands {
     Decoderawtransaction {
         /// Raw transaction hex
         hex: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    Decodepsbt {
+        /// PSBT as base64 string
+        psbt: String,
         #[arg(long)]
         raw: bool,
     },
@@ -770,6 +784,12 @@ pub enum Brc20ProgCommands {
         /// Automatically confirm the transaction preview
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Use MARA Slipstream service for broadcasting (bypasses standard mempool, accepts large/non-standard txs)
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay (requires payment output in tx)
+        #[arg(long)]
+        use_rebar: bool,
     },
     /// Call a BRC20-prog contract function (transact)
     Transact {
@@ -804,6 +824,12 @@ pub enum Brc20ProgCommands {
         /// Automatically confirm the transaction preview
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Use MARA Slipstream service for broadcasting (bypasses standard mempool, accepts large/non-standard txs)
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay (requires payment output in tx)
+        #[arg(long)]
+        use_rebar: bool,
     },
     /// Wrap BTC to frBTC and execute in brc20-prog (wrapAndExecute2)
     WrapBtc {

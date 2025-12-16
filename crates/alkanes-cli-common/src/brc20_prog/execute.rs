@@ -146,10 +146,8 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Sign and broadcast commit transaction
         let commit_tx = self.sign_and_finalize_psbt(commit_psbt).await?;
-        let commit_txid_string = self
-            .provider
-            .broadcast_transaction(bitcoin::consensus::encode::serialize_hex(&commit_tx))
-            .await?;
+        let commit_tx_hex = bitcoin::consensus::encode::serialize_hex(&commit_tx);
+        let commit_txid_string = self.broadcast_with_options(&commit_tx_hex, params).await?;
 
         let commit_outpoint = OutPoint {
             txid: commit_tx.compute_txid(),
@@ -237,10 +235,8 @@ impl<'a> Brc20ProgExecutor<'a> {
             commit_internal_key,
         ).await?;
 
-        let reveal_txid_string = self
-            .provider
-            .broadcast_transaction(bitcoin::consensus::encode::serialize_hex(&reveal_tx))
-            .await?;
+        let reveal_tx_hex = bitcoin::consensus::encode::serialize_hex(&reveal_tx);
+        let reveal_txid_string = self.broadcast_with_options(&reveal_tx_hex, params).await?;
 
         let reveal_txid = reveal_tx.compute_txid();
 
@@ -402,10 +398,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         let activation_tx = self.sign_and_finalize_psbt(psbt).await?;
 
         // Broadcast
-        let activation_txid_string = self
-            .provider
-            .broadcast_transaction(bitcoin::consensus::encode::serialize_hex(&activation_tx))
-            .await?;
+        let activation_tx_hex = bitcoin::consensus::encode::serialize_hex(&activation_tx);
+        let activation_txid_string = self.broadcast_with_options(&activation_tx_hex, params).await?;
 
         Ok((activation_tx.compute_txid(), fee))
     }
@@ -794,5 +788,52 @@ impl<'a> Brc20ProgExecutor<'a> {
             self.provider.generate_to_address(1, &address).await?;
         }
         Ok(())
+    }
+
+    /// Broadcast transaction with optional slipstream or rebar
+    async fn broadcast_with_options(&self, tx_hex: &str, params: &Brc20ProgExecuteParams) -> Result<String> {
+        if params.use_rebar {
+            log::info!("🔒 Using Rebar Shield for private transaction broadcast");
+            use crate::provider::rebar;
+            rebar::submit_transaction(tx_hex).await
+                .map_err(|e| AlkanesError::Network(format!("Rebar Shield error: {}", e)))
+        } else if params.use_slipstream {
+            log::info!("🚀 Using MARA Slipstream for transaction broadcast");
+
+            let client = reqwest::Client::new();
+            let payload = serde_json::json!({
+                "tx_hex": tx_hex
+            });
+
+            let response = client
+                .post("https://slipstream.mara.com/rest-api/submit-tx")
+                .header("Content-Type", "application/json")
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| AlkanesError::Network(format!("Slipstream request failed: {}", e)))?;
+
+            let status = response.status();
+            let response_text = response.text().await
+                .map_err(|e| AlkanesError::Network(format!("Failed to read Slipstream response: {}", e)))?;
+
+            if !status.is_success() {
+                return Err(AlkanesError::Network(format!("Slipstream error ({}): {}", status, response_text)));
+            }
+
+            let response_json: serde_json::Value = serde_json::from_str(&response_text)
+                .map_err(|e| AlkanesError::Network(format!("Failed to parse Slipstream response: {}", e)))?;
+
+            // Extract txid from response
+            if let Some(txid) = response_json.get("txid").and_then(|v| v.as_str()) {
+                log::info!("✅ Transaction submitted to MARA Slipstream successfully!");
+                Ok(txid.to_string())
+            } else {
+                Err(AlkanesError::Network(format!("Slipstream response missing txid: {}", response_text)))
+            }
+        } else {
+            // Standard broadcast
+            self.provider.broadcast_transaction(tx_hex.to_string()).await
+        }
     }
 }

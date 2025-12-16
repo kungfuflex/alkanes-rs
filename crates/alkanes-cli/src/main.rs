@@ -122,6 +122,16 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         }
         Commands::Subfrost(cmd) => execute_subfrost_command(system.provider(), cmd).await,
         Commands::Espo(cmd) => execute_espo_command(system.provider(), cmd.into()).await,
+        Commands::Decodepsbt { psbt, raw } => {
+            use alkanes_cli_common::psbt_utils::decode_psbt_from_base64;
+            let psbt_json = decode_psbt_from_base64(&psbt)?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&psbt_json)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&psbt_json)?);
+            }
+            Ok(())
+        }
     }
 }
 
@@ -4269,7 +4279,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
     let provider = system.provider_mut();
 
     match command {
-        Brc20Prog::DeployContract { foundry_json_path, from, change, fee_rate, raw, trace, mine, auto_confirm, no_activation } => {
+        Brc20Prog::DeployContract { foundry_json_path, from, change, fee_rate, raw, trace, mine, auto_confirm, no_activation, use_slipstream, use_rebar } => {
             let contract_data = parse_foundry_json(&foundry_json_path)?;
             let bytecode = extract_deployment_bytecode(&contract_data)?;
 
@@ -4303,6 +4313,8 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 mine_enabled: mine,
                 auto_confirm: auto_confirm,
                 use_activation: !no_activation, // Default is true (3-tx pattern), false with --no-activation
+                use_slipstream,
+                use_rebar,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4325,7 +4337,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::Transact { address, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
+        Brc20Prog::Transact { address, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar } => {
             let calldata_hex = encode_function_call(&signature, &calldata)?; // calldata.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>())?;
 
             let inscription = Brc20ProgCallInscription::new(address, calldata_hex);
@@ -4358,6 +4370,8 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 mine_enabled: mine,
                 auto_confirm: auto_confirm,
                 use_activation: true, // Use 3-tx pattern (required for brc20-prog indexing)
+                use_slipstream,
+                use_rebar,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);

@@ -181,3 +181,40 @@ pub fn analyze_runestone(tx_hex: &str) -> Result<String, JsValue> {
     serde_json::to_string(&response)
         .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
 }
+
+/// Decode a PSBT (Partially Signed Bitcoin Transaction) from base64
+///
+/// This function decodes a PSBT from its base64 representation and returns
+/// a JSON object containing detailed information about the transaction,
+/// inputs, outputs, and PSBT-specific fields.
+///
+/// # Arguments
+///
+/// * `psbt_base64` - Base64 encoded PSBT string
+///
+/// # Returns
+///
+/// A JSON string containing the decoded PSBT information including:
+/// - Transaction details (txid, version, locktime, inputs, outputs)
+/// - Global PSBT data (xpubs)
+/// - Per-input data (witness UTXOs, scripts, signatures, derivation paths)
+/// - Per-output data (scripts, derivation paths)
+/// - Fee information (if calculable)
+///
+/// # Example
+///
+/// ```javascript
+/// const decodedPsbt = decode_psbt(psbtBase64);
+/// const data = JSON.parse(decodedPsbt);
+/// console.log(`TXID: ${data.tx.txid}`);
+/// console.log(`Fee: ${data.fee} sats`);
+/// ```
+#[wasm_bindgen]
+pub fn decode_psbt(psbt_base64: &str) -> Result<String, JsValue> {
+    use alkanes_cli_common::psbt_utils::decode_psbt_from_base64;
+
+    decode_psbt_from_base64(psbt_base64)
+        .map(|json| serde_json::to_string(&json)
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e))))
+        .map_err(|e| JsValue::from_str(&format!("PSBT decode error: {}", e)))?
+}

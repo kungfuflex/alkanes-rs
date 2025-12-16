@@ -139,6 +139,14 @@ pub enum Commands {
     /// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
     #[command(subcommand)]
     Espo(EspoCommands),
+    /// Decode a PSBT (Partially Signed Bitcoin Transaction) without calling bitcoind
+    Decodepsbt {
+        /// PSBT as base64 string
+        psbt: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// Lua script subcommands
@@ -234,6 +242,12 @@ pub enum BitcoindCommands {
     Decoderawtransaction {
         /// Raw transaction hex
         hex: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    Decodepsbt {
+        /// PSBT as base64 string
+        psbt: String,
         #[arg(long)]
         raw: bool,
     },
@@ -571,6 +585,12 @@ pub enum Brc20Prog {
         /// Skip activation transaction and use 2-transaction pattern (commit-reveal with OP_RETURN)
         #[arg(long)]
         no_activation: bool,
+        /// Use MARA Slipstream service for broadcasting (bypasses standard mempool, accepts large/non-standard txs)
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay (requires payment output in tx)
+        #[arg(long)]
+        use_rebar: bool,
     },
     /// Call a BRC20-prog contract function
     Transact {
@@ -605,6 +625,12 @@ pub enum Brc20Prog {
         /// Automatically confirm the transaction preview
         #[arg(long, short = 'y')]
         auto_confirm: bool,
+        /// Use MARA Slipstream service for broadcasting (bypasses standard mempool, accepts large/non-standard txs)
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay (requires payment output in tx)
+        #[arg(long)]
+        use_rebar: bool,
     },
     /// Wrap BTC to frBTC and execute in brc20-prog (wrapAndExecute2)
     WrapBtc {

@@ -27,6 +27,10 @@ pub struct Brc20ProgDeployParams {
     pub auto_confirm: bool,
     /// Use 3-transaction activation pattern (commit-reveal-activation) instead of 2-transaction (commit-reveal)
     pub use_activation: bool,
+    /// Use MARA Slipstream service for broadcasting
+    pub use_slipstream: bool,
+    /// Use Rebar Shield for private transaction relay
+    pub use_rebar: bool,
 }
 
 /// Parameters for calling a BRC20-prog contract (transact subcommand)
@@ -52,6 +56,10 @@ pub struct Brc20ProgTransactParams {
     pub mine_enabled: bool,
     /// Automatically confirm the transaction preview
     pub auto_confirm: bool,
+    /// Use MARA Slipstream service for broadcasting
+    pub use_slipstream: bool,
+    /// Use Rebar Shield for private transaction relay
+    pub use_rebar: bool,
 }
 
 /// Generic execution parameters for BRC20-prog operations
@@ -75,6 +83,10 @@ pub struct Brc20ProgExecuteParams {
     pub auto_confirm: bool,
     /// Use 3-transaction activation pattern (commit-reveal-activation) instead of 2-transaction (commit-reveal)
     pub use_activation: bool,
+    /// Use MARA Slipstream service for broadcasting
+    pub use_slipstream: bool,
+    /// Use Rebar Shield for private transaction relay
+    pub use_rebar: bool,
 }
 
 /// Result of a BRC20-prog execution

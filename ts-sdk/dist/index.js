@@ -46727,7 +46727,10 @@ var init_provider = __esm({
        */
       async initialize() {
         if (this._provider) return;
-        const wasm = await import("@alkanes/ts-sdk/wasm");
+        const wasm = await import(
+          /* @vite-ignore */
+          "@alkanes/ts-sdk/wasm"
+        );
         if (typeof wasm.init === "function") {
           await wasm.init();
         }
@@ -48434,6 +48437,7 @@ async function getWasmModule() {
   if (!wasmModule) {
     wasmModule = await import(
       /* webpackIgnore: true */
+      /* @vite-ignore */
       "@alkanes/ts-sdk/wasm"
     );
   }

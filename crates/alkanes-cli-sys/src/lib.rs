@@ -2458,6 +2458,18 @@ impl SystemBitcoind for SystemAlkanes {
                 }
                 Ok(())
             },
+            BitcoindCommands::Decodepsbt { psbt, raw } => {
+                use alkanes_cli_common::psbt_utils::decode_psbt_from_base64;
+
+                let psbt_json = decode_psbt_from_base64(&psbt)?;
+
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&psbt_json)?);
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&psbt_json)?);
+                }
+                Ok(())
+            },
             BitcoindCommands::Getchaintips { raw } => {
                 let result = <ConcreteProvider as BitcoinRpcProvider>::get_chain_tips(provider).await?;
                 if raw {
