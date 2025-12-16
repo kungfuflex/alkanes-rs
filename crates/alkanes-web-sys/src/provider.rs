@@ -581,25 +581,42 @@ impl WebProvider {
                 None
             };
 
-            // Parse options
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output) = if let Some(opts_json) = options_json {
+            // Parse options including from_addresses for UTXO selection
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address) = if let Some(ref opts_json) = options_json {
                 let opts: serde_json::Value = serde_json::from_str(&opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
+
+                // Parse from_addresses - CRITICAL for wrap to use correct address type
+                let from_addrs: Option<Vec<String>> = opts.get("from_addresses")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+                let from_addrs = from_addrs.or_else(|| {
+                    opts.get("from")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                });
+
+                let change_addr = opts.get("change_address")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
                     opts.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                    from_addrs,
+                    change_addr,
                 )
             } else {
-                (false, false, true, false)
+                (false, false, true, false, None, None)
             };
 
             let params = EnhancedExecuteParams {
                 fee_rate,
                 to_addresses,
-                from_addresses: None,
-                change_address: None,
+                from_addresses,
+                change_address,
                 alkanes_change_address: None,
                 input_requirements: input_reqs,
                 protostones: proto_specs,
@@ -3430,8 +3447,6 @@ impl WalletProvider for WebProvider {
     async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(bitcoin::OutPoint, UtxoInfo)>> {
         use alkanes_cli_common::lua_script::{LuaScriptExecutor, scripts::SPENDABLE_UTXOS};
 
-        self.logger.info(&format!("[WalletProvider] Calling get_utxos for addresses: {:?}", addresses));
-
         let addrs = if let Some(a) = addresses {
             a
         } else {
@@ -4061,9 +4076,24 @@ impl BitcoinRpcProvider for WebProvider {
     }
     
     async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
-        let params = serde_json::json!([txid, true]);
-        let result = self.call(&self.sandshrew_rpc_url(), "getrawtransaction", params, 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid transaction hex response".to_string()))
+        // First try verbose=true and extract hex field (works with most RPC endpoints)
+        let params_verbose = serde_json::json!([txid, true]);
+        let result = self.call(&self.sandshrew_rpc_url(), "getrawtransaction", params_verbose, 1).await?;
+
+        // If result is a string, use it directly (non-verbose response)
+        if let Some(hex) = result.as_str() {
+            return Ok(hex.to_string());
+        }
+
+        // If result is an object with "hex" field (verbose response), extract it
+        if let Some(hex) = result.get("hex").and_then(|v| v.as_str()) {
+            return Ok(hex.to_string());
+        }
+
+        // Fallback: try non-verbose mode
+        let params_raw = serde_json::json!([txid, false]);
+        let result_raw = self.call(&self.sandshrew_rpc_url(), "getrawtransaction", params_raw, 1).await?;
+        result_raw.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid transaction hex response".to_string()))
     }
     
     async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue> {
@@ -5016,9 +5046,7 @@ impl DeezelProvider for WebProvider {
     }
 
     async fn get_utxo(&self, outpoint: &OutPoint) -> Result<Option<TxOut>> {
-        use alkanes_cli_common::traits::EsploraProvider;
-
-        // Fetch the transaction using esplora_tx RPC
+        // Fetch the transaction hex
         let txid = outpoint.txid.to_string();
         let tx_hex = match self.get_transaction_hex(&txid).await {
             Ok(hex) => hex,
