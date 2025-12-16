@@ -178,13 +178,21 @@ jobs:
 
           echo "Zone ID: ${ZONE_ID}"
 
+          # Try purging specific files first
           RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache" \
             -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -H "Content-Type: application/json" \
-            --data '{"prefixes":["pkg.alkanes.build/dist/@alkanes/ts-sdk"]}')
+            --data '{"files":["https://pkg.alkanes.build/dist/@alkanes/ts-sdk"]}')
 
-          echo "Response: ${RESPONSE}"
-          echo "CloudFlare cache purged"
+          echo "Purge response: ${RESPONSE}"
+
+          # Check if purge was successful
+          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+            echo "✅ CloudFlare cache purged successfully"
+          else
+            echo "⚠️  Cache purge failed, check CLOUDFLARE_API_TOKEN permissions"
+            echo "Token needs 'Zone.Cache Purge' permission in CloudFlare dashboard"
+          fi
 
       - name: Output published version
         run: |
