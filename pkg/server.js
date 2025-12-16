@@ -96,7 +96,7 @@ const server = http.createServer(async (req, res) => {
 
       // Get package metadata
       const metadata = await getPackageMetadata(packageName, token);
-      const latestVersion = metadata['dist-tags'].latest;
+      const latestVersion = metadata['dist-tags']['latest-dev'];
       const tarballUrl = metadata.versions[latestVersion].dist.tarball;
 
       // Extract path from tarball URL
