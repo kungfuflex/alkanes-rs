@@ -59,19 +59,53 @@ async function getPackageMetadata(packageName, token) {
     };
 
     https.get(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          try {
-            resolve(JSON.parse(data));
-          } catch (err) {
-            reject(new Error('Failed to parse package metadata'));
+      // Follow redirects (307, 302, 301)
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const redirectUrl = res.headers.location;
+        console.log(`Following metadata redirect to: ${redirectUrl}`);
+
+        const redirectOptions = redirectUrl.startsWith('http')
+          ? redirectUrl
+          : {
+              hostname: ARTIFACT_REGISTRY,
+              path: redirectUrl,
+              headers: {
+                'Host': ARTIFACT_REGISTRY,
+                'Authorization': `Bearer ${token}`
+              }
+            };
+
+        https.get(redirectOptions, (finalRes) => {
+          let data = '';
+          finalRes.on('data', (chunk) => data += chunk);
+          finalRes.on('end', () => {
+            if (finalRes.statusCode === 200) {
+              try {
+                resolve(JSON.parse(data));
+              } catch (err) {
+                reject(new Error('Failed to parse package metadata'));
+              }
+            } else {
+              reject(new Error(`Package not found after redirect: ${finalRes.statusCode}`));
+            }
+          });
+        }).on('error', reject);
+      } else {
+        // Direct response
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            try {
+              resolve(JSON.parse(data));
+            } catch (err) {
+              reject(new Error('Failed to parse package metadata'));
+            }
+          } else {
+            reject(new Error(`Package not found: ${res.statusCode}`));
           }
-        } else {
-          reject(new Error(`Package not found: ${res.statusCode}`));
-        }
-      });
+        });
+      }
     }).on('error', reject);
   });
 }
