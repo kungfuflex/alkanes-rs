@@ -115,8 +115,10 @@ jobs:
         working-directory: crates/alkanes-web-sys
         run: |
           echo "Building WASM with wasm-pack..."
-          wasm-pack build --target bundler --out-dir ../../ts-sdk/wasm
-          echo "Removing ignore files created by wasm-pack to ensure npm includes WASM files..."
+          wasm-pack build --target bundler --out-dir ../../ts-sdk/build/wasm
+          echo "Copying WASM files to top-level wasm/ directory..."
+          cp -r ../../ts-sdk/build/wasm ../../ts-sdk/wasm
+          echo "Removing ignore files from wasm directory..."
           rm -f ../../ts-sdk/wasm/.gitignore ../../ts-sdk/wasm/.npmignore
           echo "WASM build complete"
           ls -lh ../../ts-sdk/wasm/
