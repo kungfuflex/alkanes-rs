@@ -168,6 +168,21 @@ jobs:
             --registry=https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
           echo "Tagged as latest-dev"
 
+      - name: Purge CloudFlare cache
+        continue-on-error: true
+        run: |
+          echo "Purging CloudFlare cache for pkg.alkanes.build..."
+          ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=alkanes.build" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" | jq -r '.result[0].id')
+
+          curl -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '{"files":["https://pkg.alkanes.build/dist/@alkanes/ts-sdk"]}'
+
+          echo "CloudFlare cache purged"
+
       - name: Output published version
         run: |
           echo "=== Publication Summary ==="
