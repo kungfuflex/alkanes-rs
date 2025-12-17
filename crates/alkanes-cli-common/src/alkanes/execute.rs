@@ -413,6 +413,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// Execute single transaction (no envelope)
     async fn build_single_transaction(&mut self, params: &EnhancedExecuteParams) -> Result<ExecutionState> {
         log::info!("Building single transaction (no envelope)");
+        log::info!("[execute] params.from_addresses = {:?}", params.from_addresses);
+        log::info!("[execute] params.change_address = {:?}", params.change_address);
 
         // Create outputs first (including identifier-based outputs)
         // NOTE: We validate against original protostones first, then will re-validate after generating automatic protostone
@@ -1053,8 +1055,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
 
         // Add BTC change output if needed
-        // Default to p2wsh:0 if no --change specified
-        let change_addr_str = change_address.as_ref().map(|s| s.as_str()).unwrap_or("p2wsh:0");
+        // Default to p2tr:0 if no --change specified (taproot is preferred for Alkanes)
+        let change_addr_str = change_address.as_ref().map(|s| s.as_str()).unwrap_or("p2tr:0");
         log::debug!("Adding BTC change output: address '{}'", change_addr_str);
         let resolved_addr = self.provider.resolve_all_identifiers(change_addr_str).await?;
         let address = Address::from_str(&resolved_addr)?.require_network(network)?;
