@@ -1890,12 +1890,14 @@ impl<'a> Brc20ProgExecutor<'a> {
                 let msg = Message::from_digest(*sighash.as_byte_array());
                 let signature = secp.sign_schnorr(&msg, &tweaked_keypair.to_inner());
 
-                // Create the witness with just the signature (key-path spend)
-                let mut witness = bitcoin::Witness::new();
-                witness.push(signature.as_ref());
+                // Create the taproot signature (key-path spend uses default sighash type)
+                let tap_sig = bitcoin::taproot::Signature {
+                    signature,
+                    sighash_type: TapSighashType::Default,
+                };
 
-                // Update the PSBT input with the final witness
-                psbt.inputs[i].final_script_witness = Some(witness);
+                // Update the PSBT input with the taproot key-path signature
+                psbt.inputs[i].tap_key_sig = Some(tap_sig);
             }
 
             log::info!("   ✅ Signed {} wallet inputs", psbt.inputs.len() - 1);
