@@ -999,6 +999,82 @@ export class WebProvider {
         return ret;
     }
     /**
+     * @param {string} address
+     * @returns {Promise<any>}
+     */
+    ordAddressInfo(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordAddressInfo(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} query
+     * @returns {Promise<any>}
+     */
+    ordBlockInfo(query) {
+        const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordBlockInfo(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @returns {Promise<any>}
+     */
+    ordBlockCount() {
+        const ret = wasm.webprovider_ordBlockCount(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Promise<any>}
+     */
+    ordBlocks() {
+        const ret = wasm.webprovider_ordBlocks(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} inscription_id
+     * @param {number | null} [page]
+     * @returns {Promise<any>}
+     */
+    ordChildren(inscription_id, page) {
+        const ptr0 = passStringToWasm0(inscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordChildren(this.__wbg_ptr, ptr0, len0, !isLikeNone(page), isLikeNone(page) ? 0 : page);
+        return ret;
+    }
+    /**
+     * @param {string} inscription_id
+     * @returns {Promise<any>}
+     */
+    ordContent(inscription_id) {
+        const ptr0 = passStringToWasm0(inscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordContent(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} inscription_id
+     * @param {number | null} [page]
+     * @returns {Promise<any>}
+     */
+    ordParents(inscription_id, page) {
+        const ptr0 = passStringToWasm0(inscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordParents(this.__wbg_ptr, ptr0, len0, !isLikeNone(page), isLikeNone(page) ? 0 : page);
+        return ret;
+    }
+    /**
+     * @param {string} txid
+     * @returns {Promise<any>}
+     */
+    ordTxInfo(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordTxInfo(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
      * Execute an alkanes smart contract
      * @param {string} params_json
      * @returns {Promise<any>}
@@ -3145,8 +3221,8 @@ export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_849e3936dfc0ca32(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3229, function: Function { arguments: [Externref], shim_idx: 3230, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+export function __wbindgen_cast_63ac42e12965c7ce(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3251, function: Function { arguments: [Externref], shim_idx: 3252, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };

@@ -162,4 +162,208 @@ export function registerOrdCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  // address-info
+  ord
+    .command('address-info <address>')
+    .description('Get address information')
+    .action(async (address, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting address info...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.ordAddressInfo(address);
+        const addressInfo = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(addressInfo, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get address info: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // block-info
+  ord
+    .command('block-info <query>')
+    .description('Get block information (height or hash)')
+    .action(async (query, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting block info...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.ordBlockInfo(query);
+        const blockInfo = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(blockInfo, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get block info: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // block-count
+  ord
+    .command('block-count')
+    .description('Get latest block count')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting block count...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.ordBlockCount();
+        const blockCount = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(blockCount, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get block count: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // blocks
+  ord
+    .command('blocks')
+    .description('Get latest blocks')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting blocks...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.ordBlocks();
+        const blocks = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(blocks, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get blocks: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // children
+  ord
+    .command('children <inscription-id>')
+    .description('Get children of an inscription')
+    .option('--page <number>', 'Page number', '0')
+    .action(async (inscriptionId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting children...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const page = options.page ? parseFloat(options.page) : null;
+        const result = await provider.ordChildren(inscriptionId, page);
+        const children = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(children, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get children: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // content
+  ord
+    .command('content <inscription-id>')
+    .description('Get inscription content')
+    .action(async (inscriptionId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting content...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.ordContent(inscriptionId);
+        const content = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(content, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get content: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // parents
+  ord
+    .command('parents <inscription-id>')
+    .description('Get parents of an inscription')
+    .option('--page <number>', 'Page number', '0')
+    .action(async (inscriptionId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting parents...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const page = options.page ? parseFloat(options.page) : null;
+        const result = await provider.ordParents(inscriptionId, page);
+        const parents = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(parents, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get parents: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // tx-info
+  ord
+    .command('tx-info <txid>')
+    .description('Get transaction information')
+    .action(async (txid, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting transaction info...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.ordTxInfo(txid);
+        const txInfo = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(txInfo, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get transaction info: ${err.message}`);
+        process.exit(1);
+      }
+    });
 }

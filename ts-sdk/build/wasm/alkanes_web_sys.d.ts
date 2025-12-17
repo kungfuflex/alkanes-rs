@@ -253,6 +253,14 @@ export class WebProvider {
   ordInscriptions(page?: number | null): Promise<any>;
   ordOutputs(address: string): Promise<any>;
   ordRune(rune: string): Promise<any>;
+  ordAddressInfo(address: string): Promise<any>;
+  ordBlockInfo(query: string): Promise<any>;
+  ordBlockCount(): Promise<any>;
+  ordBlocks(): Promise<any>;
+  ordChildren(inscription_id: string, page?: number | null): Promise<any>;
+  ordContent(inscription_id: string): Promise<any>;
+  ordParents(inscription_id: string, page?: number | null): Promise<any>;
+  ordTxInfo(txid: string): Promise<any>;
   /**
    * Execute an alkanes smart contract
    */

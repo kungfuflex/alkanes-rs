@@ -516,6 +516,110 @@ impl WebProvider {
         })
     }
 
+    #[wasm_bindgen(js_name = ordAddressInfo)]
+    pub fn ord_address_info_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_ord_address_info(&address).await
+                .and_then(|r| serde_json::to_value(&r).map_err(Into::into))
+                .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordBlockInfo)]
+    pub fn ord_block_info_js(&self, query: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_block_info(&query).await
+                .and_then(|r| serde_json::to_value(&r).map_err(Into::into))
+                .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordBlockCount)]
+    pub fn ord_block_count_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_ord_block_count().await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordBlocks)]
+    pub fn ord_blocks_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_ord_blocks().await
+                .and_then(|r| serde_json::to_value(&r).map_err(Into::into))
+                .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordChildren)]
+    pub fn ord_children_js(&self, inscription_id: String, page: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_children(&inscription_id, page.map(|p| p as u32)).await
+                .and_then(|r| serde_json::to_value(&r).map_err(Into::into))
+                .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordContent)]
+    pub fn ord_content_js(&self, inscription_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_content(&inscription_id).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordParents)]
+    pub fn ord_parents_js(&self, inscription_id: String, page: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_parents(&inscription_id, page.map(|p| p as u32)).await
+                .and_then(|r| serde_json::to_value(&r).map_err(Into::into))
+                .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = ordTxInfo)]
+    pub fn ord_tx_info_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::OrdProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_tx_info(&txid).await
+                .and_then(|r| serde_json::to_value(&r).map_err(Into::into))
+                .and_then(|v| serde_wasm_bindgen::to_value(&v).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
     // === ALKANES METHODS ===
     
     /// Execute an alkanes smart contract
