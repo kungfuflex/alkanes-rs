@@ -685,26 +685,45 @@ impl WebProvider {
                 None
             };
 
-            // Parse options
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output) = if let Some(opts_json) = options_json {
-                let opts: serde_json::Value = serde_json::from_str(&opts_json)
+            // Parse options (from_addresses, change_address, etc.)
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address) = if let Some(opts_json) = &options_json {
+                let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
+
+                // Parse from_addresses - can be specified as "from" or "from_addresses"
+                let from_addrs: Option<Vec<String>> = opts.get("from_addresses")
+                    .or_else(|| opts.get("from"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+                // Parse change_address
+                let change_addr: Option<String> = opts.get("change_address")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                // Parse alkanes_change_address
+                let alkanes_change_addr: Option<String> = opts.get("alkanes_change_address")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
                     opts.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                    from_addrs,
+                    change_addr,
+                    alkanes_change_addr,
                 )
             } else {
-                (false, false, true, false)
+                (false, false, true, false, None, None, None)
             };
 
             let params = EnhancedExecuteParams {
                 fee_rate,
                 to_addresses,
-                from_addresses: None,
-                change_address: None,
-                alkanes_change_address: None,
+                from_addresses,
+                change_address,
+                alkanes_change_address,
                 input_requirements: input_reqs,
                 protostones: proto_specs,
                 envelope_data,
@@ -1899,17 +1918,34 @@ impl WebProvider {
     #[wasm_bindgen(js_name = alkanesByAddress)]
     pub fn alkanes_by_address_js(&self, address: String, block_tag: Option<String>, protocol_tag: Option<f64>) -> js_sys::Promise {
         use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::balance_sheet::BalanceSheetOperations;
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
             let tag = protocol_tag.map(|t| t as u128).unwrap_or(1);
             provider.protorunes_by_address(&address, block_tag, tag).await
                 .and_then(|r| {
-                    // Transform the response directly from the protobuf structure
-                    // The protobuf has: OutpointResponse.balances (BalanceSheet) -> entries (Vec<BalanceSheetItem>)
-                    // We need to serialize it properly for JavaScript consumption
-                    let serializer = serde_wasm_bindgen::Serializer::json_compatible();
-                    serde_wasm_bindgen::to_value(&r)
+                    // Transform the response to a JS-friendly format
+                    // The issue is that BTreeMap<ProtoruneRuneId, u128> doesn't serialize well
+                    // We need to convert it to a simple { "block:tx": balance } format
+                    use std::collections::HashMap;
+
+                    // Aggregate balances across all outpoints
+                    let mut aggregated_balances: HashMap<String, u128> = HashMap::new();
+                    for outpoint_response in &r.balances {
+                        for (rune_id, balance) in outpoint_response.balance_sheet.balances() {
+                            let key = format!("{}:{}", rune_id.block, rune_id.tx);
+                            *aggregated_balances.entry(key).or_insert(0) += balance;
+                        }
+                    }
+
+                    // Convert to string values for JS compatibility
+                    let string_balances: HashMap<String, String> = aggregated_balances
+                        .into_iter()
+                        .map(|(k, v)| (k, v.to_string()))
+                        .collect();
+
+                    serde_wasm_bindgen::to_value(&string_balances)
                         .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string()))
                 })
                 .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
