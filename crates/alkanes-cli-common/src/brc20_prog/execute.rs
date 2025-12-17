@@ -353,11 +353,28 @@ impl<'a> Brc20ProgExecutor<'a> {
         let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
         log::info!("Commit address: {commit_address}");
 
-        // TEMPORARY: Use standard commit output until we fix the signing complexity
-        // TODO: Re-enable anti-frontrunning with small commit output once signing is working
-        let commit_output_amount = 50_000u64;
+        // Calculate EXACT commit output needed to cover reveal fee with NO change
+        // This prevents dust output errors
+        let fee_rate = params.fee_rate.unwrap_or(600.0);
 
-        log::info!("Using commit output of {} sats", commit_output_amount);
+        // Estimate reveal transaction size:
+        // - 1 input (commit, script-path): ~200 vbytes (witness is large)
+        // - 1 output: ~43 vbytes
+        // - No change output (to avoid dust)
+        // - Base: ~10 vbytes
+        let estimated_reveal_vsize = 10 + 200 + 43;
+        let reveal_fee = (fee_rate * estimated_reveal_vsize as f32).ceil() as u64;
+
+        // Commit output = reveal output value + reveal fee
+        // For 2-tx: OP_RETURN (1 sat) + fee
+        // For 3-tx: inscription output (546 sats) + fee
+        let reveal_output_value = if params.use_activation { 546 } else { 1 };
+        let commit_output_amount = reveal_output_value + reveal_fee;
+
+        log::info!("💰 Calculated exact commit output: {} sats", commit_output_amount);
+        log::info!("   Fee rate: {} sat/vB, Reveal size: {} vB, Reveal fee: {} sats",
+                   fee_rate, estimated_reveal_vsize, reveal_fee);
+        log::info!("   Reveal output: {} sats, No change output (avoids dust)", reveal_output_value);
 
         // Select UTXOs for funding the commit
         let funding_utxos = self.select_utxos_for_amount(
@@ -431,23 +448,19 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Create outputs based on activation mode
         let outputs = if params.use_activation {
-            // 3-tx pattern: Create 546-sat inscription UTXO for later activation
-            log::info!("Creating 546-sat inscription output (will be spent to OP_RETURN in activation tx)");
+            // 3-tx pattern: Create 546-sat inscription UTXO for later activation, NO change
+            log::info!("Creating 546-sat inscription output (will be spent to OP_RETURN in activation tx, no change)");
 
             let inscription_output = TxOut {
                 value: bitcoin::Amount::from_sat(546),
                 script_pubkey: change_address.script_pubkey(),
             };
 
-            let change_output = TxOut {
-                value: bitcoin::Amount::from_sat(1), // Placeholder, will be updated later
-                script_pubkey: change_address.script_pubkey(),
-            };
-
-            vec![inscription_output, change_output]
+            // NO change output - commit output is sized exactly to cover inscription + fee
+            vec![inscription_output]
         } else {
-            // 2-tx pattern: Output directly to OP_RETURN with 1 sat
-            log::info!("Creating OP_RETURN output directly in reveal tx (2-tx pattern)");
+            // 2-tx pattern: Output directly to OP_RETURN with 1 sat, NO change output
+            log::info!("Creating OP_RETURN output directly in reveal tx (2-tx pattern, no change)");
 
             let op_return_script = self.create_brc20prog_op_return();
             let op_return_output = TxOut {
@@ -455,12 +468,8 @@ impl<'a> Brc20ProgExecutor<'a> {
                 script_pubkey: op_return_script,
             };
 
-            let change_output = TxOut {
-                value: bitcoin::Amount::from_sat(1), // Placeholder, will be updated later
-                script_pubkey: change_address.script_pubkey(),
-            };
-
-            vec![op_return_output, change_output]
+            // NO change output - commit output is sized exactly to cover fee
+            vec![op_return_output]
         };
 
         // Fetch the TxOut data for the additional UTXOs
