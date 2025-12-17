@@ -1844,48 +1844,23 @@ impl<'a> Brc20ProgExecutor<'a> {
         use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
         use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder};
 
-        // FIRST: Sign all the regular wallet inputs (inputs 1+) manually
-        // We can't use provider.sign_psbt() because it will try to sign input 0 (commit) which isn't in the wallet
+        // FIRST: Sign all the regular wallet inputs (inputs 1+) using provider
+        // We temporarily remove input 0 (commit), sign the rest, then restore it
         if psbt.inputs.len() > 1 {
             log::info!("   Signing {} additional wallet UTXOs...", psbt.inputs.len() - 1);
 
-            use bitcoin::sighash::{Prevouts as SignPrevouts, SighashCache as SignCache, TapSighashType as SignTapSighashType};
+            // Save input 0 (the commit input)
+            let commit_input = psbt.inputs.remove(0);
+            let commit_tx_in = psbt.unsigned_tx.input.remove(0);
 
-            // Collect all prevouts for signing
-            let sign_prevouts: Vec<TxOut> = psbt
-                .inputs
-                .iter()
-                .map(|input| {
-                    input
-                        .witness_utxo
-                        .clone()
-                        .ok_or_else(|| AlkanesError::Other("Missing witness UTXO for signing".to_string()))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let sign_prevouts_all = SignPrevouts::All(&sign_prevouts);
+            // Now sign the PSBT (which only has wallet inputs)
+            self.provider.sign_psbt(psbt).await?;
 
-            let sign_unsigned_tx = &psbt.unsigned_tx;
-            let mut sign_sighash_cache = SignCache::new(sign_unsigned_tx);
+            // Restore input 0 at the beginning
+            psbt.inputs.insert(0, commit_input);
+            psbt.unsigned_tx.input.insert(0, commit_tx_in);
 
-            // Sign each input starting from index 1 (skip input 0 which is the commit)
-            for i in 1..psbt.inputs.len() {
-                // Calculate sighash for key-path spending (regular taproot)
-                let sign_sighash = sign_sighash_cache
-                    .taproot_key_spend_signature_hash(i, &sign_prevouts_all, SignTapSighashType::Default)
-                    .map_err(|e| AlkanesError::Transaction(e.to_string()))?;
-
-                // Sign the sighash (using same method as script-path)
-                let sign_signature = self.provider.sign_taproot_script_spend(sign_sighash.into()).await?;
-                let sign_taproot_signature = bitcoin::taproot::Signature {
-                    signature: sign_signature,
-                    sighash_type: SignTapSighashType::Default,
-                };
-
-                // Add signature to PSBT
-                psbt.inputs[i].tap_key_sig = Some(sign_taproot_signature);
-
-                log::debug!("   Signed wallet input {}", i);
-            }
+            log::info!("   ✅ Signed {} wallet inputs", psbt.inputs.len() - 1);
         }
 
         // Get the unsigned transaction
