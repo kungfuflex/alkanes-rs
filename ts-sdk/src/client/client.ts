@@ -506,6 +506,178 @@ export class AlkanesClient {
   get metashrew() {
     return this.provider.metashrew;
   }
+
+  // ============================================================================
+  // BRC20-PROG METHODS (Contract Deployment and Interaction)
+  // ============================================================================
+
+  /**
+   * Deploy a BRC20-prog contract from Foundry JSON
+   *
+   * This method wraps the low-level WASM function with a clean TypeScript API.
+   * It handles JSON serialization internally and uses object-based parameters.
+   *
+   * @param params - Deployment parameters (accepts TypeScript objects, not JSON strings)
+   * @returns Transaction result with commit/reveal/activation txids and fees
+   *
+   * @example
+   * ```typescript
+   * const result = await client.deployBrc20ProgContract({
+   *   foundry_json: foundryBuildOutput,  // Can be string or object
+   *   fee_rate: 100,
+   *   use_activation: false,
+   *   resume_from_commit: "txid..." // Optional: resume from commit or reveal
+   * });
+   *
+   * console.log(`Deployed! Commit: ${result.commit_txid}`);
+   * console.log(`Reveal: ${result.reveal_txid}`);
+   * console.log(`Total fees: ${result.commit_fee + result.reveal_fee} sats`);
+   * ```
+   */
+  async deployBrc20ProgContract(
+    params: import('../types').Brc20ProgDeployParams
+  ): Promise<import('../types').Brc20ProgExecuteResult> {
+    const {
+      brc20_prog_deploy_contract
+    } = await import('../../wasm/alkanes_web_sys');
+
+    // Convert foundry_json to string if it's an object
+    const foundryJson = typeof params.foundry_json === 'string'
+      ? params.foundry_json
+      : JSON.stringify(params.foundry_json);
+
+    // Build execution params (excluding foundry_json)
+    const execParams: any = {};
+    if (params.from_addresses) execParams.from_addresses = params.from_addresses;
+    if (params.change_address) execParams.change_address = params.change_address;
+    if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
+    if (params.use_activation !== undefined) execParams.use_activation = params.use_activation;
+    if (params.use_slipstream !== undefined) execParams.use_slipstream = params.use_slipstream;
+    if (params.use_rebar !== undefined) execParams.use_rebar = params.use_rebar;
+    if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
+    if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
+
+    // Call WASM function (it accepts JSON strings internally)
+    const resultJson = await brc20_prog_deploy_contract(
+      this.provider.networkType,
+      foundryJson,
+      JSON.stringify(execParams)
+    );
+
+    return JSON.parse(resultJson);
+  }
+
+  /**
+   * Call a BRC20-prog contract function (transact)
+   *
+   * This method creates and broadcasts a commit-reveal-activation transaction
+   * sequence to call a function on a deployed BRC20-prog contract.
+   *
+   * @param params - Transaction parameters (accepts TypeScript objects, not JSON strings)
+   * @returns Transaction result with commit/reveal/activation txids and fees
+   *
+   * @example
+   * ```typescript
+   * const result = await client.transactBrc20Prog({
+   *   contract_address: "0x1234567890abcdef1234567890abcdef12345678",
+   *   function_signature: "transfer(address,uint256)",
+   *   calldata: ["0xRecipientAddress", "1000"],  // Can be array or string
+   *   fee_rate: 100
+   * });
+   *
+   * console.log(`Transaction sent! Activation: ${result.activation_txid}`);
+   * ```
+   */
+  async transactBrc20Prog(
+    params: import('../types').Brc20ProgTransactParams
+  ): Promise<import('../types').Brc20ProgExecuteResult> {
+    const {
+      brc20_prog_transact
+    } = await import('../../wasm/alkanes_web_sys');
+
+    // Convert calldata array to comma-separated string if needed
+    const calldataStr = Array.isArray(params.calldata)
+      ? params.calldata.join(',')
+      : params.calldata;
+
+    // Build execution params
+    const execParams: any = {};
+    if (params.from_addresses) execParams.from_addresses = params.from_addresses;
+    if (params.change_address) execParams.change_address = params.change_address;
+    if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
+    if (params.use_activation !== undefined) execParams.use_activation = params.use_activation;
+    if (params.use_slipstream !== undefined) execParams.use_slipstream = params.use_slipstream;
+    if (params.use_rebar !== undefined) execParams.use_rebar = params.use_rebar;
+    if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
+    if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
+
+    // Call WASM function
+    const resultJson = await brc20_prog_transact(
+      this.provider.networkType,
+      params.contract_address,
+      params.function_signature,
+      calldataStr,
+      JSON.stringify(execParams)
+    );
+
+    return JSON.parse(resultJson);
+  }
+
+  /**
+   * Wrap BTC into frBTC and execute a contract call in one transaction
+   *
+   * This method uses the frBTC contract's wrapAndExecute2 function to atomically:
+   * 1. Wrap BTC into frBTC
+   * 2. Approve the target contract to spend frBTC
+   * 3. Execute a function call on the target contract
+   * 4. Return any leftover frBTC to the sender
+   *
+   * @param params - Wrap-BTC parameters (accepts TypeScript objects, not JSON strings)
+   * @returns Transaction result with commit/reveal txids and fees
+   *
+   * @example
+   * ```typescript
+   * const result = await client.wrapBtc({
+   *   amount: 100000,  // 100k sats
+   *   target_contract: "0xTargetContractAddress",
+   *   function_signature: "someFunction(uint256)",
+   *   calldata: ["42"],
+   *   fee_rate: 100
+   * });
+   *
+   * console.log(`frBTC wrapped and executed! Reveal: ${result.reveal_txid}`);
+   * ```
+   */
+  async wrapBtc(
+    params: import('../types').Brc20ProgWrapBtcParams
+  ): Promise<import('../types').Brc20ProgExecuteResult> {
+    const {
+      brc20_prog_wrap_btc
+    } = await import('../../wasm/alkanes_web_sys');
+
+    // Convert calldata array to comma-separated string if needed
+    const calldataStr = Array.isArray(params.calldata)
+      ? params.calldata.join(',')
+      : params.calldata;
+
+    // Build execution params
+    const execParams: any = {};
+    if (params.from_addresses) execParams.from_addresses = params.from_addresses;
+    if (params.change_address) execParams.change_address = params.change_address;
+    if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
+
+    // Call WASM function
+    const resultJson = await brc20_prog_wrap_btc(
+      this.provider.networkType,
+      BigInt(params.amount),
+      params.target_contract,
+      params.function_signature,
+      calldataStr,
+      JSON.stringify(execParams)
+    );
+
+    return JSON.parse(resultJson);
+  }
 }
 
 // ============================================================================

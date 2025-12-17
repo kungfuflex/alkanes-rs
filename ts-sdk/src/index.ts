@@ -102,6 +102,12 @@ export type {
   AddressBalance,
   ExportOptions,
   ImportOptions,
+  // BRC20-Prog types
+  Brc20ProgExecuteParams,
+  Brc20ProgDeployParams,
+  Brc20ProgTransactParams,
+  Brc20ProgWrapBtcParams,
+  Brc20ProgExecuteResult,
 } from './types';
 
 // Utility exports

@@ -241,6 +241,21 @@ function passArrayJsValueToWasm0(array, malloc) {
     return ptr;
 }
 /**
+ * Asynchronously encrypts data using the Web Crypto API.
+ * @param {string} mnemonic
+ * @param {string} passphrase
+ * @returns {Promise<any>}
+ */
+export function encryptMnemonic(mnemonic, passphrase) {
+    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
  * @param {string} psbt_base64
  * @param {string} network_str
  * @returns {string}
@@ -401,18 +416,175 @@ export function decode_psbt(psbt_base64) {
 }
 
 /**
- * Asynchronously encrypts data using the Web Crypto API.
- * @param {string} mnemonic
- * @param {string} passphrase
+ * Deploy a BRC20-prog contract from Foundry JSON
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `foundry_json` - Foundry build JSON as string containing contract bytecode
+ * * `params_json` - JSON string with execution parameters:
+ *   ```json
+ *   {
+ *     "from_addresses": ["address1", "address2"],  // optional
+ *     "change_address": "address",                  // optional
+ *     "fee_rate": 100.0,                            // optional, sat/vB
+ *     "use_activation": false,                      // optional, use 3-tx pattern
+ *     "use_slipstream": false,                      // optional
+ *     "use_rebar": false,                           // optional
+ *     "rebar_tier": 1,                              // optional (1 or 2)
+ *     "resume_from_commit": "txid"                  // optional, auto-detects commit/reveal
+ *   }
+ *   ```
+ *
+ * # Returns
+ *
+ * A JSON string containing:
+ * - `commit_txid`: Commit transaction ID
+ * - `reveal_txid`: Reveal transaction ID
+ * - `activation_txid`: Activation transaction ID (if use_activation=true)
+ * - `commit_fee`: Commit fee in sats
+ * - `reveal_fee`: Reveal fee in sats
+ * - `activation_fee`: Activation fee in sats (if applicable)
+ *
+ * # Example
+ *
+ * ```javascript
+ * const result = await brc20_prog_deploy_contract(
+ *   "regtest",
+ *   foundryJson,
+ *   JSON.stringify({ fee_rate: 100, use_activation: false })
+ * );
+ * const data = JSON.parse(result);
+ * console.log(`Deployed! Commit: ${data.commit_txid}, Reveal: ${data.reveal_txid}`);
+ * ```
+ * @param {string} network
+ * @param {string} foundry_json
+ * @param {string} params_json
  * @returns {Promise<any>}
  */
-export function encryptMnemonic(mnemonic, passphrase) {
-    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+export function brc20_prog_deploy_contract(network, foundry_json, params_json) {
+    const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr1 = passStringToWasm0(foundry_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
+    const ptr2 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.brc20_prog_deploy_contract(ptr0, len0, ptr1, len1, ptr2, len2);
     return ret;
+}
+
+/**
+ * Call a BRC20-prog contract function (transact)
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `contract_address` - Contract address to call (0x-prefixed hex)
+ * * `function_signature` - Function signature (e.g., "transfer(address,uint256)")
+ * * `calldata` - Comma-separated calldata arguments
+ * * `params_json` - JSON string with execution parameters (same as deploy_contract)
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details (same format as deploy_contract)
+ *
+ * # Example
+ *
+ * ```javascript
+ * const result = await brc20_prog_transact(
+ *   "regtest",
+ *   "0x1234567890abcdef1234567890abcdef12345678",
+ *   "transfer(address,uint256)",
+ *   "0xrecipient,1000",
+ *   JSON.stringify({ fee_rate: 100 })
+ * );
+ * const data = JSON.parse(result);
+ * console.log(`Transaction sent! Commit: ${data.commit_txid}`);
+ * ```
+ * @param {string} network
+ * @param {string} contract_address
+ * @param {string} function_signature
+ * @param {string} calldata
+ * @param {string} params_json
+ * @returns {Promise<any>}
+ */
+export function brc20_prog_transact(network, contract_address, function_signature, calldata, params_json) {
+    const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(contract_address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(function_signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(calldata, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ptr4 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len4 = WASM_VECTOR_LEN;
+    const ret = wasm.brc20_prog_transact(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+    return ret;
+}
+
+/**
+ * Wrap BTC into frBTC and execute a contract call in one transaction
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of BTC to wrap (in satoshis)
+ * * `target_contract` - Target contract address for wrapAndExecute2
+ * * `function_signature` - Function signature for the target contract call
+ * * `calldata` - Comma-separated calldata arguments for the target function
+ * * `params_json` - JSON string with execution parameters:
+ *   ```json
+ *   {
+ *     "from_addresses": ["address1", "address2"],  // optional
+ *     "change_address": "address",                  // optional
+ *     "fee_rate": 100.0                             // optional, sat/vB
+ *   }
+ *   ```
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
+ *
+ * # Example
+ *
+ * ```javascript
+ * const result = await brc20_prog_wrap_btc(
+ *   "regtest",
+ *   100000,  // 100k sats
+ *   "0xtargetContract",
+ *   "someFunction(uint256)",
+ *   "42",
+ *   JSON.stringify({ fee_rate: 100 })
+ * );
+ * const data = JSON.parse(result);
+ * console.log(`frBTC wrapped! Reveal: ${data.reveal_txid}`);
+ * ```
+ * @param {string} network
+ * @param {bigint} amount
+ * @param {string} target_contract
+ * @param {string} function_signature
+ * @param {string} calldata
+ * @param {string} params_json
+ * @returns {Promise<any>}
+ */
+export function brc20_prog_wrap_btc(network, amount, target_contract, function_signature, calldata, params_json) {
+    const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(target_contract, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(function_signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(calldata, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ptr4 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len4 = WASM_VECTOR_LEN;
+    const ret = wasm.brc20_prog_wrap_btc(ptr0, len0, amount, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+    return ret;
+}
+
+function wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb(arg0, arg1);
 }
 
 function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2) {
@@ -422,6 +594,12 @@ function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg
 function wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(arg0, arg1, arg2, arg3) {
     wasm.wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(arg0, arg1, arg2, arg3);
 }
+
+const __wbindgen_enum_RequestCache = ["default", "no-store", "reload", "no-cache", "force-cache", "only-if-cached"];
+
+const __wbindgen_enum_RequestCredentials = ["omit", "same-origin", "include"];
+
+const __wbindgen_enum_RequestMode = ["same-origin", "no-cors", "cors", "navigate"];
 
 const KeystoreFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
@@ -1203,6 +1381,637 @@ export class WebProvider {
         const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.webprovider_alkanesSwap(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Reflect metadata for a range of alkanes
+     * @param {number} block
+     * @param {number} start_tx
+     * @param {number} end_tx
+     * @param {number | null} [concurrency]
+     * @returns {Promise<any>}
+     */
+    alkanesReflectAlkaneRange(block, start_tx, end_tx, concurrency) {
+        const ret = wasm.webprovider_alkanesReflectAlkaneRange(this.__wbg_ptr, block, start_tx, end_tx, !isLikeNone(concurrency), isLikeNone(concurrency) ? 0 : concurrency);
+        return ret;
+    }
+    /**
+     * Execute a tx-script with WASM bytecode
+     * @param {string} wasm_hex
+     * @param {string} inputs_json
+     * @param {string | null} [block_tag]
+     * @returns {Promise<any>}
+     */
+    alkanesTxScript(wasm_hex, inputs_json, block_tag) {
+        const ptr0 = passStringToWasm0(wasm_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(inputs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesTxScript(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+    }
+    /**
+     * Get pool details for a specific pool
+     * @param {string} pool_id
+     * @returns {Promise<any>}
+     */
+    alkanesPoolDetails(pool_id) {
+        const ptr0 = passStringToWasm0(pool_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesPoolDetails(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Calculate minimum unwrap amount for subfrost frBTC unwrapping
+     * @param {number | null} [fee_rate_override]
+     * @param {number | null} [premium]
+     * @param {number | null} [expected_inputs]
+     * @param {number | null} [expected_outputs]
+     * @param {boolean | null} [raw]
+     * @returns {Promise<any>}
+     */
+    subfrostMinimumUnwrap(fee_rate_override, premium, expected_inputs, expected_outputs, raw) {
+        const ret = wasm.webprovider_subfrostMinimumUnwrap(this.__wbg_ptr, !isLikeNone(fee_rate_override), isLikeNone(fee_rate_override) ? 0 : fee_rate_override, !isLikeNone(premium), isLikeNone(premium) ? 0 : premium, !isLikeNone(expected_inputs), isLikeNone(expected_inputs) ? 0 : expected_inputs, !isLikeNone(expected_outputs), isLikeNone(expected_outputs) ? 0 : expected_outputs, isLikeNone(raw) ? 0xFFFFFF : raw ? 1 : 0);
+        return ret;
+    }
+    /**
+     * Get OPI block height
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI extras block height
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiExtrasBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiExtrasBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI database version
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiDbVersion(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiDbVersion(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI event hash version
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiEventHashVersion(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiEventHashVersion(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI balance on block
+     * @param {string} base_url
+     * @param {number} block_height
+     * @param {string} pkscript
+     * @param {string} ticker
+     * @returns {Promise<any>}
+     */
+    opiBalanceOnBlock(base_url, block_height, pkscript, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBalanceOnBlock(this.__wbg_ptr, ptr0, len0, block_height, ptr1, len1, ptr2, len2);
+        return ret;
+    }
+    /**
+     * Get OPI activity on block
+     * @param {string} base_url
+     * @param {number} block_height
+     * @returns {Promise<any>}
+     */
+    opiActivityOnBlock(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiActivityOnBlock(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+    }
+    /**
+     * Get OPI Bitcoin RPC results on block
+     * @param {string} base_url
+     * @param {number} block_height
+     * @returns {Promise<any>}
+     */
+    opiBitcoinRpcResultsOnBlock(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitcoinRpcResultsOnBlock(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+    }
+    /**
+     * Get OPI current balance
+     * @param {string} base_url
+     * @param {string} ticker
+     * @param {string | null} [address]
+     * @param {string | null} [pkscript]
+     * @returns {Promise<any>}
+     */
+    opiCurrentBalance(base_url, ticker, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiCurrentBalance(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        return ret;
+    }
+    /**
+     * Get OPI valid tx notes of wallet
+     * @param {string} base_url
+     * @param {string | null} [address]
+     * @param {string | null} [pkscript]
+     * @returns {Promise<any>}
+     */
+    opiValidTxNotesOfWallet(base_url, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiValidTxNotesOfWallet(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+    }
+    /**
+     * Get OPI valid tx notes of ticker
+     * @param {string} base_url
+     * @param {string} ticker
+     * @returns {Promise<any>}
+     */
+    opiValidTxNotesOfTicker(base_url, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiValidTxNotesOfTicker(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI holders
+     * @param {string} base_url
+     * @param {string} ticker
+     * @returns {Promise<any>}
+     */
+    opiHolders(base_url, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiHolders(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI hash of all activity
+     * @param {string} base_url
+     * @param {number} block_height
+     * @returns {Promise<any>}
+     */
+    opiHashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiHashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+    }
+    /**
+     * Get OPI hash of all current balances
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiHashOfAllCurrentBalances(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiHashOfAllCurrentBalances(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI event
+     * @param {string} base_url
+     * @param {string} event_hash
+     * @returns {Promise<any>}
+     */
+    opiEvent(base_url, event_hash) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(event_hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiEvent(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI IP address
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiIp(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiIp(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI raw endpoint
+     * @param {string} base_url
+     * @param {string} endpoint
+     * @returns {Promise<any>}
+     */
+    opiRaw(base_url, endpoint) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(endpoint, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRaw(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI Runes block height
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiRunesBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI Runes balance on block
+     * @param {string} base_url
+     * @param {number} block_height
+     * @param {string} pkscript
+     * @param {string} rune_id
+     * @returns {Promise<any>}
+     */
+    opiRunesBalanceOnBlock(base_url, block_height, pkscript, rune_id) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(rune_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesBalanceOnBlock(this.__wbg_ptr, ptr0, len0, block_height, ptr1, len1, ptr2, len2);
+        return ret;
+    }
+    /**
+     * Get OPI Runes activity on block
+     * @param {string} base_url
+     * @param {number} block_height
+     * @returns {Promise<any>}
+     */
+    opiRunesActivityOnBlock(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesActivityOnBlock(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+    }
+    /**
+     * Get OPI Runes current balance
+     * @param {string} base_url
+     * @param {string | null} [address]
+     * @param {string | null} [pkscript]
+     * @returns {Promise<any>}
+     */
+    opiRunesCurrentBalance(base_url, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesCurrentBalance(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+    }
+    /**
+     * Get OPI Runes unspent outpoints
+     * @param {string} base_url
+     * @param {string | null} [address]
+     * @param {string | null} [pkscript]
+     * @returns {Promise<any>}
+     */
+    opiRunesUnspentOutpoints(base_url, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesUnspentOutpoints(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+    }
+    /**
+     * Get OPI Runes holders
+     * @param {string} base_url
+     * @param {string} rune_id
+     * @returns {Promise<any>}
+     */
+    opiRunesHolders(base_url, rune_id) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(rune_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesHolders(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI Runes hash of all activity
+     * @param {string} base_url
+     * @param {number} block_height
+     * @returns {Promise<any>}
+     */
+    opiRunesHashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesHashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+    }
+    /**
+     * Get OPI Runes event
+     * @param {string} base_url
+     * @param {string} txid
+     * @returns {Promise<any>}
+     */
+    opiRunesEvent(base_url, txid) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesEvent(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI Bitmap block height
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiBitmapBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitmapBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI Bitmap hash of all activity
+     * @param {string} base_url
+     * @param {number} block_height
+     * @returns {Promise<any>}
+     */
+    opiBitmapHashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitmapHashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+    }
+    /**
+     * Get OPI Bitmap hash of all bitmaps
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiBitmapHashOfAllBitmaps(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitmapHashOfAllBitmaps(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI Bitmap inscription ID
+     * @param {string} base_url
+     * @param {string} bitmap
+     * @returns {Promise<any>}
+     */
+    opiBitmapInscriptionId(base_url, bitmap) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(bitmap, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitmapInscriptionId(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI POW20 block height
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiPow20BlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20BlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI POW20 balance on block
+     * @param {string} base_url
+     * @param {number} block_height
+     * @param {string} pkscript
+     * @param {string} ticker
+     * @returns {Promise<any>}
+     */
+    opiPow20BalanceOnBlock(base_url, block_height, pkscript, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20BalanceOnBlock(this.__wbg_ptr, ptr0, len0, block_height, ptr1, len1, ptr2, len2);
+        return ret;
+    }
+    /**
+     * Get OPI POW20 activity on block
+     * @param {string} base_url
+     * @param {number} block_height
+     * @returns {Promise<any>}
+     */
+    opiPow20ActivityOnBlock(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20ActivityOnBlock(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+    }
+    /**
+     * Get OPI POW20 current balance
+     * @param {string} base_url
+     * @param {string} ticker
+     * @param {string | null} [address]
+     * @param {string | null} [pkscript]
+     * @returns {Promise<any>}
+     */
+    opiPow20CurrentBalance(base_url, ticker, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20CurrentBalance(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        return ret;
+    }
+    /**
+     * Get OPI POW20 valid tx notes of wallet
+     * @param {string} base_url
+     * @param {string | null} [address]
+     * @param {string | null} [pkscript]
+     * @returns {Promise<any>}
+     */
+    opiPow20ValidTxNotesOfWallet(base_url, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20ValidTxNotesOfWallet(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+    }
+    /**
+     * Get OPI POW20 valid tx notes of ticker
+     * @param {string} base_url
+     * @param {string} ticker
+     * @returns {Promise<any>}
+     */
+    opiPow20ValidTxNotesOfTicker(base_url, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20ValidTxNotesOfTicker(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI POW20 holders
+     * @param {string} base_url
+     * @param {string} ticker
+     * @returns {Promise<any>}
+     */
+    opiPow20Holders(base_url, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20Holders(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI POW20 hash of all activity
+     * @param {string} base_url
+     * @param {number} block_height
+     * @returns {Promise<any>}
+     */
+    opiPow20HashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20HashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+    }
+    /**
+     * Get OPI POW20 hash of all current balances
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiPow20HashOfAllCurrentBalances(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20HashOfAllCurrentBalances(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI SNS block height
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiSnsBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI SNS hash of all activity
+     * @param {string} base_url
+     * @param {number} block_height
+     * @returns {Promise<any>}
+     */
+    opiSnsHashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsHashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+    }
+    /**
+     * Get OPI SNS hash of all registered names
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiSnsHashOfAllRegisteredNames(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsHashOfAllRegisteredNames(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get OPI SNS info
+     * @param {string} base_url
+     * @param {string} name
+     * @returns {Promise<any>}
+     */
+    opiSnsInfo(base_url, name) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsInfo(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI SNS inscriptions of domain
+     * @param {string} base_url
+     * @param {string} domain
+     * @returns {Promise<any>}
+     */
+    opiSnsInscriptionsOfDomain(base_url, domain) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(domain, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsInscriptionsOfDomain(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Get OPI SNS registered namespaces
+     * @param {string} base_url
+     * @returns {Promise<any>}
+     */
+    opiSnsRegisteredNamespaces(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsRegisteredNamespaces(this.__wbg_ptr, ptr0, len0);
         return ret;
     }
     /**
@@ -2828,6 +3637,23 @@ export function __wbg__wbg_cb_unref_2454a539ea5790d9(arg0) {
     arg0._wbg_cb_unref();
 };
 
+export function __wbg_abort_28ad55c5825b004d(arg0, arg1) {
+    arg0.abort(arg1);
+};
+
+export function __wbg_abort_e7eb059f72f9ed0c(arg0) {
+    arg0.abort();
+};
+
+export function __wbg_append_b577eb3a177bc0fa() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
+    arg0.append(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
+}, arguments) };
+
+export function __wbg_arrayBuffer_b375eccb84b4ddf3() { return handleError(function (arg0) {
+    const ret = arg0.arrayBuffer();
+    return ret;
+}, arguments) };
+
 export function __wbg_call_525440f72fbfc0ea() { return handleError(function (arg0, arg1, arg2) {
     const ret = arg0.call(arg1, arg2);
     return ret;
@@ -2842,6 +3668,11 @@ export function __wbg_call_e762c39fa8ea36bf() { return handleError(function (arg
     const ret = arg0.call(arg1);
     return ret;
 }, arguments) };
+
+export function __wbg_clearTimeout_7a42b49784aea641(arg0) {
+    const ret = clearTimeout(arg0);
+    return ret;
+};
 
 export function __wbg_connect_1ec2f4eb726c5e06(arg0) {
     const ret = arg0.connect();
@@ -2880,6 +3711,16 @@ export function __wbg_encrypt_36464dd547f58e9c() { return handleError(function (
 
 export function __wbg_entries_e171b586f8f6bdbf(arg0) {
     const ret = Object.entries(arg0);
+    return ret;
+};
+
+export function __wbg_fetch_74a3e84ebd2c9a0e(arg0) {
+    const ret = fetch(arg0);
+    return ret;
+};
+
+export function __wbg_fetch_f8ba0e29a9d6de0d(arg0, arg1) {
+    const ret = arg0.fetch(arg1);
     return ret;
 };
 
@@ -2960,6 +3801,11 @@ export function __wbg_has_787fafc980c3ccdb() { return handleError(function (arg0
     return ret;
 }, arguments) };
 
+export function __wbg_headers_b87d7eaba61c3278(arg0) {
+    const ret = arg0.headers;
+    return ret;
+};
+
 export function __wbg_importKey_2be19189a1451235() { return handleError(function (arg0, arg1, arg2, arg3, arg4, arg5, arg6) {
     const ret = arg0.importKey(getStringFromWasm0(arg1, arg2), arg3, arg4, arg5 !== 0, arg6);
     return ret;
@@ -3002,6 +3848,17 @@ export function __wbg_instanceof_Map_8579b5e2ab5437c7(arg0) {
     let result;
     try {
         result = arg0 instanceof Map;
+    } catch (_) {
+        result = false;
+    }
+    const ret = result;
+    return ret;
+};
+
+export function __wbg_instanceof_Response_f4f3e87e07f3135c(arg0) {
+    let result;
+    try {
+        result = arg0 instanceof Response;
     } catch (_) {
         result = false;
     }
@@ -3089,6 +3946,11 @@ export function __wbg_new_1acc0b6eea89d040() {
     return ret;
 };
 
+export function __wbg_new_2531773dac38ebb3() { return handleError(function () {
+    const ret = new AbortController();
+    return ret;
+}, arguments) };
+
 export function __wbg_new_3c3d849046688a66(arg0, arg1) {
     try {
         var state0 = {a: arg0, b: arg1};
@@ -3118,8 +3980,18 @@ export function __wbg_new_68651c719dcda04e() {
     return ret;
 };
 
+export function __wbg_new_9edf9838a2def39c() { return handleError(function () {
+    const ret = new Headers();
+    return ret;
+}, arguments) };
+
 export function __wbg_new_e17d9f43105b08be() {
     const ret = new Array();
+    return ret;
+};
+
+export function __wbg_new_from_slice_92f4d78ca282a2d2(arg0, arg1) {
+    const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
     return ret;
 };
 
@@ -3132,6 +4004,11 @@ export function __wbg_new_with_length_01aa0dc35aa13543(arg0) {
     const ret = new Uint8Array(arg0 >>> 0);
     return ret;
 };
+
+export function __wbg_new_with_str_and_init_0ae7728b6ec367b1() { return handleError(function (arg0, arg1, arg2) {
+    const ret = new Request(getStringFromWasm0(arg0, arg1), arg2);
+    return ret;
+}, arguments) };
 
 export function __wbg_next_020810e0ae8ebcb0() { return handleError(function (arg0) {
     const ret = arg0.next();
@@ -3218,6 +4095,11 @@ export function __wbg_setItem_64dfb54d7b20d84c() { return handleError(function (
     arg0.setItem(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
 }, arguments) };
 
+export function __wbg_setTimeout_7bb3429662ab1e70(arg0, arg1) {
+    const ret = setTimeout(arg0, arg1);
+    return ret;
+};
+
 export function __wbg_set_3f1d0b984ed272ed(arg0, arg1, arg2) {
     arg0[arg1] = arg2;
 };
@@ -3231,6 +4113,10 @@ export function __wbg_set_9e6516df7b7d0f19(arg0, arg1, arg2) {
     arg0.set(getArrayU8FromWasm0(arg1, arg2));
 };
 
+export function __wbg_set_body_3c365989753d61f4(arg0, arg1) {
+    arg0.body = arg1;
+};
+
 export function __wbg_set_c213c871859d6500(arg0, arg1, arg2) {
     arg0[arg1 >>> 0] = arg2;
 };
@@ -3239,6 +4125,30 @@ export function __wbg_set_c2abbebe8b9ebee1() { return handleError(function (arg0
     const ret = Reflect.set(arg0, arg1, arg2);
     return ret;
 }, arguments) };
+
+export function __wbg_set_cache_2f9deb19b92b81e3(arg0, arg1) {
+    arg0.cache = __wbindgen_enum_RequestCache[arg1];
+};
+
+export function __wbg_set_credentials_f621cd2d85c0c228(arg0, arg1) {
+    arg0.credentials = __wbindgen_enum_RequestCredentials[arg1];
+};
+
+export function __wbg_set_headers_6926da238cd32ee4(arg0, arg1) {
+    arg0.headers = arg1;
+};
+
+export function __wbg_set_method_c02d8cbbe204ac2d(arg0, arg1, arg2) {
+    arg0.method = getStringFromWasm0(arg1, arg2);
+};
+
+export function __wbg_set_mode_52ef73cfa79639cb(arg0, arg1) {
+    arg0.mode = __wbindgen_enum_RequestMode[arg1];
+};
+
+export function __wbg_set_signal_dda2cf7ccb6bee0f(arg0, arg1) {
+    arg0.signal = arg1;
+};
 
 export function __wbg_signMessage_dfa4cbdda66532c1(arg0, arg1, arg2, arg3, arg4) {
     const ret = arg0.signMessage(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
@@ -3252,6 +4162,11 @@ export function __wbg_signPsbt_1703f674396512f5(arg0, arg1, arg2, arg3) {
 
 export function __wbg_signPsbts_f6481ee8ea4a52f1(arg0, arg1, arg2) {
     const ret = arg0.signPsbts(arg1, arg2);
+    return ret;
+};
+
+export function __wbg_signal_4db5aa055bf9eb9a(arg0) {
+    const ret = arg0.signal;
     return ret;
 };
 
@@ -3275,6 +4190,11 @@ export function __wbg_static_accessor_WINDOW_b45bfc5a37f6cfa2() {
     return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
 };
 
+export function __wbg_status_de7eed5a7a5bfd5d(arg0) {
+    const ret = arg0.status;
+    return ret;
+};
+
 export function __wbg_stringify_b5fb28f6465d9c3e() { return handleError(function (arg0) {
     const ret = JSON.stringify(arg0);
     return ret;
@@ -3295,6 +4215,11 @@ export function __wbg_switchNetwork_c2498e59066e6f0b(arg0, arg1, arg2) {
     return ret;
 };
 
+export function __wbg_text_dc33c15c17bdfb52() { return handleError(function (arg0) {
+    const ret = arg0.text();
+    return ret;
+}, arguments) };
+
 export function __wbg_then_4f46f6544e6b4a28(arg0, arg1) {
     const ret = arg0.then(arg1);
     return ret;
@@ -3308,6 +4233,14 @@ export function __wbg_then_70d05cf780a18d77(arg0, arg1, arg2) {
 export function __wbg_toISOString_48d92f5754d01b49(arg0) {
     const ret = arg0.toISOString();
     return ret;
+};
+
+export function __wbg_url_b36d2a5008eb056f(arg0, arg1) {
+    const ret = arg1.url;
+    const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+    getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
 };
 
 export function __wbg_value_692627309814bb8c(arg0) {
@@ -3329,6 +4262,12 @@ export function __wbg_wasmbrowserwalletprovider_new(arg0) {
     return ret;
 };
 
+export function __wbindgen_cast_0e0bbb1d7da5cbf4(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3031, function: Function { arguments: [], shim_idx: 3032, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h264445b1cd05789c, wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb);
+    return ret;
+};
+
 export function __wbindgen_cast_2241b6af4c4b2941(arg0, arg1) {
     // Cast intrinsic for `Ref(String) -> Externref`.
     const ret = getStringFromWasm0(arg0, arg1);
@@ -3341,15 +4280,15 @@ export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_51af042175124edb(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3320, function: Function { arguments: [Externref], shim_idx: 3321, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
-    return ret;
-};
-
 export function __wbindgen_cast_9ae0607507abb057(arg0) {
     // Cast intrinsic for `I64 -> Externref`.
     const ret = arg0;
+    return ret;
+};
+
+export function __wbindgen_cast_b38aa8de0df961cd(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3703, function: Function { arguments: [Externref], shim_idx: 3704, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 

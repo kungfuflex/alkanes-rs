@@ -19,6 +19,11 @@ use bitcoin::Transaction;
 use alkanes_cli_common::runestone_enhanced::{format_runestone_with_decoded_messages, format_runestone};
 use alkanes_cli_common::alkanes::inspector::analysis::perform_fuzzing_analysis;
 use alkanes_cli_common::alkanes::types::AlkaneId;
+use alkanes_cli_common::brc20_prog::{
+    Brc20ProgExecutor, Brc20ProgExecuteParams, Brc20ProgDeployInscription,
+    Brc20ProgCallInscription, parse_foundry_json, extract_deployment_bytecode,
+    encode_function_call, Brc20ProgWrapBtcExecutor, Brc20ProgWrapBtcParams,
+};
 use js_sys::Promise;
 use wasm_bindgen_futures::future_to_promise;
 pub use crate::provider::WebProvider;
@@ -217,4 +222,258 @@ pub fn decode_psbt(psbt_base64: &str) -> Result<String, JsValue> {
         .map(|json| serde_json::to_string(&json)
             .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e))))
         .map_err(|e| JsValue::from_str(&format!("PSBT decode error: {}", e)))?
+}
+/// Deploy a BRC20-prog contract from Foundry JSON
+///
+/// # Arguments
+///
+/// * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+/// * `foundry_json` - Foundry build JSON as string containing contract bytecode
+/// * `params_json` - JSON string with execution parameters:
+///   ```json
+///   {
+///     "from_addresses": ["address1", "address2"],  // optional
+///     "change_address": "address",                  // optional
+///     "fee_rate": 100.0,                            // optional, sat/vB
+///     "use_activation": false,                      // optional, use 3-tx pattern
+///     "use_slipstream": false,                      // optional
+///     "use_rebar": false,                           // optional
+///     "rebar_tier": 1,                              // optional (1 or 2)
+///     "resume_from_commit": "txid"                  // optional, auto-detects commit/reveal
+///   }
+///   ```
+///
+/// # Returns
+///
+/// A JSON string containing:
+/// - `commit_txid`: Commit transaction ID
+/// - `reveal_txid`: Reveal transaction ID
+/// - `activation_txid`: Activation transaction ID (if use_activation=true)
+/// - `commit_fee`: Commit fee in sats
+/// - `reveal_fee`: Reveal fee in sats
+/// - `activation_fee`: Activation fee in sats (if applicable)
+///
+/// # Example
+///
+/// ```javascript
+/// const result = await brc20_prog_deploy_contract(
+///   "regtest",
+///   foundryJson,
+///   JSON.stringify({ fee_rate: 100, use_activation: false })
+/// );
+/// const data = JSON.parse(result);
+/// console.log(`Deployed! Commit: ${data.commit_txid}, Reveal: ${data.reveal_txid}`);
+/// ```
+#[wasm_bindgen]
+pub fn brc20_prog_deploy_contract(
+    network: &str,
+    foundry_json: &str,
+    params_json: &str,
+) -> Promise {
+    let network_str = network.to_string();
+    let foundry_json = foundry_json.to_string();
+    let params_json = params_json.to_string();
+
+    future_to_promise(async move {
+        // Parse the Foundry JSON to extract bytecode
+        let contract_data = parse_foundry_json(&foundry_json)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse Foundry JSON: {:?}", e)))?;
+        let bytecode = extract_deployment_bytecode(&contract_data)
+            .map_err(|e| JsValue::from_str(&format!("Failed to extract bytecode: {:?}", e)))?;
+
+        // Create the deploy inscription
+        let inscription = Brc20ProgDeployInscription::new(bytecode);
+        let inscription_json = serde_json::to_string(&inscription)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize inscription: {}", e)))?;
+
+        // Parse execution parameters
+        let mut params: Brc20ProgExecuteParams = serde_json::from_str(&params_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+        params.inscription_content = inscription_json;
+
+        // Create provider and executor
+        let mut provider = WebProvider::new(network_str).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create provider: {:?}", e)))?;
+        let mut executor = Brc20ProgExecutor::new(&mut provider);
+
+        // Execute the deployment
+        let result = executor.execute(params).await
+            .map_err(|e| JsValue::from_str(&format!("Deployment failed: {:?}", e)))?;
+
+        // Return result as JSON
+        serde_json::to_string(&result)
+            .map(|json| JsValue::from_str(&json))
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+    })
+}
+
+/// Call a BRC20-prog contract function (transact)
+///
+/// # Arguments
+///
+/// * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+/// * `contract_address` - Contract address to call (0x-prefixed hex)
+/// * `function_signature` - Function signature (e.g., "transfer(address,uint256)")
+/// * `calldata` - Comma-separated calldata arguments
+/// * `params_json` - JSON string with execution parameters (same as deploy_contract)
+///
+/// # Returns
+///
+/// A JSON string with transaction details (same format as deploy_contract)
+///
+/// # Example
+///
+/// ```javascript
+/// const result = await brc20_prog_transact(
+///   "regtest",
+///   "0x1234567890abcdef1234567890abcdef12345678",
+///   "transfer(address,uint256)",
+///   "0xrecipient,1000",
+///   JSON.stringify({ fee_rate: 100 })
+/// );
+/// const data = JSON.parse(result);
+/// console.log(`Transaction sent! Commit: ${data.commit_txid}`);
+/// ```
+#[wasm_bindgen]
+pub fn brc20_prog_transact(
+    network: &str,
+    contract_address: &str,
+    function_signature: &str,
+    calldata: &str,
+    params_json: &str,
+) -> Promise {
+    let network_str = network.to_string();
+    let contract_address = contract_address.to_string();
+    let function_signature = function_signature.to_string();
+    let calldata = calldata.to_string();
+    let params_json = params_json.to_string();
+
+    future_to_promise(async move {
+        // Encode the function call
+        let calldata_hex = encode_function_call(&function_signature, &calldata)
+            .map_err(|e| JsValue::from_str(&format!("Failed to encode function call: {:?}", e)))?;
+
+        // Create the call inscription
+        let inscription = Brc20ProgCallInscription::new(contract_address, calldata_hex);
+        let inscription_json = serde_json::to_string(&inscription)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize inscription: {}", e)))?;
+
+        // Parse execution parameters
+        let mut params: Brc20ProgExecuteParams = serde_json::from_str(&params_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+        params.inscription_content = inscription_json;
+        params.use_activation = true; // Transact requires 3-tx pattern
+
+        // Create provider and executor
+        let mut provider = WebProvider::new(network_str).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create provider: {:?}", e)))?;
+        let mut executor = Brc20ProgExecutor::new(&mut provider);
+
+        // Execute the transaction
+        let result = executor.execute(params).await
+            .map_err(|e| JsValue::from_str(&format!("Transaction failed: {:?}", e)))?;
+
+        // Return result as JSON
+        serde_json::to_string(&result)
+            .map(|json| JsValue::from_str(&json))
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+    })
+}
+
+/// Wrap BTC into frBTC and execute a contract call in one transaction
+///
+/// # Arguments
+///
+/// * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+/// * `amount` - Amount of BTC to wrap (in satoshis)
+/// * `target_contract` - Target contract address for wrapAndExecute2
+/// * `function_signature` - Function signature for the target contract call
+/// * `calldata` - Comma-separated calldata arguments for the target function
+/// * `params_json` - JSON string with execution parameters:
+///   ```json
+///   {
+///     "from_addresses": ["address1", "address2"],  // optional
+///     "change_address": "address",                  // optional
+///     "fee_rate": 100.0                             // optional, sat/vB
+///   }
+///   ```
+///
+/// # Returns
+///
+/// A JSON string with transaction details
+///
+/// # Example
+///
+/// ```javascript
+/// const result = await brc20_prog_wrap_btc(
+///   "regtest",
+///   100000,  // 100k sats
+///   "0xtargetContract",
+///   "someFunction(uint256)",
+///   "42",
+///   JSON.stringify({ fee_rate: 100 })
+/// );
+/// const data = JSON.parse(result);
+/// console.log(`frBTC wrapped! Reveal: ${data.reveal_txid}`);
+/// ```
+#[wasm_bindgen]
+pub fn brc20_prog_wrap_btc(
+    network: &str,
+    amount: u64,
+    target_contract: &str,
+    function_signature: &str,
+    calldata: &str,
+    params_json: &str,
+) -> Promise {
+    let network_str = network.to_string();
+    let target_contract = target_contract.to_string();
+    let function_signature = function_signature.to_string();
+    let calldata = calldata.to_string();
+    let params_json = params_json.to_string();
+
+    future_to_promise(async move {
+        // Encode the target function call
+        let calldata_hex = encode_function_call(&function_signature, &calldata)
+            .map_err(|e| JsValue::from_str(&format!("Failed to encode function call: {:?}", e)))?;
+        let calldata_bytes = hex::decode(calldata_hex.trim_start_matches("0x"))
+            .map_err(|e| JsValue::from_str(&format!("Failed to decode calldata hex: {}", e)))?;
+
+        // Parse base parameters
+        #[derive(serde::Deserialize)]
+        struct BaseParams {
+            from_addresses: Option<Vec<String>>,
+            change_address: Option<String>,
+            fee_rate: Option<f32>,
+        }
+        let base_params: BaseParams = serde_json::from_str(&params_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+
+        // Create wrap-btc parameters
+        let params = Brc20ProgWrapBtcParams {
+            amount,
+            target_address: target_contract,
+            calldata: calldata_bytes,
+            from_addresses: base_params.from_addresses,
+            change_address: base_params.change_address,
+            fee_rate: base_params.fee_rate,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: true, // WASM should auto-confirm
+        };
+
+        // Create provider and executor
+        let mut provider = WebProvider::new(network_str).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create provider: {:?}", e)))?;
+        let mut executor = Brc20ProgWrapBtcExecutor::new(&mut provider);
+
+        // Execute the wrap-btc
+        let result = executor.wrap_btc(params).await
+            .map_err(|e| JsValue::from_str(&format!("Wrap-BTC failed: {:?}", e)))?;
+
+        // Return result as JSON
+        serde_json::to_string(&result)
+            .map(|json| JsValue::from_str(&json))
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+    })
 }

@@ -1,5 +1,9 @@
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export function analyze_psbt(psbt_base64: string, network_str: string): string;
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
 export function get_alkane_bytecode(network: string, block: number, tx: number, block_tag: string): Promise<any>;
@@ -59,9 +63,118 @@ export function analyze_runestone(tx_hex: string): string;
  */
 export function decode_psbt(psbt_base64: string): string;
 /**
- * Asynchronously encrypts data using the Web Crypto API.
+ * Deploy a BRC20-prog contract from Foundry JSON
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `foundry_json` - Foundry build JSON as string containing contract bytecode
+ * * `params_json` - JSON string with execution parameters:
+ *   ```json
+ *   {
+ *     "from_addresses": ["address1", "address2"],  // optional
+ *     "change_address": "address",                  // optional
+ *     "fee_rate": 100.0,                            // optional, sat/vB
+ *     "use_activation": false,                      // optional, use 3-tx pattern
+ *     "use_slipstream": false,                      // optional
+ *     "use_rebar": false,                           // optional
+ *     "rebar_tier": 1,                              // optional (1 or 2)
+ *     "resume_from_commit": "txid"                  // optional, auto-detects commit/reveal
+ *   }
+ *   ```
+ *
+ * # Returns
+ *
+ * A JSON string containing:
+ * - `commit_txid`: Commit transaction ID
+ * - `reveal_txid`: Reveal transaction ID
+ * - `activation_txid`: Activation transaction ID (if use_activation=true)
+ * - `commit_fee`: Commit fee in sats
+ * - `reveal_fee`: Reveal fee in sats
+ * - `activation_fee`: Activation fee in sats (if applicable)
+ *
+ * # Example
+ *
+ * ```javascript
+ * const result = await brc20_prog_deploy_contract(
+ *   "regtest",
+ *   foundryJson,
+ *   JSON.stringify({ fee_rate: 100, use_activation: false })
+ * );
+ * const data = JSON.parse(result);
+ * console.log(`Deployed! Commit: ${data.commit_txid}, Reveal: ${data.reveal_txid}`);
+ * ```
  */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
+export function brc20_prog_deploy_contract(network: string, foundry_json: string, params_json: string): Promise<any>;
+/**
+ * Call a BRC20-prog contract function (transact)
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `contract_address` - Contract address to call (0x-prefixed hex)
+ * * `function_signature` - Function signature (e.g., "transfer(address,uint256)")
+ * * `calldata` - Comma-separated calldata arguments
+ * * `params_json` - JSON string with execution parameters (same as deploy_contract)
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details (same format as deploy_contract)
+ *
+ * # Example
+ *
+ * ```javascript
+ * const result = await brc20_prog_transact(
+ *   "regtest",
+ *   "0x1234567890abcdef1234567890abcdef12345678",
+ *   "transfer(address,uint256)",
+ *   "0xrecipient,1000",
+ *   JSON.stringify({ fee_rate: 100 })
+ * );
+ * const data = JSON.parse(result);
+ * console.log(`Transaction sent! Commit: ${data.commit_txid}`);
+ * ```
+ */
+export function brc20_prog_transact(network: string, contract_address: string, function_signature: string, calldata: string, params_json: string): Promise<any>;
+/**
+ * Wrap BTC into frBTC and execute a contract call in one transaction
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of BTC to wrap (in satoshis)
+ * * `target_contract` - Target contract address for wrapAndExecute2
+ * * `function_signature` - Function signature for the target contract call
+ * * `calldata` - Comma-separated calldata arguments for the target function
+ * * `params_json` - JSON string with execution parameters:
+ *   ```json
+ *   {
+ *     "from_addresses": ["address1", "address2"],  // optional
+ *     "change_address": "address",                  // optional
+ *     "fee_rate": 100.0                             // optional, sat/vB
+ *   }
+ *   ```
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
+ *
+ * # Example
+ *
+ * ```javascript
+ * const result = await brc20_prog_wrap_btc(
+ *   "regtest",
+ *   100000,  // 100k sats
+ *   "0xtargetContract",
+ *   "someFunction(uint256)",
+ *   "42",
+ *   JSON.stringify({ fee_rate: 100 })
+ * );
+ * const data = JSON.parse(result);
+ * console.log(`frBTC wrapped! Reveal: ${data.reveal_txid}`);
+ * ```
+ */
+export function brc20_prog_wrap_btc(network: string, amount: bigint, target_contract: string, function_signature: string, calldata: string, params_json: string): Promise<any>;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;
@@ -307,6 +420,194 @@ export class WebProvider {
    * Execute an AMM swap
    */
   alkanesSwap(params_json: string): Promise<any>;
+  /**
+   * Reflect metadata for a range of alkanes
+   */
+  alkanesReflectAlkaneRange(block: number, start_tx: number, end_tx: number, concurrency?: number | null): Promise<any>;
+  /**
+   * Execute a tx-script with WASM bytecode
+   */
+  alkanesTxScript(wasm_hex: string, inputs_json: string, block_tag?: string | null): Promise<any>;
+  /**
+   * Get pool details for a specific pool
+   */
+  alkanesPoolDetails(pool_id: string): Promise<any>;
+  /**
+   * Calculate minimum unwrap amount for subfrost frBTC unwrapping
+   */
+  subfrostMinimumUnwrap(fee_rate_override?: number | null, premium?: number | null, expected_inputs?: number | null, expected_outputs?: number | null, raw?: boolean | null): Promise<any>;
+  /**
+   * Get OPI block height
+   */
+  opiBlockHeight(base_url: string): Promise<any>;
+  /**
+   * Get OPI extras block height
+   */
+  opiExtrasBlockHeight(base_url: string): Promise<any>;
+  /**
+   * Get OPI database version
+   */
+  opiDbVersion(base_url: string): Promise<any>;
+  /**
+   * Get OPI event hash version
+   */
+  opiEventHashVersion(base_url: string): Promise<any>;
+  /**
+   * Get OPI balance on block
+   */
+  opiBalanceOnBlock(base_url: string, block_height: number, pkscript: string, ticker: string): Promise<any>;
+  /**
+   * Get OPI activity on block
+   */
+  opiActivityOnBlock(base_url: string, block_height: number): Promise<any>;
+  /**
+   * Get OPI Bitcoin RPC results on block
+   */
+  opiBitcoinRpcResultsOnBlock(base_url: string, block_height: number): Promise<any>;
+  /**
+   * Get OPI current balance
+   */
+  opiCurrentBalance(base_url: string, ticker: string, address?: string | null, pkscript?: string | null): Promise<any>;
+  /**
+   * Get OPI valid tx notes of wallet
+   */
+  opiValidTxNotesOfWallet(base_url: string, address?: string | null, pkscript?: string | null): Promise<any>;
+  /**
+   * Get OPI valid tx notes of ticker
+   */
+  opiValidTxNotesOfTicker(base_url: string, ticker: string): Promise<any>;
+  /**
+   * Get OPI holders
+   */
+  opiHolders(base_url: string, ticker: string): Promise<any>;
+  /**
+   * Get OPI hash of all activity
+   */
+  opiHashOfAllActivity(base_url: string, block_height: number): Promise<any>;
+  /**
+   * Get OPI hash of all current balances
+   */
+  opiHashOfAllCurrentBalances(base_url: string): Promise<any>;
+  /**
+   * Get OPI event
+   */
+  opiEvent(base_url: string, event_hash: string): Promise<any>;
+  /**
+   * Get OPI IP address
+   */
+  opiIp(base_url: string): Promise<any>;
+  /**
+   * Get OPI raw endpoint
+   */
+  opiRaw(base_url: string, endpoint: string): Promise<any>;
+  /**
+   * Get OPI Runes block height
+   */
+  opiRunesBlockHeight(base_url: string): Promise<any>;
+  /**
+   * Get OPI Runes balance on block
+   */
+  opiRunesBalanceOnBlock(base_url: string, block_height: number, pkscript: string, rune_id: string): Promise<any>;
+  /**
+   * Get OPI Runes activity on block
+   */
+  opiRunesActivityOnBlock(base_url: string, block_height: number): Promise<any>;
+  /**
+   * Get OPI Runes current balance
+   */
+  opiRunesCurrentBalance(base_url: string, address?: string | null, pkscript?: string | null): Promise<any>;
+  /**
+   * Get OPI Runes unspent outpoints
+   */
+  opiRunesUnspentOutpoints(base_url: string, address?: string | null, pkscript?: string | null): Promise<any>;
+  /**
+   * Get OPI Runes holders
+   */
+  opiRunesHolders(base_url: string, rune_id: string): Promise<any>;
+  /**
+   * Get OPI Runes hash of all activity
+   */
+  opiRunesHashOfAllActivity(base_url: string, block_height: number): Promise<any>;
+  /**
+   * Get OPI Runes event
+   */
+  opiRunesEvent(base_url: string, txid: string): Promise<any>;
+  /**
+   * Get OPI Bitmap block height
+   */
+  opiBitmapBlockHeight(base_url: string): Promise<any>;
+  /**
+   * Get OPI Bitmap hash of all activity
+   */
+  opiBitmapHashOfAllActivity(base_url: string, block_height: number): Promise<any>;
+  /**
+   * Get OPI Bitmap hash of all bitmaps
+   */
+  opiBitmapHashOfAllBitmaps(base_url: string): Promise<any>;
+  /**
+   * Get OPI Bitmap inscription ID
+   */
+  opiBitmapInscriptionId(base_url: string, bitmap: string): Promise<any>;
+  /**
+   * Get OPI POW20 block height
+   */
+  opiPow20BlockHeight(base_url: string): Promise<any>;
+  /**
+   * Get OPI POW20 balance on block
+   */
+  opiPow20BalanceOnBlock(base_url: string, block_height: number, pkscript: string, ticker: string): Promise<any>;
+  /**
+   * Get OPI POW20 activity on block
+   */
+  opiPow20ActivityOnBlock(base_url: string, block_height: number): Promise<any>;
+  /**
+   * Get OPI POW20 current balance
+   */
+  opiPow20CurrentBalance(base_url: string, ticker: string, address?: string | null, pkscript?: string | null): Promise<any>;
+  /**
+   * Get OPI POW20 valid tx notes of wallet
+   */
+  opiPow20ValidTxNotesOfWallet(base_url: string, address?: string | null, pkscript?: string | null): Promise<any>;
+  /**
+   * Get OPI POW20 valid tx notes of ticker
+   */
+  opiPow20ValidTxNotesOfTicker(base_url: string, ticker: string): Promise<any>;
+  /**
+   * Get OPI POW20 holders
+   */
+  opiPow20Holders(base_url: string, ticker: string): Promise<any>;
+  /**
+   * Get OPI POW20 hash of all activity
+   */
+  opiPow20HashOfAllActivity(base_url: string, block_height: number): Promise<any>;
+  /**
+   * Get OPI POW20 hash of all current balances
+   */
+  opiPow20HashOfAllCurrentBalances(base_url: string): Promise<any>;
+  /**
+   * Get OPI SNS block height
+   */
+  opiSnsBlockHeight(base_url: string): Promise<any>;
+  /**
+   * Get OPI SNS hash of all activity
+   */
+  opiSnsHashOfAllActivity(base_url: string, block_height: number): Promise<any>;
+  /**
+   * Get OPI SNS hash of all registered names
+   */
+  opiSnsHashOfAllRegisteredNames(base_url: string): Promise<any>;
+  /**
+   * Get OPI SNS info
+   */
+  opiSnsInfo(base_url: string, name: string): Promise<any>;
+  /**
+   * Get OPI SNS inscriptions of domain
+   */
+  opiSnsInscriptionsOfDomain(base_url: string, domain: string): Promise<any>;
+  /**
+   * Get OPI SNS registered namespaces
+   */
+  opiSnsRegisteredNamespaces(base_url: string): Promise<any>;
   /**
    * Get alkanes contract balance for an address
    */

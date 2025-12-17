@@ -204,3 +204,14 @@ export interface ImportOptions {
   validate?: boolean;
   network?: NetworkType;
 }
+
+/**
+ * BRC20-Prog types
+ */
+export type {
+  Brc20ProgExecuteParams,
+  Brc20ProgDeployParams,
+  Brc20ProgTransactParams,
+  Brc20ProgWrapBtcParams,
+  Brc20ProgExecuteResult,
+} from './brc20-prog';
