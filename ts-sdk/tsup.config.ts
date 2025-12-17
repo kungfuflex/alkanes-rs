@@ -14,10 +14,12 @@ export default defineConfig({
     'crypto',
     // WASM module - loaded separately via package exports
     '@alkanes/ts-sdk/wasm',
-    '../../build/wasm/alkanes_web_sys',
-    '../../build/wasm/alkanes_web_sys.js',
-    '../build/wasm/alkanes_web_sys',
-    './build/wasm/alkanes_web_sys',
+    '../../wasm/alkanes_web_sys',
+    '../../wasm/alkanes_web_sys.js',
+    '../wasm/alkanes_web_sys',
+    '../wasm/alkanes_web_sys.js',
+    './wasm/alkanes_web_sys',
+    './wasm/alkanes_web_sys.js',
   ],
   noExternal: [
     'bip39',
@@ -42,4 +44,20 @@ export default defineConfig({
     options.alias = options.alias || {};
     options.alias['stream'] = 'stream-browserify';
   },
+  esbuildPlugins: [
+    {
+      name: 'externalize-wasm',
+      setup(build) {
+        // Mark all .wasm files and wasm directory imports as external
+        build.onResolve({ filter: /\.wasm$/ }, (args) => ({
+          path: args.path,
+          external: true,
+        }));
+        build.onResolve({ filter: /\/wasm\// }, (args) => ({
+          path: args.path,
+          external: true,
+        }));
+      },
+    },
+  ],
 });
