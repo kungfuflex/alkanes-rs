@@ -1173,6 +1173,39 @@ export class WebProvider {
         return ret;
     }
     /**
+     * Wrap BTC to frBTC
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    alkanesWrapBtc(params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesWrapBtc(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Initialize a new AMM liquidity pool
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    alkanesInitPool(params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesInitPool(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Execute an AMM swap
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    alkanesSwap(params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesSwap(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
      * Get alkanes contract balance for an address
      * @param {string | null} [address]
      * @returns {Promise<any>}
@@ -3308,8 +3341,8 @@ export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_79773c170c92ad13(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3283, function: Function { arguments: [Externref], shim_idx: 3284, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+export function __wbindgen_cast_51af042175124edb(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3320, function: Function { arguments: [Externref], shim_idx: 3321, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };

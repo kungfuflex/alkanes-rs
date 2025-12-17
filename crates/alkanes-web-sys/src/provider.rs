@@ -786,6 +786,52 @@ impl WebProvider {
         })
     }
 
+    /// Wrap BTC to frBTC
+    #[wasm_bindgen(js_name = alkanesWrapBtc)]
+    pub fn alkanes_wrap_btc_js(&self, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::alkanes::wrap_btc::{WrapBtcExecutor, WrapBtcParams};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let params: WrapBtcParams = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            let mut executor = WrapBtcExecutor::new(&mut provider);
+            executor.wrap_btc(params).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Wrap BTC failed: {}", e)))
+        })
+    }
+
+    /// Initialize a new AMM liquidity pool
+    #[wasm_bindgen(js_name = alkanesInitPool)]
+    pub fn alkanes_init_pool_js(&self, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::alkanes::amm_cli::{init_pool, InitPoolParams};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let params: InitPoolParams = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            init_pool(&mut provider, params).await
+                .map(|txid| JsValue::from_str(&txid))
+                .map_err(|e| JsValue::from_str(&format!("Init pool failed: {}", e)))
+        })
+    }
+
+    /// Execute an AMM swap
+    #[wasm_bindgen(js_name = alkanesSwap)]
+    pub fn alkanes_swap_js(&self, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::alkanes::amm_cli::{execute_swap, SwapExecuteParams};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let params: SwapExecuteParams = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            execute_swap(&mut provider, params).await
+                .map(|txid| JsValue::from_str(&txid))
+                .map_err(|e| JsValue::from_str(&format!("Swap failed: {}", e)))
+        })
+    }
+
     /// Get alkanes contract balance for an address
     #[wasm_bindgen(js_name = alkanesBalance)]
     pub fn alkanes_balance_js(&self, address: Option<String>) -> js_sys::Promise {

@@ -14,7 +14,7 @@ use bitcoin::Address;
 use core::str::FromStr;
 
 /// Parameters for wrap-btc operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WrapBtcParams {
     /// Amount of BTC (in satoshis) to wrap
     pub amount: u64,

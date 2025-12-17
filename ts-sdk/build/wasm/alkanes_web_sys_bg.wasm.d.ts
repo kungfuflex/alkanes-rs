@@ -32,6 +32,9 @@ export const webprovider_alkanesResumeExecution: (a: number, b: number, c: numbe
 export const webprovider_alkanesResumeCommitExecution: (a: number, b: number, c: number) => any;
 export const webprovider_alkanesResumeRevealExecution: (a: number, b: number, c: number) => any;
 export const webprovider_alkanesSimulate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+export const webprovider_alkanesWrapBtc: (a: number, b: number, c: number) => any;
+export const webprovider_alkanesInitPool: (a: number, b: number, c: number) => any;
+export const webprovider_alkanesSwap: (a: number, b: number, c: number) => any;
 export const webprovider_alkanesBalance: (a: number, b: number, c: number) => any;
 export const webprovider_alkanesBytecode: (a: number, b: number, c: number, d: number, e: number) => any;
 export const webprovider_alkanesGetAllPoolsWithDetails: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;

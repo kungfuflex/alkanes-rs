@@ -1844,10 +1844,17 @@ impl<'a> Brc20ProgExecutor<'a> {
         use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
         use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder};
 
+        // FIRST: Sign all the regular wallet inputs (inputs 1+) using the provider
+        // This will add tap_key_sig to the PSBT for all non-commit inputs
+        if psbt.inputs.len() > 1 {
+            log::info!("   Signing {} additional wallet UTXOs...", psbt.inputs.len() - 1);
+            self.provider.sign_psbt(psbt).await?;
+        }
+
         // Get the unsigned transaction
         let unsigned_tx = psbt.unsigned_tx.clone();
 
-        // Build taproot spend info
+        // Build taproot spend info for the commit input (input 0)
         let reveal_script = envelope.build_reveal_script();
         let taproot_builder = TaprootBuilder::new()
             .add_leaf(0, reveal_script.clone())
@@ -1872,14 +1879,14 @@ impl<'a> Brc20ProgExecutor<'a> {
             .collect::<Result<Vec<_>>>()?;
         let prevouts_all = Prevouts::All(&prevouts);
 
-        // Calculate sighash for script-path spending
+        // Calculate sighash for script-path spending (input 0 - the commit)
         let mut sighash_cache = SighashCache::new(&unsigned_tx);
         let leaf_hash = TapLeafHash::from_script(&reveal_script, LeafVersion::TapScript);
         let sighash = sighash_cache
             .taproot_script_spend_signature_hash(0, &prevouts_all, leaf_hash, TapSighashType::Default)
             .map_err(|e| AlkanesError::Transaction(e.to_string()))?;
 
-        // Sign the sighash
+        // Sign the sighash for the commit input
         let signature = self
             .provider
             .sign_taproot_script_spend(sighash.into())
@@ -1890,17 +1897,19 @@ impl<'a> Brc20ProgExecutor<'a> {
         };
         let signature_bytes = taproot_signature.to_vec();
 
-        // Create the complete witness
+        // Create the complete witness for the commit input
         let witness = envelope.create_complete_witness(&signature_bytes, control_block)?;
 
         // Create the final transaction
         let mut tx = unsigned_tx.clone();
         tx.input[0].witness = witness;
 
-        // Sign other inputs if needed
+        // Add witnesses for other inputs (already signed by provider)
         for i in 1..tx.input.len() {
             if let Some(tap_key_sig) = &psbt.inputs[i].tap_key_sig {
                 tx.input[i].witness = bitcoin::Witness::p2tr_key_spend(tap_key_sig);
+            } else {
+                log::warn!("   ⚠️  Warning: Input {} has no signature after signing", i);
             }
         }
 

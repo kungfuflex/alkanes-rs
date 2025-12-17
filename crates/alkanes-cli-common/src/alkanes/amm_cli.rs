@@ -7,7 +7,7 @@ use super::execute::{EnhancedAlkanesExecutor, EnhancedExecuteParams};
 use super::parsing::parse_protostones;
 
 /// Parameters for initializing a new pool
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InitPoolParams {
     pub factory_id: AlkaneId,
     pub token0: AlkaneId,
@@ -24,7 +24,7 @@ pub struct InitPoolParams {
 }
 
 /// Parameters for executing a swap
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SwapExecuteParams {
     pub factory_id: AlkaneId,
     pub path: Vec<AlkaneId>, // Token path (minimum 2)

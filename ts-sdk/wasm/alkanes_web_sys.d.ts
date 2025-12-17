@@ -296,6 +296,18 @@ export class WebProvider {
    */
   alkanesSimulate(contract_id: string, context_json: string, block_tag?: string | null): Promise<any>;
   /**
+   * Wrap BTC to frBTC
+   */
+  alkanesWrapBtc(params_json: string): Promise<any>;
+  /**
+   * Initialize a new AMM liquidity pool
+   */
+  alkanesInitPool(params_json: string): Promise<any>;
+  /**
+   * Execute an AMM swap
+   */
+  alkanesSwap(params_json: string): Promise<any>;
+  /**
    * Get alkanes contract balance for an address
    */
   alkanesBalance(address?: string | null): Promise<any>;
