@@ -147,6 +147,8 @@ export const webprovider_dataApiGetKeys: (a: number, b: number, c: number, d: nu
 export const webprovider_dataApiGetBitcoinPrice: (a: number) => any;
 export const webprovider_dataApiGetBitcoinMarketChart: (a: number, b: number, c: number) => any;
 export const webprovider_alkanesReflect: (a: number, b: number, c: number) => any;
+export const webprovider_alkanesSequence: (a: number, b: number, c: number) => any;
+export const webprovider_alkanesSpendables: (a: number, b: number, c: number) => any;
 export const webprovider_espoGetHeight: (a: number) => any;
 export const webprovider_espoPing: (a: number) => any;
 export const webprovider_espoGetAddressBalances: (a: number, b: number, c: number, d: number) => any;

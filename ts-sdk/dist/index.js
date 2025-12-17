@@ -1492,6 +1492,40 @@ function registerAlkanesCommands(program2) {
       process.exit(1);
     }
   });
+  alkanes.command("sequence").description("Get sequence for the current block").option("--block-tag <tag>", 'Block tag (e.g., "latest" or block height)').action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Getting sequence...").start();
+      const provider = await createProvider({
+        network: globalOpts.provider,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const result = await provider.alkanesSequence(options.blockTag || null);
+      const sequence = JSON.parse(result);
+      spinner.succeed();
+      console.log(formatOutput(sequence, globalOpts));
+    } catch (err) {
+      error(`Failed to get sequence: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("spendables <address>").description("Get spendable outpoints for an address").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Getting spendables...").start();
+      const provider = await createProvider({
+        network: globalOpts.provider,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const result = await provider.alkanesSpendables(address);
+      const spendables = JSON.parse(result);
+      spinner.succeed();
+      console.log(formatOutput(spendables, globalOpts));
+    } catch (err) {
+      error(`Failed to get spendables: ${err.message}`);
+      process.exit(1);
+    }
+  });
 }
 
 // src/cli/commands/esplora.ts

@@ -371,15 +371,65 @@ export function registerAlkanesCommands(program: Command): void {
       }
     });
 
+  // sequence
+  alkanes
+    .command('sequence')
+    .description('Get sequence for the current block')
+    .option('--block-tag <tag>', 'Block tag (e.g., "latest" or block height)')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting sequence...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        const result = await provider.alkanesSequence(options.blockTag || null);
+        const sequence = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(sequence, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get sequence: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // spendables
+  alkanes
+    .command('spendables <address>')
+    .description('Get spendable outpoints for an address')
+    .action(async (address, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting spendables...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        const result = await provider.alkanesSpendables(address);
+        const spendables = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(spendables, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get spendables: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
   // Note: The following commands require complex transaction building
-  // or additional provider methods not yet in WASM:
+  // or are not available in alkanes-cli-common:
   // - execute: Requires EnhancedAlkanesExecutor and transaction construction
   // - wrap-btc: Requires BTC wrapping logic
   // - init-pool, swap: Require transaction construction
-  // - sequence, spendables: Need additional provider methods
-  // - backtest: Needs additional provider methods
-  // - pool-details: Individual pool details (vs all-pools-details)
-  // - reflect-alkane-range: Range reflection
+  // - backtest: Only available in alkanes-cli (not in alkanes-cli-common)
+  // - pool-details: Use dataapi get-pool-by-id instead
+  // - reflect-alkane-range: Not available as a provider method
   //
-  // These will be implemented in future iterations
+  // These will be implemented in future iterations if provider methods become available
 }

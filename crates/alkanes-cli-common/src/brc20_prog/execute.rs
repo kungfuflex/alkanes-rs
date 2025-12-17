@@ -192,16 +192,20 @@ impl<'a> Brc20ProgExecutor<'a> {
             result
         };
 
-        // Apply CPFP strategy if enabled
-        if let Some(super::types::AntiFrontrunningStrategy::Cpfp) = params.strategy {
-            log::info!("🚀 Applying CPFP strategy: broadcasting high-fee child transaction...");
-            self.apply_cpfp_strategy(&commit_txid.to_string(), &params).await?;
-        }
+        // Apply CPFP strategy if enabled (but not when resuming - the CPFP tx may already be broadcast)
+        if params.resume_from_commit.is_none() {
+            if let Some(super::types::AntiFrontrunningStrategy::Cpfp) = params.strategy {
+                log::info!("🚀 Applying CPFP strategy: broadcasting high-fee child transaction...");
+                self.apply_cpfp_strategy(&commit_txid.to_string(), &params).await?;
+            }
 
-        // Apply RBF monitoring strategy if enabled
-        if let Some(super::types::AntiFrontrunningStrategy::Rbf) = params.strategy {
-            log::info!("🔍 RBF: Starting mempool monitoring for frontrunning attempts...");
-            self.monitor_and_bump_if_frontrun(&commit_txid.to_string(), &envelope, &params).await?;
+            // Apply RBF monitoring strategy if enabled
+            if let Some(super::types::AntiFrontrunningStrategy::Rbf) = params.strategy {
+                log::info!("🔍 RBF: Starting mempool monitoring for frontrunning attempts...");
+                self.monitor_and_bump_if_frontrun(&commit_txid.to_string(), &envelope, &params).await?;
+            }
+        } else {
+            log::info!("   Skipping anti-frontrunning strategies (resuming from existing commit)");
         }
 
         // For slipstream/rebar, we must wait for the transaction to be mined before continuing

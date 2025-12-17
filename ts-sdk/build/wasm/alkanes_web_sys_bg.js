@@ -2396,6 +2396,26 @@ export class WebProvider {
         return ret;
     }
     /**
+     * @param {string | null} [block_tag]
+     * @returns {Promise<any>}
+     */
+    alkanesSequence(block_tag) {
+        var ptr0 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesSequence(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} address
+     * @returns {Promise<any>}
+     */
+    alkanesSpendables(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesSpendables(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
      * Get current ESPO indexer height
      * @returns {Promise<any>}
      */
@@ -3221,15 +3241,15 @@ export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_63ac42e12965c7ce(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3251, function: Function { arguments: [Externref], shim_idx: 3252, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
-    return ret;
-};
-
 export function __wbindgen_cast_9ae0607507abb057(arg0) {
     // Cast intrinsic for `I64 -> Externref`.
     const ret = arg0;
+    return ret;
+};
+
+export function __wbindgen_cast_b197c8f8c98862b5(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3259, function: Function { arguments: [Externref], shim_idx: 3260, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 

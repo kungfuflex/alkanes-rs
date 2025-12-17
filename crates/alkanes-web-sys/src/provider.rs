@@ -3000,6 +3000,32 @@ impl WebProvider {
         })
     }
 
+    #[wasm_bindgen(js_name = alkanesSequence)]
+    pub fn alkanes_sequence_js(&self, block_tag: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.sequence(block_tag).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Sequence failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = alkanesSpendables)]
+    pub fn alkanes_spendables_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.spendables_by_address(&address).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Spendables failed: {}", e)))
+        })
+    }
+
     // ============================================================================
     // ESPO INDEXER METHODS
     // ============================================================================

@@ -497,6 +497,8 @@ export class WebProvider {
    * An AlkaneReflection object with all available metadata
    */
   alkanesReflect(alkane_id: string): Promise<any>;
+  alkanesSequence(block_tag?: string | null): Promise<any>;
+  alkanesSpendables(address: string): Promise<any>;
   /**
    * Get current ESPO indexer height
    */
