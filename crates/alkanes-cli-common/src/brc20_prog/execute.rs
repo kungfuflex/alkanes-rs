@@ -5,6 +5,7 @@ use crate::{AlkanesError, DeezelProvider, Result};
 use crate::traits::{WalletProvider, UtxoInfo};
 use bitcoin::{Transaction, ScriptBuf, OutPoint, TxOut, Address, XOnlyPublicKey, psbt::Psbt, Txid};
 use bitcoin::blockdata::script::Builder as ScriptBuilder;
+use bitcoin_hashes::Hash;
 use core::str::FromStr;
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec, string::{String, ToString}, format};
@@ -1846,30 +1847,59 @@ impl<'a> Brc20ProgExecutor<'a> {
         use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
         use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder};
 
-        // FIRST: Sign all the regular wallet inputs (inputs 1+) using provider
-        // We temporarily remove input 0 (commit), sign the rest, then restore it
+        // Get the unsigned transaction first (needed for sighash calculation)
+        let unsigned_tx = psbt.unsigned_tx.clone();
+
+        // FIRST: Manually sign all the regular wallet inputs (inputs 1+) using key-path spending
+        // We can't remove input 0 and call sign_psbt because that changes the sighash
         if psbt.inputs.len() > 1 {
             log::info!("   Signing {} additional wallet UTXOs...", psbt.inputs.len() - 1);
 
-            // Save input 0 (the commit input)
-            let commit_input = psbt.inputs.remove(0);
-            let commit_tx_in = psbt.unsigned_tx.input.remove(0);
+            use bitcoin::secp256k1::{Message, Secp256k1};
+            use bitcoin::key::TapTweak;
 
-            // Sign the PSBT (which only has wallet inputs now) and get the signed version
-            let signed_psbt = self.provider.sign_psbt(psbt).await?;
+            let secp = Secp256k1::new();
+            let keypair = self.provider.get_keypair().await?;
 
-            // Replace the PSBT with the signed version
-            *psbt = signed_psbt;
+            // Collect all prevouts for sighash calculation
+            let prevouts: Vec<TxOut> = psbt.inputs.iter()
+                .filter_map(|input| input.witness_utxo.clone())
+                .collect();
+            let prevouts_all = Prevouts::All(&prevouts);
 
-            // Restore input 0 at the beginning
-            psbt.inputs.insert(0, commit_input);
-            psbt.unsigned_tx.input.insert(0, commit_tx_in);
+            // Create sighash cache
+            let mut sighash_cache = SighashCache::new(&unsigned_tx);
+
+            // Sign each wallet input (inputs 1+) with taproot key-path spending
+            for i in 1..psbt.inputs.len() {
+                let input = &psbt.inputs[i];
+
+                // Get the taproot internal key for this input
+                let internal_key = input.tap_internal_key
+                    .ok_or_else(|| AlkanesError::Wallet("Missing tap_internal_key for wallet input".to_string()))?;
+
+                // Compute the sighash for this input
+                let sighash = sighash_cache
+                    .taproot_key_spend_signature_hash(i, &prevouts_all, TapSighashType::Default)
+                    .map_err(|e| AlkanesError::Wallet(format!("Failed to compute sighash: {}", e)))?;
+
+                // Create the tweaked keypair for key-path spending
+                let tweaked_keypair = keypair.tap_tweak(&secp, None);
+
+                // Sign the sighash
+                let msg = Message::from_digest(*sighash.as_byte_array());
+                let signature = secp.sign_schnorr(&msg, &tweaked_keypair.to_inner());
+
+                // Create the witness with just the signature (key-path spend)
+                let mut witness = bitcoin::Witness::new();
+                witness.push(signature.as_ref());
+
+                // Update the PSBT input with the final witness
+                psbt.inputs[i].final_script_witness = Some(witness);
+            }
 
             log::info!("   ✅ Signed {} wallet inputs", psbt.inputs.len() - 1);
         }
-
-        // Get the unsigned transaction
-        let unsigned_tx = psbt.unsigned_tx.clone();
 
         // Build taproot spend info for the commit input (input 0)
         let reveal_script = envelope.build_reveal_script();

@@ -714,4 +714,35 @@ export function registerAlkanesCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  // tx-script
+  alkanes
+    .command('tx-script')
+    .description('Execute a tx-script with WASM bytecode')
+    .option('--envelope <hex>', 'WASM hex (with or without 0x prefix)', '')
+    .option('--inputs <json>', 'Cellpack inputs as JSON array (e.g., "[1,2,3]")', '[]')
+    .option('--block-tag <tag>', 'Block tag to query')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Executing tx-script...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        const result = await provider.alkanesTxScript(
+          options.envelope,
+          options.inputs,
+          options.blockTag || null
+        );
+
+        spinner.succeed();
+        console.log(result);
+      } catch (err: any) {
+        error(`Failed to execute tx-script: ${err.message}`);
+        process.exit(1);
+      }
+    });
 }
