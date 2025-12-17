@@ -1853,22 +1853,40 @@ impl<'a> Brc20ProgExecutor<'a> {
         if psbt.inputs.len() > 1 {
             log::info!("   Signing {} wallet UTXOs with provider...", psbt.inputs.len() - 1);
 
-            // Temporarily clear input 0's signing info so provider skips it
-            // This preserves transaction structure (so sighash is correct) but tells provider not to sign input 0
-            let saved_tap_internal_key = psbt.inputs[0].tap_internal_key.take();
-            let saved_tap_key_origins = std::mem::take(&mut psbt.inputs[0].tap_key_origins);
-            let saved_tap_merkle_root = psbt.inputs[0].tap_merkle_root.take();
+            // Try to sign the PSBT - provider will attempt all inputs but fail on input 0
+            // We'll catch the error and check if wallet inputs got signed anyway
+            match self.provider.sign_psbt(psbt).await {
+                Ok(signed_psbt) => {
+                    *psbt = signed_psbt;
+                    log::info!("   ✅ All inputs signed by provider");
+                }
+                Err(e) => {
+                    // Check if the error is about input 0 (commit address not in keystore)
+                    let error_msg = e.to_string();
+                    if error_msg.contains("bc1p7xf8uu") || error_msg.contains("not found in keystore") {
+                        log::info!("   ℹ️  Provider couldn't sign input 0 (expected - it's the commit)");
+                        log::info!("   Checking if wallet inputs (1+) were signed...");
 
-            // Sign inputs 1+ (provider will skip input 0 since it has no signing info)
-            let signed_psbt = self.provider.sign_psbt(psbt).await?;
-            *psbt = signed_psbt;
+                        // Check if any wallet inputs got signed before the error
+                        let mut wallet_inputs_signed = 0;
+                        for i in 1..psbt.inputs.len() {
+                            if psbt.inputs[i].tap_key_sig.is_some() {
+                                wallet_inputs_signed += 1;
+                            }
+                        }
 
-            // Restore input 0's signing info (we'll sign it manually with script-path)
-            psbt.inputs[0].tap_internal_key = saved_tap_internal_key;
-            psbt.inputs[0].tap_key_origins = saved_tap_key_origins;
-            psbt.inputs[0].tap_merkle_root = saved_tap_merkle_root;
-
-            log::info!("   ✅ Signed {} wallet inputs", psbt.inputs.len() - 1);
+                        if wallet_inputs_signed == psbt.inputs.len() - 1 {
+                            log::info!("   ✅ All {} wallet inputs were signed", wallet_inputs_signed);
+                        } else {
+                            // Wallet inputs didn't get signed, re-throw the error
+                            return Err(e);
+                        }
+                    } else {
+                        // Different error, re-throw it
+                        return Err(e);
+                    }
+                }
+            }
         }
 
         // Get the unsigned transaction (needed for script-path signing of input 0)
