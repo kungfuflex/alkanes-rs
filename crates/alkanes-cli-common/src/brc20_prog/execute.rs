@@ -353,15 +353,11 @@ impl<'a> Brc20ProgExecutor<'a> {
         let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
         log::info!("Commit address: {commit_address}");
 
-        // ANTI-FRONTRUNNING FIX:
-        // Use a very small commit output (1,000 sats, just above dust limit) so frontrunners can't profit.
-        // Even in very low fee environments (~0.22 sat/vB), reveal transactions for large inscriptions
-        // (40KB+) cost 8,000-10,000+ sats. By using only 1,000 sats in the commit output, we force
-        // the reveal to ALWAYS require additional UTXOs, making frontrunning always unprofitable.
-        let commit_output_amount = 1_000u64; // Minimal amount - frontrunners must add their own funds
+        // TEMPORARY: Use standard commit output until we fix the signing complexity
+        // TODO: Re-enable anti-frontrunning with small commit output once signing is working
+        let commit_output_amount = 50_000u64;
 
-        log::info!("💡 Anti-frontrunning: Using minimal commit output of {} sats", commit_output_amount);
-        log::info!("   Even with low fees, reveals cost 8k-10k+ sats. Frontrunners must add their own funds!");
+        log::info!("Using commit output of {} sats", commit_output_amount);
 
         // Select UTXOs for funding the commit
         let funding_utxos = self.select_utxos_for_amount(
@@ -418,21 +414,9 @@ impl<'a> Brc20ProgExecutor<'a> {
     ) -> Result<(Txid, u64, OutPoint, TxOut)> {
         log::info!("Building reveal transaction");
 
-        // ANTI-FRONTRUNNING: Select additional UTXOs to fund the reveal transaction
-        // Since the commit output is only 1,000 sats, we need ~49k+ more to cover the reveal fee
-        // This forces frontrunners to spend their own money, making frontrunning unprofitable
-        let commit_value = commit_output.value.to_sat();
-        let estimated_reveal_fee = 50_000u64;
-        let additional_funds_needed = estimated_reveal_fee.saturating_sub(commit_value);
-
-        log::info!("💡 Commit output: {} sats, reveal fee estimate: {} sats", commit_value, estimated_reveal_fee);
-        log::info!("   Selecting additional {} sats from wallet UTXOs", additional_funds_needed);
-
-        // Select additional UTXOs to fund the reveal
-        let additional_utxos = self.select_utxos_for_amount(
-            additional_funds_needed,
-            &params.from_addresses,
-        ).await?;
+        // TEMPORARY: No additional UTXOs needed since commit output covers reveal fee
+        // TODO: Re-enable this once we fix signing complexity
+        let additional_utxos: Vec<OutPoint> = vec![];
 
         log::info!("   Selected {} additional UTXOs for reveal funding", additional_utxos.len());
 
@@ -1847,46 +1831,10 @@ impl<'a> Brc20ProgExecutor<'a> {
         use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
         use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder};
 
-        // STRATEGY: Sign wallet inputs (1+) with provider, skip input 0
-        // Input 0 will be signed separately with script-path spending
-
+        // No wallet inputs to sign - commit output covers reveal fee
+        // Input 0 will be signed with script-path spending below
         if psbt.inputs.len() > 1 {
-            log::info!("   Signing {} wallet UTXOs with provider...", psbt.inputs.len() - 1);
-
-            // Try to sign the PSBT - provider will attempt all inputs but fail on input 0
-            // We'll catch the error and check if wallet inputs got signed anyway
-            match self.provider.sign_psbt(psbt).await {
-                Ok(signed_psbt) => {
-                    *psbt = signed_psbt;
-                    log::info!("   ✅ All inputs signed by provider");
-                }
-                Err(e) => {
-                    // Check if the error is about input 0 (commit address not in keystore)
-                    let error_msg = e.to_string();
-                    if error_msg.contains("bc1p7xf8uu") || error_msg.contains("not found in keystore") {
-                        log::info!("   ℹ️  Provider couldn't sign input 0 (expected - it's the commit)");
-                        log::info!("   Checking if wallet inputs (1+) were signed...");
-
-                        // Check if any wallet inputs got signed before the error
-                        let mut wallet_inputs_signed = 0;
-                        for i in 1..psbt.inputs.len() {
-                            if psbt.inputs[i].tap_key_sig.is_some() {
-                                wallet_inputs_signed += 1;
-                            }
-                        }
-
-                        if wallet_inputs_signed == psbt.inputs.len() - 1 {
-                            log::info!("   ✅ All {} wallet inputs were signed", wallet_inputs_signed);
-                        } else {
-                            // Wallet inputs didn't get signed, re-throw the error
-                            return Err(e);
-                        }
-                    } else {
-                        // Different error, re-throw it
-                        return Err(e);
-                    }
-                }
-            }
+            log::warn!("   ⚠️  Unexpected: reveal has {} inputs (expected only commit input)", psbt.inputs.len());
         }
 
         // Get the unsigned transaction (needed for script-path signing of input 0)
