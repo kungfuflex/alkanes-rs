@@ -1117,12 +1117,7 @@ impl WalletProvider for ConcreteProvider {
                                 all_addresses.push(addr_info.address);
                             }
                         }
-                        // Also get p2wsh addresses
-                        if let Ok(addrs) = keystore.get_addresses(network, "p2wsh", 0, 0, 20) {
-                            for addr_info in addrs {
-                                all_addresses.push(addr_info.address);
-                            }
-                        }
+                        // Note: p2wsh is not supported by the keystore, so we skip it
                     }
 
                     if all_addresses.is_empty() {
