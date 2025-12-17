@@ -353,13 +353,14 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("Commit address: {commit_address}");
 
         // ANTI-FRONTRUNNING FIX:
-        // Use a small commit output (10,000 sats) so frontrunners can't profit.
-        // The reveal transaction will need to spend additional UTXOs to cover the full fee,
-        // making frontrunning unprofitable since the attacker would have to add their own funds.
-        let commit_output_amount = 10_000u64; // Small amount - frontrunners will need to add ~40k+ sats of their own money
+        // Use a very small commit output (1,000 sats, just above dust limit) so frontrunners can't profit.
+        // Even in very low fee environments (~0.22 sat/vB), reveal transactions for large inscriptions
+        // (40KB+) cost 8,000-10,000+ sats. By using only 1,000 sats in the commit output, we force
+        // the reveal to ALWAYS require additional UTXOs, making frontrunning always unprofitable.
+        let commit_output_amount = 1_000u64; // Minimal amount - frontrunners must add their own funds
 
-        log::info!("💡 Anti-frontrunning: Using small commit output of {} sats", commit_output_amount);
-        log::info!("   Frontrunners will need to add ~40,000+ sats of their own funds to complete the reveal");
+        log::info!("💡 Anti-frontrunning: Using minimal commit output of {} sats", commit_output_amount);
+        log::info!("   Even with low fees, reveals cost 8k-10k+ sats. Frontrunners must add their own funds!");
 
         // Select UTXOs for funding the commit
         let funding_utxos = self.select_utxos_for_amount(
@@ -417,7 +418,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("Building reveal transaction");
 
         // ANTI-FRONTRUNNING: Select additional UTXOs to fund the reveal transaction
-        // Since the commit output is only ~10k sats, we need ~40k+ more to cover the reveal fee
+        // Since the commit output is only 1,000 sats, we need ~49k+ more to cover the reveal fee
+        // This forces frontrunners to spend their own money, making frontrunning unprofitable
         let commit_value = commit_output.value.to_sat();
         let estimated_reveal_fee = 50_000u64;
         let additional_funds_needed = estimated_reveal_fee.saturating_sub(commit_value);

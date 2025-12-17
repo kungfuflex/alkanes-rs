@@ -853,6 +853,31 @@ impl WebProvider {
         })
     }
 
+    /// Execute a tx-script with WASM bytecode
+    #[wasm_bindgen(js_name = alkanesTxScript)]
+    pub fn alkanes_tx_script_js(&self, wasm_hex: String, inputs_json: String, block_tag: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            // Parse WASM hex (with or without 0x prefix)
+            let wasm_hex = wasm_hex.strip_prefix("0x").unwrap_or(&wasm_hex);
+            let wasm_bytes = hex::decode(wasm_hex)
+                .map_err(|e| JsValue::from_str(&format!("Invalid WASM hex: {}", e)))?;
+
+            // Parse inputs JSON array
+            let inputs: Vec<u128> = serde_json::from_str(&inputs_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid inputs JSON: {}", e)))?;
+
+            // Execute tx_script
+            let result_bytes = provider.tx_script(&wasm_bytes, inputs, block_tag).await
+                .map_err(|e| JsValue::from_str(&format!("tx_script failed: {}", e)))?;
+
+            // Return as hex string
+            Ok(JsValue::from_str(&format!("0x{}", hex::encode(result_bytes))))
+        })
+    }
+
     /// Get pool details for a specific pool
     #[wasm_bindgen(js_name = alkanesPoolDetails)]
     pub fn alkanes_pool_details_js(&self, pool_id: String) -> js_sys::Promise {
@@ -1155,6 +1180,419 @@ impl WebProvider {
             execute_opi_raw(&client, &endpoint).await
                 .map(|result| JsValue::from_str(&result))
                 .map_err(|e| JsValue::from_str(&format!("OPI raw request failed: {}", e)))
+        })
+    }
+
+    // ============================================================================
+    // OPI Runes Commands
+    // ============================================================================
+
+    /// Get OPI Runes block height
+    #[wasm_bindgen(js_name = opiRunesBlockHeight)]
+    pub fn opi_runes_block_height_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let height = client.get_runes_block_height().await
+                .map_err(|e| JsValue::from_str(&format!("OPI Runes block height failed: {}", e)))?;
+            Ok(JsValue::from_str(&format!("{}", height.unwrap_or(0))))
+        })
+    }
+
+    /// Get OPI Runes balance on block
+    #[wasm_bindgen(js_name = opiRunesBalanceOnBlock)]
+    pub fn opi_runes_balance_on_block_js(&self, base_url: String, block_height: f64, pkscript: String, rune_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_runes_balance_on_block(block_height as u64, &pkscript, &rune_id).await
+                .map_err(|e| JsValue::from_str(&format!("OPI Runes balance failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI Runes activity on block
+    #[wasm_bindgen(js_name = opiRunesActivityOnBlock)]
+    pub fn opi_runes_activity_on_block_js(&self, base_url: String, block_height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_runes_activity_on_block(block_height as u64).await
+                .map_err(|e| JsValue::from_str(&format!("OPI Runes activity failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI Runes current balance
+    #[wasm_bindgen(js_name = opiRunesCurrentBalance)]
+    pub fn opi_runes_current_balance_js(&self, base_url: String, address: Option<String>, pkscript: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_runes_current_balance_of_wallet(address.as_deref(), pkscript.as_deref()).await
+                .map_err(|e| JsValue::from_str(&format!("OPI Runes balance failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI Runes unspent outpoints
+    #[wasm_bindgen(js_name = opiRunesUnspentOutpoints)]
+    pub fn opi_runes_unspent_outpoints_js(&self, base_url: String, address: Option<String>, pkscript: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_runes_unspent_outpoints_of_wallet(address.as_deref(), pkscript.as_deref()).await
+                .map_err(|e| JsValue::from_str(&format!("OPI Runes unspent failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI Runes holders
+    #[wasm_bindgen(js_name = opiRunesHolders)]
+    pub fn opi_runes_holders_js(&self, base_url: String, rune_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_runes_holders(&rune_id).await
+                .map_err(|e| JsValue::from_str(&format!("OPI Runes holders failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI Runes hash of all activity
+    #[wasm_bindgen(js_name = opiRunesHashOfAllActivity)]
+    pub fn opi_runes_hash_of_all_activity_js(&self, base_url: String, block_height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_runes_hash_of_all_activity(block_height as u64).await
+                .map_err(|e| JsValue::from_str(&format!("OPI Runes hash failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI Runes event
+    #[wasm_bindgen(js_name = opiRunesEvent)]
+    pub fn opi_runes_event_js(&self, base_url: String, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_runes_event(&txid).await
+                .map_err(|e| JsValue::from_str(&format!("OPI Runes event failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    // ============================================================================
+    // OPI Bitmap Commands
+    // ============================================================================
+
+    /// Get OPI Bitmap block height
+    #[wasm_bindgen(js_name = opiBitmapBlockHeight)]
+    pub fn opi_bitmap_block_height_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let height = client.get_bitmap_block_height().await
+                .map_err(|e| JsValue::from_str(&format!("OPI Bitmap block height failed: {}", e)))?;
+            Ok(JsValue::from_str(&format!("{}", height.unwrap_or(0))))
+        })
+    }
+
+    /// Get OPI Bitmap hash of all activity
+    #[wasm_bindgen(js_name = opiBitmapHashOfAllActivity)]
+    pub fn opi_bitmap_hash_of_all_activity_js(&self, base_url: String, block_height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_bitmap_hash_of_all_activity(block_height as u64).await
+                .map_err(|e| JsValue::from_str(&format!("OPI Bitmap hash failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI Bitmap hash of all bitmaps
+    #[wasm_bindgen(js_name = opiBitmapHashOfAllBitmaps)]
+    pub fn opi_bitmap_hash_of_all_bitmaps_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_bitmap_hash_of_all_bitmaps().await
+                .map_err(|e| JsValue::from_str(&format!("OPI Bitmap hash failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI Bitmap inscription ID
+    #[wasm_bindgen(js_name = opiBitmapInscriptionId)]
+    pub fn opi_bitmap_inscription_id_js(&self, base_url: String, bitmap: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_bitmap_inscription_id(&bitmap).await
+                .map_err(|e| JsValue::from_str(&format!("OPI Bitmap inscription failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    // ============================================================================
+    // OPI POW20 Commands
+    // ============================================================================
+
+    /// Get OPI POW20 block height
+    #[wasm_bindgen(js_name = opiPow20BlockHeight)]
+    pub fn opi_pow20_block_height_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let height = client.get_pow20_block_height().await
+                .map_err(|e| JsValue::from_str(&format!("OPI POW20 block height failed: {}", e)))?;
+            Ok(JsValue::from_str(&format!("{}", height.unwrap_or(0))))
+        })
+    }
+
+    /// Get OPI POW20 balance on block
+    #[wasm_bindgen(js_name = opiPow20BalanceOnBlock)]
+    pub fn opi_pow20_balance_on_block_js(&self, base_url: String, block_height: f64, pkscript: String, ticker: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_pow20_balance_on_block(block_height as u64, &pkscript, &ticker).await
+                .map_err(|e| JsValue::from_str(&format!("OPI POW20 balance failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI POW20 activity on block
+    #[wasm_bindgen(js_name = opiPow20ActivityOnBlock)]
+    pub fn opi_pow20_activity_on_block_js(&self, base_url: String, block_height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_pow20_activity_on_block(block_height as u64).await
+                .map_err(|e| JsValue::from_str(&format!("OPI POW20 activity failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI POW20 current balance
+    #[wasm_bindgen(js_name = opiPow20CurrentBalance)]
+    pub fn opi_pow20_current_balance_js(&self, base_url: String, ticker: String, address: Option<String>, pkscript: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_pow20_current_balance_of_wallet(&ticker, address.as_deref(), pkscript.as_deref()).await
+                .map_err(|e| JsValue::from_str(&format!("OPI POW20 balance failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI POW20 valid tx notes of wallet
+    #[wasm_bindgen(js_name = opiPow20ValidTxNotesOfWallet)]
+    pub fn opi_pow20_valid_tx_notes_of_wallet_js(&self, base_url: String, address: Option<String>, pkscript: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_pow20_valid_tx_notes_of_wallet(address.as_deref(), pkscript.as_deref()).await
+                .map_err(|e| JsValue::from_str(&format!("OPI POW20 tx notes failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI POW20 valid tx notes of ticker
+    #[wasm_bindgen(js_name = opiPow20ValidTxNotesOfTicker)]
+    pub fn opi_pow20_valid_tx_notes_of_ticker_js(&self, base_url: String, ticker: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_pow20_valid_tx_notes_of_ticker(&ticker).await
+                .map_err(|e| JsValue::from_str(&format!("OPI POW20 tx notes failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI POW20 holders
+    #[wasm_bindgen(js_name = opiPow20Holders)]
+    pub fn opi_pow20_holders_js(&self, base_url: String, ticker: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_pow20_holders(&ticker).await
+                .map_err(|e| JsValue::from_str(&format!("OPI POW20 holders failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI POW20 hash of all activity
+    #[wasm_bindgen(js_name = opiPow20HashOfAllActivity)]
+    pub fn opi_pow20_hash_of_all_activity_js(&self, base_url: String, block_height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_pow20_hash_of_all_activity(block_height as u64).await
+                .map_err(|e| JsValue::from_str(&format!("OPI POW20 hash failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI POW20 hash of all current balances
+    #[wasm_bindgen(js_name = opiPow20HashOfAllCurrentBalances)]
+    pub fn opi_pow20_hash_of_all_current_balances_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_pow20_hash_of_all_current_balances().await
+                .map_err(|e| JsValue::from_str(&format!("OPI POW20 hash failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    // ============================================================================
+    // OPI SNS Commands
+    // ============================================================================
+
+    /// Get OPI SNS block height
+    #[wasm_bindgen(js_name = opiSnsBlockHeight)]
+    pub fn opi_sns_block_height_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let height = client.get_sns_block_height().await
+                .map_err(|e| JsValue::from_str(&format!("OPI SNS block height failed: {}", e)))?;
+            Ok(JsValue::from_str(&format!("{}", height.unwrap_or(0))))
+        })
+    }
+
+    /// Get OPI SNS hash of all activity
+    #[wasm_bindgen(js_name = opiSnsHashOfAllActivity)]
+    pub fn opi_sns_hash_of_all_activity_js(&self, base_url: String, block_height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_sns_hash_of_all_activity(block_height as u64).await
+                .map_err(|e| JsValue::from_str(&format!("OPI SNS hash failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI SNS hash of all registered names
+    #[wasm_bindgen(js_name = opiSnsHashOfAllRegisteredNames)]
+    pub fn opi_sns_hash_of_all_registered_names_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_sns_hash_of_all_registered_names().await
+                .map_err(|e| JsValue::from_str(&format!("OPI SNS hash failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI SNS info
+    #[wasm_bindgen(js_name = opiSnsInfo)]
+    pub fn opi_sns_info_js(&self, base_url: String, name: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_sns_info(&name).await
+                .map_err(|e| JsValue::from_str(&format!("OPI SNS info failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI SNS inscriptions of domain
+    #[wasm_bindgen(js_name = opiSnsInscriptionsOfDomain)]
+    pub fn opi_sns_inscriptions_of_domain_js(&self, base_url: String, domain: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_sns_inscriptions_of_domain(&domain).await
+                .map_err(|e| JsValue::from_str(&format!("OPI SNS inscriptions failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
+        })
+    }
+
+    /// Get OPI SNS registered namespaces
+    #[wasm_bindgen(js_name = opiSnsRegisteredNamespaces)]
+    pub fn opi_sns_registered_namespaces_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            let result = client.get_sns_registered_namespaces().await
+                .map_err(|e| JsValue::from_str(&format!("OPI SNS namespaces failed: {}", e)))?;
+            let json = serde_json::to_string_pretty(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            Ok(JsValue::from_str(&json))
         })
     }
 
