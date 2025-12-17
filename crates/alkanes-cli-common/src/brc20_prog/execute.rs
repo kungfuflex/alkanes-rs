@@ -1847,17 +1847,26 @@ impl<'a> Brc20ProgExecutor<'a> {
         use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
         use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder};
 
-        // STRATEGY: Sign the entire PSBT (including input 0) with provider,
-        // then replace input 0's signature with our script-path signature
-        // This avoids derivation path issues with manual signing
+        // STRATEGY: Sign wallet inputs (1+) with provider, skip input 0
+        // Input 0 will be signed separately with script-path spending
 
         if psbt.inputs.len() > 1 {
             log::info!("   Signing {} wallet UTXOs with provider...", psbt.inputs.len() - 1);
 
-            // Sign the entire PSBT - this will sign ALL inputs including input 0
-            // The provider handles derivation paths correctly
+            // Temporarily clear input 0's signing info so provider skips it
+            // This preserves transaction structure (so sighash is correct) but tells provider not to sign input 0
+            let saved_tap_internal_key = psbt.inputs[0].tap_internal_key.take();
+            let saved_tap_key_origins = std::mem::take(&mut psbt.inputs[0].tap_key_origins);
+            let saved_tap_merkle_root = psbt.inputs[0].tap_merkle_root.take();
+
+            // Sign inputs 1+ (provider will skip input 0 since it has no signing info)
             let signed_psbt = self.provider.sign_psbt(psbt).await?;
             *psbt = signed_psbt;
+
+            // Restore input 0's signing info (we'll sign it manually with script-path)
+            psbt.inputs[0].tap_internal_key = saved_tap_internal_key;
+            psbt.inputs[0].tap_key_origins = saved_tap_key_origins;
+            psbt.inputs[0].tap_merkle_root = saved_tap_merkle_root;
 
             log::info!("   ✅ Signed {} wallet inputs", psbt.inputs.len() - 1);
         }
