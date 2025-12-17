@@ -159,23 +159,26 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("Starting BRC20-prog execution");
         log::info!("Inscription content: {}", params.inscription_content);
 
-        // Log anti-frontrunning strategy if enabled
-        if let Some(ref strategy) = params.strategy {
-            use super::types::AntiFrontrunningStrategy;
-            let strategy_name = match strategy {
-                AntiFrontrunningStrategy::CheckLockTimeVerify => "CheckLockTimeVerify (CLTV)",
-                AntiFrontrunningStrategy::Cpfp => "Child-Pays-For-Parent (CPFP)",
-                AntiFrontrunningStrategy::Presign => "Presign + RBF monitoring (hybrid)",
-                AntiFrontrunningStrategy::Rbf => "Replace-By-Fee (RBF) monitoring",
-            };
-            log::info!("🛡️  Anti-frontrunning strategy: {}", strategy_name);
-        }
+        // STRATEGIES DISABLED: They don't actually prevent frontrunning
+        // The real anti-frontrunning protection is using small commit outputs (~10k sats)
+        // so that attackers have to spend their own money to frontrun.
 
-        // Use Presign strategy if enabled (separate execution path)
-        // Note: Presign can be combined with RBF by checking params.strategy separately
-        if let Some(super::types::AntiFrontrunningStrategy::Presign) = params.strategy {
-            return self.execute_with_presign_rbf(params).await;
-        }
+        // // Log anti-frontrunning strategy if enabled
+        // if let Some(ref strategy) = params.strategy {
+        //     use super::types::AntiFrontrunningStrategy;
+        //     let strategy_name = match strategy {
+        //         AntiFrontrunningStrategy::CheckLockTimeVerify => "CheckLockTimeVerify (CLTV)",
+        //         AntiFrontrunningStrategy::Cpfp => "Child-Pays-For-Parent (CPFP)",
+        //         AntiFrontrunningStrategy::Presign => "Presign + RBF monitoring (hybrid)",
+        //         AntiFrontrunningStrategy::Rbf => "Replace-By-Fee (RBF) monitoring",
+        //     };
+        //     log::info!("🛡️  Anti-frontrunning strategy: {}", strategy_name);
+        // }
+
+        // // Use Presign strategy if enabled (separate execution path)
+        // if let Some(super::types::AntiFrontrunningStrategy::Presign) = params.strategy {
+        //     return self.execute_with_presign_rbf(params).await;
+        // }
 
 
         // Create the envelope with the JSON payload
@@ -192,21 +195,24 @@ impl<'a> Brc20ProgExecutor<'a> {
             result
         };
 
-        // Apply CPFP strategy if enabled (but not when resuming - the CPFP tx may already be broadcast)
-        if params.resume_from_commit.is_none() {
-            if let Some(super::types::AntiFrontrunningStrategy::Cpfp) = params.strategy {
-                log::info!("🚀 Applying CPFP strategy: broadcasting high-fee child transaction...");
-                self.apply_cpfp_strategy(&commit_txid.to_string(), &params).await?;
-            }
+        // STRATEGIES DISABLED: They don't work - frontrunners can still extract and use the inscription data
+        // The only real protection is making frontrunning cost money via small commit outputs
 
-            // Apply RBF monitoring strategy if enabled
-            if let Some(super::types::AntiFrontrunningStrategy::Rbf) = params.strategy {
-                log::info!("🔍 RBF: Starting mempool monitoring for frontrunning attempts...");
-                self.monitor_and_bump_if_frontrun(&commit_txid.to_string(), &envelope, &params).await?;
-            }
-        } else {
-            log::info!("   Skipping anti-frontrunning strategies (resuming from existing commit)");
-        }
+        // // Apply CPFP strategy if enabled (but not when resuming - the CPFP tx may already be broadcast)
+        // if params.resume_from_commit.is_none() {
+        //     if let Some(super::types::AntiFrontrunningStrategy::Cpfp) = params.strategy {
+        //         log::info!("🚀 Applying CPFP strategy: broadcasting high-fee child transaction...");
+        //         self.apply_cpfp_strategy(&commit_txid.to_string(), &params).await?;
+        //     }
+        //
+        //     // Apply RBF monitoring strategy if enabled
+        //     if let Some(super::types::AntiFrontrunningStrategy::Rbf) = params.strategy {
+        //         log::info!("🔍 RBF: Starting mempool monitoring for frontrunning attempts...");
+        //         self.monitor_and_bump_if_frontrun(&commit_txid.to_string(), &envelope, &params).await?;
+        //     }
+        // } else {
+        //     log::info!("   Skipping anti-frontrunning strategies (resuming from existing commit)");
+        // }
 
         // For slipstream/rebar, we must wait for the transaction to be mined before continuing
         if params.use_slipstream || params.use_rebar {
@@ -346,20 +352,23 @@ impl<'a> Brc20ProgExecutor<'a> {
         let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
         log::info!("Commit address: {commit_address}");
 
-        // Calculate required amount for reveal transaction
-        // We need enough for: recipient output + fees + padding
-        let mut required_reveal_amount = DUST_LIMIT; // For the OP_RETURN output
-        let estimated_reveal_fee = 50_000u64; // Generous estimate for reveal tx
-        required_reveal_amount += estimated_reveal_fee;
+        // ANTI-FRONTRUNNING FIX:
+        // Use a small commit output (10,000 sats) so frontrunners can't profit.
+        // The reveal transaction will need to spend additional UTXOs to cover the full fee,
+        // making frontrunning unprofitable since the attacker would have to add their own funds.
+        let commit_output_amount = 10_000u64; // Small amount - frontrunners will need to add ~40k+ sats of their own money
+
+        log::info!("💡 Anti-frontrunning: Using small commit output of {} sats", commit_output_amount);
+        log::info!("   Frontrunners will need to add ~40,000+ sats of their own funds to complete the reveal");
 
         // Select UTXOs for funding the commit
         let funding_utxos = self.select_utxos_for_amount(
-            required_reveal_amount,
+            commit_output_amount,
             &params.from_addresses,
         ).await?;
 
         let commit_output = TxOut {
-            value: bitcoin::Amount::from_sat(required_reveal_amount),
+            value: bitcoin::Amount::from_sat(commit_output_amount),
             script_pubkey: commit_address.script_pubkey(),
         };
 
@@ -407,6 +416,23 @@ impl<'a> Brc20ProgExecutor<'a> {
     ) -> Result<(Txid, u64, OutPoint, TxOut)> {
         log::info!("Building reveal transaction");
 
+        // ANTI-FRONTRUNNING: Select additional UTXOs to fund the reveal transaction
+        // Since the commit output is only ~10k sats, we need ~40k+ more to cover the reveal fee
+        let commit_value = commit_output.value.to_sat();
+        let estimated_reveal_fee = 50_000u64;
+        let additional_funds_needed = estimated_reveal_fee.saturating_sub(commit_value);
+
+        log::info!("💡 Commit output: {} sats, reveal fee estimate: {} sats", commit_value, estimated_reveal_fee);
+        log::info!("   Selecting additional {} sats from wallet UTXOs", additional_funds_needed);
+
+        // Select additional UTXOs to fund the reveal
+        let additional_utxos = self.select_utxos_for_amount(
+            additional_funds_needed,
+            &params.from_addresses,
+        ).await?;
+
+        log::info!("   Selected {} additional UTXOs for reveal funding", additional_utxos.len());
+
         // Get change address
         let change_address_str = if let Some(ref addr) = params.change_address {
             addr.clone()
@@ -450,36 +476,35 @@ impl<'a> Brc20ProgExecutor<'a> {
             vec![op_return_output, change_output]
         };
 
+        // Fetch the TxOut data for the additional UTXOs
+        let mut all_inputs_with_txouts = vec![(commit_outpoint, commit_output.clone())];
+
+        for utxo_outpoint in additional_utxos {
+            let tx_hex = self.provider.get_tx_hex(&utxo_outpoint.txid.to_string()).await?;
+            let tx_bytes = hex::decode(&tx_hex)?;
+            let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
+            let txout = tx.output.get(utxo_outpoint.vout as usize)
+                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO vout {} not found in transaction", utxo_outpoint.vout)))?
+                .clone();
+            all_inputs_with_txouts.push((utxo_outpoint, txout));
+        }
+
+        log::info!("   Total reveal transaction inputs: {}", all_inputs_with_txouts.len());
+
         // Calculate Rebar payment if needed (estimate tx size first)
-        let estimated_reveal_vsize = 10 + 200 + (2 * 43); // base + script-path input + 2 outputs
+        let estimated_reveal_vsize = 10 + 200 + (all_inputs_with_txouts.len() * 107) + (2 * 43); // base + script-path input + standard inputs + 2 outputs
         let rebar_payment = self.calculate_rebar_payment(estimated_reveal_vsize, params).await?;
 
-        // Calculate locktime for CLTV strategy and wait for it to be reached
-        let locktime = if let Some(super::types::AntiFrontrunningStrategy::CheckLockTimeVerify) = params.strategy {
-            use crate::traits::BitcoinRpcProvider;
-            let current_height = self.provider.get_block_count().await?;
-            let locktime_height = current_height + 6; // Wait 6 blocks after current height
-            log::info!("🔒 CLTV: Reveal transaction will be locked until block {}", locktime_height);
-            log::info!("   Current height: {}, waiting for +6 blocks", current_height);
-
-            // Wait for the locktime to be reached
-            self.wait_for_block_height(locktime_height, params).await?;
-
-            Some(locktime_height as u32)
-        } else {
-            None
-        };
-
-        // Build reveal PSBT with script-path spending
+        // Build reveal PSBT with script-path spending (NO MORE CLTV STRATEGY - it doesn't work)
         let (mut reveal_psbt, reveal_fee) = self
             .build_reveal_psbt(
-                vec![(commit_outpoint, commit_output)],
+                all_inputs_with_txouts,
                 outputs,
                 params.fee_rate,
                 Some(envelope),
                 commit_internal_key,
                 rebar_payment,
-                locktime,
+                None, // No locktime - CLTV strategy removed
             )
             .await?;
 

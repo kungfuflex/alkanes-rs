@@ -310,4 +310,198 @@ export function registerDataapiCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  // health
+  dataapi
+    .command('health')
+    .description('Check data API health')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Checking health...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        await provider.dataApiHealth();
+
+        spinner.succeed('Data API is healthy');
+      } catch (err: any) {
+        error(`Health check failed: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // get-alkanes
+  dataapi
+    .command('get-alkanes')
+    .description('Get all alkanes')
+    .option('--page <number>', 'Page number', '0')
+    .option('--limit <number>', 'Results per page', '100')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting alkanes...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const page = options.page ? parseInt(options.page) : null;
+        const limit = options.limit ? parseInt(options.limit) : null;
+        const result = await provider.dataApiGetAlkanes(page, limit);
+        const alkanes = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(alkanes, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get alkanes: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // get-alkane-details
+  dataapi
+    .command('get-alkane-details <alkane-id>')
+    .description('Get alkane details by ID (format: block:tx)')
+    .action(async (alkaneId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting alkane details...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.dataApiGetAlkaneDetails(alkaneId);
+        const details = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(details, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get alkane details: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // get-pool-by-id
+  dataapi
+    .command('get-pool-by-id <pool-id>')
+    .description('Get pool details by ID (format: block:tx)')
+    .action(async (poolId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting pool details...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.dataApiGetPoolById(poolId);
+        const pool = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(pool, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get pool: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // get-outpoint-balances
+  dataapi
+    .command('get-outpoint-balances <outpoint>')
+    .description('Get balances for an outpoint (format: txid:vout)')
+    .action(async (outpoint, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting outpoint balances...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.dataApiGetOutpointBalances(outpoint);
+        const balances = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(balances, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get outpoint balances: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // get-block-height
+  dataapi
+    .command('get-block-height')
+    .description('Get latest indexed block height')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting block height...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.dataApiGetBlockHeight();
+        const height = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(height, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get block height: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // get-block-hash
+  dataapi
+    .command('get-block-hash')
+    .description('Get latest indexed block hash')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting block hash...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.dataApiGetBlockHash();
+        const hash = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(hash, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get block hash: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // get-indexer-position
+  dataapi
+    .command('get-indexer-position')
+    .description('Get indexer position (height and hash)')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting indexer position...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.dataApiGetIndexerPosition();
+        const position = JSON.parse(result);
+
+        spinner.succeed();
+        console.log(formatOutput(position, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get indexer position: ${err.message}`);
+        process.exit(1);
+      }
+    });
 }

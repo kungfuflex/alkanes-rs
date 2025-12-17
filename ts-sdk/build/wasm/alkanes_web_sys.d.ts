@@ -1,9 +1,5 @@
 /* tslint:disable */
 /* eslint-disable */
-/**
- * Asynchronously encrypts data using the Web Crypto API.
- */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export function analyze_psbt(psbt_base64: string, network_str: string): string;
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
 export function get_alkane_bytecode(network: string, block: number, tx: number, block_tag: string): Promise<any>;
@@ -62,6 +58,10 @@ export function analyze_runestone(tx_hex: string): string;
  * ```
  */
 export function decode_psbt(psbt_base64: string): string;
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;
@@ -484,6 +484,14 @@ export class WebProvider {
   dataApiGetKeys(alkane: string, prefix: string | null | undefined, limit: bigint): Promise<any>;
   dataApiGetBitcoinPrice(): Promise<any>;
   dataApiGetBitcoinMarketChart(days: string): Promise<any>;
+  dataApiHealth(): Promise<any>;
+  dataApiGetAlkanes(page?: bigint | null, limit?: bigint | null): Promise<any>;
+  dataApiGetAlkaneDetails(alkane_id: string): Promise<any>;
+  dataApiGetPoolById(pool_id: string): Promise<any>;
+  dataApiGetOutpointBalances(outpoint: string): Promise<any>;
+  dataApiGetBlockHeight(): Promise<any>;
+  dataApiGetBlockHash(): Promise<any>;
+  dataApiGetIndexerPosition(): Promise<any>;
   /**
    * Reflect alkane token metadata by querying standard opcodes
    *
