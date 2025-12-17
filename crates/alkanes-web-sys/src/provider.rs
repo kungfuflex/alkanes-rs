@@ -832,6 +832,332 @@ impl WebProvider {
         })
     }
 
+    /// Reflect metadata for a range of alkanes
+    #[wasm_bindgen(js_name = alkanesReflectAlkaneRange)]
+    pub fn alkanes_reflect_alkane_range_js(&self, block: f64, start_tx: f64, end_tx: f64, concurrency: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::alkanes::experimental_asm::reflect_alkane_range;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let reflections = reflect_alkane_range(
+                &mut provider,
+                block as u64,
+                start_tx as u64,
+                end_tx as u64,
+                concurrency.map(|c| c as usize).unwrap_or(30),
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("Reflect alkane range failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&reflections)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
+        })
+    }
+
+    /// Get pool details for a specific pool
+    #[wasm_bindgen(js_name = alkanesPoolDetails)]
+    pub fn alkanes_pool_details_js(&self, pool_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::proto::alkanes::MessageContextParcel;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            // Parse pool_id
+            let parts: Vec<&str> = pool_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(JsValue::from_str("Invalid pool_id format. Expected 'block:tx'"));
+            }
+            let block: u64 = parts[0].parse()
+                .map_err(|_| JsValue::from_str("Invalid block number"))?;
+            let tx: u64 = parts[1].parse()
+                .map_err(|_| JsValue::from_str("Invalid tx number"))?;
+
+            // Call pool with opcode 999 (POOL_DETAILS)
+            // This replicates what AmmManager.get_pool_details does
+            const POOL_OPCODE_POOL_DETAILS: u64 = 999;
+
+            let mut calldata = Vec::new();
+            use leb128;
+            leb128::write::unsigned(&mut calldata, block).unwrap();
+            leb128::write::unsigned(&mut calldata, tx).unwrap();
+            leb128::write::unsigned(&mut calldata, POOL_OPCODE_POOL_DETAILS).unwrap();
+
+            let context = MessageContextParcel {
+                alkanes: vec![],
+                transaction: vec![],
+                block: vec![],
+                height: 0,
+                vout: 0,
+                txindex: 0,
+                calldata,
+                pointer: 0,
+                refund_pointer: 0,
+            };
+
+            let result = provider.simulate(&pool_id, &context, None).await
+                .map_err(|e| JsValue::from_str(&format!("Pool details query failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
+        })
+    }
+
+    /// Calculate minimum unwrap amount for subfrost frBTC unwrapping
+    #[wasm_bindgen(js_name = subfrostMinimumUnwrap)]
+    pub fn subfrost_minimum_unwrap_js(
+        &self,
+        fee_rate_override: Option<f64>,
+        premium: Option<f64>,
+        expected_inputs: Option<f64>,
+        expected_outputs: Option<f64>,
+        raw: Option<bool>,
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::subfrost::execute_minimum_unwrap;
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = execute_minimum_unwrap(
+                &provider,
+                fee_rate_override,
+                premium.unwrap_or(0.001), // Default 0.1% premium
+                expected_inputs.map(|i| i as usize).unwrap_or(10),
+                expected_outputs.map(|o| o as usize).unwrap_or(10),
+                raw.unwrap_or(false),
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("Minimum unwrap calculation failed: {}", e)))?;
+
+            Ok(JsValue::from_str(&result))
+        })
+    }
+
+    // ============================================================================
+    // OPI Commands
+    // ============================================================================
+
+    /// Get OPI block height
+    #[wasm_bindgen(js_name = opiBlockHeight)]
+    pub fn opi_block_height_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_block_height;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_block_height(&client).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI block height failed: {}", e)))
+        })
+    }
+
+    /// Get OPI extras block height
+    #[wasm_bindgen(js_name = opiExtrasBlockHeight)]
+    pub fn opi_extras_block_height_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_extras_block_height;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_extras_block_height(&client).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI extras block height failed: {}", e)))
+        })
+    }
+
+    /// Get OPI database version
+    #[wasm_bindgen(js_name = opiDbVersion)]
+    pub fn opi_db_version_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_db_version;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_db_version(&client).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI db version failed: {}", e)))
+        })
+    }
+
+    /// Get OPI event hash version
+    #[wasm_bindgen(js_name = opiEventHashVersion)]
+    pub fn opi_event_hash_version_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_event_hash_version;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_event_hash_version(&client).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI event hash version failed: {}", e)))
+        })
+    }
+
+    /// Get OPI balance on block
+    #[wasm_bindgen(js_name = opiBalanceOnBlock)]
+    pub fn opi_balance_on_block_js(&self, base_url: String, block_height: f64, pkscript: String, ticker: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_balance_on_block;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_balance_on_block(&client, block_height as u64, &pkscript, &ticker).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI balance on block failed: {}", e)))
+        })
+    }
+
+    /// Get OPI activity on block
+    #[wasm_bindgen(js_name = opiActivityOnBlock)]
+    pub fn opi_activity_on_block_js(&self, base_url: String, block_height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_activity_on_block;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_activity_on_block(&client, block_height as u64).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI activity on block failed: {}", e)))
+        })
+    }
+
+    /// Get OPI Bitcoin RPC results on block
+    #[wasm_bindgen(js_name = opiBitcoinRpcResultsOnBlock)]
+    pub fn opi_bitcoin_rpc_results_on_block_js(&self, base_url: String, block_height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_bitcoin_rpc_results_on_block;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_bitcoin_rpc_results_on_block(&client, block_height as u64).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI bitcoin rpc results failed: {}", e)))
+        })
+    }
+
+    /// Get OPI current balance
+    #[wasm_bindgen(js_name = opiCurrentBalance)]
+    pub fn opi_current_balance_js(&self, base_url: String, ticker: String, address: Option<String>, pkscript: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_current_balance;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_current_balance(&client, &ticker, address.as_deref(), pkscript.as_deref()).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI current balance failed: {}", e)))
+        })
+    }
+
+    /// Get OPI valid tx notes of wallet
+    #[wasm_bindgen(js_name = opiValidTxNotesOfWallet)]
+    pub fn opi_valid_tx_notes_of_wallet_js(&self, base_url: String, address: Option<String>, pkscript: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_valid_tx_notes_of_wallet;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_valid_tx_notes_of_wallet(&client, address.as_deref(), pkscript.as_deref()).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI valid tx notes of wallet failed: {}", e)))
+        })
+    }
+
+    /// Get OPI valid tx notes of ticker
+    #[wasm_bindgen(js_name = opiValidTxNotesOfTicker)]
+    pub fn opi_valid_tx_notes_of_ticker_js(&self, base_url: String, ticker: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_valid_tx_notes_of_ticker;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_valid_tx_notes_of_ticker(&client, &ticker).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI valid tx notes of ticker failed: {}", e)))
+        })
+    }
+
+    /// Get OPI holders
+    #[wasm_bindgen(js_name = opiHolders)]
+    pub fn opi_holders_js(&self, base_url: String, ticker: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_holders;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_holders(&client, &ticker).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI holders failed: {}", e)))
+        })
+    }
+
+    /// Get OPI hash of all activity
+    #[wasm_bindgen(js_name = opiHashOfAllActivity)]
+    pub fn opi_hash_of_all_activity_js(&self, base_url: String, block_height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_hash_of_all_activity;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_hash_of_all_activity(&client, block_height as u64).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI hash of all activity failed: {}", e)))
+        })
+    }
+
+    /// Get OPI hash of all current balances
+    #[wasm_bindgen(js_name = opiHashOfAllCurrentBalances)]
+    pub fn opi_hash_of_all_current_balances_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_hash_of_all_current_balances;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_hash_of_all_current_balances(&client).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI hash of all current balances failed: {}", e)))
+        })
+    }
+
+    /// Get OPI event
+    #[wasm_bindgen(js_name = opiEvent)]
+    pub fn opi_event_js(&self, base_url: String, event_hash: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_event;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_event(&client, &event_hash).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI event failed: {}", e)))
+        })
+    }
+
+    /// Get OPI IP address
+    #[wasm_bindgen(js_name = opiIp)]
+    pub fn opi_ip_js(&self, base_url: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_ip;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_ip(&client).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI IP failed: {}", e)))
+        })
+    }
+
+    /// Get OPI raw endpoint
+    #[wasm_bindgen(js_name = opiRaw)]
+    pub fn opi_raw_js(&self, base_url: String, endpoint: String) -> js_sys::Promise {
+        use alkanes_cli_common::opi::client::OpiClient;
+        use alkanes_cli_common::opi::commands::execute_opi_raw;
+        use wasm_bindgen_futures::future_to_promise;
+        future_to_promise(async move {
+            let client = OpiClient::new(base_url);
+            execute_opi_raw(&client, &endpoint).await
+                .map(|result| JsValue::from_str(&result))
+                .map_err(|e| JsValue::from_str(&format!("OPI raw request failed: {}", e)))
+        })
+    }
+
     /// Get alkanes contract balance for an address
     #[wasm_bindgen(js_name = alkanesBalance)]
     pub fn alkanes_balance_js(&self, address: Option<String>) -> js_sys::Promise {

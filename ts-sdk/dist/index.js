@@ -1526,6 +1526,187 @@ function registerAlkanesCommands(program2) {
       process.exit(1);
     }
   });
+  alkanes.command("execute").description("Execute an alkanes smart contract").option("--inputs <requirements>", 'Input requirements (e.g., "B:10000" or "2:0:1000")').option("--to <addresses>", "Recipient addresses (JSON array)").option("--from <addresses>", "Source addresses (JSON array)", "[]").option("--change <address>", "Change address").option("--protostones <spec>", "Protostone specification").option("--envelope <hex>", "Envelope data as hex").option("--fee-rate <rate>", "Fee rate in sat/vB").option("--trace", "Enable transaction tracing").option("--mine", "Mine a block after broadcasting (regtest only)").option("-y, --auto-confirm", "Automatically confirm transaction").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Executing contract...").start();
+      const provider = await createProvider({
+        network: globalOpts.provider,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const params = {
+        input_requirements: options.inputs || "",
+        to_addresses: options.to ? JSON.parse(options.to) : [],
+        from_addresses: options.from ? JSON.parse(options.from) : [],
+        change_address: options.change || null,
+        protostones: options.protostones || "",
+        envelope_hex: options.envelope || null,
+        fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
+        trace_enabled: options.trace || false,
+        mine_enabled: options.mine || false,
+        auto_confirm: options.autoConfirm || false,
+        raw_output: globalOpts.raw || false
+      };
+      const result = await provider.alkanesExecuteWithStrings(
+        JSON.stringify(params.to_addresses),
+        params.input_requirements,
+        params.protostones,
+        params.fee_rate,
+        params.envelope_hex,
+        JSON.stringify({
+          trace_enabled: params.trace_enabled,
+          mine_enabled: params.mine_enabled,
+          auto_confirm: params.auto_confirm,
+          raw_output: params.raw_output
+        })
+      );
+      spinner.succeed();
+      console.log(formatOutput(JSON.parse(result), globalOpts));
+    } catch (err) {
+      error(`Failed to execute: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("wrap-btc <amount>").description("Wrap BTC to frBTC").option("--to <address>", "Address to receive frBTC", "p2tr:0").option("--from <addresses>", "Source addresses (JSON array)", "[]").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB").option("--trace", "Enable transaction tracing").option("--mine", "Mine a block after broadcasting (regtest only)").option("-y, --auto-confirm", "Automatically confirm transaction").action(async (amount, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Wrapping BTC to frBTC...").start();
+      const provider = await createProvider({
+        network: globalOpts.provider,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const params = {
+        amount: parseInt(amount),
+        to_address: options.to,
+        from_addresses: options.from !== "[]" ? JSON.parse(options.from) : null,
+        change_address: options.change || null,
+        fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
+        raw_output: globalOpts.raw || false,
+        trace_enabled: options.trace || false,
+        mine_enabled: options.mine || false,
+        auto_confirm: options.autoConfirm || false
+      };
+      const result = await provider.alkanesWrapBtc(JSON.stringify(params));
+      spinner.succeed();
+      console.log(formatOutput(JSON.parse(result), globalOpts));
+    } catch (err) {
+      error(`Failed to wrap BTC: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("init-pool").description("Initialize a new AMM liquidity pool").option("--pair <tokens>", "Token pair (format: BLOCK:TX,BLOCK:TX)", "2:0,32:0").option("--liquidity <amounts>", "Initial liquidity (format: AMOUNT0:AMOUNT1)", "300000000:50000").option("--to <address>", "Recipient address", "p2tr:0").option("--from <address>", "Source address", "p2tr:0").option("--change <address>", "Change address").option("--minimum <lp>", "Minimum LP tokens to receive").option("--fee-rate <rate>", "Fee rate in sat/vB").option("--trace", "Show trace after transaction confirms").option("--factory <id>", "Factory ID (format: BLOCK:TX)", "4:1").option("--auto-confirm", "Auto-confirm transaction").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Initializing pool...").start();
+      const provider = await createProvider({
+        network: globalOpts.provider,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const [token0Str, token1Str] = options.pair.split(",");
+      const [token0Block, token0Tx] = token0Str.split(":").map((n) => parseInt(n));
+      const [token1Block, token1Tx] = token1Str.split(":").map((n) => parseInt(n));
+      const [amount0, amount1] = options.liquidity.split(":").map((n) => parseInt(n));
+      const [factoryBlock, factoryTx] = options.factory.split(":").map((n) => parseInt(n));
+      const params = {
+        factory_id: { block: factoryBlock, tx: factoryTx },
+        token0: { block: token0Block, tx: token0Tx },
+        token1: { block: token1Block, tx: token1Tx },
+        amount0,
+        amount1,
+        minimum_lp: options.minimum ? parseInt(options.minimum) : null,
+        to_address: options.to,
+        from_address: options.from,
+        change_address: options.change || null,
+        fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
+        trace: options.trace || false,
+        auto_confirm: options.autoConfirm || false
+      };
+      const txid = await provider.alkanesInitPool(JSON.stringify(params));
+      spinner.succeed(`Pool initialized! Transaction: ${txid}`);
+    } catch (err) {
+      error(`Failed to initialize pool: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("swap").description("Execute an AMM token swap").option("--path <tokens>", "Swap path (comma-separated alkane IDs)", "2:0,32:0").option("--input <amount>", "Input token amount (required)", "1000000").option("--minimum-output <amount>", "Minimum output amount").option("--slippage <percent>", "Slippage percentage", "5.0").option("--expires <height>", "Expiry block height").option("--to <address>", "Recipient address", "p2tr:0").option("--from <address>", "Source address", "p2tr:0").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB").option("--trace", "Show trace after transaction confirms").option("--mine", "Mine a block after broadcasting (regtest only)").option("--factory <id>", "Factory ID", "4:65522").option("--no-optimize", "Skip path optimization").option("--auto-confirm", "Auto-confirm transaction").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Executing swap...").start();
+      const provider = await createProvider({
+        network: globalOpts.provider,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const pathTokens = options.path.split(",").map((token) => {
+        const [block, tx] = token.split(":").map((n) => parseInt(n));
+        return { block, tx };
+      });
+      const [factoryBlock, factoryTx] = options.factory.split(":").map((n) => parseInt(n));
+      const inputAmount = parseInt(options.input);
+      const minimumOutput = options.minimumOutput ? parseInt(options.minimumOutput) : Math.floor(inputAmount * (1 - parseFloat(options.slippage) / 100));
+      let expires = options.expires ? parseInt(options.expires) : 0;
+      if (!expires) {
+        const heightResult = await provider.get_metashrew_height_js();
+        expires = parseInt(heightResult) + 100;
+      }
+      const params = {
+        factory_id: { block: factoryBlock, tx: factoryTx },
+        path: pathTokens,
+        input_amount: inputAmount,
+        minimum_output: minimumOutput,
+        expires,
+        to_address: options.to,
+        from_address: options.from,
+        change_address: options.change || null,
+        fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
+        trace: options.trace || false,
+        auto_confirm: options.autoConfirm || false
+      };
+      const txid = await provider.alkanesSwap(JSON.stringify(params));
+      spinner.succeed(`Swap executed! Transaction: ${txid}`);
+    } catch (err) {
+      error(`Failed to execute swap: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("pool-details <pool-id>").description("Get detailed information about a specific pool").action(async (poolId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Getting pool details...").start();
+      const provider = await createProvider({
+        network: globalOpts.provider,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const result = await provider.alkanesPoolDetails(poolId);
+      const poolDetails = JSON.parse(result);
+      spinner.succeed();
+      console.log(formatOutput(poolDetails, globalOpts));
+    } catch (err) {
+      error(`Failed to get pool details: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("reflect-alkane-range <block> <start-tx> <end-tx>").description("Reflect metadata for a range of alkanes in a block").option("--concurrency <n>", "Number of concurrent requests", "30").action(async (block, startTx, endTx, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Reflecting alkane range...").start();
+      const provider = await createProvider({
+        network: globalOpts.provider,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const result = await provider.alkanesReflectAlkaneRange(
+        parseFloat(block),
+        parseFloat(startTx),
+        parseFloat(endTx),
+        options.concurrency ? parseFloat(options.concurrency) : null
+      );
+      const reflections = JSON.parse(result);
+      spinner.succeed();
+      console.log(formatOutput(reflections, globalOpts));
+    } catch (err) {
+      error(`Failed to reflect alkane range: ${err.message}`);
+      process.exit(1);
+    }
+  });
 }
 
 // src/cli/commands/esplora.ts
@@ -3334,15 +3515,32 @@ function registerOpiCommands(program2) {
 
 // src/cli/commands/subfrost.ts
 init_formatting();
+var import_ora13 = __toESM(require("ora"));
 function registerSubfrostCommands(program2) {
   const subfrost = program2.command("subfrost").description("Subfrost operations (frBTC unwrap utilities)");
-  subfrost.command("minimum-unwrap").description("Calculate minimum unwrap amount based on current fee rates").action(async (options, command) => {
+  subfrost.command("minimum-unwrap").description("Calculate minimum unwrap amount based on current fee rates").option("--fee-rate <rate>", "Fee rate override in sat/vB (otherwise fetches from network)").option("--premium <percent>", "Premium percentage (default: 0.1)", "0.1").option("--expected-inputs <n>", "Expected number of inputs", "10").option("--expected-outputs <n>", "Expected number of outputs", "10").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
-      error("Subfrost minimum-unwrap command is not yet implemented.");
-      error("This requires WASM bindings for subfrost minimum unwrap calculation.");
-      error("For now, please use the Rust alkanes-cli for Subfrost operations.");
-      process.exit(1);
+      const spinner = (0, import_ora13.default)("Calculating minimum unwrap amount...").start();
+      const provider = await createProvider({
+        network: globalOpts.provider,
+        esploraUrl: globalOpts.esploraUrl
+      });
+      const result = await provider.subfrostMinimumUnwrap(
+        options.feeRate ? parseFloat(options.feeRate) : null,
+        parseFloat(options.premium) / 100,
+        // Convert percentage to decimal
+        options.expectedInputs ? parseFloat(options.expectedInputs) : null,
+        options.expectedOutputs ? parseFloat(options.expectedOutputs) : null,
+        globalOpts.raw || false
+      );
+      spinner.succeed();
+      if (globalOpts.raw) {
+        const parsed = JSON.parse(result);
+        console.log(formatOutput(parsed, globalOpts));
+      } else {
+        console.log(result);
+      }
     } catch (err) {
       error(`Failed to calculate minimum unwrap: ${err.message}`);
       process.exit(1);
@@ -3373,8 +3571,8 @@ program.command("decodepsbt <psbt>").description("Decode a PSBT (Partially Signe
     const globalOpts = command.parent?.opts() || {};
     const result = decode_psbt(psbt);
     const decoded = JSON.parse(result);
-    const { formatOutput: formatOutput3 } = await Promise.resolve().then(() => (init_formatting(), formatting_exports));
-    console.log(formatOutput3(decoded, globalOpts));
+    const { formatOutput: formatOutput2 } = await Promise.resolve().then(() => (init_formatting(), formatting_exports));
+    console.log(formatOutput2(decoded, globalOpts));
   } catch (err) {
     const { error: error2 } = await Promise.resolve().then(() => (init_formatting(), formatting_exports));
     error2(`Failed to decode PSBT: ${err.message}`);
