@@ -1855,8 +1855,11 @@ impl<'a> Brc20ProgExecutor<'a> {
             let commit_input = psbt.inputs.remove(0);
             let commit_tx_in = psbt.unsigned_tx.input.remove(0);
 
-            // Now sign the PSBT (which only has wallet inputs)
-            self.provider.sign_psbt(psbt).await?;
+            // Sign the PSBT (which only has wallet inputs now) and get the signed version
+            let signed_psbt = self.provider.sign_psbt(psbt).await?;
+
+            // Replace the PSBT with the signed version
+            *psbt = signed_psbt;
 
             // Restore input 0 at the beginning
             psbt.inputs.insert(0, commit_input);
