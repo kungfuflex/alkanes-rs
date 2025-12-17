@@ -187,8 +187,12 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Check if resuming from existing commit
         let (commit_txid, commit_fee, commit_outpoint, commit_output, internal_key) = if let Some(ref resume_txid) = params.resume_from_commit {
-            log::info!("🔄 Resuming from existing commit transaction: {}", resume_txid);
-            self.resume_from_commit(resume_txid, &params, &envelope).await?
+            log::info!("🔄 Resuming from transaction: {}", resume_txid);
+
+            // Auto-detect if this is a commit or reveal transaction
+            let actual_commit_txid = self.detect_and_get_commit_txid(resume_txid).await?;
+
+            self.resume_from_commit(&actual_commit_txid, &params, &envelope).await?
         } else {
             // Build and execute commit transaction
             let result = self.build_and_broadcast_commit(&params, &envelope).await?;
@@ -293,6 +297,36 @@ impl<'a> Brc20ProgExecutor<'a> {
             outputs_created: vec![],
             traces: None,
         })
+    }
+
+    /// Smart resume: Auto-detect if txid is commit or reveal, extract commit txid if needed
+    async fn detect_and_get_commit_txid(
+        &mut self,
+        txid: &str,
+    ) -> Result<String> {
+        log::info!("🔍 Auto-detecting transaction type for: {}", txid);
+
+        // Fetch the transaction
+        let tx_hex = self.provider.get_tx_hex(txid).await?;
+        let tx_bytes = hex::decode(&tx_hex)?;
+        let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
+
+        // Check if this is a reveal transaction (has large witness on input 0)
+        if !tx.input.is_empty() && !tx.input[0].witness.is_empty() {
+            let witness_size: usize = tx.input[0].witness.iter().map(|w| w.len()).sum();
+
+            if witness_size > 1000 {
+                // This looks like a reveal transaction (large inscription witness)
+                let commit_txid = tx.input[0].previous_output.txid;
+                log::info!("   ✓ Detected REVEAL transaction");
+                log::info!("   → Extracting commit txid: {}", commit_txid);
+                return Ok(commit_txid.to_string());
+            }
+        }
+
+        // Otherwise, assume it's the commit transaction
+        log::info!("   ✓ Detected COMMIT transaction");
+        Ok(txid.to_string())
     }
 
     /// Resume execution from an existing commit transaction
