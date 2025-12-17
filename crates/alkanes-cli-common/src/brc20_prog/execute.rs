@@ -1847,61 +1847,23 @@ impl<'a> Brc20ProgExecutor<'a> {
         use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
         use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder};
 
-        // Get the unsigned transaction first (needed for sighash calculation)
-        let unsigned_tx = psbt.unsigned_tx.clone();
+        // STRATEGY: Sign the entire PSBT (including input 0) with provider,
+        // then replace input 0's signature with our script-path signature
+        // This avoids derivation path issues with manual signing
 
-        // FIRST: Manually sign all the regular wallet inputs (inputs 1+) using key-path spending
-        // We can't remove input 0 and call sign_psbt because that changes the sighash
         if psbt.inputs.len() > 1 {
-            log::info!("   Signing {} additional wallet UTXOs...", psbt.inputs.len() - 1);
+            log::info!("   Signing {} wallet UTXOs with provider...", psbt.inputs.len() - 1);
 
-            use bitcoin::secp256k1::{Message, Secp256k1};
-            use bitcoin::key::TapTweak;
-
-            let secp = Secp256k1::new();
-            let keypair = self.provider.get_keypair().await?;
-
-            // Collect all prevouts for sighash calculation
-            let prevouts: Vec<TxOut> = psbt.inputs.iter()
-                .filter_map(|input| input.witness_utxo.clone())
-                .collect();
-            let prevouts_all = Prevouts::All(&prevouts);
-
-            // Create sighash cache
-            let mut sighash_cache = SighashCache::new(&unsigned_tx);
-
-            // Sign each wallet input (inputs 1+) with taproot key-path spending
-            for i in 1..psbt.inputs.len() {
-                let input = &psbt.inputs[i];
-
-                // Get the taproot internal key for this input
-                let internal_key = input.tap_internal_key
-                    .ok_or_else(|| AlkanesError::Wallet("Missing tap_internal_key for wallet input".to_string()))?;
-
-                // Compute the sighash for this input
-                let sighash = sighash_cache
-                    .taproot_key_spend_signature_hash(i, &prevouts_all, TapSighashType::Default)
-                    .map_err(|e| AlkanesError::Wallet(format!("Failed to compute sighash: {}", e)))?;
-
-                // Create the tweaked keypair for key-path spending
-                let tweaked_keypair = keypair.tap_tweak(&secp, None);
-
-                // Sign the sighash
-                let msg = Message::from_digest(*sighash.as_byte_array());
-                let signature = secp.sign_schnorr(&msg, &tweaked_keypair.to_inner());
-
-                // Create the taproot signature (key-path spend uses default sighash type)
-                let tap_sig = bitcoin::taproot::Signature {
-                    signature,
-                    sighash_type: TapSighashType::Default,
-                };
-
-                // Update the PSBT input with the taproot key-path signature
-                psbt.inputs[i].tap_key_sig = Some(tap_sig);
-            }
+            // Sign the entire PSBT - this will sign ALL inputs including input 0
+            // The provider handles derivation paths correctly
+            let signed_psbt = self.provider.sign_psbt(psbt).await?;
+            *psbt = signed_psbt;
 
             log::info!("   ✅ Signed {} wallet inputs", psbt.inputs.len() - 1);
         }
+
+        // Get the unsigned transaction (needed for script-path signing of input 0)
+        let unsigned_tx = psbt.unsigned_tx.clone();
 
         // Build taproot spend info for the commit input (input 0)
         let reveal_script = envelope.build_reveal_script();
