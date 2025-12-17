@@ -1185,6 +1185,266 @@ impl WebProvider {
         })
     }
 
+    // === ADDITIONAL ESPLORA METHODS ===
+
+    #[wasm_bindgen(js_name = esploraGetBlocks)]
+    pub fn esplora_get_blocks_js(&self, start_height: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_blocks(start_height.map(|h| h as u64)).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlockByHeight)]
+    pub fn esplora_get_block_by_height_js(&self, height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_block_by_height(height as u64).await
+                .map(|h| JsValue::from_str(&h))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlock)]
+    pub fn esplora_get_block_js(&self, hash: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            EsploraProvider::get_block(&provider, &hash).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlockStatus)]
+    pub fn esplora_get_block_status_js(&self, hash: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_block_status(&hash).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlockTxids)]
+    pub fn esplora_get_block_txids_js(&self, hash: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_block_txids(&hash).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlockHeader)]
+    pub fn esplora_get_block_header_js(&self, hash: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            EsploraProvider::get_block_header(&provider, &hash).await
+                .map(|h| JsValue::from_str(h.as_str()))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlockRaw)]
+    pub fn esplora_get_block_raw_js(&self, hash: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_block_raw(&hash).await
+                .map(|h| JsValue::from_str(&h))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlockTxid)]
+    pub fn esplora_get_block_txid_js(&self, hash: String, index: f64) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_block_txid(&hash, index as u32).await
+                .map(|h| JsValue::from_str(&h))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetBlockTxs)]
+    pub fn esplora_get_block_txs_js(&self, hash: String, start_index: Option<f64>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_block_txs(&hash, start_index.map(|i| i as u32)).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetAddressTxsMempool)]
+    pub fn esplora_get_address_txs_mempool_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_address_txs_mempool(&address).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetAddressPrefix)]
+    pub fn esplora_get_address_prefix_js(&self, prefix: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_address_prefix(&prefix).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetTxRaw)]
+    pub fn esplora_get_tx_raw_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_tx_raw(&txid).await
+                .map(|h| JsValue::from_str(&h))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetTxMerkleProof)]
+    pub fn esplora_get_tx_merkle_proof_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_tx_merkle_proof(&txid).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetTxMerkleblockProof)]
+    pub fn esplora_get_tx_merkleblock_proof_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_tx_merkleblock_proof(&txid).await
+                .map(|h| JsValue::from_str(&h))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetTxOutspend)]
+    pub fn esplora_get_tx_outspend_js(&self, txid: String, index: f64) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_tx_outspend(&txid, index as u32).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetTxOutspends)]
+    pub fn esplora_get_tx_outspends_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_tx_outspends(&txid).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetMempool)]
+    pub fn esplora_get_mempool_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_mempool().await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetMempoolTxids)]
+    pub fn esplora_get_mempool_txids_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_mempool_txids().await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraGetMempoolRecent)]
+    pub fn esplora_get_mempool_recent_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EsploraProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.get_mempool_recent().await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r)
+                    .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = esploraPostTx)]
+    pub fn esplora_post_tx_js(&self, tx_hex: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let esplora_url = provider.esplora_rpc_url()
+                .ok_or_else(|| JsValue::from_str("Esplora URL not configured"))?;
+
+            // POST to /tx endpoint (same as broadcast, just different name)
+            let url = format!("{}/tx", esplora_url);
+            let response = crate::platform::fetch(&url, "POST", Some(&tx_hex), vec![("Content-Type", "text/plain")]).await
+                .map_err(|e| JsValue::from_str(&format!("Post tx failed: {}", e)))?;
+
+            Ok(JsValue::from_str(&response))
+        })
+    }
+
     // === BITCOIN RPC METHODS ===
     
     #[wasm_bindgen(js_name = bitcoindGetBlockCount)]

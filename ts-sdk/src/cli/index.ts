@@ -33,24 +33,64 @@ program
 // Import the command modules we have implemented
 import { registerWalletCommands } from './commands/wallet.js';
 import { registerBitcoindCommands } from './commands/bitcoind.js';
+import { registerAlkanesCommands } from './commands/alkanes.js';
+import { registerEsploraCommands } from './commands/esplora.js';
+import { registerOrdCommands } from './commands/ord.js';
+import { registerRunestoneCommands } from './commands/runestone.js';
+import { registerProtorunesCommands } from './commands/protorunes.js';
+import { registerMetashrewCommands } from './commands/metashrew.js';
+import { registerLuaCommands } from './commands/lua.js';
+import { registerDataapiCommands } from './commands/dataapi.js';
+import { registerEspoCommands } from './commands/espo.js';
+import { registerBrc20ProgCommands } from './commands/brc20prog.js';
+import { registerOpiCommands } from './commands/opi.js';
+import { registerSubfrostCommands } from './commands/subfrost.js';
 
 // Register implemented command groups
 registerWalletCommands(program);
 registerBitcoindCommands(program);
+registerAlkanesCommands(program);
+registerEsploraCommands(program);
+registerOrdCommands(program);
+registerRunestoneCommands(program);
+registerProtorunesCommands(program);
+registerMetashrewCommands(program);
+registerLuaCommands(program);
+registerDataapiCommands(program);
+registerEspoCommands(program);
+registerBrc20ProgCommands(program);
+registerOpiCommands(program);
+registerSubfrostCommands(program);
 
-// TODO: Implement remaining command groups:
-// - Alkanes
-// - Esplora
-// - Ord
-// - Runestone
-// - Protorunes
-// - Metashrew
-// - Lua
-// - Dataapi
-// - OPI
-// - Subfrost
-// - ESPO
-// - BRC20-Prog
+// Standalone command: decodepsbt
+program
+  .command('decodepsbt <psbt>')
+  .description('Decode a PSBT (Partially Signed Bitcoin Transaction) without calling bitcoind')
+  .action(async (psbt, options, command) => {
+    try {
+      const { decode_psbt } = await import('../wasm/alkanes_web_sys.js');
+      const globalOpts = command.parent?.opts() || {};
+
+      const result = decode_psbt(psbt);
+      const decoded = JSON.parse(result);
+
+      const { formatOutput } = await import('./utils/formatting.js');
+      console.log(formatOutput(decoded, globalOpts));
+    } catch (err: any) {
+      const { error } = await import('./utils/formatting.js');
+      error(`Failed to decode PSBT: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+// TODO: Additional commands that need WASM bindings:
+// - Esplora: ~20 more commands (block operations, mempool, etc.)
+// - Ord: ~8 more commands (address-info, block-info, children, content, etc.)
+// - Dataapi: A few more specialized endpoints
+//
+// Note: Some commands within implemented groups may require additional WASM bindings:
+// - Alkanes: execute, wrap-btc, init-pool, swap (transaction building commands)
+// - OPI: Most commands require direct HTTP endpoint access (not available in WASM)
 
 // Global error handler
 process.on('unhandledRejection', (reason, promise) => {

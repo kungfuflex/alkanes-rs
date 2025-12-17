@@ -1317,6 +1317,196 @@ export class WebProvider {
         return ret;
     }
     /**
+     * @param {number | null} [start_height]
+     * @returns {Promise<any>}
+     */
+    esploraGetBlocks(start_height) {
+        const ret = wasm.webprovider_esploraGetBlocks(this.__wbg_ptr, !isLikeNone(start_height), isLikeNone(start_height) ? 0 : start_height);
+        return ret;
+    }
+    /**
+     * @param {number} height
+     * @returns {Promise<any>}
+     */
+    esploraGetBlockByHeight(height) {
+        const ret = wasm.webprovider_esploraGetBlockByHeight(this.__wbg_ptr, height);
+        return ret;
+    }
+    /**
+     * @param {string} hash
+     * @returns {Promise<any>}
+     */
+    esploraGetBlock(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlock(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} hash
+     * @returns {Promise<any>}
+     */
+    esploraGetBlockStatus(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockStatus(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} hash
+     * @returns {Promise<any>}
+     */
+    esploraGetBlockTxids(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockTxids(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} hash
+     * @returns {Promise<any>}
+     */
+    esploraGetBlockHeader(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockHeader(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} hash
+     * @returns {Promise<any>}
+     */
+    esploraGetBlockRaw(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockRaw(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} hash
+     * @param {number} index
+     * @returns {Promise<any>}
+     */
+    esploraGetBlockTxid(hash, index) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockTxid(this.__wbg_ptr, ptr0, len0, index);
+        return ret;
+    }
+    /**
+     * @param {string} hash
+     * @param {number | null} [start_index]
+     * @returns {Promise<any>}
+     */
+    esploraGetBlockTxs(hash, start_index) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockTxs(this.__wbg_ptr, ptr0, len0, !isLikeNone(start_index), isLikeNone(start_index) ? 0 : start_index);
+        return ret;
+    }
+    /**
+     * @param {string} address
+     * @returns {Promise<any>}
+     */
+    esploraGetAddressTxsMempool(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetAddressTxsMempool(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} prefix
+     * @returns {Promise<any>}
+     */
+    esploraGetAddressPrefix(prefix) {
+        const ptr0 = passStringToWasm0(prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetAddressPrefix(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} txid
+     * @returns {Promise<any>}
+     */
+    esploraGetTxRaw(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxRaw(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} txid
+     * @returns {Promise<any>}
+     */
+    esploraGetTxMerkleProof(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxMerkleProof(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} txid
+     * @returns {Promise<any>}
+     */
+    esploraGetTxMerkleblockProof(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxMerkleblockProof(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @param {string} txid
+     * @param {number} index
+     * @returns {Promise<any>}
+     */
+    esploraGetTxOutspend(txid, index) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxOutspend(this.__wbg_ptr, ptr0, len0, index);
+        return ret;
+    }
+    /**
+     * @param {string} txid
+     * @returns {Promise<any>}
+     */
+    esploraGetTxOutspends(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxOutspends(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * @returns {Promise<any>}
+     */
+    esploraGetMempool() {
+        const ret = wasm.webprovider_esploraGetMempool(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Promise<any>}
+     */
+    esploraGetMempoolTxids() {
+        const ret = wasm.webprovider_esploraGetMempoolTxids(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Promise<any>}
+     */
+    esploraGetMempoolRecent() {
+        const ret = wasm.webprovider_esploraGetMempoolRecent(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {string} tx_hex
+     * @returns {Promise<any>}
+     */
+    esploraPostTx(tx_hex) {
+        const ptr0 = passStringToWasm0(tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraPostTx(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
      * @returns {Promise<any>}
      */
     bitcoindGetBlockCount() {
@@ -2943,12 +3133,6 @@ export function __wbg_wasmbrowserwalletprovider_new(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_0ff5371c659ffaef(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3167, function: Function { arguments: [Externref], shim_idx: 3168, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
-    return ret;
-};
-
 export function __wbindgen_cast_2241b6af4c4b2941(arg0, arg1) {
     // Cast intrinsic for `Ref(String) -> Externref`.
     const ret = getStringFromWasm0(arg0, arg1);
@@ -2958,6 +3142,12 @@ export function __wbindgen_cast_2241b6af4c4b2941(arg0, arg1) {
 export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     // Cast intrinsic for `U64 -> Externref`.
     const ret = BigInt.asUintN(64, arg0);
+    return ret;
+};
+
+export function __wbindgen_cast_849e3936dfc0ca32(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3229, function: Function { arguments: [Externref], shim_idx: 3230, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 

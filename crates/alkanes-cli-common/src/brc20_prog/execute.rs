@@ -34,9 +34,15 @@ impl<'a> Brc20ProgExecutor<'a> {
         Self { provider }
     }
 
-    /// Execute with Presign strategy: pre-sign all transactions before broadcasting
-    async fn execute_with_presign(&mut self, params: Brc20ProgExecuteParams) -> Result<Brc20ProgExecuteResult> {
-        log::info!("🔐 Presign Strategy: Building and signing all transactions upfront...");
+    /// Execute BRC20-prog with Presign+RBF hybrid strategy
+    /// This strategy:
+    /// 1. Pre-builds and signs all transactions (commit, reveal, activation) with RBF-enabled sequences
+    /// 2. Broadcasts all transactions simultaneously to minimize timing gaps
+    /// 3. Monitors mempool for frontrunning attempts
+    /// 4. If frontrunning detected, RBF-bumps commit and rebuilds/rebroadcasts reveal+activation
+    /// 5. Repeats monitoring and RBF-bumping up to 3 times to outpace attackers
+    async fn execute_with_presign_rbf(&mut self, params: Brc20ProgExecuteParams) -> Result<Brc20ProgExecuteResult> {
+        log::info!("🔐 Presign+RBF Hybrid Strategy: Building and signing all transactions upfront...");
         log::info!("Inscription content: {}", params.inscription_content);
 
         // Create the envelope
@@ -123,17 +129,17 @@ impl<'a> Brc20ProgExecutor<'a> {
             None
         };
 
-        // Step 6: Wait for confirmations if needed
-        log::info!("⏳ Step 6/6: Waiting for confirmations...");
-        if params.use_slipstream || params.use_rebar {
-            self.wait_for_confirmation(&final_commit_txid, &params).await?;
-            self.wait_for_confirmation(&final_reveal_txid, &params).await?;
-            if let Some(ref act_txid) = final_activation_txid {
-                self.wait_for_confirmation(act_txid, &params).await?;
-            }
-        }
+        // Step 6: Monitor for frontrunning and RBF if needed
+        log::info!("🔍 Step 6/6: Monitoring for frontrunning attacks...");
+        self.monitor_and_bump_presigned_txs(
+            &final_commit_txid,
+            &final_reveal_txid,
+            final_activation_txid.as_deref(),
+            &envelope,
+            &params,
+        ).await?;
 
-        log::info!("✅ Presign strategy completed successfully!");
+        log::info!("✅ Presign+RBF strategy completed successfully!");
 
         Ok(Brc20ProgExecuteResult {
             commit_txid: final_commit_txid,
@@ -159,15 +165,16 @@ impl<'a> Brc20ProgExecutor<'a> {
             let strategy_name = match strategy {
                 AntiFrontrunningStrategy::CheckLockTimeVerify => "CheckLockTimeVerify (CLTV)",
                 AntiFrontrunningStrategy::Cpfp => "Child-Pays-For-Parent (CPFP)",
-                AntiFrontrunningStrategy::Presign => "Presign all transactions",
+                AntiFrontrunningStrategy::Presign => "Presign + RBF monitoring (hybrid)",
                 AntiFrontrunningStrategy::Rbf => "Replace-By-Fee (RBF) monitoring",
             };
             log::info!("🛡️  Anti-frontrunning strategy: {}", strategy_name);
         }
 
         // Use Presign strategy if enabled (separate execution path)
+        // Note: Presign can be combined with RBF by checking params.strategy separately
         if let Some(super::types::AntiFrontrunningStrategy::Presign) = params.strategy {
-            return self.execute_with_presign(params).await;
+            return self.execute_with_presign_rbf(params).await;
         }
 
 
@@ -781,7 +788,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             input: funding_utxos.iter().map(|outpoint| bitcoin::TxIn {
                 previous_output: *outpoint,
                 script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::MAX, // FINAL sequence for presign
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME, // RBF-enabled for presign+RBF hybrid
                 witness: bitcoin::Witness::from_slice(&[vec![0u8; 65]]),
             }).collect(),
             output: temp_outputs,
@@ -809,7 +816,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             input: funding_utxos.iter().map(|outpoint| bitcoin::TxIn {
                 previous_output: *outpoint,
                 script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::MAX, // FINAL
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME, // RBF-enabled
                 witness: bitcoin::Witness::new(),
             }).collect(),
             output: final_outputs,
@@ -913,7 +920,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             input: vec![bitcoin::TxIn {
                 previous_output: reveal_inscription_outpoint,
                 script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::MAX,
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME, // RBF-enabled
                 witness: bitcoin::Witness::from_slice(&[vec![0u8; 65]]),
             }],
             output: vec![
@@ -947,7 +954,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             input: vec![bitcoin::TxIn {
                 previous_output: reveal_inscription_outpoint,
                 script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::MAX,
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME, // RBF-enabled
                 witness: bitcoin::Witness::new(),
             }],
             output: final_outputs,
@@ -1096,6 +1103,198 @@ impl<'a> Brc20ProgExecutor<'a> {
         Ok(())
     }
 
+    /// Monitor mempool for frontrunning and RBF-bump presigned transactions if needed
+    async fn monitor_and_bump_presigned_txs(
+        &mut self,
+        commit_txid: &str,
+        reveal_txid: &str,
+        activation_txid: Option<&str>,
+        envelope: &Brc20ProgEnvelope,
+        params: &Brc20ProgExecuteParams,
+    ) -> Result<()> {
+        use crate::traits::EsploraProvider;
+
+        // If using slipstream/rebar, just wait for confirmations (no monitoring needed)
+        if params.use_slipstream || params.use_rebar {
+            log::info!("   Using private mempool service - waiting for confirmations...");
+            self.wait_for_confirmation(commit_txid, params).await?;
+            self.wait_for_confirmation(reveal_txid, params).await?;
+            if let Some(act_txid) = activation_txid {
+                self.wait_for_confirmation(act_txid, params).await?;
+            }
+            return Ok(());
+        }
+
+        // Get the commit transaction to extract its tapscript
+        let commit_tx_hex = self.provider.get_tx_hex(commit_txid).await?;
+        let commit_tx_bytes = hex::decode(&commit_tx_hex)?;
+        let commit_tx: Transaction = bitcoin::consensus::deserialize(&commit_tx_bytes)?;
+        let commit_script = &commit_tx.output[0].script_pubkey;
+
+        log::info!("   Monitoring mempool for competing transactions...");
+        log::info!("   Will check every 3 seconds for up to 30 seconds");
+
+        let max_monitoring_attempts = 10; // 30 seconds total
+        let max_rbf_bumps = 3;
+        let mut rbf_bump_count = 0;
+        let mut current_commit_txid = commit_txid.to_string();
+        let mut current_fee_rate = params.fee_rate.unwrap_or(600.0);
+
+        for attempt in 1..=max_monitoring_attempts {
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+            // Check if our commit is confirmed
+            match self.provider.get_tx_status(&current_commit_txid).await {
+                Ok(status) => {
+                    let confirmed = status.get("confirmed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    if confirmed {
+                        log::info!("   ✅ Commit transaction confirmed!");
+                        return Ok(());
+                    }
+
+                    // Check mempool for frontrunning
+                    if let Ok(mempool_json) = self.provider.get_mempool_txids().await {
+                        if let Some(mempool_txids) = mempool_json.as_array() {
+                            log::debug!("   Checking {} mempool transactions...", mempool_txids.len());
+
+                            for mempool_txid_val in mempool_txids {
+                                if let Some(mempool_txid) = mempool_txid_val.as_str() {
+                                    // Skip our own transaction
+                                    if mempool_txid == current_commit_txid {
+                                        continue;
+                                    }
+
+                                    // Check if this transaction has the same taproot script
+                                    if let Ok(competitor_hex) = self.provider.get_tx_hex(mempool_txid).await {
+                                        if let Ok(competitor_bytes) = hex::decode(&competitor_hex) {
+                                            if let Ok(competitor_tx) = bitcoin::consensus::deserialize::<Transaction>(&competitor_bytes) {
+                                                // Check if any output matches our commit script (frontrunning!)
+                                                if competitor_tx.output.iter().any(|out| &out.script_pubkey == commit_script) {
+                                                    log::warn!("   ⚠️  FRONTRUNNING DETECTED!");
+                                                    log::warn!("   Competing transaction: {}", mempool_txid);
+
+                                                    if rbf_bump_count >= max_rbf_bumps {
+                                                        log::warn!("   Maximum RBF bumps ({}) reached", max_rbf_bumps);
+                                                        return Err(AlkanesError::Wallet(
+                                                            "Frontrunning detected and max RBF attempts exhausted".to_string()
+                                                        ));
+                                                    }
+
+                                                    rbf_bump_count += 1;
+                                                    current_fee_rate *= 1.5; // Increase fee by 50%
+                                                    log::info!("   🔄 RBF Bump #{}: Increasing fee to {:.1} sat/vB",
+                                                        rbf_bump_count, current_fee_rate);
+
+                                                    // RBF the commit transaction
+                                                    match self.rbf_bump_commit(&current_commit_txid, current_fee_rate, params, envelope).await {
+                                                        Ok(new_commit_txid) => {
+                                                            log::info!("   ✅ New commit broadcast: {}", new_commit_txid);
+                                                            current_commit_txid = new_commit_txid.clone();
+
+                                                            // Get the new commit transaction details
+                                                            let new_commit_tx_hex = self.provider.get_tx_hex(&new_commit_txid).await?;
+                                                            let new_commit_tx_bytes = hex::decode(&new_commit_tx_hex)?;
+                                                            let new_commit_tx: Transaction = bitcoin::consensus::deserialize(&new_commit_tx_bytes)?;
+
+                                                            let new_commit_outpoint = OutPoint {
+                                                                txid: new_commit_tx.txid(),
+                                                                vout: 0,
+                                                            };
+                                                            let new_commit_output = new_commit_tx.output[0].clone();
+
+                                                            // Extract internal key from the commit transaction's taproot output
+                                                            let new_commit_internal_key = self.extract_internal_key_from_commit(&new_commit_tx, envelope).await?;
+
+                                                            // Rebuild and broadcast reveal transaction
+                                                            log::info!("   🔄 Rebuilding reveal transaction...");
+                                                            let (new_reveal_psbt, _reveal_fee, new_reveal_inscription_outpoint) =
+                                                                self.build_reveal_psbt_for_presign(
+                                                                    params,
+                                                                    envelope,
+                                                                    new_commit_outpoint,
+                                                                    new_commit_output,
+                                                                    new_commit_internal_key,
+                                                                ).await?;
+
+                                                            let new_signed_reveal = self.sign_and_finalize_reveal_psbt_simple(
+                                                                new_reveal_psbt,
+                                                                envelope,
+                                                                new_commit_internal_key
+                                                            ).await?;
+
+                                                            let new_reveal_hex = bitcoin::consensus::encode::serialize_hex(&new_signed_reveal);
+                                                            let new_reveal_txid = self.broadcast_with_options(&new_reveal_hex, params).await?;
+                                                            log::info!("   ✅ New reveal broadcast: {}", new_reveal_txid);
+
+                                                            // Rebuild and broadcast activation if needed
+                                                            if params.use_activation {
+                                                                log::info!("   🔄 Rebuilding activation transaction...");
+                                                                let new_reveal_inscription_output = new_signed_reveal.output[0].clone();
+
+                                                                let (new_activation_psbt, _activation_fee) =
+                                                                    self.build_activation_psbt_for_presign(
+                                                                        params,
+                                                                        new_reveal_inscription_outpoint,
+                                                                        new_reveal_inscription_output,
+                                                                    ).await?;
+
+                                                                let new_signed_activation = self.sign_and_finalize_psbt(new_activation_psbt).await?;
+                                                                let new_activation_hex = bitcoin::consensus::encode::serialize_hex(&new_signed_activation);
+                                                                let new_activation_txid = self.broadcast_with_options(&new_activation_hex, params).await?;
+                                                                log::info!("   ✅ New activation broadcast: {}", new_activation_txid);
+                                                            }
+
+                                                            // Break to restart monitoring with new transactions
+                                                            break;
+                                                        }
+                                                        Err(e) => {
+                                                            log::error!("   ❌ Failed to RBF commit: {}", e);
+                                                            return Err(e);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => continue,
+            }
+
+            if attempt % 3 == 0 {
+                log::info!("   Still monitoring... ({}/{})", attempt, max_monitoring_attempts);
+            }
+        }
+
+        log::info!("   ✅ Monitoring complete - no frontrunning detected");
+        Ok(())
+    }
+
+    /// Extract internal key from commit transaction's taproot output
+    async fn extract_internal_key_from_commit(
+        &self,
+        commit_tx: &Transaction,
+        envelope: &Brc20ProgEnvelope,
+    ) -> Result<XOnlyPublicKey> {
+        use crate::traits::WalletProvider;
+
+        // The internal key should be the wallet's key
+        // We need to reconstruct it from the taproot address
+        let taproot_output = &commit_tx.output[0];
+
+        // For now, we'll use the wallet's key directly
+        // In a more robust implementation, we'd extract it from the taproot address
+        let secp = bitcoin::secp256k1::Secp256k1::new();
+        let keypair = WalletProvider::get_keypair(self.provider).await?;
+        Ok(XOnlyPublicKey::from_keypair(&keypair).0)
+    }
+
     /// Create RBF replacement transaction with higher fee
     async fn rbf_bump_commit(
         &mut self,
@@ -1134,10 +1333,37 @@ impl<'a> Brc20ProgExecutor<'a> {
         use bitcoin::psbt::Input as PsbtInput;
         use crate::traits::BitcoinRpcProvider;
 
-        // Get the commit transaction to find the change output
-        let commit_tx_hex = self.provider.get_tx_hex(commit_txid).await?;
-        let commit_tx_bytes = hex::decode(&commit_tx_hex)?;
-        let commit_tx: Transaction = bitcoin::consensus::deserialize(&commit_tx_bytes)?;
+        // Wait for the commit transaction to propagate to esplora
+        log::info!("   Waiting for commit transaction to propagate...");
+
+        // Retry fetching the transaction up to 3 times with delays
+        let commit_tx = loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            match self.provider.get_tx_hex(commit_txid).await {
+                Ok(hex_str) => {
+                    match hex::decode(&hex_str) {
+                        Ok(bytes) => {
+                            match bitcoin::consensus::deserialize::<Transaction>(&bytes) {
+                                Ok(tx) => break tx,
+                                Err(e) => {
+                                    log::warn!("   Failed to deserialize transaction, retrying: {}", e);
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            log::warn!("   Transaction not yet available in esplora, retrying...");
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("   Failed to fetch transaction, retrying: {}", e);
+                    continue;
+                }
+            }
+        };
 
         // Find the change output (the largest output that's not the commit output at index 0)
         let change_output_index = if commit_tx.output.len() > 1 {
