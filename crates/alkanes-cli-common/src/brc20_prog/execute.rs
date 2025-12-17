@@ -353,28 +353,59 @@ impl<'a> Brc20ProgExecutor<'a> {
         let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
         log::info!("Commit address: {commit_address}");
 
-        // Calculate EXACT commit output needed to cover reveal fee with NO change
-        // This prevents dust output errors
+        // Calculate EXACT commit output using reference implementation approach:
+        // Build a dummy reveal transaction with REAL script and control block to get exact vsize
         let fee_rate = params.fee_rate.unwrap_or(600.0);
 
-        // Estimate reveal transaction size:
-        // - 1 input (commit, script-path): ~200 vbytes (witness is large)
-        // - 1 output: ~43 vbytes
-        // - No change output (to avoid dust)
-        // - Base: ~10 vbytes
-        let estimated_reveal_vsize = 10 + 200 + 43;
-        let reveal_fee = (fee_rate * estimated_reveal_vsize as f32).ceil() as u64;
+        // Build the reveal script and taproot structures NOW (before commit)
+        let reveal_script = envelope.build_reveal_script();
+        use bitcoin::taproot::{TaprootBuilder, LeafVersion, TapLeafHash};
+        let taproot_builder = TaprootBuilder::new()
+            .add_leaf(0, reveal_script.clone())
+            .map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
+        let taproot_spend_info = taproot_builder
+            .finalize(self.provider.secp(), internal_key)
+            .map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
+        let control_block = taproot_spend_info
+            .control_block(&(reveal_script.clone(), LeafVersion::TapScript))
+            .ok_or_else(|| AlkanesError::Other("Failed to create control block".to_string()))?;
 
-        // Commit output = reveal output value + reveal fee
-        // For 2-tx: OP_RETURN (1 sat) + fee
-        // For 3-tx: inscription output (546 sats) + fee
+        // Create dummy reveal transaction to calculate exact size (like reference implementation)
+        use bitcoin::transaction::Version;
+        let dummy_outpoint = OutPoint::null();
         let reveal_output_value = if params.use_activation { 546 } else { 1 };
+
+        let mut dummy_reveal_tx = Transaction {
+            version: Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: dummy_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: bitcoin::Amount::from_sat(reveal_output_value),
+                script_pubkey: ScriptBuf::new_op_return(&[]), // Dummy OP_RETURN
+            }],
+        };
+
+        // Add dummy witness (64-byte signature + script + control block) - like reference
+        dummy_reveal_tx.input[0].witness.push(vec![0u8; 64]); // Dummy 64-byte signature
+        dummy_reveal_tx.input[0].witness.push(reveal_script.as_bytes());
+        dummy_reveal_tx.input[0].witness.push(control_block.serialize());
+
+        // Get EXACT vsize
+        let reveal_vsize = dummy_reveal_tx.vsize();
+        let reveal_fee = (fee_rate * reveal_vsize as f32).ceil() as u64;
+
+        // Commit output = reveal output value + reveal fee (like reference: postage + reveal_fee)
         let commit_output_amount = reveal_output_value + reveal_fee;
 
-        log::info!("💰 Calculated exact commit output: {} sats", commit_output_amount);
-        log::info!("   Fee rate: {} sat/vB, Reveal size: {} vB, Reveal fee: {} sats",
-                   fee_rate, estimated_reveal_vsize, reveal_fee);
-        log::info!("   Reveal output: {} sats, No change output (avoids dust)", reveal_output_value);
+        log::info!("💰 Calculated EXACT commit output: {} sats (reference implementation method)", commit_output_amount);
+        log::info!("   Fee rate: {} sat/vB, Reveal vsize: {} vB, Reveal fee: {} sats",
+                   fee_rate, reveal_vsize, reveal_fee);
+        log::info!("   Reveal output: {} sats, No change (avoids dust)", reveal_output_value);
 
         // Select UTXOs for funding the commit
         let funding_utxos = self.select_utxos_for_amount(
