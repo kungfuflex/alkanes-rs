@@ -539,7 +539,7 @@ export class AlkanesClient {
   ): Promise<import('../types').Brc20ProgExecuteResult> {
     const {
       brc20_prog_deploy_contract
-    } = await import('../../wasm/alkanes_web_sys');
+    } = await import('../wasm/alkanes_web_sys');
 
     // Convert foundry_json to string if it's an object
     const foundryJson = typeof params.foundry_json === 'string'
@@ -593,7 +593,7 @@ export class AlkanesClient {
   ): Promise<import('../types').Brc20ProgExecuteResult> {
     const {
       brc20_prog_transact
-    } = await import('../../wasm/alkanes_web_sys');
+    } = await import('../wasm/alkanes_web_sys');
 
     // Convert calldata array to comma-separated string if needed
     const calldataStr = Array.isArray(params.calldata)
@@ -653,7 +653,7 @@ export class AlkanesClient {
   ): Promise<import('../types').Brc20ProgExecuteResult> {
     const {
       brc20_prog_wrap_btc
-    } = await import('../../wasm/alkanes_web_sys');
+    } = await import('../wasm/alkanes_web_sys');
 
     // Convert calldata array to comma-separated string if needed
     const calldataStr = Array.isArray(params.calldata)

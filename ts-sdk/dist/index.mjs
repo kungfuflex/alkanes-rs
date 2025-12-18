@@ -49559,7 +49559,7 @@ var AlkanesClient = class _AlkanesClient {
   async deployBrc20ProgContract(params) {
     const {
       brc20_prog_deploy_contract
-    } = await import("../../wasm/alkanes_web_sys");
+    } = await import("../wasm/alkanes_web_sys");
     const foundryJson = typeof params.foundry_json === "string" ? params.foundry_json : JSON.stringify(params.foundry_json);
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
@@ -49601,7 +49601,7 @@ var AlkanesClient = class _AlkanesClient {
   async transactBrc20Prog(params) {
     const {
       brc20_prog_transact
-    } = await import("../../wasm/alkanes_web_sys");
+    } = await import("../wasm/alkanes_web_sys");
     const calldataStr = Array.isArray(params.calldata) ? params.calldata.join(",") : params.calldata;
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
@@ -49649,7 +49649,7 @@ var AlkanesClient = class _AlkanesClient {
   async wrapBtc(params) {
     const {
       brc20_prog_wrap_btc
-    } = await import("../../wasm/alkanes_web_sys");
+    } = await import("../wasm/alkanes_web_sys");
     const calldataStr = Array.isArray(params.calldata) ? params.calldata.join(",") : params.calldata;
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
