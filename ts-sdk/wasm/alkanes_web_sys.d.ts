@@ -641,6 +641,7 @@ export class WebProvider {
   esploraGetAddressUtxo(address: string): Promise<any>;
   esploraGetAddressTxs(address: string): Promise<any>;
   esploraGetAddressTxsChain(address: string, last_seen_txid?: string | null): Promise<any>;
+  getStorageAt(block: bigint, tx: bigint, path: Uint8Array): Promise<any>;
   esploraGetFeeEstimates(): Promise<any>;
   esploraBroadcastTx(tx_hex: string): Promise<any>;
   esploraGetTxHex(txid: string): Promise<any>;

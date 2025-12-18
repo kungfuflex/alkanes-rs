@@ -46981,6 +46981,17 @@ var init_provider = __esm({
         return provider.esploraGetAddressTxsChain(address2, lastSeenTxid);
       }
       /**
+       * Get storage value at a specific path for an alkane
+       * @param block - Block number of the alkane
+       * @param tx - Transaction number of the alkane
+       * @param path - Storage path as bytes (use TextEncoder to convert string to bytes)
+       * @returns Hex string (0x-prefixed) of the storage value
+       */
+      async getStorageAt(block, tx, path) {
+        const provider = await this.getProvider();
+        return provider.getStorageAt(block, tx, Array.from(path));
+      }
+      /**
        * Get address history with alkane traces
        */
       async getAddressHistoryWithTraces(address2, excludeCoinbase) {

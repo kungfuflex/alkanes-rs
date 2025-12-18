@@ -325,23 +325,49 @@ impl ConcreteProvider {
     pub async fn metashrew_view_call(&self, method: &str, params: &str, height: &str) -> Result<Vec<u8>> {
         // Use the centralized RPC target resolution
         let target = self.rpc_config.get_metashrew_rpc_target();
-        
+
         // metashrew_view always uses JSON-RPC (even when called through sandshrew)
         let rpc_params = serde_json::json!([method, params, height]);
         let result = self.call(&target.url, "metashrew_view", rpc_params, 1).await?;
-        
+
         // The result should be a hex string starting with "0x"
         let hex_str = result.as_str()
             .ok_or_else(|| AlkanesError::RpcError("metashrew_view result is not a string".to_string()))?;
-        
+
         // Remove "0x" prefix if present
         let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-        
+
         // Decode hex to bytes
         let bytes = hex::decode(hex_str)
             .map_err(|e| AlkanesError::RpcError(format!("Failed to decode metashrew_view hex response: {}", e)))?;
-        
+
         Ok(bytes)
+    }
+
+    /// Get storage value at a specific path for an alkane
+    pub async fn get_storage_at(&self, block: u64, tx: u64, path: &[u8]) -> Result<Vec<u8>> {
+        // Build the protobuf request
+        let request = crate::proto::alkanes::AlkaneStorageRequest {
+            id: Some(crate::proto::alkanes::AlkaneId {
+                block: Some(crate::proto::alkanes::Uint128 { lo: block, hi: 0 }),
+                tx: Some(crate::proto::alkanes::Uint128 { lo: tx, hi: 0 }),
+            }),
+            path: path.to_vec(),
+        };
+
+        // Encode to protobuf bytes
+        use prost::Message;
+        let encoded = request.encode_to_vec();
+        let hex_params = hex::encode(&encoded);
+
+        // Call metashrew_view with getstorageat method
+        let response_bytes = self.metashrew_view_call("getstorageat", &hex_params, "latest").await?;
+
+        // Decode the response protobuf
+        let response = crate::proto::alkanes::AlkaneStorageResponse::decode(response_bytes.as_slice())
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode AlkaneStorageResponse: {}", e)))?;
+
+        Ok(response.value)
     }
 
     // Low-level Lua script execution methods (prefer using LuaScriptExecutor trait)

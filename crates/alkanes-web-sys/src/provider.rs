@@ -2093,6 +2093,20 @@ impl WebProvider {
         })
     }
 
+    #[wasm_bindgen(js_name = getStorageAt)]
+    pub fn get_storage_at_js(&self, block: u64, tx: u64, path: Vec<u8>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_storage_at(block, tx, &path).await
+                .map_err(|e| JsValue::from_str(&format!("Failed to get storage: {}", e)))?;
+
+            // Return as hex string with 0x prefix
+            let hex_string = format!("0x{}", hex::encode(&result));
+            Ok(JsValue::from_str(&hex_string))
+        })
+    }
+
     #[wasm_bindgen(js_name = esploraGetFeeEstimates)]
     pub fn esplora_get_fee_estimates_js(&self) -> js_sys::Promise {
         use alkanes_cli_common::traits::EsploraProvider;
@@ -4682,6 +4696,49 @@ impl JsonRpcProvider for WebProvider {
             .ok_or_else(|| AlkanesError::JsonRpc("No result in JSON-RPC response".to_string()))
     }
 
+}
+
+impl WebProvider {
+    /// Get storage value at a specific path for an alkane
+    pub async fn get_storage_at(&self, block: u64, tx: u64, path: &[u8]) -> Result<Vec<u8>> {
+        // Build the protobuf request
+        let request = alkanes_cli_common::proto::alkanes::AlkaneStorageRequest {
+            id: Some(alkanes_cli_common::proto::alkanes::AlkaneId {
+                block: Some(alkanes_cli_common::proto::alkanes::Uint128 { lo: block, hi: 0 }),
+                tx: Some(alkanes_cli_common::proto::alkanes::Uint128 { lo: tx, hi: 0 }),
+            }),
+            path: path.to_vec(),
+        };
+
+        // Encode to protobuf bytes
+        use prost::Message;
+        let encoded = request.encode_to_vec();
+        let hex_params = hex::encode(&encoded);
+
+        // Get the metashrew RPC target
+        let target = self.rpc_config.get_metashrew_rpc_target();
+
+        // Call metashrew_view with getstorageat method
+        let rpc_params = serde_json::json!(["getstorageat", hex_params, "latest"]);
+        let result = self.call(&target.url, "metashrew_view", rpc_params, 1).await?;
+
+        // The result should be a hex string
+        let hex_str = result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("metashrew_view result is not a string".to_string()))?;
+
+        // Remove "0x" prefix if present
+        let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+
+        // Decode hex to bytes
+        let response_bytes = hex::decode(hex_str)
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode hex response: {}", e)))?;
+
+        // Decode the response protobuf
+        let response = alkanes_cli_common::proto::alkanes::AlkaneStorageResponse::decode(response_bytes.as_slice())
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode AlkaneStorageResponse: {}", e)))?;
+
+        Ok(response.value)
+    }
 }
 
 #[async_trait(?Send)]
