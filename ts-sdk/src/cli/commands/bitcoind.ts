@@ -1,11 +1,19 @@
 /**
  * Bitcoind command group
  * Bitcoin Core RPC operations
+ *
+ * The CLI uses the SDK's BitcoinRpcClient via provider.bitcoin for all operations.
  */
 
 import { Command } from 'commander';
 import { createProvider } from '../utils/provider.js';
-import { formatOutput, success, error } from '../utils/formatting.js';
+import {
+  formatOutput,
+  formatBlockchainInfo,
+  formatBlockInfo,
+  success,
+  error,
+} from '../utils/formatting.js';
 import ora from 'ora';
 
 export function registerBitcoindCommands(program: Command): void {
@@ -15,6 +23,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('getblockcount')
     .description('Get current block count')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -25,11 +34,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoin_getblockcount_js();
-        const blockCount = JSON.parse(result);
+        const blockCount = await provider.bitcoin.getBlockCount();
 
         spinner.succeed();
-        console.log(formatOutput(blockCount, globalOpts));
+        console.log(formatOutput(blockCount, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get block count: ${err.message}`);
         process.exit(1);
@@ -40,6 +48,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('generatetoaddress <nblocks> <address>')
     .description('Generate blocks to an address (regtest only)')
+    .option('--raw', 'Output raw JSON')
     .action(async (nblocks, address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -50,11 +59,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoin_generatetoaddress_js(parseInt(nblocks), address);
-        const hashes = JSON.parse(result);
+        const hashes = await provider.bitcoin.generateToAddress(parseInt(nblocks), address);
 
         spinner.succeed(`Generated ${nblocks} blocks`);
-        console.log(formatOutput(hashes, globalOpts));
+        console.log(formatOutput(hashes, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to generate blocks: ${err.message}`);
         process.exit(1);
@@ -65,6 +73,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('getblockchaininfo')
     .description('Get blockchain information')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -75,11 +84,14 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoin_getblockchaininfo_js();
-        const info = JSON.parse(result);
+        const info = await provider.bitcoin.getBlockchainInfo();
 
         spinner.succeed();
-        console.log(formatOutput(info, globalOpts));
+        if (options.raw) {
+          console.log(formatOutput(info, { raw: true }));
+        } else {
+          console.log(formatBlockchainInfo(info));
+        }
       } catch (err: any) {
         error(`Failed to get blockchain info: ${err.message}`);
         process.exit(1);
@@ -91,6 +103,7 @@ export function registerBitcoindCommands(program: Command): void {
     .command('getrawtransaction <txid>')
     .description('Get raw transaction')
     .option('--verbose', 'Return decoded transaction')
+    .option('--raw', 'Output raw JSON')
     .action(async (txid, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -101,11 +114,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoin_getrawtransaction_js(txid, options.verbose || false);
-        const tx = JSON.parse(result);
+        const tx = await provider.bitcoin.getTransaction(txid);
 
         spinner.succeed();
-        console.log(formatOutput(tx, globalOpts));
+        console.log(formatOutput(tx, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get transaction: ${err.message}`);
         process.exit(1);
@@ -117,6 +129,7 @@ export function registerBitcoindCommands(program: Command): void {
     .command('getblock <hash>')
     .description('Get block by hash')
     .option('--verbosity <level>', 'Verbosity level (0-2)', '1')
+    .option('--raw', 'Output raw JSON')
     .action(async (hash, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -127,11 +140,17 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoin_getblock_js(hash, parseInt(options.verbosity));
-        const block = JSON.parse(result);
+        const rawOutput = options.verbosity === '0';
+        const block = await provider.bitcoin.getBlock(hash, rawOutput);
 
         spinner.succeed();
-        console.log(formatOutput(block, globalOpts));
+        if (options.raw) {
+          console.log(formatOutput(block, { raw: true }));
+        } else if (typeof block === 'object') {
+          console.log(formatBlockInfo(block));
+        } else {
+          console.log(formatOutput(block, { raw: false }));
+        }
       } catch (err: any) {
         error(`Failed to get block: ${err.message}`);
         process.exit(1);
@@ -142,6 +161,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('getblockhash <height>')
     .description('Get block hash by height')
+    .option('--raw', 'Output raw JSON')
     .action(async (height, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -152,11 +172,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoin_getblockhash_js(parseInt(height));
-        const hash = JSON.parse(result);
+        const hash = await provider.bitcoin.getBlockHash(parseInt(height));
 
         spinner.succeed();
-        console.log(formatOutput(hash, globalOpts));
+        console.log(formatOutput(hash, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get block hash: ${err.message}`);
         process.exit(1);
@@ -167,6 +186,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('sendrawtransaction <hex>')
     .description('Broadcast a raw transaction')
+    .option('--raw', 'Output raw JSON')
     .action(async (hex, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -177,11 +197,14 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoin_sendrawtransaction_js(hex);
-        const txid = JSON.parse(result);
+        const txid = await provider.bitcoin.sendRawTransaction(hex);
 
         spinner.succeed('Transaction broadcast');
-        success(`TXID: ${txid}`);
+        if (options.raw) {
+          console.log(formatOutput(txid, { raw: true }));
+        } else {
+          success(`TXID: ${txid}`);
+        }
       } catch (err: any) {
         error(`Failed to broadcast transaction: ${err.message}`);
         process.exit(1);
@@ -192,6 +215,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('getnetworkinfo')
     .description('Get network information')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -202,11 +226,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoin_getnetworkinfo_js();
-        const info = JSON.parse(result);
+        const info = await provider.bitcoin.getNetworkInfo();
 
         spinner.succeed();
-        console.log(formatOutput(info, globalOpts));
+        console.log(formatOutput(info, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get network info: ${err.message}`);
         process.exit(1);
@@ -217,6 +240,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('getmempoolinfo')
     .description('Get mempool information')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -227,11 +251,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoin_getmempoolinfo_js();
-        const info = JSON.parse(result);
+        const info = await provider.bitcoin.getMempoolInfo();
 
         spinner.succeed();
-        console.log(formatOutput(info, globalOpts));
+        console.log(formatOutput(info, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get mempool info: ${err.message}`);
         process.exit(1);
@@ -242,6 +265,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('generatefuture <address>')
     .description('Generate a future block (regtest only)')
+    .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -252,11 +276,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoind_generate_future_js(address);
-        const hash = JSON.parse(result);
+        const hash = await provider.bitcoin.generateFuture(address);
 
         spinner.succeed('Future block generated');
-        console.log(formatOutput(hash, globalOpts));
+        console.log(formatOutput(hash, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to generate future block: ${err.message}`);
         process.exit(1);
@@ -267,6 +290,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('getblockheader <hash>')
     .description('Get block header by hash')
+    .option('--raw', 'Output raw JSON')
     .action(async (hash, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -277,11 +301,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoind_get_block_header_js(hash);
-        const header = JSON.parse(result);
+        const header = await provider.bitcoin.getBlockHeader(hash);
 
         spinner.succeed();
-        console.log(formatOutput(header, globalOpts));
+        console.log(formatOutput(header, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get block header: ${err.message}`);
         process.exit(1);
@@ -292,6 +315,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('getblockstats <hash>')
     .description('Get block statistics by hash')
+    .option('--raw', 'Output raw JSON')
     .action(async (hash, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -302,11 +326,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoind_get_block_stats_js(hash);
-        const stats = JSON.parse(result);
+        const stats = await provider.bitcoin.getBlockStats(hash);
 
         spinner.succeed();
-        console.log(formatOutput(stats, globalOpts));
+        console.log(formatOutput(stats, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get block stats: ${err.message}`);
         process.exit(1);
@@ -317,6 +340,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('estimatesmartfee <blocks>')
     .description('Estimate smart fee for confirmation in N blocks')
+    .option('--raw', 'Output raw JSON')
     .action(async (blocks, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -327,11 +351,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoind_estimate_smart_fee_js(parseInt(blocks));
-        const estimate = JSON.parse(result);
+        const estimate = await provider.bitcoin.estimateSmartFee(parseInt(blocks));
 
         spinner.succeed();
-        console.log(formatOutput(estimate, globalOpts));
+        console.log(formatOutput(estimate, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to estimate fee: ${err.message}`);
         process.exit(1);
@@ -342,6 +365,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('getchaintips')
     .description('Get chain tips information')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -352,11 +376,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoind_get_chain_tips_js();
-        const tips = JSON.parse(result);
+        const tips = await provider.bitcoin.getChainTips();
 
         spinner.succeed();
-        console.log(formatOutput(tips, globalOpts));
+        console.log(formatOutput(tips, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get chain tips: ${err.message}`);
         process.exit(1);
@@ -367,6 +390,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('decoderawtransaction <hex>')
     .description('Decode a raw transaction hex')
+    .option('--raw', 'Output raw JSON')
     .action(async (hex, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -377,11 +401,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoind_decode_raw_transaction_js(hex);
-        const decoded = JSON.parse(result);
+        const decoded = await provider.bitcoin.decodeRawTransaction(hex);
 
         spinner.succeed();
-        console.log(formatOutput(decoded, globalOpts));
+        console.log(formatOutput(decoded, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to decode transaction: ${err.message}`);
         process.exit(1);
@@ -392,6 +415,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('decodepsbt <psbt>')
     .description('Decode a PSBT (base64)')
+    .option('--raw', 'Output raw JSON')
     .action(async (psbt, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -402,11 +426,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoind_decode_psbt_js(psbt);
-        const decoded = JSON.parse(result);
+        const decoded = await provider.bitcoin.decodePsbt(psbt);
 
         spinner.succeed();
-        console.log(formatOutput(decoded, globalOpts));
+        console.log(formatOutput(decoded, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to decode PSBT: ${err.message}`);
         process.exit(1);
@@ -417,6 +440,7 @@ export function registerBitcoindCommands(program: Command): void {
   bitcoind
     .command('getrawmempool')
     .description('Get raw mempool transactions')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -427,11 +451,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoind_get_raw_mempool_js();
-        const mempool = JSON.parse(result);
+        const mempool = await provider.bitcoin.getRawMempool();
 
         spinner.succeed();
-        console.log(formatOutput(mempool, globalOpts));
+        console.log(formatOutput(mempool, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get mempool: ${err.message}`);
         process.exit(1);
@@ -443,6 +466,7 @@ export function registerBitcoindCommands(program: Command): void {
     .command('gettxout <txid> <vout>')
     .description('Get transaction output details')
     .option('--include-mempool', 'Include mempool transactions', false)
+    .option('--raw', 'Output raw JSON')
     .action(async (txid, vout, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -453,11 +477,10 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.bitcoind_get_tx_out_js(txid, parseInt(vout), options.includeMempool);
-        const txout = JSON.parse(result);
+        const txout = await provider.bitcoin.getTxOut(txid, parseInt(vout), options.includeMempool);
 
         spinner.succeed();
-        console.log(formatOutput(txout, globalOpts));
+        console.log(formatOutput(txout, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get tx out: ${err.message}`);
         process.exit(1);

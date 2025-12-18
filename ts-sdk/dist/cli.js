@@ -33,29 +33,293 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 // src/cli/utils/formatting.ts
 var formatting_exports = {};
 __export(formatting_exports, {
+  TreeNode: () => TreeNode,
   createTable: () => createTable,
   error: () => error,
   formatAddress: () => formatAddress,
+  formatAlkaneBalances: () => formatAlkaneBalances,
   formatBTC: () => formatBTC,
+  formatBlockInfo: () => formatBlockInfo,
+  formatBlockchainInfo: () => formatBlockchainInfo,
+  formatBytes: () => formatBytes,
   formatDate: () => formatDate,
+  formatFeeEstimates: () => formatFeeEstimates,
+  formatInscriptions: () => formatInscriptions,
   formatNumber: () => formatNumber,
   formatOutput: () => formatOutput,
+  formatReflectMetadata: () => formatReflectMetadata,
   formatTxid: () => formatTxid,
+  getVerbosity: () => getVerbosity,
   info: () => info,
   printHeader: () => printHeader,
   printRule: () => printRule,
+  setVerbosity: () => setVerbosity,
   success: () => success,
+  tree: () => tree,
+  verbose: () => verbose,
   warn: () => warn
 });
+function setVerbosity(level) {
+  globalVerbosity = level;
+}
+function getVerbosity() {
+  return globalVerbosity;
+}
+function verbose(level, message) {
+  if (globalVerbosity >= level) {
+    const prefix = level === 3 ? import_chalk.default.dim("[DEBUG]") : level === 2 ? import_chalk.default.blue("[INFO]") : import_chalk.default.cyan("[VERBOSE]");
+    console.error(`${prefix} ${message}`);
+  }
+}
+function tree(label) {
+  return new TreeNode(label);
+}
+function jsonReplacer(key, value) {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  return value;
+}
 function formatOutput(data, options = {}) {
-  const { raw = false, color = true } = options;
+  const { raw = false } = options;
   if (raw) {
-    return JSON.stringify(data, null, 2);
+    return JSON.stringify(data, jsonReplacer, 2);
   }
-  if (typeof data === "string" || typeof data === "number" || typeof data === "boolean") {
-    return String(data);
+  if (typeof data === "string") {
+    return data;
   }
-  return JSON.stringify(data, null, 2);
+  if (typeof data === "number" || typeof data === "bigint") {
+    return import_chalk.default.yellow(String(data));
+  }
+  if (typeof data === "boolean") {
+    return data ? import_chalk.default.green("true") : import_chalk.default.red("false");
+  }
+  if (data === null || data === void 0) {
+    return import_chalk.default.dim("(none)");
+  }
+  if (Array.isArray(data)) {
+    if (data.length === 0) {
+      return import_chalk.default.dim("(empty)");
+    }
+    if (data.every((item) => typeof item === "string" || typeof item === "number")) {
+      return data.join("\n");
+    }
+    return formatArrayAsTree(data);
+  }
+  return formatObjectAsTree(data);
+}
+function formatObjectAsTree(obj, rootLabel) {
+  const root = tree(rootLabel || "");
+  for (const [key, value] of Object.entries(obj)) {
+    const formattedKey = import_chalk.default.bold(formatKey(key));
+    if (value === null || value === void 0) {
+      root.push(`${formattedKey}: ${import_chalk.default.dim("(none)")}`);
+    } else if (typeof value === "boolean") {
+      root.push(`${formattedKey}: ${value ? import_chalk.default.green("yes") : import_chalk.default.red("no")}`);
+    } else if (typeof value === "number" || typeof value === "bigint") {
+      root.push(`${formattedKey}: ${import_chalk.default.yellow(String(value))}`);
+    } else if (typeof value === "string") {
+      root.push(`${formattedKey}: ${formatStringValue(value)}`);
+    } else if (Array.isArray(value)) {
+      if (value.length === 0) {
+        root.push(`${formattedKey}: ${import_chalk.default.dim("[]")}`);
+      } else if (value.length <= 3 && value.every((v) => typeof v === "string" || typeof v === "number")) {
+        root.push(`${formattedKey}: ${value.join(", ")}`);
+      } else {
+        const arrayNode = tree(`${formattedKey}: ${import_chalk.default.dim(`[${value.length} items]`)}`);
+        for (const item of value.slice(0, 5)) {
+          if (typeof item === "object" && item !== null) {
+            arrayNode.push(formatNestedObject(item));
+          } else {
+            arrayNode.push(String(item));
+          }
+        }
+        if (value.length > 5) {
+          arrayNode.push(import_chalk.default.dim(`... and ${value.length - 5} more`));
+        }
+        root.push(arrayNode);
+      }
+    } else if (typeof value === "object") {
+      const objNode = tree(formattedKey);
+      for (const [k, v] of Object.entries(value)) {
+        objNode.push(`${import_chalk.default.bold(formatKey(k))}: ${formatSimpleValue(v)}`);
+      }
+      root.push(objNode);
+    }
+  }
+  if (!rootLabel) {
+    return root.children.map((c) => c.toString("", true, true)).join("\n");
+  }
+  return root.toString();
+}
+function formatNestedObject(obj) {
+  const firstKey = Object.keys(obj)[0];
+  const label = firstKey ? `${import_chalk.default.bold(formatKey(firstKey))}: ${formatSimpleValue(obj[firstKey])}` : "{}";
+  const node = tree(label);
+  let first = true;
+  for (const [k, v] of Object.entries(obj)) {
+    if (first) {
+      first = false;
+      continue;
+    }
+    node.push(`${import_chalk.default.bold(formatKey(k))}: ${formatSimpleValue(v)}`);
+  }
+  return node;
+}
+function formatArrayAsTree(arr) {
+  const lines = [];
+  for (const item of arr) {
+    if (typeof item === "object" && item !== null) {
+      lines.push(formatObjectAsTree(item));
+    } else {
+      lines.push(String(item));
+    }
+  }
+  return lines.join("\n\n");
+}
+function formatKey(key) {
+  return key.replace(/([A-Z])/g, " $1").replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()).trim();
+}
+function formatStringValue(value) {
+  if (value.length > 40 && /^[0-9a-fA-F]+$/.test(value)) {
+    return import_chalk.default.cyan(value);
+  }
+  if (value.startsWith("0x")) {
+    return import_chalk.default.cyan(value);
+  }
+  return value;
+}
+function formatSimpleValue(value) {
+  if (value === null || value === void 0) {
+    return import_chalk.default.dim("(none)");
+  }
+  if (typeof value === "boolean") {
+    return value ? import_chalk.default.green("yes") : import_chalk.default.red("no");
+  }
+  if (typeof value === "number" || typeof value === "bigint") {
+    return import_chalk.default.yellow(String(value));
+  }
+  if (typeof value === "string") {
+    return formatStringValue(value);
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return import_chalk.default.dim("[]");
+    if (value.length <= 3 && value.every((v) => typeof v === "string" || typeof v === "number")) {
+      return value.join(", ");
+    }
+    return import_chalk.default.dim(`[${value.length} items]`);
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value);
+    if (keys.length === 0) return import_chalk.default.dim("{}");
+    return import_chalk.default.dim(`{${keys.length} fields}`);
+  }
+  return String(value);
+}
+function formatBlockchainInfo(info2) {
+  const root = tree(`${import_chalk.default.bold("\u26D3\uFE0F  Blockchain Info")}`);
+  root.push(`${import_chalk.default.bold("Chain:")} ${info2.chain}`);
+  root.push(`${import_chalk.default.bold("Blocks:")} ${import_chalk.default.yellow(info2.blocks)}`);
+  root.push(`${import_chalk.default.bold("Headers:")} ${import_chalk.default.yellow(info2.headers)}`);
+  root.push(`${import_chalk.default.bold("Best Block Hash:")} ${import_chalk.default.cyan(info2.bestblockhash)}`);
+  root.push(`${import_chalk.default.bold("Difficulty:")} ${import_chalk.default.yellow(info2.difficulty)}`);
+  if (info2.mediantime) {
+    root.push(`${import_chalk.default.bold("Median Time:")} ${formatDate(info2.mediantime)}`);
+  }
+  if (info2.verificationprogress !== void 0) {
+    const progress = (info2.verificationprogress * 100).toFixed(2);
+    root.push(`${import_chalk.default.bold("Verification:")} ${import_chalk.default.yellow(progress + "%")}`);
+  }
+  if (info2.initialblockdownload !== void 0) {
+    root.push(`${import_chalk.default.bold("Initial Download:")} ${info2.initialblockdownload ? import_chalk.default.yellow("yes") : import_chalk.default.green("no")}`);
+  }
+  if (info2.pruned !== void 0) {
+    root.push(`${import_chalk.default.bold("Pruned:")} ${info2.pruned ? import_chalk.default.yellow("yes") : import_chalk.default.green("no")}`);
+  }
+  if (info2.size_on_disk) {
+    root.push(`${import_chalk.default.bold("Size on Disk:")} ${formatBytes(info2.size_on_disk)}`);
+  }
+  if (info2.warnings) {
+    root.push(`${import_chalk.default.bold("\u26A0\uFE0F  Warnings:")} ${import_chalk.default.yellow(info2.warnings)}`);
+  }
+  return root.toString();
+}
+function formatBlockInfo(block) {
+  const root = tree(`${import_chalk.default.bold("\u{1F4E6} Block")}`);
+  if (block.hash) root.push(`${import_chalk.default.bold("Hash:")} ${import_chalk.default.cyan(block.hash)}`);
+  if (block.height !== void 0) root.push(`${import_chalk.default.bold("Height:")} ${import_chalk.default.yellow(block.height)}`);
+  if (block.number !== void 0) {
+    const num = typeof block.number === "string" ? parseInt(block.number, 16) : block.number;
+    root.push(`${import_chalk.default.bold("Number:")} ${import_chalk.default.yellow(num)}`);
+  }
+  if (block.timestamp) {
+    const ts = typeof block.timestamp === "string" ? parseInt(block.timestamp, 16) : block.timestamp;
+    root.push(`${import_chalk.default.bold("Timestamp:")} ${formatDate(ts)}`);
+  }
+  if (block.difficulty) root.push(`${import_chalk.default.bold("Difficulty:")} ${block.difficulty}`);
+  if (block.nonce) root.push(`${import_chalk.default.bold("Nonce:")} ${block.nonce}`);
+  if (block.size) root.push(`${import_chalk.default.bold("Size:")} ${formatBytes(parseInt(block.size, 16) || block.size)}`);
+  if (block.transactions) {
+    root.push(`${import_chalk.default.bold("Transactions:")} ${import_chalk.default.yellow(Array.isArray(block.transactions) ? block.transactions.length : 0)}`);
+  }
+  if (block.parentHash) root.push(`${import_chalk.default.bold("Parent:")} ${import_chalk.default.cyan(block.parentHash)}`);
+  return root.toString();
+}
+function formatAlkaneBalances(balances) {
+  if (!balances || balances.length === 0) {
+    return import_chalk.default.dim("No alkane balances found");
+  }
+  const root = tree(`${import_chalk.default.bold("\u{1FA99} Alkane Balances")}`);
+  for (const balance of balances) {
+    const id = balance.alkane_id ? `${balance.alkane_id.block}:${balance.alkane_id.tx}` : `${balance.block}:${balance.tx}`;
+    const balanceNode = tree(`${import_chalk.default.bold("ID:")} ${import_chalk.default.cyan(id)}`);
+    if (balance.name) balanceNode.push(`${import_chalk.default.bold("Name:")} ${balance.name}`);
+    if (balance.symbol) balanceNode.push(`${import_chalk.default.bold("Symbol:")} ${balance.symbol}`);
+    balanceNode.push(`${import_chalk.default.bold("Balance:")} ${import_chalk.default.yellow(balance.balance || balance.value || "0")}`);
+    root.push(balanceNode);
+  }
+  return root.toString();
+}
+function formatInscriptions(inscriptions) {
+  const ids = inscriptions.ids || inscriptions;
+  if (!ids || ids.length === 0) {
+    return import_chalk.default.dim("No inscriptions found");
+  }
+  const root = tree(`${import_chalk.default.bold("\u{1F4DC} Inscriptions")} ${import_chalk.default.dim(`(${ids.length} total)`)}`);
+  for (const id of ids.slice(0, 10)) {
+    root.push(import_chalk.default.cyan(id));
+  }
+  if (ids.length > 10) {
+    root.push(import_chalk.default.dim(`... and ${ids.length - 10} more`));
+  }
+  if (inscriptions.more) {
+    root.push(import_chalk.default.dim("(more available)"));
+  }
+  return root.toString();
+}
+function formatFeeEstimates(estimates) {
+  const root = tree(`${import_chalk.default.bold("\u{1F4B0} Fee Estimates")} ${import_chalk.default.dim("(sat/vB)")}`);
+  const blocks = Object.keys(estimates).map(Number).sort((a, b) => a - b);
+  for (const block of blocks) {
+    const fee = estimates[block];
+    const label = block === 1 ? "Next block" : block <= 6 ? `~${block * 10} min` : block <= 144 ? `~${Math.round(block / 6)} hours` : `~${Math.round(block / 144)} days`;
+    root.push(`${import_chalk.default.bold(block.toString().padStart(4))} blocks (${label}): ${import_chalk.default.yellow(fee.toFixed(3))}`);
+  }
+  return root.toString();
+}
+function formatReflectMetadata(metadata) {
+  const root = tree(`${import_chalk.default.bold("\u{1F50D} Alkane Metadata")}`);
+  if (metadata.id) root.push(`${import_chalk.default.bold("ID:")} ${import_chalk.default.cyan(metadata.id)}`);
+  if (metadata.name) root.push(`${import_chalk.default.bold("Name:")} ${metadata.name}`);
+  if (metadata.symbol) root.push(`${import_chalk.default.bold("Symbol:")} ${metadata.symbol}`);
+  if (metadata.total_supply !== void 0) root.push(`${import_chalk.default.bold("Total Supply:")} ${import_chalk.default.yellow(metadata.total_supply)}`);
+  if (metadata.cap !== void 0) root.push(`${import_chalk.default.bold("Cap:")} ${import_chalk.default.yellow(metadata.cap)}`);
+  if (metadata.minted !== void 0) root.push(`${import_chalk.default.bold("Minted:")} ${import_chalk.default.yellow(metadata.minted)}`);
+  if (metadata.value_per_mint !== void 0) root.push(`${import_chalk.default.bold("Value Per Mint:")} ${import_chalk.default.yellow(metadata.value_per_mint)}`);
+  if (metadata.premine !== void 0) root.push(`${import_chalk.default.bold("Premine:")} ${import_chalk.default.yellow(metadata.premine)}`);
+  if (metadata.decimals !== void 0) root.push(`${import_chalk.default.bold("Decimals:")} ${import_chalk.default.yellow(metadata.decimals)}`);
+  if (metadata.data) root.push(`${import_chalk.default.bold("Data:")} ${metadata.data}`);
+  return root.toString();
 }
 function success(message) {
   console.log(import_chalk.default.green("\u2713 ") + message);
@@ -74,7 +338,6 @@ function createTable(headers) {
     head: headers.map((h) => import_chalk.default.cyan(h)),
     style: {
       head: [],
-      // Don't apply default styling to headers
       border: []
     }
   });
@@ -97,6 +360,16 @@ function formatBTC(satoshis) {
 function formatNumber(num) {
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
+function formatBytes(bytes) {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let unitIndex = 0;
+  let size = bytes;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  return `${size.toFixed(2)} ${units[unitIndex]}`;
+}
 function formatDate(timestamp) {
   return new Date(timestamp * 1e3).toLocaleString();
 }
@@ -108,12 +381,58 @@ function printHeader(text) {
   console.log(import_chalk.default.bold.cyan(text));
   printRule();
 }
-var import_chalk, import_cli_table3;
+var import_chalk, import_cli_table3, globalVerbosity, TreeNode;
 var init_formatting = __esm({
   "src/cli/utils/formatting.ts"() {
     "use strict";
     import_chalk = __toESM(require("chalk"));
     import_cli_table3 = __toESM(require("cli-table3"));
+    globalVerbosity = 0;
+    TreeNode = class _TreeNode {
+      constructor(label) {
+        this.children = [];
+        this.label = label;
+      }
+      /**
+       * Add a child node
+       */
+      push(child) {
+        if (typeof child === "string") {
+          this.children.push(new _TreeNode(child));
+        } else {
+          this.children.push(child);
+        }
+        return this;
+      }
+      /**
+       * Add multiple children
+       */
+      withLeaves(children) {
+        for (const child of children) {
+          this.push(child);
+        }
+        return this;
+      }
+      /**
+       * Render the tree as a string
+       */
+      toString(prefix = "", isLast = true, isRoot = true) {
+        const lines = [];
+        if (isRoot) {
+          lines.push(this.label);
+        } else {
+          const connector = isLast ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 ";
+          lines.push(prefix + connector + this.label);
+        }
+        const childPrefix = isRoot ? "" : prefix + (isLast ? "    " : "\u2502   ");
+        for (let i = 0; i < this.children.length; i++) {
+          const child = this.children[i];
+          const childIsLast = i === this.children.length - 1;
+          lines.push(child.toString(childPrefix, childIsLast, false));
+        }
+        return lines.join("\n");
+      }
+    };
   }
 });
 
@@ -123,12 +442,14 @@ __export(provider_exports, {
   AlkanesProvider: () => AlkanesProvider,
   AlkanesRpcClient: () => AlkanesRpcClient,
   BitcoinRpcClient: () => BitcoinRpcClient,
+  Brc20ProgClient: () => Brc20ProgClient,
   DataApiClient: () => DataApiClient,
   EsploraClient: () => EsploraClient,
   EspoClient: () => EspoClient,
   LuaClient: () => LuaClient,
   MetashrewClient: () => MetashrewClient,
   NETWORK_PRESETS: () => NETWORK_PRESETS,
+  OrdClient: () => OrdClient,
   createProvider: () => createProvider
 });
 function mapToObject(value) {
@@ -147,7 +468,7 @@ function mapToObject(value) {
 function createProvider(config) {
   return new AlkanesProvider(config);
 }
-var bitcoin, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, LuaClient, DataApiClient, EspoClient, AlkanesProvider;
+var bitcoin, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, EspoClient, AlkanesProvider;
 var init_provider = __esm({
   "src/provider/index.ts"() {
     "use strict";
@@ -195,28 +516,67 @@ var init_provider = __esm({
         return this.provider.bitcoindGetBlockHash(height);
       }
       async getBlock(hash, raw = false) {
-        return this.provider.bitcoindGetBlock(hash, raw);
+        const result = await this.provider.bitcoindGetBlock(hash, raw);
+        return mapToObject(result);
       }
       async sendRawTransaction(hex) {
         return this.provider.bitcoindSendRawTransaction(hex);
       }
       async getTransaction(txid, blockHash) {
-        return this.provider.bitcoindGetRawTransaction(txid, blockHash);
+        const result = await this.provider.bitcoindGetRawTransaction(txid, blockHash);
+        return mapToObject(result);
       }
       async getBlockchainInfo() {
-        return this.provider.bitcoindGetBlockchainInfo();
+        const result = await this.provider.bitcoindGetBlockchainInfo();
+        return mapToObject(result);
       }
       async getNetworkInfo() {
-        return this.provider.bitcoindGetNetworkInfo();
+        const result = await this.provider.bitcoindGetNetworkInfo();
+        return mapToObject(result);
       }
       async getMempoolInfo() {
-        return this.provider.bitcoindGetMempoolInfo();
+        const result = await this.provider.bitcoindGetMempoolInfo();
+        return mapToObject(result);
       }
       async estimateSmartFee(target) {
-        return this.provider.bitcoindEstimateSmartFee(target);
+        const result = await this.provider.bitcoindEstimateSmartFee(target);
+        return mapToObject(result);
       }
       async generateToAddress(nblocks, address) {
-        return this.provider.bitcoindGenerateToAddress(nblocks, address);
+        const result = await this.provider.bitcoindGenerateToAddress(nblocks, address);
+        return mapToObject(result);
+      }
+      async generateFuture(address) {
+        const result = await this.provider.bitcoindGenerateFuture(address);
+        return mapToObject(result);
+      }
+      async getBlockHeader(hash) {
+        const result = await this.provider.bitcoindGetBlockHeader(hash);
+        return mapToObject(result);
+      }
+      async getBlockStats(hash) {
+        const result = await this.provider.bitcoindGetBlockStats(hash);
+        return mapToObject(result);
+      }
+      async getChainTips() {
+        const result = await this.provider.bitcoindGetChainTips();
+        return mapToObject(result);
+      }
+      async getRawMempool() {
+        const result = await this.provider.bitcoindGetRawMempool();
+        return mapToObject(result);
+      }
+      async getTxOut(txid, vout, includeMempool) {
+        const result = await this.provider.bitcoindGetTxOut(txid, vout, includeMempool);
+        return mapToObject(result);
+      }
+      async decodeRawTransaction(hex) {
+        const result = await this.provider.bitcoindDecodeRawTransaction(hex);
+        return mapToObject(result);
+      }
+      async decodePsbt(psbt) {
+        const result = await this.provider.bitcoindDecodePsbt(psbt);
+        return mapToObject(result);
       }
     };
     EsploraClient = class {
@@ -224,19 +584,24 @@ var init_provider = __esm({
         this.provider = provider;
       }
       async getAddressInfo(address) {
-        return this.provider.esploraGetAddressInfo(address);
+        const result = await this.provider.esploraGetAddressInfo(address);
+        return mapToObject(result);
       }
       async getAddressUtxos(address) {
-        return this.provider.esploraGetAddressUtxo(address);
+        const result = await this.provider.esploraGetAddressUtxo(address);
+        return mapToObject(result);
       }
       async getAddressTxs(address) {
-        return this.provider.esploraGetAddressTxs(address);
+        const result = await this.provider.esploraGetAddressTxs(address);
+        return mapToObject(result);
       }
       async getTx(txid) {
-        return this.provider.esploraGetTx(txid);
+        const result = await this.provider.esploraGetTx(txid);
+        return mapToObject(result);
       }
       async getTxStatus(txid) {
-        return this.provider.esploraGetTxStatus(txid);
+        const result = await this.provider.esploraGetTxStatus(txid);
+        return mapToObject(result);
       }
       async getTxHex(txid) {
         return this.provider.esploraGetTxHex(txid);
@@ -250,46 +615,160 @@ var init_provider = __esm({
       async broadcastTx(txHex) {
         return this.provider.esploraBroadcastTx(txHex);
       }
+      async getFeeEstimates() {
+        const result = await this.provider.esploraGetFeeEstimates();
+        return mapToObject(result);
+      }
+      async getBlocks(startHeight) {
+        const result = await this.provider.esploraGetBlocks(startHeight);
+        return mapToObject(result);
+      }
+      async getBlockByHeight(height) {
+        const result = await this.provider.esploraGetBlockByHeight(height);
+        return mapToObject(result);
+      }
+      async getBlock(hash) {
+        const result = await this.provider.esploraGetBlock(hash);
+        return mapToObject(result);
+      }
+      async getBlockStatus(hash) {
+        const result = await this.provider.esploraGetBlockStatus(hash);
+        return mapToObject(result);
+      }
+      async getBlockTxids(hash) {
+        return this.provider.esploraGetBlockTxids(hash);
+      }
+      async getBlockHeader(hash) {
+        const result = await this.provider.esploraGetBlockHeader(hash);
+        return mapToObject(result);
+      }
+      async getBlockRaw(hash) {
+        return this.provider.esploraGetBlockRaw(hash);
+      }
+      async getBlockTxid(hash, index) {
+        return this.provider.esploraGetBlockTxid(hash, index);
+      }
+      async getBlockTxs(hash, startIndex) {
+        const result = await this.provider.esploraGetBlockTxs(hash, startIndex);
+        return mapToObject(result);
+      }
+      async getAddressTxsChain(address, lastSeenTxid) {
+        const result = await this.provider.esploraGetAddressTxsChain(address, lastSeenTxid);
+        return mapToObject(result);
+      }
+      async getAddressTxsMempool(address) {
+        const result = await this.provider.esploraGetAddressTxsMempool(address);
+        return mapToObject(result);
+      }
+      async getAddressPrefix(prefix) {
+        const result = await this.provider.esploraGetAddressPrefix(prefix);
+        return mapToObject(result);
+      }
+      async getTxRaw(txid) {
+        return this.provider.esploraGetTxRaw(txid);
+      }
+      async getTxMerkleProof(txid) {
+        const result = await this.provider.esploraGetTxMerkleProof(txid);
+        return mapToObject(result);
+      }
+      async getTxMerkleblockProof(txid) {
+        const result = await this.provider.esploraGetTxMerkleblockProof(txid);
+        return mapToObject(result);
+      }
+      async getTxOutspend(txid, index) {
+        const result = await this.provider.esploraGetTxOutspend(txid, index);
+        return mapToObject(result);
+      }
+      async getTxOutspends(txid) {
+        const result = await this.provider.esploraGetTxOutspends(txid);
+        return mapToObject(result);
+      }
+      async getMempool() {
+        const result = await this.provider.esploraGetMempool();
+        return mapToObject(result);
+      }
+      async getMempoolTxids() {
+        return this.provider.esploraGetMempoolTxids();
+      }
+      async getMempoolRecent() {
+        const result = await this.provider.esploraGetMempoolRecent();
+        return mapToObject(result);
+      }
     };
     AlkanesRpcClient = class {
       constructor(provider) {
         this.provider = provider;
       }
       async getBalance(address) {
-        return this.provider.alkanesBalance(address);
+        const result = await this.provider.alkanesBalance(address);
+        return mapToObject(result);
       }
       async getByAddress(address, blockTag, protocolTag) {
-        return this.provider.alkanesByAddress(address, blockTag, protocolTag);
+        const result = await this.provider.alkanesByAddress(address, blockTag, protocolTag);
+        return mapToObject(result);
       }
       async getByOutpoint(outpoint, blockTag, protocolTag) {
-        return this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
+        const result = await this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
+        return mapToObject(result);
       }
       async getBytecode(alkaneId, blockTag) {
         return this.provider.alkanesBytecode(alkaneId, blockTag);
       }
       async simulate(contractId, contextJson, blockTag) {
-        return this.provider.alkanesSimulate(contractId, contextJson, blockTag);
+        const result = await this.provider.alkanesSimulate(contractId, contextJson, blockTag);
+        return mapToObject(result);
       }
       async execute(paramsJson) {
-        return this.provider.alkanesExecute(paramsJson);
+        const result = await this.provider.alkanesExecute(paramsJson);
+        return mapToObject(result);
       }
       async trace(outpoint) {
-        return this.provider.alkanesTrace(outpoint);
+        const result = await this.provider.alkanesTrace(outpoint);
+        return mapToObject(result);
       }
       async traceBlock(height) {
-        return this.provider.traceBlock(height);
+        const result = await this.provider.traceBlock(height);
+        return mapToObject(result);
       }
       async view(contractId, viewFn, params, blockTag) {
-        return this.provider.alkanesView(contractId, viewFn, params, blockTag);
+        const result = await this.provider.alkanesView(contractId, viewFn, params, blockTag);
+        return mapToObject(result);
       }
       async getAllPools(factoryId) {
-        return this.provider.alkanesGetAllPools(factoryId);
+        const result = await this.provider.alkanesGetAllPools(factoryId);
+        return mapToObject(result);
       }
       async getAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent) {
-        return this.provider.alkanesGetAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent);
+        const result = await this.provider.alkanesGetAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent);
+        return mapToObject(result);
       }
       async getPendingUnwraps(blockTag) {
-        return this.provider.alkanesPendingUnwraps(blockTag);
+        const result = await this.provider.alkanesPendingUnwraps(blockTag);
+        return mapToObject(result);
+      }
+      async reflect(alkaneId) {
+        const result = await this.provider.alkanesReflect(alkaneId);
+        return mapToObject(result);
+      }
+      async getSequence(blockTag) {
+        const result = await this.provider.alkanesSequence(blockTag);
+        return mapToObject(result);
+      }
+      async getSpendables(address) {
+        const result = await this.provider.alkanesSpendables(address);
+        return mapToObject(result);
+      }
+      async getPoolDetails(poolId) {
+        const result = await this.provider.alkanesPoolDetails(poolId);
+        return mapToObject(result);
+      }
+      async reflectAlkaneRange(block, startTx, endTx) {
+        const result = await this.provider.alkanesReflectAlkaneRange(block, startTx, endTx);
+        return mapToObject(result);
+      }
+      async inspect(target, config) {
+        const result = await this.provider.alkanesInspect(target, config);
+        return mapToObject(result);
       }
     };
     MetashrewClient = class {
@@ -326,6 +805,105 @@ var init_provider = __esm({
        */
       async view(viewFn, payload, blockTag = "latest") {
         return this.provider.metashrewView(viewFn, payload, blockTag);
+      }
+    };
+    OrdClient = class {
+      constructor(provider) {
+        this.provider = provider;
+      }
+      async getInscription(id) {
+        const result = await this.provider.ordInscription(id);
+        return mapToObject(result);
+      }
+      async getInscriptions(page) {
+        const result = await this.provider.ordInscriptions(page);
+        return mapToObject(result);
+      }
+      async getOutputs(address) {
+        const result = await this.provider.ordOutputs(address);
+        return mapToObject(result);
+      }
+      async getRune(name) {
+        const result = await this.provider.ordRune(name);
+        return mapToObject(result);
+      }
+      async list(outpoint) {
+        const result = await this.provider.ordList(outpoint);
+        return mapToObject(result);
+      }
+      async find(sat) {
+        const result = await this.provider.ordFind(sat);
+        return mapToObject(result);
+      }
+      async getAddressInfo(address) {
+        const result = await this.provider.ordAddressInfo(address);
+        return mapToObject(result);
+      }
+      async getBlockInfo(query) {
+        const result = await this.provider.ordBlockInfo(query);
+        return mapToObject(result);
+      }
+      async getBlockCount() {
+        return this.provider.ordBlockCount();
+      }
+      async getBlocks() {
+        const result = await this.provider.ordBlocks();
+        return mapToObject(result);
+      }
+      async getChildren(inscriptionId, page) {
+        const result = await this.provider.ordChildren(inscriptionId, page);
+        return mapToObject(result);
+      }
+      async getContent(inscriptionId) {
+        const result = await this.provider.ordContent(inscriptionId);
+        return mapToObject(result);
+      }
+      async getParents(inscriptionId, page) {
+        const result = await this.provider.ordParents(inscriptionId, page);
+        return mapToObject(result);
+      }
+      async getTxInfo(txid) {
+        const result = await this.provider.ordTxInfo(txid);
+        return mapToObject(result);
+      }
+    };
+    Brc20ProgClient = class {
+      constructor(provider) {
+        this.provider = provider;
+      }
+      async getBalance(address) {
+        const result = await this.provider.brc20progGetBalance(address);
+        return mapToObject(result);
+      }
+      async getCode(address) {
+        const result = await this.provider.brc20progGetCode(address);
+        return mapToObject(result);
+      }
+      async getBlockNumber() {
+        return this.provider.brc20progBlockNumber();
+      }
+      async getChainId() {
+        return this.provider.brc20progChainId();
+      }
+      async getTxReceipt(hash) {
+        const result = await this.provider.brc20progGetTransactionReceipt(hash);
+        return mapToObject(result);
+      }
+      async getTx(hash) {
+        const result = await this.provider.brc20progGetTransactionByHash(hash);
+        return mapToObject(result);
+      }
+      async getBlock(number, includeTxs) {
+        const result = await this.provider.brc20progGetBlockByNumber(String(number), includeTxs);
+        return mapToObject(result);
+      }
+      async call(to, data, from, blockTag) {
+        const result = await this.provider.brc20progCall(to, data, from, blockTag);
+        return mapToObject(result);
+      }
+      async estimateGas(to, data, from) {
+        const result = await this.provider.brc20progEstimateGas(to, data, from);
+        return mapToObject(result);
       }
     };
     LuaClient = class {
@@ -601,6 +1179,8 @@ var init_provider = __esm({
         this._espo = null;
         this._lua = null;
         this._metashrew = null;
+        this._ord = null;
+        this._brc20prog = null;
         const preset = NETWORK_PRESETS[config.network] || NETWORK_PRESETS["mainnet"];
         this.networkPreset = config.network;
         this.networkType = preset.networkType;
@@ -758,6 +1338,30 @@ var init_provider = __esm({
           this._metashrew = new MetashrewClient(this._provider);
         }
         return this._metashrew;
+      }
+      /**
+       * Ord (Ordinals) RPC client
+       */
+      get ord() {
+        if (!this._ord) {
+          if (!this._provider) {
+            throw new Error("Provider not initialized. Call initialize() first.");
+          }
+          this._ord = new OrdClient(this._provider);
+        }
+        return this._ord;
+      }
+      /**
+       * BRC-20 Prog (Programmable BRC-20) RPC client
+       */
+      get brc20prog() {
+        if (!this._brc20prog) {
+          if (!this._provider) {
+            throw new Error("Provider not initialized. Call initialize() first.");
+          }
+          this._brc20prog = new Brc20ProgClient(this._provider);
+        }
+        return this._brc20prog;
       }
       // ============================================================================
       // CONVENIENCE METHODS
@@ -942,6 +1546,7 @@ var init_provider = __esm({
 
 // src/cli/index.ts
 var import_commander = require("commander");
+var import_chalk3 = __toESM(require("chalk"));
 init_formatting();
 
 // src/cli/commands/wallet.ts
@@ -1743,7 +2348,7 @@ init_formatting();
 var import_ora2 = __toESM(require("ora"));
 function registerBitcoindCommands(program2) {
   const bitcoind = program2.command("bitcoind").description("Bitcoin Core RPC commands");
-  bitcoind.command("getblockcount").description("Get current block count").action(async (options, command) => {
+  bitcoind.command("getblockcount").description("Get current block count").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting block count...").start();
@@ -1751,16 +2356,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoin_getblockcount_js();
-      const blockCount = JSON.parse(result);
+      const blockCount = await provider.bitcoin.getBlockCount();
       spinner.succeed();
-      console.log(formatOutput(blockCount, globalOpts));
+      console.log(formatOutput(blockCount, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block count: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("generatetoaddress <nblocks> <address>").description("Generate blocks to an address (regtest only)").action(async (nblocks, address, options, command) => {
+  bitcoind.command("generatetoaddress <nblocks> <address>").description("Generate blocks to an address (regtest only)").option("--raw", "Output raw JSON").action(async (nblocks, address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)(`Generating ${nblocks} blocks...`).start();
@@ -1768,16 +2372,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoin_generatetoaddress_js(parseInt(nblocks), address);
-      const hashes = JSON.parse(result);
+      const hashes = await provider.bitcoin.generateToAddress(parseInt(nblocks), address);
       spinner.succeed(`Generated ${nblocks} blocks`);
-      console.log(formatOutput(hashes, globalOpts));
+      console.log(formatOutput(hashes, { raw: options.raw }));
     } catch (err) {
       error(`Failed to generate blocks: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getblockchaininfo").description("Get blockchain information").action(async (options, command) => {
+  bitcoind.command("getblockchaininfo").description("Get blockchain information").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting blockchain info...").start();
@@ -1785,16 +2388,19 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoin_getblockchaininfo_js();
-      const info2 = JSON.parse(result);
+      const info2 = await provider.bitcoin.getBlockchainInfo();
       spinner.succeed();
-      console.log(formatOutput(info2, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(info2, { raw: true }));
+      } else {
+        console.log(formatBlockchainInfo(info2));
+      }
     } catch (err) {
       error(`Failed to get blockchain info: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getrawtransaction <txid>").description("Get raw transaction").option("--verbose", "Return decoded transaction").action(async (txid, options, command) => {
+  bitcoind.command("getrawtransaction <txid>").description("Get raw transaction").option("--verbose", "Return decoded transaction").option("--raw", "Output raw JSON").action(async (txid, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting transaction...").start();
@@ -1802,16 +2408,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoin_getrawtransaction_js(txid, options.verbose || false);
-      const tx = JSON.parse(result);
+      const tx = await provider.bitcoin.getTransaction(txid);
       spinner.succeed();
-      console.log(formatOutput(tx, globalOpts));
+      console.log(formatOutput(tx, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get transaction: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getblock <hash>").description("Get block by hash").option("--verbosity <level>", "Verbosity level (0-2)", "1").action(async (hash, options, command) => {
+  bitcoind.command("getblock <hash>").description("Get block by hash").option("--verbosity <level>", "Verbosity level (0-2)", "1").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting block...").start();
@@ -1819,16 +2424,22 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoin_getblock_js(hash, parseInt(options.verbosity));
-      const block = JSON.parse(result);
+      const rawOutput = options.verbosity === "0";
+      const block = await provider.bitcoin.getBlock(hash, rawOutput);
       spinner.succeed();
-      console.log(formatOutput(block, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(block, { raw: true }));
+      } else if (typeof block === "object") {
+        console.log(formatBlockInfo(block));
+      } else {
+        console.log(formatOutput(block, { raw: false }));
+      }
     } catch (err) {
       error(`Failed to get block: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getblockhash <height>").description("Get block hash by height").action(async (height, options, command) => {
+  bitcoind.command("getblockhash <height>").description("Get block hash by height").option("--raw", "Output raw JSON").action(async (height, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting block hash...").start();
@@ -1836,16 +2447,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoin_getblockhash_js(parseInt(height));
-      const hash = JSON.parse(result);
+      const hash = await provider.bitcoin.getBlockHash(parseInt(height));
       spinner.succeed();
-      console.log(formatOutput(hash, globalOpts));
+      console.log(formatOutput(hash, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block hash: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("sendrawtransaction <hex>").description("Broadcast a raw transaction").action(async (hex, options, command) => {
+  bitcoind.command("sendrawtransaction <hex>").description("Broadcast a raw transaction").option("--raw", "Output raw JSON").action(async (hex, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Broadcasting transaction...").start();
@@ -1853,16 +2463,19 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoin_sendrawtransaction_js(hex);
-      const txid = JSON.parse(result);
+      const txid = await provider.bitcoin.sendRawTransaction(hex);
       spinner.succeed("Transaction broadcast");
-      success(`TXID: ${txid}`);
+      if (options.raw) {
+        console.log(formatOutput(txid, { raw: true }));
+      } else {
+        success(`TXID: ${txid}`);
+      }
     } catch (err) {
       error(`Failed to broadcast transaction: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getnetworkinfo").description("Get network information").action(async (options, command) => {
+  bitcoind.command("getnetworkinfo").description("Get network information").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting network info...").start();
@@ -1870,16 +2483,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoin_getnetworkinfo_js();
-      const info2 = JSON.parse(result);
+      const info2 = await provider.bitcoin.getNetworkInfo();
       spinner.succeed();
-      console.log(formatOutput(info2, globalOpts));
+      console.log(formatOutput(info2, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get network info: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getmempoolinfo").description("Get mempool information").action(async (options, command) => {
+  bitcoind.command("getmempoolinfo").description("Get mempool information").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting mempool info...").start();
@@ -1887,16 +2499,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoin_getmempoolinfo_js();
-      const info2 = JSON.parse(result);
+      const info2 = await provider.bitcoin.getMempoolInfo();
       spinner.succeed();
-      console.log(formatOutput(info2, globalOpts));
+      console.log(formatOutput(info2, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get mempool info: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("generatefuture <address>").description("Generate a future block (regtest only)").action(async (address, options, command) => {
+  bitcoind.command("generatefuture <address>").description("Generate a future block (regtest only)").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Generating future block...").start();
@@ -1904,16 +2515,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoind_generate_future_js(address);
-      const hash = JSON.parse(result);
+      const hash = await provider.bitcoin.generateFuture(address);
       spinner.succeed("Future block generated");
-      console.log(formatOutput(hash, globalOpts));
+      console.log(formatOutput(hash, { raw: options.raw }));
     } catch (err) {
       error(`Failed to generate future block: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getblockheader <hash>").description("Get block header by hash").action(async (hash, options, command) => {
+  bitcoind.command("getblockheader <hash>").description("Get block header by hash").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting block header...").start();
@@ -1921,16 +2531,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoind_get_block_header_js(hash);
-      const header = JSON.parse(result);
+      const header = await provider.bitcoin.getBlockHeader(hash);
       spinner.succeed();
-      console.log(formatOutput(header, globalOpts));
+      console.log(formatOutput(header, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block header: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getblockstats <hash>").description("Get block statistics by hash").action(async (hash, options, command) => {
+  bitcoind.command("getblockstats <hash>").description("Get block statistics by hash").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting block stats...").start();
@@ -1938,16 +2547,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoind_get_block_stats_js(hash);
-      const stats = JSON.parse(result);
+      const stats = await provider.bitcoin.getBlockStats(hash);
       spinner.succeed();
-      console.log(formatOutput(stats, globalOpts));
+      console.log(formatOutput(stats, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block stats: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("estimatesmartfee <blocks>").description("Estimate smart fee for confirmation in N blocks").action(async (blocks, options, command) => {
+  bitcoind.command("estimatesmartfee <blocks>").description("Estimate smart fee for confirmation in N blocks").option("--raw", "Output raw JSON").action(async (blocks, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Estimating fee...").start();
@@ -1955,16 +2563,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoind_estimate_smart_fee_js(parseInt(blocks));
-      const estimate = JSON.parse(result);
+      const estimate = await provider.bitcoin.estimateSmartFee(parseInt(blocks));
       spinner.succeed();
-      console.log(formatOutput(estimate, globalOpts));
+      console.log(formatOutput(estimate, { raw: options.raw }));
     } catch (err) {
       error(`Failed to estimate fee: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getchaintips").description("Get chain tips information").action(async (options, command) => {
+  bitcoind.command("getchaintips").description("Get chain tips information").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting chain tips...").start();
@@ -1972,16 +2579,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoind_get_chain_tips_js();
-      const tips = JSON.parse(result);
+      const tips = await provider.bitcoin.getChainTips();
       spinner.succeed();
-      console.log(formatOutput(tips, globalOpts));
+      console.log(formatOutput(tips, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get chain tips: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("decoderawtransaction <hex>").description("Decode a raw transaction hex").action(async (hex, options, command) => {
+  bitcoind.command("decoderawtransaction <hex>").description("Decode a raw transaction hex").option("--raw", "Output raw JSON").action(async (hex, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Decoding transaction...").start();
@@ -1989,16 +2595,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoind_decode_raw_transaction_js(hex);
-      const decoded = JSON.parse(result);
+      const decoded = await provider.bitcoin.decodeRawTransaction(hex);
       spinner.succeed();
-      console.log(formatOutput(decoded, globalOpts));
+      console.log(formatOutput(decoded, { raw: options.raw }));
     } catch (err) {
       error(`Failed to decode transaction: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("decodepsbt <psbt>").description("Decode a PSBT (base64)").action(async (psbt, options, command) => {
+  bitcoind.command("decodepsbt <psbt>").description("Decode a PSBT (base64)").option("--raw", "Output raw JSON").action(async (psbt, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Decoding PSBT...").start();
@@ -2006,16 +2611,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoind_decode_psbt_js(psbt);
-      const decoded = JSON.parse(result);
+      const decoded = await provider.bitcoin.decodePsbt(psbt);
       spinner.succeed();
-      console.log(formatOutput(decoded, globalOpts));
+      console.log(formatOutput(decoded, { raw: options.raw }));
     } catch (err) {
       error(`Failed to decode PSBT: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("getrawmempool").description("Get raw mempool transactions").action(async (options, command) => {
+  bitcoind.command("getrawmempool").description("Get raw mempool transactions").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting mempool transactions...").start();
@@ -2023,16 +2627,15 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoind_get_raw_mempool_js();
-      const mempool = JSON.parse(result);
+      const mempool = await provider.bitcoin.getRawMempool();
       spinner.succeed();
-      console.log(formatOutput(mempool, globalOpts));
+      console.log(formatOutput(mempool, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get mempool: ${err.message}`);
       process.exit(1);
     }
   });
-  bitcoind.command("gettxout <txid> <vout>").description("Get transaction output details").option("--include-mempool", "Include mempool transactions", false).action(async (txid, vout, options, command) => {
+  bitcoind.command("gettxout <txid> <vout>").description("Get transaction output details").option("--include-mempool", "Include mempool transactions", false).option("--raw", "Output raw JSON").action(async (txid, vout, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora2.default)("Getting transaction output...").start();
@@ -2040,10 +2643,9 @@ function registerBitcoindCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.bitcoind_get_tx_out_js(txid, parseInt(vout), options.includeMempool);
-      const txout = JSON.parse(result);
+      const txout = await provider.bitcoin.getTxOut(txid, parseInt(vout), options.includeMempool);
       spinner.succeed();
-      console.log(formatOutput(txout, globalOpts));
+      console.log(formatOutput(txout, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get tx out: ${err.message}`);
       process.exit(1);
@@ -2056,7 +2658,7 @@ init_formatting();
 var import_ora3 = __toESM(require("ora"));
 function registerAlkanesCommands(program2) {
   const alkanes = program2.command("alkanes").description("Alkanes smart contract operations");
-  alkanes.command("getbytecode <alkane-id>").description("Get bytecode for an alkanes contract").option("--block-tag <tag>", 'Block tag (e.g., "latest" or height)').action(async (alkaneId, options, command) => {
+  alkanes.command("getbytecode <alkane-id>").description("Get bytecode for an alkanes contract").option("--block-tag <tag>", 'Block tag (e.g., "latest" or height)').option("--raw", "Output raw JSON").action(async (alkaneId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Getting bytecode...").start();
@@ -2065,16 +2667,15 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanes_bytecode_js(alkaneId, options.blockTag || null);
-      const bytecode = JSON.parse(result);
+      const bytecode = await provider.alkanes.getBytecode(alkaneId, options.blockTag);
       spinner.succeed();
-      console.log(formatOutput(bytecode, globalOpts));
+      console.log(formatOutput(bytecode, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get bytecode: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("balance").description("Get alkanes balance for an address").option("--address <address>", "Address to check (defaults to wallet)").action(async (options, command) => {
+  alkanes.command("balance").description("Get alkanes balance for an address").option("--address <address>", "Address to check (defaults to wallet)").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Getting balance...").start();
@@ -2083,16 +2684,21 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanes_balance_js(options.address || null);
-      const balance = JSON.parse(result);
+      const balance = await provider.alkanes.getBalance(options.address);
       spinner.succeed();
-      console.log(formatOutput(balance, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(balance, { raw: true }));
+      } else if (Array.isArray(balance)) {
+        console.log(formatAlkaneBalances(balance));
+      } else {
+        console.log(formatOutput(balance, { raw: false }));
+      }
     } catch (err) {
       error(`Failed to get balance: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("trace <outpoint>").description("Trace an alkanes transaction").action(async (outpoint, options, command) => {
+  alkanes.command("trace <outpoint>").description("Trace an alkanes transaction").option("--raw", "Output raw JSON").action(async (outpoint, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Tracing transaction...").start();
@@ -2101,16 +2707,15 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanes_trace_js(outpoint);
-      const trace = JSON.parse(result);
+      const trace = await provider.alkanes.trace(outpoint);
       spinner.succeed();
-      console.log(formatOutput(trace, globalOpts));
+      console.log(formatOutput(trace, { raw: options.raw }));
     } catch (err) {
       error(`Failed to trace: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("inspect <target>").description("Inspect alkanes bytecode").option("--disasm", "Enable disassembly to WAT format", false).option("--fuzz", "Enable fuzzing analysis", false).option("--fuzz-ranges <ranges>", "Opcode ranges for fuzzing").option("--meta", "Extract and display metadata", false).option("--codehash", "Compute and display codehash", false).action(async (target, options, command) => {
+  alkanes.command("inspect <target>").description("Inspect alkanes bytecode").option("--disasm", "Enable disassembly to WAT format", false).option("--fuzz", "Enable fuzzing analysis", false).option("--fuzz-ranges <ranges>", "Opcode ranges for fuzzing").option("--raw", "Output raw JSON").action(async (target, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Inspecting bytecode...").start();
@@ -2122,20 +2727,17 @@ function registerAlkanesCommands(program2) {
       const config = {
         disasm: options.disasm,
         fuzz: options.fuzz,
-        fuzz_ranges: options.fuzzRanges || null,
-        meta: options.meta,
-        codehash: options.codehash
+        fuzzRanges: options.fuzzRanges
       };
-      const result = await provider.alkanes_inspect_js(target, config);
-      const inspection = JSON.parse(result);
+      const result = await provider.alkanes.inspect(target, config);
       spinner.succeed();
-      console.log(formatOutput(inspection, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to inspect: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("simulate <contract-id>").description("Simulate alkanes execution").option("--params <params>", "Calldata params (format: [block,tx,inputs...]:[block:tx:value])").option("--block-hex <hex>", "Block hex").option("--transaction-hex <hex>", "Transaction hex").option("--block-tag <tag>", "Block tag").action(async (contractId, options, command) => {
+  alkanes.command("simulate <contract-id>").description("Simulate alkanes execution").option("--inputs <json>", "Input parameters JSON").option("--context <json>", "Execution context JSON").option("--block-tag <tag>", "Block tag").option("--raw", "Output raw JSON").action(async (contractId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Simulating execution...").start();
@@ -2144,25 +2746,18 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const context = {
-        params: options.params || null,
-        block_hex: options.blockHex || null,
-        transaction_hex: options.transactionHex || null
-      };
-      const result = await provider.alkanes_simulate_js(
-        contractId,
-        JSON.stringify(context),
-        options.blockTag || null
-      );
-      const simulation = JSON.parse(result);
+      const contextJson = options.context || JSON.stringify({
+        inputs: options.inputs ? JSON.parse(options.inputs) : []
+      });
+      const result = await provider.alkanes.simulate(contractId, contextJson, options.blockTag);
       spinner.succeed();
-      console.log(formatOutput(simulation, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to simulate: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("unwrap").description("Get pending unwraps").option("--block-tag <tag>", "Block tag").action(async (options, command) => {
+  alkanes.command("unwrap").description("Get pending unwraps").option("--block-tag <tag>", "Block tag").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Getting pending unwraps...").start();
@@ -2171,34 +2766,32 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanes_pending_unwraps_js(options.blockTag || null);
-      const unwraps = JSON.parse(result);
+      const result = await provider.alkanes.getPendingUnwraps(options.blockTag);
       spinner.succeed();
-      console.log(formatOutput(unwraps, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
-      error(`Failed to get unwraps: ${err.message}`);
+      error(`Failed to get pending unwraps: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("get-all-pools <factory-id>").description("Get all pools from an AMM factory").action(async (factoryId, options, command) => {
+  alkanes.command("get-all-pools <factory-id>").description("Get all pools from an AMM factory").option("--raw", "Output raw JSON").action(async (factoryId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
-      const spinner = (0, import_ora3.default)("Getting all pools...").start();
+      const spinner = (0, import_ora3.default)("Getting pools...").start();
       const provider = await createProvider2({
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanes_get_all_pools_js(factoryId);
-      const pools = JSON.parse(result);
+      const result = await provider.alkanes.getAllPools(factoryId);
       spinner.succeed();
-      console.log(formatOutput(pools, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get pools: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("all-pools-details <factory-id>").description("Get all pools with detailed information").action(async (factoryId, options, command) => {
+  alkanes.command("all-pools-details <factory-id>").description("Get all pools with detailed information").option("--raw", "Output raw JSON").action(async (factoryId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Getting pool details...").start();
@@ -2207,20 +2800,15 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanes_get_all_pools_with_details_js(
-        factoryId,
-        null
-        // protocol_tag
-      );
-      const details = JSON.parse(result);
+      const result = await provider.alkanes.getAllPoolsWithDetails(factoryId);
       spinner.succeed();
-      console.log(formatOutput(details, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get pool details: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("reflect <alkane-id>").description("Reflect alkane metadata").action(async (alkaneId, options, command) => {
+  alkanes.command("reflect <alkane-id>").description("Reflect alkane metadata").option("--raw", "Output raw JSON").action(async (alkaneId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Reflecting alkane...").start();
@@ -2229,16 +2817,19 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanes_reflect_js(alkaneId);
-      const metadata = JSON.parse(result);
+      const result = await provider.alkanes.reflect(alkaneId);
       spinner.succeed();
-      console.log(formatOutput(metadata, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(result, { raw: true }));
+      } else {
+        console.log(formatReflectMetadata(result));
+      }
     } catch (err) {
-      error(`Failed to reflect alkane: ${err.message}`);
+      error(`Failed to reflect: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("by-address <address>").description("Get alkanes by address").option("--block-tag <tag>", "Block tag").option("--protocol-tag <tag>", "Protocol tag", "0").action(async (address, options, command) => {
+  alkanes.command("by-address <address>").description("Get alkanes by address").option("--block-tag <tag>", "Block tag").option("--protocol-tag <tag>", "Protocol tag").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Getting alkanes by address...").start();
@@ -2247,21 +2838,25 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const protocolTag = options.protocolTag ? parseFloat(options.protocolTag) : null;
-      const result = await provider.alkanes_by_address_js(
+      const result = await provider.alkanes.getByAddress(
         address,
-        options.blockTag || null,
-        protocolTag
+        options.blockTag,
+        options.protocolTag ? parseInt(options.protocolTag) : void 0
       );
-      const alkanes2 = JSON.parse(result);
       spinner.succeed();
-      console.log(formatOutput(alkanes2, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(result, { raw: true }));
+      } else if (Array.isArray(result)) {
+        console.log(formatAlkaneBalances(result));
+      } else {
+        console.log(formatOutput(result, { raw: false }));
+      }
     } catch (err) {
-      error(`Failed to get alkanes by address: ${err.message}`);
+      error(`Failed to get alkanes: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("by-outpoint <outpoint>").description("Get alkanes by outpoint").option("--block-tag <tag>", "Block tag").option("--protocol-tag <tag>", "Protocol tag", "0").action(async (outpoint, options, command) => {
+  alkanes.command("by-outpoint <outpoint>").description("Get alkanes by outpoint").option("--block-tag <tag>", "Block tag").option("--protocol-tag <tag>", "Protocol tag").option("--raw", "Output raw JSON").action(async (outpoint, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Getting alkanes by outpoint...").start();
@@ -2270,21 +2865,19 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const protocolTag = options.protocolTag ? parseFloat(options.protocolTag) : null;
-      const result = await provider.alkanes_by_outpoint_js(
+      const result = await provider.alkanes.getByOutpoint(
         outpoint,
-        options.blockTag || null,
-        protocolTag
+        options.blockTag,
+        options.protocolTag ? parseInt(options.protocolTag) : void 0
       );
-      const alkanes2 = JSON.parse(result);
       spinner.succeed();
-      console.log(formatOutput(alkanes2, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
-      error(`Failed to get alkanes by outpoint: ${err.message}`);
+      error(`Failed to get alkanes: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("traceblock <height>").description("Trace all alkanes transactions in a block").action(async (height, options, command) => {
+  alkanes.command("traceblock <height>").description("Trace all alkanes transactions in a block").option("--raw", "Output raw JSON").action(async (height, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Tracing block...").start();
@@ -2293,245 +2886,211 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.traceBlock(parseFloat(height));
-      const trace = JSON.parse(result);
+      const result = await provider.alkanes.traceBlock(parseInt(height));
       spinner.succeed();
-      console.log(formatOutput(trace, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to trace block: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("sequence").description("Get sequence for the current block").option("--block-tag <tag>", 'Block tag (e.g., "latest" or block height)').action(async (options, command) => {
+  alkanes.command("sequence").description("Get sequence for the current block").option("--block-tag <tag>", "Block tag").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Getting sequence...").start();
       const provider = await createProvider2({
         network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanesSequence(options.blockTag || null);
-      const sequence = JSON.parse(result);
+      const result = await provider.alkanes.getSequence(options.blockTag);
       spinner.succeed();
-      console.log(formatOutput(sequence, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get sequence: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("spendables <address>").description("Get spendable outpoints for an address").action(async (address, options, command) => {
+  alkanes.command("spendables <address>").description("Get spendable outpoints for an address").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Getting spendables...").start();
       const provider = await createProvider2({
         network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanesSpendables(address);
-      const spendables = JSON.parse(result);
+      const result = await provider.alkanes.getSpendables(address);
       spinner.succeed();
-      console.log(formatOutput(spendables, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get spendables: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("execute").description("Execute an alkanes smart contract").option("--inputs <requirements>", 'Input requirements (e.g., "B:10000" or "2:0:1000")').option("--to <addresses>", "Recipient addresses (JSON array)").option("--from <addresses>", "Source addresses (JSON array)", "[]").option("--change <address>", "Change address").option("--protostones <spec>", "Protostone specification").option("--envelope <hex>", "Envelope data as hex").option("--fee-rate <rate>", "Fee rate in sat/vB").option("--trace", "Enable transaction tracing").option("--mine", "Mine a block after broadcasting (regtest only)").option("-y, --auto-confirm", "Automatically confirm transaction").action(async (options, command) => {
-    try {
-      const globalOpts = command.parent?.parent?.opts() || {};
-      const spinner = (0, import_ora3.default)("Executing contract...").start();
-      const provider = await createProvider2({
-        network: globalOpts.provider,
-        metashrewUrl: globalOpts.metashrewUrl
-      });
-      const params = {
-        input_requirements: options.inputs || "",
-        to_addresses: options.to ? JSON.parse(options.to) : [],
-        from_addresses: options.from ? JSON.parse(options.from) : [],
-        change_address: options.change || null,
-        protostones: options.protostones || "",
-        envelope_hex: options.envelope || null,
-        fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
-        trace_enabled: options.trace || false,
-        mine_enabled: options.mine || false,
-        auto_confirm: options.autoConfirm || false,
-        raw_output: globalOpts.raw || false
-      };
-      const result = await provider.alkanesExecuteWithStrings(
-        JSON.stringify(params.to_addresses),
-        params.input_requirements,
-        params.protostones,
-        params.fee_rate,
-        params.envelope_hex,
-        JSON.stringify({
-          trace_enabled: params.trace_enabled,
-          mine_enabled: params.mine_enabled,
-          auto_confirm: params.auto_confirm,
-          raw_output: params.raw_output
-        })
-      );
-      spinner.succeed();
-      console.log(formatOutput(JSON.parse(result), globalOpts));
-    } catch (err) {
-      error(`Failed to execute: ${err.message}`);
-      process.exit(1);
-    }
-  });
-  alkanes.command("wrap-btc <amount>").description("Wrap BTC to frBTC").option("--to <address>", "Address to receive frBTC", "p2tr:0").option("--from <addresses>", "Source addresses (JSON array)", "[]").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB").option("--trace", "Enable transaction tracing").option("--mine", "Mine a block after broadcasting (regtest only)").option("-y, --auto-confirm", "Automatically confirm transaction").action(async (amount, options, command) => {
-    try {
-      const globalOpts = command.parent?.parent?.opts() || {};
-      const spinner = (0, import_ora3.default)("Wrapping BTC to frBTC...").start();
-      const provider = await createProvider2({
-        network: globalOpts.provider,
-        metashrewUrl: globalOpts.metashrewUrl
-      });
-      const params = {
-        amount: parseInt(amount),
-        to_address: options.to,
-        from_addresses: options.from !== "[]" ? JSON.parse(options.from) : null,
-        change_address: options.change || null,
-        fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
-        raw_output: globalOpts.raw || false,
-        trace_enabled: options.trace || false,
-        mine_enabled: options.mine || false,
-        auto_confirm: options.autoConfirm || false
-      };
-      const result = await provider.alkanesWrapBtc(JSON.stringify(params));
-      spinner.succeed();
-      console.log(formatOutput(JSON.parse(result), globalOpts));
-    } catch (err) {
-      error(`Failed to wrap BTC: ${err.message}`);
-      process.exit(1);
-    }
-  });
-  alkanes.command("init-pool").description("Initialize a new AMM liquidity pool").option("--pair <tokens>", "Token pair (format: BLOCK:TX,BLOCK:TX)", "2:0,32:0").option("--liquidity <amounts>", "Initial liquidity (format: AMOUNT0:AMOUNT1)", "300000000:50000").option("--to <address>", "Recipient address", "p2tr:0").option("--from <address>", "Source address", "p2tr:0").option("--change <address>", "Change address").option("--minimum <lp>", "Minimum LP tokens to receive").option("--fee-rate <rate>", "Fee rate in sat/vB").option("--trace", "Show trace after transaction confirms").option("--factory <id>", "Factory ID (format: BLOCK:TX)", "4:1").option("--auto-confirm", "Auto-confirm transaction").action(async (options, command) => {
-    try {
-      const globalOpts = command.parent?.parent?.opts() || {};
-      const spinner = (0, import_ora3.default)("Initializing pool...").start();
-      const provider = await createProvider2({
-        network: globalOpts.provider,
-        metashrewUrl: globalOpts.metashrewUrl
-      });
-      const [token0Str, token1Str] = options.pair.split(",");
-      const [token0Block, token0Tx] = token0Str.split(":").map((n) => parseInt(n));
-      const [token1Block, token1Tx] = token1Str.split(":").map((n) => parseInt(n));
-      const [amount0, amount1] = options.liquidity.split(":").map((n) => parseInt(n));
-      const [factoryBlock, factoryTx] = options.factory.split(":").map((n) => parseInt(n));
-      const params = {
-        factory_id: { block: factoryBlock, tx: factoryTx },
-        token0: { block: token0Block, tx: token0Tx },
-        token1: { block: token1Block, tx: token1Tx },
-        amount0,
-        amount1,
-        minimum_lp: options.minimum ? parseInt(options.minimum) : null,
-        to_address: options.to,
-        from_address: options.from,
-        change_address: options.change || null,
-        fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
-        trace: options.trace || false,
-        auto_confirm: options.autoConfirm || false
-      };
-      const txid = await provider.alkanesInitPool(JSON.stringify(params));
-      spinner.succeed(`Pool initialized! Transaction: ${txid}`);
-    } catch (err) {
-      error(`Failed to initialize pool: ${err.message}`);
-      process.exit(1);
-    }
-  });
-  alkanes.command("swap").description("Execute an AMM token swap").option("--path <tokens>", "Swap path (comma-separated alkane IDs)", "2:0,32:0").option("--input <amount>", "Input token amount (required)", "1000000").option("--minimum-output <amount>", "Minimum output amount").option("--slippage <percent>", "Slippage percentage", "5.0").option("--expires <height>", "Expiry block height").option("--to <address>", "Recipient address", "p2tr:0").option("--from <address>", "Source address", "p2tr:0").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB").option("--trace", "Show trace after transaction confirms").option("--mine", "Mine a block after broadcasting (regtest only)").option("--factory <id>", "Factory ID", "4:65522").option("--no-optimize", "Skip path optimization").option("--auto-confirm", "Auto-confirm transaction").action(async (options, command) => {
-    try {
-      const globalOpts = command.parent?.parent?.opts() || {};
-      const spinner = (0, import_ora3.default)("Executing swap...").start();
-      const provider = await createProvider2({
-        network: globalOpts.provider,
-        metashrewUrl: globalOpts.metashrewUrl
-      });
-      const pathTokens = options.path.split(",").map((token) => {
-        const [block, tx] = token.split(":").map((n) => parseInt(n));
-        return { block, tx };
-      });
-      const [factoryBlock, factoryTx] = options.factory.split(":").map((n) => parseInt(n));
-      const inputAmount = parseInt(options.input);
-      const minimumOutput = options.minimumOutput ? parseInt(options.minimumOutput) : Math.floor(inputAmount * (1 - parseFloat(options.slippage) / 100));
-      let expires = options.expires ? parseInt(options.expires) : 0;
-      if (!expires) {
-        const heightResult = await provider.get_metashrew_height_js();
-        expires = parseInt(heightResult) + 100;
-      }
-      const params = {
-        factory_id: { block: factoryBlock, tx: factoryTx },
-        path: pathTokens,
-        input_amount: inputAmount,
-        minimum_output: minimumOutput,
-        expires,
-        to_address: options.to,
-        from_address: options.from,
-        change_address: options.change || null,
-        fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
-        trace: options.trace || false,
-        auto_confirm: options.autoConfirm || false
-      };
-      const txid = await provider.alkanesSwap(JSON.stringify(params));
-      spinner.succeed(`Swap executed! Transaction: ${txid}`);
-    } catch (err) {
-      error(`Failed to execute swap: ${err.message}`);
-      process.exit(1);
-    }
-  });
-  alkanes.command("pool-details <pool-id>").description("Get detailed information about a specific pool").action(async (poolId, options, command) => {
+  alkanes.command("pool-details <pool-id>").description("Get detailed information about a specific pool").option("--raw", "Output raw JSON").action(async (poolId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Getting pool details...").start();
       const provider = await createProvider2({
         network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanesPoolDetails(poolId);
-      const poolDetails = JSON.parse(result);
+      const result = await provider.alkanes.getPoolDetails(poolId);
       spinner.succeed();
-      console.log(formatOutput(poolDetails, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get pool details: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("reflect-alkane-range <block> <start-tx> <end-tx>").description("Reflect metadata for a range of alkanes in a block").option("--concurrency <n>", "Number of concurrent requests", "30").action(async (block, startTx, endTx, options, command) => {
+  alkanes.command("reflect-alkane-range <block> <start-tx> <end-tx>").description("Reflect metadata for a range of alkanes in a block").option("--raw", "Output raw JSON").action(async (block, startTx, endTx, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Reflecting alkane range...").start();
       const provider = await createProvider2({
         network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanesReflectAlkaneRange(
-        parseFloat(block),
-        parseFloat(startTx),
-        parseFloat(endTx),
-        options.concurrency ? parseFloat(options.concurrency) : null
+      const result = await provider.alkanes.reflectAlkaneRange(
+        parseInt(block),
+        parseInt(startTx),
+        parseInt(endTx)
       );
-      const reflections = JSON.parse(result);
       spinner.succeed();
-      console.log(formatOutput(reflections, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to reflect alkane range: ${err.message}`);
       process.exit(1);
     }
   });
-  alkanes.command("tx-script").description("Execute a tx-script with WASM bytecode").option("--envelope <hex>", "WASM hex (with or without 0x prefix)", "").option("--inputs <json>", 'Cellpack inputs as JSON array (e.g., "[1,2,3]")', "[]").option("--block-tag <tag>", "Block tag to query").action(async (options, command) => {
+  alkanes.command("execute").description("Execute an alkanes smart contract").option("--contract <id>", "Contract ID").option("--inputs <json>", "Input parameters JSON").option("--target <target>", "Target address").option("--pointer <pointer>", "Pointer value").option("--refund-pointer <pointer>", "Refund pointer").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Executing contract...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const params = {
+        contractId: options.contract,
+        inputs: options.inputs ? JSON.parse(options.inputs) : [],
+        target: options.target,
+        pointer: options.pointer ? parseInt(options.pointer) : void 0,
+        refundPointer: options.refundPointer ? parseInt(options.refundPointer) : void 0,
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : void 0
+      };
+      const result = await provider._provider.alkanesExecuteWithStrings(
+        JSON.stringify(params.inputs),
+        params.contractId,
+        params.pointer || 0,
+        params.refundPointer || 0,
+        params.target || "",
+        params.feeRate || 1
+      );
+      spinner.succeed("Contract executed");
+      console.log(formatOutput(JSON.parse(result), { raw: options.raw }));
+    } catch (err) {
+      error(`Failed to execute: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("wrap-btc <amount>").description("Wrap BTC to frBTC").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (amount, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Wrapping BTC...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const params = {
+        amount: parseInt(amount),
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1
+      };
+      const result = await provider._provider.alkanesWrapBtc(JSON.stringify(params));
+      spinner.succeed("BTC wrapped");
+      console.log(formatOutput(JSON.parse(result), { raw: options.raw }));
+    } catch (err) {
+      error(`Failed to wrap BTC: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("init-pool").description("Initialize a new AMM liquidity pool").option("--token0 <id>", "First token ID").option("--token1 <id>", "Second token ID").option("--amount0 <amount>", "Amount of first token").option("--amount1 <amount>", "Amount of second token").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Initializing pool...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const params = {
+        token0: options.token0,
+        token1: options.token1,
+        amount0: options.amount0,
+        amount1: options.amount1,
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1
+      };
+      const txid = await provider._provider.alkanesInitPool(JSON.stringify(params));
+      spinner.succeed("Pool initialized");
+      if (options.raw) {
+        console.log(formatOutput({ txid }, { raw: true }));
+      } else {
+        success(`TXID: ${txid}`);
+      }
+    } catch (err) {
+      error(`Failed to init pool: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("swap").description("Execute an AMM token swap").option("--token-in <id>", "Token to swap from").option("--token-out <id>", "Token to swap to").option("--amount-in <amount>", "Amount to swap").option("--min-amount-out <amount>", "Minimum output amount").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Executing swap...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const params = {
+        tokenIn: options.tokenIn,
+        tokenOut: options.tokenOut,
+        amountIn: options.amountIn,
+        minAmountOut: options.minAmountOut || "0",
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1
+      };
+      const txid = await provider._provider.alkanesSwap(JSON.stringify(params));
+      spinner.succeed("Swap executed");
+      if (options.raw) {
+        console.log(formatOutput({ txid }, { raw: true }));
+      } else {
+        success(`TXID: ${txid}`);
+      }
+    } catch (err) {
+      error(`Failed to swap: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("tx-script").description("Execute a tx-script with WASM bytecode").option("--bytecode <hex>", "WASM bytecode hex").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Executing tx-script...").start();
       const provider = await createProvider2({
         network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.alkanesTxScript(
-        options.envelope,
-        options.inputs,
-        options.blockTag || null
-      );
-      spinner.succeed();
-      console.log(result);
+      const params = {
+        bytecode: options.bytecode,
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1
+      };
+      const result = await provider._provider.alkanesTxScript(JSON.stringify(params));
+      spinner.succeed("tx-script executed");
+      console.log(formatOutput(JSON.parse(result), { raw: options.raw }));
     } catch (err) {
       error(`Failed to execute tx-script: ${err.message}`);
       process.exit(1);
@@ -2544,7 +3103,7 @@ init_formatting();
 var import_ora4 = __toESM(require("ora"));
 function registerEsploraCommands(program2) {
   const esplora = program2.command("esplora").description("Esplora REST API operations");
-  esplora.command("tx <txid>").description("Get transaction by txid").action(async (txid, options, command) => {
+  esplora.command("tx <txid>").description("Get transaction by txid").option("--raw", "Output raw JSON").action(async (txid, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting transaction...").start();
@@ -2552,16 +3111,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_tx_js(txid);
-      const tx = JSON.parse(result);
+      const tx = await provider.esplora.getTx(txid);
       spinner.succeed();
-      console.log(formatOutput(tx, globalOpts));
+      console.log(formatOutput(tx, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get transaction: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("tx-status <txid>").description("Get transaction status").action(async (txid, options, command) => {
+  esplora.command("tx-status <txid>").description("Get transaction status").option("--raw", "Output raw JSON").action(async (txid, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting transaction status...").start();
@@ -2569,16 +3127,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_tx_status_js(txid);
-      const status = JSON.parse(result);
+      const status = await provider.esplora.getTxStatus(txid);
       spinner.succeed();
-      console.log(formatOutput(status, globalOpts));
+      console.log(formatOutput(status, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get transaction status: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("address <address>").description("Get address information").action(async (address, options, command) => {
+  esplora.command("address <address>").description("Get address information").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting address info...").start();
@@ -2586,16 +3143,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_address_info_js(address);
-      const info2 = JSON.parse(result);
+      const info2 = await provider.esplora.getAddressInfo(address);
       spinner.succeed();
-      console.log(formatOutput(info2, globalOpts));
+      console.log(formatOutput(info2, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get address info: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("address-utxos <address>").description("Get UTXOs for an address").action(async (address, options, command) => {
+  esplora.command("address-utxos <address>").description("Get UTXOs for an address").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting UTXOs...").start();
@@ -2603,16 +3159,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_address_utxo_js(address);
-      const utxos = JSON.parse(result);
+      const utxos = await provider.esplora.getAddressUtxos(address);
       spinner.succeed();
-      console.log(formatOutput(utxos, globalOpts));
+      console.log(formatOutput(utxos, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get UTXOs: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("address-txs <address>").description("Get transactions for an address").action(async (address, options, command) => {
+  esplora.command("address-txs <address>").description("Get transactions for an address").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting transactions...").start();
@@ -2620,16 +3175,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_address_txs_js(address);
-      const txs = JSON.parse(result);
+      const txs = await provider.esplora.getAddressTxs(address);
       spinner.succeed();
-      console.log(formatOutput(txs, globalOpts));
+      console.log(formatOutput(txs, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get transactions: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("address-txs-chain <address>").description("Get paginated transactions for an address").option("--last-seen <txid>", "Last seen txid for pagination").action(async (address, options, command) => {
+  esplora.command("address-txs-chain <address>").description("Get paginated transactions for an address").option("--last-seen <txid>", "Last seen txid for pagination").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting transactions...").start();
@@ -2637,19 +3191,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_address_txs_chain_js(
-        address,
-        options.lastSeen || null
-      );
-      const txs = JSON.parse(result);
+      const txs = await provider.esplora.getAddressTxsChain(address, options.lastSeen);
       spinner.succeed();
-      console.log(formatOutput(txs, globalOpts));
+      console.log(formatOutput(txs, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get transactions: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("blocks-tip-height").description("Get current block tip height").action(async (options, command) => {
+  esplora.command("blocks-tip-height").description("Get current block tip height").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting tip height...").start();
@@ -2657,16 +3207,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_blocks_tip_height_js();
-      const height = JSON.parse(result);
+      const height = await provider.esplora.getBlocksTipHeight();
       spinner.succeed();
-      console.log(formatOutput(height, globalOpts));
+      console.log(formatOutput(height, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get tip height: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("blocks-tip-hash").description("Get current block tip hash").action(async (options, command) => {
+  esplora.command("blocks-tip-hash").description("Get current block tip hash").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting tip hash...").start();
@@ -2674,16 +3223,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_blocks_tip_hash_js();
-      const hash = JSON.parse(result);
+      const hash = await provider.esplora.getBlocksTipHash();
       spinner.succeed();
-      console.log(formatOutput(hash, globalOpts));
+      console.log(formatOutput(hash, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get tip hash: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("fee-estimates").description("Get fee estimates").action(async (options, command) => {
+  esplora.command("fee-estimates").description("Get fee estimates").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting fee estimates...").start();
@@ -2691,16 +3239,19 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_fee_estimates_js();
-      const estimates = JSON.parse(result);
+      const estimates = await provider.esplora.getFeeEstimates();
       spinner.succeed();
-      console.log(formatOutput(estimates, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(estimates, { raw: true }));
+      } else {
+        console.log(formatFeeEstimates(estimates));
+      }
     } catch (err) {
       error(`Failed to get fee estimates: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("broadcast-tx <hex>").description("Broadcast a transaction").action(async (hex, options, command) => {
+  esplora.command("broadcast-tx <hex>").description("Broadcast a transaction").option("--raw", "Output raw JSON").action(async (hex, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Broadcasting transaction...").start();
@@ -2708,16 +3259,19 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_broadcast_tx_js(hex);
-      const txid = JSON.parse(result);
+      const txid = await provider.esplora.broadcastTx(hex);
       spinner.succeed("Transaction broadcast");
-      success(`TXID: ${txid}`);
+      if (options.raw) {
+        console.log(formatOutput({ txid }, { raw: true }));
+      } else {
+        success(`TXID: ${txid}`);
+      }
     } catch (err) {
       error(`Failed to broadcast transaction: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("tx-hex <txid>").description("Get raw transaction hex").action(async (txid, options, command) => {
+  esplora.command("tx-hex <txid>").description("Get raw transaction hex").option("--raw", "Output raw JSON").action(async (txid, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting transaction hex...").start();
@@ -2725,16 +3279,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esplora_get_tx_hex_js(txid);
-      const hex = JSON.parse(result);
+      const hex = await provider.esplora.getTxHex(txid);
       spinner.succeed();
-      console.log(formatOutput(hex, globalOpts));
+      console.log(formatOutput(hex, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get transaction hex: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("blocks [start-height]").description("Get blocks starting from height").action(async (startHeight, options, command) => {
+  esplora.command("blocks [start-height]").description("Get blocks starting from height").option("--raw", "Output raw JSON").action(async (startHeight, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting blocks...").start();
@@ -2742,16 +3295,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetBlocks(startHeight ? parseFloat(startHeight) : null);
-      const blocks = JSON.parse(result);
+      const blocks = await provider.esplora.getBlocks(startHeight ? parseInt(startHeight) : void 0);
       spinner.succeed();
-      console.log(formatOutput(blocks, globalOpts));
+      console.log(formatOutput(blocks, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get blocks: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("block-height <height>").description("Get block hash by height").action(async (height, options, command) => {
+  esplora.command("block-height <height>").description("Get block hash by height").option("--raw", "Output raw JSON").action(async (height, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting block...").start();
@@ -2759,15 +3311,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const hash = await provider.esploraGetBlockByHeight(parseFloat(height));
+      const hash = await provider.esplora.getBlockByHeight(parseInt(height));
       spinner.succeed();
-      console.log(formatOutput(hash, globalOpts));
+      console.log(formatOutput(hash, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("block <hash>").description("Get block by hash").action(async (hash, options, command) => {
+  esplora.command("block <hash>").description("Get block by hash").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting block...").start();
@@ -2775,16 +3327,19 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetBlock(hash);
-      const block = JSON.parse(result);
+      const block = await provider.esplora.getBlock(hash);
       spinner.succeed();
-      console.log(formatOutput(block, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(block, { raw: true }));
+      } else {
+        console.log(formatBlockInfo(block));
+      }
     } catch (err) {
       error(`Failed to get block: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("block-status <hash>").description("Get block status").action(async (hash, options, command) => {
+  esplora.command("block-status <hash>").description("Get block status").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting block status...").start();
@@ -2792,16 +3347,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetBlockStatus(hash);
-      const status = JSON.parse(result);
+      const status = await provider.esplora.getBlockStatus(hash);
       spinner.succeed();
-      console.log(formatOutput(status, globalOpts));
+      console.log(formatOutput(status, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block status: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("block-txids <hash>").description("Get transaction IDs in block").action(async (hash, options, command) => {
+  esplora.command("block-txids <hash>").description("Get transaction IDs in block").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting block txids...").start();
@@ -2809,16 +3363,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetBlockTxids(hash);
-      const txids = JSON.parse(result);
+      const txids = await provider.esplora.getBlockTxids(hash);
       spinner.succeed();
-      console.log(formatOutput(txids, globalOpts));
+      console.log(formatOutput(txids, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block txids: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("block-header <hash>").description("Get block header").action(async (hash, options, command) => {
+  esplora.command("block-header <hash>").description("Get block header").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting block header...").start();
@@ -2826,15 +3379,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const header = await provider.esploraGetBlockHeader(hash);
+      const header = await provider.esplora.getBlockHeader(hash);
       spinner.succeed();
-      console.log(formatOutput(header, globalOpts));
+      console.log(formatOutput(header, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block header: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("block-raw <hash>").description("Get raw block data").action(async (hash, options, command) => {
+  esplora.command("block-raw <hash>").description("Get raw block data").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting raw block...").start();
@@ -2842,15 +3395,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const raw = await provider.esploraGetBlockRaw(hash);
+      const raw = await provider.esplora.getBlockRaw(hash);
       spinner.succeed();
-      console.log(formatOutput(raw, globalOpts));
+      console.log(formatOutput(raw, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get raw block: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("block-txid <hash> <index>").description("Get transaction ID by block hash and index").action(async (hash, index, options, command) => {
+  esplora.command("block-txid <hash> <index>").description("Get transaction ID by block hash and index").option("--raw", "Output raw JSON").action(async (hash, index, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting block txid...").start();
@@ -2858,15 +3411,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const txid = await provider.esploraGetBlockTxid(hash, parseFloat(index));
+      const txid = await provider.esplora.getBlockTxid(hash, parseInt(index));
       spinner.succeed();
-      console.log(formatOutput(txid, globalOpts));
+      console.log(formatOutput(txid, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block txid: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("block-txs <hash> [start-index]").description("Get block transactions").action(async (hash, startIndex, options, command) => {
+  esplora.command("block-txs <hash> [start-index]").description("Get block transactions").option("--raw", "Output raw JSON").action(async (hash, startIndex, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting block txs...").start();
@@ -2874,16 +3427,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetBlockTxs(hash, startIndex ? parseFloat(startIndex) : null);
-      const txs = JSON.parse(result);
+      const txs = await provider.esplora.getBlockTxs(hash, startIndex ? parseInt(startIndex) : void 0);
       spinner.succeed();
-      console.log(formatOutput(txs, globalOpts));
+      console.log(formatOutput(txs, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block txs: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("address-txs-mempool <address>").description("Get mempool transactions for address").action(async (address, options, command) => {
+  esplora.command("address-txs-mempool <address>").description("Get mempool transactions for address").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting mempool transactions...").start();
@@ -2891,16 +3443,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetAddressTxsMempool(address);
-      const txs = JSON.parse(result);
+      const txs = await provider.esplora.getAddressTxsMempool(address);
       spinner.succeed();
-      console.log(formatOutput(txs, globalOpts));
+      console.log(formatOutput(txs, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get mempool transactions: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("address-prefix <prefix>").description("Search addresses by prefix").action(async (prefix, options, command) => {
+  esplora.command("address-prefix <prefix>").description("Search addresses by prefix").option("--raw", "Output raw JSON").action(async (prefix, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Searching addresses...").start();
@@ -2908,16 +3459,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetAddressPrefix(prefix);
-      const addresses = JSON.parse(result);
+      const addresses = await provider.esplora.getAddressPrefix(prefix);
       spinner.succeed();
-      console.log(formatOutput(addresses, globalOpts));
+      console.log(formatOutput(addresses, { raw: options.raw }));
     } catch (err) {
       error(`Failed to search addresses: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("tx-raw <txid>").description("Get raw transaction").action(async (txid, options, command) => {
+  esplora.command("tx-raw <txid>").description("Get raw transaction").option("--raw", "Output raw JSON").action(async (txid, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting raw transaction...").start();
@@ -2925,15 +3475,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const raw = await provider.esploraGetTxRaw(txid);
+      const raw = await provider.esplora.getTxRaw(txid);
       spinner.succeed();
-      console.log(formatOutput(raw, globalOpts));
+      console.log(formatOutput(raw, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get raw transaction: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("tx-merkle-proof <txid>").description("Get merkle proof for transaction").action(async (txid, options, command) => {
+  esplora.command("tx-merkle-proof <txid>").description("Get merkle proof for transaction").option("--raw", "Output raw JSON").action(async (txid, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting merkle proof...").start();
@@ -2941,16 +3491,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetTxMerkleProof(txid);
-      const proof = JSON.parse(result);
+      const proof = await provider.esplora.getTxMerkleProof(txid);
       spinner.succeed();
-      console.log(formatOutput(proof, globalOpts));
+      console.log(formatOutput(proof, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get merkle proof: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("tx-merkleblock-proof <txid>").description("Get merkle block proof").action(async (txid, options, command) => {
+  esplora.command("tx-merkleblock-proof <txid>").description("Get merkle block proof").option("--raw", "Output raw JSON").action(async (txid, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting merkleblock proof...").start();
@@ -2958,15 +3507,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const proof = await provider.esploraGetTxMerkleblockProof(txid);
+      const proof = await provider.esplora.getTxMerkleblockProof(txid);
       spinner.succeed();
-      console.log(formatOutput(proof, globalOpts));
+      console.log(formatOutput(proof, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get merkleblock proof: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("tx-outspend <txid> <index>").description("Get outspend for transaction output").action(async (txid, index, options, command) => {
+  esplora.command("tx-outspend <txid> <index>").description("Get outspend for transaction output").option("--raw", "Output raw JSON").action(async (txid, index, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting outspend...").start();
@@ -2974,16 +3523,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetTxOutspend(txid, parseFloat(index));
-      const outspend = JSON.parse(result);
+      const outspend = await provider.esplora.getTxOutspend(txid, parseInt(index));
       spinner.succeed();
-      console.log(formatOutput(outspend, globalOpts));
+      console.log(formatOutput(outspend, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get outspend: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("tx-outspends <txid>").description("Get all outspends for transaction").action(async (txid, options, command) => {
+  esplora.command("tx-outspends <txid>").description("Get all outspends for transaction").option("--raw", "Output raw JSON").action(async (txid, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting outspends...").start();
@@ -2991,16 +3539,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetTxOutspends(txid);
-      const outspends = JSON.parse(result);
+      const outspends = await provider.esplora.getTxOutspends(txid);
       spinner.succeed();
-      console.log(formatOutput(outspends, globalOpts));
+      console.log(formatOutput(outspends, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get outspends: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("mempool").description("Get mempool info").action(async (options, command) => {
+  esplora.command("mempool").description("Get mempool info").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting mempool info...").start();
@@ -3008,16 +3555,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetMempool();
-      const mempool = JSON.parse(result);
+      const mempool = await provider.esplora.getMempool();
       spinner.succeed();
-      console.log(formatOutput(mempool, globalOpts));
+      console.log(formatOutput(mempool, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get mempool info: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("mempool-txids").description("Get mempool transaction IDs").action(async (options, command) => {
+  esplora.command("mempool-txids").description("Get mempool transaction IDs").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting mempool txids...").start();
@@ -3025,16 +3571,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetMempoolTxids();
-      const txids = JSON.parse(result);
+      const txids = await provider.esplora.getMempoolTxids();
       spinner.succeed();
-      console.log(formatOutput(txids, globalOpts));
+      console.log(formatOutput(txids, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get mempool txids: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("mempool-recent").description("Get recent mempool transactions").action(async (options, command) => {
+  esplora.command("mempool-recent").description("Get recent mempool transactions").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Getting recent mempool txs...").start();
@@ -3042,16 +3587,15 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const result = await provider.esploraGetMempoolRecent();
-      const txs = JSON.parse(result);
+      const txs = await provider.esplora.getMempoolRecent();
       spinner.succeed();
-      console.log(formatOutput(txs, globalOpts));
+      console.log(formatOutput(txs, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get recent mempool txs: ${err.message}`);
       process.exit(1);
     }
   });
-  esplora.command("post-tx <tx-hex>").description("Post transaction (alternative to broadcast)").action(async (txHex, options, command) => {
+  esplora.command("post-tx <tx-hex>").description("Post transaction (alternative to broadcast)").option("--raw", "Output raw JSON").action(async (txHex, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora4.default)("Posting transaction...").start();
@@ -3059,9 +3603,13 @@ function registerEsploraCommands(program2) {
         network: globalOpts.provider,
         esploraUrl: globalOpts.esploraUrl
       });
-      const txid = await provider.esploraPostTx(txHex);
+      const txid = await provider.esplora.broadcastTx(txHex);
       spinner.succeed("Transaction posted");
-      success(`TXID: ${txid}`);
+      if (options.raw) {
+        console.log(formatOutput({ txid }, { raw: true }));
+      } else {
+        success(`TXID: ${txid}`);
+      }
     } catch (err) {
       error(`Failed to post transaction: ${err.message}`);
       process.exit(1);
@@ -3074,7 +3622,7 @@ init_formatting();
 var import_ora5 = __toESM(require("ora"));
 function registerOrdCommands(program2) {
   const ord = program2.command("ord").description("Ordinals and Inscriptions operations");
-  ord.command("inscription <id>").description("Get inscription by ID").action(async (id, options, command) => {
+  ord.command("inscription <id>").description("Get inscription by ID").option("--raw", "Output raw JSON").action(async (id, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting inscription...").start();
@@ -3082,16 +3630,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ord_inscription_js(id);
-      const inscription = JSON.parse(result);
+      const result = await provider.ord.getInscription(id);
       spinner.succeed();
-      console.log(formatOutput(inscription, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get inscription: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("inscriptions").description("List inscriptions").option("--page <number>", "Page number", "0").action(async (options, command) => {
+  ord.command("inscriptions").description("List inscriptions").option("--page <number>", "Page number", "0").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting inscriptions...").start();
@@ -3099,17 +3646,19 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const page = options.page ? parseFloat(options.page) : null;
-      const result = await provider.ord_inscriptions_js(page);
-      const inscriptions = JSON.parse(result);
+      const result = await provider.ord.getInscriptions(parseInt(options.page));
       spinner.succeed();
-      console.log(formatOutput(inscriptions, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(result, { raw: true }));
+      } else {
+        console.log(formatInscriptions(result));
+      }
     } catch (err) {
       error(`Failed to get inscriptions: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("outputs <address>").description("Get ordinal outputs for an address").action(async (address, options, command) => {
+  ord.command("outputs <address>").description("Get ordinal outputs for an address").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting outputs...").start();
@@ -3117,16 +3666,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ord_outputs_js(address);
-      const outputs = JSON.parse(result);
+      const result = await provider.ord.getOutputs(address);
       spinner.succeed();
-      console.log(formatOutput(outputs, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get outputs: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("rune <name>").description("Get rune information").action(async (name, options, command) => {
+  ord.command("rune <name>").description("Get rune information").option("--raw", "Output raw JSON").action(async (name, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting rune...").start();
@@ -3134,16 +3682,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ord_rune_js(name);
-      const rune = JSON.parse(result);
+      const result = await provider.ord.getRune(name);
       spinner.succeed();
-      console.log(formatOutput(rune, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get rune: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("list <outpoint>").description("List ordinals in an output").action(async (outpoint, options, command) => {
+  ord.command("list <outpoint>").description("List ordinals in an output").option("--raw", "Output raw JSON").action(async (outpoint, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Listing ordinals...").start();
@@ -3151,16 +3698,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ord_list_js(outpoint);
-      const list = JSON.parse(result);
+      const result = await provider.ord.list(outpoint);
       spinner.succeed();
-      console.log(formatOutput(list, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to list ordinals: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("find <sat>").description("Find ordinal by satoshi number").action(async (sat, options, command) => {
+  ord.command("find <sat>").description("Find ordinal by satoshi number").option("--raw", "Output raw JSON").action(async (sat, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Finding ordinal...").start();
@@ -3168,16 +3714,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ord_find_js(parseFloat(sat));
-      const location = JSON.parse(result);
+      const result = await provider.ord.find(parseInt(sat));
       spinner.succeed();
-      console.log(formatOutput(location, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to find ordinal: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("address-info <address>").description("Get address information").action(async (address, options, command) => {
+  ord.command("address-info <address>").description("Get address information").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting address info...").start();
@@ -3185,16 +3730,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ordAddressInfo(address);
-      const addressInfo = JSON.parse(result);
+      const result = await provider.ord.getAddressInfo(address);
       spinner.succeed();
-      console.log(formatOutput(addressInfo, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get address info: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("block-info <query>").description("Get block information (height or hash)").action(async (query, options, command) => {
+  ord.command("block-info <query>").description("Get block information (height or hash)").option("--raw", "Output raw JSON").action(async (query, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting block info...").start();
@@ -3202,16 +3746,19 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ordBlockInfo(query);
-      const blockInfo = JSON.parse(result);
+      const result = await provider.ord.getBlockInfo(query);
       spinner.succeed();
-      console.log(formatOutput(blockInfo, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(result, { raw: true }));
+      } else {
+        console.log(formatBlockInfo(result));
+      }
     } catch (err) {
       error(`Failed to get block info: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("block-count").description("Get latest block count").action(async (options, command) => {
+  ord.command("block-count").description("Get latest block count").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting block count...").start();
@@ -3219,16 +3766,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ordBlockCount();
-      const blockCount = JSON.parse(result);
+      const result = await provider.ord.getBlockCount();
       spinner.succeed();
-      console.log(formatOutput(blockCount, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block count: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("blocks").description("Get latest blocks").action(async (options, command) => {
+  ord.command("blocks").description("Get latest blocks").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting blocks...").start();
@@ -3236,16 +3782,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ordBlocks();
-      const blocks = JSON.parse(result);
+      const result = await provider.ord.getBlocks();
       spinner.succeed();
-      console.log(formatOutput(blocks, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get blocks: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("children <inscription-id>").description("Get children of an inscription").option("--page <number>", "Page number", "0").action(async (inscriptionId, options, command) => {
+  ord.command("children <inscription-id>").description("Get children of an inscription").option("--page <number>", "Page number", "0").option("--raw", "Output raw JSON").action(async (inscriptionId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting children...").start();
@@ -3253,17 +3798,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const page = options.page ? parseFloat(options.page) : null;
-      const result = await provider.ordChildren(inscriptionId, page);
-      const children = JSON.parse(result);
+      const result = await provider.ord.getChildren(inscriptionId, parseInt(options.page));
       spinner.succeed();
-      console.log(formatOutput(children, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get children: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("content <inscription-id>").description("Get inscription content").action(async (inscriptionId, options, command) => {
+  ord.command("content <inscription-id>").description("Get inscription content").option("--raw", "Output raw JSON").action(async (inscriptionId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting content...").start();
@@ -3271,16 +3814,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ordContent(inscriptionId);
-      const content = JSON.parse(result);
+      const result = await provider.ord.getContent(inscriptionId);
       spinner.succeed();
-      console.log(formatOutput(content, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get content: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("parents <inscription-id>").description("Get parents of an inscription").option("--page <number>", "Page number", "0").action(async (inscriptionId, options, command) => {
+  ord.command("parents <inscription-id>").description("Get parents of an inscription").option("--page <number>", "Page number", "0").option("--raw", "Output raw JSON").action(async (inscriptionId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting parents...").start();
@@ -3288,17 +3830,15 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const page = options.page ? parseFloat(options.page) : null;
-      const result = await provider.ordParents(inscriptionId, page);
-      const parents = JSON.parse(result);
+      const result = await provider.ord.getParents(inscriptionId, parseInt(options.page));
       spinner.succeed();
-      console.log(formatOutput(parents, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get parents: ${err.message}`);
       process.exit(1);
     }
   });
-  ord.command("tx-info <txid>").description("Get transaction information").action(async (txid, options, command) => {
+  ord.command("tx-info <txid>").description("Get transaction information").option("--raw", "Output raw JSON").action(async (txid, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora5.default)("Getting transaction info...").start();
@@ -3306,10 +3846,9 @@ function registerOrdCommands(program2) {
         network: globalOpts.provider,
         jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.ordTxInfo(txid);
-      const txInfo = JSON.parse(result);
+      const result = await provider.ord.getTxInfo(txid);
       spinner.succeed();
-      console.log(formatOutput(txInfo, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get transaction info: ${err.message}`);
       process.exit(1);
@@ -3432,7 +3971,7 @@ init_formatting();
 var import_ora8 = __toESM(require("ora"));
 function registerMetashrewCommands(program2) {
   const metashrew = program2.command("metashrew").description("Metashrew RPC operations");
-  metashrew.command("height").description("Get current metashrew height").action(async (options, command) => {
+  metashrew.command("height").description("Get current metashrew height").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora8.default)("Getting height...").start();
@@ -3440,16 +3979,15 @@ function registerMetashrewCommands(program2) {
         network: globalOpts.provider,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.metashrew_height_js();
-      const height = JSON.parse(result);
+      const height = await provider.metashrew.getHeight();
       spinner.succeed();
-      console.log(formatOutput(height, globalOpts));
+      console.log(formatOutput(height, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get height: ${err.message}`);
       process.exit(1);
     }
   });
-  metashrew.command("state-root").description("Get state root at height").option("--height <number>", "Block height").action(async (options, command) => {
+  metashrew.command("state-root").description("Get state root at height").option("--height <number>", "Block height").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora8.default)("Getting state root...").start();
@@ -3457,17 +3995,16 @@ function registerMetashrewCommands(program2) {
         network: globalOpts.provider,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const height = options.height ? parseFloat(options.height) : null;
-      const result = await provider.metashrew_state_root_js(height);
-      const stateRoot = JSON.parse(result);
+      const height = options.height ? parseInt(options.height) : void 0;
+      const stateRoot = await provider.metashrew.getStateRoot(height);
       spinner.succeed();
-      console.log(formatOutput(stateRoot, globalOpts));
+      console.log(formatOutput(stateRoot, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get state root: ${err.message}`);
       process.exit(1);
     }
   });
-  metashrew.command("getblockhash <height>").description("Get block hash at height").action(async (height, options, command) => {
+  metashrew.command("getblockhash <height>").description("Get block hash at height").option("--raw", "Output raw JSON").action(async (height, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora8.default)("Getting block hash...").start();
@@ -3475,16 +4012,15 @@ function registerMetashrewCommands(program2) {
         network: globalOpts.provider,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.metashrew_get_block_hash_js(parseFloat(height));
-      const hash = JSON.parse(result);
+      const hash = await provider.metashrew.getBlockHash(parseInt(height));
       spinner.succeed();
-      console.log(formatOutput(hash, globalOpts));
+      console.log(formatOutput(hash, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block hash: ${err.message}`);
       process.exit(1);
     }
   });
-  metashrew.command("view <function> <payload> <block-tag>").description("Call metashrew view function").action(async (fn, payload, blockTag, options, command) => {
+  metashrew.command("view <function> <payload> <block-tag>").description("Call metashrew view function").option("--raw", "Output raw JSON").action(async (fn, payload, blockTag, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora8.default)("Calling view function...").start();
@@ -3492,10 +4028,9 @@ function registerMetashrewCommands(program2) {
         network: globalOpts.provider,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const result = await provider.metashrew_view_js(fn, payload, blockTag);
-      const view = JSON.parse(result);
+      const result = await provider.metashrew.view(fn, payload, blockTag);
       spinner.succeed();
-      console.log(formatOutput(view, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to call view function: ${err.message}`);
       process.exit(1);
@@ -4143,160 +4678,150 @@ function registerEspoCommands(program2) {
 init_formatting();
 var import_ora12 = __toESM(require("ora"));
 function registerBrc20ProgCommands(program2) {
-  const brc20prog = program2.command("brc20-prog").description("Programmable BRC-20 operations");
-  brc20prog.command("balance <address>").description("Get balance for address").option("--block <tag>", "Block tag").action(async (address, options, command) => {
+  const brc20Prog = program2.command("brc20-prog").description("Programmable BRC-20 operations");
+  brc20Prog.command("balance <address>").description("Get balance for address").option("--block <tag>", "Block tag").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Getting balance...").start();
       const provider = await createProvider2({
-        network: globalOpts.provider
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.brc20prog_get_balance_js(
-        address,
-        options.block || null
-      );
-      const balance = JSON.parse(result);
+      const result = await provider.brc20prog.getBalance(address, options.block);
       spinner.succeed();
-      console.log(formatOutput(balance, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get balance: ${err.message}`);
       process.exit(1);
     }
   });
-  brc20prog.command("code <address>").description("Get contract code").action(async (address, options, command) => {
+  brc20Prog.command("code <address>").description("Get contract code").option("--raw", "Output raw JSON").action(async (address, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Getting code...").start();
       const provider = await createProvider2({
-        network: globalOpts.provider
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.brc20prog_get_code_js(address);
-      const code = JSON.parse(result);
+      const result = await provider.brc20prog.getCode(address);
       spinner.succeed();
-      console.log(formatOutput(code, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get code: ${err.message}`);
       process.exit(1);
     }
   });
-  brc20prog.command("block-number").description("Get current block number").action(async (options, command) => {
+  brc20Prog.command("block-number").description("Get current block number").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Getting block number...").start();
       const provider = await createProvider2({
-        network: globalOpts.provider
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.brc20prog_block_number_js();
-      const blockNumber = JSON.parse(result);
+      const result = await provider.brc20prog.getBlockNumber();
       spinner.succeed();
-      console.log(formatOutput(blockNumber, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get block number: ${err.message}`);
       process.exit(1);
     }
   });
-  brc20prog.command("chain-id").description("Get chain ID").action(async (options, command) => {
+  brc20Prog.command("chain-id").description("Get chain ID").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Getting chain ID...").start();
       const provider = await createProvider2({
-        network: globalOpts.provider
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.brc20prog_chain_id_js();
-      const chainId = JSON.parse(result);
+      const result = await provider.brc20prog.getChainId();
       spinner.succeed();
-      console.log(formatOutput(chainId, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get chain ID: ${err.message}`);
       process.exit(1);
     }
   });
-  brc20prog.command("tx-receipt <hash>").description("Get transaction receipt").action(async (hash, options, command) => {
+  brc20Prog.command("tx-receipt <hash>").description("Get transaction receipt").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Getting transaction receipt...").start();
       const provider = await createProvider2({
-        network: globalOpts.provider
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.brc20prog_get_transaction_receipt_js(hash);
-      const receipt = JSON.parse(result);
+      const result = await provider.brc20prog.getTxReceipt(hash);
       spinner.succeed();
-      console.log(formatOutput(receipt, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get transaction receipt: ${err.message}`);
       process.exit(1);
     }
   });
-  brc20prog.command("tx <hash>").description("Get transaction by hash").action(async (hash, options, command) => {
+  brc20Prog.command("tx <hash>").description("Get transaction by hash").option("--raw", "Output raw JSON").action(async (hash, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Getting transaction...").start();
       const provider = await createProvider2({
-        network: globalOpts.provider
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.brc20prog_get_transaction_by_hash_js(hash);
-      const tx = JSON.parse(result);
+      const result = await provider.brc20prog.getTx(hash);
       spinner.succeed();
-      console.log(formatOutput(tx, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get transaction: ${err.message}`);
       process.exit(1);
     }
   });
-  brc20prog.command("block <number>").description("Get block by number").option("--full", "Include full transactions", false).action(async (number, options, command) => {
+  brc20Prog.command("block <number>").description("Get block by number").option("--include-txs", "Include full transaction objects", false).option("--raw", "Output raw JSON").action(async (number, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Getting block...").start();
       const provider = await createProvider2({
-        network: globalOpts.provider
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.brc20prog_get_block_by_number_js(
-        number,
-        options.full
-      );
-      const block = JSON.parse(result);
+      const result = await provider.brc20prog.getBlock(number, options.includeTxs);
       spinner.succeed();
-      console.log(formatOutput(block, globalOpts));
+      if (options.raw) {
+        console.log(formatOutput(result, { raw: true }));
+      } else {
+        console.log(formatBlockInfo(result));
+      }
     } catch (err) {
       error(`Failed to get block: ${err.message}`);
       process.exit(1);
     }
   });
-  brc20prog.command("call <to> <data>").description("Call contract function").option("--block <tag>", "Block tag").action(async (to, data, options, command) => {
+  brc20Prog.command("call <to> <data>").description("Call contract function").option("--from <address>", "Caller address").option("--block-tag <tag>", "Block tag (latest, pending, or number)").option("--raw", "Output raw JSON").action(async (to, data, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Calling contract...").start();
       const provider = await createProvider2({
-        network: globalOpts.provider
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.brc20prog_call_js(
-        to,
-        data,
-        options.block || null
-      );
-      const output = JSON.parse(result);
+      const result = await provider.brc20prog.call(to, data, options.from, options.blockTag);
       spinner.succeed();
-      console.log(formatOutput(output, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to call contract: ${err.message}`);
       process.exit(1);
     }
   });
-  brc20prog.command("estimate-gas <to> <data>").description("Estimate gas for transaction").option("--block <tag>", "Block tag").action(async (to, data, options, command) => {
+  brc20Prog.command("estimate-gas <to> <data>").description("Estimate gas for transaction").option("--from <address>", "Caller address").option("--raw", "Output raw JSON").action(async (to, data, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Estimating gas...").start();
       const provider = await createProvider2({
-        network: globalOpts.provider
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
       });
-      const result = await provider.brc20prog_estimate_gas_js(
-        to,
-        data,
-        options.block || null
-      );
-      const gas = JSON.parse(result);
+      const result = await provider.brc20prog.estimateGas(to, data, options.from);
       spinner.succeed();
-      console.log(formatOutput(gas, globalOpts));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to estimate gas: ${err.message}`);
       process.exit(1);
@@ -5108,8 +5633,33 @@ function registerSubfrostCommands(program2) {
 }
 
 // src/cli/index.ts
+var originalConsoleLog = console.log;
+var originalConsoleInfo = console.info;
+function setupLogging(verbose2) {
+  setVerbosity(verbose2);
+  console.log = (...args) => {
+    const message = args.map((a) => String(a)).join(" ");
+    if (message.includes("[INFO]") || message.includes("JsonRpcProvider::call") || message.includes("Raw RPC response")) {
+      if (verbose2 >= 3) {
+        originalConsoleLog.apply(console, [import_chalk3.default.dim(...args)]);
+      }
+      return;
+    }
+    originalConsoleLog.apply(console, args);
+  };
+  console.info = (...args) => {
+    const message = args.map((a) => String(a)).join(" ");
+    if (message.includes("[INFO]")) {
+      if (verbose2 >= 2) {
+        originalConsoleInfo.apply(console, [import_chalk3.default.dim(...args)]);
+      }
+      return;
+    }
+    originalConsoleInfo.apply(console, args);
+  };
+}
 var program = new import_commander.Command();
-program.name("alkanes-bindgen-cli").version("0.1.0").description("Alkanes Bindgen CLI - Bitcoin smart contracts (WASM/TypeScript version)").option("-p, --provider <network>", "Network: mainnet/testnet/signet/regtest", "mainnet").option("--wallet-file <path>", "Wallet file path", "~/.alkanes/wallet.json").option("--passphrase <password>", "Wallet passphrase").option("--jsonrpc-url <url>", "JSON-RPC URL").option("--esplora-url <url>", "Esplora API URL").option("--metashrew-url <url>", "Metashrew RPC URL").option("--raw", "Output raw JSON").option("-y, --auto-confirm", "Skip confirmation prompts");
+program.name("alkanes-bindgen-cli").version("0.1.0").description("Alkanes Bindgen CLI - Bitcoin smart contracts (WASM/TypeScript version)").option("-p, --provider <network>", "Network: mainnet/testnet/signet/regtest", "mainnet").option("--wallet-file <path>", "Wallet file path", "~/.alkanes/wallet.json").option("--passphrase <password>", "Wallet passphrase").option("--jsonrpc-url <url>", "JSON-RPC URL").option("--esplora-url <url>", "Esplora API URL").option("--metashrew-url <url>", "Metashrew RPC URL").option("-v, --verbose", "Verbose output (-v, -vv, -vvv for increasing levels)", (_, prev) => prev + 1, 0).option("-y, --auto-confirm", "Skip confirmation prompts");
 registerWalletCommands(program);
 registerBitcoindCommands(program);
 registerAlkanesCommands(program);
@@ -5149,6 +5699,9 @@ process.on("uncaughtException", (error2) => {
   }
   process.exit(1);
 });
+var preParseOpts = program.opts();
+var verboseCount = process.argv.filter((arg) => arg === "-v" || arg === "--verbose").length + process.argv.filter((arg) => arg.match(/^-v+$/)).reduce((acc, arg) => acc + arg.length - 1, 0);
+setupLogging(verboseCount);
 program.parse(process.argv);
 if (!process.argv.slice(2).length) {
   program.outputHelp();

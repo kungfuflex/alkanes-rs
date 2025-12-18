@@ -1,6 +1,8 @@
 /**
  * Metashrew command group
  * Metashrew RPC operations
+ *
+ * The CLI uses the SDK's MetashrewClient via provider.metashrew for all operations.
  */
 
 import { Command } from 'commander';
@@ -15,6 +17,7 @@ export function registerMetashrewCommands(program: Command): void {
   metashrew
     .command('height')
     .description('Get current metashrew height')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -25,11 +28,10 @@ export function registerMetashrewCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.metashrew_height_js();
-        const height = JSON.parse(result);
+        const height = await provider.metashrew.getHeight();
 
         spinner.succeed();
-        console.log(formatOutput(height, globalOpts));
+        console.log(formatOutput(height, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get height: ${err.message}`);
         process.exit(1);
@@ -41,6 +43,7 @@ export function registerMetashrewCommands(program: Command): void {
     .command('state-root')
     .description('Get state root at height')
     .option('--height <number>', 'Block height')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -51,12 +54,11 @@ export function registerMetashrewCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const height = options.height ? parseFloat(options.height) : null;
-        const result = await provider.metashrew_state_root_js(height);
-        const stateRoot = JSON.parse(result);
+        const height = options.height ? parseInt(options.height) : undefined;
+        const stateRoot = await provider.metashrew.getStateRoot(height);
 
         spinner.succeed();
-        console.log(formatOutput(stateRoot, globalOpts));
+        console.log(formatOutput(stateRoot, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get state root: ${err.message}`);
         process.exit(1);
@@ -67,6 +69,7 @@ export function registerMetashrewCommands(program: Command): void {
   metashrew
     .command('getblockhash <height>')
     .description('Get block hash at height')
+    .option('--raw', 'Output raw JSON')
     .action(async (height, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -77,11 +80,10 @@ export function registerMetashrewCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.metashrew_get_block_hash_js(parseFloat(height));
-        const hash = JSON.parse(result);
+        const hash = await provider.metashrew.getBlockHash(parseInt(height));
 
         spinner.succeed();
-        console.log(formatOutput(hash, globalOpts));
+        console.log(formatOutput(hash, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get block hash: ${err.message}`);
         process.exit(1);
@@ -92,6 +94,7 @@ export function registerMetashrewCommands(program: Command): void {
   metashrew
     .command('view <function> <payload> <block-tag>')
     .description('Call metashrew view function')
+    .option('--raw', 'Output raw JSON')
     .action(async (fn, payload, blockTag, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -102,11 +105,10 @@ export function registerMetashrewCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.metashrew_view_js(fn, payload, blockTag);
-        const view = JSON.parse(result);
+        const result = await provider.metashrew.view(fn, payload, blockTag);
 
         spinner.succeed();
-        console.log(formatOutput(view, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to call view function: ${err.message}`);
         process.exit(1);

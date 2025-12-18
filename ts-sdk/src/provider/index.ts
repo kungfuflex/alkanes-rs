@@ -302,7 +302,8 @@ export class BitcoinRpcClient {
   }
 
   async getBlock(hash: string, raw: boolean = false): Promise<any> {
-    return this.provider.bitcoindGetBlock(hash, raw);
+    const result = await this.provider.bitcoindGetBlock(hash, raw);
+    return mapToObject(result);
   }
 
   async sendRawTransaction(hex: string): Promise<string> {
@@ -310,27 +311,73 @@ export class BitcoinRpcClient {
   }
 
   async getTransaction(txid: string, blockHash?: string): Promise<any> {
-    return this.provider.bitcoindGetRawTransaction(txid, blockHash);
+    const result = await this.provider.bitcoindGetRawTransaction(txid, blockHash);
+    return mapToObject(result);
   }
 
   async getBlockchainInfo(): Promise<any> {
-    return this.provider.bitcoindGetBlockchainInfo();
+    const result = await this.provider.bitcoindGetBlockchainInfo();
+    return mapToObject(result);
   }
 
   async getNetworkInfo(): Promise<any> {
-    return this.provider.bitcoindGetNetworkInfo();
+    const result = await this.provider.bitcoindGetNetworkInfo();
+    return mapToObject(result);
   }
 
   async getMempoolInfo(): Promise<any> {
-    return this.provider.bitcoindGetMempoolInfo();
+    const result = await this.provider.bitcoindGetMempoolInfo();
+    return mapToObject(result);
   }
 
   async estimateSmartFee(target: number): Promise<any> {
-    return this.provider.bitcoindEstimateSmartFee(target);
+    const result = await this.provider.bitcoindEstimateSmartFee(target);
+    return mapToObject(result);
   }
 
   async generateToAddress(nblocks: number, address: string): Promise<any> {
-    return this.provider.bitcoindGenerateToAddress(nblocks, address);
+    const result = await this.provider.bitcoindGenerateToAddress(nblocks, address);
+    return mapToObject(result);
+  }
+
+  async generateFuture(address: string): Promise<any> {
+    const result = await this.provider.bitcoindGenerateFuture(address);
+    return mapToObject(result);
+  }
+
+  async getBlockHeader(hash: string): Promise<any> {
+    const result = await this.provider.bitcoindGetBlockHeader(hash);
+    return mapToObject(result);
+  }
+
+  async getBlockStats(hash: string): Promise<any> {
+    const result = await this.provider.bitcoindGetBlockStats(hash);
+    return mapToObject(result);
+  }
+
+  async getChainTips(): Promise<any> {
+    const result = await this.provider.bitcoindGetChainTips();
+    return mapToObject(result);
+  }
+
+  async getRawMempool(): Promise<any> {
+    const result = await this.provider.bitcoindGetRawMempool();
+    return mapToObject(result);
+  }
+
+  async getTxOut(txid: string, vout: number, includeMempool?: boolean): Promise<any> {
+    const result = await this.provider.bitcoindGetTxOut(txid, vout, includeMempool);
+    return mapToObject(result);
+  }
+
+  async decodeRawTransaction(hex: string): Promise<any> {
+    const result = await this.provider.bitcoindDecodeRawTransaction(hex);
+    return mapToObject(result);
+  }
+
+  async decodePsbt(psbt: string): Promise<any> {
+    const result = await this.provider.bitcoindDecodePsbt(psbt);
+    return mapToObject(result);
   }
 }
 
@@ -341,23 +388,28 @@ export class EsploraClient {
   constructor(private provider: WasmWebProvider) {}
 
   async getAddressInfo(address: string): Promise<any> {
-    return this.provider.esploraGetAddressInfo(address);
+    const result = await this.provider.esploraGetAddressInfo(address);
+    return mapToObject(result);
   }
 
   async getAddressUtxos(address: string): Promise<UTXO[]> {
-    return this.provider.esploraGetAddressUtxo(address);
+    const result = await this.provider.esploraGetAddressUtxo(address);
+    return mapToObject(result);
   }
 
   async getAddressTxs(address: string): Promise<any[]> {
-    return this.provider.esploraGetAddressTxs(address);
+    const result = await this.provider.esploraGetAddressTxs(address);
+    return mapToObject(result);
   }
 
   async getTx(txid: string): Promise<any> {
-    return this.provider.esploraGetTx(txid);
+    const result = await this.provider.esploraGetTx(txid);
+    return mapToObject(result);
   }
 
   async getTxStatus(txid: string): Promise<any> {
-    return this.provider.esploraGetTxStatus(txid);
+    const result = await this.provider.esploraGetTxStatus(txid);
+    return mapToObject(result);
   }
 
   async getTxHex(txid: string): Promise<string> {
@@ -375,6 +427,106 @@ export class EsploraClient {
   async broadcastTx(txHex: string): Promise<string> {
     return this.provider.esploraBroadcastTx(txHex);
   }
+
+  async getFeeEstimates(): Promise<any> {
+    const result = await this.provider.esploraGetFeeEstimates();
+    return mapToObject(result);
+  }
+
+  async getBlocks(startHeight?: number): Promise<any> {
+    const result = await this.provider.esploraGetBlocks(startHeight);
+    return mapToObject(result);
+  }
+
+  async getBlockByHeight(height: number): Promise<any> {
+    const result = await this.provider.esploraGetBlockByHeight(height);
+    return mapToObject(result);
+  }
+
+  async getBlock(hash: string): Promise<any> {
+    const result = await this.provider.esploraGetBlock(hash);
+    return mapToObject(result);
+  }
+
+  async getBlockStatus(hash: string): Promise<any> {
+    const result = await this.provider.esploraGetBlockStatus(hash);
+    return mapToObject(result);
+  }
+
+  async getBlockTxids(hash: string): Promise<string[]> {
+    return this.provider.esploraGetBlockTxids(hash);
+  }
+
+  async getBlockHeader(hash: string): Promise<any> {
+    const result = await this.provider.esploraGetBlockHeader(hash);
+    return mapToObject(result);
+  }
+
+  async getBlockRaw(hash: string): Promise<any> {
+    return this.provider.esploraGetBlockRaw(hash);
+  }
+
+  async getBlockTxid(hash: string, index: number): Promise<string> {
+    return this.provider.esploraGetBlockTxid(hash, index);
+  }
+
+  async getBlockTxs(hash: string, startIndex?: number): Promise<any[]> {
+    const result = await this.provider.esploraGetBlockTxs(hash, startIndex);
+    return mapToObject(result);
+  }
+
+  async getAddressTxsChain(address: string, lastSeenTxid?: string): Promise<any[]> {
+    const result = await this.provider.esploraGetAddressTxsChain(address, lastSeenTxid);
+    return mapToObject(result);
+  }
+
+  async getAddressTxsMempool(address: string): Promise<any[]> {
+    const result = await this.provider.esploraGetAddressTxsMempool(address);
+    return mapToObject(result);
+  }
+
+  async getAddressPrefix(prefix: string): Promise<any> {
+    const result = await this.provider.esploraGetAddressPrefix(prefix);
+    return mapToObject(result);
+  }
+
+  async getTxRaw(txid: string): Promise<any> {
+    return this.provider.esploraGetTxRaw(txid);
+  }
+
+  async getTxMerkleProof(txid: string): Promise<any> {
+    const result = await this.provider.esploraGetTxMerkleProof(txid);
+    return mapToObject(result);
+  }
+
+  async getTxMerkleblockProof(txid: string): Promise<any> {
+    const result = await this.provider.esploraGetTxMerkleblockProof(txid);
+    return mapToObject(result);
+  }
+
+  async getTxOutspend(txid: string, index: number): Promise<any> {
+    const result = await this.provider.esploraGetTxOutspend(txid, index);
+    return mapToObject(result);
+  }
+
+  async getTxOutspends(txid: string): Promise<any[]> {
+    const result = await this.provider.esploraGetTxOutspends(txid);
+    return mapToObject(result);
+  }
+
+  async getMempool(): Promise<any> {
+    const result = await this.provider.esploraGetMempool();
+    return mapToObject(result);
+  }
+
+  async getMempoolTxids(): Promise<string[]> {
+    return this.provider.esploraGetMempoolTxids();
+  }
+
+  async getMempoolRecent(): Promise<any[]> {
+    const result = await this.provider.esploraGetMempoolRecent();
+    return mapToObject(result);
+  }
 }
 
 /**
@@ -384,15 +536,18 @@ export class AlkanesRpcClient {
   constructor(private provider: WasmWebProvider) {}
 
   async getBalance(address?: string): Promise<AlkaneBalance[]> {
-    return this.provider.alkanesBalance(address);
+    const result = await this.provider.alkanesBalance(address);
+    return mapToObject(result);
   }
 
   async getByAddress(address: string, blockTag?: string, protocolTag?: number): Promise<any> {
-    return this.provider.alkanesByAddress(address, blockTag, protocolTag);
+    const result = await this.provider.alkanesByAddress(address, blockTag, protocolTag);
+    return mapToObject(result);
   }
 
   async getByOutpoint(outpoint: string, blockTag?: string, protocolTag?: number): Promise<any> {
-    return this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
+    const result = await this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
+    return mapToObject(result);
   }
 
   async getBytecode(alkaneId: string, blockTag?: string): Promise<string> {
@@ -400,35 +555,73 @@ export class AlkanesRpcClient {
   }
 
   async simulate(contractId: string, contextJson: string, blockTag?: string): Promise<any> {
-    return this.provider.alkanesSimulate(contractId, contextJson, blockTag);
+    const result = await this.provider.alkanesSimulate(contractId, contextJson, blockTag);
+    return mapToObject(result);
   }
 
   async execute(paramsJson: string): Promise<any> {
-    return this.provider.alkanesExecute(paramsJson);
+    const result = await this.provider.alkanesExecute(paramsJson);
+    return mapToObject(result);
   }
 
   async trace(outpoint: string): Promise<any> {
-    return this.provider.alkanesTrace(outpoint);
+    const result = await this.provider.alkanesTrace(outpoint);
+    return mapToObject(result);
   }
 
   async traceBlock(height: number): Promise<any> {
-    return this.provider.traceBlock(height);
+    const result = await this.provider.traceBlock(height);
+    return mapToObject(result);
   }
 
   async view(contractId: string, viewFn: string, params?: Uint8Array, blockTag?: string): Promise<any> {
-    return this.provider.alkanesView(contractId, viewFn, params, blockTag);
+    const result = await this.provider.alkanesView(contractId, viewFn, params, blockTag);
+    return mapToObject(result);
   }
 
   async getAllPools(factoryId: string): Promise<any> {
-    return this.provider.alkanesGetAllPools(factoryId);
+    const result = await this.provider.alkanesGetAllPools(factoryId);
+    return mapToObject(result);
   }
 
   async getAllPoolsWithDetails(factoryId: string, chunkSize?: number, maxConcurrent?: number): Promise<PoolWithDetails[]> {
-    return this.provider.alkanesGetAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent);
+    const result = await this.provider.alkanesGetAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent);
+    return mapToObject(result);
   }
 
   async getPendingUnwraps(blockTag?: string): Promise<any> {
-    return this.provider.alkanesPendingUnwraps(blockTag);
+    const result = await this.provider.alkanesPendingUnwraps(blockTag);
+    return mapToObject(result);
+  }
+
+  async reflect(alkaneId: string): Promise<any> {
+    const result = await this.provider.alkanesReflect(alkaneId);
+    return mapToObject(result);
+  }
+
+  async getSequence(blockTag?: string): Promise<any> {
+    const result = await this.provider.alkanesSequence(blockTag);
+    return mapToObject(result);
+  }
+
+  async getSpendables(address: string): Promise<any> {
+    const result = await this.provider.alkanesSpendables(address);
+    return mapToObject(result);
+  }
+
+  async getPoolDetails(poolId: string): Promise<any> {
+    const result = await this.provider.alkanesPoolDetails(poolId);
+    return mapToObject(result);
+  }
+
+  async reflectAlkaneRange(block: number, startTx: number, endTx: number): Promise<any> {
+    const result = await this.provider.alkanesReflectAlkaneRange(block, startTx, endTx);
+    return mapToObject(result);
+  }
+
+  async inspect(target: string, config: any): Promise<any> {
+    const result = await this.provider.alkanesInspect(target, config);
+    return mapToObject(result);
   }
 }
 
@@ -474,6 +667,132 @@ export class MetashrewClient {
    */
   async view(viewFn: string, payload: string, blockTag: string = 'latest'): Promise<string> {
     return this.provider.metashrewView(viewFn, payload, blockTag);
+  }
+}
+
+/**
+ * Ord (Ordinals) RPC client (uses WebProvider internally)
+ */
+export class OrdClient {
+  constructor(private provider: WasmWebProvider) {}
+
+  async getInscription(id: string): Promise<any> {
+    const result = await this.provider.ordInscription(id);
+    return mapToObject(result);
+  }
+
+  async getInscriptions(page?: number): Promise<any> {
+    const result = await this.provider.ordInscriptions(page);
+    return mapToObject(result);
+  }
+
+  async getOutputs(address: string): Promise<any> {
+    const result = await this.provider.ordOutputs(address);
+    return mapToObject(result);
+  }
+
+  async getRune(name: string): Promise<any> {
+    const result = await this.provider.ordRune(name);
+    return mapToObject(result);
+  }
+
+  async list(outpoint: string): Promise<any> {
+    const result = await this.provider.ordList(outpoint);
+    return mapToObject(result);
+  }
+
+  async find(sat: number): Promise<any> {
+    const result = await this.provider.ordFind(sat);
+    return mapToObject(result);
+  }
+
+  async getAddressInfo(address: string): Promise<any> {
+    const result = await this.provider.ordAddressInfo(address);
+    return mapToObject(result);
+  }
+
+  async getBlockInfo(query: string): Promise<any> {
+    const result = await this.provider.ordBlockInfo(query);
+    return mapToObject(result);
+  }
+
+  async getBlockCount(): Promise<number> {
+    return this.provider.ordBlockCount();
+  }
+
+  async getBlocks(): Promise<any> {
+    const result = await this.provider.ordBlocks();
+    return mapToObject(result);
+  }
+
+  async getChildren(inscriptionId: string, page?: number): Promise<any> {
+    const result = await this.provider.ordChildren(inscriptionId, page);
+    return mapToObject(result);
+  }
+
+  async getContent(inscriptionId: string): Promise<any> {
+    const result = await this.provider.ordContent(inscriptionId);
+    return mapToObject(result);
+  }
+
+  async getParents(inscriptionId: string, page?: number): Promise<any> {
+    const result = await this.provider.ordParents(inscriptionId, page);
+    return mapToObject(result);
+  }
+
+  async getTxInfo(txid: string): Promise<any> {
+    const result = await this.provider.ordTxInfo(txid);
+    return mapToObject(result);
+  }
+}
+
+/**
+ * BRC-20 Prog (Programmable BRC-20) RPC client (uses WebProvider internally)
+ */
+export class Brc20ProgClient {
+  constructor(private provider: WasmWebProvider) {}
+
+  async getBalance(address: string): Promise<any> {
+    const result = await this.provider.brc20progGetBalance(address);
+    return mapToObject(result);
+  }
+
+  async getCode(address: string): Promise<any> {
+    const result = await this.provider.brc20progGetCode(address);
+    return mapToObject(result);
+  }
+
+  async getBlockNumber(): Promise<any> {
+    return this.provider.brc20progBlockNumber();
+  }
+
+  async getChainId(): Promise<any> {
+    return this.provider.brc20progChainId();
+  }
+
+  async getTxReceipt(hash: string): Promise<any> {
+    const result = await this.provider.brc20progGetTransactionReceipt(hash);
+    return mapToObject(result);
+  }
+
+  async getTx(hash: string): Promise<any> {
+    const result = await this.provider.brc20progGetTransactionByHash(hash);
+    return mapToObject(result);
+  }
+
+  async getBlock(number: string | number, includeTxs?: boolean): Promise<any> {
+    const result = await this.provider.brc20progGetBlockByNumber(String(number), includeTxs);
+    return mapToObject(result);
+  }
+
+  async call(to: string, data: string, from?: string, blockTag?: string): Promise<any> {
+    const result = await this.provider.brc20progCall(to, data, from, blockTag);
+    return mapToObject(result);
+  }
+
+  async estimateGas(to: string, data: string, from?: string): Promise<any> {
+    const result = await this.provider.brc20progEstimateGas(to, data, from);
+    return mapToObject(result);
   }
 }
 
@@ -867,6 +1186,8 @@ export class AlkanesProvider {
   private _espo: EspoClient | null = null;
   private _lua: LuaClient | null = null;
   private _metashrew: MetashrewClient | null = null;
+  private _ord: OrdClient | null = null;
+  private _brc20prog: Brc20ProgClient | null = null;
 
   public readonly network: bitcoin.Network;
   public readonly networkType: NetworkType;
@@ -1052,6 +1373,32 @@ export class AlkanesProvider {
       this._metashrew = new MetashrewClient(this._provider);
     }
     return this._metashrew;
+  }
+
+  /**
+   * Ord (Ordinals) RPC client
+   */
+  get ord(): OrdClient {
+    if (!this._ord) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._ord = new OrdClient(this._provider);
+    }
+    return this._ord;
+  }
+
+  /**
+   * BRC-20 Prog (Programmable BRC-20) RPC client
+   */
+  get brc20prog(): Brc20ProgClient {
+    if (!this._brc20prog) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._brc20prog = new Brc20ProgClient(this._provider);
+    }
+    return this._brc20prog;
   }
 
   // ============================================================================
