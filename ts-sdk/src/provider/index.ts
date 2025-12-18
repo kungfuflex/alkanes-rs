@@ -603,6 +603,24 @@ export class DataApiClient {
 }
 
 /**
+ * Convert Map objects (from serde_wasm_bindgen) to plain objects recursively.
+ * This is needed because serde_wasm_bindgen serializes JSON as JavaScript Maps.
+ */
+function mapToObject(value: any): any {
+  if (value instanceof Map) {
+    const obj: any = {};
+    value.forEach((v, k) => {
+      obj[k] = mapToObject(v);
+    });
+    return obj;
+  }
+  if (Array.isArray(value)) {
+    return value.map(mapToObject);
+  }
+  return value;
+}
+
+/**
  * Espo client (uses WebProvider internally)
  *
  * Provides access to Espo indexer for alkanes data and AMM analytics.
@@ -637,7 +655,8 @@ export class EspoClient {
    * @param includeOutpoints - Include detailed outpoint information
    */
   async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<AddressBalancesResponse> {
-    return this.provider.espoGetAddressBalances(address, includeOutpoints);
+    const result = await this.provider.espoGetAddressBalances(address, includeOutpoints);
+    return mapToObject(result);
   }
 
   /**
@@ -645,7 +664,8 @@ export class EspoClient {
    * @param address - Bitcoin address
    */
   async getAddressOutpoints(address: string): Promise<AddressOutpointsResponse> {
-    return this.provider.espoGetAddressOutpoints(address);
+    const result = await this.provider.espoGetAddressOutpoints(address);
+    return mapToObject(result);
   }
 
   /**
@@ -653,7 +673,8 @@ export class EspoClient {
    * @param outpoint - Outpoint in format "txid:vout"
    */
   async getOutpointBalances(outpoint: string): Promise<OutpointBalancesResponse> {
-    return this.provider.espoGetOutpointBalances(outpoint);
+    const result = await this.provider.espoGetOutpointBalances(outpoint);
+    return mapToObject(result);
   }
 
   /**
@@ -663,7 +684,8 @@ export class EspoClient {
    * @param limit - Items per page (default: 100)
    */
   async getHolders(alkaneId: string, page: number = 0, limit: number = 100): Promise<HoldersResponse> {
-    return this.provider.espoGetHolders(alkaneId, BigInt(page), BigInt(limit));
+    const result = await this.provider.espoGetHolders(alkaneId, page, limit);
+    return mapToObject(result);
   }
 
   /**
@@ -671,7 +693,8 @@ export class EspoClient {
    * @param alkaneId - Alkane ID in format "block:tx"
    */
   async getHoldersCount(alkaneId: string): Promise<number> {
-    const response: HoldersCountResponse = await this.provider.espoGetHoldersCount(alkaneId);
+    const result = await this.provider.espoGetHoldersCount(alkaneId);
+    const response: HoldersCountResponse = mapToObject(result);
     return response.count;
   }
 
@@ -682,7 +705,8 @@ export class EspoClient {
    * @param limit - Items per page (default: 100)
    */
   async getKeys(alkaneId: string, page: number = 0, limit: number = 100): Promise<KeysResponse> {
-    return this.provider.espoGetKeys(alkaneId, BigInt(page), BigInt(limit));
+    const result = await this.provider.espoGetKeys(alkaneId, page, limit);
+    return mapToObject(result);
   }
 
   // ============================================================================
@@ -711,13 +735,14 @@ export class EspoClient {
     limit?: number,
     page?: number
   ): Promise<CandlesResponse> {
-    return this.provider.espoGetCandles(
+    const result = await this.provider.espoGetCandles(
       pool,
       timeframe,
       side,
-      limit !== undefined ? BigInt(limit) : undefined,
-      page !== undefined ? BigInt(page) : undefined
+      limit,
+      page
     );
+    return mapToObject(result);
   }
 
   /**
@@ -739,15 +764,16 @@ export class EspoClient {
     sort?: string,
     dir?: string
   ): Promise<TradesResponse> {
-    return this.provider.espoGetTrades(
+    const result = await this.provider.espoGetTrades(
       pool,
-      limit !== undefined ? BigInt(limit) : undefined,
-      page !== undefined ? BigInt(page) : undefined,
+      limit,
+      page,
       side,
       filterSide,
       sort,
       dir
     );
+    return mapToObject(result);
   }
 
   /**
@@ -756,10 +782,8 @@ export class EspoClient {
    * @param page - Page number (default: 0)
    */
   async getPools(limit?: number, page?: number): Promise<PoolsResponse> {
-    return this.provider.espoGetPools(
-      limit !== undefined ? BigInt(limit) : undefined,
-      page !== undefined ? BigInt(page) : undefined
-    );
+    const result = await this.provider.espoGetPools(limit, page);
+    return mapToObject(result);
   }
 
   /**
@@ -787,7 +811,7 @@ export class EspoClient {
     feeBps?: number,
     maxHops?: number
   ): Promise<SwapPathResponse> {
-    return this.provider.espoFindBestSwapPath(
+    const result = await this.provider.espoFindBestSwapPath(
       tokenIn,
       tokenOut,
       mode,
@@ -796,9 +820,10 @@ export class EspoClient {
       amountOutMin,
       amountInMax,
       availableIn,
-      feeBps !== undefined ? BigInt(feeBps) : undefined,
-      maxHops !== undefined ? BigInt(maxHops) : undefined
+      feeBps,
+      maxHops
     );
+    return mapToObject(result);
   }
 
   /**
@@ -812,11 +837,12 @@ export class EspoClient {
     feeBps?: number,
     maxHops?: number
   ): Promise<MevSwapResponse> {
-    return this.provider.espoGetBestMevSwap(
+    const result = await this.provider.espoGetBestMevSwap(
       token,
-      feeBps !== undefined ? BigInt(feeBps) : undefined,
-      maxHops !== undefined ? BigInt(maxHops) : undefined
+      feeBps,
+      maxHops
     );
+    return mapToObject(result);
   }
 }
 
@@ -883,12 +909,24 @@ export class AlkanesProvider {
   async initialize(): Promise<void> {
     if (this._provider) return;
 
-    // Dynamic import of WASM module using cross-platform loader
-    const wasm = await import(/* @vite-ignore */ '@alkanes/ts-sdk/wasm');
+    let WebProviderClass: any;
 
-    // For Node.js, we need to call init() first to load the WASM
-    if (typeof wasm.init === 'function') {
-      await wasm.init();
+    // Detect environment and use appropriate loader
+    const isNode = typeof process !== 'undefined' &&
+      process.versions != null &&
+      process.versions.node != null;
+
+    if (isNode) {
+      // Node.js: Use the CommonJS loader that manually instantiates WASM
+      // Dynamic import of CommonJS module wraps exports in 'default'
+      const nodeLoaderModule = await import(/* @vite-ignore */ '@alkanes/ts-sdk/wasm/node-loader.cjs');
+      const nodeLoader = nodeLoaderModule.default || nodeLoaderModule;
+      await nodeLoader.init();
+      WebProviderClass = nodeLoader.WebProvider;
+    } else {
+      // Browser: Use the ESM module (expects bundler support)
+      const wasm = await import(/* @vite-ignore */ '@alkanes/ts-sdk/wasm');
+      WebProviderClass = wasm.WebProvider;
     }
 
     // Create provider with appropriate network name
@@ -899,7 +937,7 @@ export class AlkanesProvider {
       jsonrpc_url: this.rpcUrl
     };
 
-    this._provider = new wasm.WebProvider(
+    this._provider = new WebProviderClass(
       providerName,
       configOverride
     );

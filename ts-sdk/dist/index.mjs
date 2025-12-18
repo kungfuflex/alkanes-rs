@@ -46305,6 +46305,19 @@ __export(provider_exports, {
   NETWORK_PRESETS: () => NETWORK_PRESETS,
   createProvider: () => createProvider
 });
+function mapToObject(value) {
+  if (value instanceof Map) {
+    const obj = {};
+    value.forEach((v, k) => {
+      obj[k] = mapToObject(v);
+    });
+    return obj;
+  }
+  if (Array.isArray(value)) {
+    return value.map(mapToObject);
+  }
+  return value;
+}
 function createProvider(config) {
   return new AlkanesProvider(config);
 }
@@ -46604,21 +46617,24 @@ var init_provider = __esm({
        * @param includeOutpoints - Include detailed outpoint information
        */
       async getAddressBalances(address2, includeOutpoints = false) {
-        return this.provider.espoGetAddressBalances(address2, includeOutpoints);
+        const result = await this.provider.espoGetAddressBalances(address2, includeOutpoints);
+        return mapToObject(result);
       }
       /**
        * Get outpoints containing alkanes for an address
        * @param address - Bitcoin address
        */
       async getAddressOutpoints(address2) {
-        return this.provider.espoGetAddressOutpoints(address2);
+        const result = await this.provider.espoGetAddressOutpoints(address2);
+        return mapToObject(result);
       }
       /**
        * Get alkanes balances at a specific outpoint
        * @param outpoint - Outpoint in format "txid:vout"
        */
       async getOutpointBalances(outpoint) {
-        return this.provider.espoGetOutpointBalances(outpoint);
+        const result = await this.provider.espoGetOutpointBalances(outpoint);
+        return mapToObject(result);
       }
       /**
        * Get holders of an alkane token with pagination
@@ -46627,14 +46643,16 @@ var init_provider = __esm({
        * @param limit - Items per page (default: 100)
        */
       async getHolders(alkaneId, page = 0, limit = 100) {
-        return this.provider.espoGetHolders(alkaneId, BigInt(page), BigInt(limit));
+        const result = await this.provider.espoGetHolders(alkaneId, page, limit);
+        return mapToObject(result);
       }
       /**
        * Get total holder count for an alkane
        * @param alkaneId - Alkane ID in format "block:tx"
        */
       async getHoldersCount(alkaneId) {
-        const response = await this.provider.espoGetHoldersCount(alkaneId);
+        const result = await this.provider.espoGetHoldersCount(alkaneId);
+        const response = mapToObject(result);
         return response.count;
       }
       /**
@@ -46644,7 +46662,8 @@ var init_provider = __esm({
        * @param limit - Items per page (default: 100)
        */
       async getKeys(alkaneId, page = 0, limit = 100) {
-        return this.provider.espoGetKeys(alkaneId, BigInt(page), BigInt(limit));
+        const result = await this.provider.espoGetKeys(alkaneId, page, limit);
+        return mapToObject(result);
       }
       // ============================================================================
       // AMM DATA MODULE
@@ -46664,13 +46683,14 @@ var init_provider = __esm({
        * @param page - Page number (default: 0)
        */
       async getCandles(pool, timeframe, side, limit, page) {
-        return this.provider.espoGetCandles(
+        const result = await this.provider.espoGetCandles(
           pool,
           timeframe,
           side,
-          limit !== void 0 ? BigInt(limit) : void 0,
-          page !== void 0 ? BigInt(page) : void 0
+          limit,
+          page
         );
+        return mapToObject(result);
       }
       /**
        * Get trade history for a pool
@@ -46683,15 +46703,16 @@ var init_provider = __esm({
        * @param dir - Sort direction: "asc" | "desc"
        */
       async getTrades(pool, limit, page, side, filterSide, sort, dir) {
-        return this.provider.espoGetTrades(
+        const result = await this.provider.espoGetTrades(
           pool,
-          limit !== void 0 ? BigInt(limit) : void 0,
-          page !== void 0 ? BigInt(page) : void 0,
+          limit,
+          page,
           side,
           filterSide,
           sort,
           dir
         );
+        return mapToObject(result);
       }
       /**
        * Get all pools with pagination
@@ -46699,10 +46720,8 @@ var init_provider = __esm({
        * @param page - Page number (default: 0)
        */
       async getPools(limit, page) {
-        return this.provider.espoGetPools(
-          limit !== void 0 ? BigInt(limit) : void 0,
-          page !== void 0 ? BigInt(page) : void 0
-        );
+        const result = await this.provider.espoGetPools(limit, page);
+        return mapToObject(result);
       }
       /**
        * Find the best swap path between two tokens
@@ -46718,7 +46737,7 @@ var init_provider = __esm({
        * @param maxHops - Maximum swap hops
        */
       async findBestSwapPath(tokenIn, tokenOut, mode, amountIn, amountOut, amountOutMin, amountInMax, availableIn, feeBps, maxHops) {
-        return this.provider.espoFindBestSwapPath(
+        const result = await this.provider.espoFindBestSwapPath(
           tokenIn,
           tokenOut,
           mode,
@@ -46727,9 +46746,10 @@ var init_provider = __esm({
           amountOutMin,
           amountInMax,
           availableIn,
-          feeBps !== void 0 ? BigInt(feeBps) : void 0,
-          maxHops !== void 0 ? BigInt(maxHops) : void 0
+          feeBps,
+          maxHops
         );
+        return mapToObject(result);
       }
       /**
        * Find the best MEV swap opportunity for a token
@@ -46738,11 +46758,12 @@ var init_provider = __esm({
        * @param maxHops - Maximum swap hops
        */
       async getBestMevSwap(token, feeBps, maxHops) {
-        return this.provider.espoGetBestMevSwap(
+        const result = await this.provider.espoGetBestMevSwap(
           token,
-          feeBps !== void 0 ? BigInt(feeBps) : void 0,
-          maxHops !== void 0 ? BigInt(maxHops) : void 0
+          feeBps,
+          maxHops
         );
+        return mapToObject(result);
       }
     };
     AlkanesProvider = class {
@@ -46784,18 +46805,28 @@ var init_provider = __esm({
        */
       async initialize() {
         if (this._provider) return;
-        const wasm = await import(
-          /* @vite-ignore */
-          "@alkanes/ts-sdk/wasm"
-        );
-        if (typeof wasm.init === "function") {
-          await wasm.init();
+        let WebProviderClass;
+        const isNode2 = typeof process !== "undefined" && process.versions != null && process.versions.node != null;
+        if (isNode2) {
+          const nodeLoaderModule = await import(
+            /* @vite-ignore */
+            "@alkanes/ts-sdk/wasm/node-loader.cjs"
+          );
+          const nodeLoader = nodeLoaderModule.default || nodeLoaderModule;
+          await nodeLoader.init();
+          WebProviderClass = nodeLoader.WebProvider;
+        } else {
+          const wasm = await import(
+            /* @vite-ignore */
+            "@alkanes/ts-sdk/wasm"
+          );
+          WebProviderClass = wasm.WebProvider;
         }
         const providerName = this.networkPreset === "local" ? "regtest" : this.networkPreset;
         const configOverride = {
           jsonrpc_url: this.rpcUrl
         };
-        this._provider = new wasm.WebProvider(
+        this._provider = new WebProviderClass(
           providerName,
           configOverride
         );

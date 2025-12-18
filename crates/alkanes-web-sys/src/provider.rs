@@ -7005,7 +7005,7 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
 
     async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_address_balances", serde_json::json!({
+        self.call(&target.url, "essentials.get_address_balances", serde_json::json!({
             "address": address,
             "include_outpoints": include_outpoints
         }), 1).await
@@ -7013,21 +7013,21 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
 
     async fn get_address_outpoints(&self, address: &str) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_address_outpoints", serde_json::json!({
+        self.call(&target.url, "essentials.get_address_outpoints", serde_json::json!({
             "address": address
         }), 1).await
     }
 
     async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_outpoint_balances", serde_json::json!({
+        self.call(&target.url, "essentials.get_outpoint_balances", serde_json::json!({
             "outpoint": outpoint
         }), 1).await
     }
 
     async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_holders", serde_json::json!({
+        self.call(&target.url, "essentials.get_holders", serde_json::json!({
             "alkane": alkane_id,
             "page": page,
             "limit": limit
@@ -7036,14 +7036,14 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
 
     async fn get_holders_count(&self, alkane_id: &str) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_holders_count", serde_json::json!({
+        self.call(&target.url, "essentials.get_holders_count", serde_json::json!({
             "alkane": alkane_id
         }), 1).await
     }
 
     async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_keys", serde_json::json!({
+        self.call(&target.url, "essentials.get_keys", serde_json::json!({
             "alkane": alkane_id,
             "page": page,
             "limit": limit,
@@ -7053,7 +7053,7 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
 
     async fn ping(&self) -> Result<String> {
         let target = self.rpc_config.get_espo_rpc_target();
-        let result = self.call(&target.url, "ping", serde_json::json!({}), 1).await?;
+        let result = self.call(&target.url, "essentials.ping", serde_json::json!({}), 1).await?;
         if let Some(s) = result.as_str() {
             return Ok(s.to_string());
         }
