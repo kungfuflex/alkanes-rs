@@ -1240,13 +1240,16 @@ export class AlkanesProvider {
     if (isNode) {
       // Node.js: Use the CommonJS loader that manually instantiates WASM
       // Dynamic import of CommonJS module wraps exports in 'default'
-      const nodeLoaderModule = await import(/* @vite-ignore */ '@alkanes/ts-sdk/wasm/node-loader.cjs');
+      // Use string concatenation to prevent bundler static analysis issues
+      const loaderPath = '@alkanes/ts-sdk' + '/wasm/node-loader.cjs';
+      const nodeLoaderModule = await import(/* @vite-ignore */ loaderPath);
       const nodeLoader = nodeLoaderModule.default || nodeLoaderModule;
       await nodeLoader.init();
       WebProviderClass = nodeLoader.WebProvider;
     } else {
       // Browser: Use the ESM module (expects bundler support)
-      const wasm = await import(/* @vite-ignore */ '@alkanes/ts-sdk/wasm');
+      const wasmPath = '@alkanes/ts-sdk' + '/wasm';
+      const wasm = await import(/* @vite-ignore */ wasmPath);
       WebProviderClass = wasm.WebProvider;
     }
 
