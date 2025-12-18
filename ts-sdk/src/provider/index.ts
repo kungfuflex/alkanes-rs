@@ -952,7 +952,7 @@ export class AlkanesProvider {
    */
   async getStorageAt(block: number, tx: number, path: Uint8Array): Promise<string> {
     const provider = await this.getProvider();
-    return provider.getStorageAt(block, tx, Array.from(path));
+    return provider.getStorageAt(BigInt(block), BigInt(tx), Array.from(path));
   }
 
   /**

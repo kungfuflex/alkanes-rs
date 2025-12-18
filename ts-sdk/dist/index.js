@@ -46991,7 +46991,7 @@ var init_provider = __esm({
        */
       async getStorageAt(block, tx, path) {
         const provider = await this.getProvider();
-        return provider.getStorageAt(block, tx, Array.from(path));
+        return provider.getStorageAt(BigInt(block), BigInt(tx), Array.from(path));
       }
       /**
        * Get address history with alkane traces
