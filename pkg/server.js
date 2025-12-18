@@ -1,5 +1,6 @@
 const http = require('http');
 const https = require('https');
+const url = require('url');
 
 const PORT = process.env.PORT || 8080;
 const ARTIFACT_REGISTRY = 'us-central1-npm.pkg.dev';
@@ -9,6 +10,10 @@ const REPOSITORY = 'npm-packages';
 // Cache for access token
 let cachedToken = null;
 let tokenExpiry = 0;
+
+// Cache for package metadata (5 minute TTL)
+const metadataCache = new Map();
+const METADATA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 // Fetch access token from metadata server
 async function getAccessToken() {
@@ -46,8 +51,15 @@ async function getAccessToken() {
   });
 }
 
-// Fetch package metadata
-async function getPackageMetadata(packageName, token) {
+// Fetch package metadata from Artifact Registry
+async function getPackageMetadata(packageName, token, forceRefresh = false) {
+  const cacheKey = packageName;
+  const cached = metadataCache.get(cacheKey);
+
+  if (!forceRefresh && cached && cached.expiry > Date.now()) {
+    return cached.data;
+  }
+
   return new Promise((resolve, reject) => {
     const options = {
       hostname: ARTIFACT_REGISTRY,
@@ -81,7 +93,13 @@ async function getPackageMetadata(packageName, token) {
           finalRes.on('end', () => {
             if (finalRes.statusCode === 200) {
               try {
-                resolve(JSON.parse(data));
+                const metadata = JSON.parse(data);
+                // Cache the metadata
+                metadataCache.set(cacheKey, {
+                  data: metadata,
+                  expiry: Date.now() + METADATA_CACHE_TTL
+                });
+                resolve(metadata);
               } catch (err) {
                 reject(new Error('Failed to parse package metadata'));
               }
@@ -97,7 +115,13 @@ async function getPackageMetadata(packageName, token) {
         res.on('end', () => {
           if (res.statusCode === 200) {
             try {
-              resolve(JSON.parse(data));
+              const metadata = JSON.parse(data);
+              // Cache the metadata
+              metadataCache.set(cacheKey, {
+                data: metadata,
+                expiry: Date.now() + METADATA_CACHE_TTL
+              });
+              resolve(metadata);
             } catch (err) {
               reject(new Error('Failed to parse package metadata'));
             }
@@ -110,8 +134,110 @@ async function getPackageMetadata(packageName, token) {
   });
 }
 
+// Fetch tarball with optional version
+async function fetchTarball(res, packageName, version, token) {
+  // Get package metadata
+  const metadata = await getPackageMetadata(packageName, token);
+
+  // Determine which version to fetch
+  let targetVersion;
+  if (!version || version === 'latest') {
+    // Use latest-dev tag or fall back to latest
+    targetVersion = metadata['dist-tags']['latest-dev'] || metadata['dist-tags']['latest'];
+  } else {
+    // Check if specific version exists
+    if (!metadata.versions[version]) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'Version not found',
+        requestedVersion: version,
+        availableVersions: Object.keys(metadata.versions).slice(-10) // Last 10 versions
+      }));
+      return;
+    }
+    targetVersion = version;
+  }
+
+  const tarballUrl = metadata.versions[targetVersion].dist.tarball;
+  console.log(`Fetching tarball for ${packageName}@${targetVersion}`);
+
+  // Extract path from tarball URL
+  const tarballPath = new URL(tarballUrl).pathname;
+
+  // Proxy tarball request (follow redirects)
+  const options = {
+    hostname: ARTIFACT_REGISTRY,
+    path: tarballPath,
+    headers: {
+      'Host': ARTIFACT_REGISTRY,
+      'Authorization': `Bearer ${token}`
+    }
+  };
+
+  const proxyReq = https.get(options, (proxyRes) => {
+    // Follow redirects (307, 302, 301)
+    if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+      const redirectUrl = proxyRes.headers.location;
+      console.log(`Following redirect to: ${redirectUrl}`);
+
+      const redirectOptions = redirectUrl.startsWith('http')
+        ? redirectUrl
+        : {
+            hostname: ARTIFACT_REGISTRY,
+            path: redirectUrl,
+            headers: {
+              'Host': ARTIFACT_REGISTRY,
+              'Authorization': `Bearer ${token}`
+            }
+          };
+
+      https.get(redirectOptions, (finalRes) => {
+        // Add version header
+        const headers = {
+          'Content-Type': finalRes.headers['content-type'] || 'application/octet-stream',
+          'Content-Length': finalRes.headers['content-length'],
+          'X-Package-Version': targetVersion,
+          'Content-Disposition': `attachment; filename="${packageName.replace('@', '').replace('/', '-')}-${targetVersion}.tgz"`
+        };
+        res.writeHead(finalRes.statusCode, headers);
+        finalRes.pipe(res);
+      }).on('error', (err) => {
+        console.error('Redirect fetch error:', err);
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to fetch tarball from redirect', details: err.message }));
+      });
+    } else {
+      // Direct response
+      const headers = {
+        ...proxyRes.headers,
+        'X-Package-Version': targetVersion,
+        'Content-Disposition': `attachment; filename="${packageName.replace('@', '').replace('/', '-')}-${targetVersion}.tgz"`
+      };
+      res.writeHead(proxyRes.statusCode, headers);
+      proxyRes.pipe(res);
+    }
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error('Tarball fetch error:', err);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to fetch tarball', details: err.message }));
+  });
+}
+
 // Proxy server
 const server = http.createServer(async (req, res) => {
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   // Health check
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -122,76 +248,92 @@ const server = http.createServer(async (req, res) => {
   try {
     // Get access token
     const token = await getAccessToken();
+    const parsedUrl = url.parse(req.url, true);
+    const pathname = parsedUrl.pathname;
+    const query = parsedUrl.query;
 
-    // Handle /dist/{package} endpoint - direct tarball download
-    if (req.url.startsWith('/dist/')) {
-      const packageName = req.url.substring(6); // Remove '/dist/'
-      console.log(`Fetching tarball for ${packageName}`);
+    // Handle /versions/{package} endpoint - list all available versions
+    if (pathname.startsWith('/versions/')) {
+      const packageName = pathname.substring(10); // Remove '/versions/'
+      console.log(`Fetching versions for ${packageName}`);
 
-      // Get package metadata
-      const metadata = await getPackageMetadata(packageName, token);
-      const latestVersion = metadata['dist-tags']['latest-dev'];
-      const tarballUrl = metadata.versions[latestVersion].dist.tarball;
+      try {
+        const metadata = await getPackageMetadata(packageName, token, query.refresh === 'true');
+        const versions = Object.keys(metadata.versions).sort((a, b) => {
+          // Sort by version (semver-ish)
+          return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+        });
 
-      // Extract path from tarball URL
-      const tarballPath = new URL(tarballUrl).pathname;
+        const response = {
+          name: metadata.name,
+          latest: metadata['dist-tags']['latest-dev'] || metadata['dist-tags']['latest'],
+          'dist-tags': metadata['dist-tags'],
+          versions: versions,
+          totalVersions: versions.length
+        };
 
-      // Proxy tarball request (follow redirects)
-      const options = {
-        hostname: ARTIFACT_REGISTRY,
-        path: tarballPath,
-        headers: {
-          'Host': ARTIFACT_REGISTRY,
-          'Authorization': `Bearer ${token}`
-        }
-      };
-
-      const proxyReq = https.get(options, (proxyRes) => {
-        // Follow redirects (307, 302, 301)
-        if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-          const redirectUrl = proxyRes.headers.location;
-          console.log(`Following redirect to: ${redirectUrl}`);
-
-          // Build redirect options (handle both relative and absolute URLs)
-          const redirectOptions = redirectUrl.startsWith('http')
-            ? redirectUrl  // Absolute URL
-            : {            // Relative path
-                hostname: ARTIFACT_REGISTRY,
-                path: redirectUrl,
-                headers: {
-                  'Host': ARTIFACT_REGISTRY,
-                  'Authorization': `Bearer ${token}`
-                }
-              };
-
-          https.get(redirectOptions, (finalRes) => {
-            res.writeHead(finalRes.statusCode, {
-              'Content-Type': finalRes.headers['content-type'] || 'application/octet-stream',
-              'Content-Length': finalRes.headers['content-length']
-            });
-            finalRes.pipe(res);
-          }).on('error', (err) => {
-            console.error('Redirect fetch error:', err);
-            res.writeHead(502, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Failed to fetch tarball from redirect', details: err.message }));
-          });
-        } else {
-          // Direct response
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
-          proxyRes.pipe(res);
-        }
-      });
-
-      proxyReq.on('error', (err) => {
-        console.error('Tarball fetch error:', err);
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Failed to fetch tarball', details: err.message }));
-      });
-
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(response, null, 2));
+      } catch (err) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Package not found', details: err.message }));
+      }
       return;
     }
 
-    // Default: proxy request to Artifact Registry
+    // Handle /{package} endpoint - get package metadata (like npm view)
+    // Matches /@scope/package or /package
+    const packageMetadataMatch = pathname.match(/^\/(@[^\/]+\/[^\/]+)$/);
+    if (packageMetadataMatch) {
+      const packageName = packageMetadataMatch[1];
+      console.log(`Fetching metadata for ${packageName}`);
+
+      try {
+        const metadata = await getPackageMetadata(packageName, token, query.refresh === 'true');
+        const latestVersion = metadata['dist-tags']['latest-dev'] || metadata['dist-tags']['latest'];
+        const latestInfo = metadata.versions[latestVersion];
+
+        const response = {
+          name: metadata.name,
+          version: latestVersion,
+          description: metadata.description,
+          'dist-tags': metadata['dist-tags'],
+          versions: Object.keys(metadata.versions),
+          latest: {
+            version: latestVersion,
+            tarball: `https://pkg.alkanes.build/dist/${packageName}?v=${latestVersion}`,
+            shasum: latestInfo?.dist?.shasum,
+            integrity: latestInfo?.dist?.integrity
+          },
+          install: {
+            npm: `npm install --save-dev https://pkg.alkanes.build/dist/${packageName}?v=${latestVersion}`,
+            pnpm: `pnpm install --save-dev https://pkg.alkanes.build/dist/${packageName}?v=${latestVersion}`,
+            yarn: `yarn add -D https://pkg.alkanes.build/dist/${packageName}?v=${latestVersion}`
+          },
+          repository: metadata.repository,
+          homepage: metadata.homepage,
+          license: metadata.license
+        };
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(response, null, 2));
+      } catch (err) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Package not found', details: err.message }));
+      }
+      return;
+    }
+
+    // Handle /dist/{package} endpoint - direct tarball download with optional ?v=version
+    if (pathname.startsWith('/dist/')) {
+      const packageName = pathname.substring(6); // Remove '/dist/'
+      const version = query.v || query.version;
+
+      await fetchTarball(res, packageName, version, token);
+      return;
+    }
+
+    // Default: proxy request to Artifact Registry (npm registry compatibility)
     const options = {
       hostname: ARTIFACT_REGISTRY,
       path: `/${PROJECT}/${REPOSITORY}${req.url}`,
@@ -233,4 +375,11 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Artifact Registry proxy listening on port ${PORT}`);
   console.log(`Proxying to: https://${ARTIFACT_REGISTRY}/${PROJECT}/${REPOSITORY}/`);
+  console.log('');
+  console.log('Endpoints:');
+  console.log('  GET /@scope/package          - Package metadata and latest version');
+  console.log('  GET /versions/@scope/package - List all available versions');
+  console.log('  GET /dist/@scope/package     - Download latest tarball');
+  console.log('  GET /dist/@scope/package?v=X - Download specific version tarball');
+  console.log('  GET /health                  - Health check');
 });
