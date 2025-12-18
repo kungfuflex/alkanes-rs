@@ -1,6 +1,9 @@
 /**
  * ESPO command group
  * ESPO balance indexer operations
+ *
+ * The CLI uses the SDK's EspoClient via provider.espo for all operations.
+ * This ensures the CLI and SDK share the same typed interface.
  */
 
 import { Command } from 'commander';
@@ -24,8 +27,7 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espo_get_height_js();
-        const height = JSON.parse(result);
+        const height = await provider.espo.getHeight();
 
         spinner.succeed();
         console.log(formatOutput(height, globalOpts));
@@ -48,8 +50,7 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espo_ping_js();
-        const pong = JSON.parse(result);
+        const pong = await provider.espo.ping();
 
         spinner.succeed();
         console.log(formatOutput(pong, globalOpts));
@@ -73,11 +74,10 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espo_get_address_balances_js(
+        const balances = await provider.espo.getAddressBalances(
           address,
           options.includeOutpoints
         );
-        const balances = JSON.parse(result);
 
         spinner.succeed();
         console.log(formatOutput(balances, globalOpts));
@@ -100,8 +100,7 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espo_get_address_outpoints_js(address);
-        const outpoints = JSON.parse(result);
+        const outpoints = await provider.espo.getAddressOutpoints(address);
 
         spinner.succeed();
         console.log(formatOutput(outpoints, globalOpts));
@@ -124,8 +123,7 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espo_get_outpoint_balances_js(outpoint);
-        const balances = JSON.parse(result);
+        const balances = await provider.espo.getOutpointBalances(outpoint);
 
         spinner.succeed();
         console.log(formatOutput(balances, globalOpts));
@@ -150,12 +148,11 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espo_get_holders_js(
+        const holders = await provider.espo.getHolders(
           alkaneId,
-          parseFloat(options.page),
-          parseFloat(options.limit)
+          parseInt(options.page, 10),
+          parseInt(options.limit, 10)
         );
-        const holders = JSON.parse(result);
 
         spinner.succeed();
         console.log(formatOutput(holders, globalOpts));
@@ -178,11 +175,10 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espo_get_holders_count_js(alkaneId);
-        const count = JSON.parse(result);
+        const count = await provider.espo.getHoldersCount(alkaneId);
 
         spinner.succeed();
-        console.log(formatOutput(count, globalOpts));
+        console.log(formatOutput({ count }, globalOpts));
       } catch (err: any) {
         error(`Failed to get holder count: ${err.message}`);
         process.exit(1);
@@ -204,12 +200,11 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espo_get_keys_js(
+        const keys = await provider.espo.getKeys(
           alkaneId,
-          parseFloat(options.page),
-          parseFloat(options.limit)
+          parseInt(options.page, 10),
+          parseInt(options.limit, 10)
         );
-        const keys = JSON.parse(result);
 
         spinner.succeed();
         console.log(formatOutput(keys, globalOpts));
@@ -232,8 +227,7 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espo_ammdata_ping_js();
-        const pong = JSON.parse(result);
+        const pong = await provider.espo.ammdataPing();
 
         spinner.succeed();
         console.log(formatOutput(pong, globalOpts));
@@ -260,14 +254,13 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espoGetCandles(
+        const candles = await provider.espo.getCandles(
           pool,
-          options.timeframe || null,
-          options.side || null,
-          options.limit ? parseFloat(options.limit) : null,
-          options.page ? parseFloat(options.page) : null
+          options.timeframe,
+          options.side,
+          options.limit ? parseInt(options.limit, 10) : undefined,
+          options.page ? parseInt(options.page, 10) : undefined
         );
-        const candles = JSON.parse(result);
 
         spinner.succeed();
         console.log(formatOutput(candles, globalOpts));
@@ -296,16 +289,15 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espoGetTrades(
+        const trades = await provider.espo.getTrades(
           pool,
-          options.limit ? parseFloat(options.limit) : null,
-          options.page ? parseFloat(options.page) : null,
-          options.side || null,
-          options.filterSide || null,
-          options.sort || null,
-          options.dir || null
+          options.limit ? parseInt(options.limit, 10) : undefined,
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.side,
+          options.filterSide,
+          options.sort,
+          options.dir
         );
-        const trades = JSON.parse(result);
 
         spinner.succeed();
         console.log(formatOutput(trades, globalOpts));
@@ -330,11 +322,10 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espoGetPools(
-          options.limit ? parseFloat(options.limit) : null,
-          options.page ? parseFloat(options.page) : null
+        const pools = await provider.espo.getPools(
+          options.limit ? parseInt(options.limit, 10) : undefined,
+          options.page ? parseInt(options.page, 10) : undefined
         );
-        const pools = JSON.parse(result);
 
         spinner.succeed();
         console.log(formatOutput(pools, globalOpts));
@@ -365,19 +356,18 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espoFindBestSwapPath(
+        const path = await provider.espo.findBestSwapPath(
           tokenIn,
           tokenOut,
-          options.mode || null,
-          options.amountIn || null,
-          options.amountOut || null,
-          options.amountOutMin || null,
-          options.amountInMax || null,
-          options.availableIn || null,
-          options.feeBps ? parseFloat(options.feeBps) : null,
-          options.maxHops ? parseFloat(options.maxHops) : null
+          options.mode,
+          options.amountIn,
+          options.amountOut,
+          options.amountOutMin,
+          options.amountInMax,
+          options.availableIn,
+          options.feeBps ? parseInt(options.feeBps, 10) : undefined,
+          options.maxHops ? parseInt(options.maxHops, 10) : undefined
         );
-        const path = JSON.parse(result);
 
         spinner.succeed();
         console.log(formatOutput(path, globalOpts));
@@ -402,12 +392,11 @@ export function registerEspoCommands(program: Command): void {
           network: globalOpts.provider,
         });
 
-        const result = await provider.espoGetBestMevSwap(
+        const mevSwap = await provider.espo.getBestMevSwap(
           token,
-          options.feeBps ? parseFloat(options.feeBps) : null,
-          options.maxHops ? parseFloat(options.maxHops) : null
+          options.feeBps ? parseInt(options.feeBps, 10) : undefined,
+          options.maxHops ? parseInt(options.maxHops, 10) : undefined
         );
-        const mevSwap = JSON.parse(result);
 
         spinner.succeed();
         console.log(formatOutput(mevSwap, globalOpts));

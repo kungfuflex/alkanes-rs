@@ -35,7 +35,7 @@
     "build:wasm": "cd ../crates/alkanes-web-sys && wasm-pack build --target bundler --out-dir ../../ts-sdk/build/wasm && cd ../../ts-sdk && cp -r build/wasm/* wasm/",
     "build:vendor": "node scripts/vendor-wasms.js",
     "build:ts": "tsup src/index.ts --format cjs,esm --clean",
-    "build:cli": "tsup src/cli/index.ts --config none --format cjs --target node18 --platform node --out-dir dist --no-dts --external '../../wasm/alkanes_web_sys.js'",
+    "build:cli": "tsup src/cli/index.ts --config none --format cjs --target node18 --platform node --out-dir dist --no-dts --external '../wasm/*' --external '@alkanes/ts-sdk/wasm' --external '*/wasm/*'",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "cli:dev": "npm run build:cli && node dist/index.js",
     "test": "vitest run",

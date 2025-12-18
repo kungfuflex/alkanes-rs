@@ -115,6 +115,170 @@ export interface HolderInfo {
   amount: string;
 }
 
+// ============================================================================
+// ESPO API RESPONSE TYPES
+// ============================================================================
+
+/** Paginated response base */
+export interface PaginatedResponse {
+  ok: boolean;
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+/** Address balance entry with outpoint details */
+export interface OutpointEntry {
+  alkane: string;
+  amount: string;
+}
+
+export interface OutpointWithEntries {
+  outpoint: string;
+  entries: OutpointEntry[];
+}
+
+/** Response from getAddressBalances */
+export interface AddressBalancesResponse {
+  ok: boolean;
+  address: string;
+  balances: Record<string, string>; // alkane_id -> amount
+  outpoints?: OutpointWithEntries[];
+}
+
+/** Response from getAddressOutpoints */
+export interface AddressOutpointsResponse {
+  ok: boolean;
+  address: string;
+  outpoints: OutpointWithEntries[];
+}
+
+/** Response from getOutpointBalances */
+export interface OutpointBalancesResponse {
+  ok: boolean;
+  outpoint: string;
+  items: OutpointWithEntries[];
+}
+
+/** Response from getHolders */
+export interface HoldersResponse extends PaginatedResponse {
+  alkane: string;
+  items: HolderInfo[];
+}
+
+/** Response from getHoldersCount */
+export interface HoldersCountResponse {
+  ok: boolean;
+  count: number;
+}
+
+/** Storage key entry */
+export interface StorageKeyEntry {
+  key: string;
+  key_hex: string;
+  value: string;
+  value_hex: string;
+}
+
+/** Response from getKeys */
+export interface KeysResponse extends PaginatedResponse {
+  alkane: string;
+  items: StorageKeyEntry[];
+}
+
+/** Candle data from AMM */
+export interface EspoCandle {
+  open_time: string;
+  close_time: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume0: string;
+  volume1: string;
+  trade_count: number;
+}
+
+/** Response from getCandles */
+export interface CandlesResponse extends PaginatedResponse {
+  pool: string;
+  timeframe: string;
+  side: string;
+  candles: EspoCandle[];
+}
+
+/** Trade data from AMM */
+export interface EspoTrade {
+  txid: string;
+  vout: number;
+  block_height: number;
+  timestamp: string;
+  side: string;
+  amount_in: string;
+  amount_out: string;
+  price: string;
+}
+
+/** Response from getTrades */
+export interface TradesResponse extends PaginatedResponse {
+  pool: string;
+  side: string;
+  filter_side: string;
+  sort: string;
+  dir: string;
+  trades: EspoTrade[];
+}
+
+/** Pool info from AMM */
+export interface EspoPool {
+  pool_id: string;
+  token0: string;
+  token1: string;
+  reserve0: string;
+  reserve1: string;
+  total_supply: string;
+}
+
+/** Response from getPools */
+export interface PoolsResponse extends PaginatedResponse {
+  pools: EspoPool[];
+}
+
+/** Swap hop info */
+export interface SwapHop {
+  pool: string;
+  token_in: string;
+  token_out: string;
+  amount_in: string;
+  amount_out: string;
+}
+
+/** Response from findBestSwapPath */
+export interface SwapPathResponse {
+  ok: boolean;
+  mode: string;
+  token_in: string;
+  token_out: string;
+  fee_bps: number;
+  max_hops: number;
+  amount_in: string;
+  amount_out: string;
+  hops: SwapHop[];
+}
+
+/** Response from getBestMevSwap */
+export interface MevSwapResponse {
+  ok: boolean;
+  token: string;
+  fee_bps: number;
+  max_hops: number;
+  amount_in: string;
+  amount_out: string;
+  profit: string;
+  hops: SwapHop[];
+}
+
 // Execute result
 export interface ExecuteResult {
   txid: string;
@@ -472,7 +636,7 @@ export class EspoClient {
    * @param address - Bitcoin address
    * @param includeOutpoints - Include detailed outpoint information
    */
-  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<any> {
+  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<AddressBalancesResponse> {
     return this.provider.espoGetAddressBalances(address, includeOutpoints);
   }
 
@@ -480,7 +644,7 @@ export class EspoClient {
    * Get outpoints containing alkanes for an address
    * @param address - Bitcoin address
    */
-  async getAddressOutpoints(address: string): Promise<any> {
+  async getAddressOutpoints(address: string): Promise<AddressOutpointsResponse> {
     return this.provider.espoGetAddressOutpoints(address);
   }
 
@@ -488,7 +652,7 @@ export class EspoClient {
    * Get alkanes balances at a specific outpoint
    * @param outpoint - Outpoint in format "txid:vout"
    */
-  async getOutpointBalances(outpoint: string): Promise<any> {
+  async getOutpointBalances(outpoint: string): Promise<OutpointBalancesResponse> {
     return this.provider.espoGetOutpointBalances(outpoint);
   }
 
@@ -498,7 +662,7 @@ export class EspoClient {
    * @param page - Page number (default: 0)
    * @param limit - Items per page (default: 100)
    */
-  async getHolders(alkaneId: string, page: number = 0, limit: number = 100): Promise<any> {
+  async getHolders(alkaneId: string, page: number = 0, limit: number = 100): Promise<HoldersResponse> {
     return this.provider.espoGetHolders(alkaneId, BigInt(page), BigInt(limit));
   }
 
@@ -507,7 +671,8 @@ export class EspoClient {
    * @param alkaneId - Alkane ID in format "block:tx"
    */
   async getHoldersCount(alkaneId: string): Promise<number> {
-    return this.provider.espoGetHoldersCount(alkaneId);
+    const response: HoldersCountResponse = await this.provider.espoGetHoldersCount(alkaneId);
+    return response.count;
   }
 
   /**
@@ -516,7 +681,7 @@ export class EspoClient {
    * @param page - Page number (default: 0)
    * @param limit - Items per page (default: 100)
    */
-  async getKeys(alkaneId: string, page: number = 0, limit: number = 100): Promise<any> {
+  async getKeys(alkaneId: string, page: number = 0, limit: number = 100): Promise<KeysResponse> {
     return this.provider.espoGetKeys(alkaneId, BigInt(page), BigInt(limit));
   }
 
@@ -545,7 +710,7 @@ export class EspoClient {
     side?: string,
     limit?: number,
     page?: number
-  ): Promise<any> {
+  ): Promise<CandlesResponse> {
     return this.provider.espoGetCandles(
       pool,
       timeframe,
@@ -573,7 +738,7 @@ export class EspoClient {
     filterSide?: string,
     sort?: string,
     dir?: string
-  ): Promise<any> {
+  ): Promise<TradesResponse> {
     return this.provider.espoGetTrades(
       pool,
       limit !== undefined ? BigInt(limit) : undefined,
@@ -590,7 +755,7 @@ export class EspoClient {
    * @param limit - Number of pools (default: 100)
    * @param page - Page number (default: 0)
    */
-  async getPools(limit?: number, page?: number): Promise<any> {
+  async getPools(limit?: number, page?: number): Promise<PoolsResponse> {
     return this.provider.espoGetPools(
       limit !== undefined ? BigInt(limit) : undefined,
       page !== undefined ? BigInt(page) : undefined
@@ -621,7 +786,7 @@ export class EspoClient {
     availableIn?: string,
     feeBps?: number,
     maxHops?: number
-  ): Promise<any> {
+  ): Promise<SwapPathResponse> {
     return this.provider.espoFindBestSwapPath(
       tokenIn,
       tokenOut,
@@ -646,7 +811,7 @@ export class EspoClient {
     token: string,
     feeBps?: number,
     maxHops?: number
-  ): Promise<any> {
+  ): Promise<MevSwapResponse> {
     return this.provider.espoGetBestMevSwap(
       token,
       feeBps !== undefined ? BigInt(feeBps) : undefined,

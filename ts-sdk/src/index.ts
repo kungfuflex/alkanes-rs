@@ -65,6 +65,7 @@ export {
   MetashrewClient,
   DataApiClient,
   LuaClient,
+  EspoClient,
   createProvider,
   NETWORK_PRESETS,
 } from './provider';
@@ -78,6 +79,26 @@ export type {
   HolderInfo,
   ExecuteResult,
   LuaEvalResult,
+  // Espo API response types
+  PaginatedResponse,
+  OutpointEntry,
+  OutpointWithEntries,
+  AddressBalancesResponse,
+  AddressOutpointsResponse,
+  OutpointBalancesResponse,
+  HoldersResponse,
+  HoldersCountResponse,
+  StorageKeyEntry,
+  KeysResponse,
+  EspoCandle,
+  CandlesResponse,
+  EspoTrade,
+  TradesResponse,
+  EspoPool,
+  PoolsResponse,
+  SwapHop,
+  SwapPathResponse,
+  MevSwapResponse,
 } from './provider';
 
 // Type exports
