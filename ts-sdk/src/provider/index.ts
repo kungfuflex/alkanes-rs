@@ -693,9 +693,9 @@ export class EspoClient {
    * @param alkaneId - Alkane ID in format "block:tx"
    */
   async getHoldersCount(alkaneId: string): Promise<number> {
+    // WASM method returns the count directly as a number
     const result = await this.provider.espoGetHoldersCount(alkaneId);
-    const response: HoldersCountResponse = mapToObject(result);
-    return response.count;
+    return result;
   }
 
   /**

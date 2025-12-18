@@ -46652,8 +46652,7 @@ var init_provider = __esm({
        */
       async getHoldersCount(alkaneId) {
         const result = await this.provider.espoGetHoldersCount(alkaneId);
-        const response = mapToObject(result);
-        return response.count;
+        return result;
       }
       /**
        * Get storage keys for an alkane contract with pagination
