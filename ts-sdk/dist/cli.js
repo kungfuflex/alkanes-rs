@@ -4881,6 +4881,142 @@ function registerBrc20ProgCommands(program2) {
       process.exit(1);
     }
   });
+  brc20Prog.command("wrap-btc <amount>").description("Wrap BTC to frBTC (simple wrap without execution)").option("--from <addresses...>", "Addresses to source UTXOs from").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--use-slipstream", "Use MARA Slipstream for broadcasting").option("--use-rebar", "Use Rebar Shield for private relay").option("--rebar-tier <tier>", "Rebar fee tier (1 or 2)", parseInt).option("--resume <txid>", "Resume from existing commit transaction").option("--raw", "Output raw JSON").action(async (amount, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora12.default)("Wrapping BTC to frBTC...").start();
+      const { frbtc_wrap } = await import("../../wasm/alkanes_web_sys.js");
+      const params = {
+        from_addresses: options.from,
+        change_address: options.change,
+        fee_rate: options.feeRate,
+        use_slipstream: options.useSlipstream,
+        use_rebar: options.useRebar,
+        rebar_tier: options.rebarTier,
+        resume_from_commit: options.resume
+      };
+      const result = await frbtc_wrap(
+        globalOpts.provider || "mainnet",
+        BigInt(amount),
+        JSON.stringify(params)
+      );
+      spinner.succeed("BTC wrapped to frBTC successfully!");
+      const parsed = JSON.parse(result);
+      console.log(formatOutput(parsed, { raw: options.raw }));
+    } catch (err) {
+      error(`Failed to wrap BTC: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  brc20Prog.command("unwrap-btc <amount>").description("Unwrap frBTC to BTC (burns frBTC and queues BTC payment)").requiredOption("--to <address>", "Recipient address for the unwrapped BTC").option("--vout <index>", "Vout index for inscription output", parseInt, 0).option("--from <addresses...>", "Addresses to source UTXOs from").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--use-slipstream", "Use MARA Slipstream for broadcasting").option("--use-rebar", "Use Rebar Shield for private relay").option("--rebar-tier <tier>", "Rebar fee tier (1 or 2)", parseInt).option("--resume <txid>", "Resume from existing commit transaction").option("--raw", "Output raw JSON").action(async (amount, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora12.default)("Unwrapping frBTC to BTC...").start();
+      const { frbtc_unwrap } = await import("../../wasm/alkanes_web_sys.js");
+      const params = {
+        from_addresses: options.from,
+        change_address: options.change,
+        fee_rate: options.feeRate,
+        use_slipstream: options.useSlipstream,
+        use_rebar: options.useRebar,
+        rebar_tier: options.rebarTier,
+        resume_from_commit: options.resume
+      };
+      const result = await frbtc_unwrap(
+        globalOpts.provider || "mainnet",
+        BigInt(amount),
+        BigInt(options.vout || 0),
+        options.to,
+        JSON.stringify(params)
+      );
+      spinner.succeed("frBTC unwrap queued successfully!");
+      const parsed = JSON.parse(result);
+      console.log(formatOutput(parsed, { raw: options.raw }));
+      success(`BTC will be sent to ${options.to} by the subfrost operator`);
+    } catch (err) {
+      error(`Failed to unwrap frBTC: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  brc20Prog.command("wrap-and-execute <amount>").description("Wrap BTC and deploy+execute a script (wrapAndExecute)").requiredOption("--script <bytecode>", "Script bytecode to deploy and execute (hex)").option("--from <addresses...>", "Addresses to source UTXOs from").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--use-slipstream", "Use MARA Slipstream for broadcasting").option("--use-rebar", "Use Rebar Shield for private relay").option("--rebar-tier <tier>", "Rebar fee tier (1 or 2)", parseInt).option("--resume <txid>", "Resume from existing commit transaction").option("--raw", "Output raw JSON").action(async (amount, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora12.default)("Wrapping BTC and executing script...").start();
+      const { frbtc_wrap_and_execute } = await import("../../wasm/alkanes_web_sys.js");
+      const params = {
+        from_addresses: options.from,
+        change_address: options.change,
+        fee_rate: options.feeRate,
+        use_slipstream: options.useSlipstream,
+        use_rebar: options.useRebar,
+        rebar_tier: options.rebarTier,
+        resume_from_commit: options.resume
+      };
+      const result = await frbtc_wrap_and_execute(
+        globalOpts.provider || "mainnet",
+        BigInt(amount),
+        options.script,
+        JSON.stringify(params)
+      );
+      spinner.succeed("BTC wrapped and script executed!");
+      const parsed = JSON.parse(result);
+      console.log(formatOutput(parsed, { raw: options.raw }));
+    } catch (err) {
+      error(`Failed to wrap and execute: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  brc20Prog.command("wrap-and-execute2 <amount>").description("Wrap BTC and call an existing contract (wrapAndExecute2)").requiredOption("--target <address>", "Target contract address").requiredOption("--signature <sig>", 'Function signature (e.g., "deposit()")').option("--calldata <args>", "Comma-separated calldata arguments", "").option("--from <addresses...>", "Addresses to source UTXOs from").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--use-slipstream", "Use MARA Slipstream for broadcasting").option("--use-rebar", "Use Rebar Shield for private relay").option("--rebar-tier <tier>", "Rebar fee tier (1 or 2)", parseInt).option("--resume <txid>", "Resume from existing commit transaction").option("--raw", "Output raw JSON").action(async (amount, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora12.default)("Wrapping BTC and calling contract...").start();
+      const { frbtc_wrap_and_execute2 } = await import("../../wasm/alkanes_web_sys.js");
+      const params = {
+        from_addresses: options.from,
+        change_address: options.change,
+        fee_rate: options.feeRate,
+        use_slipstream: options.useSlipstream,
+        use_rebar: options.useRebar,
+        rebar_tier: options.rebarTier,
+        resume_from_commit: options.resume
+      };
+      const result = await frbtc_wrap_and_execute2(
+        globalOpts.provider || "mainnet",
+        BigInt(amount),
+        options.target,
+        options.signature,
+        options.calldata || "",
+        JSON.stringify(params)
+      );
+      spinner.succeed("BTC wrapped and contract called!");
+      const parsed = JSON.parse(result);
+      console.log(formatOutput(parsed, { raw: options.raw }));
+    } catch (err) {
+      error(`Failed to wrap and execute2: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  brc20Prog.command("signer-address").description("Get the FrBTC signer address for the current network").option("--raw", "Output raw JSON").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora12.default)("Getting FrBTC signer address...").start();
+      const { frbtc_get_signer_address } = await import("../../wasm/alkanes_web_sys.js");
+      const result = await frbtc_get_signer_address(globalOpts.provider || "mainnet");
+      spinner.succeed("FrBTC signer address retrieved!");
+      const parsed = JSON.parse(result);
+      if (options.raw) {
+        console.log(formatOutput(parsed, { raw: true }));
+      } else {
+        console.log(`\u{1F511} FrBTC Signer Address`);
+        console.log(`   Network: ${parsed.network}`);
+        console.log(`   FrBTC Contract: ${parsed.frbtc_contract}`);
+        console.log(`   Signer Address: ${parsed.signer_address}`);
+      }
+    } catch (err) {
+      error(`Failed to get signer address: ${err.message}`);
+      process.exit(1);
+    }
+  });
 }
 
 // src/cli/commands/opi.ts
