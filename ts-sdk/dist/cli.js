@@ -9,6 +9,9 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
@@ -1300,6 +1303,21 @@ var init_provider = __esm({
         return this._provider;
       }
       /**
+       * Get the raw WASM WebProvider for direct access to low-level methods.
+       *
+       * This is useful for CLI tools that need access to wallet methods
+       * like wallet_create_js, wallet_load_js, etc. that are not wrapped
+       * by the higher-level API.
+       *
+       * @throws Error if provider is not initialized
+       */
+      get rawProvider() {
+        if (!this._provider) {
+          throw new Error("Provider not initialized. Call initialize() first.");
+        }
+        return this._provider;
+      }
+      /**
        * Bitcoin RPC client
        */
       get bitcoin() {
@@ -1502,9 +1520,9 @@ var init_provider = __esm({
        * @param path - Storage path as bytes (use TextEncoder to convert string to bytes)
        * @returns Hex string (0x-prefixed) of the storage value
        */
-      async getStorageAt(block, tx, path2) {
+      async getStorageAt(block, tx, path3) {
         const provider = await this.getProvider();
-        return provider.getStorageAt(BigInt(block), BigInt(tx), Array.from(path2));
+        return provider.getStorageAt(BigInt(block), BigInt(tx), Array.from(path3));
       }
       /**
        * Get address history with alkane traces
@@ -1598,6 +1616,4019 @@ var init_provider = __esm({
   }
 });
 
+// src/wasm/alkanes_web_sys.js
+var require_alkanes_web_sys = __commonJS({
+  "src/wasm/alkanes_web_sys.js"(exports2, module2) {
+    "use strict";
+    var imports = {};
+    imports["__wbindgen_placeholder__"] = module2.exports;
+    var cachedUint8ArrayMemory0 = null;
+    function getUint8ArrayMemory0() {
+      if (cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0) {
+        cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
+      }
+      return cachedUint8ArrayMemory0;
+    }
+    var cachedTextDecoder = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true });
+    cachedTextDecoder.decode();
+    function decodeText(ptr, len) {
+      return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
+    }
+    function getStringFromWasm0(ptr, len) {
+      ptr = ptr >>> 0;
+      return decodeText(ptr, len);
+    }
+    var WASM_VECTOR_LEN = 0;
+    var cachedTextEncoder = new TextEncoder();
+    if (!("encodeInto" in cachedTextEncoder)) {
+      cachedTextEncoder.encodeInto = function(arg, view) {
+        const buf = cachedTextEncoder.encode(arg);
+        view.set(buf);
+        return {
+          read: arg.length,
+          written: buf.length
+        };
+      };
+    }
+    function passStringToWasm0(arg, malloc, realloc) {
+      if (realloc === void 0) {
+        const buf = cachedTextEncoder.encode(arg);
+        const ptr2 = malloc(buf.length, 1) >>> 0;
+        getUint8ArrayMemory0().subarray(ptr2, ptr2 + buf.length).set(buf);
+        WASM_VECTOR_LEN = buf.length;
+        return ptr2;
+      }
+      let len = arg.length;
+      let ptr = malloc(len, 1) >>> 0;
+      const mem = getUint8ArrayMemory0();
+      let offset = 0;
+      for (; offset < len; offset++) {
+        const code = arg.charCodeAt(offset);
+        if (code > 127) break;
+        mem[ptr + offset] = code;
+      }
+      if (offset !== len) {
+        if (offset !== 0) {
+          arg = arg.slice(offset);
+        }
+        ptr = realloc(ptr, len, len = offset + arg.length * 3, 1) >>> 0;
+        const view = getUint8ArrayMemory0().subarray(ptr + offset, ptr + len);
+        const ret = cachedTextEncoder.encodeInto(arg, view);
+        offset += ret.written;
+        ptr = realloc(ptr, len, offset, 1) >>> 0;
+      }
+      WASM_VECTOR_LEN = offset;
+      return ptr;
+    }
+    var cachedDataViewMemory0 = null;
+    function getDataViewMemory0() {
+      if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || cachedDataViewMemory0.buffer.detached === void 0 && cachedDataViewMemory0.buffer !== wasm.memory.buffer) {
+        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+      }
+      return cachedDataViewMemory0;
+    }
+    function isLikeNone(x) {
+      return x === void 0 || x === null;
+    }
+    function debugString(val) {
+      const type = typeof val;
+      if (type == "number" || type == "boolean" || val == null) {
+        return `${val}`;
+      }
+      if (type == "string") {
+        return `"${val}"`;
+      }
+      if (type == "symbol") {
+        const description = val.description;
+        if (description == null) {
+          return "Symbol";
+        } else {
+          return `Symbol(${description})`;
+        }
+      }
+      if (type == "function") {
+        const name = val.name;
+        if (typeof name == "string" && name.length > 0) {
+          return `Function(${name})`;
+        } else {
+          return "Function";
+        }
+      }
+      if (Array.isArray(val)) {
+        const length = val.length;
+        let debug = "[";
+        if (length > 0) {
+          debug += debugString(val[0]);
+        }
+        for (let i = 1; i < length; i++) {
+          debug += ", " + debugString(val[i]);
+        }
+        debug += "]";
+        return debug;
+      }
+      const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
+      let className;
+      if (builtInMatches && builtInMatches.length > 1) {
+        className = builtInMatches[1];
+      } else {
+        return toString.call(val);
+      }
+      if (className == "Object") {
+        try {
+          return "Object(" + JSON.stringify(val) + ")";
+        } catch (_) {
+          return "Object";
+        }
+      }
+      if (val instanceof Error) {
+        return `${val.name}: ${val.message}
+${val.stack}`;
+      }
+      return className;
+    }
+    function addToExternrefTable0(obj) {
+      const idx = wasm.__externref_table_alloc();
+      wasm.__wbindgen_externrefs.set(idx, obj);
+      return idx;
+    }
+    function handleError(f, args) {
+      try {
+        return f.apply(this, args);
+      } catch (e) {
+        const idx = addToExternrefTable0(e);
+        wasm.__wbindgen_exn_store(idx);
+      }
+    }
+    function getArrayU8FromWasm0(ptr, len) {
+      ptr = ptr >>> 0;
+      return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+    }
+    var CLOSURE_DTORS = typeof FinalizationRegistry === "undefined" ? { register: () => {
+    }, unregister: () => {
+    } } : new FinalizationRegistry((state) => state.dtor(state.a, state.b));
+    function makeMutClosure(arg0, arg1, dtor, f) {
+      const state = { a: arg0, b: arg1, cnt: 1, dtor };
+      const real = (...args) => {
+        state.cnt++;
+        const a = state.a;
+        state.a = 0;
+        try {
+          return f(a, state.b, ...args);
+        } finally {
+          state.a = a;
+          real._wbg_cb_unref();
+        }
+      };
+      real._wbg_cb_unref = () => {
+        if (--state.cnt === 0) {
+          state.dtor(state.a, state.b);
+          state.a = 0;
+          CLOSURE_DTORS.unregister(state);
+        }
+      };
+      CLOSURE_DTORS.register(real, state, state);
+      return real;
+    }
+    function takeFromExternrefTable0(idx) {
+      const value = wasm.__wbindgen_externrefs.get(idx);
+      wasm.__externref_table_dealloc(idx);
+      return value;
+    }
+    function passArray8ToWasm0(arg, malloc) {
+      const ptr = malloc(arg.length * 1, 1) >>> 0;
+      getUint8ArrayMemory0().set(arg, ptr / 1);
+      WASM_VECTOR_LEN = arg.length;
+      return ptr;
+    }
+    function passArrayJsValueToWasm0(array, malloc) {
+      const ptr = malloc(array.length * 4, 4) >>> 0;
+      for (let i = 0; i < array.length; i++) {
+        const add = addToExternrefTable0(array[i]);
+        getDataViewMemory0().setUint32(ptr + 4 * i, add, true);
+      }
+      WASM_VECTOR_LEN = array.length;
+      return ptr;
+    }
+    exports2.encryptMnemonic = function(mnemonic, passphrase) {
+      const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
+      return ret;
+    };
+    exports2.analyze_psbt = function(psbt_base64, network_str) {
+      let deferred4_0;
+      let deferred4_1;
+      try {
+        const ptr0 = passStringToWasm0(psbt_base64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(network_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.analyze_psbt(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+          ptr3 = 0;
+          len3 = 0;
+          throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+      } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+      }
+    };
+    exports2.simulate_alkane_call = function(alkane_id_str, wasm_hex, cellpack_hex) {
+      const ptr0 = passStringToWasm0(alkane_id_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(wasm_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ptr2 = passStringToWasm0(cellpack_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len2 = WASM_VECTOR_LEN;
+      const ret = wasm.simulate_alkane_call(ptr0, len0, ptr1, len1, ptr2, len2);
+      return ret;
+    };
+    exports2.get_alkane_bytecode = function(network, block, tx, block_tag) {
+      const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ret = wasm.get_alkane_bytecode(ptr0, len0, block, tx, ptr1, len1);
+      return ret;
+    };
+    exports2.analyze_runestone = function(tx_hex) {
+      let deferred3_0;
+      let deferred3_1;
+      try {
+        const ptr0 = passStringToWasm0(tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.analyze_runestone(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+          ptr2 = 0;
+          len2 = 0;
+          throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+      } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+      }
+    };
+    exports2.decode_psbt = function(psbt_base64) {
+      let deferred3_0;
+      let deferred3_1;
+      try {
+        const ptr0 = passStringToWasm0(psbt_base64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.decode_psbt(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+          ptr2 = 0;
+          len2 = 0;
+          throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+      } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+      }
+    };
+    exports2.brc20_prog_deploy_contract = function(network, foundry_json, params_json) {
+      const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(foundry_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ptr2 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len2 = WASM_VECTOR_LEN;
+      const ret = wasm.brc20_prog_deploy_contract(ptr0, len0, ptr1, len1, ptr2, len2);
+      return ret;
+    };
+    exports2.brc20_prog_transact = function(network, contract_address, function_signature, calldata, params_json) {
+      const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(contract_address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ptr2 = passStringToWasm0(function_signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len2 = WASM_VECTOR_LEN;
+      const ptr3 = passStringToWasm0(calldata, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len3 = WASM_VECTOR_LEN;
+      const ptr4 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len4 = WASM_VECTOR_LEN;
+      const ret = wasm.brc20_prog_transact(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+      return ret;
+    };
+    exports2.brc20_prog_wrap_btc = function(network, amount, target_contract, function_signature, calldata, params_json) {
+      const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(target_contract, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ptr2 = passStringToWasm0(function_signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len2 = WASM_VECTOR_LEN;
+      const ptr3 = passStringToWasm0(calldata, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len3 = WASM_VECTOR_LEN;
+      const ptr4 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len4 = WASM_VECTOR_LEN;
+      const ret = wasm.brc20_prog_wrap_btc(ptr0, len0, amount, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+      return ret;
+    };
+    exports2.frbtc_wrap = function(network, amount, params_json) {
+      const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ret = wasm.frbtc_wrap(ptr0, len0, amount, ptr1, len1);
+      return ret;
+    };
+    exports2.frbtc_unwrap = function(network, amount, vout, recipient_address, params_json) {
+      const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(recipient_address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ptr2 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len2 = WASM_VECTOR_LEN;
+      const ret = wasm.frbtc_unwrap(ptr0, len0, amount, vout, ptr1, len1, ptr2, len2);
+      return ret;
+    };
+    exports2.frbtc_wrap_and_execute = function(network, amount, script_bytecode, params_json) {
+      const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(script_bytecode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ptr2 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len2 = WASM_VECTOR_LEN;
+      const ret = wasm.frbtc_wrap_and_execute(ptr0, len0, amount, ptr1, len1, ptr2, len2);
+      return ret;
+    };
+    exports2.frbtc_wrap_and_execute2 = function(network, amount, target_address, function_signature, calldata_args, params_json) {
+      const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ptr1 = passStringToWasm0(target_address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      const ptr2 = passStringToWasm0(function_signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len2 = WASM_VECTOR_LEN;
+      const ptr3 = passStringToWasm0(calldata_args, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len3 = WASM_VECTOR_LEN;
+      const ptr4 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len4 = WASM_VECTOR_LEN;
+      const ret = wasm.frbtc_wrap_and_execute2(ptr0, len0, amount, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+      return ret;
+    };
+    exports2.frbtc_get_signer_address = function(network) {
+      const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len0 = WASM_VECTOR_LEN;
+      const ret = wasm.frbtc_get_signer_address(ptr0, len0);
+      return ret;
+    };
+    function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2) {
+      wasm.wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2);
+    }
+    function wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb(arg0, arg1) {
+      wasm.wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb(arg0, arg1);
+    }
+    function wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(arg0, arg1, arg2, arg3) {
+      wasm.wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(arg0, arg1, arg2, arg3);
+    }
+    var __wbindgen_enum_RequestCache = ["default", "no-store", "reload", "no-cache", "force-cache", "only-if-cached"];
+    var __wbindgen_enum_RequestCredentials = ["omit", "same-origin", "include"];
+    var __wbindgen_enum_RequestMode = ["same-origin", "no-cors", "cors", "navigate"];
+    var KeystoreFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+    }, unregister: () => {
+    } } : new FinalizationRegistry((ptr) => wasm.__wbg_keystore_free(ptr >>> 0, 1));
+    var Keystore = class {
+      __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        KeystoreFinalization.unregister(this);
+        return ptr;
+      }
+      free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_keystore_free(ptr, 0);
+      }
+      /**
+       * @param {any} val
+       */
+      constructor(val) {
+        const ret = wasm.keystore_from_js(val);
+        if (ret[2]) {
+          throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0] >>> 0;
+        KeystoreFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+      }
+      /**
+       * @returns {any}
+       */
+      to_js() {
+        const ret = wasm.keystore_to_js(this.__wbg_ptr);
+        if (ret[2]) {
+          throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+      }
+      /**
+       * @returns {string}
+       */
+      accountXpub() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+          const ret = wasm.keystore_accountXpub(this.__wbg_ptr);
+          deferred1_0 = ret[0];
+          deferred1_1 = ret[1];
+          return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+          wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+      }
+      /**
+       * @returns {any}
+       */
+      hdPaths() {
+        const ret = wasm.keystore_hdPaths(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {string}
+       */
+      masterFingerprint() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+          const ret = wasm.keystore_masterFingerprint(this.__wbg_ptr);
+          deferred1_0 = ret[0];
+          deferred1_1 = ret[1];
+          return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+          wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+      }
+      /**
+       * @param {string} passphrase
+       * @returns {Promise<any>}
+       */
+      decryptMnemonic(passphrase) {
+        const ptr0 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.keystore_decryptMnemonic(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+    };
+    if (Symbol.dispose) Keystore.prototype[Symbol.dispose] = Keystore.prototype.free;
+    exports2.Keystore = Keystore;
+    var PbkdfParamsFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+    }, unregister: () => {
+    } } : new FinalizationRegistry((ptr) => wasm.__wbg_pbkdfparams_free(ptr >>> 0, 1));
+    var PbkdfParams = class {
+      __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        PbkdfParamsFinalization.unregister(this);
+        return ptr;
+      }
+      free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_pbkdfparams_free(ptr, 0);
+      }
+      /**
+       * @param {any} val
+       */
+      constructor(val) {
+        const ret = wasm.pbkdfparams_from_js(val);
+        if (ret[2]) {
+          throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0] >>> 0;
+        PbkdfParamsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+      }
+      /**
+       * @returns {any}
+       */
+      to_js() {
+        const ret = wasm.pbkdfparams_to_js(this.__wbg_ptr);
+        if (ret[2]) {
+          throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+      }
+    };
+    if (Symbol.dispose) PbkdfParams.prototype[Symbol.dispose] = PbkdfParams.prototype.free;
+    exports2.PbkdfParams = PbkdfParams;
+    var WasmBrowserWalletProviderFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+    }, unregister: () => {
+    } } : new FinalizationRegistry((ptr) => wasm.__wbg_wasmbrowserwalletprovider_free(ptr >>> 0, 1));
+    var WasmBrowserWalletProvider = class _WasmBrowserWalletProvider {
+      static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(_WasmBrowserWalletProvider.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmBrowserWalletProviderFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+      }
+      __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmBrowserWalletProviderFinalization.unregister(this);
+        return ptr;
+      }
+      free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmbrowserwalletprovider_free(ptr, 0);
+      }
+      /**
+       * Create a new BrowserWalletProvider from a JavaScript wallet adapter
+       *
+       * @param adapter - A JavaScript object implementing the JsWalletAdapter interface
+       * @param network - Network string ("mainnet", "testnet", "signet", "regtest")
+       * @returns Promise<WasmBrowserWalletProvider>
+       * @param {JsWalletAdapter} adapter
+       * @param {string} network
+       */
+      constructor(adapter, network) {
+        const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmbrowserwalletprovider_new(adapter, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get the connected wallet address
+       * @returns {string | undefined}
+       */
+      getAddress() {
+        const ret = wasm.wasmbrowserwalletprovider_getAddress(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+          v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+          wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+      }
+      /**
+       * Get the wallet public key
+       * @returns {Promise<string>}
+       */
+      getPublicKey() {
+        const ret = wasm.wasmbrowserwalletprovider_getPublicKey(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Sign a PSBT (hex encoded)
+       * @param {string} psbt_hex
+       * @param {any} options
+       * @returns {Promise<string>}
+       */
+      signPsbt(psbt_hex, options) {
+        const ptr0 = passStringToWasm0(psbt_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmbrowserwalletprovider_signPsbt(this.__wbg_ptr, ptr0, len0, options);
+        return ret;
+      }
+      /**
+       * Sign a message
+       * @param {string} message
+       * @param {string | null} [address]
+       * @returns {Promise<string>}
+       */
+      signMessage(message, address) {
+        const ptr0 = passStringToWasm0(message, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmbrowserwalletprovider_signMessage(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Broadcast a transaction
+       * @param {string} tx_hex
+       * @returns {Promise<string>}
+       */
+      broadcastTransaction(tx_hex) {
+        const ptr0 = passStringToWasm0(tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmbrowserwalletprovider_broadcastTransaction(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get balance
+       * @returns {Promise<any>}
+       */
+      getBalance() {
+        const ret = wasm.wasmbrowserwalletprovider_getBalance(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Get UTXOs
+       * @param {boolean} include_frozen
+       * @returns {Promise<any>}
+       */
+      getUtxos(include_frozen) {
+        const ret = wasm.wasmbrowserwalletprovider_getUtxos(this.__wbg_ptr, include_frozen);
+        return ret;
+      }
+      /**
+       * Get enriched UTXOs with asset information
+       * @returns {Promise<any>}
+       */
+      getEnrichedUtxos() {
+        const ret = wasm.wasmbrowserwalletprovider_getEnrichedUtxos(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Get all balances (BTC + alkanes)
+       * @returns {Promise<any>}
+       */
+      getAllBalances() {
+        const ret = wasm.wasmbrowserwalletprovider_getAllBalances(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Get wallet info
+       * @returns {any}
+       */
+      getWalletInfo() {
+        const ret = wasm.wasmbrowserwalletprovider_getWalletInfo(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Get connection status
+       * @returns {string}
+       */
+      getConnectionStatus() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+          const ret = wasm.wasmbrowserwalletprovider_getConnectionStatus(this.__wbg_ptr);
+          deferred1_0 = ret[0];
+          deferred1_1 = ret[1];
+          return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+          wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+      }
+      /**
+       * Get current network
+       * @returns {string}
+       */
+      getNetwork() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+          const ret = wasm.wasmbrowserwalletprovider_getNetwork(this.__wbg_ptr);
+          deferred1_0 = ret[0];
+          deferred1_1 = ret[1];
+          return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+          wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+      }
+      /**
+       * Disconnect from the wallet
+       * @returns {Promise<void>}
+       */
+      disconnect() {
+        const ret = wasm.wasmbrowserwalletprovider_disconnect(this.__wbg_ptr);
+        return ret;
+      }
+    };
+    if (Symbol.dispose) WasmBrowserWalletProvider.prototype[Symbol.dispose] = WasmBrowserWalletProvider.prototype.free;
+    exports2.WasmBrowserWalletProvider = WasmBrowserWalletProvider;
+    var WebProviderFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+    }, unregister: () => {
+    } } : new FinalizationRegistry((ptr) => wasm.__wbg_webprovider_free(ptr >>> 0, 1));
+    var WebProvider = class {
+      __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WebProviderFinalization.unregister(this);
+        return ptr;
+      }
+      free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_webprovider_free(ptr, 0);
+      }
+      /**
+       * Create a new WebProvider from provider name and optional config overrides
+       *
+       * # Arguments
+       * * `provider` - Network provider: "mainnet", "signet", "subfrost-regtest", "regtest"
+       * * `config` - Optional JS object with RpcConfig fields to override defaults
+       *
+       * # Example (JavaScript)
+       * ```js
+       * // Simple - uses all defaults for signet
+       * const provider = new WebProvider("signet");
+       *
+       * // With overrides
+       * const provider = new WebProvider("signet", {
+       *   bitcoin_rpc_url: "https://custom-rpc.example.com",
+       *   esplora_url: "https://custom-esplora.example.com"
+       * });
+       * ```
+       * @param {string} provider
+       * @param {any | null} [config]
+       */
+      constructor(provider, config) {
+        const ptr0 = passStringToWasm0(provider, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_new_js(ptr0, len0, isLikeNone(config) ? 0 : addToExternrefTable0(config));
+        if (ret[2]) {
+          throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0] >>> 0;
+        WebProviderFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+      }
+      /**
+       * @returns {string}
+       */
+      sandshrew_rpc_url() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+          const ret = wasm.webprovider_sandshrew_rpc_url(this.__wbg_ptr);
+          deferred1_0 = ret[0];
+          deferred1_1 = ret[1];
+          return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+          wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+      }
+      /**
+       * @returns {string | undefined}
+       */
+      esplora_rpc_url() {
+        const ret = wasm.webprovider_esplora_rpc_url(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+          v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+          wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+      }
+      /**
+       * @returns {string}
+       */
+      bitcoin_rpc_url() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+          const ret = wasm.webprovider_bitcoin_rpc_url(this.__wbg_ptr);
+          deferred1_0 = ret[0];
+          deferred1_1 = ret[1];
+          return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+          wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+      }
+      /**
+       * @returns {string}
+       */
+      brc20_prog_rpc_url() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+          const ret = wasm.webprovider_brc20_prog_rpc_url(this.__wbg_ptr);
+          deferred1_0 = ret[0];
+          deferred1_1 = ret[1];
+          return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+          wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+      }
+      /**
+       * Get enriched wallet balances using the balances.lua script
+       *
+       * This uses the built-in balances.lua script with automatic hash-based caching.
+       * Returns comprehensive balance data including spendable UTXOs, asset UTXOs, and pending.
+       * @param {string} address
+       * @param {string | null} [protocol_tag]
+       * @returns {Promise<any>}
+       */
+      getEnrichedBalances(address, protocol_tag) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(protocol_tag) ? 0 : passStringToWasm0(protocol_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_getEnrichedBalances(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get all transactions for an address from Esplora
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      getAddressTxs(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_getAddressTxs(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get raw transaction hex
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      getTransactionHex(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_getTransactionHex(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Trace alkanes execution for a protostone outpoint
+       * @param {string} outpoint
+       * @returns {Promise<any>}
+       */
+      traceOutpoint(outpoint) {
+        const ptr0 = passStringToWasm0(outpoint, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_traceOutpoint(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get address UTXOs
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      getAddressUtxos(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_getAddressUtxos(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Broadcast a raw transaction
+       * @param {string} tx_hex
+       * @returns {Promise<any>}
+       */
+      broadcastTransaction(tx_hex) {
+        const ptr0 = passStringToWasm0(tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_broadcastTransaction(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get address transactions with complete runestone traces (CLI: esplora address-txs --runestone-trace)
+       * @param {string} address
+       * @param {boolean | null} [exclude_coinbase]
+       * @returns {Promise<any>}
+       */
+      getAddressTxsWithTraces(address, exclude_coinbase) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_getAddressTxsWithTraces(this.__wbg_ptr, ptr0, len0, isLikeNone(exclude_coinbase) ? 16777215 : exclude_coinbase ? 1 : 0);
+        return ret;
+      }
+      /**
+       * @param {string} inscription_id
+       * @returns {Promise<any>}
+       */
+      ordInscription(inscription_id) {
+        const ptr0 = passStringToWasm0(inscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordInscription(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {number | null} [page]
+       * @returns {Promise<any>}
+       */
+      ordInscriptions(page) {
+        const ret = wasm.webprovider_ordInscriptions(this.__wbg_ptr, !isLikeNone(page), isLikeNone(page) ? 0 : page);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      ordOutputs(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordOutputs(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} rune
+       * @returns {Promise<any>}
+       */
+      ordRune(rune) {
+        const ptr0 = passStringToWasm0(rune, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordRune(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      ordAddressInfo(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordAddressInfo(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} query
+       * @returns {Promise<any>}
+       */
+      ordBlockInfo(query) {
+        const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordBlockInfo(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      ordBlockCount() {
+        const ret = wasm.webprovider_ordBlockCount(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      ordBlocks() {
+        const ret = wasm.webprovider_ordBlocks(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} inscription_id
+       * @param {number | null} [page]
+       * @returns {Promise<any>}
+       */
+      ordChildren(inscription_id, page) {
+        const ptr0 = passStringToWasm0(inscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordChildren(this.__wbg_ptr, ptr0, len0, !isLikeNone(page), isLikeNone(page) ? 0 : page);
+        return ret;
+      }
+      /**
+       * @param {string} inscription_id
+       * @returns {Promise<any>}
+       */
+      ordContent(inscription_id) {
+        const ptr0 = passStringToWasm0(inscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordContent(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} inscription_id
+       * @param {number | null} [page]
+       * @returns {Promise<any>}
+       */
+      ordParents(inscription_id, page) {
+        const ptr0 = passStringToWasm0(inscription_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordParents(this.__wbg_ptr, ptr0, len0, !isLikeNone(page), isLikeNone(page) ? 0 : page);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      ordTxInfo(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordTxInfo(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Execute an alkanes smart contract
+       * @param {string} params_json
+       * @returns {Promise<any>}
+       */
+      alkanesExecute(params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesExecute(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Execute an alkanes smart contract using CLI-style string parameters
+       * This is the recommended method for executing alkanes contracts as it supports
+       * the same parameter format as alkanes-cli.
+       *
+       * # Parameters
+       * - `to_addresses`: JSON array of recipient addresses
+       * - `input_requirements`: String format like "B:10000" or "2:0:1000" (alkane block:tx:amount)
+       * - `protostones`: String format like "[32,0,77]:v0:v0" (cellpack:pointer:refund)
+       * - `fee_rate`: Optional fee rate in sat/vB
+       * - `envelope_hex`: Optional envelope data as hex string
+       * - `options_json`: Optional JSON with additional options (trace_enabled, mine_enabled, auto_confirm, raw_output)
+       * @param {string} to_addresses_json
+       * @param {string} input_requirements
+       * @param {string} protostones
+       * @param {number | null} [fee_rate]
+       * @param {string | null} [envelope_hex]
+       * @param {string | null} [options_json]
+       * @returns {Promise<any>}
+       */
+      alkanesExecuteWithStrings(to_addresses_json, input_requirements, protostones, fee_rate, envelope_hex, options_json) {
+        const ptr0 = passStringToWasm0(to_addresses_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(input_requirements, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(protostones, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(envelope_hex) ? 0 : passStringToWasm0(envelope_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        var ptr4 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len4 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesExecuteWithStrings(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, isLikeNone(fee_rate) ? 4294967297 : Math.fround(fee_rate), ptr3, len3, ptr4, len4);
+        return ret;
+      }
+      /**
+       * Resume execution after user confirmation (for simple transactions)
+       * @param {string} state_json
+       * @param {string} params_json
+       * @returns {Promise<any>}
+       */
+      alkanesResumeExecution(state_json, params_json) {
+        const ptr0 = passStringToWasm0(state_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesResumeExecution(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Resume execution after commit transaction confirmation
+       * @param {string} state_json
+       * @returns {Promise<any>}
+       */
+      alkanesResumeCommitExecution(state_json) {
+        const ptr0 = passStringToWasm0(state_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesResumeCommitExecution(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Resume execution after reveal transaction confirmation
+       * @param {string} state_json
+       * @returns {Promise<any>}
+       */
+      alkanesResumeRevealExecution(state_json) {
+        const ptr0 = passStringToWasm0(state_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesResumeRevealExecution(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Simulate an alkanes contract call (read-only)
+       * @param {string} contract_id
+       * @param {string} context_json
+       * @param {string | null} [block_tag]
+       * @returns {Promise<any>}
+       */
+      alkanesSimulate(contract_id, context_json, block_tag) {
+        const ptr0 = passStringToWasm0(contract_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(context_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesSimulate(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * Wrap BTC to frBTC
+       * @param {string} params_json
+       * @returns {Promise<any>}
+       */
+      alkanesWrapBtc(params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesWrapBtc(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Initialize a new AMM liquidity pool
+       * @param {string} params_json
+       * @returns {Promise<any>}
+       */
+      alkanesInitPool(params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesInitPool(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Execute an AMM swap
+       * @param {string} params_json
+       * @returns {Promise<any>}
+       */
+      alkanesSwap(params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesSwap(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Reflect metadata for a range of alkanes
+       * @param {number} block
+       * @param {number} start_tx
+       * @param {number} end_tx
+       * @param {number | null} [concurrency]
+       * @returns {Promise<any>}
+       */
+      alkanesReflectAlkaneRange(block, start_tx, end_tx, concurrency) {
+        const ret = wasm.webprovider_alkanesReflectAlkaneRange(this.__wbg_ptr, block, start_tx, end_tx, !isLikeNone(concurrency), isLikeNone(concurrency) ? 0 : concurrency);
+        return ret;
+      }
+      /**
+       * Execute a tx-script with WASM bytecode
+       * @param {string} wasm_hex
+       * @param {string} inputs_json
+       * @param {string | null} [block_tag]
+       * @returns {Promise<any>}
+       */
+      alkanesTxScript(wasm_hex, inputs_json, block_tag) {
+        const ptr0 = passStringToWasm0(wasm_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(inputs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesTxScript(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * Get pool details for a specific pool
+       * @param {string} pool_id
+       * @returns {Promise<any>}
+       */
+      alkanesPoolDetails(pool_id) {
+        const ptr0 = passStringToWasm0(pool_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesPoolDetails(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Calculate minimum unwrap amount for subfrost frBTC unwrapping
+       * @param {number | null} [fee_rate_override]
+       * @param {number | null} [premium]
+       * @param {number | null} [expected_inputs]
+       * @param {number | null} [expected_outputs]
+       * @param {boolean | null} [raw]
+       * @returns {Promise<any>}
+       */
+      subfrostMinimumUnwrap(fee_rate_override, premium, expected_inputs, expected_outputs, raw) {
+        const ret = wasm.webprovider_subfrostMinimumUnwrap(this.__wbg_ptr, !isLikeNone(fee_rate_override), isLikeNone(fee_rate_override) ? 0 : fee_rate_override, !isLikeNone(premium), isLikeNone(premium) ? 0 : premium, !isLikeNone(expected_inputs), isLikeNone(expected_inputs) ? 0 : expected_inputs, !isLikeNone(expected_outputs), isLikeNone(expected_outputs) ? 0 : expected_outputs, isLikeNone(raw) ? 16777215 : raw ? 1 : 0);
+        return ret;
+      }
+      /**
+       * Get OPI block height
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI extras block height
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiExtrasBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiExtrasBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI database version
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiDbVersion(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiDbVersion(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI event hash version
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiEventHashVersion(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiEventHashVersion(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI balance on block
+       * @param {string} base_url
+       * @param {number} block_height
+       * @param {string} pkscript
+       * @param {string} ticker
+       * @returns {Promise<any>}
+       */
+      opiBalanceOnBlock(base_url, block_height, pkscript, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBalanceOnBlock(this.__wbg_ptr, ptr0, len0, block_height, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * Get OPI activity on block
+       * @param {string} base_url
+       * @param {number} block_height
+       * @returns {Promise<any>}
+       */
+      opiActivityOnBlock(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiActivityOnBlock(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+      }
+      /**
+       * Get OPI Bitcoin RPC results on block
+       * @param {string} base_url
+       * @param {number} block_height
+       * @returns {Promise<any>}
+       */
+      opiBitcoinRpcResultsOnBlock(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitcoinRpcResultsOnBlock(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+      }
+      /**
+       * Get OPI current balance
+       * @param {string} base_url
+       * @param {string} ticker
+       * @param {string | null} [address]
+       * @param {string | null} [pkscript]
+       * @returns {Promise<any>}
+       */
+      opiCurrentBalance(base_url, ticker, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiCurrentBalance(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        return ret;
+      }
+      /**
+       * Get OPI valid tx notes of wallet
+       * @param {string} base_url
+       * @param {string | null} [address]
+       * @param {string | null} [pkscript]
+       * @returns {Promise<any>}
+       */
+      opiValidTxNotesOfWallet(base_url, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiValidTxNotesOfWallet(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * Get OPI valid tx notes of ticker
+       * @param {string} base_url
+       * @param {string} ticker
+       * @returns {Promise<any>}
+       */
+      opiValidTxNotesOfTicker(base_url, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiValidTxNotesOfTicker(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI holders
+       * @param {string} base_url
+       * @param {string} ticker
+       * @returns {Promise<any>}
+       */
+      opiHolders(base_url, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiHolders(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI hash of all activity
+       * @param {string} base_url
+       * @param {number} block_height
+       * @returns {Promise<any>}
+       */
+      opiHashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiHashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+      }
+      /**
+       * Get OPI hash of all current balances
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiHashOfAllCurrentBalances(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiHashOfAllCurrentBalances(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI event
+       * @param {string} base_url
+       * @param {string} event_hash
+       * @returns {Promise<any>}
+       */
+      opiEvent(base_url, event_hash) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(event_hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiEvent(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI IP address
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiIp(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiIp(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI raw endpoint
+       * @param {string} base_url
+       * @param {string} endpoint
+       * @returns {Promise<any>}
+       */
+      opiRaw(base_url, endpoint) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(endpoint, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRaw(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI Runes block height
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiRunesBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI Runes balance on block
+       * @param {string} base_url
+       * @param {number} block_height
+       * @param {string} pkscript
+       * @param {string} rune_id
+       * @returns {Promise<any>}
+       */
+      opiRunesBalanceOnBlock(base_url, block_height, pkscript, rune_id) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(rune_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesBalanceOnBlock(this.__wbg_ptr, ptr0, len0, block_height, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * Get OPI Runes activity on block
+       * @param {string} base_url
+       * @param {number} block_height
+       * @returns {Promise<any>}
+       */
+      opiRunesActivityOnBlock(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesActivityOnBlock(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+      }
+      /**
+       * Get OPI Runes current balance
+       * @param {string} base_url
+       * @param {string | null} [address]
+       * @param {string | null} [pkscript]
+       * @returns {Promise<any>}
+       */
+      opiRunesCurrentBalance(base_url, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesCurrentBalance(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * Get OPI Runes unspent outpoints
+       * @param {string} base_url
+       * @param {string | null} [address]
+       * @param {string | null} [pkscript]
+       * @returns {Promise<any>}
+       */
+      opiRunesUnspentOutpoints(base_url, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesUnspentOutpoints(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * Get OPI Runes holders
+       * @param {string} base_url
+       * @param {string} rune_id
+       * @returns {Promise<any>}
+       */
+      opiRunesHolders(base_url, rune_id) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(rune_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesHolders(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI Runes hash of all activity
+       * @param {string} base_url
+       * @param {number} block_height
+       * @returns {Promise<any>}
+       */
+      opiRunesHashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesHashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+      }
+      /**
+       * Get OPI Runes event
+       * @param {string} base_url
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      opiRunesEvent(base_url, txid) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiRunesEvent(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI Bitmap block height
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiBitmapBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitmapBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI Bitmap hash of all activity
+       * @param {string} base_url
+       * @param {number} block_height
+       * @returns {Promise<any>}
+       */
+      opiBitmapHashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitmapHashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+      }
+      /**
+       * Get OPI Bitmap hash of all bitmaps
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiBitmapHashOfAllBitmaps(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitmapHashOfAllBitmaps(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI Bitmap inscription ID
+       * @param {string} base_url
+       * @param {string} bitmap
+       * @returns {Promise<any>}
+       */
+      opiBitmapInscriptionId(base_url, bitmap) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(bitmap, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiBitmapInscriptionId(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI POW20 block height
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiPow20BlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20BlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI POW20 balance on block
+       * @param {string} base_url
+       * @param {number} block_height
+       * @param {string} pkscript
+       * @param {string} ticker
+       * @returns {Promise<any>}
+       */
+      opiPow20BalanceOnBlock(base_url, block_height, pkscript, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20BalanceOnBlock(this.__wbg_ptr, ptr0, len0, block_height, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * Get OPI POW20 activity on block
+       * @param {string} base_url
+       * @param {number} block_height
+       * @returns {Promise<any>}
+       */
+      opiPow20ActivityOnBlock(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20ActivityOnBlock(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+      }
+      /**
+       * Get OPI POW20 current balance
+       * @param {string} base_url
+       * @param {string} ticker
+       * @param {string | null} [address]
+       * @param {string | null} [pkscript]
+       * @returns {Promise<any>}
+       */
+      opiPow20CurrentBalance(base_url, ticker, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20CurrentBalance(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        return ret;
+      }
+      /**
+       * Get OPI POW20 valid tx notes of wallet
+       * @param {string} base_url
+       * @param {string | null} [address]
+       * @param {string | null} [pkscript]
+       * @returns {Promise<any>}
+       */
+      opiPow20ValidTxNotesOfWallet(base_url, address, pkscript) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(pkscript) ? 0 : passStringToWasm0(pkscript, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20ValidTxNotesOfWallet(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * Get OPI POW20 valid tx notes of ticker
+       * @param {string} base_url
+       * @param {string} ticker
+       * @returns {Promise<any>}
+       */
+      opiPow20ValidTxNotesOfTicker(base_url, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20ValidTxNotesOfTicker(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI POW20 holders
+       * @param {string} base_url
+       * @param {string} ticker
+       * @returns {Promise<any>}
+       */
+      opiPow20Holders(base_url, ticker) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(ticker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20Holders(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI POW20 hash of all activity
+       * @param {string} base_url
+       * @param {number} block_height
+       * @returns {Promise<any>}
+       */
+      opiPow20HashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20HashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+      }
+      /**
+       * Get OPI POW20 hash of all current balances
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiPow20HashOfAllCurrentBalances(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiPow20HashOfAllCurrentBalances(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI SNS block height
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiSnsBlockHeight(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsBlockHeight(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI SNS hash of all activity
+       * @param {string} base_url
+       * @param {number} block_height
+       * @returns {Promise<any>}
+       */
+      opiSnsHashOfAllActivity(base_url, block_height) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsHashOfAllActivity(this.__wbg_ptr, ptr0, len0, block_height);
+        return ret;
+      }
+      /**
+       * Get OPI SNS hash of all registered names
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiSnsHashOfAllRegisteredNames(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsHashOfAllRegisteredNames(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get OPI SNS info
+       * @param {string} base_url
+       * @param {string} name
+       * @returns {Promise<any>}
+       */
+      opiSnsInfo(base_url, name) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsInfo(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI SNS inscriptions of domain
+       * @param {string} base_url
+       * @param {string} domain
+       * @returns {Promise<any>}
+       */
+      opiSnsInscriptionsOfDomain(base_url, domain) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(domain, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsInscriptionsOfDomain(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get OPI SNS registered namespaces
+       * @param {string} base_url
+       * @returns {Promise<any>}
+       */
+      opiSnsRegisteredNamespaces(base_url) {
+        const ptr0 = passStringToWasm0(base_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_opiSnsRegisteredNamespaces(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get alkanes contract balance for an address
+       * @param {string | null} [address]
+       * @returns {Promise<any>}
+       */
+      alkanesBalance(address) {
+        var ptr0 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesBalance(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get alkanes contract bytecode
+       * @param {string} alkane_id
+       * @param {string | null} [block_tag]
+       * @returns {Promise<any>}
+       */
+      alkanesBytecode(alkane_id, block_tag) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesBytecode(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * Get all pools with details from an AMM factory (parallel optimized for browser)
+       * @param {string} factory_id
+       * @param {number | null} [chunk_size]
+       * @param {number | null} [max_concurrent]
+       * @returns {Promise<any>}
+       */
+      alkanesGetAllPoolsWithDetails(factory_id, chunk_size, max_concurrent) {
+        const ptr0 = passStringToWasm0(factory_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesGetAllPoolsWithDetails(this.__wbg_ptr, ptr0, len0, !isLikeNone(chunk_size), isLikeNone(chunk_size) ? 0 : chunk_size, !isLikeNone(max_concurrent), isLikeNone(max_concurrent) ? 0 : max_concurrent);
+        return ret;
+      }
+      /**
+       * Get all pools from a factory (lightweight, IDs only)
+       * @param {string} factory_id
+       * @returns {Promise<any>}
+       */
+      alkanesGetAllPools(factory_id) {
+        const ptr0 = passStringToWasm0(factory_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesGetAllPools(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get pool details including reserves using simulation
+       * @param {string} pool_id
+       * @returns {Promise<any>}
+       */
+      ammGetPoolDetails(pool_id) {
+        const ptr0 = passStringToWasm0(pool_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ammGetPoolDetails(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} outpoint
+       * @returns {Promise<any>}
+       */
+      alkanesTrace(outpoint) {
+        const ptr0 = passStringToWasm0(outpoint, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesTrace(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      traceProtostones(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_traceProtostones(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {number} height
+       * @returns {Promise<any>}
+       */
+      traceBlock(height) {
+        const ret = wasm.webprovider_traceBlock(this.__wbg_ptr, height);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @param {string | null} [block_tag]
+       * @param {number | null} [protocol_tag]
+       * @returns {Promise<any>}
+       */
+      alkanesByAddress(address, block_tag, protocol_tag) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesByAddress(this.__wbg_ptr, ptr0, len0, ptr1, len1, !isLikeNone(protocol_tag), isLikeNone(protocol_tag) ? 0 : protocol_tag);
+        return ret;
+      }
+      /**
+       * @param {string} outpoint
+       * @param {string | null} [block_tag]
+       * @param {number | null} [protocol_tag]
+       * @returns {Promise<any>}
+       */
+      alkanesByOutpoint(outpoint, block_tag, protocol_tag) {
+        const ptr0 = passStringToWasm0(outpoint, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesByOutpoint(this.__wbg_ptr, ptr0, len0, ptr1, len1, !isLikeNone(protocol_tag), isLikeNone(protocol_tag) ? 0 : protocol_tag);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      esploraGetTx(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTx(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      esploraGetTxStatus(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxStatus(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      esploraGetAddressInfo(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetAddressInfo(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      esploraGetBlocksTipHeight() {
+        const ret = wasm.webprovider_esploraGetBlocksTipHeight(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      esploraGetBlocksTipHash() {
+        const ret = wasm.webprovider_esploraGetBlocksTipHash(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      esploraGetAddressUtxo(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetAddressUtxo(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      esploraGetAddressTxs(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetAddressTxs(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @param {string | null} [last_seen_txid]
+       * @returns {Promise<any>}
+       */
+      esploraGetAddressTxsChain(address, last_seen_txid) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(last_seen_txid) ? 0 : passStringToWasm0(last_seen_txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetAddressTxsChain(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * @param {bigint} block
+       * @param {bigint} tx
+       * @param {Uint8Array} path
+       * @returns {Promise<any>}
+       */
+      getStorageAt(block, tx, path3) {
+        const ptr0 = passArray8ToWasm0(path3, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_getStorageAt(this.__wbg_ptr, block, tx, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      esploraGetFeeEstimates() {
+        const ret = wasm.webprovider_esploraGetFeeEstimates(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} tx_hex
+       * @returns {Promise<any>}
+       */
+      esploraBroadcastTx(tx_hex) {
+        const ptr0 = passStringToWasm0(tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraBroadcastTx(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      esploraGetTxHex(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxHex(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {number | null} [start_height]
+       * @returns {Promise<any>}
+       */
+      esploraGetBlocks(start_height) {
+        const ret = wasm.webprovider_esploraGetBlocks(this.__wbg_ptr, !isLikeNone(start_height), isLikeNone(start_height) ? 0 : start_height);
+        return ret;
+      }
+      /**
+       * @param {number} height
+       * @returns {Promise<any>}
+       */
+      esploraGetBlockByHeight(height) {
+        const ret = wasm.webprovider_esploraGetBlockByHeight(this.__wbg_ptr, height);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @returns {Promise<any>}
+       */
+      esploraGetBlock(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlock(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @returns {Promise<any>}
+       */
+      esploraGetBlockStatus(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockStatus(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @returns {Promise<any>}
+       */
+      esploraGetBlockTxids(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockTxids(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @returns {Promise<any>}
+       */
+      esploraGetBlockHeader(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockHeader(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @returns {Promise<any>}
+       */
+      esploraGetBlockRaw(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockRaw(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @param {number} index
+       * @returns {Promise<any>}
+       */
+      esploraGetBlockTxid(hash, index) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockTxid(this.__wbg_ptr, ptr0, len0, index);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @param {number | null} [start_index]
+       * @returns {Promise<any>}
+       */
+      esploraGetBlockTxs(hash, start_index) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetBlockTxs(this.__wbg_ptr, ptr0, len0, !isLikeNone(start_index), isLikeNone(start_index) ? 0 : start_index);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      esploraGetAddressTxsMempool(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetAddressTxsMempool(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} prefix
+       * @returns {Promise<any>}
+       */
+      esploraGetAddressPrefix(prefix) {
+        const ptr0 = passStringToWasm0(prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetAddressPrefix(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      esploraGetTxRaw(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxRaw(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      esploraGetTxMerkleProof(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxMerkleProof(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      esploraGetTxMerkleblockProof(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxMerkleblockProof(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @param {number} index
+       * @returns {Promise<any>}
+       */
+      esploraGetTxOutspend(txid, index) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxOutspend(this.__wbg_ptr, ptr0, len0, index);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      esploraGetTxOutspends(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraGetTxOutspends(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      esploraGetMempool() {
+        const ret = wasm.webprovider_esploraGetMempool(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      esploraGetMempoolTxids() {
+        const ret = wasm.webprovider_esploraGetMempoolTxids(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      esploraGetMempoolRecent() {
+        const ret = wasm.webprovider_esploraGetMempoolRecent(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} tx_hex
+       * @returns {Promise<any>}
+       */
+      esploraPostTx(tx_hex) {
+        const ptr0 = passStringToWasm0(tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_esploraPostTx(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      bitcoindGetBlockCount() {
+        const ret = wasm.webprovider_bitcoindGetBlockCount(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} tx_hex
+       * @returns {Promise<any>}
+       */
+      bitcoindSendRawTransaction(tx_hex) {
+        const ptr0 = passStringToWasm0(tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindSendRawTransaction(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {number} nblocks
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      bitcoindGenerateToAddress(nblocks, address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindGenerateToAddress(this.__wbg_ptr, nblocks, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      bitcoindGenerateFuture(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindGenerateFuture(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      bitcoindGetBlockchainInfo() {
+        const ret = wasm.webprovider_bitcoindGetBlockchainInfo(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      bitcoindGetNetworkInfo() {
+        const ret = wasm.webprovider_bitcoindGetNetworkInfo(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @param {string | null} [block_hash]
+       * @returns {Promise<any>}
+       */
+      bitcoindGetRawTransaction(txid, block_hash) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(block_hash) ? 0 : passStringToWasm0(block_hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindGetRawTransaction(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @param {boolean} raw
+       * @returns {Promise<any>}
+       */
+      bitcoindGetBlock(hash, raw) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindGetBlock(this.__wbg_ptr, ptr0, len0, raw);
+        return ret;
+      }
+      /**
+       * @param {number} height
+       * @returns {Promise<any>}
+       */
+      bitcoindGetBlockHash(height) {
+        const ret = wasm.webprovider_bitcoindGetBlockHash(this.__wbg_ptr, height);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @returns {Promise<any>}
+       */
+      bitcoindGetBlockHeader(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindGetBlockHeader(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} hash
+       * @returns {Promise<any>}
+       */
+      bitcoindGetBlockStats(hash) {
+        const ptr0 = passStringToWasm0(hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindGetBlockStats(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      bitcoindGetMempoolInfo() {
+        const ret = wasm.webprovider_bitcoindGetMempoolInfo(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {number} target
+       * @returns {Promise<any>}
+       */
+      bitcoindEstimateSmartFee(target) {
+        const ret = wasm.webprovider_bitcoindEstimateSmartFee(this.__wbg_ptr, target);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      bitcoindGetChainTips() {
+        const ret = wasm.webprovider_bitcoindGetChainTips(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      bitcoindGetRawMempool() {
+        const ret = wasm.webprovider_bitcoindGetRawMempool(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @param {number} vout
+       * @param {boolean} include_mempool
+       * @returns {Promise<any>}
+       */
+      bitcoindGetTxOut(txid, vout, include_mempool) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindGetTxOut(this.__wbg_ptr, ptr0, len0, vout, include_mempool);
+        return ret;
+      }
+      /**
+       * @param {string} hex
+       * @returns {Promise<any>}
+       */
+      bitcoindDecodeRawTransaction(hex) {
+        const ptr0 = passStringToWasm0(hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindDecodeRawTransaction(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} psbt
+       * @returns {Promise<any>}
+       */
+      bitcoindDecodePsbt(psbt) {
+        const ptr0 = passStringToWasm0(psbt, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_bitcoindDecodePsbt(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} contract_id
+       * @param {string} view_fn
+       * @param {Uint8Array | null} [params]
+       * @param {string | null} [block_tag]
+       * @returns {Promise<any>}
+       */
+      alkanesView(contract_id, view_fn, params, block_tag) {
+        const ptr0 = passStringToWasm0(contract_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(view_fn, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(params) ? 0 : passArray8ToWasm0(params, wasm.__wbindgen_malloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesView(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        return ret;
+      }
+      /**
+       * @param {string} target
+       * @param {any} config
+       * @returns {Promise<any>}
+       */
+      alkanesInspect(target, config) {
+        const ptr0 = passStringToWasm0(target, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesInspect(this.__wbg_ptr, ptr0, len0, config);
+        return ret;
+      }
+      /**
+       * @param {string | null} [block_tag]
+       * @returns {Promise<any>}
+       */
+      alkanesPendingUnwraps(block_tag) {
+        var ptr0 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesPendingUnwraps(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} to
+       * @param {string} data
+       * @param {string | null} [block]
+       * @returns {Promise<any>}
+       */
+      brc20progCall(to, data, block) {
+        const ptr0 = passStringToWasm0(to, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(data, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(block) ? 0 : passStringToWasm0(block, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_brc20progCall(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @param {string | null} [block]
+       * @returns {Promise<any>}
+       */
+      brc20progGetBalance(address, block) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(block) ? 0 : passStringToWasm0(block, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_brc20progGetBalance(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      brc20progGetCode(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_brc20progGetCode(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @param {string | null} [block]
+       * @returns {Promise<any>}
+       */
+      brc20progGetTransactionCount(address, block) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(block) ? 0 : passStringToWasm0(block, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_brc20progGetTransactionCount(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      brc20progBlockNumber() {
+        const ret = wasm.webprovider_brc20progBlockNumber(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      brc20progChainId() {
+        const ret = wasm.webprovider_brc20progChainId(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} tx_hash
+       * @returns {Promise<any>}
+       */
+      brc20progGetTransactionReceipt(tx_hash) {
+        const ptr0 = passStringToWasm0(tx_hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_brc20progGetTransactionReceipt(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} tx_hash
+       * @returns {Promise<any>}
+       */
+      brc20progGetTransactionByHash(tx_hash) {
+        const ptr0 = passStringToWasm0(tx_hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_brc20progGetTransactionByHash(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} block
+       * @param {boolean} full_tx
+       * @returns {Promise<any>}
+       */
+      brc20progGetBlockByNumber(block, full_tx) {
+        const ptr0 = passStringToWasm0(block, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_brc20progGetBlockByNumber(this.__wbg_ptr, ptr0, len0, full_tx);
+        return ret;
+      }
+      /**
+       * @param {string} to
+       * @param {string} data
+       * @param {string | null} [block]
+       * @returns {Promise<any>}
+       */
+      brc20progEstimateGas(to, data, block) {
+        const ptr0 = passStringToWasm0(to, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(data, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(block) ? 0 : passStringToWasm0(block, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_brc20progEstimateGas(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * @param {any} filter
+       * @returns {Promise<any>}
+       */
+      brc20progGetLogs(filter) {
+        const ret = wasm.webprovider_brc20progGetLogs(this.__wbg_ptr, filter);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      brc20progWeb3ClientVersion() {
+        const ret = wasm.webprovider_brc20progWeb3ClientVersion(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      metashrewHeight() {
+        const ret = wasm.webprovider_metashrewHeight(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {number | null} [height]
+       * @returns {Promise<any>}
+       */
+      metashrewStateRoot(height) {
+        const ret = wasm.webprovider_metashrewStateRoot(this.__wbg_ptr, !isLikeNone(height), isLikeNone(height) ? 0 : height);
+        return ret;
+      }
+      /**
+       * @param {number} height
+       * @returns {Promise<any>}
+       */
+      metashrewGetBlockHash(height) {
+        const ret = wasm.webprovider_metashrewGetBlockHash(this.__wbg_ptr, height);
+        return ret;
+      }
+      /**
+       * Generic metashrew_view call
+       *
+       * Calls the metashrew_view RPC method with the given view function, payload, and block tag.
+       * This is the low-level method for calling any metashrew view function.
+       *
+       * # Arguments
+       * * `view_fn` - The view function name (e.g., "simulate", "protorunesbyaddress")
+       * * `payload` - The hex-encoded payload (with or without 0x prefix)
+       * * `block_tag` - The block tag ("latest" or a block height as string)
+       *
+       * # Returns
+       * The hex-encoded response string from the view function
+       * @param {string} view_fn
+       * @param {string} payload
+       * @param {string} block_tag
+       * @returns {Promise<any>}
+       */
+      metashrewView(view_fn, payload, block_tag) {
+        const ptr0 = passStringToWasm0(view_fn, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(payload, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_metashrewView(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+      }
+      /**
+       * @param {string} script
+       * @returns {Promise<any>}
+       */
+      luaEvalScript(script) {
+        const ptr0 = passStringToWasm0(script, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_luaEvalScript(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Execute a Lua script with arguments, using scripthash caching
+       *
+       * This method first tries to use the cached scripthash version (lua_evalsaved),
+       * and falls back to the full script (lua_evalscript) if the hash isn't cached.
+       * This is the recommended way to execute Lua scripts for better performance.
+       *
+       * # Arguments
+       * * `script` - The Lua script content
+       * * `args` - JSON-serialized array of arguments to pass to the script
+       * @param {string} script
+       * @param {any} args
+       * @returns {Promise<any>}
+       */
+      luaEval(script, args) {
+        const ptr0 = passStringToWasm0(script, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_luaEval(this.__wbg_ptr, ptr0, len0, args);
+        return ret;
+      }
+      /**
+       * @param {string} outpoint
+       * @returns {Promise<any>}
+       */
+      ordList(outpoint) {
+        const ptr0 = passStringToWasm0(outpoint, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_ordList(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {number} sat
+       * @returns {Promise<any>}
+       */
+      ordFind(sat) {
+        const ret = wasm.webprovider_ordFind(this.__wbg_ptr, sat);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      runestoneDecodeTx(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_runestoneDecodeTx(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      runestoneAnalyzeTx(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_runestoneAnalyzeTx(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      protorunesDecodeTx(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_protorunesDecodeTx(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} txid
+       * @returns {Promise<any>}
+       */
+      protorunesAnalyzeTx(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_protorunesAnalyzeTx(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Create a new wallet with an optional mnemonic phrase
+       * If no mnemonic is provided, a new one will be generated
+       * Returns wallet info including address and mnemonic
+       *
+       * Note: This sets the keystore on self synchronously so walletIsLoaded() returns true immediately
+       * @param {string | null} [mnemonic]
+       * @param {string | null} [passphrase]
+       * @returns {any}
+       */
+      walletCreate(mnemonic, passphrase) {
+        var ptr0 = isLikeNone(mnemonic) ? 0 : passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(passphrase) ? 0 : passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletCreate(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        if (ret[2]) {
+          throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+      }
+      /**
+       * Load an existing wallet from storage
+       * @param {string | null} [passphrase]
+       * @returns {Promise<any>}
+       */
+      walletLoad(passphrase) {
+        var ptr0 = isLikeNone(passphrase) ? 0 : passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletLoad(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get the wallet's primary address
+       * @returns {Promise<any>}
+       */
+      walletGetAddress() {
+        const ret = wasm.webprovider_walletGetAddress(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Get the wallet's BTC balance
+       * Returns { confirmed: number, pending: number }
+       * @param {string[] | null} [addresses]
+       * @returns {Promise<any>}
+       */
+      walletGetBalance(addresses) {
+        var ptr0 = isLikeNone(addresses) ? 0 : passArrayJsValueToWasm0(addresses, wasm.__wbindgen_malloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletGetBalance(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Load a wallet from mnemonic for signing transactions
+       * This must be called before walletSend or other signing operations
+       * @param {string} mnemonic_str
+       * @param {string | null} [passphrase]
+       */
+      walletLoadMnemonic(mnemonic_str, passphrase) {
+        const ptr0 = passStringToWasm0(mnemonic_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(passphrase) ? 0 : passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletLoadMnemonic(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        if (ret[1]) {
+          throw takeFromExternrefTable0(ret[0]);
+        }
+      }
+      /**
+       * Check if wallet is loaded (has keystore for signing)
+       * @returns {boolean}
+       */
+      walletIsLoaded() {
+        const ret = wasm.webprovider_walletIsLoaded(this.__wbg_ptr);
+        return ret !== 0;
+      }
+      /**
+       * Get addresses from the loaded wallet keystore
+       * Uses the Keystore.get_addresses method from alkanes-cli-common
+       *
+       * # Arguments
+       * * `address_type` - Address type: "p2tr", "p2wpkh", "p2sh-p2wpkh", "p2pkh"
+       * * `start_index` - Starting index for address derivation
+       * * `count` - Number of addresses to derive
+       * * `chain` - Chain index (0 for external/receiving, 1 for internal/change)
+       *
+       * # Returns
+       * Array of address info objects with: { derivation_path, address, script_type, index, used }
+       * @param {string} address_type
+       * @param {number} start_index
+       * @param {number} count
+       * @param {number | null} [chain]
+       * @returns {any}
+       */
+      walletGetAddresses(address_type, start_index, count, chain) {
+        const ptr0 = passStringToWasm0(address_type, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletGetAddresses(this.__wbg_ptr, ptr0, len0, start_index, count, isLikeNone(chain) ? 4294967297 : chain >>> 0);
+        if (ret[2]) {
+          throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+      }
+      /**
+       * Send BTC to an address
+       * params: { address: string, amount: number (satoshis), fee_rate?: number }
+       * Wallet must be loaded first via walletLoadMnemonic
+       * @param {string} params_json
+       * @returns {Promise<any>}
+       */
+      walletSend(params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletSend(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get UTXOs for the wallet
+       * @param {string[] | null} [addresses]
+       * @returns {Promise<any>}
+       */
+      walletGetUtxos(addresses) {
+        var ptr0 = isLikeNone(addresses) ? 0 : passArrayJsValueToWasm0(addresses, wasm.__wbindgen_malloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletGetUtxos(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get transaction history for an address
+       * @param {string | null} [address]
+       * @returns {Promise<any>}
+       */
+      walletGetHistory(address) {
+        var ptr0 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletGetHistory(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} params_json
+       * @returns {Promise<any>}
+       */
+      walletCreatePsbt(params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletCreatePsbt(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      walletExport() {
+        const ret = wasm.webprovider_walletExport(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      walletBackup() {
+        const ret = wasm.webprovider_walletBackup(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} pool_id
+       * @param {string | null} [category]
+       * @param {bigint | null} [limit]
+       * @param {bigint | null} [offset]
+       * @returns {Promise<any>}
+       */
+      dataApiGetPoolHistory(pool_id, category, limit, offset) {
+        const ptr0 = passStringToWasm0(pool_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(category) ? 0 : passStringToWasm0(category, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetPoolHistory(this.__wbg_ptr, ptr0, len0, ptr1, len1, !isLikeNone(limit), isLikeNone(limit) ? BigInt(0) : limit, !isLikeNone(offset), isLikeNone(offset) ? BigInt(0) : offset);
+        return ret;
+      }
+      /**
+       * @param {string} factory_id
+       * @returns {Promise<any>}
+       */
+      dataApiGetPools(factory_id) {
+        const ptr0 = passStringToWasm0(factory_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetPools(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      dataApiGetAlkanesByAddress(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetAlkanesByAddress(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @param {boolean} include_outpoints
+       * @returns {Promise<any>}
+       */
+      dataApiGetAddressBalances(address, include_outpoints) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetAddressBalances(this.__wbg_ptr, ptr0, len0, include_outpoints);
+        return ret;
+      }
+      /**
+       * @param {string} pool_id
+       * @param {bigint | null} [limit]
+       * @param {bigint | null} [offset]
+       * @returns {Promise<any>}
+       */
+      dataApiGetAllHistory(pool_id, limit, offset) {
+        const ptr0 = passStringToWasm0(pool_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetAllHistory(this.__wbg_ptr, ptr0, len0, !isLikeNone(limit), isLikeNone(limit) ? BigInt(0) : limit, !isLikeNone(offset), isLikeNone(offset) ? BigInt(0) : offset);
+        return ret;
+      }
+      /**
+       * @param {string} pool_id
+       * @param {bigint | null} [limit]
+       * @param {bigint | null} [offset]
+       * @returns {Promise<any>}
+       */
+      dataApiGetSwapHistory(pool_id, limit, offset) {
+        const ptr0 = passStringToWasm0(pool_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetSwapHistory(this.__wbg_ptr, ptr0, len0, !isLikeNone(limit), isLikeNone(limit) ? BigInt(0) : limit, !isLikeNone(offset), isLikeNone(offset) ? BigInt(0) : offset);
+        return ret;
+      }
+      /**
+       * @param {string} pool_id
+       * @param {bigint | null} [limit]
+       * @param {bigint | null} [offset]
+       * @returns {Promise<any>}
+       */
+      dataApiGetMintHistory(pool_id, limit, offset) {
+        const ptr0 = passStringToWasm0(pool_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetMintHistory(this.__wbg_ptr, ptr0, len0, !isLikeNone(limit), isLikeNone(limit) ? BigInt(0) : limit, !isLikeNone(offset), isLikeNone(offset) ? BigInt(0) : offset);
+        return ret;
+      }
+      /**
+       * @param {string} pool_id
+       * @param {bigint | null} [limit]
+       * @param {bigint | null} [offset]
+       * @returns {Promise<any>}
+       */
+      dataApiGetBurnHistory(pool_id, limit, offset) {
+        const ptr0 = passStringToWasm0(pool_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetBurnHistory(this.__wbg_ptr, ptr0, len0, !isLikeNone(limit), isLikeNone(limit) ? BigInt(0) : limit, !isLikeNone(offset), isLikeNone(offset) ? BigInt(0) : offset);
+        return ret;
+      }
+      /**
+       * @param {string} pool
+       * @param {number | null} [start_time]
+       * @param {number | null} [end_time]
+       * @param {bigint | null} [limit]
+       * @returns {Promise<any>}
+       */
+      dataApiGetTrades(pool, start_time, end_time, limit) {
+        const ptr0 = passStringToWasm0(pool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetTrades(this.__wbg_ptr, ptr0, len0, !isLikeNone(start_time), isLikeNone(start_time) ? 0 : start_time, !isLikeNone(end_time), isLikeNone(end_time) ? 0 : end_time, !isLikeNone(limit), isLikeNone(limit) ? BigInt(0) : limit);
+        return ret;
+      }
+      /**
+       * @param {string} pool
+       * @param {string} interval
+       * @param {number | null} [start_time]
+       * @param {number | null} [end_time]
+       * @param {bigint | null} [limit]
+       * @returns {Promise<any>}
+       */
+      dataApiGetCandles(pool, interval, start_time, end_time, limit) {
+        const ptr0 = passStringToWasm0(pool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(interval, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetCandles(this.__wbg_ptr, ptr0, len0, ptr1, len1, !isLikeNone(start_time), isLikeNone(start_time) ? 0 : start_time, !isLikeNone(end_time), isLikeNone(end_time) ? 0 : end_time, !isLikeNone(limit), isLikeNone(limit) ? BigInt(0) : limit);
+        return ret;
+      }
+      /**
+       * @param {string} pool
+       * @returns {Promise<any>}
+       */
+      dataApiGetReserves(pool) {
+        const ptr0 = passStringToWasm0(pool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetReserves(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} alkane
+       * @param {bigint} page
+       * @param {bigint} limit
+       * @returns {Promise<any>}
+       */
+      dataApiGetHolders(alkane, page, limit) {
+        const ptr0 = passStringToWasm0(alkane, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetHolders(this.__wbg_ptr, ptr0, len0, page, limit);
+        return ret;
+      }
+      /**
+       * @param {string} alkane
+       * @returns {Promise<any>}
+       */
+      dataApiGetHoldersCount(alkane) {
+        const ptr0 = passStringToWasm0(alkane, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetHoldersCount(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} alkane
+       * @param {string | null | undefined} prefix
+       * @param {bigint} limit
+       * @returns {Promise<any>}
+       */
+      dataApiGetKeys(alkane, prefix, limit) {
+        const ptr0 = passStringToWasm0(alkane, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(prefix) ? 0 : passStringToWasm0(prefix, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetKeys(this.__wbg_ptr, ptr0, len0, ptr1, len1, limit);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      dataApiGetBitcoinPrice() {
+        const ret = wasm.webprovider_dataApiGetBitcoinPrice(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {string} days
+       * @returns {Promise<any>}
+       */
+      dataApiGetBitcoinMarketChart(days) {
+        const ptr0 = passStringToWasm0(days, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetBitcoinMarketChart(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      dataApiHealth() {
+        const ret = wasm.webprovider_dataApiHealth(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @param {bigint | null} [page]
+       * @param {bigint | null} [limit]
+       * @returns {Promise<any>}
+       */
+      dataApiGetAlkanes(page, limit) {
+        const ret = wasm.webprovider_dataApiGetAlkanes(this.__wbg_ptr, !isLikeNone(page), isLikeNone(page) ? BigInt(0) : page, !isLikeNone(limit), isLikeNone(limit) ? BigInt(0) : limit);
+        return ret;
+      }
+      /**
+       * @param {string} alkane_id
+       * @returns {Promise<any>}
+       */
+      dataApiGetAlkaneDetails(alkane_id) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetAlkaneDetails(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} pool_id
+       * @returns {Promise<any>}
+       */
+      dataApiGetPoolById(pool_id) {
+        const ptr0 = passStringToWasm0(pool_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetPoolById(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} outpoint
+       * @returns {Promise<any>}
+       */
+      dataApiGetOutpointBalances(outpoint) {
+        const ptr0 = passStringToWasm0(outpoint, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_dataApiGetOutpointBalances(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      dataApiGetBlockHeight() {
+        const ret = wasm.webprovider_dataApiGetBlockHeight(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      dataApiGetBlockHash() {
+        const ret = wasm.webprovider_dataApiGetBlockHash(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * @returns {Promise<any>}
+       */
+      dataApiGetIndexerPosition() {
+        const ret = wasm.webprovider_dataApiGetIndexerPosition(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Reflect alkane token metadata by querying standard opcodes
+       *
+       * This method queries the alkane contract with standard opcodes to retrieve
+       * token metadata like name, symbol, total supply, cap, minted, and value per mint.
+       *
+       * # Arguments
+       * * `alkane_id` - The alkane ID in "block:tx" format (e.g., "2:1234")
+       *
+       * # Returns
+       * An AlkaneReflection object with all available metadata
+       * @param {string} alkane_id
+       * @returns {Promise<any>}
+       */
+      alkanesReflect(alkane_id) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesReflect(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string | null} [block_tag]
+       * @returns {Promise<any>}
+       */
+      alkanesSequence(block_tag) {
+        var ptr0 = isLikeNone(block_tag) ? 0 : passStringToWasm0(block_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesSequence(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      alkanesSpendables(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesSpendables(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get current ESPO indexer height
+       * @returns {Promise<any>}
+       */
+      espoGetHeight() {
+        const ret = wasm.webprovider_espoGetHeight(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Ping the ESPO essentials module
+       * @returns {Promise<any>}
+       */
+      espoPing() {
+        const ret = wasm.webprovider_espoPing(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Get alkanes balances for an address from ESPO
+       * @param {string} address
+       * @param {boolean} include_outpoints
+       * @returns {Promise<any>}
+       */
+      espoGetAddressBalances(address, include_outpoints) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAddressBalances(this.__wbg_ptr, ptr0, len0, include_outpoints);
+        return ret;
+      }
+      /**
+       * Get outpoints containing alkanes for an address from ESPO
+       * @param {string} address
+       * @returns {Promise<any>}
+       */
+      espoGetAddressOutpoints(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAddressOutpoints(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get alkanes balances at a specific outpoint from ESPO
+       * @param {string} outpoint
+       * @returns {Promise<any>}
+       */
+      espoGetOutpointBalances(outpoint) {
+        const ptr0 = passStringToWasm0(outpoint, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetOutpointBalances(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get holders of an alkane token from ESPO
+       * @param {string} alkane_id
+       * @param {number} page
+       * @param {number} limit
+       * @returns {Promise<any>}
+       */
+      espoGetHolders(alkane_id, page, limit) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetHolders(this.__wbg_ptr, ptr0, len0, page, limit);
+        return ret;
+      }
+      /**
+       * Get holder count for an alkane from ESPO
+       * @param {string} alkane_id
+       * @returns {Promise<any>}
+       */
+      espoGetHoldersCount(alkane_id) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetHoldersCount(this.__wbg_ptr, ptr0, len0);
+        return ret;
+      }
+      /**
+       * Get storage keys for an alkane contract from ESPO
+       * @param {string} alkane_id
+       * @param {number} page
+       * @param {number} limit
+       * @returns {Promise<any>}
+       */
+      espoGetKeys(alkane_id, page, limit) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetKeys(this.__wbg_ptr, ptr0, len0, page, limit);
+        return ret;
+      }
+      /**
+       * Ping the ESPO AMM Data module
+       * @returns {Promise<any>}
+       */
+      espoAmmdataPing() {
+        const ret = wasm.webprovider_espoAmmdataPing(this.__wbg_ptr);
+        return ret;
+      }
+      /**
+       * Get OHLCV candlestick data for a pool from ESPO
+       * @param {string} pool
+       * @param {string | null} [timeframe]
+       * @param {string | null} [side]
+       * @param {number | null} [limit]
+       * @param {number | null} [page]
+       * @returns {Promise<any>}
+       */
+      espoGetCandles(pool, timeframe, side, limit, page) {
+        const ptr0 = passStringToWasm0(pool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(timeframe) ? 0 : passStringToWasm0(timeframe, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(side) ? 0 : passStringToWasm0(side, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetCandles(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit, !isLikeNone(page), isLikeNone(page) ? 0 : page);
+        return ret;
+      }
+      /**
+       * Get trade history for a pool from ESPO
+       * @param {string} pool
+       * @param {number | null} [limit]
+       * @param {number | null} [page]
+       * @param {string | null} [side]
+       * @param {string | null} [filter_side]
+       * @param {string | null} [sort]
+       * @param {string | null} [dir]
+       * @returns {Promise<any>}
+       */
+      espoGetTrades(pool, limit, page, side, filter_side, sort, dir) {
+        const ptr0 = passStringToWasm0(pool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(side) ? 0 : passStringToWasm0(side, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(filter_side) ? 0 : passStringToWasm0(filter_side, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(sort) ? 0 : passStringToWasm0(sort, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        var ptr4 = isLikeNone(dir) ? 0 : passStringToWasm0(dir, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len4 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetTrades(this.__wbg_ptr, ptr0, len0, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit, !isLikeNone(page), isLikeNone(page) ? 0 : page, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+        return ret;
+      }
+      /**
+       * Get all pools from ESPO
+       * @param {number | null} [limit]
+       * @param {number | null} [page]
+       * @returns {Promise<any>}
+       */
+      espoGetPools(limit, page) {
+        const ret = wasm.webprovider_espoGetPools(this.__wbg_ptr, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit, !isLikeNone(page), isLikeNone(page) ? 0 : page);
+        return ret;
+      }
+      /**
+       * Find the best swap path between two tokens using ESPO
+       * @param {string} token_in
+       * @param {string} token_out
+       * @param {string | null} [mode]
+       * @param {string | null} [amount_in]
+       * @param {string | null} [amount_out]
+       * @param {string | null} [amount_out_min]
+       * @param {string | null} [amount_in_max]
+       * @param {string | null} [available_in]
+       * @param {number | null} [fee_bps]
+       * @param {number | null} [max_hops]
+       * @returns {Promise<any>}
+       */
+      espoFindBestSwapPath(token_in, token_out, mode, amount_in, amount_out, amount_out_min, amount_in_max, available_in, fee_bps, max_hops) {
+        const ptr0 = passStringToWasm0(token_in, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(token_out, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(mode) ? 0 : passStringToWasm0(mode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(amount_in) ? 0 : passStringToWasm0(amount_in, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        var ptr4 = isLikeNone(amount_out) ? 0 : passStringToWasm0(amount_out, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len4 = WASM_VECTOR_LEN;
+        var ptr5 = isLikeNone(amount_out_min) ? 0 : passStringToWasm0(amount_out_min, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len5 = WASM_VECTOR_LEN;
+        var ptr6 = isLikeNone(amount_in_max) ? 0 : passStringToWasm0(amount_in_max, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len6 = WASM_VECTOR_LEN;
+        var ptr7 = isLikeNone(available_in) ? 0 : passStringToWasm0(available_in, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len7 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoFindBestSwapPath(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7, !isLikeNone(fee_bps), isLikeNone(fee_bps) ? 0 : fee_bps, !isLikeNone(max_hops), isLikeNone(max_hops) ? 0 : max_hops);
+        return ret;
+      }
+      /**
+       * Find the best MEV swap opportunity for a token using ESPO
+       * @param {string} token
+       * @param {number | null} [fee_bps]
+       * @param {number | null} [max_hops]
+       * @returns {Promise<any>}
+       */
+      espoGetBestMevSwap(token, fee_bps, max_hops) {
+        const ptr0 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetBestMevSwap(this.__wbg_ptr, ptr0, len0, !isLikeNone(fee_bps), isLikeNone(fee_bps) ? 0 : fee_bps, !isLikeNone(max_hops), isLikeNone(max_hops) ? 0 : max_hops);
+        return ret;
+      }
+    };
+    if (Symbol.dispose) WebProvider.prototype[Symbol.dispose] = WebProvider.prototype.free;
+    exports2.WebProvider = WebProvider;
+    exports2.__wbg_Error_e83987f665cf5504 = function(arg0, arg1) {
+      const ret = Error(getStringFromWasm0(arg0, arg1));
+      return ret;
+    };
+    exports2.__wbg_Number_bb48ca12f395cd08 = function(arg0) {
+      const ret = Number(arg0);
+      return ret;
+    };
+    exports2.__wbg_String_8f0eb39a4a4c2f66 = function(arg0, arg1) {
+      const ret = String(arg1);
+      const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+      getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+    };
+    exports2.__wbg___wbindgen_bigint_get_as_i64_f3ebc5a755000afd = function(arg0, arg1) {
+      const v = arg1;
+      const ret = typeof v === "bigint" ? v : void 0;
+      getDataViewMemory0().setBigInt64(arg0 + 8 * 1, isLikeNone(ret) ? BigInt(0) : ret, true);
+      getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
+    };
+    exports2.__wbg___wbindgen_boolean_get_6d5a1ee65bab5f68 = function(arg0) {
+      const v = arg0;
+      const ret = typeof v === "boolean" ? v : void 0;
+      return isLikeNone(ret) ? 16777215 : ret ? 1 : 0;
+    };
+    exports2.__wbg___wbindgen_debug_string_df47ffb5e35e6763 = function(arg0, arg1) {
+      const ret = debugString(arg1);
+      const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+      getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+    };
+    exports2.__wbg___wbindgen_in_bb933bd9e1b3bc0f = function(arg0, arg1) {
+      const ret = arg0 in arg1;
+      return ret;
+    };
+    exports2.__wbg___wbindgen_is_bigint_cb320707dcd35f0b = function(arg0) {
+      const ret = typeof arg0 === "bigint";
+      return ret;
+    };
+    exports2.__wbg___wbindgen_is_falsy_46b8d2f2aba49112 = function(arg0) {
+      const ret = !arg0;
+      return ret;
+    };
+    exports2.__wbg___wbindgen_is_function_ee8a6c5833c90377 = function(arg0) {
+      const ret = typeof arg0 === "function";
+      return ret;
+    };
+    exports2.__wbg___wbindgen_is_null_5e69f72e906cc57c = function(arg0) {
+      const ret = arg0 === null;
+      return ret;
+    };
+    exports2.__wbg___wbindgen_is_object_c818261d21f283a4 = function(arg0) {
+      const val = arg0;
+      const ret = typeof val === "object" && val !== null;
+      return ret;
+    };
+    exports2.__wbg___wbindgen_is_string_fbb76cb2940daafd = function(arg0) {
+      const ret = typeof arg0 === "string";
+      return ret;
+    };
+    exports2.__wbg___wbindgen_is_undefined_2d472862bd29a478 = function(arg0) {
+      const ret = arg0 === void 0;
+      return ret;
+    };
+    exports2.__wbg___wbindgen_jsval_eq_6b13ab83478b1c50 = function(arg0, arg1) {
+      const ret = arg0 === arg1;
+      return ret;
+    };
+    exports2.__wbg___wbindgen_jsval_loose_eq_b664b38a2f582147 = function(arg0, arg1) {
+      const ret = arg0 == arg1;
+      return ret;
+    };
+    exports2.__wbg___wbindgen_number_get_a20bf9b85341449d = function(arg0, arg1) {
+      const obj = arg1;
+      const ret = typeof obj === "number" ? obj : void 0;
+      getDataViewMemory0().setFloat64(arg0 + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
+      getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
+    };
+    exports2.__wbg___wbindgen_string_get_e4f06c90489ad01b = function(arg0, arg1) {
+      const obj = arg1;
+      const ret = typeof obj === "string" ? obj : void 0;
+      var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      var len1 = WASM_VECTOR_LEN;
+      getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+      getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+    };
+    exports2.__wbg___wbindgen_throw_b855445ff6a94295 = function(arg0, arg1) {
+      throw new Error(getStringFromWasm0(arg0, arg1));
+    };
+    exports2.__wbg__wbg_cb_unref_2454a539ea5790d9 = function(arg0) {
+      arg0._wbg_cb_unref();
+    };
+    exports2.__wbg_abort_28ad55c5825b004d = function(arg0, arg1) {
+      arg0.abort(arg1);
+    };
+    exports2.__wbg_abort_e7eb059f72f9ed0c = function(arg0) {
+      arg0.abort();
+    };
+    exports2.__wbg_append_b577eb3a177bc0fa = function() {
+      return handleError(function(arg0, arg1, arg2, arg3, arg4) {
+        arg0.append(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
+      }, arguments);
+    };
+    exports2.__wbg_arrayBuffer_b375eccb84b4ddf3 = function() {
+      return handleError(function(arg0) {
+        const ret = arg0.arrayBuffer();
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_call_525440f72fbfc0ea = function() {
+      return handleError(function(arg0, arg1, arg2) {
+        const ret = arg0.call(arg1, arg2);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_call_e45d2cf9fc925fcf = function() {
+      return handleError(function(arg0, arg1, arg2, arg3) {
+        const ret = arg0.call(arg1, arg2, arg3);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_call_e762c39fa8ea36bf = function() {
+      return handleError(function(arg0, arg1) {
+        const ret = arg0.call(arg1);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_clearTimeout_7a42b49784aea641 = function(arg0) {
+      const ret = clearTimeout(arg0);
+      return ret;
+    };
+    exports2.__wbg_connect_1ec2f4eb726c5e06 = function(arg0) {
+      const ret = arg0.connect();
+      return ret;
+    };
+    exports2.__wbg_crypto_574e78ad8b13b65f = function(arg0) {
+      const ret = arg0.crypto;
+      return ret;
+    };
+    exports2.__wbg_decrypt_0452782895e3c2f1 = function() {
+      return handleError(function(arg0, arg1, arg2, arg3, arg4) {
+        const ret = arg0.decrypt(arg1, arg2, getArrayU8FromWasm0(arg3, arg4));
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_deriveBits_28ff8a809aa473ec = function() {
+      return handleError(function(arg0, arg1, arg2, arg3) {
+        const ret = arg0.deriveBits(arg1, arg2, arg3 >>> 0);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_disconnect_2ee62795d9b85438 = function(arg0) {
+      const ret = arg0.disconnect();
+      return ret;
+    };
+    exports2.__wbg_done_2042aa2670fb1db1 = function(arg0) {
+      const ret = arg0.done;
+      return ret;
+    };
+    exports2.__wbg_encrypt_36464dd547f58e9c = function() {
+      return handleError(function(arg0, arg1, arg2, arg3, arg4) {
+        const ret = arg0.encrypt(arg1, arg2, getArrayU8FromWasm0(arg3, arg4));
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_entries_e171b586f8f6bdbf = function(arg0) {
+      const ret = Object.entries(arg0);
+      return ret;
+    };
+    exports2.__wbg_fetch_74a3e84ebd2c9a0e = function(arg0) {
+      const ret = fetch(arg0);
+      return ret;
+    };
+    exports2.__wbg_fetch_f8ba0e29a9d6de0d = function(arg0, arg1) {
+      const ret = arg0.fetch(arg1);
+      return ret;
+    };
+    exports2.__wbg_fromCodePoint_a1c5bb992dc05846 = function() {
+      return handleError(function(arg0) {
+        const ret = String.fromCodePoint(arg0 >>> 0);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_from_a4ad7cbddd0d7135 = function(arg0) {
+      const ret = Array.from(arg0);
+      return ret;
+    };
+    exports2.__wbg_getAccounts_364d2a097b56525c = function(arg0) {
+      const ret = arg0.getAccounts();
+      return ret;
+    };
+    exports2.__wbg_getBalance_3804a0e75a8ac301 = function(arg0) {
+      const ret = arg0.getBalance();
+      return ret;
+    };
+    exports2.__wbg_getInfo_8ee5a8fc05c8f277 = function(arg0) {
+      const ret = arg0.getInfo();
+      return ret;
+    };
+    exports2.__wbg_getInscriptions_0e1a3c5a6e0485f5 = function(arg0, arg1, arg2) {
+      const ret = arg0.getInscriptions(arg1, arg2);
+      return ret;
+    };
+    exports2.__wbg_getItem_89f57d6acc51a876 = function() {
+      return handleError(function(arg0, arg1, arg2, arg3) {
+        const ret = arg1.getItem(getStringFromWasm0(arg2, arg3));
+        var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+        getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+      }, arguments);
+    };
+    exports2.__wbg_getNetwork_79834a70f80b58ba = function(arg0) {
+      const ret = arg0.getNetwork();
+      return ret;
+    };
+    exports2.__wbg_getPublicKey_19363ddc641d2495 = function(arg0) {
+      const ret = arg0.getPublicKey();
+      return ret;
+    };
+    exports2.__wbg_getRandomValues_6357e7b583eb49cc = function() {
+      return handleError(function(arg0, arg1, arg2) {
+        const ret = arg0.getRandomValues(getArrayU8FromWasm0(arg1, arg2));
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_getRandomValues_b8f5dbd5f3995a9e = function() {
+      return handleError(function(arg0, arg1) {
+        arg0.getRandomValues(arg1);
+      }, arguments);
+    };
+    exports2.__wbg_get_7bed016f185add81 = function(arg0, arg1) {
+      const ret = arg0[arg1 >>> 0];
+      return ret;
+    };
+    exports2.__wbg_get_efcb449f58ec27c2 = function() {
+      return handleError(function(arg0, arg1) {
+        const ret = Reflect.get(arg0, arg1);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_get_with_ref_key_1dc361bd10053bfe = function(arg0, arg1) {
+      const ret = arg0[arg1];
+      return ret;
+    };
+    exports2.__wbg_has_787fafc980c3ccdb = function() {
+      return handleError(function(arg0, arg1) {
+        const ret = Reflect.has(arg0, arg1);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_headers_b87d7eaba61c3278 = function(arg0) {
+      const ret = arg0.headers;
+      return ret;
+    };
+    exports2.__wbg_importKey_2be19189a1451235 = function() {
+      return handleError(function(arg0, arg1, arg2, arg3, arg4, arg5, arg6) {
+        const ret = arg0.importKey(getStringFromWasm0(arg1, arg2), arg3, arg4, arg5 !== 0, arg6);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_instanceof_ArrayBuffer_70beb1189ca63b38 = function(arg0) {
+      let result;
+      try {
+        result = arg0 instanceof ArrayBuffer;
+      } catch (_) {
+        result = false;
+      }
+      const ret = result;
+      return ret;
+    };
+    exports2.__wbg_instanceof_CryptoKey_9fbbefded7590b8c = function(arg0) {
+      let result;
+      try {
+        result = arg0 instanceof CryptoKey;
+      } catch (_) {
+        result = false;
+      }
+      const ret = result;
+      return ret;
+    };
+    exports2.__wbg_instanceof_Crypto_2574e69763b89701 = function(arg0) {
+      let result;
+      try {
+        result = arg0 instanceof Crypto;
+      } catch (_) {
+        result = false;
+      }
+      const ret = result;
+      return ret;
+    };
+    exports2.__wbg_instanceof_Map_8579b5e2ab5437c7 = function(arg0) {
+      let result;
+      try {
+        result = arg0 instanceof Map;
+      } catch (_) {
+        result = false;
+      }
+      const ret = result;
+      return ret;
+    };
+    exports2.__wbg_instanceof_Response_f4f3e87e07f3135c = function(arg0) {
+      let result;
+      try {
+        result = arg0 instanceof Response;
+      } catch (_) {
+        result = false;
+      }
+      const ret = result;
+      return ret;
+    };
+    exports2.__wbg_instanceof_Uint8Array_20c8e73002f7af98 = function(arg0) {
+      let result;
+      try {
+        result = arg0 instanceof Uint8Array;
+      } catch (_) {
+        result = false;
+      }
+      const ret = result;
+      return ret;
+    };
+    exports2.__wbg_instanceof_Window_4846dbb3de56c84c = function(arg0) {
+      let result;
+      try {
+        result = arg0 instanceof Window;
+      } catch (_) {
+        result = false;
+      }
+      const ret = result;
+      return ret;
+    };
+    exports2.__wbg_isArray_96e0af9891d0945d = function(arg0) {
+      const ret = Array.isArray(arg0);
+      return ret;
+    };
+    exports2.__wbg_isSafeInteger_d216eda7911dde36 = function(arg0) {
+      const ret = Number.isSafeInteger(arg0);
+      return ret;
+    };
+    exports2.__wbg_iterator_e5822695327a3c39 = function() {
+      const ret = Symbol.iterator;
+      return ret;
+    };
+    exports2.__wbg_key_38d01a092280ffc6 = function() {
+      return handleError(function(arg0, arg1, arg2) {
+        const ret = arg1.key(arg2 >>> 0);
+        var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+        getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+      }, arguments);
+    };
+    exports2.__wbg_length_69bca3cb64fc8748 = function(arg0) {
+      const ret = arg0.length;
+      return ret;
+    };
+    exports2.__wbg_length_7534a213da0a65cd = function() {
+      return handleError(function(arg0) {
+        const ret = arg0.length;
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_length_cdd215e10d9dd507 = function(arg0) {
+      const ret = arg0.length;
+      return ret;
+    };
+    exports2.__wbg_localStorage_3034501cd2b3da3f = function() {
+      return handleError(function(arg0) {
+        const ret = arg0.localStorage;
+        return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+      }, arguments);
+    };
+    exports2.__wbg_msCrypto_a61aeb35a24c1329 = function(arg0) {
+      const ret = arg0.msCrypto;
+      return ret;
+    };
+    exports2.__wbg_new_0_f9740686d739025c = function() {
+      const ret = /* @__PURE__ */ new Date();
+      return ret;
+    };
+    exports2.__wbg_new_1acc0b6eea89d040 = function() {
+      const ret = new Object();
+      return ret;
+    };
+    exports2.__wbg_new_2531773dac38ebb3 = function() {
+      return handleError(function() {
+        const ret = new AbortController();
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_new_3c3d849046688a66 = function(arg0, arg1) {
+      try {
+        var state0 = { a: arg0, b: arg1 };
+        var cb0 = (arg02, arg12) => {
+          const a = state0.a;
+          state0.a = 0;
+          try {
+            return wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(a, state0.b, arg02, arg12);
+          } finally {
+            state0.a = a;
+          }
+        };
+        const ret = new Promise(cb0);
+        return ret;
+      } finally {
+        state0.a = state0.b = 0;
+      }
+    };
+    exports2.__wbg_new_5a79be3ab53b8aa5 = function(arg0) {
+      const ret = new Uint8Array(arg0);
+      return ret;
+    };
+    exports2.__wbg_new_68651c719dcda04e = function() {
+      const ret = /* @__PURE__ */ new Map();
+      return ret;
+    };
+    exports2.__wbg_new_9edf9838a2def39c = function() {
+      return handleError(function() {
+        const ret = new Headers();
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_new_e17d9f43105b08be = function() {
+      const ret = new Array();
+      return ret;
+    };
+    exports2.__wbg_new_from_slice_92f4d78ca282a2d2 = function(arg0, arg1) {
+      const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
+      return ret;
+    };
+    exports2.__wbg_new_no_args_ee98eee5275000a4 = function(arg0, arg1) {
+      const ret = new Function(getStringFromWasm0(arg0, arg1));
+      return ret;
+    };
+    exports2.__wbg_new_with_length_01aa0dc35aa13543 = function(arg0) {
+      const ret = new Uint8Array(arg0 >>> 0);
+      return ret;
+    };
+    exports2.__wbg_new_with_str_and_init_0ae7728b6ec367b1 = function() {
+      return handleError(function(arg0, arg1, arg2) {
+        const ret = new Request(getStringFromWasm0(arg0, arg1), arg2);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_next_020810e0ae8ebcb0 = function() {
+      return handleError(function(arg0) {
+        const ret = arg0.next();
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_next_2c826fe5dfec6b6a = function(arg0) {
+      const ret = arg0.next;
+      return ret;
+    };
+    exports2.__wbg_node_905d3e251edff8a2 = function(arg0) {
+      const ret = arg0.node;
+      return ret;
+    };
+    exports2.__wbg_now_793306c526e2e3b6 = function() {
+      const ret = Date.now();
+      return ret;
+    };
+    exports2.__wbg_of_035271b9e67a3bd9 = function(arg0) {
+      const ret = Array.of(arg0);
+      return ret;
+    };
+    exports2.__wbg_parse_2a704d6b78abb2b8 = function() {
+      return handleError(function(arg0, arg1) {
+        const ret = JSON.parse(getStringFromWasm0(arg0, arg1));
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_process_dc0fbacc7c1c06f7 = function(arg0) {
+      const ret = arg0.process;
+      return ret;
+    };
+    exports2.__wbg_prototypesetcall_2a6620b6922694b2 = function(arg0, arg1, arg2) {
+      Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
+    };
+    exports2.__wbg_pushPsbt_94963062529d842c = function(arg0, arg1, arg2) {
+      const ret = arg0.pushPsbt(getStringFromWasm0(arg1, arg2));
+      return ret;
+    };
+    exports2.__wbg_pushTx_4fc10aa38ba926b8 = function(arg0, arg1, arg2) {
+      const ret = arg0.pushTx(getStringFromWasm0(arg1, arg2));
+      return ret;
+    };
+    exports2.__wbg_push_df81a39d04db858c = function(arg0, arg1) {
+      const ret = arg0.push(arg1);
+      return ret;
+    };
+    exports2.__wbg_queueMicrotask_34d692c25c47d05b = function(arg0) {
+      const ret = arg0.queueMicrotask;
+      return ret;
+    };
+    exports2.__wbg_queueMicrotask_9d76cacb20c84d58 = function(arg0) {
+      queueMicrotask(arg0);
+    };
+    exports2.__wbg_randomFillSync_ac0988aba3254290 = function() {
+      return handleError(function(arg0, arg1) {
+        arg0.randomFillSync(arg1);
+      }, arguments);
+    };
+    exports2.__wbg_removeItem_0e1e70f1687b5304 = function() {
+      return handleError(function(arg0, arg1, arg2) {
+        arg0.removeItem(getStringFromWasm0(arg1, arg2));
+      }, arguments);
+    };
+    exports2.__wbg_require_60cc747a6bc5215a = function() {
+      return handleError(function() {
+        const ret = module2.require;
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_resolve_caf97c30b83f7053 = function(arg0) {
+      const ret = Promise.resolve(arg0);
+      return ret;
+    };
+    exports2.__wbg_setItem_64dfb54d7b20d84c = function() {
+      return handleError(function(arg0, arg1, arg2, arg3, arg4) {
+        arg0.setItem(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
+      }, arguments);
+    };
+    exports2.__wbg_setTimeout_7bb3429662ab1e70 = function(arg0, arg1) {
+      const ret = setTimeout(arg0, arg1);
+      return ret;
+    };
+    exports2.__wbg_set_3f1d0b984ed272ed = function(arg0, arg1, arg2) {
+      arg0[arg1] = arg2;
+    };
+    exports2.__wbg_set_907fb406c34a251d = function(arg0, arg1, arg2) {
+      const ret = arg0.set(arg1, arg2);
+      return ret;
+    };
+    exports2.__wbg_set_9e6516df7b7d0f19 = function(arg0, arg1, arg2) {
+      arg0.set(getArrayU8FromWasm0(arg1, arg2));
+    };
+    exports2.__wbg_set_body_3c365989753d61f4 = function(arg0, arg1) {
+      arg0.body = arg1;
+    };
+    exports2.__wbg_set_c213c871859d6500 = function(arg0, arg1, arg2) {
+      arg0[arg1 >>> 0] = arg2;
+    };
+    exports2.__wbg_set_c2abbebe8b9ebee1 = function() {
+      return handleError(function(arg0, arg1, arg2) {
+        const ret = Reflect.set(arg0, arg1, arg2);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_set_cache_2f9deb19b92b81e3 = function(arg0, arg1) {
+      arg0.cache = __wbindgen_enum_RequestCache[arg1];
+    };
+    exports2.__wbg_set_credentials_f621cd2d85c0c228 = function(arg0, arg1) {
+      arg0.credentials = __wbindgen_enum_RequestCredentials[arg1];
+    };
+    exports2.__wbg_set_headers_6926da238cd32ee4 = function(arg0, arg1) {
+      arg0.headers = arg1;
+    };
+    exports2.__wbg_set_method_c02d8cbbe204ac2d = function(arg0, arg1, arg2) {
+      arg0.method = getStringFromWasm0(arg1, arg2);
+    };
+    exports2.__wbg_set_mode_52ef73cfa79639cb = function(arg0, arg1) {
+      arg0.mode = __wbindgen_enum_RequestMode[arg1];
+    };
+    exports2.__wbg_set_signal_dda2cf7ccb6bee0f = function(arg0, arg1) {
+      arg0.signal = arg1;
+    };
+    exports2.__wbg_signMessage_dfa4cbdda66532c1 = function(arg0, arg1, arg2, arg3, arg4) {
+      const ret = arg0.signMessage(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
+      return ret;
+    };
+    exports2.__wbg_signPsbt_1703f674396512f5 = function(arg0, arg1, arg2, arg3) {
+      const ret = arg0.signPsbt(getStringFromWasm0(arg1, arg2), arg3);
+      return ret;
+    };
+    exports2.__wbg_signPsbts_f6481ee8ea4a52f1 = function(arg0, arg1, arg2) {
+      const ret = arg0.signPsbts(arg1, arg2);
+      return ret;
+    };
+    exports2.__wbg_signal_4db5aa055bf9eb9a = function(arg0) {
+      const ret = arg0.signal;
+      return ret;
+    };
+    exports2.__wbg_static_accessor_GLOBAL_89e1d9ac6a1b250e = function() {
+      const ret = typeof global === "undefined" ? null : global;
+      return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+    };
+    exports2.__wbg_static_accessor_GLOBAL_THIS_8b530f326a9e48ac = function() {
+      const ret = typeof globalThis === "undefined" ? null : globalThis;
+      return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+    };
+    exports2.__wbg_static_accessor_SELF_6fdf4b64710cc91b = function() {
+      const ret = typeof self === "undefined" ? null : self;
+      return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+    };
+    exports2.__wbg_static_accessor_WINDOW_b45bfc5a37f6cfa2 = function() {
+      const ret = typeof window === "undefined" ? null : window;
+      return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+    };
+    exports2.__wbg_status_de7eed5a7a5bfd5d = function(arg0) {
+      const ret = arg0.status;
+      return ret;
+    };
+    exports2.__wbg_stringify_b5fb28f6465d9c3e = function() {
+      return handleError(function(arg0) {
+        const ret = JSON.stringify(arg0);
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_subarray_480600f3d6a9f26c = function(arg0, arg1, arg2) {
+      const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
+      return ret;
+    };
+    exports2.__wbg_subtle_a158c8cba320b8ed = function(arg0) {
+      const ret = arg0.subtle;
+      return ret;
+    };
+    exports2.__wbg_switchNetwork_c2498e59066e6f0b = function(arg0, arg1, arg2) {
+      const ret = arg0.switchNetwork(getStringFromWasm0(arg1, arg2));
+      return ret;
+    };
+    exports2.__wbg_text_dc33c15c17bdfb52 = function() {
+      return handleError(function(arg0) {
+        const ret = arg0.text();
+        return ret;
+      }, arguments);
+    };
+    exports2.__wbg_then_4f46f6544e6b4a28 = function(arg0, arg1) {
+      const ret = arg0.then(arg1);
+      return ret;
+    };
+    exports2.__wbg_then_70d05cf780a18d77 = function(arg0, arg1, arg2) {
+      const ret = arg0.then(arg1, arg2);
+      return ret;
+    };
+    exports2.__wbg_toISOString_48d92f5754d01b49 = function(arg0) {
+      const ret = arg0.toISOString();
+      return ret;
+    };
+    exports2.__wbg_url_b36d2a5008eb056f = function(arg0, arg1) {
+      const ret = arg1.url;
+      const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+      const len1 = WASM_VECTOR_LEN;
+      getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+      getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+    };
+    exports2.__wbg_value_692627309814bb8c = function(arg0) {
+      const ret = arg0.value;
+      return ret;
+    };
+    exports2.__wbg_versions_c01dfd4722a88165 = function(arg0) {
+      const ret = arg0.versions;
+      return ret;
+    };
+    exports2.__wbg_warn_1d74dddbe2fd1dbb = function(arg0) {
+      console.warn(arg0);
+    };
+    exports2.__wbg_wasmbrowserwalletprovider_new = function(arg0) {
+      const ret = WasmBrowserWalletProvider.__wrap(arg0);
+      return ret;
+    };
+    exports2.__wbindgen_cast_2241b6af4c4b2941 = function(arg0, arg1) {
+      const ret = getStringFromWasm0(arg0, arg1);
+      return ret;
+    };
+    exports2.__wbindgen_cast_4625c577ab2ec9ee = function(arg0) {
+      const ret = BigInt.asUintN(64, arg0);
+      return ret;
+    };
+    exports2.__wbindgen_cast_832dfe82587c7cfc = function(arg0, arg1) {
+      const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h264445b1cd05789c, wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb);
+      return ret;
+    };
+    exports2.__wbindgen_cast_9ae0607507abb057 = function(arg0) {
+      const ret = arg0;
+      return ret;
+    };
+    exports2.__wbindgen_cast_cb9088102bce6b30 = function(arg0, arg1) {
+      const ret = getArrayU8FromWasm0(arg0, arg1);
+      return ret;
+    };
+    exports2.__wbindgen_cast_d6cd19b81560fd6e = function(arg0) {
+      const ret = arg0;
+      return ret;
+    };
+    exports2.__wbindgen_cast_e7b45dd881f38ce3 = function(arg0, arg1) {
+      const ret = BigInt.asUintN(64, arg0) | BigInt.asUintN(64, arg1) << BigInt(64);
+      return ret;
+    };
+    exports2.__wbindgen_cast_facf2bd55df381c1 = function(arg0, arg1) {
+      const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
+      return ret;
+    };
+    exports2.__wbindgen_init_externref_table = function() {
+      const table = wasm.__wbindgen_externrefs;
+      const offset = table.grow(4);
+      table.set(0, void 0);
+      table.set(offset + 0, void 0);
+      table.set(offset + 1, null);
+      table.set(offset + 2, true);
+      table.set(offset + 3, false);
+      ;
+    };
+    exports2.__wbindgen_object_is_undefined = function(arg0) {
+      const ret = arg0 === void 0;
+      return ret;
+    };
+    var wasmPath = `${__dirname}/alkanes_web_sys_bg.wasm`;
+    var wasmBytes = require("fs").readFileSync(wasmPath);
+    var wasmModule = new WebAssembly.Module(wasmBytes);
+    var wasm = exports2.__wasm = new WebAssembly.Instance(wasmModule, imports).exports;
+    wasm.__wbindgen_start();
+  }
+});
+
 // src/cli/index.ts
 var import_commander = require("commander");
 var import_chalk3 = __toESM(require("chalk"));
@@ -1675,9 +5706,27 @@ async function createProvider2(options) {
 
 // src/cli/utils/wallet.ts
 var fs2 = __toESM(require("fs"));
+var path2 = __toESM(require("path"));
 function walletExists(walletPath) {
   const expandedPath = expandPath(walletPath);
   return fs2.existsSync(expandedPath);
+}
+function loadWalletFile(walletPath) {
+  const expandedPath = expandPath(walletPath);
+  if (!fs2.existsSync(expandedPath)) {
+    throw new Error(`Wallet file not found: ${walletPath}`);
+  }
+  const content = fs2.readFileSync(expandedPath, "utf-8");
+  return JSON.parse(content);
+}
+function saveWalletFile(walletPath, walletData) {
+  const expandedPath = expandPath(walletPath);
+  const dir = path2.dirname(expandedPath);
+  if (!fs2.existsSync(dir)) {
+    fs2.mkdirSync(dir, { recursive: true });
+  }
+  fs2.writeFileSync(expandedPath, JSON.stringify(walletData, null, 2));
+  fs2.chmodSync(expandedPath, 384);
 }
 function isValidMnemonic(mnemonic) {
   const words = mnemonic.trim().split(/\s+/);
@@ -1748,20 +5797,20 @@ function registerWalletCommands(program2) {
             return;
           }
         }
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        const result = provider.wallet_create_js(
-          JSON.stringify(walletConfig),
+        const rawProvider = provider.rawProvider;
+        const walletInfo = rawProvider.walletCreate(
           mnemonic || void 0,
           passphrase
         );
-        const walletInfo = await result;
+        saveWalletFile(walletPath, {
+          mnemonic: walletInfo.mnemonic,
+          network: globalOpts.provider || "mainnet",
+          created_at: (/* @__PURE__ */ new Date()).toISOString()
+        });
         spinner.succeed("Wallet created successfully!");
         console.log();
         success(`Wallet saved to: ${walletPath}`);
-        info(`Network: ${walletInfo.network}`);
+        info(`Network: ${walletInfo.network || globalOpts.provider || "mainnet"}`);
         info(`First address (p2tr:0): ${walletInfo.address}`);
         if (walletInfo.mnemonic && !options.mnemonic) {
           console.log();
@@ -1796,11 +5845,14 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
+        const rawProvider = provider.rawProvider;
+        const walletData = loadWalletFile(walletPath);
+        if (!walletData || !walletData.mnemonic) {
+          spinner.fail();
+          error("Failed to load wallet or wallet has no mnemonic");
+          return;
+        }
+        rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
         spinner.succeed("Wallet loaded");
         const [addressType, range] = spec.split(":");
         if (!addressType || !range) {
@@ -1816,11 +5868,13 @@ function registerWalletCommands(program2) {
         } else {
           indices.push(Number(range));
         }
+        const startIndex = indices[0];
+        const count = indices.length;
+        const addresses = rawProvider.walletGetAddresses(addressType, startIndex, count);
         console.log();
-        const table = createTable(["Index", "Address Type", "Address"]);
-        for (const index of indices) {
-          const addr = await provider.get_address(addressType, index);
-          table.push([String(index), addressType, addr]);
+        const table = createTable(["Index", "Address Type", "Derivation Path", "Address"]);
+        for (const addr of addresses) {
+          table.push([String(addr.index), addr.script_type, addr.derivation_path, addr.address]);
         }
         console.log(table.toString());
       } catch (err) {
@@ -1848,13 +5902,15 @@ function registerWalletCommands(program2) {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
           esploraUrl: globalOpts.esploraUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        const utxos_result = await provider.get_utxos_by_spec_js([spec]);
-        const utxos = JSON.parse(utxos_result);
+        const rawProvider = provider.rawProvider;
+        const walletData = loadWalletFile(walletPath);
+        if (!walletData || !walletData.mnemonic) {
+          spinner.fail();
+          error("Failed to load wallet or wallet has no mnemonic");
+          return;
+        }
+        rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
+        const utxos = await rawProvider.walletGetUtxos();
         spinner.succeed(`Found ${utxos.length} UTXOs`);
         if (utxos.length === 0) {
           info("No UTXOs found for the specified addresses");
@@ -1899,21 +5955,22 @@ function registerWalletCommands(program2) {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
           esploraUrl: globalOpts.esploraUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        const balance_result = await provider.wallet_get_balance_js(options.address);
-        const balance = JSON.parse(balance_result);
+        const rawProvider = provider.rawProvider;
+        const walletData = loadWalletFile(walletPath);
+        if (!walletData || !walletData.mnemonic) {
+          spinner.fail();
+          error("Failed to load wallet or wallet has no mnemonic");
+          return;
+        }
+        rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
+        const balance = await rawProvider.walletGetBalance();
         spinner.succeed("Balance calculated");
         console.log();
-        success(`Total Balance: ${formatBTC(balance.total || 0)}`);
-        if (balance.confirmed !== void 0) {
-          info(`Confirmed: ${formatBTC(balance.confirmed)}`);
-        }
-        if (balance.unconfirmed !== void 0 && balance.unconfirmed > 0) {
-          info(`Unconfirmed: ${formatBTC(balance.unconfirmed)}`);
+        const total = (balance.confirmed || 0) + (balance.pending || 0);
+        success(`Total Balance: ${formatBTC(total)}`);
+        info(`Confirmed: ${formatBTC(balance.confirmed || 0)}`);
+        if (balance.pending && balance.pending > 0) {
+          info(`Pending: ${formatBTC(balance.pending)}`);
         }
       } catch (err) {
         spinner.fail();
@@ -1949,20 +6006,22 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
+        const rawProvider = provider.rawProvider;
+        const walletData = loadWalletFile(walletPath);
+        if (!walletData || !walletData.mnemonic) {
+          spinner.fail();
+          error("Failed to load wallet or wallet has no mnemonic");
+          return;
+        }
+        rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
         const sendParams = {
-          to_address: address,
-          amount: parseFloat(amount) * 1e8,
+          address,
+          amount: Math.round(parseFloat(amount) * 1e8),
           // Convert BTC to satoshis
           fee_rate: parseFloat(options.feeRate),
-          from: options.from
+          from: options.from ? [options.from] : void 0
         };
-        const txid_result = await provider.wallet_send_js(JSON.stringify(sendParams));
-        const txid = JSON.parse(txid_result);
+        const txid = await rawProvider.walletSend(JSON.stringify(sendParams));
         spinner.succeed("Transaction broadcast successfully!");
         console.log();
         success(`Transaction ID: ${txid}`);
@@ -1990,16 +6049,15 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        const history_result = await provider.wallet_get_history_js(
-          options.address,
-          parseInt(options.count)
-        );
-        const history = JSON.parse(history_result);
+        const rawProvider = provider.rawProvider;
+        const walletData = loadWalletFile(walletPath);
+        if (!walletData || !walletData.mnemonic) {
+          spinner.fail();
+          error("Failed to load wallet or wallet has no mnemonic");
+          return;
+        }
+        rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
+        const history = await rawProvider.walletGetHistory(options.address);
         spinner.succeed("Transaction history fetched");
         if (history.length === 0) {
           info("No transactions found");
@@ -2040,17 +6098,9 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        const signed_result = await provider.wallet_sign_psbt_js(psbt);
-        const signed = JSON.parse(signed_result);
-        spinner.succeed("PSBT signed");
-        console.log();
-        success("Signed PSBT:");
-        console.log(formatOutput(signed, globalOpts));
+        spinner.fail();
+        error("PSBT signing is not yet available in the WASM CLI");
+        info("Use a full node wallet for PSBT operations");
       } catch (err) {
         spinner.fail();
         throw err;
@@ -2075,13 +6125,9 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        await provider.wallet_freeze_utxo_js(outpoint, options.reason || "");
-        spinner.succeed(`UTXO ${outpoint} frozen`);
+        spinner.fail();
+        error("UTXO freezing is not yet available in the WASM CLI");
+        info("Use a full node wallet for UTXO management");
       } catch (err) {
         spinner.fail();
         throw err;
@@ -2106,13 +6152,9 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        await provider.wallet_unfreeze_utxo_js(outpoint);
-        spinner.succeed(`UTXO ${outpoint} unfrozen`);
+        spinner.fail();
+        error("UTXO unfreezing is not yet available in the WASM CLI");
+        info("Use a full node wallet for UTXO management");
       } catch (err) {
         spinner.fail();
         throw err;
@@ -2137,20 +6179,9 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        const tx_result = await provider.wallet_create_tx_js(
-          options.to,
-          parseInt(options.amount),
-          parseFloat(options.feeRate)
-        );
-        const tx = JSON.parse(tx_result);
-        spinner.succeed("Transaction created");
-        console.log();
-        console.log(formatOutput(tx, globalOpts));
+        spinner.fail();
+        error("Transaction creation (PSBT) is not yet available in the WASM CLI");
+        info("Use walletSend for direct transactions or a full node wallet for PSBT operations");
       } catch (err) {
         spinner.fail();
         throw err;
@@ -2175,17 +6206,9 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        const signed_result = await provider.wallet_sign_tx_js(txHex);
-        const signed = JSON.parse(signed_result);
-        spinner.succeed("Transaction signed");
-        console.log();
-        success("Signed transaction:");
-        console.log(formatOutput(signed, globalOpts));
+        spinner.fail();
+        error("Transaction signing is not yet available in the WASM CLI");
+        info("Use walletSend for direct transactions or a full node wallet for signing");
       } catch (err) {
         spinner.fail();
         throw err;
@@ -2204,8 +6227,7 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const decoded_result = await provider.bitcoin_decoderawtransaction_js(txHex);
-        const decoded = JSON.parse(decoded_result);
+        const decoded = await provider.rawProvider.bitcoindDecodeRawTransaction(txHex);
         spinner.succeed("Transaction decoded");
         console.log();
         console.log(formatOutput(decoded, globalOpts));
@@ -2227,8 +6249,7 @@ function registerWalletCommands(program2) {
           network: globalOpts.provider,
           jsonrpcUrl: globalOpts.jsonrpcUrl
         });
-        const txid_result = await provider.bitcoin_sendrawtransaction_js(txHex);
-        const txid = JSON.parse(txid_result);
+        const txid = await provider.rawProvider.bitcoindSendRawTransaction(txHex);
         spinner.succeed("Transaction broadcast");
         console.log();
         success(`TXID: ${txid}`);
@@ -2249,32 +6270,8 @@ function registerWalletCommands(program2) {
         error(`Wallet not found at ${walletPath}`);
         return;
       }
-      const passphrase = globalOpts.passphrase || await password("Enter wallet passphrase:");
-      const spinner = (0, import_ora.default)("Estimating fee...").start();
-      try {
-        const provider = await createProvider2({
-          network: globalOpts.provider,
-          jsonrpcUrl: globalOpts.jsonrpcUrl
-        });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        const fee_result = await provider.wallet_estimate_fee_js(
-          options.to,
-          parseInt(options.amount),
-          parseFloat(options.feeRate)
-        );
-        const fee = JSON.parse(fee_result);
-        spinner.succeed("Fee estimated");
-        console.log();
-        info(`Estimated fee: ${formatBTC(fee.fee || 0)}`);
-        info(`Total: ${formatBTC(parseInt(options.amount) + (fee.fee || 0))}`);
-      } catch (err) {
-        spinner.fail();
-        throw err;
-      }
+      error("Fee estimation is not yet available in the WASM CLI");
+      info("Use esplora fee-estimates for current network fee rates");
     } catch (err) {
       error(`Failed to estimate fee: ${err.message}`);
       process.exit(1);
@@ -2290,8 +6287,7 @@ function registerWalletCommands(program2) {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
           esploraUrl: globalOpts.esploraUrl
         });
-        const rates_result = await provider.esplora_get_fee_estimates_js();
-        const rates = JSON.parse(rates_result);
+        const rates = await provider.rawProvider.esploraGetFeeEstimates();
         spinner.succeed("Fee rates fetched");
         console.log();
         console.log(formatOutput(rates, globalOpts));
@@ -2312,24 +6308,8 @@ function registerWalletCommands(program2) {
         error(`Wallet not found at ${walletPath}`);
         return;
       }
-      const passphrase = globalOpts.passphrase || await password("Enter wallet passphrase:");
-      const spinner = (0, import_ora.default)("Syncing wallet...").start();
-      try {
-        const provider = await createProvider2({
-          network: globalOpts.provider,
-          jsonrpcUrl: globalOpts.jsonrpcUrl
-        });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        await provider.wallet_sync_js();
-        spinner.succeed("Wallet synced");
-      } catch (err) {
-        spinner.fail();
-        throw err;
-      }
+      error("Wallet sync is not yet available in the WASM CLI");
+      info("The WASM wallet syncs automatically when querying balance/UTXOs");
     } catch (err) {
       error(`Failed to sync wallet: ${err.message}`);
       process.exit(1);
@@ -2366,30 +6346,16 @@ function registerWalletCommands(program2) {
         error(`Wallet not found at ${walletPath}`);
         return;
       }
-      const passphrase = globalOpts.passphrase || await password("Enter wallet passphrase:");
-      const spinner = (0, import_ora.default)("Getting mnemonic...").start();
-      try {
-        const provider = await createProvider2({
-          network: globalOpts.provider,
-          jsonrpcUrl: globalOpts.jsonrpcUrl
-        });
-        const walletConfig = {
-          wallet_path: walletPath,
-          network: globalOpts.provider || "mainnet"
-        };
-        await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-        const mnemonic_result = await provider.wallet_get_mnemonic_js();
-        const mnemonic = JSON.parse(mnemonic_result);
-        spinner.succeed("Mnemonic retrieved");
-        console.log();
-        console.log(import_chalk2.default.yellow.bold("\u26A0 WARNING: Keep this mnemonic safe and private!"));
-        console.log();
-        console.log(import_chalk2.default.cyan(mnemonic));
-        console.log();
-      } catch (err) {
-        spinner.fail();
-        throw err;
+      const walletData = loadWalletFile(walletPath);
+      if (!walletData || !walletData.mnemonic) {
+        error("Failed to load wallet or wallet has no mnemonic");
+        return;
       }
+      console.log();
+      console.log(import_chalk2.default.yellow.bold("\u26A0 WARNING: Keep this mnemonic safe and private!"));
+      console.log();
+      console.log(import_chalk2.default.cyan(walletData.mnemonic));
+      console.log();
     } catch (err) {
       error(`Failed to get mnemonic: ${err.message}`);
       process.exit(1);
@@ -4688,7 +8654,7 @@ function registerEspoCommands(program2) {
       const provider = await createProvider2({
         network: globalOpts.provider
       });
-      const path2 = await provider.espo.findBestSwapPath(
+      const path3 = await provider.espo.findBestSwapPath(
         tokenIn,
         tokenOut,
         options.mode,
@@ -4701,7 +8667,7 @@ function registerEspoCommands(program2) {
         options.maxHops ? parseInt(options.maxHops, 10) : void 0
       );
       spinner.succeed();
-      console.log(formatOutput(path2, globalOpts));
+      console.log(formatOutput(path3, globalOpts));
     } catch (err) {
       error(`Failed to find swap path: ${err.message}`);
       process.exit(1);
@@ -4885,7 +8851,7 @@ function registerBrc20ProgCommands(program2) {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Wrapping BTC to frBTC...").start();
-      const { frbtc_wrap } = await import("../../wasm/alkanes_web_sys.js");
+      const { frbtc_wrap } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
       const params = {
         from_addresses: options.from,
         change_address: options.change,
@@ -4912,7 +8878,7 @@ function registerBrc20ProgCommands(program2) {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Unwrapping frBTC to BTC...").start();
-      const { frbtc_unwrap } = await import("../../wasm/alkanes_web_sys.js");
+      const { frbtc_unwrap } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
       const params = {
         from_addresses: options.from,
         change_address: options.change,
@@ -4942,7 +8908,7 @@ function registerBrc20ProgCommands(program2) {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Wrapping BTC and executing script...").start();
-      const { frbtc_wrap_and_execute } = await import("../../wasm/alkanes_web_sys.js");
+      const { frbtc_wrap_and_execute } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
       const params = {
         from_addresses: options.from,
         change_address: options.change,
@@ -4970,7 +8936,7 @@ function registerBrc20ProgCommands(program2) {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Wrapping BTC and calling contract...").start();
-      const { frbtc_wrap_and_execute2 } = await import("../../wasm/alkanes_web_sys.js");
+      const { frbtc_wrap_and_execute2 } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
       const params = {
         from_addresses: options.from,
         change_address: options.change,
@@ -5000,7 +8966,7 @@ function registerBrc20ProgCommands(program2) {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Getting FrBTC signer address...").start();
-      const { frbtc_get_signer_address } = await import("../../wasm/alkanes_web_sys.js");
+      const { frbtc_get_signer_address } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
       const result = await frbtc_get_signer_address(globalOpts.provider || "mainnet");
       spinner.succeed("FrBTC signer address retrieved!");
       const parsed = JSON.parse(result);
@@ -5866,7 +9832,7 @@ registerOpiCommands(program);
 registerSubfrostCommands(program);
 program.command("decodepsbt <psbt>").description("Decode a PSBT (Partially Signed Bitcoin Transaction) without calling bitcoind").action(async (psbt, options, command) => {
   try {
-    const { decode_psbt } = await import("../wasm/alkanes_web_sys.js");
+    const { decode_psbt } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
     const globalOpts = command.parent?.opts() || {};
     const result = decode_psbt(psbt);
     const decoded = JSON.parse(result);

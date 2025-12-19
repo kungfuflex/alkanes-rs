@@ -3243,6 +3243,47 @@ impl WebProvider {
         self.keystore.is_some()
     }
 
+    /// Get addresses from the loaded wallet keystore
+    /// Uses the Keystore.get_addresses method from alkanes-cli-common
+    ///
+    /// # Arguments
+    /// * `address_type` - Address type: "p2tr", "p2wpkh", "p2sh-p2wpkh", "p2pkh"
+    /// * `start_index` - Starting index for address derivation
+    /// * `count` - Number of addresses to derive
+    /// * `chain` - Chain index (0 for external/receiving, 1 for internal/change)
+    ///
+    /// # Returns
+    /// Array of address info objects with: { derivation_path, address, script_type, index, used }
+    #[wasm_bindgen(js_name = walletGetAddresses)]
+    pub fn wallet_get_addresses_js(&self, address_type: String, start_index: u32, count: u32, chain: Option<u32>) -> std::result::Result<JsValue, JsValue> {
+        let keystore = self.keystore.as_ref()
+            .ok_or_else(|| JsValue::from_str("Wallet not loaded. Call walletCreate or walletLoadMnemonic first."))?;
+
+        let chain = chain.unwrap_or(0);
+
+        let addresses = keystore.get_addresses(self.network, &address_type, chain, start_index, count)
+            .map_err(|e| JsValue::from_str(&format!("Failed to get addresses: {}", e)))?;
+
+        // Convert to JS array
+        let js_array = js_sys::Array::new();
+        for addr_info in addresses {
+            let obj = js_sys::Object::new();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("derivation_path"), &JsValue::from_str(&addr_info.derivation_path))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set derivation_path: {:?}", e)))?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("address"), &JsValue::from_str(&addr_info.address))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set address: {:?}", e)))?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("script_type"), &JsValue::from_str(&addr_info.script_type))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set script_type: {:?}", e)))?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("index"), &JsValue::from_f64(addr_info.index as f64))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set index: {:?}", e)))?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("used"), &JsValue::from_bool(addr_info.used))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set used: {:?}", e)))?;
+            js_array.push(&obj);
+        }
+
+        Ok(js_array.into())
+    }
+
     /// Send BTC to an address
     /// params: { address: string, amount: number (satoshis), fee_rate?: number }
     /// Wallet must be loaded first via walletLoadMnemonic

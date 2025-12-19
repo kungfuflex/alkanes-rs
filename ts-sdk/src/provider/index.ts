@@ -1455,6 +1455,22 @@ export class AlkanesProvider {
   }
 
   /**
+   * Get the raw WASM WebProvider for direct access to low-level methods.
+   *
+   * This is useful for CLI tools that need access to wallet methods
+   * like wallet_create_js, wallet_load_js, etc. that are not wrapped
+   * by the higher-level API.
+   *
+   * @throws Error if provider is not initialized
+   */
+  get rawProvider(): WasmWebProvider {
+    if (!this._provider) {
+      throw new Error('Provider not initialized. Call initialize() first.');
+    }
+    return this._provider;
+  }
+
+  /**
    * Bitcoin RPC client
    */
   get bitcoin(): BitcoinRpcClient {

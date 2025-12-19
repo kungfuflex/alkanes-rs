@@ -1,5 +1,9 @@
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export function analyze_psbt(psbt_base64: string, network_str: string): string;
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
 export function get_alkane_bytecode(network: string, block: number, tx: number, block_tag: string): Promise<any>;
@@ -172,9 +176,100 @@ export function brc20_prog_transact(network: string, contract_address: string, f
  */
 export function brc20_prog_wrap_btc(network: string, amount: bigint, target_contract: string, function_signature: string, calldata: string, params_json: string): Promise<any>;
 /**
- * Asynchronously encrypts data using the Web Crypto API.
+ * Simple wrap: convert BTC to frBTC without executing any contract
+ *
+ * This calls the wrap() function on the FrBTC contract.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of BTC to wrap (in satoshis)
+ * * `params_json` - JSON string with execution parameters:
+ *   ```json
+ *   {
+ *     "from_addresses": ["address1", "address2"],  // optional
+ *     "change_address": "address",                  // optional
+ *     "fee_rate": 100.0                             // optional, sat/vB
+ *   }
+ *   ```
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
  */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
+export function frbtc_wrap(network: string, amount: bigint, params_json: string): Promise<any>;
+/**
+ * Unwrap frBTC to BTC
+ *
+ * This calls unwrap2() on the FrBTC contract to burn frBTC and queue a BTC payment.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of frBTC to unwrap (in satoshis)
+ * * `vout` - Vout index for the inscription output
+ * * `recipient_address` - Bitcoin address to receive the unwrapped BTC
+ * * `params_json` - JSON string with execution parameters
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
+ */
+export function frbtc_unwrap(network: string, amount: bigint, vout: bigint, recipient_address: string, params_json: string): Promise<any>;
+/**
+ * Wrap BTC and deploy+execute a script (wrapAndExecute)
+ *
+ * This calls wrapAndExecute() on the FrBTC contract.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of BTC to wrap (in satoshis)
+ * * `script_bytecode` - Script bytecode to deploy and execute (hex-encoded)
+ * * `params_json` - JSON string with execution parameters
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
+ */
+export function frbtc_wrap_and_execute(network: string, amount: bigint, script_bytecode: string, params_json: string): Promise<any>;
+/**
+ * Wrap BTC and call an existing contract (wrapAndExecute2)
+ *
+ * This calls wrapAndExecute2() on the FrBTC contract.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of BTC to wrap (in satoshis)
+ * * `target_address` - Target contract address
+ * * `function_signature` - Function signature (e.g., "deposit()")
+ * * `calldata_args` - Comma-separated calldata arguments
+ * * `params_json` - JSON string with execution parameters
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
+ */
+export function frbtc_wrap_and_execute2(network: string, amount: bigint, target_address: string, function_signature: string, calldata_args: string, params_json: string): Promise<any>;
+/**
+ * Get the FrBTC signer address for a network
+ *
+ * This calls getSignerAddress() on the FrBTC contract to get the p2tr address
+ * where BTC should be sent for wrapping.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ *
+ * # Returns
+ *
+ * A JSON string containing:
+ * - `network`: The network name
+ * - `frbtc_contract`: The FrBTC contract address
+ * - `signer_address`: The Bitcoin p2tr address for the signer
+ */
+export function frbtc_get_signer_address(network: string): Promise<any>;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;
@@ -765,6 +860,20 @@ export class WebProvider {
    * Check if wallet is loaded (has keystore for signing)
    */
   walletIsLoaded(): boolean;
+  /**
+   * Get addresses from the loaded wallet keystore
+   * Uses the Keystore.get_addresses method from alkanes-cli-common
+   *
+   * # Arguments
+   * * `address_type` - Address type: "p2tr", "p2wpkh", "p2sh-p2wpkh", "p2pkh"
+   * * `start_index` - Starting index for address derivation
+   * * `count` - Number of addresses to derive
+   * * `chain` - Chain index (0 for external/receiving, 1 for internal/change)
+   *
+   * # Returns
+   * Array of address info objects with: { derivation_path, address, script_type, index, used }
+   */
+  walletGetAddresses(address_type: string, start_index: number, count: number, chain?: number | null): any;
   /**
    * Send BTC to an address
    * params: { address: string, amount: number (satoshis), fee_rate?: number }
