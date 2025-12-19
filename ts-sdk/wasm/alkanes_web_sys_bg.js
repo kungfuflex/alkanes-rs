@@ -583,12 +583,12 @@ export function encryptMnemonic(mnemonic, passphrase) {
     return ret;
 }
 
-function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2);
-}
-
 function wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb(arg0, arg1) {
     wasm.wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb(arg0, arg1);
+}
+
+function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2);
 }
 
 function wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(arg0, arg1, arg2, arg3) {
