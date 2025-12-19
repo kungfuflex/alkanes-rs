@@ -45,6 +45,7 @@ import {
   AlkaneSpendablesResponse,
   AlkaneSimulateResponse,
   AlkaneTraceResponse,
+  AlkaneTraceEntry,
   AlkaneSequenceResponse,
   AlkanePoolResponse,
   // Ord response types
@@ -58,6 +59,14 @@ import {
   Brc20ProgTxReceipt,
   Brc20ProgTransaction,
   Brc20ProgBlock,
+  // Data API response types
+  DataApiReserves,
+  DataApiPoolHistoryEvent,
+  DataApiPoolsResponse,
+  DataApiStorageKey,
+  DataApiAddressAlkanes,
+  BitcoinPriceResponse,
+  MarketChartResponse,
 } from '../types/responses';
 
 // WASM provider type - loaded dynamically at runtime
@@ -931,7 +940,7 @@ export class LuaClient {
    * @param script - The Lua script content
    * @returns The script execution result
    */
-  async evalScript(script: string): Promise<any> {
+  async evalScript(script: string): Promise<LuaEvalResult> {
     return this.provider.luaEvalScript(script);
   }
 }
@@ -943,27 +952,27 @@ export class DataApiClient {
   constructor(private provider: WasmWebProvider) {}
 
   // Pool operations
-  async getPools(factoryId: string): Promise<any> {
+  async getPools(factoryId: string): Promise<DataApiPoolsResponse> {
     return this.provider.dataApiGetPools(factoryId);
   }
 
-  async getPoolHistory(poolId: string, category?: string, limit?: number, offset?: number): Promise<any> {
+  async getPoolHistory(poolId: string, category?: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetPoolHistory(poolId, category, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
-  async getAllHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+  async getAllHistory(poolId: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetAllHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
-  async getSwapHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+  async getSwapHistory(poolId: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetSwapHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
-  async getMintHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+  async getMintHistory(poolId: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetMintHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
-  async getBurnHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+  async getBurnHistory(poolId: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetBurnHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
@@ -976,16 +985,16 @@ export class DataApiClient {
     return this.provider.dataApiGetCandles(pool, interval, startTime, endTime, limit ? BigInt(limit) : undefined);
   }
 
-  async getReserves(pool: string): Promise<any> {
+  async getReserves(pool: string): Promise<DataApiReserves> {
     return this.provider.dataApiGetReserves(pool);
   }
 
   // Balance operations
-  async getAlkanesByAddress(address: string): Promise<any> {
+  async getAlkanesByAddress(address: string): Promise<DataApiAddressAlkanes> {
     return this.provider.dataApiGetAlkanesByAddress(address);
   }
 
-  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<any> {
+  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<AddressBalancesResponse> {
     return this.provider.dataApiGetAddressBalances(address, includeOutpoints);
   }
 
@@ -998,16 +1007,16 @@ export class DataApiClient {
     return this.provider.dataApiGetHoldersCount(alkane);
   }
 
-  async getKeys(alkane: string, prefix?: string, limit: number = 100): Promise<any> {
+  async getKeys(alkane: string, prefix?: string, limit: number = 100): Promise<DataApiStorageKey[]> {
     return this.provider.dataApiGetKeys(alkane, prefix, BigInt(limit));
   }
 
   // Market data
-  async getBitcoinPrice(): Promise<any> {
+  async getBitcoinPrice(): Promise<BitcoinPriceResponse> {
     return this.provider.dataApiGetBitcoinPrice();
   }
 
-  async getBitcoinMarketChart(days: string): Promise<any> {
+  async getBitcoinMarketChart(days: string): Promise<MarketChartResponse> {
     return this.provider.dataApiGetBitcoinMarketChart(days);
   }
 }
@@ -1595,7 +1604,12 @@ export class AlkanesProvider {
   /**
    * Get enriched balances (BTC + alkanes) for an address
    */
-  async getEnrichedBalances(address: string, protocolTag?: string): Promise<any> {
+  async getEnrichedBalances(address: string, protocolTag?: string): Promise<{
+    address: string;
+    btc: { confirmed: number; unconfirmed: number };
+    alkanes: AlkaneBalanceResponse[];
+    outpoints: Array<{ outpoint: string; value: number; alkanes: AlkaneBalanceResponse[] }>;
+  }> {
     const provider = await this.getProvider();
     return provider.getEnrichedBalances(address, protocolTag);
   }
@@ -1619,7 +1633,13 @@ export class AlkanesProvider {
   /**
    * Get alkane token details
    */
-  async getAlkaneTokenDetails(params: { alkaneId: AlkaneId }): Promise<any> {
+  async getAlkaneTokenDetails(params: { alkaneId: AlkaneId }): Promise<{
+    id: AlkaneId;
+    name: string;
+    symbol: string;
+    decimals: number;
+    totalSupply: string;
+  }> {
     const provider = await this.getProvider();
     const id = `${params.alkaneId.block}:${params.alkaneId.tx}`;
 
@@ -1641,7 +1661,7 @@ export class AlkanesProvider {
   /**
    * Get transaction history for an address (first page, max 25 transactions)
    */
-  async getAddressHistory(address: string): Promise<any[]> {
+  async getAddressHistory(address: string): Promise<EsploraTransaction[]> {
     const provider = await this.getProvider();
     return provider.getAddressTxs(address);
   }
@@ -1649,7 +1669,7 @@ export class AlkanesProvider {
   /**
    * Get transaction history for an address from Esplora (first page, max 25 transactions)
    */
-  async getAddressTxs(address: string): Promise<any[]> {
+  async getAddressTxs(address: string): Promise<EsploraTransaction[]> {
     const provider = await this.getProvider();
     return provider.esploraGetAddressTxs(address);
   }
@@ -1659,7 +1679,7 @@ export class AlkanesProvider {
    * @param address The address to fetch transactions for
    * @param lastSeenTxid The last transaction ID from the previous page (undefined for first page)
    */
-  async getAddressTxsChain(address: string, lastSeenTxid?: string): Promise<any[]> {
+  async getAddressTxsChain(address: string, lastSeenTxid?: string): Promise<EsploraTransaction[]> {
     const provider = await this.getProvider();
     return provider.esploraGetAddressTxsChain(address, lastSeenTxid);
   }
@@ -1679,7 +1699,9 @@ export class AlkanesProvider {
   /**
    * Get address history with alkane traces
    */
-  async getAddressHistoryWithTraces(address: string, excludeCoinbase?: boolean): Promise<any[]> {
+  async getAddressHistoryWithTraces(address: string, excludeCoinbase?: boolean): Promise<Array<
+    EsploraTransaction & { alkane_traces?: AlkaneTraceEntry[] }
+  >> {
     const provider = await this.getProvider();
     return provider.getAddressTxsWithTraces(address, excludeCoinbase);
   }
@@ -1711,7 +1733,7 @@ export class AlkanesProvider {
   /**
    * Get pool reserves
    */
-  async getPoolReserves(poolId: string): Promise<any> {
+  async getPoolReserves(poolId: string): Promise<DataApiReserves> {
     const provider = await this.getProvider();
     return provider.dataApiGetReserves(poolId);
   }
@@ -1763,7 +1785,7 @@ export class AlkanesProvider {
   /**
    * Simulate an alkanes contract call (read-only)
    */
-  async simulateAlkanes(contractId: string, calldata: number[], blockTag?: string): Promise<any> {
+  async simulateAlkanes(contractId: string, calldata: number[], blockTag?: string): Promise<AlkaneSimulateResponse> {
     const provider = await this.getProvider();
     const context = {
       alkanes: [],

@@ -219,6 +219,10 @@ export type {
   DataApiHolder,
   BitcoinPriceResponse,
   MarketChartResponse,
+  DataApiPoolHistoryEvent,
+  DataApiPoolsResponse,
+  DataApiStorageKey,
+  DataApiAddressAlkanes,
 } from './types/responses';
 
 // Utility exports

@@ -629,3 +629,46 @@ export interface MarketChartResponse {
   market_caps: [number, number][];
   total_volumes: [number, number][];
 }
+
+/** Pool history event */
+export interface DataApiPoolHistoryEvent {
+  txid: string;
+  vout: number;
+  block_height: number;
+  timestamp: string;
+  category: 'swap' | 'mint' | 'burn';
+  amount0: string;
+  amount1: string;
+  reserve0_after: string;
+  reserve1_after: string;
+}
+
+/** Pool list response */
+export interface DataApiPoolsResponse {
+  pools: Array<{
+    pool_id: string;
+    token0: string;
+    token1: string;
+    reserve0: string;
+    reserve1: string;
+    total_supply: string;
+  }>;
+}
+
+/** Storage key entry from data API */
+export interface DataApiStorageKey {
+  key: string;
+  value: string;
+}
+
+/** Address alkanes response */
+export interface DataApiAddressAlkanes {
+  address: string;
+  alkanes: Array<{
+    id: string;
+    amount: string;
+    name?: string;
+    symbol?: string;
+    decimals?: number;
+  }>;
+}
