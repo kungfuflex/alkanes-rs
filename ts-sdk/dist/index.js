@@ -46322,10 +46322,24 @@ function mapToObject(value) {
   }
   return value;
 }
+function getLogLevelFromEnv() {
+  if (typeof process !== "undefined" && process.env) {
+    const alkLog = process.env.ALKANES_LOG_LEVEL;
+    const rustLog = process.env.RUST_LOG;
+    const level = alkLog || rustLog;
+    if (level) {
+      const normalized = level.toLowerCase();
+      if (["off", "error", "warn", "info", "debug", "trace"].includes(normalized)) {
+        return normalized;
+      }
+    }
+  }
+  return void 0;
+}
 function createProvider(config) {
   return new AlkanesProvider(config);
 }
-var bitcoin3, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, EspoClient, AlkanesProvider;
+var bitcoin3, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, EspoClient, Logger, logger, AlkanesProvider;
 var init_provider = __esm({
   "src/provider/index.ts"() {
     "use strict";
@@ -47026,6 +47040,41 @@ var init_provider = __esm({
         return mapToObject(result);
       }
     };
+    Logger = class {
+      constructor(level = "off") {
+        this.levels = {
+          off: 0,
+          error: 1,
+          warn: 2,
+          info: 3,
+          debug: 4,
+          trace: 5
+        };
+        this.level = level;
+      }
+      setLevel(level) {
+        this.level = level;
+      }
+      shouldLog(msgLevel) {
+        return this.levels[msgLevel] <= this.levels[this.level];
+      }
+      error(...args) {
+        if (this.shouldLog("error")) console.error("[SDK Error]", ...args);
+      }
+      warn(...args) {
+        if (this.shouldLog("warn")) console.warn("[SDK Warn]", ...args);
+      }
+      info(...args) {
+        if (this.shouldLog("info")) console.info("[SDK Info]", ...args);
+      }
+      debug(...args) {
+        if (this.shouldLog("debug")) console.log("[SDK Debug]", ...args);
+      }
+      trace(...args) {
+        if (this.shouldLog("trace")) console.log("[SDK Trace]", ...args);
+      }
+    };
+    logger = new Logger();
     AlkanesProvider = class {
       constructor(config) {
         this._provider = null;
@@ -47043,6 +47092,8 @@ var init_provider = __esm({
         this.networkType = preset.networkType;
         this.rpcUrl = config.rpcUrl || preset.rpcUrl;
         this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
+        this.logLevel = config.logLevel || getLogLevelFromEnv() || "off";
+        logger.setLevel(this.logLevel);
         if (config.bitcoinNetwork) {
           this.network = config.bitcoinNetwork;
         } else {
@@ -47059,6 +47110,7 @@ var init_provider = __esm({
               this.network = bitcoin3.networks.regtest;
           }
         }
+        logger.debug(`Provider configured for ${this.networkType} (${this.rpcUrl})`);
       }
       /**
        * Initialize the provider (loads WASM if needed)
@@ -47070,17 +47122,19 @@ var init_provider = __esm({
         let WebProviderClass;
         const isNode2 = typeof process !== "undefined" && process.versions != null && process.versions.node != null;
         if (isNode2) {
+          const loaderPath = "@alkanes/ts-sdk/wasm/node-loader.cjs";
           const nodeLoaderModule = await import(
             /* @vite-ignore */
-            "@alkanes/ts-sdk/wasm/node-loader.cjs"
+            loaderPath
           );
           const nodeLoader = nodeLoaderModule.default || nodeLoaderModule;
           await nodeLoader.init();
           WebProviderClass = nodeLoader.WebProvider;
         } else {
+          const wasmPath = "@alkanes/ts-sdk/wasm";
           const wasm = await import(
             /* @vite-ignore */
-            "@alkanes/ts-sdk/wasm"
+            wasmPath
           );
           WebProviderClass = wasm.WebProvider;
         }
@@ -48763,6 +48817,7 @@ __export(index_exports, {
   BitcoinRpcClient: () => BitcoinRpcClient,
   BrowserWalletSigner: () => BrowserWalletSigner,
   ConnectedWallet: () => ConnectedWallet,
+  DEFAULT_DECIMALS: () => DEFAULT_DECIMALS,
   DERIVATION_PATHS: () => DERIVATION_PATHS,
   DataApiClient: () => DataApiClient,
   EsploraClient: () => EsploraClient,
@@ -48787,6 +48842,7 @@ __export(index_exports, {
   XverseAdapter: () => XverseAdapter,
   analyzeRunestone: () => analyzeRunestone,
   btcToSatoshis: () => btcToSatoshis,
+  btcToSats: () => btcToSats,
   bytesToHex: () => bytesToHex,
   calculateFee: () => calculateFee,
   calculateWeight: () => calculateWeight,
@@ -48802,6 +48858,7 @@ __export(index_exports, {
   delay: () => delay,
   estimateTxSize: () => estimateTxSize,
   formatAlkaneId: () => formatAlkaneId,
+  formatAmount: () => formatAmount,
   formatBackupDate: () => formatBackupDate,
   formatTimestamp: () => formatTimestamp,
   getAvailableWallets: () => getAvailableWallets,
@@ -48815,12 +48872,20 @@ __export(index_exports, {
   isBrowser: () => isBrowser,
   isNode: () => isNode,
   isWalletInstalled: () => isWalletInstalled,
+  parseAlkaneBalance: () => parseAlkaneBalance,
+  parseAlkaneBalances: () => parseAlkaneBalances,
   parseAlkaneId: () => parseAlkaneId,
+  parseAmount: () => parseAmount,
+  parsePoolDetails: () => parsePoolDetails,
+  parseReflectMetadata: () => parseReflectMetadata,
+  parseTrade: () => parseTrade,
   retry: () => retry,
   reverseBytes: () => reverseBytes,
   reversedHex: () => reversedHex,
   safeJsonParse: () => safeJsonParse,
   satoshisToBTC: () => satoshisToBTC,
+  satsToBtc: () => satsToBtc,
+  toRawAmount: () => toRawAmount,
   unlockKeystore: () => unlockKeystore,
   validateAddress: () => validateAddress,
   weightToVsize: () => weightToVsize
@@ -48829,6 +48894,137 @@ module.exports = __toCommonJS(index_exports);
 init_keystore();
 init_wallet();
 init_provider();
+
+// src/utils/amounts.ts
+var DEFAULT_DECIMALS = 8;
+function parseAmount(amount) {
+  if (typeof amount === "bigint") return amount;
+  if (typeof amount === "number") return BigInt(Math.floor(amount));
+  if (amount.startsWith("0x")) {
+    return BigInt(amount);
+  }
+  return BigInt(amount.replace(/[^0-9-]/g, ""));
+}
+function formatAmount(amount, decimals = DEFAULT_DECIMALS) {
+  const value = parseAmount(amount);
+  const divisor = 10n ** BigInt(decimals);
+  const intPart = value / divisor;
+  const fracPart = value % divisor;
+  if (fracPart === 0n) {
+    return `${intPart}.0`;
+  }
+  const fracStr = fracPart.toString().padStart(decimals, "0");
+  const trimmed = fracStr.replace(/0+$/, "");
+  return `${intPart}.${trimmed}`;
+}
+function toRawAmount(amount, decimals = DEFAULT_DECIMALS) {
+  const strAmount = typeof amount === "number" ? amount.toString() : amount;
+  const [intPart, fracPart = ""] = strAmount.split(".");
+  const paddedFrac = fracPart.padEnd(decimals, "0").slice(0, decimals);
+  const combined = intPart + paddedFrac;
+  return BigInt(combined);
+}
+function parseAlkaneBalance(balance) {
+  const decimals = balance.decimals ?? DEFAULT_DECIMALS;
+  const rawAmount = parseAmount(balance.amount || balance.value || "0");
+  let block;
+  let tx;
+  let id;
+  if (typeof balance.id === "string") {
+    const [b, t] = balance.id.split(":").map(Number);
+    block = b;
+    tx = t;
+    id = balance.id;
+  } else if (balance.id && typeof balance.id === "object") {
+    block = balance.id.block;
+    tx = balance.id.tx;
+    id = `${block}:${tx}`;
+  } else {
+    block = balance.block ?? 0;
+    tx = balance.tx ?? 0;
+    id = `${block}:${tx}`;
+  }
+  return {
+    id,
+    block,
+    tx,
+    rawAmount,
+    amount: formatAmount(rawAmount, decimals),
+    name: balance.name,
+    symbol: balance.symbol,
+    decimals
+  };
+}
+function parseAlkaneBalances(balances) {
+  return balances.map(parseAlkaneBalance);
+}
+function parseReflectMetadata(metadata) {
+  const decimals = metadata.decimals ?? DEFAULT_DECIMALS;
+  const rawTotalSupply = parseAmount(metadata.total_supply || metadata.totalSupply || "0");
+  const rawCap = parseAmount(metadata.cap || "0");
+  const rawMinted = parseAmount(metadata.minted || "0");
+  const rawValuePerMint = parseAmount(metadata.value_per_mint || metadata.valuePerMint || "0");
+  const rawPremine = parseAmount(metadata.premine || "0");
+  return {
+    id: metadata.id || "",
+    name: metadata.name || "",
+    symbol: metadata.symbol || "",
+    rawTotalSupply,
+    totalSupply: formatAmount(rawTotalSupply, decimals),
+    rawCap,
+    cap: rawCap.toString(),
+    // Cap is typically a count, not an amount
+    rawMinted,
+    minted: rawMinted.toString(),
+    // Minted is typically a count
+    rawValuePerMint,
+    valuePerMint: formatAmount(rawValuePerMint, decimals),
+    rawPremine,
+    premine: formatAmount(rawPremine, decimals),
+    decimals,
+    data: metadata.data
+  };
+}
+function parsePoolDetails(pool, decimals0 = DEFAULT_DECIMALS, decimals1 = DEFAULT_DECIMALS) {
+  const rawReserve0 = parseAmount(pool.reserve0 || "0");
+  const rawReserve1 = parseAmount(pool.reserve1 || "0");
+  const rawTotalSupply = parseAmount(pool.total_supply || pool.totalSupply || "0");
+  return {
+    poolId: pool.pool_id || pool.poolId || "",
+    token0: pool.token0 || "",
+    token1: pool.token1 || "",
+    rawReserve0,
+    reserve0: formatAmount(rawReserve0, decimals0),
+    rawReserve1,
+    reserve1: formatAmount(rawReserve1, decimals1),
+    rawTotalSupply,
+    totalSupply: formatAmount(rawTotalSupply, DEFAULT_DECIMALS),
+    decimals0,
+    decimals1
+  };
+}
+function parseTrade(trade, decimalsIn = DEFAULT_DECIMALS, decimalsOut = DEFAULT_DECIMALS) {
+  const rawAmountIn = parseAmount(trade.amount_in || trade.amountIn || "0");
+  const rawAmountOut = parseAmount(trade.amount_out || trade.amountOut || "0");
+  return {
+    txid: trade.txid || "",
+    vout: trade.vout ?? 0,
+    blockHeight: trade.block_height || trade.blockHeight || 0,
+    timestamp: trade.timestamp || "",
+    side: trade.side || "",
+    rawAmountIn,
+    amountIn: formatAmount(rawAmountIn, decimalsIn),
+    rawAmountOut,
+    amountOut: formatAmount(rawAmountOut, decimalsOut),
+    price: trade.price || ""
+  };
+}
+function satsToBtc(sats) {
+  return formatAmount(sats, 8);
+}
+function btcToSats(btc) {
+  return toRawAmount(btc, 8);
+}
 
 // src/utils/index.ts
 var bitcoin4 = __toESM(require_src3());

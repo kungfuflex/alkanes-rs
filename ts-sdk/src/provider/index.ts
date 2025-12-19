@@ -17,6 +17,49 @@ import {
   AlkaneId,
 } from '../types';
 
+import {
+  // Bitcoin RPC response types
+  BlockchainInfo,
+  NetworkInfo,
+  MempoolInfo,
+  BitcoinTransaction,
+  BitcoinBlock,
+  BitcoinBlockHeader,
+  SmartFeeEstimate,
+  ChainTip,
+  // Esplora response types
+  EsploraAddressInfo,
+  EsploraUtxo,
+  EsploraTransaction,
+  EsploraBlock,
+  FeeEstimates,
+  Outspend,
+  MerkleProof,
+  MempoolStats,
+  MempoolRecentTx,
+  TxStatus,
+  // Alkanes response types
+  AlkaneBalanceResponse,
+  AlkaneReflectResponse,
+  AlkanesByAddressResponse,
+  AlkaneSpendablesResponse,
+  AlkaneSimulateResponse,
+  AlkaneTraceResponse,
+  AlkaneSequenceResponse,
+  AlkanePoolResponse,
+  // Ord response types
+  InscriptionResponse,
+  InscriptionsListResponse,
+  RuneResponse,
+  OrdOutput,
+  OrdBlockInfo,
+  // BRC20-Prog response types
+  Brc20ProgBalance,
+  Brc20ProgTxReceipt,
+  Brc20ProgTransaction,
+  Brc20ProgBlock,
+} from '../types/responses';
+
 // WASM provider type - loaded dynamically at runtime
 type WasmWebProvider = any;
 
@@ -54,6 +97,17 @@ export const NETWORK_PRESETS: Record<string, { rpcUrl: string; dataApiUrl: strin
   },
 };
 
+/**
+ * Log level for SDK operations
+ * - 'off': No logging (default)
+ * - 'error': Only errors
+ * - 'warn': Errors and warnings
+ * - 'info': Errors, warnings, and info messages
+ * - 'debug': All messages including debug output
+ * - 'trace': Most verbose, includes WASM internals
+ */
+export type LogLevel = 'off' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
+
 // Extended provider configuration
 export interface AlkanesProviderConfig {
   /** Network type or preset name */
@@ -64,6 +118,12 @@ export interface AlkanesProviderConfig {
   dataApiUrl?: string;
   /** bitcoinjs-lib network (auto-detected if not provided) */
   bitcoinNetwork?: bitcoin.Network;
+  /**
+   * Log level for SDK operations.
+   * Can also be set via RUST_LOG or ALKANES_LOG_LEVEL environment variables.
+   * Priority: config > ALKANES_LOG_LEVEL > RUST_LOG > 'off'
+   */
+  logLevel?: LogLevel;
 }
 
 // Pool details from factory
@@ -301,7 +361,7 @@ export class BitcoinRpcClient {
     return this.provider.bitcoindGetBlockHash(height);
   }
 
-  async getBlock(hash: string, raw: boolean = false): Promise<any> {
+  async getBlock(hash: string, raw: boolean = false): Promise<BitcoinBlock> {
     const result = await this.provider.bitcoindGetBlock(hash, raw);
     return mapToObject(result);
   }
@@ -310,72 +370,84 @@ export class BitcoinRpcClient {
     return this.provider.bitcoindSendRawTransaction(hex);
   }
 
-  async getTransaction(txid: string, blockHash?: string): Promise<any> {
+  async getTransaction(txid: string, blockHash?: string): Promise<BitcoinTransaction> {
     const result = await this.provider.bitcoindGetRawTransaction(txid, blockHash);
     return mapToObject(result);
   }
 
-  async getBlockchainInfo(): Promise<any> {
+  async getBlockchainInfo(): Promise<BlockchainInfo> {
     const result = await this.provider.bitcoindGetBlockchainInfo();
     return mapToObject(result);
   }
 
-  async getNetworkInfo(): Promise<any> {
+  async getNetworkInfo(): Promise<NetworkInfo> {
     const result = await this.provider.bitcoindGetNetworkInfo();
     return mapToObject(result);
   }
 
-  async getMempoolInfo(): Promise<any> {
+  async getMempoolInfo(): Promise<MempoolInfo> {
     const result = await this.provider.bitcoindGetMempoolInfo();
     return mapToObject(result);
   }
 
-  async estimateSmartFee(target: number): Promise<any> {
+  async estimateSmartFee(target: number): Promise<SmartFeeEstimate> {
     const result = await this.provider.bitcoindEstimateSmartFee(target);
     return mapToObject(result);
   }
 
-  async generateToAddress(nblocks: number, address: string): Promise<any> {
+  async generateToAddress(nblocks: number, address: string): Promise<string[]> {
     const result = await this.provider.bitcoindGenerateToAddress(nblocks, address);
     return mapToObject(result);
   }
 
-  async generateFuture(address: string): Promise<any> {
+  async generateFuture(address: string): Promise<string[]> {
     const result = await this.provider.bitcoindGenerateFuture(address);
     return mapToObject(result);
   }
 
-  async getBlockHeader(hash: string): Promise<any> {
+  async getBlockHeader(hash: string): Promise<BitcoinBlockHeader> {
     const result = await this.provider.bitcoindGetBlockHeader(hash);
     return mapToObject(result);
   }
 
-  async getBlockStats(hash: string): Promise<any> {
+  async getBlockStats(hash: string): Promise<Record<string, number>> {
     const result = await this.provider.bitcoindGetBlockStats(hash);
     return mapToObject(result);
   }
 
-  async getChainTips(): Promise<any> {
+  async getChainTips(): Promise<ChainTip[]> {
     const result = await this.provider.bitcoindGetChainTips();
     return mapToObject(result);
   }
 
-  async getRawMempool(): Promise<any> {
+  async getRawMempool(): Promise<string[]> {
     const result = await this.provider.bitcoindGetRawMempool();
     return mapToObject(result);
   }
 
-  async getTxOut(txid: string, vout: number, includeMempool?: boolean): Promise<any> {
+  async getTxOut(txid: string, vout: number, includeMempool?: boolean): Promise<{
+    bestblock: string;
+    confirmations: number;
+    value: number;
+    scriptPubKey: { asm: string; hex: string; type: string; address?: string };
+    coinbase: boolean;
+  } | null> {
     const result = await this.provider.bitcoindGetTxOut(txid, vout, includeMempool);
     return mapToObject(result);
   }
 
-  async decodeRawTransaction(hex: string): Promise<any> {
+  async decodeRawTransaction(hex: string): Promise<BitcoinTransaction> {
     const result = await this.provider.bitcoindDecodeRawTransaction(hex);
     return mapToObject(result);
   }
 
-  async decodePsbt(psbt: string): Promise<any> {
+  async decodePsbt(psbt: string): Promise<{
+    tx: BitcoinTransaction;
+    unknown: Record<string, string>;
+    inputs: any[];
+    outputs: any[];
+    fee?: number;
+  }> {
     const result = await this.provider.bitcoindDecodePsbt(psbt);
     return mapToObject(result);
   }
@@ -387,27 +459,27 @@ export class BitcoinRpcClient {
 export class EsploraClient {
   constructor(private provider: WasmWebProvider) {}
 
-  async getAddressInfo(address: string): Promise<any> {
+  async getAddressInfo(address: string): Promise<EsploraAddressInfo> {
     const result = await this.provider.esploraGetAddressInfo(address);
     return mapToObject(result);
   }
 
-  async getAddressUtxos(address: string): Promise<UTXO[]> {
+  async getAddressUtxos(address: string): Promise<EsploraUtxo[]> {
     const result = await this.provider.esploraGetAddressUtxo(address);
     return mapToObject(result);
   }
 
-  async getAddressTxs(address: string): Promise<any[]> {
+  async getAddressTxs(address: string): Promise<EsploraTransaction[]> {
     const result = await this.provider.esploraGetAddressTxs(address);
     return mapToObject(result);
   }
 
-  async getTx(txid: string): Promise<any> {
+  async getTx(txid: string): Promise<EsploraTransaction> {
     const result = await this.provider.esploraGetTx(txid);
     return mapToObject(result);
   }
 
-  async getTxStatus(txid: string): Promise<any> {
+  async getTxStatus(txid: string): Promise<TxStatus> {
     const result = await this.provider.esploraGetTxStatus(txid);
     return mapToObject(result);
   }
@@ -428,27 +500,27 @@ export class EsploraClient {
     return this.provider.esploraBroadcastTx(txHex);
   }
 
-  async getFeeEstimates(): Promise<any> {
+  async getFeeEstimates(): Promise<FeeEstimates> {
     const result = await this.provider.esploraGetFeeEstimates();
     return mapToObject(result);
   }
 
-  async getBlocks(startHeight?: number): Promise<any> {
+  async getBlocks(startHeight?: number): Promise<EsploraBlock[]> {
     const result = await this.provider.esploraGetBlocks(startHeight);
     return mapToObject(result);
   }
 
-  async getBlockByHeight(height: number): Promise<any> {
+  async getBlockByHeight(height: number): Promise<EsploraBlock> {
     const result = await this.provider.esploraGetBlockByHeight(height);
     return mapToObject(result);
   }
 
-  async getBlock(hash: string): Promise<any> {
+  async getBlock(hash: string): Promise<EsploraBlock> {
     const result = await this.provider.esploraGetBlock(hash);
     return mapToObject(result);
   }
 
-  async getBlockStatus(hash: string): Promise<any> {
+  async getBlockStatus(hash: string): Promise<{ in_best_chain: boolean; height?: number; next_best?: string }> {
     const result = await this.provider.esploraGetBlockStatus(hash);
     return mapToObject(result);
   }
@@ -457,12 +529,12 @@ export class EsploraClient {
     return this.provider.esploraGetBlockTxids(hash);
   }
 
-  async getBlockHeader(hash: string): Promise<any> {
+  async getBlockHeader(hash: string): Promise<string> {
     const result = await this.provider.esploraGetBlockHeader(hash);
     return mapToObject(result);
   }
 
-  async getBlockRaw(hash: string): Promise<any> {
+  async getBlockRaw(hash: string): Promise<Uint8Array> {
     return this.provider.esploraGetBlockRaw(hash);
   }
 
@@ -470,51 +542,51 @@ export class EsploraClient {
     return this.provider.esploraGetBlockTxid(hash, index);
   }
 
-  async getBlockTxs(hash: string, startIndex?: number): Promise<any[]> {
+  async getBlockTxs(hash: string, startIndex?: number): Promise<EsploraTransaction[]> {
     const result = await this.provider.esploraGetBlockTxs(hash, startIndex);
     return mapToObject(result);
   }
 
-  async getAddressTxsChain(address: string, lastSeenTxid?: string): Promise<any[]> {
+  async getAddressTxsChain(address: string, lastSeenTxid?: string): Promise<EsploraTransaction[]> {
     const result = await this.provider.esploraGetAddressTxsChain(address, lastSeenTxid);
     return mapToObject(result);
   }
 
-  async getAddressTxsMempool(address: string): Promise<any[]> {
+  async getAddressTxsMempool(address: string): Promise<EsploraTransaction[]> {
     const result = await this.provider.esploraGetAddressTxsMempool(address);
     return mapToObject(result);
   }
 
-  async getAddressPrefix(prefix: string): Promise<any> {
+  async getAddressPrefix(prefix: string): Promise<string[]> {
     const result = await this.provider.esploraGetAddressPrefix(prefix);
     return mapToObject(result);
   }
 
-  async getTxRaw(txid: string): Promise<any> {
+  async getTxRaw(txid: string): Promise<Uint8Array> {
     return this.provider.esploraGetTxRaw(txid);
   }
 
-  async getTxMerkleProof(txid: string): Promise<any> {
+  async getTxMerkleProof(txid: string): Promise<MerkleProof> {
     const result = await this.provider.esploraGetTxMerkleProof(txid);
     return mapToObject(result);
   }
 
-  async getTxMerkleblockProof(txid: string): Promise<any> {
+  async getTxMerkleblockProof(txid: string): Promise<string> {
     const result = await this.provider.esploraGetTxMerkleblockProof(txid);
     return mapToObject(result);
   }
 
-  async getTxOutspend(txid: string, index: number): Promise<any> {
+  async getTxOutspend(txid: string, index: number): Promise<Outspend> {
     const result = await this.provider.esploraGetTxOutspend(txid, index);
     return mapToObject(result);
   }
 
-  async getTxOutspends(txid: string): Promise<any[]> {
+  async getTxOutspends(txid: string): Promise<Outspend[]> {
     const result = await this.provider.esploraGetTxOutspends(txid);
     return mapToObject(result);
   }
 
-  async getMempool(): Promise<any> {
+  async getMempool(): Promise<MempoolStats> {
     const result = await this.provider.esploraGetMempool();
     return mapToObject(result);
   }
@@ -523,7 +595,7 @@ export class EsploraClient {
     return this.provider.esploraGetMempoolTxids();
   }
 
-  async getMempoolRecent(): Promise<any[]> {
+  async getMempoolRecent(): Promise<MempoolRecentTx[]> {
     const result = await this.provider.esploraGetMempoolRecent();
     return mapToObject(result);
   }
@@ -535,17 +607,21 @@ export class EsploraClient {
 export class AlkanesRpcClient {
   constructor(private provider: WasmWebProvider) {}
 
-  async getBalance(address?: string): Promise<AlkaneBalance[]> {
+  async getBalance(address?: string): Promise<AlkaneBalanceResponse[]> {
     const result = await this.provider.alkanesBalance(address);
     return mapToObject(result);
   }
 
-  async getByAddress(address: string, blockTag?: string, protocolTag?: number): Promise<any> {
+  async getByAddress(address: string, blockTag?: string, protocolTag?: number): Promise<AlkanesByAddressResponse> {
     const result = await this.provider.alkanesByAddress(address, blockTag, protocolTag);
     return mapToObject(result);
   }
 
-  async getByOutpoint(outpoint: string, blockTag?: string, protocolTag?: number): Promise<any> {
+  async getByOutpoint(outpoint: string, blockTag?: string, protocolTag?: number): Promise<{
+    outpoint: string;
+    alkanes: AlkaneBalanceResponse[];
+    value?: number;
+  }> {
     const result = await this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
     return mapToObject(result);
   }
@@ -554,32 +630,32 @@ export class AlkanesRpcClient {
     return this.provider.alkanesBytecode(alkaneId, blockTag);
   }
 
-  async simulate(contractId: string, contextJson: string, blockTag?: string): Promise<any> {
+  async simulate(contractId: string, contextJson: string, blockTag?: string): Promise<AlkaneSimulateResponse> {
     const result = await this.provider.alkanesSimulate(contractId, contextJson, blockTag);
     return mapToObject(result);
   }
 
-  async execute(paramsJson: string): Promise<any> {
+  async execute(paramsJson: string): Promise<ExecuteResult> {
     const result = await this.provider.alkanesExecute(paramsJson);
     return mapToObject(result);
   }
 
-  async trace(outpoint: string): Promise<any> {
+  async trace(outpoint: string): Promise<AlkaneTraceResponse> {
     const result = await this.provider.alkanesTrace(outpoint);
     return mapToObject(result);
   }
 
-  async traceBlock(height: number): Promise<any> {
+  async traceBlock(height: number): Promise<AlkaneTraceResponse[]> {
     const result = await this.provider.traceBlock(height);
     return mapToObject(result);
   }
 
-  async view(contractId: string, viewFn: string, params?: Uint8Array, blockTag?: string): Promise<any> {
+  async view(contractId: string, viewFn: string, params?: Uint8Array, blockTag?: string): Promise<{ data?: any; error?: string }> {
     const result = await this.provider.alkanesView(contractId, viewFn, params, blockTag);
     return mapToObject(result);
   }
 
-  async getAllPools(factoryId: string): Promise<any> {
+  async getAllPools(factoryId: string): Promise<string[]> {
     const result = await this.provider.alkanesGetAllPools(factoryId);
     return mapToObject(result);
   }
@@ -589,37 +665,43 @@ export class AlkanesRpcClient {
     return mapToObject(result);
   }
 
-  async getPendingUnwraps(blockTag?: string): Promise<any> {
+  async getPendingUnwraps(blockTag?: string): Promise<{
+    unwraps: Array<{ txid: string; vout: number; amount: string; recipient: string }>;
+  }> {
     const result = await this.provider.alkanesPendingUnwraps(blockTag);
     return mapToObject(result);
   }
 
-  async reflect(alkaneId: string): Promise<any> {
+  async reflect(alkaneId: string): Promise<AlkaneReflectResponse> {
     const result = await this.provider.alkanesReflect(alkaneId);
     return mapToObject(result);
   }
 
-  async getSequence(blockTag?: string): Promise<any> {
+  async getSequence(blockTag?: string): Promise<AlkaneSequenceResponse> {
     const result = await this.provider.alkanesSequence(blockTag);
     return mapToObject(result);
   }
 
-  async getSpendables(address: string): Promise<any> {
+  async getSpendables(address: string): Promise<AlkaneSpendablesResponse> {
     const result = await this.provider.alkanesSpendables(address);
     return mapToObject(result);
   }
 
-  async getPoolDetails(poolId: string): Promise<any> {
+  async getPoolDetails(poolId: string): Promise<AlkanePoolResponse> {
     const result = await this.provider.alkanesPoolDetails(poolId);
     return mapToObject(result);
   }
 
-  async reflectAlkaneRange(block: number, startTx: number, endTx: number): Promise<any> {
+  async reflectAlkaneRange(block: number, startTx: number, endTx: number): Promise<AlkaneReflectResponse[]> {
     const result = await this.provider.alkanesReflectAlkaneRange(block, startTx, endTx);
     return mapToObject(result);
   }
 
-  async inspect(target: string, config: any): Promise<any> {
+  async inspect(target: string, config: any): Promise<{
+    storage?: Record<string, string>;
+    balances?: AlkaneBalanceResponse[];
+    metadata?: AlkaneReflectResponse;
+  }> {
     const result = await this.provider.alkanesInspect(target, config);
     return mapToObject(result);
   }
@@ -676,42 +758,47 @@ export class MetashrewClient {
 export class OrdClient {
   constructor(private provider: WasmWebProvider) {}
 
-  async getInscription(id: string): Promise<any> {
+  async getInscription(id: string): Promise<InscriptionResponse> {
     const result = await this.provider.ordInscription(id);
     return mapToObject(result);
   }
 
-  async getInscriptions(page?: number): Promise<any> {
+  async getInscriptions(page?: number): Promise<InscriptionsListResponse> {
     const result = await this.provider.ordInscriptions(page);
     return mapToObject(result);
   }
 
-  async getOutputs(address: string): Promise<any> {
+  async getOutputs(address: string): Promise<OrdOutput[]> {
     const result = await this.provider.ordOutputs(address);
     return mapToObject(result);
   }
 
-  async getRune(name: string): Promise<any> {
+  async getRune(name: string): Promise<RuneResponse> {
     const result = await this.provider.ordRune(name);
     return mapToObject(result);
   }
 
-  async list(outpoint: string): Promise<any> {
+  async list(outpoint: string): Promise<OrdOutput> {
     const result = await this.provider.ordList(outpoint);
     return mapToObject(result);
   }
 
-  async find(sat: number): Promise<any> {
+  async find(sat: number): Promise<{ outpoint: string; offset: number }> {
     const result = await this.provider.ordFind(sat);
     return mapToObject(result);
   }
 
-  async getAddressInfo(address: string): Promise<any> {
+  async getAddressInfo(address: string): Promise<{
+    outputs: OrdOutput[];
+    inscriptions: string[];
+    sat_balance: number;
+    runes_balances: Record<string, { amount: string; divisibility: number; symbol?: string }>;
+  }> {
     const result = await this.provider.ordAddressInfo(address);
     return mapToObject(result);
   }
 
-  async getBlockInfo(query: string): Promise<any> {
+  async getBlockInfo(query: string): Promise<OrdBlockInfo> {
     const result = await this.provider.ordBlockInfo(query);
     return mapToObject(result);
   }
@@ -720,27 +807,31 @@ export class OrdClient {
     return this.provider.ordBlockCount();
   }
 
-  async getBlocks(): Promise<any> {
+  async getBlocks(): Promise<OrdBlockInfo[]> {
     const result = await this.provider.ordBlocks();
     return mapToObject(result);
   }
 
-  async getChildren(inscriptionId: string, page?: number): Promise<any> {
+  async getChildren(inscriptionId: string, page?: number): Promise<InscriptionsListResponse> {
     const result = await this.provider.ordChildren(inscriptionId, page);
     return mapToObject(result);
   }
 
-  async getContent(inscriptionId: string): Promise<any> {
+  async getContent(inscriptionId: string): Promise<{ content_type: string; content: Uint8Array }> {
     const result = await this.provider.ordContent(inscriptionId);
     return mapToObject(result);
   }
 
-  async getParents(inscriptionId: string, page?: number): Promise<any> {
+  async getParents(inscriptionId: string, page?: number): Promise<InscriptionsListResponse> {
     const result = await this.provider.ordParents(inscriptionId, page);
     return mapToObject(result);
   }
 
-  async getTxInfo(txid: string): Promise<any> {
+  async getTxInfo(txid: string): Promise<{
+    txid: string;
+    inscriptions: string[];
+    runes: Record<string, { amount: string; divisibility: number; symbol?: string }>;
+  }> {
     const result = await this.provider.ordTxInfo(txid);
     return mapToObject(result);
   }
@@ -752,45 +843,45 @@ export class OrdClient {
 export class Brc20ProgClient {
   constructor(private provider: WasmWebProvider) {}
 
-  async getBalance(address: string): Promise<any> {
+  async getBalance(address: string): Promise<Brc20ProgBalance> {
     const result = await this.provider.brc20progGetBalance(address);
     return mapToObject(result);
   }
 
-  async getCode(address: string): Promise<any> {
+  async getCode(address: string): Promise<string> {
     const result = await this.provider.brc20progGetCode(address);
     return mapToObject(result);
   }
 
-  async getBlockNumber(): Promise<any> {
+  async getBlockNumber(): Promise<number> {
     return this.provider.brc20progBlockNumber();
   }
 
-  async getChainId(): Promise<any> {
+  async getChainId(): Promise<number> {
     return this.provider.brc20progChainId();
   }
 
-  async getTxReceipt(hash: string): Promise<any> {
+  async getTxReceipt(hash: string): Promise<Brc20ProgTxReceipt | null> {
     const result = await this.provider.brc20progGetTransactionReceipt(hash);
     return mapToObject(result);
   }
 
-  async getTx(hash: string): Promise<any> {
+  async getTx(hash: string): Promise<Brc20ProgTransaction | null> {
     const result = await this.provider.brc20progGetTransactionByHash(hash);
     return mapToObject(result);
   }
 
-  async getBlock(number: string | number, includeTxs?: boolean): Promise<any> {
+  async getBlock(number: string | number, includeTxs?: boolean): Promise<Brc20ProgBlock | null> {
     const result = await this.provider.brc20progGetBlockByNumber(String(number), includeTxs);
     return mapToObject(result);
   }
 
-  async call(to: string, data: string, from?: string, blockTag?: string): Promise<any> {
+  async call(to: string, data: string, from?: string, blockTag?: string): Promise<string> {
     const result = await this.provider.brc20progCall(to, data, from, blockTag);
     return mapToObject(result);
   }
 
-  async estimateGas(to: string, data: string, from?: string): Promise<any> {
+  async estimateGas(to: string, data: string, from?: string): Promise<string> {
     const result = await this.provider.brc20progEstimateGas(to, data, from);
     return mapToObject(result);
   }
@@ -1177,6 +1268,76 @@ export class EspoClient {
  * - Lua script execution with caching
  * - Metashrew low-level RPC access
  */
+/**
+ * Get log level from environment variables
+ */
+function getLogLevelFromEnv(): LogLevel | undefined {
+  // Only check env vars in Node.js environment
+  if (typeof process !== 'undefined' && process.env) {
+    const alkLog = process.env.ALKANES_LOG_LEVEL;
+    const rustLog = process.env.RUST_LOG;
+
+    const level = alkLog || rustLog;
+    if (level) {
+      const normalized = level.toLowerCase();
+      if (['off', 'error', 'warn', 'info', 'debug', 'trace'].includes(normalized)) {
+        return normalized as LogLevel;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Logger instance that respects log level configuration
+ */
+class Logger {
+  private level: LogLevel;
+  private readonly levels: Record<LogLevel, number> = {
+    off: 0,
+    error: 1,
+    warn: 2,
+    info: 3,
+    debug: 4,
+    trace: 5,
+  };
+
+  constructor(level: LogLevel = 'off') {
+    this.level = level;
+  }
+
+  setLevel(level: LogLevel): void {
+    this.level = level;
+  }
+
+  private shouldLog(msgLevel: LogLevel): boolean {
+    return this.levels[msgLevel] <= this.levels[this.level];
+  }
+
+  error(...args: any[]): void {
+    if (this.shouldLog('error')) console.error('[SDK Error]', ...args);
+  }
+
+  warn(...args: any[]): void {
+    if (this.shouldLog('warn')) console.warn('[SDK Warn]', ...args);
+  }
+
+  info(...args: any[]): void {
+    if (this.shouldLog('info')) console.info('[SDK Info]', ...args);
+  }
+
+  debug(...args: any[]): void {
+    if (this.shouldLog('debug')) console.log('[SDK Debug]', ...args);
+  }
+
+  trace(...args: any[]): void {
+    if (this.shouldLog('trace')) console.log('[SDK Trace]', ...args);
+  }
+}
+
+// Global logger instance
+const logger = new Logger();
+
 export class AlkanesProvider {
   private _provider: WasmWebProvider | null = null;
   private _bitcoin: BitcoinRpcClient | null = null;
@@ -1193,6 +1354,7 @@ export class AlkanesProvider {
   public readonly networkType: NetworkType;
   public readonly rpcUrl: string;
   public readonly dataApiUrl: string;
+  public readonly logLevel: LogLevel;
   private readonly networkPreset: string;
 
   constructor(config: AlkanesProviderConfig) {
@@ -1202,6 +1364,10 @@ export class AlkanesProvider {
     this.networkType = preset.networkType;
     this.rpcUrl = config.rpcUrl || preset.rpcUrl;
     this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
+
+    // Resolve log level: config > env > off
+    this.logLevel = config.logLevel || getLogLevelFromEnv() || 'off';
+    logger.setLevel(this.logLevel);
 
     // Set bitcoinjs network
     if (config.bitcoinNetwork) {
@@ -1220,6 +1386,8 @@ export class AlkanesProvider {
           this.network = bitcoin.networks.regtest;
       }
     }
+
+    logger.debug(`Provider configured for ${this.networkType} (${this.rpcUrl})`);
   }
 
   /**
