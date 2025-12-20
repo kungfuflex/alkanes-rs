@@ -141,6 +141,59 @@ export function registerAlkanesCommands(program: Command): void {
       }
     });
 
+  // inspect-bytecode - Inspect bytecode directly from file or hex string
+  alkanes
+    .command('inspect-bytecode <bytecode>')
+    .description('Inspect alkanes bytecode directly from file or hex string (no RPC fetch)')
+    .option('--alkane-id <id>', 'Alkane ID for context (format: block:tx)', '0:0')
+    .option('--disasm', 'Enable disassembly to WAT format', false)
+    .option('--fuzz', 'Enable fuzzing analysis', false)
+    .option('--fuzz-ranges <ranges>', 'Opcode ranges for fuzzing (e.g., "0-100,200-300")')
+    .option('--meta', 'Extract and display metadata', false)
+    .option('--codehash', 'Compute and display codehash', false)
+    .option('--raw', 'Output raw JSON')
+    .action(async (bytecode, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Inspecting bytecode...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        // Determine if bytecode is a file path or hex string
+        let bytecodeHex: string;
+        const fs = await import('fs');
+        if (fs.existsSync(bytecode)) {
+          // Read from file
+          const fileContent = fs.readFileSync(bytecode);
+          bytecodeHex = fileContent.toString('hex');
+        } else {
+          // Assume it's a hex string
+          bytecodeHex = bytecode;
+        }
+
+        const config = {
+          disasm: options.disasm,
+          fuzz: options.fuzz,
+          fuzz_ranges: options.fuzzRanges,
+          meta: options.meta,
+          codehash: options.codehash,
+          raw: options.raw,
+        };
+
+        const result = await provider.alkanes.inspectBytecode(bytecodeHex, options.alkaneId, config);
+
+        spinner.succeed('Inspection complete');
+        console.log(formatOutput(result, { raw: options.raw }));
+      } catch (err: any) {
+        error(`Failed to inspect bytecode: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
   // simulate
   alkanes
     .command('simulate <contract-id>')

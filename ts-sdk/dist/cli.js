@@ -787,6 +787,19 @@ var init_provider = __esm({
         const result = await this.provider.alkanesInspect(target, config);
         return mapToObject(result);
       }
+      /**
+       * Inspect alkanes bytecode directly from WASM bytes.
+       * This allows inspection without fetching from RPC - useful for local/offline analysis.
+       *
+       * @param bytecodeHex - The WASM bytecode as hex string (with or without 0x prefix)
+       * @param alkaneId - The alkane ID in format "block:tx"
+       * @param config - Inspection configuration
+       * @returns Inspection result with codehash, disassembly, metadata, and fuzzing results
+       */
+      async inspectBytecode(bytecodeHex, alkaneId, config) {
+        const result = await this.provider.alkanesInspectBytecode(bytecodeHex, alkaneId, config);
+        return mapToObject(result);
+      }
     };
     MetashrewClient = class {
       constructor(provider) {
@@ -6755,6 +6768,39 @@ function registerAlkanesCommands(program2) {
       console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to inspect: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("inspect-bytecode <bytecode>").description("Inspect alkanes bytecode directly from file or hex string (no RPC fetch)").option("--alkane-id <id>", "Alkane ID for context (format: block:tx)", "0:0").option("--disasm", "Enable disassembly to WAT format", false).option("--fuzz", "Enable fuzzing analysis", false).option("--fuzz-ranges <ranges>", 'Opcode ranges for fuzzing (e.g., "0-100,200-300")').option("--meta", "Extract and display metadata", false).option("--codehash", "Compute and display codehash", false).option("--raw", "Output raw JSON").action(async (bytecode, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Inspecting bytecode...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      let bytecodeHex;
+      const fs3 = await import("fs");
+      if (fs3.existsSync(bytecode)) {
+        const fileContent = fs3.readFileSync(bytecode);
+        bytecodeHex = fileContent.toString("hex");
+      } else {
+        bytecodeHex = bytecode;
+      }
+      const config = {
+        disasm: options.disasm,
+        fuzz: options.fuzz,
+        fuzz_ranges: options.fuzzRanges,
+        meta: options.meta,
+        codehash: options.codehash,
+        raw: options.raw
+      };
+      const result = await provider.alkanes.inspectBytecode(bytecodeHex, options.alkaneId, config);
+      spinner.succeed("Inspection complete");
+      console.log(formatOutput(result, { raw: options.raw }));
+    } catch (err) {
+      error(`Failed to inspect bytecode: ${err.message}`);
       process.exit(1);
     }
   });

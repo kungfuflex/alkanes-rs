@@ -1,9 +1,5 @@
 /* tslint:disable */
 /* eslint-disable */
-/**
- * Asynchronously encrypts data using the Web Crypto API.
- */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export function analyze_psbt(psbt_base64: string, network_str: string): string;
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
 export function get_alkane_bytecode(network: string, block: number, tx: number, block_tag: string): Promise<any>;
@@ -270,6 +266,10 @@ export function frbtc_wrap_and_execute2(network: string, amount: bigint, target_
  * - `signer_address`: The Bitcoin p2tr address for the signer
  */
 export function frbtc_get_signer_address(network: string): Promise<any>;
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;
@@ -780,6 +780,11 @@ export class WebProvider {
   bitcoindDecodePsbt(psbt: string): Promise<any>;
   alkanesView(contract_id: string, view_fn: string, params?: Uint8Array | null, block_tag?: string | null): Promise<any>;
   alkanesInspect(target: string, config: any): Promise<any>;
+  /**
+   * Inspect alkanes bytecode directly from WASM bytes (hex-encoded or raw bytes)
+   * This allows inspection without fetching from RPC - useful for local/offline analysis
+   */
+  alkanesInspectBytecode(bytecode_hex: string, alkane_id: string, config: any): Promise<any>;
   alkanesPendingUnwraps(block_tag?: string | null): Promise<any>;
   brc20progCall(to: string, data: string, block?: string | null): Promise<any>;
   brc20progGetBalance(address: string, block?: string | null): Promise<any>;

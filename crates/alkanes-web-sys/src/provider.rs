@@ -2664,14 +2664,73 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let inspect_config: alkanes_cli_common::alkanes::AlkanesInspectConfig = 
+            let inspect_config: alkanes_cli_common::alkanes::AlkanesInspectConfig =
                 serde_wasm_bindgen::from_value(config)
                     .map_err(|e| JsValue::from_str(&format!("Invalid config: {}", e)))?;
-            
+
             provider.inspect(&target, inspect_config).await
                 .and_then(|r| serde_wasm_bindgen::to_value(&r)
                     .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
                 .map_err(|e| JsValue::from_str(&format!("Inspect failed: {}", e)))
+        })
+    }
+
+    /// Inspect alkanes bytecode directly from WASM bytes (hex-encoded or raw bytes)
+    /// This allows inspection without fetching from RPC - useful for local/offline analysis
+    #[wasm_bindgen(js_name = alkanesInspectBytecode)]
+    pub fn alkanes_inspect_bytecode_js(&self, bytecode_hex: String, alkane_id: String, config: JsValue) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        use alkanes_cli_common::alkanes::inspector::{AlkaneInspector, InspectionConfig};
+        use alkanes_cli_common::alkanes::types::AlkaneId;
+
+        future_to_promise(async move {
+            // Parse the alkane ID (format: block:tx)
+            let parts: Vec<&str> = alkane_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(JsValue::from_str(&format!(
+                    "Invalid alkane ID format, expected block:tx, got: {}", alkane_id
+                )));
+            }
+            let block = parts[0].parse::<u64>()
+                .map_err(|_| JsValue::from_str(&format!("Invalid block value: {}", parts[0])))?;
+            let tx = parts[1].parse::<u64>()
+                .map_err(|_| JsValue::from_str(&format!("Invalid tx value: {}", parts[1])))?;
+            let alkane_id = AlkaneId { block, tx };
+
+            // Parse the config from JSON object
+            let config_obj = match config.dyn_ref::<js_sys::Object>() {
+                Some(obj) => obj.clone(),
+                None => return Err(JsValue::from_str("Config must be an object")),
+            };
+
+            let inspect_config = InspectionConfig {
+                disasm: js_sys::Reflect::get(&config_obj, &"disasm".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                fuzz: js_sys::Reflect::get(&config_obj, &"fuzz".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                fuzz_ranges: js_sys::Reflect::get(&config_obj, &"fuzz_ranges".into())
+                    .ok().and_then(|v| v.as_string()),
+                meta: js_sys::Reflect::get(&config_obj, &"meta".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                codehash: js_sys::Reflect::get(&config_obj, &"codehash".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                raw: js_sys::Reflect::get(&config_obj, &"raw".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+
+            // Decode the hex bytecode
+            let hex_str = bytecode_hex.strip_prefix("0x").unwrap_or(&bytecode_hex);
+            let wasm_bytes = hex::decode(hex_str)
+                .map_err(|e| JsValue::from_str(&format!("Invalid bytecode hex: {}", e)))?;
+
+            // Use the inspector to analyze the bytecode
+            let inspector = AlkaneInspector::new();
+            let result = inspector.inspect_alkane_with_bytes(&wasm_bytes, &alkane_id, &inspect_config)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Inspection failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
         })
     }
 

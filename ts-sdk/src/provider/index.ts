@@ -714,6 +714,65 @@ export class AlkanesRpcClient {
     const result = await this.provider.alkanesInspect(target, config);
     return mapToObject(result);
   }
+
+  /**
+   * Inspect alkanes bytecode directly from WASM bytes.
+   * This allows inspection without fetching from RPC - useful for local/offline analysis.
+   *
+   * @param bytecodeHex - The WASM bytecode as hex string (with or without 0x prefix)
+   * @param alkaneId - The alkane ID in format "block:tx"
+   * @param config - Inspection configuration
+   * @returns Inspection result with codehash, disassembly, metadata, and fuzzing results
+   */
+  async inspectBytecode(bytecodeHex: string, alkaneId: string, config: {
+    disasm?: boolean;
+    fuzz?: boolean;
+    fuzz_ranges?: string;
+    meta?: boolean;
+    codehash?: boolean;
+    raw?: boolean;
+  }): Promise<{
+    alkane_id: { block: number; tx: number };
+    bytecode_length: number;
+    codehash?: string;
+    disassembly?: string;
+    metadata?: {
+      name: string;
+      version: string;
+      description?: string;
+      methods: Array<{
+        name: string;
+        opcode: number;
+        params: string[];
+        returns: string;
+      }>;
+    };
+    metadata_error?: string;
+    fuzzing_results?: {
+      total_opcodes_tested: number;
+      opcodes_filtered_out: number;
+      successful_executions: number;
+      failed_executions: number;
+      implemented_opcodes: number[];
+      opcode_results: Array<{
+        success: boolean;
+        return_value?: number;
+        return_data: number[];
+        error?: string;
+        execution_time_micros: number;
+        opcode: number;
+        host_calls: Array<{
+          function_name: string;
+          parameters: string[];
+          result: string;
+          timestamp_micros: number;
+        }>;
+      }>;
+    };
+  }> {
+    const result = await this.provider.alkanesInspectBytecode(bytecodeHex, alkaneId, config);
+    return mapToObject(result);
+  }
 }
 
 /**
