@@ -3345,7 +3345,7 @@ impl AlkanesProvider for ConcreteProvider {
   target: &str,
   config: AlkanesInspectConfig,
  ) -> Result<AlkanesInspectResult> {
-  let inspector = AlkaneInspector::new(self.clone());
+  let inspector = AlkaneInspector::new();
   let parts: Vec<&str> = target.split(':').collect();
   if parts.len() != 2 {
    return Err(AlkanesError::InvalidParameters(
@@ -3363,7 +3363,7 @@ impl AlkanesProvider for ConcreteProvider {
    codehash: config.codehash,
    raw: config.raw,
   };
-  let result = inspector.inspect_alkane(&alkane_id, &inspection_config).await.map_err(|e| AlkanesError::Other(e.to_string()))?;
+  let result = inspector.inspect_alkane(&alkane_id, &inspection_config, self).await.map_err(|e| AlkanesError::Other(e.to_string()))?;
   Ok(serde_json::from_value(serde_json::to_value(result)?)?)
  }
 
