@@ -891,6 +891,20 @@ export class WebProvider {
   walletCreatePsbt(params_json: string): Promise<any>;
   walletExport(): Promise<any>;
   walletBackup(): Promise<any>;
+  /**
+   * Get the FrBTC signer address for the current network
+   */
+  frbtcGetSignerAddress(): Promise<any>;
+  /**
+   * Wrap BTC to frBTC
+   * params_json: { fee_rate?: number, from?: string[], change?: string }
+   */
+  frbtcWrap(amount: bigint, params_json: string): Promise<any>;
+  /**
+   * Unwrap frBTC to BTC
+   * params_json: { fee_rate?: number, from?: string[], change?: string }
+   */
+  frbtcUnwrap(amount: bigint, vout: bigint, recipient_address: string, params_json: string): Promise<any>;
   dataApiGetPoolHistory(pool_id: string, category?: string | null, limit?: bigint | null, offset?: bigint | null): Promise<any>;
   dataApiGetPools(factory_id: string): Promise<any>;
   dataApiGetAlkanesByAddress(address: string): Promise<any>;

@@ -3238,6 +3238,44 @@ export class WebProvider {
         return ret;
     }
     /**
+     * Get the FrBTC signer address for the current network
+     * @returns {Promise<any>}
+     */
+    frbtcGetSignerAddress() {
+        const ret = wasm.webprovider_frbtcGetSignerAddress(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Wrap BTC to frBTC
+     * params_json: { fee_rate?: number, from?: string[], change?: string }
+     * @param {bigint} amount
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    frbtcWrap(amount, params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_frbtcWrap(this.__wbg_ptr, amount, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Unwrap frBTC to BTC
+     * params_json: { fee_rate?: number, from?: string[], change?: string }
+     * @param {bigint} amount
+     * @param {bigint} vout
+     * @param {string} recipient_address
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    frbtcUnwrap(amount, vout, recipient_address, params_json) {
+        const ptr0 = passStringToWasm0(recipient_address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_frbtcUnwrap(this.__wbg_ptr, amount, vout, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
      * @param {string} pool_id
      * @param {string | null} [category]
      * @param {bigint | null} [limit]
@@ -4480,8 +4518,8 @@ export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_832dfe82587c7cfc(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3070, function: Function { arguments: [], shim_idx: 3071, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+export function __wbindgen_cast_502d37c86b66c70b(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3076, function: Function { arguments: [], shim_idx: 3077, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h264445b1cd05789c, wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb);
     return ret;
 };
@@ -4489,6 +4527,12 @@ export function __wbindgen_cast_832dfe82587c7cfc(arg0, arg1) {
 export function __wbindgen_cast_9ae0607507abb057(arg0) {
     // Cast intrinsic for `I64 -> Externref`.
     const ret = arg0;
+    return ret;
+};
+
+export function __wbindgen_cast_a9c07188c6071a94(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3758, function: Function { arguments: [Externref], shim_idx: 3759, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 
@@ -4507,12 +4551,6 @@ export function __wbindgen_cast_d6cd19b81560fd6e(arg0) {
 export function __wbindgen_cast_e7b45dd881f38ce3(arg0, arg1) {
     // Cast intrinsic for `U128 -> Externref`.
     const ret = (BigInt.asUintN(64, arg0) | (BigInt.asUintN(64, arg1) << BigInt(64)));
-    return ret;
-};
-
-export function __wbindgen_cast_facf2bd55df381c1(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3752, function: Function { arguments: [Externref], shim_idx: 3753, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 

@@ -29,7 +29,7 @@ async function init() {
   jsBindings = bindings;
 
   // Create import object for WASM instantiation
-  // The WASM module expects imports from './alkanes_web_sys_bg.js'
+  // The WASM module expects imports from './alkanes_web_sys_bg.js' (bundler target)
   const imports = {
     './alkanes_web_sys_bg.js': bindings,
   };

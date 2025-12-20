@@ -5631,7 +5631,7 @@ ${val.stack}`;
 
 // src/cli/index.ts
 var import_commander = require("commander");
-var import_chalk3 = __toESM(require("chalk"));
+var import_chalk4 = __toESM(require("chalk"));
 init_formatting();
 
 // src/cli/commands/wallet.ts
@@ -6674,6 +6674,7 @@ function registerBitcoindCommands(program2) {
 }
 
 // src/cli/commands/alkanes.ts
+var import_chalk3 = __toESM(require("chalk"));
 init_formatting();
 var import_ora3 = __toESM(require("ora"));
 function registerAlkanesCommands(program2) {
@@ -6757,7 +6758,7 @@ function registerAlkanesCommands(program2) {
       process.exit(1);
     }
   });
-  alkanes.command("simulate <contract-id>").description("Simulate alkanes execution").option("--inputs <json>", "Input parameters JSON").option("--context <json>", "Execution context JSON").option("--block-tag <tag>", "Block tag").option("--raw", "Output raw JSON").action(async (contractId, options, command) => {
+  alkanes.command("simulate <contract-id>").description("Simulate alkanes execution (format: block:tx or block:tx:opcode)").option("--inputs <alkanes>", "Input alkanes as comma-separated triplets (e.g., 2:1:1000,2:2:500)").option("--height <height>", "Block height for simulation").option("--txindex <index>", "Transaction index (default: 1)", "1").option("--pointer <ptr>", "Pointer value (default: 0)", "0").option("--refund <ptr>", "Refund pointer (default: 0)", "0").option("--block-tag <tag>", "Block tag to query").option("--raw", "Output raw JSON").action(async (contractId, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Simulating execution...").start();
@@ -6766,14 +6767,129 @@ function registerAlkanesCommands(program2) {
         jsonrpcUrl: globalOpts.jsonrpcUrl,
         metashrewUrl: globalOpts.metashrewUrl
       });
-      const contextJson = options.context || JSON.stringify({
-        inputs: options.inputs ? JSON.parse(options.inputs) : []
-      });
-      const result = await provider.alkanes.simulate(contractId, contextJson, options.blockTag);
+      const parts = contractId.split(":");
+      if (parts.length < 2 || parts.length > 3) {
+        throw new Error("Invalid contract-id format. Use block:tx or block:tx:opcode (e.g., 2:112 or 2:112:10)");
+      }
+      const targetBlock = parseInt(parts[0], 10);
+      const targetTx = parseInt(parts[1], 10);
+      const calldataOpcode = parts.length === 3 ? parseInt(parts[2], 10) : 0;
+      const alkanes2 = [];
+      if (options.inputs) {
+        const inputParts = options.inputs.split(",");
+        for (const input2 of inputParts) {
+          const [block, tx, amount] = input2.split(":").map((s) => parseInt(s, 10));
+          if (isNaN(block) || isNaN(tx) || isNaN(amount)) {
+            throw new Error(`Invalid input format: ${input2}. Use block:tx:amount`);
+          }
+          alkanes2.push({
+            id: { block: { lo: block, hi: 0 }, tx: { lo: tx, hi: 0 } },
+            value: { lo: amount, hi: 0 }
+          });
+        }
+      }
+      let height = options.height ? parseInt(options.height, 10) : 0;
+      if (!height) {
+        try {
+          height = await provider.metashrew.height();
+        } catch {
+          height = 0;
+        }
+      }
+      const calldata = [];
+      let value = targetBlock;
+      do {
+        let byte = value & 127;
+        value >>>= 7;
+        if (value !== 0) byte |= 128;
+        calldata.push(byte);
+      } while (value !== 0);
+      value = targetTx;
+      do {
+        let byte = value & 127;
+        value >>>= 7;
+        if (value !== 0) byte |= 128;
+        calldata.push(byte);
+      } while (value !== 0);
+      value = calldataOpcode;
+      do {
+        let byte = value & 127;
+        value >>>= 7;
+        if (value !== 0) byte |= 128;
+        calldata.push(byte);
+      } while (value !== 0);
+      const context = {
+        alkanes: alkanes2,
+        transaction: [],
+        // Empty byte array
+        block: [],
+        // Empty byte array
+        height,
+        txindex: parseInt(options.txindex, 10),
+        calldata: Array.from(calldata),
+        // Pass as array of numbers
+        vout: 0,
+        pointer: parseInt(options.pointer, 10),
+        refund_pointer: parseInt(options.refund, 10)
+      };
+      const contractIdStr = `${targetBlock}:${targetTx}`;
+      const result = await provider.alkanes.simulate(contractIdStr, JSON.stringify(context), options.blockTag);
       spinner.succeed();
-      console.log(formatOutput(result, { raw: options.raw }));
+      if (typeof result === "string" && result.startsWith("0x") && !options.raw) {
+        try {
+          const hexData = result.slice(2);
+          const bytes = Buffer.from(hexData, "hex");
+          let pos = 0;
+          let gasUsed = 0;
+          let errorMsg = "";
+          let executionData = "";
+          while (pos < bytes.length) {
+            const tag = bytes[pos++];
+            const fieldNum = tag >> 3;
+            const wireType = tag & 7;
+            if (wireType === 0) {
+              let value2 = 0;
+              let shift = 0;
+              while (pos < bytes.length) {
+                const b = bytes[pos++];
+                value2 |= (b & 127) << shift;
+                if ((b & 128) === 0) break;
+                shift += 7;
+              }
+              if (fieldNum === 2) gasUsed = value2;
+            } else if (wireType === 2) {
+              let len = 0;
+              let shift = 0;
+              while (pos < bytes.length) {
+                const b = bytes[pos++];
+                len |= (b & 127) << shift;
+                if ((b & 128) === 0) break;
+                shift += 7;
+              }
+              const data = bytes.slice(pos, pos + len);
+              pos += len;
+              if (fieldNum === 1) executionData = "0x" + data.toString("hex");
+              if (fieldNum === 3) errorMsg = data.toString("utf8");
+            }
+          }
+          console.log();
+          if (errorMsg) {
+            console.log(import_chalk3.default.red(`Error: ${errorMsg}`));
+          } else {
+            console.log(import_chalk3.default.green("\u2713 Simulation successful"));
+          }
+          if (gasUsed) console.log(`Gas used: ${gasUsed}`);
+          if (executionData && executionData !== "0x") console.log(`Execution: ${executionData}`);
+          console.log();
+          console.log(import_chalk3.default.gray(`Raw: ${result}`));
+        } catch {
+          console.log(formatOutput(result, { raw: true }));
+        }
+      } else {
+        console.log(formatOutput(result, { raw: options.raw }));
+      }
     } catch (err) {
-      error(`Failed to simulate: ${err.message}`);
+      error(`Failed to simulate: ${err.message || err}`);
       process.exit(1);
     }
   });
@@ -8851,7 +8967,10 @@ function registerBrc20ProgCommands(program2) {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Wrapping BTC to frBTC...").start();
-      const { frbtc_wrap } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
+      });
       const params = {
         from_addresses: options.from,
         change_address: options.change,
@@ -8859,16 +8978,13 @@ function registerBrc20ProgCommands(program2) {
         use_slipstream: options.useSlipstream,
         use_rebar: options.useRebar,
         rebar_tier: options.rebarTier,
-        resume_from_commit: options.resume
+        resume_from_commit: options.resume,
+        auto_confirm: true
       };
-      const result = await frbtc_wrap(
-        globalOpts.provider || "mainnet",
-        BigInt(amount),
-        JSON.stringify(params)
-      );
+      const rawProvider = provider.rawProvider;
+      const result = await rawProvider.frbtcWrap(BigInt(amount), JSON.stringify(params));
       spinner.succeed("BTC wrapped to frBTC successfully!");
-      const parsed = JSON.parse(result);
-      console.log(formatOutput(parsed, { raw: options.raw }));
+      console.log(formatOutput(result, { raw: options.raw }));
     } catch (err) {
       error(`Failed to wrap BTC: ${err.message}`);
       process.exit(1);
@@ -8878,7 +8994,10 @@ function registerBrc20ProgCommands(program2) {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Unwrapping frBTC to BTC...").start();
-      const { frbtc_unwrap } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
+      });
       const params = {
         from_addresses: options.from,
         change_address: options.change,
@@ -8886,97 +9005,51 @@ function registerBrc20ProgCommands(program2) {
         use_slipstream: options.useSlipstream,
         use_rebar: options.useRebar,
         rebar_tier: options.rebarTier,
-        resume_from_commit: options.resume
+        resume_from_commit: options.resume,
+        auto_confirm: true
       };
-      const result = await frbtc_unwrap(
-        globalOpts.provider || "mainnet",
+      const rawProvider = provider.rawProvider;
+      const result = await rawProvider.frbtcUnwrap(
         BigInt(amount),
         BigInt(options.vout || 0),
         options.to,
         JSON.stringify(params)
       );
       spinner.succeed("frBTC unwrap queued successfully!");
-      const parsed = JSON.parse(result);
-      console.log(formatOutput(parsed, { raw: options.raw }));
+      console.log(formatOutput(result, { raw: options.raw }));
       success(`BTC will be sent to ${options.to} by the subfrost operator`);
     } catch (err) {
       error(`Failed to unwrap frBTC: ${err.message}`);
       process.exit(1);
     }
   });
-  brc20Prog.command("wrap-and-execute <amount>").description("Wrap BTC and deploy+execute a script (wrapAndExecute)").requiredOption("--script <bytecode>", "Script bytecode to deploy and execute (hex)").option("--from <addresses...>", "Addresses to source UTXOs from").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--use-slipstream", "Use MARA Slipstream for broadcasting").option("--use-rebar", "Use Rebar Shield for private relay").option("--rebar-tier <tier>", "Rebar fee tier (1 or 2)", parseInt).option("--resume <txid>", "Resume from existing commit transaction").option("--raw", "Output raw JSON").action(async (amount, options, command) => {
-    try {
-      const globalOpts = command.parent?.parent?.opts() || {};
-      const spinner = (0, import_ora12.default)("Wrapping BTC and executing script...").start();
-      const { frbtc_wrap_and_execute } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
-      const params = {
-        from_addresses: options.from,
-        change_address: options.change,
-        fee_rate: options.feeRate,
-        use_slipstream: options.useSlipstream,
-        use_rebar: options.useRebar,
-        rebar_tier: options.rebarTier,
-        resume_from_commit: options.resume
-      };
-      const result = await frbtc_wrap_and_execute(
-        globalOpts.provider || "mainnet",
-        BigInt(amount),
-        options.script,
-        JSON.stringify(params)
-      );
-      spinner.succeed("BTC wrapped and script executed!");
-      const parsed = JSON.parse(result);
-      console.log(formatOutput(parsed, { raw: options.raw }));
-    } catch (err) {
-      error(`Failed to wrap and execute: ${err.message}`);
-      process.exit(1);
-    }
+  brc20Prog.command("wrap-and-execute <amount>").description("Wrap BTC and deploy+execute a script (wrapAndExecute) [Not yet implemented]").requiredOption("--script <bytecode>", "Script bytecode to deploy and execute (hex)").option("--from <addresses...>", "Addresses to source UTXOs from").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--raw", "Output raw JSON").action(async (_amount, _options, _command) => {
+    error("wrap-and-execute is not yet implemented in alkanes-bindgen-cli.");
+    error("Please use alkanes-cli directly for this operation.");
+    process.exit(1);
   });
-  brc20Prog.command("wrap-and-execute2 <amount>").description("Wrap BTC and call an existing contract (wrapAndExecute2)").requiredOption("--target <address>", "Target contract address").requiredOption("--signature <sig>", 'Function signature (e.g., "deposit()")').option("--calldata <args>", "Comma-separated calldata arguments", "").option("--from <addresses...>", "Addresses to source UTXOs from").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--use-slipstream", "Use MARA Slipstream for broadcasting").option("--use-rebar", "Use Rebar Shield for private relay").option("--rebar-tier <tier>", "Rebar fee tier (1 or 2)", parseInt).option("--resume <txid>", "Resume from existing commit transaction").option("--raw", "Output raw JSON").action(async (amount, options, command) => {
-    try {
-      const globalOpts = command.parent?.parent?.opts() || {};
-      const spinner = (0, import_ora12.default)("Wrapping BTC and calling contract...").start();
-      const { frbtc_wrap_and_execute2 } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
-      const params = {
-        from_addresses: options.from,
-        change_address: options.change,
-        fee_rate: options.feeRate,
-        use_slipstream: options.useSlipstream,
-        use_rebar: options.useRebar,
-        rebar_tier: options.rebarTier,
-        resume_from_commit: options.resume
-      };
-      const result = await frbtc_wrap_and_execute2(
-        globalOpts.provider || "mainnet",
-        BigInt(amount),
-        options.target,
-        options.signature,
-        options.calldata || "",
-        JSON.stringify(params)
-      );
-      spinner.succeed("BTC wrapped and contract called!");
-      const parsed = JSON.parse(result);
-      console.log(formatOutput(parsed, { raw: options.raw }));
-    } catch (err) {
-      error(`Failed to wrap and execute2: ${err.message}`);
-      process.exit(1);
-    }
+  brc20Prog.command("wrap-and-execute2 <amount>").description("Wrap BTC and call an existing contract (wrapAndExecute2) [Not yet implemented]").requiredOption("--target <address>", "Target contract address").requiredOption("--signature <sig>", 'Function signature (e.g., "deposit()")').option("--calldata <args>", "Comma-separated calldata arguments", "").option("--from <addresses...>", "Addresses to source UTXOs from").option("--change <address>", "Change address").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--raw", "Output raw JSON").action(async (_amount, _options, _command) => {
+    error("wrap-and-execute2 is not yet implemented in alkanes-bindgen-cli.");
+    error("Please use alkanes-cli directly for this operation.");
+    process.exit(1);
   });
   brc20Prog.command("signer-address").description("Get the FrBTC signer address for the current network").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora12.default)("Getting FrBTC signer address...").start();
-      const { frbtc_get_signer_address } = await Promise.resolve().then(() => __toESM(require_alkanes_web_sys()));
-      const result = await frbtc_get_signer_address(globalOpts.provider || "mainnet");
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
+      });
+      const rawProvider = provider.rawProvider;
+      const signerAddress = await rawProvider.frbtcGetSignerAddress();
       spinner.succeed("FrBTC signer address retrieved!");
-      const parsed = JSON.parse(result);
       if (options.raw) {
-        console.log(formatOutput(parsed, { raw: true }));
+        console.log(formatOutput({ signer_address: signerAddress }, { raw: true }));
       } else {
-        console.log(`\u{1F511} FrBTC Signer Address`);
-        console.log(`   Network: ${parsed.network}`);
-        console.log(`   FrBTC Contract: ${parsed.frbtc_contract}`);
-        console.log(`   Signer Address: ${parsed.signer_address}`);
+        console.log(`FrBTC Signer Address`);
+        console.log(`   Network: ${globalOpts.provider || "mainnet"}`);
+        console.log(`   Signer Address: ${signerAddress}`);
       }
     } catch (err) {
       error(`Failed to get signer address: ${err.message}`);
@@ -9797,7 +9870,7 @@ function setupLogging(verbose2) {
     const message = args.map((a) => String(a)).join(" ");
     if (message.includes("[INFO]") || message.includes("JsonRpcProvider::call") || message.includes("Raw RPC response")) {
       if (verbose2 >= 3) {
-        originalConsoleLog.apply(console, [import_chalk3.default.dim(...args)]);
+        originalConsoleLog.apply(console, [import_chalk4.default.dim(...args)]);
       }
       return;
     }
@@ -9807,7 +9880,7 @@ function setupLogging(verbose2) {
     const message = args.map((a) => String(a)).join(" ");
     if (message.includes("[INFO]")) {
       if (verbose2 >= 2) {
-        originalConsoleInfo.apply(console, [import_chalk3.default.dim(...args)]);
+        originalConsoleInfo.apply(console, [import_chalk4.default.dim(...args)]);
       }
       return;
     }

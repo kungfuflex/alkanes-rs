@@ -6,6 +6,7 @@
  */
 
 import { Command } from 'commander';
+import chalk from 'chalk';
 import { createProvider } from '../utils/provider.js';
 import {
   formatOutput,
@@ -143,10 +144,13 @@ export function registerAlkanesCommands(program: Command): void {
   // simulate
   alkanes
     .command('simulate <contract-id>')
-    .description('Simulate alkanes execution')
-    .option('--inputs <json>', 'Input parameters JSON')
-    .option('--context <json>', 'Execution context JSON')
-    .option('--block-tag <tag>', 'Block tag')
+    .description('Simulate alkanes execution (format: block:tx or block:tx:opcode)')
+    .option('--inputs <alkanes>', 'Input alkanes as comma-separated triplets (e.g., 2:1:1000,2:2:500)')
+    .option('--height <height>', 'Block height for simulation')
+    .option('--txindex <index>', 'Transaction index (default: 1)', '1')
+    .option('--pointer <ptr>', 'Pointer value (default: 0)', '0')
+    .option('--refund <ptr>', 'Refund pointer (default: 0)', '0')
+    .option('--block-tag <tag>', 'Block tag to query')
     .option('--raw', 'Output raw JSON')
     .action(async (contractId, options, command) => {
       try {
@@ -159,16 +163,154 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const contextJson = options.context || JSON.stringify({
-          inputs: options.inputs ? JSON.parse(options.inputs) : [],
-        });
+        // Parse contract-id: block:tx or block:tx:opcode
+        const parts = contractId.split(':');
+        if (parts.length < 2 || parts.length > 3) {
+          throw new Error('Invalid contract-id format. Use block:tx or block:tx:opcode (e.g., 2:112 or 2:112:10)');
+        }
+        const targetBlock = parseInt(parts[0], 10);
+        const targetTx = parseInt(parts[1], 10);
+        const calldataOpcode = parts.length === 3 ? parseInt(parts[2], 10) : 0;
 
-        const result = await provider.alkanes.simulate(contractId, contextJson, options.blockTag);
+        // Parse input alkanes if provided (format: block:tx:amount,block:tx:amount)
+        const alkanes: Array<{id: {block: {lo: number, hi: number}, tx: {lo: number, hi: number}}, value: {lo: number, hi: number}}> = [];
+        if (options.inputs) {
+          const inputParts = options.inputs.split(',');
+          for (const input of inputParts) {
+            const [block, tx, amount] = input.split(':').map((s: string) => parseInt(s, 10));
+            if (isNaN(block) || isNaN(tx) || isNaN(amount)) {
+              throw new Error(`Invalid input format: ${input}. Use block:tx:amount`);
+            }
+            alkanes.push({
+              id: { block: { lo: block, hi: 0 }, tx: { lo: tx, hi: 0 } },
+              value: { lo: amount, hi: 0 }
+            });
+          }
+        }
+
+        // Get simulation height
+        let height = options.height ? parseInt(options.height, 10) : 0;
+        if (!height) {
+          // Get current metashrew height
+          try {
+            height = await provider.metashrew.height();
+          } catch {
+            height = 0;
+          }
+        }
+
+        // Build calldata with LEB128 encoding
+        const calldata: number[] = [];
+        // LEB128 encode targetBlock
+        let value = targetBlock;
+        do {
+          let byte = value & 0x7f;
+          value >>>= 7;
+          if (value !== 0) byte |= 0x80;
+          calldata.push(byte);
+        } while (value !== 0);
+        // LEB128 encode targetTx
+        value = targetTx;
+        do {
+          let byte = value & 0x7f;
+          value >>>= 7;
+          if (value !== 0) byte |= 0x80;
+          calldata.push(byte);
+        } while (value !== 0);
+        // LEB128 encode calldataOpcode
+        value = calldataOpcode;
+        do {
+          let byte = value & 0x7f;
+          value >>>= 7;
+          if (value !== 0) byte |= 0x80;
+          calldata.push(byte);
+        } while (value !== 0);
+
+        // Build MessageContextParcel
+        // Note: protobuf bytes fields expect base64 strings or arrays, not empty strings
+        const context = {
+          alkanes,
+          transaction: [],  // Empty byte array
+          block: [],        // Empty byte array
+          height,
+          txindex: parseInt(options.txindex, 10),
+          calldata: Array.from(calldata),  // Pass as array of numbers
+          vout: 0,
+          pointer: parseInt(options.pointer, 10),
+          refund_pointer: parseInt(options.refund, 10),
+        };
+
+        const contractIdStr = `${targetBlock}:${targetTx}`;
+        const result = await provider.alkanes.simulate(contractIdStr, JSON.stringify(context), options.blockTag);
 
         spinner.succeed();
-        console.log(formatOutput(result, { raw: options.raw }));
+
+        // Try to decode the hex result as SimulateResponse protobuf
+        // The result may be a string (hex) or an object with data field
+        if (typeof result === 'string' && result.startsWith('0x') && !options.raw) {
+          try {
+            const hexData = result.slice(2);
+            const bytes = Buffer.from(hexData, 'hex');
+
+            // Simple protobuf decoding for SimulateResponse:
+            // field 1 (execution): ExtendedCallResponse
+            // field 2 (gas_used): uint64
+            // field 3 (error): string
+            let pos = 0;
+            let gasUsed = 0;
+            let errorMsg = '';
+            let executionData = '';
+
+            while (pos < bytes.length) {
+              const tag = bytes[pos++];
+              const fieldNum = tag >> 3;
+              const wireType = tag & 0x7;
+
+              if (wireType === 0) { // varint
+                let value = 0;
+                let shift = 0;
+                while (pos < bytes.length) {
+                  const b = bytes[pos++];
+                  value |= (b & 0x7f) << shift;
+                  if ((b & 0x80) === 0) break;
+                  shift += 7;
+                }
+                if (fieldNum === 2) gasUsed = value;
+              } else if (wireType === 2) { // length-delimited
+                let len = 0;
+                let shift = 0;
+                while (pos < bytes.length) {
+                  const b = bytes[pos++];
+                  len |= (b & 0x7f) << shift;
+                  if ((b & 0x80) === 0) break;
+                  shift += 7;
+                }
+                const data = bytes.slice(pos, pos + len);
+                pos += len;
+                if (fieldNum === 1) executionData = '0x' + data.toString('hex');
+                if (fieldNum === 3) errorMsg = data.toString('utf8');
+              }
+            }
+
+            console.log();
+            if (errorMsg) {
+              console.log(chalk.red(`Error: ${errorMsg}`));
+            } else {
+              console.log(chalk.green('✓ Simulation successful'));
+            }
+            if (gasUsed) console.log(`Gas used: ${gasUsed}`);
+            if (executionData && executionData !== '0x') console.log(`Execution: ${executionData}`);
+            console.log();
+            console.log(chalk.gray(`Raw: ${result}`));
+          } catch {
+            // Fall back to raw output if decoding fails
+            console.log(formatOutput(result, { raw: true }));
+          }
+        } else {
+          console.log(formatOutput(result, { raw: options.raw }));
+        }
       } catch (err: any) {
-        error(`Failed to simulate: ${err.message}`);
+        error(`Failed to simulate: ${err.message || err}`);
         process.exit(1);
       }
     });
