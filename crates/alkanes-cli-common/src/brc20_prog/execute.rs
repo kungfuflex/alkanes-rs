@@ -836,14 +836,67 @@ impl<'a> Brc20ProgExecutor<'a> {
         let (internal_key, ephemeral_secret, _) = self.provider.get_internal_key_with_secret().await?;
         let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
 
-        let required_reveal_amount = 10_000u64;
+        // Calculate EXACT commit output using reference implementation approach:
+        // Build a dummy reveal transaction with REAL script and control block to get exact vsize
+        let fee_rate = params.fee_rate.unwrap_or(600.0);
+
+        // Build the reveal script and taproot structures NOW (before commit)
+        let reveal_script = envelope.build_reveal_script();
+        use bitcoin::taproot::{TaprootBuilder, LeafVersion};
+        let taproot_builder = TaprootBuilder::new()
+            .add_leaf(0, reveal_script.clone())
+            .map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
+        let taproot_spend_info = taproot_builder
+            .finalize(self.provider.secp(), internal_key)
+            .map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
+        let control_block = taproot_spend_info
+            .control_block(&(reveal_script.clone(), LeafVersion::TapScript))
+            .ok_or_else(|| AlkanesError::Other("Failed to create control block".to_string()))?;
+
+        // Create dummy reveal transaction to calculate exact size (like reference implementation)
+        use bitcoin::transaction::Version;
+        let dummy_outpoint = OutPoint::null();
+        let reveal_output_value = if params.use_activation { 546 } else { 1 };
+
+        let mut dummy_reveal_tx = Transaction {
+            version: Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: dummy_outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: bitcoin::Amount::from_sat(reveal_output_value),
+                script_pubkey: ScriptBuf::new_op_return(&[]), // Dummy OP_RETURN (size is similar)
+            }],
+        };
+
+        // Add dummy witness (64-byte signature + script + control block) - like reference
+        dummy_reveal_tx.input[0].witness.push(vec![0u8; 64]); // Dummy 64-byte signature
+        dummy_reveal_tx.input[0].witness.push(reveal_script.as_bytes());
+        dummy_reveal_tx.input[0].witness.push(control_block.serialize());
+
+        // Get EXACT vsize
+        let reveal_vsize = dummy_reveal_tx.vsize();
+        let reveal_fee = (fee_rate * reveal_vsize as f32).ceil() as u64;
+
+        // Commit output = reveal output value + reveal fee (like reference: postage + reveal_fee)
+        let commit_output_amount = reveal_output_value + reveal_fee;
+
+        log::info!("💰 Calculated EXACT commit output for presign: {} sats", commit_output_amount);
+        log::info!("   Fee rate: {} sat/vB, Reveal vsize: {} vB, Reveal fee: {} sats",
+                   fee_rate, reveal_vsize, reveal_fee);
+        log::info!("   Reveal output: {} sats, No change (avoids dust)", reveal_output_value);
+
         let funding_utxos = self.select_utxos_for_amount(
-            required_reveal_amount,
+            commit_output_amount,
             &params.from_addresses,
         ).await?;
 
         let commit_output = TxOut {
-            value: bitcoin::Amount::from_sat(required_reveal_amount),
+            value: bitcoin::Amount::from_sat(commit_output_amount),
             script_pubkey: commit_address.script_pubkey(),
         };
 
@@ -946,6 +999,7 @@ impl<'a> Brc20ProgExecutor<'a> {
     }
 
     /// Build reveal PSBT for presign strategy
+    /// This creates a reveal with NO change output - commit is sized exactly to cover reveal fee + dust output
     async fn build_reveal_psbt_for_presign(
         &mut self,
         params: &Brc20ProgExecuteParams,
@@ -962,27 +1016,26 @@ impl<'a> Brc20ProgExecutor<'a> {
         let change_address = Address::from_str(&change_address_str)?
             .require_network(self.provider.get_network())?;
 
-        let op_return_output = TxOut {
-            value: bitcoin::Amount::from_sat(0),
-            script_pubkey: self.create_brc20prog_op_return(),
-        };
-
-        let change_output = TxOut {
-            value: bitcoin::Amount::from_sat(1), // Placeholder
-            script_pubkey: change_address.script_pubkey(),
-        };
-
+        // NO CHANGE OUTPUT - commit is sized exactly for reveal fee + dust output
+        // This ensures all excess value goes to miners as fee
         let outputs = if params.use_activation {
-            // 3-tx pattern: inscription output + change
+            // 3-tx pattern: ONLY inscription output (546 sats), no change
+            log::info!("Creating 546-sat inscription output (no change - exact fee calculation)");
             vec![
                 TxOut {
                     value: bitcoin::Amount::from_sat(546),
                     script_pubkey: change_address.script_pubkey(),
                 },
-                change_output,
             ]
         } else {
-            vec![op_return_output, change_output]
+            // 2-tx pattern: ONLY OP_RETURN output, no change
+            log::info!("Creating OP_RETURN output (no change - exact fee calculation)");
+            vec![
+                TxOut {
+                    value: bitcoin::Amount::from_sat(0),
+                    script_pubkey: self.create_brc20prog_op_return(),
+                },
+            ]
         };
 
         let (reveal_psbt, reveal_fee) = self.build_reveal_psbt(
