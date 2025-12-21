@@ -51,7 +51,7 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Step 1: Build commit transaction (unsigned)
         log::info!("📝 Step 1/6: Building commit transaction...");
-        let (commit_psbt, commit_fee, commit_internal_key) = self.build_commit_psbt_for_presign(&params, &envelope).await?;
+        let (commit_psbt, commit_fee, commit_internal_key, ephemeral_secret) = self.build_commit_psbt_for_presign(&params, &envelope).await?;
 
         // Calculate commit txid from unsigned transaction
         let commit_tx = commit_psbt.unsigned_tx.clone();
@@ -109,7 +109,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         // Step 4: Sign all transactions
         log::info!("✍️  Step 4/6: Signing all transactions...");
         let signed_commit = self.sign_and_finalize_psbt(commit_psbt).await?;
-        let signed_reveal = self.sign_and_finalize_reveal_psbt_simple(reveal_psbt, &envelope, commit_internal_key).await?;
+        let signed_reveal = self.sign_and_finalize_reveal_psbt_simple(reveal_psbt, &envelope, commit_internal_key, Some(ephemeral_secret)).await?;
         let signed_activation = if let Some(act_psbt) = activation_psbt_opt {
             Some(self.sign_and_finalize_psbt(act_psbt).await?)
         } else {
@@ -577,6 +577,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             &mut reveal_psbt,
             envelope,
             commit_internal_key,
+            None, // No ephemeral secret in old flow
         ).await?;
 
         let reveal_tx_hex = bitcoin::consensus::encode::serialize_hex(&reveal_tx);
@@ -813,8 +814,9 @@ impl<'a> Brc20ProgExecutor<'a> {
         &mut self,
         params: &Brc20ProgExecuteParams,
         envelope: &Brc20ProgEnvelope,
-    ) -> Result<(Psbt, u64, XOnlyPublicKey)> {
-        let (internal_key, _) = self.provider.get_internal_key().await?;
+    ) -> Result<(Psbt, u64, XOnlyPublicKey, bitcoin::secp256k1::SecretKey)> {
+        // ANTI-FRONTRUNNING: Get ephemeral key with secret for signing
+        let (internal_key, ephemeral_secret, _) = self.provider.get_internal_key_with_secret().await?;
         let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
 
         let required_reveal_amount = 10_000u64;
@@ -836,7 +838,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             &params.change_address,
         ).await?;
 
-        Ok((commit_psbt, commit_fee, internal_key))
+        Ok((commit_psbt, commit_fee, internal_key, ephemeral_secret))
     }
 
     /// Build commit PSBT with final sequences (for presign)
@@ -1097,8 +1099,9 @@ impl<'a> Brc20ProgExecutor<'a> {
         mut psbt: Psbt,
         envelope: &Brc20ProgEnvelope,
         commit_internal_key: XOnlyPublicKey,
+        ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>,
     ) -> Result<Transaction> {
-        self.sign_and_finalize_reveal_psbt(&mut psbt, envelope, commit_internal_key).await
+        self.sign_and_finalize_reveal_psbt(&mut psbt, envelope, commit_internal_key, ephemeral_secret).await
     }
 
     /// Monitor mempool and bump fee if frontrunning detected (RBF strategy)
@@ -1344,7 +1347,8 @@ impl<'a> Brc20ProgExecutor<'a> {
                                                             let new_signed_reveal = self.sign_and_finalize_reveal_psbt_simple(
                                                                 new_reveal_psbt,
                                                                 envelope,
-                                                                new_commit_internal_key
+                                                                new_commit_internal_key,
+                                                                None // Can't use ephemeral secret in RBF path - this path shouldn't trigger with ephemeral keys
                                                             ).await?;
 
                                                             let new_reveal_hex = bitcoin::consensus::encode::serialize_hex(&new_signed_reveal);
@@ -1944,6 +1948,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         psbt: &mut Psbt,
         envelope: &Brc20ProgEnvelope,
         commit_internal_key: XOnlyPublicKey,
+        ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>,
     ) -> Result<Transaction> {
         use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
         use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder};
@@ -1990,9 +1995,10 @@ impl<'a> Brc20ProgExecutor<'a> {
             .map_err(|e| AlkanesError::Transaction(e.to_string()))?;
 
         // Sign the sighash for the commit input
+        // ANTI-FRONTRUNNING: Pass ephemeral secret to ensure we sign with the correct key
         let signature = self
             .provider
-            .sign_taproot_script_spend(sighash.into())
+            .sign_taproot_script_spend(sighash.into(), ephemeral_secret)
             .await?;
         let taproot_signature = bitcoin::taproot::Signature {
             signature,

@@ -1125,7 +1125,12 @@ impl WalletProvider for BrowserWalletProvider {
         // Browser wallets do not expose derivation paths, so this method cannot be fully implemented.
         Err(AlkanesError::NotImplemented("get_internal_key is not supported for browser wallets as they do not expose derivation paths.".to_string()))
     }
-    
+
+    async fn get_internal_key_with_secret(&self) -> Result<(XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
+        Err(AlkanesError::NotImplemented("get_internal_key_with_secret is not supported for browser wallets.".to_string()))
+    }
+
+
     async fn sign_psbt(&mut self, psbt: &Psbt) -> Result<Psbt> {
         // Convert PSBT to hex and use wallet to sign
         let psbt_hex = hex::encode(psbt.serialize());
@@ -1919,8 +1924,8 @@ impl DeezelProvider for BrowserWalletProvider {
         self.web_provider.get_utxo(outpoint).await
     }
 
-    async fn sign_taproot_script_spend(&self, msg: Message) -> Result<Signature> {
-        self.web_provider.sign_taproot_script_spend(msg).await
+    async fn sign_taproot_script_spend(&self, msg: Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<Signature> {
+        self.web_provider.sign_taproot_script_spend(msg, ephemeral_secret).await
     }
     fn get_bitcoin_rpc_url(&self) -> Option<String> {
         self.web_provider.get_bitcoin_rpc_url()

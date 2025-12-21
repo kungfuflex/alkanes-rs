@@ -356,7 +356,13 @@ impl WalletProvider for MockProvider {
         let path = DerivationPath::from_str("m/86'/1'/0'").unwrap();
         Ok((self.internal_key, (fingerprint, path)))
     }
-    
+
+    async fn get_internal_key_with_secret(&self) -> Result<(XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))> {
+        let fingerprint = Fingerprint::from_str("00000000").unwrap();
+        let path = DerivationPath::from_str("m/86'/1'/0'").unwrap();
+        Ok((self.internal_key, self.secret_key, (fingerprint, path)))
+    }
+
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
         use bitcoin::sighash::{SighashCache, TapSighashType, Prevouts};
         use bitcoin::taproot;
@@ -1047,8 +1053,10 @@ impl DeezelProvider for MockProvider {
     async fn sign_taproot_script_spend(
         &self,
         sighash: bitcoin::secp256k1::Message,
+        ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>,
     ) -> Result<schnorr::Signature> {
-        let keypair = Keypair::from_secret_key(&self.secp, &self.secret_key);
+        let secret = ephemeral_secret.unwrap_or(self.secret_key);
+        let keypair = Keypair::from_secret_key(&self.secp, &secret);
         Ok(self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut rand::thread_rng()))
     }
 

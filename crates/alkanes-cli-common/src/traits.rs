@@ -230,7 +230,10 @@ pub trait WalletProvider {
     
     /// Get internal key for wallet
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))>;
-    
+
+    /// Get ephemeral internal key with secret (for anti-frontrunning in inscriptions)
+    async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))>;
+
     /// Sign PSBT
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt>;
     
@@ -1008,7 +1011,8 @@ pub trait DeezelProvider:
     async fn get_utxo(&self, outpoint: &bitcoin::OutPoint) -> Result<Option<bitcoin::TxOut>>;
 
     /// Sign a taproot script spend sighash
-    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature>;
+    /// ANTI-FRONTRUNNING: If ephemeral_secret is provided, use it instead of generating random entropy
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature>;
 
     async fn wrap(&mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Result<String>;
 
@@ -1178,6 +1182,9 @@ impl<T: DeezelProvider + ?Sized> WalletProvider for Box<T> {
    }
    async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))> {
        (**self).get_internal_key().await
+   }
+   async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))> {
+       (**self).get_internal_key_with_secret().await
    }
    async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
        (**self).sign_psbt(psbt).await
@@ -1741,8 +1748,8 @@ impl<T: DeezelProvider + ?Sized> DeezelProvider for Box<T> {
     async fn get_utxo(&self, outpoint: &bitcoin::OutPoint) -> Result<Option<bitcoin::TxOut>> {
         (**self).get_utxo(outpoint).await
     }
-    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        (**self).sign_taproot_script_spend(sighash).await
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+        (**self).sign_taproot_script_spend(sighash, ephemeral_secret).await
     }
 
     async fn wrap(&mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Result<String> {

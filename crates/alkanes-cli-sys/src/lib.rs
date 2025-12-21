@@ -314,8 +314,9 @@ impl DeezelProvider for SystemAlkanes {
     async fn sign_taproot_script_spend(
         &self,
         sighash: bitcoin::secp256k1::Message,
+        ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>,
     ) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        self.provider.sign_taproot_script_spend(sighash).await
+        self.provider.sign_taproot_script_spend(sighash, ephemeral_secret).await
     }
 }
 
@@ -472,6 +473,9 @@ impl WalletProvider for SystemAlkanes {
     }
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
         self.provider.get_internal_key().await
+    }
+    async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
+        self.provider.get_internal_key_with_secret().await
     }
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
         self.provider.sign_psbt(psbt).await

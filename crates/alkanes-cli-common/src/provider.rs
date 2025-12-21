@@ -1879,26 +1879,54 @@ impl WalletProvider for ConcreteProvider {
     }
     
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))> {
-        let (keystore, mnemonic) = match &self.wallet_state {
-            WalletState::Unlocked { keystore, mnemonic } => (keystore, mnemonic),
-            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to get internal key".to_string())),
-        };
+        // CRITICAL FOR ANTI-FRONTRUNNING: Generate a fresh random ephemeral keypair
+        // for each inscription, just like the reference implementation does.
+        // Using the same deterministic key allows attackers to predict commit addresses!
 
-        let mnemonic_obj = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
-        let seed = mnemonic_obj.to_seed("");
-        let network = self.get_network();
-        let root_key = Xpriv::new_master(network, &seed)?;
-        
-        // Standard path for Taproot internal key. This should be configurable in a real wallet.
-        let path = DerivationPath::from_str("m/86'/1'/0'")?;
-        
-        let derived_xpriv = root_key.derive_priv(&self.secp, &path)?;
-        let keypair = derived_xpriv.to_keypair(&self.secp);
+        use bitcoin::secp256k1::rand::RngCore;
+
+        let mut secret_bytes = [0u8; 32];
+        #[cfg(not(target_arch = "wasm32"))]
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        #[cfg(target_arch = "wasm32")]
+        {
+            use bitcoin::secp256k1::rand::rngs::OsRng;
+            OsRng.fill_bytes(&mut secret_bytes);
+        }
+
+        let secret_key = bitcoin::secp256k1::SecretKey::from_slice(&secret_bytes)?;
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret_key);
         let (internal_key, _) = keypair.x_only_public_key();
 
-        let master_fingerprint = Fingerprint::from_str(&keystore.master_fingerprint)?;
+        // For ephemeral keys, we use a dummy fingerprint and path since they're not derived from the wallet
+        let dummy_fingerprint = Fingerprint::from_str("00000000")?;
+        let dummy_path = DerivationPath::from_str("m/0")?;
 
-        Ok((internal_key, (master_fingerprint, path)))
+        Ok((internal_key, (dummy_fingerprint, dummy_path)))
+    }
+
+    /// Get an ephemeral internal key with the secret key for signing
+    /// ANTI-FRONTRUNNING: Returns fresh random keypair for each inscription
+    async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))> {
+        use bitcoin::secp256k1::rand::RngCore;
+
+        let mut secret_bytes = [0u8; 32];
+        #[cfg(not(target_arch = "wasm32"))]
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        #[cfg(target_arch = "wasm32")]
+        {
+            use bitcoin::secp256k1::rand::rngs::OsRng;
+            OsRng.fill_bytes(&mut secret_bytes);
+        }
+
+        let secret_key = bitcoin::secp256k1::SecretKey::from_slice(&secret_bytes)?;
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret_key);
+        let (internal_key, _) = keypair.x_only_public_key();
+
+        let dummy_fingerprint = Fingerprint::from_str("00000000")?;
+        let dummy_path = DerivationPath::from_str("m/0")?;
+
+        Ok((internal_key, secret_key, (dummy_fingerprint, dummy_path)))
     }
     
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
@@ -3726,16 +3754,25 @@ impl DeezelProvider for ConcreteProvider {
         Ok(Some(TxOut { value: Amount::from_sat(amount), script_pubkey }))
     }
 
-    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        let mnemonic = match &self.wallet_state {
-            WalletState::Unlocked { mnemonic, .. } => mnemonic,
-            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign".to_string())),
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+        // ANTI-FRONTRUNNING: If ephemeral_secret is provided (from presign flow),
+        // use it instead of generating random entropy. This ensures the reveal can be
+        // signed with the same key used to create the commit address.
+        let keypair = if let Some(secret) = ephemeral_secret {
+            bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret)
+        } else {
+            // Fallback to old behavior for non-presign flows
+            let mnemonic = match &self.wallet_state {
+                WalletState::Unlocked { mnemonic, .. } => mnemonic,
+                _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign".to_string())),
+            };
+            let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+            let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
+            let network = self.get_network();
+            let root_key = Xpriv::new_master(network, &seed)?;
+            root_key.to_keypair(&self.secp)
         };
-        let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
-        let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
-        let network = self.get_network();
-        let root_key = Xpriv::new_master(network, &seed)?;
-        let keypair = root_key.to_keypair(&self.secp);
+
         #[cfg(not(target_arch = "wasm32"))]
         let signature = self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut rand::thread_rng());
         #[cfg(target_arch = "wasm32")]

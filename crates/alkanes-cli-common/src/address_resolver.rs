@@ -611,7 +611,11 @@ impl WalletProvider for StandaloneAddressResolver {
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support wallet operations".to_string()))
     }
-    
+
+    async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support wallet operations".to_string()))
+    }
+
     async fn sign_psbt(&mut self, _psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support wallet operations".to_string()))
     }
@@ -1251,7 +1255,7 @@ impl DeezelProvider for StandaloneAddressResolver {
     async fn get_utxo(&self, _outpoint: &bitcoin::OutPoint) -> Result<Option<bitcoin::TxOut>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support get_utxo".to_string()))
     }
-    async fn sign_taproot_script_spend(&self, _sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+    async fn sign_taproot_script_spend(&self, _sighash: bitcoin::secp256k1::Message, _ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support sign_taproot_script_spend".to_string()))
     }
 

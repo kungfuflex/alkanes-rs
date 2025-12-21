@@ -1673,8 +1673,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         log::info!("Computed taproot script-path sighash for input {input_index}");
 
-        let signature = self.provider.sign_taproot_script_spend(sighash.into()).await?;
-        
+        let signature = self.provider.sign_taproot_script_spend(sighash.into(), None).await?;
+
         let taproot_signature = taproot::Signature {
             signature,
             sighash_type: TapSighashType::Default,

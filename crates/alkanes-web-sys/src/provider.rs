@@ -5883,6 +5883,24 @@ impl WalletProvider for WebProvider {
         let fingerprint = Fingerprint::from_str(&keystore.master_fingerprint)?;
         Ok((x_only, (fingerprint, path)))
     }
+
+    async fn get_internal_key_with_secret(&self) -> Result<(XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))> {
+        use bitcoin::secp256k1::rand::RngCore;
+        use bitcoin::secp256k1::rand::rngs::OsRng;
+
+        // Generate ephemeral random key for anti-frontrunning (WASM-compatible)
+        let mut secret_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut secret_bytes);
+
+        let secret_key = bitcoin::secp256k1::SecretKey::from_slice(&secret_bytes)?;
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(self.secp(), &secret_key);
+        let (internal_key, _) = keypair.x_only_public_key();
+
+        let dummy_fingerprint = Fingerprint::from_str("00000000")?;
+        let dummy_path = DerivationPath::from_str("m/0")?;
+
+        Ok((internal_key, secret_key, (dummy_fingerprint, dummy_path)))
+    }
     
     async fn sign_psbt(&mut self, psbt: &Psbt) -> Result<Psbt> {
         use bitcoin::sighash::{SighashCache, EcdsaSighashType};
@@ -7076,9 +7094,15 @@ impl DeezelProvider for WebProvider {
         Ok(Some(tx.output[vout].clone()))
     }
 
-    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature> {
         use bitcoin::bip32::Xpriv;
         use bip39::Mnemonic;
+
+        // If ephemeral_secret provided, use it instead of wallet mnemonic
+        if let Some(secret) = ephemeral_secret {
+            let keypair = bitcoin::secp256k1::Keypair::from_secret_key(self.secp(), &secret);
+            return Ok(self.secp().sign_schnorr(&sighash, &keypair));
+        }
 
         // Get the keystore and decrypt the mnemonic
         let keystore = self.keystore.as_ref()
