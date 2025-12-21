@@ -1908,9 +1908,15 @@ impl WalletProvider for ConcreteProvider {
         let secp = Secp256k1::<All>::new();
 
         let mut prevouts = Vec::new();
-        for input in &tx.input {
-            let utxo = self.get_utxo(&input.previous_output).await?
-                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", input.previous_output)))?;
+        for (i, input) in tx.input.iter().enumerate() {
+            // First try to use witness_utxo from PSBT (for presigned transactions that don't exist on-chain yet)
+            let utxo = if let Some(ref witness_utxo) = psbt.inputs[i].witness_utxo {
+                witness_utxo.clone()
+            } else {
+                // Fallback to fetching from network
+                self.get_utxo(&input.previous_output).await?
+                    .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", input.previous_output)))?
+            };
             prevouts.push(utxo);
         }
 
