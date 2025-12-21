@@ -548,6 +548,9 @@ impl BitcoinRpcProvider for SystemAlkanes {
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
         self.provider.send_raw_transaction(tx_hex).await
     }
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        self.provider.send_raw_transactions(tx_hexes).await
+    }
     async fn get_mempool_info(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_mempool_info().await
     }
