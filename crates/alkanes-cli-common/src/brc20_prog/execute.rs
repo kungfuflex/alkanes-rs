@@ -61,6 +61,12 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         log::info!("   Commit txid (pre-calculated): {}", commit_txid);
 
+        // Extract commit change output (at index 1) to use for funding activation
+        let commit_change_output = commit_tx.output.get(1)
+            .ok_or_else(|| AlkanesError::Wallet("Commit transaction has no change output".to_string()))?
+            .clone();
+        let commit_change_outpoint = OutPoint { txid: commit_txid, vout: 1 };
+
         // Step 2: Build reveal transaction (unsigned, spending future commit output)
         log::info!("📝 Step 2/6: Building reveal transaction...");
         let (reveal_psbt, reveal_fee, reveal_inscription_outpoint) = self.build_reveal_psbt_for_presign(
@@ -83,10 +89,13 @@ impl<'a> Brc20ProgExecutor<'a> {
         // Step 3: Build activation transaction (if needed)
         let (activation_psbt_opt, activation_fee_opt) = if params.use_activation {
             log::info!("📝 Step 3/6: Building activation transaction...");
+            // Use commit change output to fund activation fee
             let (act_psbt, act_fee) = self.build_activation_psbt_for_presign(
                 &params,
                 reveal_inscription_outpoint,
                 reveal_inscription_output,
+                commit_change_outpoint,
+                commit_change_output,
             ).await?;
 
             let act_txid = act_psbt.unsigned_tx.txid();
@@ -981,6 +990,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         params: &Brc20ProgExecuteParams,
         reveal_inscription_outpoint: OutPoint,
         reveal_inscription_output: TxOut,
+        commit_change_outpoint: OutPoint,
+        commit_change_output: TxOut,
     ) -> Result<(Psbt, u64)> {
         use bitcoin::psbt::Input as PsbtInput;
 
@@ -993,20 +1004,28 @@ impl<'a> Brc20ProgExecutor<'a> {
             .require_network(self.provider.get_network())?;
 
         let op_return_output = TxOut {
-            value: bitcoin::Amount::from_sat(0),
+            value: bitcoin::Amount::from_sat(1), // 1 sat for OP_RETURN
             script_pubkey: self.create_brc20prog_op_return(),
         };
 
-        // Estimate fee
+        // Estimate fee using 2 inputs (inscription + commit change)
         let temp_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,
             lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn {
-                previous_output: reveal_inscription_outpoint,
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME, // RBF-enabled
-                witness: bitcoin::Witness::from_slice(&[vec![0u8; 65]]),
-            }],
+            input: vec![
+                bitcoin::TxIn {
+                    previous_output: reveal_inscription_outpoint,
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: bitcoin::Witness::from_slice(&[vec![0u8; 65]]),
+                },
+                bitcoin::TxIn {
+                    previous_output: commit_change_outpoint,
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: bitcoin::Witness::from_slice(&[vec![0u8; 65]]),
+                },
+            ],
             output: vec![
                 op_return_output.clone(),
                 TxOut {
@@ -1018,10 +1037,17 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         let fee_rate_sat_vb = params.fee_rate.unwrap_or(600.0);
         let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
-        let change_value = reveal_inscription_output.value.to_sat().saturating_sub(1).saturating_sub(fee);
+
+        // Total inputs: inscription (546) + commit change
+        let total_input = reveal_inscription_output.value.to_sat() + commit_change_output.value.to_sat();
+        // Outputs: OP_RETURN (1) + change
+        let change_value = total_input.saturating_sub(1).saturating_sub(fee);
 
         if change_value < 546 {
-            return Err(AlkanesError::Wallet("Not enough funds for activation".to_string()));
+            return Err(AlkanesError::Wallet(format!(
+                "Not enough funds for activation: total_input={}, fee={}, change={}",
+                total_input, fee, change_value
+            )));
         }
 
         let final_outputs = vec![
@@ -1035,18 +1061,30 @@ impl<'a> Brc20ProgExecutor<'a> {
         let unsigned_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,
             lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn {
-                previous_output: reveal_inscription_outpoint,
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME, // RBF-enabled
-                witness: bitcoin::Witness::new(),
-            }],
+            input: vec![
+                bitcoin::TxIn {
+                    previous_output: reveal_inscription_outpoint,
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: bitcoin::Witness::new(),
+                },
+                bitcoin::TxIn {
+                    previous_output: commit_change_outpoint,
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: bitcoin::Witness::new(),
+                },
+            ],
             output: final_outputs,
         };
 
         let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
         psbt.inputs[0] = PsbtInput {
             witness_utxo: Some(reveal_inscription_output),
+            ..Default::default()
+        };
+        psbt.inputs[1] = PsbtInput {
+            witness_utxo: Some(commit_change_output),
             ..Default::default()
         };
 
@@ -1318,11 +1356,22 @@ impl<'a> Brc20ProgExecutor<'a> {
                                                                 log::info!("   🔄 Rebuilding activation transaction...");
                                                                 let new_reveal_inscription_output = new_signed_reveal.output[0].clone();
 
+                                                                // Extract commit change output for funding activation
+                                                                let new_commit_change_output = new_commit_tx.output.get(1)
+                                                                    .ok_or_else(|| AlkanesError::Wallet("New commit transaction has no change output".to_string()))?
+                                                                    .clone();
+                                                                let new_commit_change_outpoint = OutPoint {
+                                                                    txid: new_commit_tx.txid(),
+                                                                    vout: 1
+                                                                };
+
                                                                 let (new_activation_psbt, _activation_fee) =
                                                                     self.build_activation_psbt_for_presign(
                                                                         params,
                                                                         new_reveal_inscription_outpoint,
                                                                         new_reveal_inscription_output,
+                                                                        new_commit_change_outpoint,
+                                                                        new_commit_change_output,
                                                                     ).await?;
 
                                                                 let new_signed_activation = self.sign_and_finalize_psbt(new_activation_psbt).await?;
