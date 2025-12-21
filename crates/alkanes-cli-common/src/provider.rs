@@ -4007,7 +4007,7 @@ impl BitcoinRpcProvider for ConcreteProvider {
     }
 
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let maxfeerate = 0.1;
@@ -4017,6 +4017,25 @@ impl BitcoinRpcProvider for ConcreteProvider {
         result.as_str()
             .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransaction response".to_string()))
             .map(|s| s.to_string())
+    }
+
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let maxfeerate = 0.1;
+        let maxburnamount = 0.1;
+        let params = json!([tx_hexes, maxfeerate, maxburnamount]);
+        let result = self.call(&rpc_url, "sendrawtransactions", params, 1).await?;
+
+        // Parse array of txids
+        result.as_array()
+            .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransactions response".to_string()))?
+            .iter()
+            .map(|v| v.as_str()
+                .ok_or_else(|| AlkanesError::RpcError("Invalid txid in response".to_string()))
+                .map(|s| s.to_string()))
+            .collect()
     }
 
     async fn get_mempool_info(&self) -> Result<JsonValue> {

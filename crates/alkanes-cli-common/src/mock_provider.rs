@@ -534,6 +534,10 @@ impl BitcoinRpcProvider for MockProvider {
         Ok("mock_txid".to_string())
     }
 
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        Ok(tx_hexes.iter().enumerate().map(|(i, _)| format!("mock_txid_{}", i)).collect())
+    }
+
     async fn get_blockchain_info(&self) -> Result<JsonValue> {
         Ok(JsonValue::Null)
     }

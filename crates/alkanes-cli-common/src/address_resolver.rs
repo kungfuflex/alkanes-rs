@@ -685,6 +685,9 @@ impl BitcoinRpcProvider for StandaloneAddressResolver {
     async fn send_raw_transaction(&self, _tx_hex: &str) -> Result<String> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }
+    async fn send_raw_transactions(&self, _tx_hexes: &[String]) -> Result<Vec<String>> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
+    }
     async fn get_mempool_info(&self) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }

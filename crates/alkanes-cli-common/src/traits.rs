@@ -488,7 +488,10 @@ pub trait BitcoinRpcProvider {
     
     /// Send raw transaction
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String>;
-    
+
+    /// Send multiple raw transactions atomically (anti-frontrunning)
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>>;
+
     /// Get mempool info
     async fn get_mempool_info(&self) -> Result<JsonValue>;
     
@@ -1253,6 +1256,9 @@ impl<T: DeezelProvider + ?Sized> BitcoinRpcProvider for Box<T> {
    }
    async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
        <T as BitcoinRpcProvider>::send_raw_transaction(self, tx_hex).await
+   }
+   async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+       <T as BitcoinRpcProvider>::send_raw_transactions(self, tx_hexes).await
    }
    async fn get_mempool_info(&self) -> Result<serde_json::Value> {
        <T as BitcoinRpcProvider>::get_mempool_info(self).await

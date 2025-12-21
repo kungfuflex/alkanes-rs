@@ -113,6 +113,98 @@ static RPCHelpMan sendrawtransaction()
     };
 }
 
+static RPCHelpMan sendrawtransactions()
+{
+    return RPCHelpMan{
+        "sendrawtransactions",
+        "Submit multiple raw transactions (serialized, hex-encoded) to local node and network atomically.\n"
+        "\nAll transactions will be broadcast together in a single batch to prevent frontrunning.\n"
+        "This is useful for commit-reveal patterns where transactions must hit the mempool simultaneously.\n"
+        "\nRelated RPCs: sendrawtransaction, submitpackage\n",
+        {
+            {"hexstrings", RPCArg::Type::ARR, RPCArg::Optional::NO, "An array of hex strings of raw transactions",
+                {
+                    {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, ""},
+                },
+            },
+            {"maxfeerate", RPCArg::Type::AMOUNT, RPCArg::Default{FormatMoney(DEFAULT_MAX_RAW_TX_FEE_RATE.GetFeePerK())},
+             "Reject transactions whose fee rate is higher than the specified value, expressed in " + CURRENCY_UNIT +
+                 "/kvB.\nFee rates larger than 1BTC/kvB are rejected.\nSet to 0 to accept any fee rate."},
+            {"maxburnamount", RPCArg::Type::AMOUNT, RPCArg::Default{FormatMoney(DEFAULT_MAX_BURN_AMOUNT)},
+             "Reject transactions with provably unspendable outputs (e.g. 'datacarrier' outputs that use the OP_RETURN opcode) greater than the specified value, expressed in " + CURRENCY_UNIT + ".\n"
+             "If burning funds through unspendable outputs is desired, increase this value.\n"
+             "This check is based on heuristics and does not guarantee spendability of outputs.\n"},
+        },
+        RPCResult{
+            RPCResult::Type::ARR, "", "Array of transaction hashes in hex",
+            {
+                {RPCResult::Type::STR_HEX, "", "The transaction hash in hex"},
+            }
+        },
+        RPCExamples{
+            "\nBroadcast commit and reveal transactions together\n"
+            + HelpExampleCli("sendrawtransactions", "'[\"commit_tx_hex\", \"reveal_tx_hex\"]'") +
+            "\nAs a JSON-RPC call\n"
+            + HelpExampleRpc("sendrawtransactions", "[\"commit_tx_hex\", \"reveal_tx_hex\"]")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+            const UniValue raw_transactions = request.params[0].get_array();
+            if (raw_transactions.empty() || raw_transactions.size() > MAX_PACKAGE_COUNT) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "Array must contain between 1 and " + ToString(MAX_PACKAGE_COUNT) + " transactions.");
+            }
+
+            const CAmount max_burn_amount = request.params[2].isNull() ? 0 : AmountFromValue(request.params[2]);
+            const CFeeRate max_raw_tx_fee_rate{ParseFeeRate(self.Arg<UniValue>("maxfeerate"))};
+
+            std::vector<CTransactionRef> txns;
+            txns.reserve(raw_transactions.size());
+
+            // Decode and validate all transactions first
+            for (const auto& rawtx : raw_transactions.getValues()) {
+                CMutableTransaction mtx;
+                if (!DecodeHexTx(mtx, rawtx.get_str())) {
+                    throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed. Make sure the tx has at least one input.");
+                }
+
+                for (const auto& out : mtx.vout) {
+                    if((out.scriptPubKey.IsUnspendable() || !out.scriptPubKey.HasValidOps()) && out.nValue > max_burn_amount) {
+                        throw JSONRPCTransactionError(TransactionError::MAX_BURN_EXCEEDED);
+                    }
+                }
+
+                txns.emplace_back(MakeTransactionRef(std::move(mtx)));
+            }
+
+            NodeContext& node = EnsureAnyNodeContext(request.context);
+            UniValue result(UniValue::VARR);
+
+            // Broadcast all transactions atomically
+            AssertLockNotHeld(cs_main);
+            for (const auto& tx : txns) {
+                int64_t virtual_size = GetVirtualTransactionSize(*tx);
+                CAmount max_raw_tx_fee = max_raw_tx_fee_rate.GetFee(virtual_size);
+
+                std::string err_string;
+                const TransactionError err = BroadcastTransaction(node,
+                                                                  tx,
+                                                                  err_string,
+                                                                  max_raw_tx_fee,
+                                                                  node::TxBroadcast::MEMPOOL_AND_BROADCAST_TO_ALL,
+                                                                  /*wait_callback=*/true);
+                if (TransactionError::OK != err) {
+                    throw JSONRPCTransactionError(err, err_string);
+                }
+
+                result.push_back(tx->GetHash().GetHex());
+            }
+
+            return result;
+        },
+    };
+}
+
 static RPCHelpMan testmempoolaccept()
 {
     return RPCHelpMan{
@@ -1150,6 +1242,7 @@ void RegisterMempoolRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
         {"rawtransactions", &sendrawtransaction},
+        {"rawtransactions", &sendrawtransactions},
         {"rawtransactions", &testmempoolaccept},
         {"blockchain", &getmempoolancestors},
         {"blockchain", &getmempooldescendants},

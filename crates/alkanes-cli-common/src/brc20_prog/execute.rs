@@ -118,26 +118,43 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         log::info!("   ✅ All transactions signed");
 
-        // Step 5: Broadcast all transactions at once
-        log::info!("📡 Step 5/6: Broadcasting all transactions simultaneously...");
+        // Step 5: Broadcast all transactions atomically in a single batch
+        log::info!("📡 Step 5/6: Broadcasting all transactions ATOMICALLY to prevent frontrunning...");
 
         let commit_hex = bitcoin::consensus::encode::serialize_hex(&signed_commit);
         let reveal_hex = bitcoin::consensus::encode::serialize_hex(&signed_reveal);
 
-        let final_commit_txid = self.broadcast_with_options(&commit_hex, &params).await?;
-        log::info!("   ✅ Commit broadcast: {}", final_commit_txid);
-
-        let final_reveal_txid = self.broadcast_with_options(&reveal_hex, &params).await?;
-        log::info!("   ✅ Reveal broadcast: {}", final_reveal_txid);
-
-        let final_activation_txid = if let Some(ref act_tx) = signed_activation {
+        // Build array of all transactions to broadcast together
+        let mut tx_hexes = vec![commit_hex, reveal_hex];
+        if let Some(ref act_tx) = signed_activation {
             let act_hex = bitcoin::consensus::encode::serialize_hex(act_tx);
-            let txid = self.broadcast_with_options(&act_hex, &params).await?;
-            log::info!("   ✅ Activation broadcast: {}", txid);
-            Some(txid)
+            tx_hexes.push(act_hex);
+        }
+
+        // ATOMIC BATCH BROADCAST - all transactions hit mempool simultaneously
+        use crate::traits::BitcoinRpcProvider;
+        let txids = self.provider.send_raw_transactions(&tx_hexes).await?;
+
+        let final_commit_txid = txids.get(0)
+            .ok_or_else(|| AlkanesError::RpcError("No commit txid in batch response".to_string()))?
+            .clone();
+        let final_reveal_txid = txids.get(1)
+            .ok_or_else(|| AlkanesError::RpcError("No reveal txid in batch response".to_string()))?
+            .clone();
+        let final_activation_txid = if signed_activation.is_some() {
+            Some(txids.get(2)
+                .ok_or_else(|| AlkanesError::RpcError("No activation txid in batch response".to_string()))?
+                .clone())
         } else {
             None
         };
+
+        log::info!("   ✅ Commit broadcast: {}", final_commit_txid);
+        log::info!("   ✅ Reveal broadcast: {}", final_reveal_txid);
+        if let Some(ref act_txid) = final_activation_txid {
+            log::info!("   ✅ Activation broadcast: {}", act_txid);
+        }
+        log::info!("   🎯 All {} transactions broadcast atomically in single RPC call!", tx_hexes.len());
 
         // Step 6: Monitor for frontrunning and RBF if needed
         log::info!("🔍 Step 6/6: Monitoring for frontrunning attacks...");
