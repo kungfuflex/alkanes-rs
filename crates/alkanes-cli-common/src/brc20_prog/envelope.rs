@@ -8,7 +8,7 @@ use bitcoin::{
     blockdata::opcodes,
     script::Builder as ScriptBuilder,
     taproot::ControlBlock,
-    ScriptBuf, Witness,
+    ScriptBuf, Witness, XOnlyPublicKey,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -47,9 +47,18 @@ impl Brc20ProgEnvelope {
     }
 
     /// Build the reveal script following ord inscription format
-    /// Structure: OP_FALSE OP_IF "ord" <content_type_tag> "text/plain" <body_tag> <payload> OP_ENDIF
-    pub fn build_reveal_script(&self) -> ScriptBuf {
+    /// Structure: <pubkey> CHECKSIG OP_FALSE OP_IF "ord" <content_type_tag> "text/plain" <body_tag> <payload> OP_ENDIF
+    ///
+    /// IMPORTANT: The <pubkey> CHECKSIG at the start ensures ONLY the holder of the corresponding
+    /// private key can spend this script-path output. Without this, anyone could spend the commit
+    /// output (frontrunning vulnerability).
+    pub fn build_reveal_script(&self, pubkey: XOnlyPublicKey) -> ScriptBuf {
         let mut builder = ScriptBuilder::new()
+            // CRITICAL: Pubkey + CHECKSIG at the start to prevent frontrunning
+            // Only the holder of the ephemeral private key can create a valid signature
+            .push_x_only_key(&pubkey)
+            .push_opcode(opcodes::all::OP_CHECKSIG)
+            // The inscription envelope follows - this is inside OP_FALSE OP_IF so it's not executed
             .push_opcode(opcodes::OP_FALSE)
             .push_opcode(opcodes::all::OP_IF)
             .push_slice(ORD_PROTOCOL_ID); // "ord" protocol identifier
@@ -77,8 +86,9 @@ impl Brc20ProgEnvelope {
         &self,
         signature: &[u8],
         control_block: ControlBlock,
+        pubkey: XOnlyPublicKey,
     ) -> Result<Witness, AlkanesError> {
-        let reveal_script = self.build_reveal_script();
+        let reveal_script = self.build_reveal_script(pubkey);
 
         let mut witness = Witness::new();
 
@@ -119,25 +129,42 @@ impl Brc20ProgEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitcoin::secp256k1::{Secp256k1, SecretKey};
+
+    fn test_pubkey() -> XOnlyPublicKey {
+        let secp = Secp256k1::new();
+        let secret_key = SecretKey::from_slice(&[1u8; 32]).unwrap();
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+        XOnlyPublicKey::from_keypair(&keypair).0
+    }
 
     #[test]
     fn test_deploy_envelope_script() {
         let json = r#"{"p":"brc20-prog","op":"deploy","d":"0x608060405234801561001057600080fd5b50"}"#;
         let envelope = Brc20ProgEnvelope::for_deploy(json.to_string());
-        let script = envelope.build_reveal_script();
+        let pubkey = test_pubkey();
+        let script = envelope.build_reveal_script(pubkey);
 
-        // Verify script starts with OP_FALSE OP_IF "ord"
+        // Verify script starts with <pubkey> CHECKSIG OP_FALSE OP_IF "ord"
+        // Script structure: [32-byte pubkey push] [CHECKSIG] [OP_FALSE] [OP_IF] [3-byte "ord" push] ...
         let script_bytes = script.as_bytes();
-        assert!(script_bytes.len() > 10);
-        assert_eq!(script_bytes[0], opcodes::OP_FALSE.to_u8());
-        assert_eq!(script_bytes[1], opcodes::all::OP_IF.to_u8());
+        assert!(script_bytes.len() > 40);
+        // First byte should be 0x20 (32) for the pubkey push
+        assert_eq!(script_bytes[0], 0x20);
+        // After 32 bytes of pubkey, we should have CHECKSIG (0xac)
+        assert_eq!(script_bytes[33], opcodes::all::OP_CHECKSIG.to_u8());
+        // Then OP_FALSE (0x00)
+        assert_eq!(script_bytes[34], opcodes::OP_FALSE.to_u8());
+        // Then OP_IF (0x63)
+        assert_eq!(script_bytes[35], opcodes::all::OP_IF.to_u8());
     }
 
     #[test]
     fn test_call_envelope_script() {
         let json = r#"{"p":"brc20-prog","op":"call","c":"0x1234567890abcdef","d":"0xa9059cbb"}"#;
         let envelope = Brc20ProgEnvelope::for_call(json.to_string());
-        let script = envelope.build_reveal_script();
+        let pubkey = test_pubkey();
+        let script = envelope.build_reveal_script(pubkey);
 
         // Verify script contains the JSON payload
         let script_bytes = script.as_bytes();

@@ -412,7 +412,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         let fee_rate = params.fee_rate.unwrap_or(600.0);
 
         // Build the reveal script and taproot structures NOW (before commit)
-        let reveal_script = envelope.build_reveal_script();
+        // The reveal script includes <pubkey> CHECKSIG to prevent frontrunning
+        let reveal_script = envelope.build_reveal_script(internal_key);
         use bitcoin::taproot::{TaprootBuilder, LeafVersion, TapLeafHash};
         let taproot_builder = TaprootBuilder::new()
             .add_leaf(0, reveal_script.clone())
@@ -803,7 +804,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         use bitcoin::taproot::TaprootBuilder;
         let network = self.provider.get_network();
 
-        let reveal_script = envelope.build_reveal_script();
+        // Build reveal script with pubkey+CHECKSIG to prevent frontrunning
+        let reveal_script = envelope.build_reveal_script(internal_key);
 
         let taproot_builder = TaprootBuilder::new()
             .add_leaf(0, reveal_script.clone())
@@ -841,7 +843,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         let fee_rate = params.fee_rate.unwrap_or(600.0);
 
         // Build the reveal script and taproot structures NOW (before commit)
-        let reveal_script = envelope.build_reveal_script();
+        // The reveal script includes <pubkey> CHECKSIG to prevent frontrunning
+        let reveal_script = envelope.build_reveal_script(internal_key);
         use bitcoin::taproot::{TaprootBuilder, LeafVersion};
         let taproot_builder = TaprootBuilder::new()
             .add_leaf(0, reveal_script.clone())
@@ -1916,11 +1919,11 @@ impl<'a> Brc20ProgExecutor<'a> {
                 if i == 0 {
                     // Script-path spend - calculate actual witness size
                     // Witness structure: [signature (65), script, control_block (33)]
-                    let reveal_script = env.build_reveal_script();
+                    let reveal_script = env.build_reveal_script(commit_internal_key);
                     let script_size = reveal_script.len();
                     let control_block_size = 33; // Fixed size for control block
                     let signature_size = 65; // Schnorr signature + sighash type
-                    
+
                     // Create realistic witness placeholder
                     input.witness.push(vec![0u8; signature_size]);
                     input.witness.push(vec![0u8; script_size]);
@@ -2033,7 +2036,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         let unsigned_tx = psbt.unsigned_tx.clone();
 
         // Build taproot spend info for the commit input (input 0)
-        let reveal_script = envelope.build_reveal_script();
+        // The reveal script includes <pubkey> CHECKSIG to prevent frontrunning
+        let reveal_script = envelope.build_reveal_script(commit_internal_key);
         let taproot_builder = TaprootBuilder::new()
             .add_leaf(0, reveal_script.clone())
             .map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
@@ -2077,7 +2081,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         let signature_bytes = taproot_signature.to_vec();
 
         // Create the complete witness for the commit input
-        let witness = envelope.create_complete_witness(&signature_bytes, control_block)?;
+        let witness = envelope.create_complete_witness(&signature_bytes, control_block, commit_internal_key)?;
 
         // Create the final transaction
         let mut tx = unsigned_tx.clone();
