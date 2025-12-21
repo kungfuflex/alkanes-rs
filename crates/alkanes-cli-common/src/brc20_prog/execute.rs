@@ -160,26 +160,18 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("Starting BRC20-prog execution");
         log::info!("Inscription content: {}", params.inscription_content);
 
-        // STRATEGIES DISABLED: They don't actually prevent frontrunning
-        // The real anti-frontrunning protection is using small commit outputs (~10k sats)
-        // so that attackers have to spend their own money to frontrun.
+        // ANTI-FRONTRUNNING: Use presign strategy by default to prevent frontrunning
+        // This builds and signs all transactions BEFORE broadcasting any of them,
+        // eliminating the window where attackers can see the commit and race to build their own reveal.
+        //
+        // The presign approach is the ONLY reliable way to prevent frontrunning because:
+        // - Commit and reveal are broadcast in immediate succession (no delay)
+        // - Reveal is already signed when commit hits the mempool
+        // - Attackers have no time to build and broadcast a competing reveal
 
-        // // Log anti-frontrunning strategy if enabled
-        // if let Some(ref strategy) = params.strategy {
-        //     use super::types::AntiFrontrunningStrategy;
-        //     let strategy_name = match strategy {
-        //         AntiFrontrunningStrategy::CheckLockTimeVerify => "CheckLockTimeVerify (CLTV)",
-        //         AntiFrontrunningStrategy::Cpfp => "Child-Pays-For-Parent (CPFP)",
-        //         AntiFrontrunningStrategy::Presign => "Presign + RBF monitoring (hybrid)",
-        //         AntiFrontrunningStrategy::Rbf => "Replace-By-Fee (RBF) monitoring",
-        //     };
-        //     log::info!("🛡️  Anti-frontrunning strategy: {}", strategy_name);
-        // }
-
-        // // Use Presign strategy if enabled (separate execution path)
-        // if let Some(super::types::AntiFrontrunningStrategy::Presign) = params.strategy {
-        //     return self.execute_with_presign_rbf(params).await;
-        // }
+        // Always use presign strategy (ignore the strategy parameter - it doesn't work)
+        log::info!("🔐 Using presign strategy to prevent frontrunning");
+        return self.execute_with_presign_rbf(params).await;
 
 
         // Create the envelope with the JSON payload
