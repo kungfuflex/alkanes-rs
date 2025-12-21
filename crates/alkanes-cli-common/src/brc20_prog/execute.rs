@@ -224,8 +224,9 @@ impl<'a> Brc20ProgExecutor<'a> {
             log::info!("⏳ Waiting for commit transaction to be mined (required for slipstream/rebar)...");
             self.wait_for_confirmation(&commit_txid.to_string(), &params).await?;
         } else {
-            log::info!("Waiting a while for esplora to index the commit transaction...");
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            // NO WAIT - broadcast reveal immediately to prevent frontrunning
+            // We already have commit_output and commit_outpoint in memory, no need to wait for esplora
+            log::info!("⚡ Broadcasting reveal immediately (anti-frontrunning)");
 
             // Mine a block if on regtest
             if params.mine_enabled {
@@ -252,8 +253,9 @@ impl<'a> Brc20ProgExecutor<'a> {
             log::info!("⏳ Waiting for reveal transaction to be mined (required for slipstream/rebar)...");
             self.wait_for_confirmation(&reveal_txid.to_string(), &params).await?;
         } else {
-            log::info!("Waiting a while for esplora to index the reveal transaction...");
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            // NO WAIT - broadcast activation immediately to prevent frontrunning
+            // We already have reveal_inscription_outpoint and reveal_inscription_output in memory
+            log::info!("⚡ Broadcasting activation immediately (anti-frontrunning)");
 
             if params.mine_enabled {
                 self.mine_blocks_if_regtest(&params).await?;
