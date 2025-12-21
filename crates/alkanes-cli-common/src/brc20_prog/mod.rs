@@ -8,6 +8,7 @@ pub mod envelope;
 pub mod eth_call;
 pub mod execute;
 pub mod foundry;
+pub mod frbtc;
 pub mod types;
 pub mod wrap_btc;
 
@@ -34,3 +35,16 @@ pub use wrap_btc::{
 
 pub use batch_payment_bytecode::generate_batch_payment_fetcher_bytecode;
 pub use sol_query_bytecode::generate_frbtc_query_bytecode;
+
+// FrBTC operations
+pub use frbtc::{
+    FrBtcExecutor,
+    FrBtcWrapParams,
+    FrBtcUnwrapParams,
+    FrBtcWrapAndExecuteParams,
+    FrBtcWrapAndExecute2Params,
+    FRBTC_ADDRESS_MAINNET,
+    FRBTC_ADDRESS_SIGNET,
+    FRBTC_ADDRESS_REGTEST,
+    get_frbtc_contract_address,
+};

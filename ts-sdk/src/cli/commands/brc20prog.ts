@@ -1,21 +1,29 @@
 /**
  * BRC20-Prog command group
- * Programmable BRC-20 operations (EVM-compatible)
+ * Programmable BRC-20 operations
+ *
+ * The CLI uses the SDK's Brc20ProgClient via provider.brc20prog for all operations.
  */
 
 import { Command } from 'commander';
 import { createProvider } from '../utils/provider.js';
-import { formatOutput, success, error } from '../utils/formatting.js';
+import {
+  formatOutput,
+  formatBlockInfo,
+  success,
+  error,
+} from '../utils/formatting.js';
 import ora from 'ora';
 
 export function registerBrc20ProgCommands(program: Command): void {
-  const brc20prog = program.command('brc20-prog').description('Programmable BRC-20 operations');
+  const brc20Prog = program.command('brc20-prog').description('Programmable BRC-20 operations');
 
   // balance
-  brc20prog
+  brc20Prog
     .command('balance <address>')
     .description('Get balance for address')
     .option('--block <tag>', 'Block tag')
+    .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -23,16 +31,13 @@ export function registerBrc20ProgCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog_get_balance_js(
-          address,
-          options.block || null
-        );
-        const balance = JSON.parse(result);
+        const result = await provider.brc20prog.getBalance(address, options.block);
 
         spinner.succeed();
-        console.log(formatOutput(balance, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get balance: ${err.message}`);
         process.exit(1);
@@ -40,9 +45,10 @@ export function registerBrc20ProgCommands(program: Command): void {
     });
 
   // code
-  brc20prog
+  brc20Prog
     .command('code <address>')
     .description('Get contract code')
+    .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -50,13 +56,13 @@ export function registerBrc20ProgCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog_get_code_js(address);
-        const code = JSON.parse(result);
+        const result = await provider.brc20prog.getCode(address);
 
         spinner.succeed();
-        console.log(formatOutput(code, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get code: ${err.message}`);
         process.exit(1);
@@ -64,9 +70,10 @@ export function registerBrc20ProgCommands(program: Command): void {
     });
 
   // block-number
-  brc20prog
+  brc20Prog
     .command('block-number')
     .description('Get current block number')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -74,13 +81,13 @@ export function registerBrc20ProgCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog_block_number_js();
-        const blockNumber = JSON.parse(result);
+        const result = await provider.brc20prog.getBlockNumber();
 
         spinner.succeed();
-        console.log(formatOutput(blockNumber, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get block number: ${err.message}`);
         process.exit(1);
@@ -88,9 +95,10 @@ export function registerBrc20ProgCommands(program: Command): void {
     });
 
   // chain-id
-  brc20prog
+  brc20Prog
     .command('chain-id')
     .description('Get chain ID')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -98,13 +106,13 @@ export function registerBrc20ProgCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog_chain_id_js();
-        const chainId = JSON.parse(result);
+        const result = await provider.brc20prog.getChainId();
 
         spinner.succeed();
-        console.log(formatOutput(chainId, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get chain ID: ${err.message}`);
         process.exit(1);
@@ -112,9 +120,10 @@ export function registerBrc20ProgCommands(program: Command): void {
     });
 
   // tx-receipt
-  brc20prog
+  brc20Prog
     .command('tx-receipt <hash>')
     .description('Get transaction receipt')
+    .option('--raw', 'Output raw JSON')
     .action(async (hash, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -122,13 +131,13 @@ export function registerBrc20ProgCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog_get_transaction_receipt_js(hash);
-        const receipt = JSON.parse(result);
+        const result = await provider.brc20prog.getTxReceipt(hash);
 
         spinner.succeed();
-        console.log(formatOutput(receipt, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get transaction receipt: ${err.message}`);
         process.exit(1);
@@ -136,9 +145,10 @@ export function registerBrc20ProgCommands(program: Command): void {
     });
 
   // tx
-  brc20prog
+  brc20Prog
     .command('tx <hash>')
     .description('Get transaction by hash')
+    .option('--raw', 'Output raw JSON')
     .action(async (hash, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -146,13 +156,13 @@ export function registerBrc20ProgCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog_get_transaction_by_hash_js(hash);
-        const tx = JSON.parse(result);
+        const result = await provider.brc20prog.getTx(hash);
 
         spinner.succeed();
-        console.log(formatOutput(tx, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get transaction: ${err.message}`);
         process.exit(1);
@@ -160,10 +170,11 @@ export function registerBrc20ProgCommands(program: Command): void {
     });
 
   // block
-  brc20prog
+  brc20Prog
     .command('block <number>')
     .description('Get block by number')
-    .option('--full', 'Include full transactions', false)
+    .option('--include-txs', 'Include full transaction objects', false)
+    .option('--raw', 'Output raw JSON')
     .action(async (number, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -171,16 +182,17 @@ export function registerBrc20ProgCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog_get_block_by_number_js(
-          number,
-          options.full
-        );
-        const block = JSON.parse(result);
+        const result = await provider.brc20prog.getBlock(number, options.includeTxs);
 
         spinner.succeed();
-        console.log(formatOutput(block, globalOpts));
+        if (options.raw) {
+          console.log(formatOutput(result, { raw: true }));
+        } else {
+          console.log(formatBlockInfo(result));
+        }
       } catch (err: any) {
         error(`Failed to get block: ${err.message}`);
         process.exit(1);
@@ -188,10 +200,12 @@ export function registerBrc20ProgCommands(program: Command): void {
     });
 
   // call
-  brc20prog
+  brc20Prog
     .command('call <to> <data>')
     .description('Call contract function')
-    .option('--block <tag>', 'Block tag')
+    .option('--from <address>', 'Caller address')
+    .option('--block-tag <tag>', 'Block tag (latest, pending, or number)')
+    .option('--raw', 'Output raw JSON')
     .action(async (to, data, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -199,17 +213,13 @@ export function registerBrc20ProgCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog_call_js(
-          to,
-          data,
-          options.block || null
-        );
-        const output = JSON.parse(result);
+        const result = await provider.brc20prog.call(to, data, options.from, options.blockTag);
 
         spinner.succeed();
-        console.log(formatOutput(output, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to call contract: ${err.message}`);
         process.exit(1);
@@ -217,10 +227,11 @@ export function registerBrc20ProgCommands(program: Command): void {
     });
 
   // estimate-gas
-  brc20prog
+  brc20Prog
     .command('estimate-gas <to> <data>')
     .description('Estimate gas for transaction')
-    .option('--block <tag>', 'Block tag')
+    .option('--from <address>', 'Caller address')
+    .option('--raw', 'Output raw JSON')
     .action(async (to, data, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -228,19 +239,184 @@ export function registerBrc20ProgCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog_estimate_gas_js(
-          to,
-          data,
-          options.block || null
-        );
-        const gas = JSON.parse(result);
+        const result = await provider.brc20prog.estimateGas(to, data, options.from);
 
         spinner.succeed();
-        console.log(formatOutput(gas, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to estimate gas: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // ============================================================================
+  // FrBTC Operations (using WASM bindings)
+  // ============================================================================
+
+  // wrap-btc - Simple wrap BTC to frBTC
+  brc20Prog
+    .command('wrap-btc <amount>')
+    .description('Wrap BTC to frBTC (simple wrap without execution)')
+    .option('--from <addresses...>', 'Addresses to source UTXOs from')
+    .option('--change <address>', 'Change address')
+    .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
+    .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
+    .option('--use-rebar', 'Use Rebar Shield for private relay')
+    .option('--rebar-tier <tier>', 'Rebar fee tier (1 or 2)', parseInt)
+    .option('--resume <txid>', 'Resume from existing commit transaction')
+    .option('--raw', 'Output raw JSON')
+    .action(async (amount, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Wrapping BTC to frBTC...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const params = {
+          from_addresses: options.from,
+          change_address: options.change,
+          fee_rate: options.feeRate,
+          use_slipstream: options.useSlipstream,
+          use_rebar: options.useRebar,
+          rebar_tier: options.rebarTier,
+          resume_from_commit: options.resume,
+          auto_confirm: true,
+        };
+
+        const rawProvider = provider.rawProvider;
+        const result = await rawProvider.frbtcWrap(BigInt(amount), JSON.stringify(params));
+
+        spinner.succeed('BTC wrapped to frBTC successfully!');
+        console.log(formatOutput(result, { raw: options.raw }));
+      } catch (err: any) {
+        error(`Failed to wrap BTC: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // unwrap-btc - Unwrap frBTC to BTC
+  brc20Prog
+    .command('unwrap-btc <amount>')
+    .description('Unwrap frBTC to BTC (burns frBTC and queues BTC payment)')
+    .requiredOption('--to <address>', 'Recipient address for the unwrapped BTC')
+    .option('--vout <index>', 'Vout index for inscription output', parseInt, 0)
+    .option('--from <addresses...>', 'Addresses to source UTXOs from')
+    .option('--change <address>', 'Change address')
+    .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
+    .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
+    .option('--use-rebar', 'Use Rebar Shield for private relay')
+    .option('--rebar-tier <tier>', 'Rebar fee tier (1 or 2)', parseInt)
+    .option('--resume <txid>', 'Resume from existing commit transaction')
+    .option('--raw', 'Output raw JSON')
+    .action(async (amount, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Unwrapping frBTC to BTC...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const params = {
+          from_addresses: options.from,
+          change_address: options.change,
+          fee_rate: options.feeRate,
+          use_slipstream: options.useSlipstream,
+          use_rebar: options.useRebar,
+          rebar_tier: options.rebarTier,
+          resume_from_commit: options.resume,
+          auto_confirm: true,
+        };
+
+        const rawProvider = provider.rawProvider;
+        const result = await rawProvider.frbtcUnwrap(
+          BigInt(amount),
+          BigInt(options.vout || 0),
+          options.to,
+          JSON.stringify(params)
+        );
+
+        spinner.succeed('frBTC unwrap queued successfully!');
+        console.log(formatOutput(result, { raw: options.raw }));
+        success(`BTC will be sent to ${options.to} by the subfrost operator`);
+      } catch (err: any) {
+        error(`Failed to unwrap frBTC: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // wrap-and-execute - Wrap BTC and deploy+execute a script
+  // NOTE: This advanced feature is not yet implemented in the CLI.
+  // Use alkanes-cli directly for wrap-and-execute operations.
+  brc20Prog
+    .command('wrap-and-execute <amount>')
+    .description('Wrap BTC and deploy+execute a script (wrapAndExecute) [Not yet implemented]')
+    .requiredOption('--script <bytecode>', 'Script bytecode to deploy and execute (hex)')
+    .option('--from <addresses...>', 'Addresses to source UTXOs from')
+    .option('--change <address>', 'Change address')
+    .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
+    .option('--raw', 'Output raw JSON')
+    .action(async (_amount, _options, _command) => {
+      error('wrap-and-execute is not yet implemented in alkanes-bindgen-cli.');
+      error('Please use alkanes-cli directly for this operation.');
+      process.exit(1);
+    });
+
+  // wrap-and-execute2 - Wrap BTC and call an existing contract
+  // NOTE: This advanced feature is not yet implemented in the CLI.
+  // Use alkanes-cli directly for wrap-and-execute2 operations.
+  brc20Prog
+    .command('wrap-and-execute2 <amount>')
+    .description('Wrap BTC and call an existing contract (wrapAndExecute2) [Not yet implemented]')
+    .requiredOption('--target <address>', 'Target contract address')
+    .requiredOption('--signature <sig>', 'Function signature (e.g., "deposit()")')
+    .option('--calldata <args>', 'Comma-separated calldata arguments', '')
+    .option('--from <addresses...>', 'Addresses to source UTXOs from')
+    .option('--change <address>', 'Change address')
+    .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
+    .option('--raw', 'Output raw JSON')
+    .action(async (_amount, _options, _command) => {
+      error('wrap-and-execute2 is not yet implemented in alkanes-bindgen-cli.');
+      error('Please use alkanes-cli directly for this operation.');
+      process.exit(1);
+    });
+
+  // signer-address - Get the FrBTC signer address
+  brc20Prog
+    .command('signer-address')
+    .description('Get the FrBTC signer address for the current network')
+    .option('--raw', 'Output raw JSON')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting FrBTC signer address...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const rawProvider = provider.rawProvider;
+        const signerAddress = await rawProvider.frbtcGetSignerAddress();
+
+        spinner.succeed('FrBTC signer address retrieved!');
+
+        if (options.raw) {
+          console.log(formatOutput({ signer_address: signerAddress }, { raw: true }));
+        } else {
+          console.log(`FrBTC Signer Address`);
+          console.log(`   Network: ${globalOpts.provider || 'mainnet'}`);
+          console.log(`   Signer Address: ${signerAddress}`);
+        }
+      } catch (err: any) {
+        error(`Failed to get signer address: ${err.message}`);
         process.exit(1);
       }
     });

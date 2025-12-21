@@ -241,6 +241,21 @@ function passArrayJsValueToWasm0(array, malloc) {
     return ptr;
 }
 /**
+ * Asynchronously encrypts data using the Web Crypto API.
+ * @param {string} mnemonic
+ * @param {string} passphrase
+ * @returns {Promise<any>}
+ */
+export function encryptMnemonic(mnemonic, passphrase) {
+    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
  * @param {string} psbt_base64
  * @param {string} network_str
  * @returns {string}
@@ -569,26 +584,178 @@ export function brc20_prog_wrap_btc(network, amount, target_contract, function_s
 }
 
 /**
- * Asynchronously encrypts data using the Web Crypto API.
- * @param {string} mnemonic
- * @param {string} passphrase
+ * Simple wrap: convert BTC to frBTC without executing any contract
+ *
+ * This calls the wrap() function on the FrBTC contract.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of BTC to wrap (in satoshis)
+ * * `params_json` - JSON string with execution parameters:
+ *   ```json
+ *   {
+ *     "from_addresses": ["address1", "address2"],  // optional
+ *     "change_address": "address",                  // optional
+ *     "fee_rate": 100.0                             // optional, sat/vB
+ *   }
+ *   ```
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
+ * @param {string} network
+ * @param {bigint} amount
+ * @param {string} params_json
  * @returns {Promise<any>}
  */
-export function encryptMnemonic(mnemonic, passphrase) {
-    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+export function frbtc_wrap(network, amount, params_json) {
+    const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
+    const ret = wasm.frbtc_wrap(ptr0, len0, amount, ptr1, len1);
     return ret;
 }
 
-function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2);
+/**
+ * Unwrap frBTC to BTC
+ *
+ * This calls unwrap2() on the FrBTC contract to burn frBTC and queue a BTC payment.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of frBTC to unwrap (in satoshis)
+ * * `vout` - Vout index for the inscription output
+ * * `recipient_address` - Bitcoin address to receive the unwrapped BTC
+ * * `params_json` - JSON string with execution parameters
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
+ * @param {string} network
+ * @param {bigint} amount
+ * @param {bigint} vout
+ * @param {string} recipient_address
+ * @param {string} params_json
+ * @returns {Promise<any>}
+ */
+export function frbtc_unwrap(network, amount, vout, recipient_address, params_json) {
+    const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(recipient_address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.frbtc_unwrap(ptr0, len0, amount, vout, ptr1, len1, ptr2, len2);
+    return ret;
+}
+
+/**
+ * Wrap BTC and deploy+execute a script (wrapAndExecute)
+ *
+ * This calls wrapAndExecute() on the FrBTC contract.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of BTC to wrap (in satoshis)
+ * * `script_bytecode` - Script bytecode to deploy and execute (hex-encoded)
+ * * `params_json` - JSON string with execution parameters
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
+ * @param {string} network
+ * @param {bigint} amount
+ * @param {string} script_bytecode
+ * @param {string} params_json
+ * @returns {Promise<any>}
+ */
+export function frbtc_wrap_and_execute(network, amount, script_bytecode, params_json) {
+    const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(script_bytecode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.frbtc_wrap_and_execute(ptr0, len0, amount, ptr1, len1, ptr2, len2);
+    return ret;
+}
+
+/**
+ * Wrap BTC and call an existing contract (wrapAndExecute2)
+ *
+ * This calls wrapAndExecute2() on the FrBTC contract.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ * * `amount` - Amount of BTC to wrap (in satoshis)
+ * * `target_address` - Target contract address
+ * * `function_signature` - Function signature (e.g., "deposit()")
+ * * `calldata_args` - Comma-separated calldata arguments
+ * * `params_json` - JSON string with execution parameters
+ *
+ * # Returns
+ *
+ * A JSON string with transaction details
+ * @param {string} network
+ * @param {bigint} amount
+ * @param {string} target_address
+ * @param {string} function_signature
+ * @param {string} calldata_args
+ * @param {string} params_json
+ * @returns {Promise<any>}
+ */
+export function frbtc_wrap_and_execute2(network, amount, target_address, function_signature, calldata_args, params_json) {
+    const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(target_address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(function_signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(calldata_args, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ptr4 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len4 = WASM_VECTOR_LEN;
+    const ret = wasm.frbtc_wrap_and_execute2(ptr0, len0, amount, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+    return ret;
+}
+
+/**
+ * Get the FrBTC signer address for a network
+ *
+ * This calls getSignerAddress() on the FrBTC contract to get the p2tr address
+ * where BTC should be sent for wrapping.
+ *
+ * # Arguments
+ *
+ * * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+ *
+ * # Returns
+ *
+ * A JSON string containing:
+ * - `network`: The network name
+ * - `frbtc_contract`: The FrBTC contract address
+ * - `signer_address`: The Bitcoin p2tr address for the signer
+ * @param {string} network
+ * @returns {Promise<any>}
+ */
+export function frbtc_get_signer_address(network) {
+    const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.frbtc_get_signer_address(ptr0, len0);
+    return ret;
 }
 
 function wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb(arg0, arg1) {
     wasm.wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb(arg0, arg1);
+}
+
+function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2);
 }
 
 function wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(arg0, arg1, arg2, arg3) {
@@ -2985,6 +3152,33 @@ export class WebProvider {
         return ret !== 0;
     }
     /**
+     * Get addresses from the loaded wallet keystore
+     * Uses the Keystore.get_addresses method from alkanes-cli-common
+     *
+     * # Arguments
+     * * `address_type` - Address type: "p2tr", "p2wpkh", "p2sh-p2wpkh", "p2pkh"
+     * * `start_index` - Starting index for address derivation
+     * * `count` - Number of addresses to derive
+     * * `chain` - Chain index (0 for external/receiving, 1 for internal/change)
+     *
+     * # Returns
+     * Array of address info objects with: { derivation_path, address, script_type, index, used }
+     * @param {string} address_type
+     * @param {number} start_index
+     * @param {number} count
+     * @param {number | null} [chain]
+     * @returns {any}
+     */
+    walletGetAddresses(address_type, start_index, count, chain) {
+        const ptr0 = passStringToWasm0(address_type, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletGetAddresses(this.__wbg_ptr, ptr0, len0, start_index, count, isLikeNone(chain) ? 0x100000001 : (chain) >>> 0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Send BTC to an address
      * params: { address: string, amount: number (satoshis), fee_rate?: number }
      * Wallet must be loaded first via walletLoadMnemonic
@@ -4274,12 +4468,6 @@ export function __wbg_wasmbrowserwalletprovider_new(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_063787da2e490a92(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3035, function: Function { arguments: [], shim_idx: 3036, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h264445b1cd05789c, wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb);
-    return ret;
-};
-
 export function __wbindgen_cast_2241b6af4c4b2941(arg0, arg1) {
     // Cast intrinsic for `Ref(String) -> Externref`.
     const ret = getStringFromWasm0(arg0, arg1);
@@ -4292,9 +4480,9 @@ export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_6168e0e9deacb449(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3707, function: Function { arguments: [Externref], shim_idx: 3708, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
+export function __wbindgen_cast_832dfe82587c7cfc(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3070, function: Function { arguments: [], shim_idx: 3071, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h264445b1cd05789c, wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb);
     return ret;
 };
 
@@ -4319,6 +4507,12 @@ export function __wbindgen_cast_d6cd19b81560fd6e(arg0) {
 export function __wbindgen_cast_e7b45dd881f38ce3(arg0, arg1) {
     // Cast intrinsic for `U128 -> Externref`.
     const ret = (BigInt.asUintN(64, arg0) | (BigInt.asUintN(64, arg1) << BigInt(64)));
+    return ret;
+};
+
+export function __wbindgen_cast_facf2bd55df381c1(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3752, function: Function { arguments: [Externref], shim_idx: 3753, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 

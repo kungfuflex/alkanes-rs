@@ -4422,12 +4422,8 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::WrapBtc { amount, target, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
-            use alkanes_cli_common::brc20_prog::wrap_btc::{Brc20ProgWrapBtcExecutor, Brc20ProgWrapBtcParams};
-
-            
-            let calldata_hex = encode_function_call(&signature, &calldata)?;
-            let calldata_bytes = hex::decode(calldata_hex.trim_start_matches("0x"))?;
+        Brc20Prog::WrapBtc { amount, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapParams};
 
             // Resolve address identifiers before creating params
             let resolved_from = if let Some(from_addrs) = from {
@@ -4439,38 +4435,219 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             } else {
                 None
             };
-            
+
             let resolved_change = if let Some(change_addr) = change {
                 Some(provider.resolve_all_identifiers(&change_addr).await?)
             } else {
                 None
             };
 
-            let params = Brc20ProgWrapBtcParams {
+            let params = FrBtcWrapParams {
                 amount,
-                target_address: target,
-                calldata: calldata_bytes,
                 from_addresses: resolved_from,
                 change_address: resolved_change,
                 fee_rate,
                 raw_output: raw,
                 trace_enabled: trace,
                 mine_enabled: mine,
-                auto_confirm: auto_confirm,
+                auto_confirm,
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                resume_from_commit: resume,
             };
 
-            let mut executor = Brc20ProgWrapBtcExecutor::new(provider);
-            let result = executor.wrap_btc(params).await?;
+            let mut executor = FrBtcExecutor::new(provider);
+            let result = executor.wrap(params).await?;
 
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!("✅ BTC wrapped and locked successfully!");
+                println!("✅ BTC wrapped to frBTC successfully!");
                 println!("🔗 Commit TXID: {}", result.commit_txid);
                 println!("🔗 Reveal TXID: {}", result.reveal_txid);
                 println!("💰 Commit Fee: {} sats", result.commit_fee);
                 println!("💰 Reveal Fee: {} sats", result.reveal_fee);
-                println!("🎉 frBTC minted and locked in BRC20 vault!");
+            }
+            Ok(())
+        }
+        Brc20Prog::UnwrapBtc { amount, vout, to, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcUnwrapParams};
+
+            // Resolve address identifiers
+            let resolved_from = if let Some(from_addrs) = from {
+                let mut resolved = Vec::new();
+                for addr in from_addrs {
+                    resolved.push(provider.resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+
+            let resolved_change = if let Some(change_addr) = change {
+                Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
+            let resolved_to = provider.resolve_all_identifiers(&to).await?;
+
+            let params = FrBtcUnwrapParams {
+                amount,
+                vout,
+                recipient_address: resolved_to,
+                from_addresses: resolved_from,
+                change_address: resolved_change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm,
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                resume_from_commit: resume,
+            };
+
+            let mut executor = FrBtcExecutor::new(provider);
+            let result = executor.unwrap(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ frBTC unwrap queued successfully!");
+                println!("🔗 Commit TXID: {}", result.commit_txid);
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee);
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+                println!("📬 BTC will be sent to {} by the subfrost operator", to);
+            }
+            Ok(())
+        }
+        Brc20Prog::WrapAndExecute { amount, script, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapAndExecuteParams};
+
+            // Resolve address identifiers
+            let resolved_from = if let Some(from_addrs) = from {
+                let mut resolved = Vec::new();
+                for addr in from_addrs {
+                    resolved.push(provider.resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+
+            let resolved_change = if let Some(change_addr) = change {
+                Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
+            let params = FrBtcWrapAndExecuteParams {
+                amount,
+                script_bytecode: script,
+                from_addresses: resolved_from,
+                change_address: resolved_change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm,
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                resume_from_commit: resume,
+            };
+
+            let mut executor = FrBtcExecutor::new(provider);
+            let result = executor.wrap_and_execute(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ BTC wrapped and script executed!");
+                println!("🔗 Commit TXID: {}", result.commit_txid);
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee);
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+            }
+            Ok(())
+        }
+        Brc20Prog::WrapAndExecute2 { amount, target, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapAndExecute2Params};
+
+            // Resolve address identifiers
+            let resolved_from = if let Some(from_addrs) = from {
+                let mut resolved = Vec::new();
+                for addr in from_addrs {
+                    resolved.push(provider.resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+
+            let resolved_change = if let Some(change_addr) = change {
+                Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
+            let params = FrBtcWrapAndExecute2Params {
+                amount,
+                target_address: target,
+                signature,
+                calldata_args: calldata,
+                from_addresses: resolved_from,
+                change_address: resolved_change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm,
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                resume_from_commit: resume,
+            };
+
+            let mut executor = FrBtcExecutor::new(provider);
+            let result = executor.wrap_and_execute2(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ BTC wrapped and contract called!");
+                println!("🔗 Commit TXID: {}", result.commit_txid);
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee);
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+            }
+            Ok(())
+        }
+        Brc20Prog::SignerAddress { raw } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, get_frbtc_contract_address};
+
+            let network = provider.get_network();
+            let frbtc_address = get_frbtc_contract_address(network);
+
+            let mut executor = FrBtcExecutor::new(provider);
+            let signer_address = executor.get_signer_address().await?;
+
+            if raw {
+                let result = serde_json::json!({
+                    "network": format!("{:?}", network),
+                    "frbtc_contract": frbtc_address,
+                    "signer_address": signer_address,
+                });
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("🔑 FrBTC Signer Address");
+                println!("   Network: {:?}", network);
+                println!("   FrBTC Contract: {}", frbtc_address);
+                println!("   Signer Address: {}", signer_address);
             }
             Ok(())
         }

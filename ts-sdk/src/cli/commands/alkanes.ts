@@ -1,11 +1,20 @@
 /**
  * Alkanes command group
  * Smart contract operations for Alkanes protocol
+ *
+ * The CLI uses the SDK's AlkanesRpcClient via provider.alkanes for all operations.
  */
 
 import { Command } from 'commander';
+import chalk from 'chalk';
 import { createProvider } from '../utils/provider.js';
-import { formatOutput, success, error } from '../utils/formatting.js';
+import {
+  formatOutput,
+  formatAlkaneBalances,
+  formatReflectMetadata,
+  success,
+  error,
+} from '../utils/formatting.js';
 import ora from 'ora';
 
 export function registerAlkanesCommands(program: Command): void {
@@ -16,6 +25,7 @@ export function registerAlkanesCommands(program: Command): void {
     .command('getbytecode <alkane-id>')
     .description('Get bytecode for an alkanes contract')
     .option('--block-tag <tag>', 'Block tag (e.g., "latest" or height)')
+    .option('--raw', 'Output raw JSON')
     .action(async (alkaneId, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -27,11 +37,10 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanes_bytecode_js(alkaneId, options.blockTag || null);
-        const bytecode = JSON.parse(result);
+        const bytecode = await provider.alkanes.getBytecode(alkaneId, options.blockTag);
 
         spinner.succeed();
-        console.log(formatOutput(bytecode, globalOpts));
+        console.log(formatOutput(bytecode, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get bytecode: ${err.message}`);
         process.exit(1);
@@ -43,6 +52,7 @@ export function registerAlkanesCommands(program: Command): void {
     .command('balance')
     .description('Get alkanes balance for an address')
     .option('--address <address>', 'Address to check (defaults to wallet)')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -54,11 +64,16 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanes_balance_js(options.address || null);
-        const balance = JSON.parse(result);
+        const balance = await provider.alkanes.getBalance(options.address);
 
         spinner.succeed();
-        console.log(formatOutput(balance, globalOpts));
+        if (options.raw) {
+          console.log(formatOutput(balance, { raw: true }));
+        } else if (Array.isArray(balance)) {
+          console.log(formatAlkaneBalances(balance));
+        } else {
+          console.log(formatOutput(balance, { raw: false }));
+        }
       } catch (err: any) {
         error(`Failed to get balance: ${err.message}`);
         process.exit(1);
@@ -69,6 +84,7 @@ export function registerAlkanesCommands(program: Command): void {
   alkanes
     .command('trace <outpoint>')
     .description('Trace an alkanes transaction')
+    .option('--raw', 'Output raw JSON')
     .action(async (outpoint, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -80,11 +96,10 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanes_trace_js(outpoint);
-        const trace = JSON.parse(result);
+        const trace = await provider.alkanes.trace(outpoint);
 
         spinner.succeed();
-        console.log(formatOutput(trace, globalOpts));
+        console.log(formatOutput(trace, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to trace: ${err.message}`);
         process.exit(1);
@@ -98,8 +113,7 @@ export function registerAlkanesCommands(program: Command): void {
     .option('--disasm', 'Enable disassembly to WAT format', false)
     .option('--fuzz', 'Enable fuzzing analysis', false)
     .option('--fuzz-ranges <ranges>', 'Opcode ranges for fuzzing')
-    .option('--meta', 'Extract and display metadata', false)
-    .option('--codehash', 'Compute and display codehash', false)
+    .option('--raw', 'Output raw JSON')
     .action(async (target, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -114,18 +128,68 @@ export function registerAlkanesCommands(program: Command): void {
         const config = {
           disasm: options.disasm,
           fuzz: options.fuzz,
-          fuzz_ranges: options.fuzzRanges || null,
-          meta: options.meta,
-          codehash: options.codehash,
+          fuzzRanges: options.fuzzRanges,
         };
 
-        const result = await provider.alkanes_inspect_js(target, config);
-        const inspection = JSON.parse(result);
+        const result = await provider.alkanes.inspect(target, config);
 
         spinner.succeed();
-        console.log(formatOutput(inspection, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to inspect: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // inspect-bytecode - Inspect bytecode directly from file or hex string
+  alkanes
+    .command('inspect-bytecode <bytecode>')
+    .description('Inspect alkanes bytecode directly from file or hex string (no RPC fetch)')
+    .option('--alkane-id <id>', 'Alkane ID for context (format: block:tx)', '0:0')
+    .option('--disasm', 'Enable disassembly to WAT format', false)
+    .option('--fuzz', 'Enable fuzzing analysis', false)
+    .option('--fuzz-ranges <ranges>', 'Opcode ranges for fuzzing (e.g., "0-100,200-300")')
+    .option('--meta', 'Extract and display metadata', false)
+    .option('--codehash', 'Compute and display codehash', false)
+    .option('--raw', 'Output raw JSON')
+    .action(async (bytecode, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Inspecting bytecode...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        // Determine if bytecode is a file path or hex string
+        let bytecodeHex: string;
+        const fs = await import('fs');
+        if (fs.existsSync(bytecode)) {
+          // Read from file
+          const fileContent = fs.readFileSync(bytecode);
+          bytecodeHex = fileContent.toString('hex');
+        } else {
+          // Assume it's a hex string
+          bytecodeHex = bytecode;
+        }
+
+        const config = {
+          disasm: options.disasm,
+          fuzz: options.fuzz,
+          fuzz_ranges: options.fuzzRanges,
+          meta: options.meta,
+          codehash: options.codehash,
+          raw: options.raw,
+        };
+
+        const result = await provider.alkanes.inspectBytecode(bytecodeHex, options.alkaneId, config);
+
+        spinner.succeed('Inspection complete');
+        console.log(formatOutput(result, { raw: options.raw }));
+      } catch (err: any) {
+        error(`Failed to inspect bytecode: ${err.message}`);
         process.exit(1);
       }
     });
@@ -133,11 +197,14 @@ export function registerAlkanesCommands(program: Command): void {
   // simulate
   alkanes
     .command('simulate <contract-id>')
-    .description('Simulate alkanes execution')
-    .option('--params <params>', 'Calldata params (format: [block,tx,inputs...]:[block:tx:value])')
-    .option('--block-hex <hex>', 'Block hex')
-    .option('--transaction-hex <hex>', 'Transaction hex')
-    .option('--block-tag <tag>', 'Block tag')
+    .description('Simulate alkanes execution (format: block:tx or block:tx:opcode)')
+    .option('--inputs <alkanes>', 'Input alkanes as comma-separated triplets (e.g., 2:1:1000,2:2:500)')
+    .option('--height <height>', 'Block height for simulation')
+    .option('--txindex <index>', 'Transaction index (default: 1)', '1')
+    .option('--pointer <ptr>', 'Pointer value (default: 0)', '0')
+    .option('--refund <ptr>', 'Refund pointer (default: 0)', '0')
+    .option('--block-tag <tag>', 'Block tag to query')
+    .option('--raw', 'Output raw JSON')
     .action(async (contractId, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -149,33 +216,164 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        // Build context JSON
+        // Parse contract-id: block:tx or block:tx:opcode
+        const parts = contractId.split(':');
+        if (parts.length < 2 || parts.length > 3) {
+          throw new Error('Invalid contract-id format. Use block:tx or block:tx:opcode (e.g., 2:112 or 2:112:10)');
+        }
+        const targetBlock = parseInt(parts[0], 10);
+        const targetTx = parseInt(parts[1], 10);
+        const calldataOpcode = parts.length === 3 ? parseInt(parts[2], 10) : 0;
+
+        // Parse input alkanes if provided (format: block:tx:amount,block:tx:amount)
+        const alkanes: Array<{id: {block: {lo: number, hi: number}, tx: {lo: number, hi: number}}, value: {lo: number, hi: number}}> = [];
+        if (options.inputs) {
+          const inputParts = options.inputs.split(',');
+          for (const input of inputParts) {
+            const [block, tx, amount] = input.split(':').map((s: string) => parseInt(s, 10));
+            if (isNaN(block) || isNaN(tx) || isNaN(amount)) {
+              throw new Error(`Invalid input format: ${input}. Use block:tx:amount`);
+            }
+            alkanes.push({
+              id: { block: { lo: block, hi: 0 }, tx: { lo: tx, hi: 0 } },
+              value: { lo: amount, hi: 0 }
+            });
+          }
+        }
+
+        // Get simulation height
+        let height = options.height ? parseInt(options.height, 10) : 0;
+        if (!height) {
+          // Get current metashrew height
+          try {
+            height = await provider.metashrew.height();
+          } catch {
+            height = 0;
+          }
+        }
+
+        // Build calldata with LEB128 encoding
+        const calldata: number[] = [];
+        // LEB128 encode targetBlock
+        let value = targetBlock;
+        do {
+          let byte = value & 0x7f;
+          value >>>= 7;
+          if (value !== 0) byte |= 0x80;
+          calldata.push(byte);
+        } while (value !== 0);
+        // LEB128 encode targetTx
+        value = targetTx;
+        do {
+          let byte = value & 0x7f;
+          value >>>= 7;
+          if (value !== 0) byte |= 0x80;
+          calldata.push(byte);
+        } while (value !== 0);
+        // LEB128 encode calldataOpcode
+        value = calldataOpcode;
+        do {
+          let byte = value & 0x7f;
+          value >>>= 7;
+          if (value !== 0) byte |= 0x80;
+          calldata.push(byte);
+        } while (value !== 0);
+
+        // Build MessageContextParcel
+        // Note: protobuf bytes fields expect base64 strings or arrays, not empty strings
         const context = {
-          params: options.params || null,
-          block_hex: options.blockHex || null,
-          transaction_hex: options.transactionHex || null,
+          alkanes,
+          transaction: [],  // Empty byte array
+          block: [],        // Empty byte array
+          height,
+          txindex: parseInt(options.txindex, 10),
+          calldata: Array.from(calldata),  // Pass as array of numbers
+          vout: 0,
+          pointer: parseInt(options.pointer, 10),
+          refund_pointer: parseInt(options.refund, 10),
         };
 
-        const result = await provider.alkanes_simulate_js(
-          contractId,
-          JSON.stringify(context),
-          options.blockTag || null
-        );
-        const simulation = JSON.parse(result);
+        const contractIdStr = `${targetBlock}:${targetTx}`;
+        const result = await provider.alkanes.simulate(contractIdStr, JSON.stringify(context), options.blockTag);
 
         spinner.succeed();
-        console.log(formatOutput(simulation, globalOpts));
+
+        // Try to decode the hex result as SimulateResponse protobuf
+        // The result may be a string (hex) or an object with data field
+        if (typeof result === 'string' && result.startsWith('0x') && !options.raw) {
+          try {
+            const hexData = result.slice(2);
+            const bytes = Buffer.from(hexData, 'hex');
+
+            // Simple protobuf decoding for SimulateResponse:
+            // field 1 (execution): ExtendedCallResponse
+            // field 2 (gas_used): uint64
+            // field 3 (error): string
+            let pos = 0;
+            let gasUsed = 0;
+            let errorMsg = '';
+            let executionData = '';
+
+            while (pos < bytes.length) {
+              const tag = bytes[pos++];
+              const fieldNum = tag >> 3;
+              const wireType = tag & 0x7;
+
+              if (wireType === 0) { // varint
+                let value = 0;
+                let shift = 0;
+                while (pos < bytes.length) {
+                  const b = bytes[pos++];
+                  value |= (b & 0x7f) << shift;
+                  if ((b & 0x80) === 0) break;
+                  shift += 7;
+                }
+                if (fieldNum === 2) gasUsed = value;
+              } else if (wireType === 2) { // length-delimited
+                let len = 0;
+                let shift = 0;
+                while (pos < bytes.length) {
+                  const b = bytes[pos++];
+                  len |= (b & 0x7f) << shift;
+                  if ((b & 0x80) === 0) break;
+                  shift += 7;
+                }
+                const data = bytes.slice(pos, pos + len);
+                pos += len;
+                if (fieldNum === 1) executionData = '0x' + data.toString('hex');
+                if (fieldNum === 3) errorMsg = data.toString('utf8');
+              }
+            }
+
+            console.log();
+            if (errorMsg) {
+              console.log(chalk.red(`Error: ${errorMsg}`));
+            } else {
+              console.log(chalk.green('✓ Simulation successful'));
+            }
+            if (gasUsed) console.log(`Gas used: ${gasUsed}`);
+            if (executionData && executionData !== '0x') console.log(`Execution: ${executionData}`);
+            console.log();
+            console.log(chalk.gray(`Raw: ${result}`));
+          } catch {
+            // Fall back to raw output if decoding fails
+            console.log(formatOutput(result, { raw: true }));
+          }
+        } else {
+          console.log(formatOutput(result, { raw: options.raw }));
+        }
       } catch (err: any) {
-        error(`Failed to simulate: ${err.message}`);
+        error(`Failed to simulate: ${err.message || err}`);
         process.exit(1);
       }
     });
 
-  // unwrap (get pending unwraps)
+  // unwrap
   alkanes
     .command('unwrap')
     .description('Get pending unwraps')
     .option('--block-tag <tag>', 'Block tag')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -187,13 +385,12 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanes_pending_unwraps_js(options.blockTag || null);
-        const unwraps = JSON.parse(result);
+        const result = await provider.alkanes.getPendingUnwraps(options.blockTag);
 
         spinner.succeed();
-        console.log(formatOutput(unwraps, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
-        error(`Failed to get unwraps: ${err.message}`);
+        error(`Failed to get pending unwraps: ${err.message}`);
         process.exit(1);
       }
     });
@@ -202,10 +399,11 @@ export function registerAlkanesCommands(program: Command): void {
   alkanes
     .command('get-all-pools <factory-id>')
     .description('Get all pools from an AMM factory')
+    .option('--raw', 'Output raw JSON')
     .action(async (factoryId, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
-        const spinner = ora('Getting all pools...').start();
+        const spinner = ora('Getting pools...').start();
 
         const provider = await createProvider({
           network: globalOpts.provider,
@@ -213,11 +411,10 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanes_get_all_pools_js(factoryId);
-        const pools = JSON.parse(result);
+        const result = await provider.alkanes.getAllPools(factoryId);
 
         spinner.succeed();
-        console.log(formatOutput(pools, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get pools: ${err.message}`);
         process.exit(1);
@@ -228,6 +425,7 @@ export function registerAlkanesCommands(program: Command): void {
   alkanes
     .command('all-pools-details <factory-id>')
     .description('Get all pools with detailed information')
+    .option('--raw', 'Output raw JSON')
     .action(async (factoryId, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -239,14 +437,10 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanes_get_all_pools_with_details_js(
-          factoryId,
-          null // protocol_tag
-        );
-        const details = JSON.parse(result);
+        const result = await provider.alkanes.getAllPoolsWithDetails(factoryId);
 
         spinner.succeed();
-        console.log(formatOutput(details, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get pool details: ${err.message}`);
         process.exit(1);
@@ -257,6 +451,7 @@ export function registerAlkanesCommands(program: Command): void {
   alkanes
     .command('reflect <alkane-id>')
     .description('Reflect alkane metadata')
+    .option('--raw', 'Output raw JSON')
     .action(async (alkaneId, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -268,13 +463,16 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanes_reflect_js(alkaneId);
-        const metadata = JSON.parse(result);
+        const result = await provider.alkanes.reflect(alkaneId);
 
         spinner.succeed();
-        console.log(formatOutput(metadata, globalOpts));
+        if (options.raw) {
+          console.log(formatOutput(result, { raw: true }));
+        } else {
+          console.log(formatReflectMetadata(result));
+        }
       } catch (err: any) {
-        error(`Failed to reflect alkane: ${err.message}`);
+        error(`Failed to reflect: ${err.message}`);
         process.exit(1);
       }
     });
@@ -284,7 +482,8 @@ export function registerAlkanesCommands(program: Command): void {
     .command('by-address <address>')
     .description('Get alkanes by address')
     .option('--block-tag <tag>', 'Block tag')
-    .option('--protocol-tag <tag>', 'Protocol tag', '0')
+    .option('--protocol-tag <tag>', 'Protocol tag')
+    .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -296,18 +495,22 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const protocolTag = options.protocolTag ? parseFloat(options.protocolTag) : null;
-        const result = await provider.alkanes_by_address_js(
+        const result = await provider.alkanes.getByAddress(
           address,
-          options.blockTag || null,
-          protocolTag
+          options.blockTag,
+          options.protocolTag ? parseInt(options.protocolTag) : undefined
         );
-        const alkanes = JSON.parse(result);
 
         spinner.succeed();
-        console.log(formatOutput(alkanes, globalOpts));
+        if (options.raw) {
+          console.log(formatOutput(result, { raw: true }));
+        } else if (Array.isArray(result)) {
+          console.log(formatAlkaneBalances(result));
+        } else {
+          console.log(formatOutput(result, { raw: false }));
+        }
       } catch (err: any) {
-        error(`Failed to get alkanes by address: ${err.message}`);
+        error(`Failed to get alkanes: ${err.message}`);
         process.exit(1);
       }
     });
@@ -317,7 +520,8 @@ export function registerAlkanesCommands(program: Command): void {
     .command('by-outpoint <outpoint>')
     .description('Get alkanes by outpoint')
     .option('--block-tag <tag>', 'Block tag')
-    .option('--protocol-tag <tag>', 'Protocol tag', '0')
+    .option('--protocol-tag <tag>', 'Protocol tag')
+    .option('--raw', 'Output raw JSON')
     .action(async (outpoint, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -329,18 +533,16 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const protocolTag = options.protocolTag ? parseFloat(options.protocolTag) : null;
-        const result = await provider.alkanes_by_outpoint_js(
+        const result = await provider.alkanes.getByOutpoint(
           outpoint,
-          options.blockTag || null,
-          protocolTag
+          options.blockTag,
+          options.protocolTag ? parseInt(options.protocolTag) : undefined
         );
-        const alkanes = JSON.parse(result);
 
         spinner.succeed();
-        console.log(formatOutput(alkanes, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
-        error(`Failed to get alkanes by outpoint: ${err.message}`);
+        error(`Failed to get alkanes: ${err.message}`);
         process.exit(1);
       }
     });
@@ -349,6 +551,7 @@ export function registerAlkanesCommands(program: Command): void {
   alkanes
     .command('traceblock <height>')
     .description('Trace all alkanes transactions in a block')
+    .option('--raw', 'Output raw JSON')
     .action(async (height, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -360,11 +563,10 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.traceBlock(parseFloat(height));
-        const trace = JSON.parse(result);
+        const result = await provider.alkanes.traceBlock(parseInt(height));
 
         spinner.succeed();
-        console.log(formatOutput(trace, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to trace block: ${err.message}`);
         process.exit(1);
@@ -375,7 +577,8 @@ export function registerAlkanesCommands(program: Command): void {
   alkanes
     .command('sequence')
     .description('Get sequence for the current block')
-    .option('--block-tag <tag>', 'Block tag (e.g., "latest" or block height)')
+    .option('--block-tag <tag>', 'Block tag')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -383,14 +586,14 @@ export function registerAlkanesCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanesSequence(options.blockTag || null);
-        const sequence = JSON.parse(result);
+        const result = await provider.alkanes.getSequence(options.blockTag);
 
         spinner.succeed();
-        console.log(formatOutput(sequence, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get sequence: ${err.message}`);
         process.exit(1);
@@ -401,6 +604,7 @@ export function registerAlkanesCommands(program: Command): void {
   alkanes
     .command('spendables <address>')
     .description('Get spendable outpoints for an address')
+    .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -408,253 +612,16 @@ export function registerAlkanesCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanesSpendables(address);
-        const spendables = JSON.parse(result);
+        const result = await provider.alkanes.getSpendables(address);
 
         spinner.succeed();
-        console.log(formatOutput(spendables, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get spendables: ${err.message}`);
-        process.exit(1);
-      }
-    });
-
-  // execute
-  alkanes
-    .command('execute')
-    .description('Execute an alkanes smart contract')
-    .option('--inputs <requirements>', 'Input requirements (e.g., "B:10000" or "2:0:1000")')
-    .option('--to <addresses>', 'Recipient addresses (JSON array)')
-    .option('--from <addresses>', 'Source addresses (JSON array)', '[]')
-    .option('--change <address>', 'Change address')
-    .option('--protostones <spec>', 'Protostone specification')
-    .option('--envelope <hex>', 'Envelope data as hex')
-    .option('--fee-rate <rate>', 'Fee rate in sat/vB')
-    .option('--trace', 'Enable transaction tracing')
-    .option('--mine', 'Mine a block after broadcasting (regtest only)')
-    .option('-y, --auto-confirm', 'Automatically confirm transaction')
-    .action(async (options, command) => {
-      try {
-        const globalOpts = command.parent?.parent?.opts() || {};
-        const spinner = ora('Executing contract...').start();
-
-        const provider = await createProvider({
-          network: globalOpts.provider,
-          metashrewUrl: globalOpts.metashrewUrl,
-        });
-
-        // Build params object
-        const params = {
-          input_requirements: options.inputs || '',
-          to_addresses: options.to ? JSON.parse(options.to) : [],
-          from_addresses: options.from ? JSON.parse(options.from) : [],
-          change_address: options.change || null,
-          protostones: options.protostones || '',
-          envelope_hex: options.envelope || null,
-          fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
-          trace_enabled: options.trace || false,
-          mine_enabled: options.mine || false,
-          auto_confirm: options.autoConfirm || false,
-          raw_output: globalOpts.raw || false,
-        };
-
-        const result = await provider.alkanesExecuteWithStrings(
-          JSON.stringify(params.to_addresses),
-          params.input_requirements,
-          params.protostones,
-          params.fee_rate,
-          params.envelope_hex,
-          JSON.stringify({
-            trace_enabled: params.trace_enabled,
-            mine_enabled: params.mine_enabled,
-            auto_confirm: params.auto_confirm,
-            raw_output: params.raw_output,
-          })
-        );
-
-        spinner.succeed();
-        console.log(formatOutput(JSON.parse(result), globalOpts));
-      } catch (err: any) {
-        error(`Failed to execute: ${err.message}`);
-        process.exit(1);
-      }
-    });
-
-  // wrap-btc
-  alkanes
-    .command('wrap-btc <amount>')
-    .description('Wrap BTC to frBTC')
-    .option('--to <address>', 'Address to receive frBTC', 'p2tr:0')
-    .option('--from <addresses>', 'Source addresses (JSON array)', '[]')
-    .option('--change <address>', 'Change address')
-    .option('--fee-rate <rate>', 'Fee rate in sat/vB')
-    .option('--trace', 'Enable transaction tracing')
-    .option('--mine', 'Mine a block after broadcasting (regtest only)')
-    .option('-y, --auto-confirm', 'Automatically confirm transaction')
-    .action(async (amount, options, command) => {
-      try {
-        const globalOpts = command.parent?.parent?.opts() || {};
-        const spinner = ora('Wrapping BTC to frBTC...').start();
-
-        const provider = await createProvider({
-          network: globalOpts.provider,
-          metashrewUrl: globalOpts.metashrewUrl,
-        });
-
-        const params = {
-          amount: parseInt(amount),
-          to_address: options.to,
-          from_addresses: options.from !== '[]' ? JSON.parse(options.from) : null,
-          change_address: options.change || null,
-          fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
-          raw_output: globalOpts.raw || false,
-          trace_enabled: options.trace || false,
-          mine_enabled: options.mine || false,
-          auto_confirm: options.autoConfirm || false,
-        };
-
-        const result = await provider.alkanesWrapBtc(JSON.stringify(params));
-
-        spinner.succeed();
-        console.log(formatOutput(JSON.parse(result), globalOpts));
-      } catch (err: any) {
-        error(`Failed to wrap BTC: ${err.message}`);
-        process.exit(1);
-      }
-    });
-
-  // init-pool
-  alkanes
-    .command('init-pool')
-    .description('Initialize a new AMM liquidity pool')
-    .option('--pair <tokens>', 'Token pair (format: BLOCK:TX,BLOCK:TX)', '2:0,32:0')
-    .option('--liquidity <amounts>', 'Initial liquidity (format: AMOUNT0:AMOUNT1)', '300000000:50000')
-    .option('--to <address>', 'Recipient address', 'p2tr:0')
-    .option('--from <address>', 'Source address', 'p2tr:0')
-    .option('--change <address>', 'Change address')
-    .option('--minimum <lp>', 'Minimum LP tokens to receive')
-    .option('--fee-rate <rate>', 'Fee rate in sat/vB')
-    .option('--trace', 'Show trace after transaction confirms')
-    .option('--factory <id>', 'Factory ID (format: BLOCK:TX)', '4:1')
-    .option('--auto-confirm', 'Auto-confirm transaction')
-    .action(async (options, command) => {
-      try {
-        const globalOpts = command.parent?.parent?.opts() || {};
-        const spinner = ora('Initializing pool...').start();
-
-        const provider = await createProvider({
-          network: globalOpts.provider,
-          metashrewUrl: globalOpts.metashrewUrl,
-        });
-
-        // Parse pair
-        const [token0Str, token1Str] = options.pair.split(',');
-        const [token0Block, token0Tx] = token0Str.split(':').map((n: string) => parseInt(n));
-        const [token1Block, token1Tx] = token1Str.split(':').map((n: string) => parseInt(n));
-
-        // Parse liquidity
-        const [amount0, amount1] = options.liquidity.split(':').map((n: string) => parseInt(n));
-
-        // Parse factory
-        const [factoryBlock, factoryTx] = options.factory.split(':').map((n: string) => parseInt(n));
-
-        const params = {
-          factory_id: { block: factoryBlock, tx: factoryTx },
-          token0: { block: token0Block, tx: token0Tx },
-          token1: { block: token1Block, tx: token1Tx },
-          amount0,
-          amount1,
-          minimum_lp: options.minimum ? parseInt(options.minimum) : null,
-          to_address: options.to,
-          from_address: options.from,
-          change_address: options.change || null,
-          fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
-          trace: options.trace || false,
-          auto_confirm: options.autoConfirm || false,
-        };
-
-        const txid = await provider.alkanesInitPool(JSON.stringify(params));
-
-        spinner.succeed(`Pool initialized! Transaction: ${txid}`);
-      } catch (err: any) {
-        error(`Failed to initialize pool: ${err.message}`);
-        process.exit(1);
-      }
-    });
-
-  // swap
-  alkanes
-    .command('swap')
-    .description('Execute an AMM token swap')
-    .option('--path <tokens>', 'Swap path (comma-separated alkane IDs)', '2:0,32:0')
-    .option('--input <amount>', 'Input token amount (required)', '1000000')
-    .option('--minimum-output <amount>', 'Minimum output amount')
-    .option('--slippage <percent>', 'Slippage percentage', '5.0')
-    .option('--expires <height>', 'Expiry block height')
-    .option('--to <address>', 'Recipient address', 'p2tr:0')
-    .option('--from <address>', 'Source address', 'p2tr:0')
-    .option('--change <address>', 'Change address')
-    .option('--fee-rate <rate>', 'Fee rate in sat/vB')
-    .option('--trace', 'Show trace after transaction confirms')
-    .option('--mine', 'Mine a block after broadcasting (regtest only)')
-    .option('--factory <id>', 'Factory ID', '4:65522')
-    .option('--no-optimize', 'Skip path optimization')
-    .option('--auto-confirm', 'Auto-confirm transaction')
-    .action(async (options, command) => {
-      try {
-        const globalOpts = command.parent?.parent?.opts() || {};
-        const spinner = ora('Executing swap...').start();
-
-        const provider = await createProvider({
-          network: globalOpts.provider,
-          metashrewUrl: globalOpts.metashrewUrl,
-        });
-
-        // Parse path
-        const pathTokens = options.path.split(',').map((token: string) => {
-          const [block, tx] = token.split(':').map((n: string) => parseInt(n));
-          return { block, tx };
-        });
-
-        // Parse factory
-        const [factoryBlock, factoryTx] = options.factory.split(':').map((n: string) => parseInt(n));
-
-        // Calculate minimum output if not provided
-        const inputAmount = parseInt(options.input);
-        const minimumOutput = options.minimumOutput
-          ? parseInt(options.minimumOutput)
-          : Math.floor(inputAmount * (1 - parseFloat(options.slippage) / 100));
-
-        // Get current height for expiry if not provided
-        let expires = options.expires ? parseInt(options.expires) : 0;
-        if (!expires) {
-          // Default to current height + 100
-          const heightResult = await provider.get_metashrew_height_js();
-          expires = parseInt(heightResult) + 100;
-        }
-
-        const params = {
-          factory_id: { block: factoryBlock, tx: factoryTx },
-          path: pathTokens,
-          input_amount: inputAmount,
-          minimum_output: minimumOutput,
-          expires,
-          to_address: options.to,
-          from_address: options.from,
-          change_address: options.change || null,
-          fee_rate: options.feeRate ? parseFloat(options.feeRate) : null,
-          trace: options.trace || false,
-          auto_confirm: options.autoConfirm || false,
-        };
-
-        const txid = await provider.alkanesSwap(JSON.stringify(params));
-
-        spinner.succeed(`Swap executed! Transaction: ${txid}`);
-      } catch (err: any) {
-        error(`Failed to execute swap: ${err.message}`);
         process.exit(1);
       }
     });
@@ -663,6 +630,7 @@ export function registerAlkanesCommands(program: Command): void {
   alkanes
     .command('pool-details <pool-id>')
     .description('Get detailed information about a specific pool')
+    .option('--raw', 'Output raw JSON')
     .action(async (poolId, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -670,14 +638,14 @@ export function registerAlkanesCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanesPoolDetails(poolId);
-        const poolDetails = JSON.parse(result);
+        const result = await provider.alkanes.getPoolDetails(poolId);
 
         spinner.succeed();
-        console.log(formatOutput(poolDetails, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get pool details: ${err.message}`);
         process.exit(1);
@@ -688,7 +656,7 @@ export function registerAlkanesCommands(program: Command): void {
   alkanes
     .command('reflect-alkane-range <block> <start-tx> <end-tx>')
     .description('Reflect metadata for a range of alkanes in a block')
-    .option('--concurrency <n>', 'Number of concurrent requests', '30')
+    .option('--raw', 'Output raw JSON')
     .action(async (block, startTx, endTx, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -696,32 +664,200 @@ export function registerAlkanesCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanesReflectAlkaneRange(
-          parseFloat(block),
-          parseFloat(startTx),
-          parseFloat(endTx),
-          options.concurrency ? parseFloat(options.concurrency) : null
+        const result = await provider.alkanes.reflectAlkaneRange(
+          parseInt(block),
+          parseInt(startTx),
+          parseInt(endTx)
         );
-        const reflections = JSON.parse(result);
 
         spinner.succeed();
-        console.log(formatOutput(reflections, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to reflect alkane range: ${err.message}`);
         process.exit(1);
       }
     });
 
-  // tx-script
+  // === STATE-CHANGING COMMANDS (require wallet) ===
+
+  // execute (state-changing)
+  alkanes
+    .command('execute')
+    .description('Execute an alkanes smart contract')
+    .option('--contract <id>', 'Contract ID')
+    .option('--inputs <json>', 'Input parameters JSON')
+    .option('--target <target>', 'Target address')
+    .option('--pointer <pointer>', 'Pointer value')
+    .option('--refund-pointer <pointer>', 'Refund pointer')
+    .option('--feeRate <rate>', 'Fee rate in sat/vB')
+    .option('--raw', 'Output raw JSON')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Executing contract...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        // Access internal provider for execute operations
+        const params = {
+          contractId: options.contract,
+          inputs: options.inputs ? JSON.parse(options.inputs) : [],
+          target: options.target,
+          pointer: options.pointer ? parseInt(options.pointer) : undefined,
+          refundPointer: options.refundPointer ? parseInt(options.refundPointer) : undefined,
+          feeRate: options.feeRate ? parseFloat(options.feeRate) : undefined,
+        };
+
+        const result = await (provider as any)._provider.alkanesExecuteWithStrings(
+          JSON.stringify(params.inputs),
+          params.contractId,
+          params.pointer || 0,
+          params.refundPointer || 0,
+          params.target || '',
+          params.feeRate || 1
+        );
+
+        spinner.succeed('Contract executed');
+        console.log(formatOutput(JSON.parse(result), { raw: options.raw }));
+      } catch (err: any) {
+        error(`Failed to execute: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // wrap-btc (state-changing)
+  alkanes
+    .command('wrap-btc <amount>')
+    .description('Wrap BTC to frBTC')
+    .option('--feeRate <rate>', 'Fee rate in sat/vB')
+    .option('--raw', 'Output raw JSON')
+    .action(async (amount, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Wrapping BTC...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        const params = {
+          amount: parseInt(amount),
+          feeRate: options.feeRate ? parseFloat(options.feeRate) : 1,
+        };
+
+        const result = await (provider as any)._provider.alkanesWrapBtc(JSON.stringify(params));
+
+        spinner.succeed('BTC wrapped');
+        console.log(formatOutput(JSON.parse(result), { raw: options.raw }));
+      } catch (err: any) {
+        error(`Failed to wrap BTC: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // init-pool (state-changing)
+  alkanes
+    .command('init-pool')
+    .description('Initialize a new AMM liquidity pool')
+    .option('--token0 <id>', 'First token ID')
+    .option('--token1 <id>', 'Second token ID')
+    .option('--amount0 <amount>', 'Amount of first token')
+    .option('--amount1 <amount>', 'Amount of second token')
+    .option('--feeRate <rate>', 'Fee rate in sat/vB')
+    .option('--raw', 'Output raw JSON')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Initializing pool...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        const params = {
+          token0: options.token0,
+          token1: options.token1,
+          amount0: options.amount0,
+          amount1: options.amount1,
+          feeRate: options.feeRate ? parseFloat(options.feeRate) : 1,
+        };
+
+        const txid = await (provider as any)._provider.alkanesInitPool(JSON.stringify(params));
+
+        spinner.succeed('Pool initialized');
+        if (options.raw) {
+          console.log(formatOutput({ txid }, { raw: true }));
+        } else {
+          success(`TXID: ${txid}`);
+        }
+      } catch (err: any) {
+        error(`Failed to init pool: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // swap (state-changing)
+  alkanes
+    .command('swap')
+    .description('Execute an AMM token swap')
+    .option('--token-in <id>', 'Token to swap from')
+    .option('--token-out <id>', 'Token to swap to')
+    .option('--amount-in <amount>', 'Amount to swap')
+    .option('--min-amount-out <amount>', 'Minimum output amount')
+    .option('--feeRate <rate>', 'Fee rate in sat/vB')
+    .option('--raw', 'Output raw JSON')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Executing swap...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        const params = {
+          tokenIn: options.tokenIn,
+          tokenOut: options.tokenOut,
+          amountIn: options.amountIn,
+          minAmountOut: options.minAmountOut || '0',
+          feeRate: options.feeRate ? parseFloat(options.feeRate) : 1,
+        };
+
+        const txid = await (provider as any)._provider.alkanesSwap(JSON.stringify(params));
+
+        spinner.succeed('Swap executed');
+        if (options.raw) {
+          console.log(formatOutput({ txid }, { raw: true }));
+        } else {
+          success(`TXID: ${txid}`);
+        }
+      } catch (err: any) {
+        error(`Failed to swap: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // tx-script (state-changing)
   alkanes
     .command('tx-script')
     .description('Execute a tx-script with WASM bytecode')
-    .option('--envelope <hex>', 'WASM hex (with or without 0x prefix)', '')
-    .option('--inputs <json>', 'Cellpack inputs as JSON array (e.g., "[1,2,3]")', '[]')
-    .option('--block-tag <tag>', 'Block tag to query')
+    .option('--bytecode <hex>', 'WASM bytecode hex')
+    .option('--feeRate <rate>', 'Fee rate in sat/vB')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -729,17 +865,19 @@ export function registerAlkanesCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanesTxScript(
-          options.envelope,
-          options.inputs,
-          options.blockTag || null
-        );
+        const params = {
+          bytecode: options.bytecode,
+          feeRate: options.feeRate ? parseFloat(options.feeRate) : 1,
+        };
 
-        spinner.succeed();
-        console.log(result);
+        const result = await (provider as any)._provider.alkanesTxScript(JSON.stringify(params));
+
+        spinner.succeed('tx-script executed');
+        console.log(formatOutput(JSON.parse(result), { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to execute tx-script: ${err.message}`);
         process.exit(1);

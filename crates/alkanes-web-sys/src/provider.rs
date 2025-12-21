@@ -2664,14 +2664,73 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let inspect_config: alkanes_cli_common::alkanes::AlkanesInspectConfig = 
+            let inspect_config: alkanes_cli_common::alkanes::AlkanesInspectConfig =
                 serde_wasm_bindgen::from_value(config)
                     .map_err(|e| JsValue::from_str(&format!("Invalid config: {}", e)))?;
-            
+
             provider.inspect(&target, inspect_config).await
                 .and_then(|r| serde_wasm_bindgen::to_value(&r)
                     .map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
                 .map_err(|e| JsValue::from_str(&format!("Inspect failed: {}", e)))
+        })
+    }
+
+    /// Inspect alkanes bytecode directly from WASM bytes (hex-encoded or raw bytes)
+    /// This allows inspection without fetching from RPC - useful for local/offline analysis
+    #[wasm_bindgen(js_name = alkanesInspectBytecode)]
+    pub fn alkanes_inspect_bytecode_js(&self, bytecode_hex: String, alkane_id: String, config: JsValue) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        use alkanes_cli_common::alkanes::inspector::{AlkaneInspector, InspectionConfig};
+        use alkanes_cli_common::alkanes::types::AlkaneId;
+
+        future_to_promise(async move {
+            // Parse the alkane ID (format: block:tx)
+            let parts: Vec<&str> = alkane_id.split(':').collect();
+            if parts.len() != 2 {
+                return Err(JsValue::from_str(&format!(
+                    "Invalid alkane ID format, expected block:tx, got: {}", alkane_id
+                )));
+            }
+            let block = parts[0].parse::<u64>()
+                .map_err(|_| JsValue::from_str(&format!("Invalid block value: {}", parts[0])))?;
+            let tx = parts[1].parse::<u64>()
+                .map_err(|_| JsValue::from_str(&format!("Invalid tx value: {}", parts[1])))?;
+            let alkane_id = AlkaneId { block, tx };
+
+            // Parse the config from JSON object
+            let config_obj = match config.dyn_ref::<js_sys::Object>() {
+                Some(obj) => obj.clone(),
+                None => return Err(JsValue::from_str("Config must be an object")),
+            };
+
+            let inspect_config = InspectionConfig {
+                disasm: js_sys::Reflect::get(&config_obj, &"disasm".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                fuzz: js_sys::Reflect::get(&config_obj, &"fuzz".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                fuzz_ranges: js_sys::Reflect::get(&config_obj, &"fuzz_ranges".into())
+                    .ok().and_then(|v| v.as_string()),
+                meta: js_sys::Reflect::get(&config_obj, &"meta".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                codehash: js_sys::Reflect::get(&config_obj, &"codehash".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                raw: js_sys::Reflect::get(&config_obj, &"raw".into())
+                    .ok().and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+
+            // Decode the hex bytecode
+            let hex_str = bytecode_hex.strip_prefix("0x").unwrap_or(&bytecode_hex);
+            let wasm_bytes = hex::decode(hex_str)
+                .map_err(|e| JsValue::from_str(&format!("Invalid bytecode hex: {}", e)))?;
+
+            // Use the inspector to analyze the bytecode
+            let inspector = AlkaneInspector::new();
+            let result = inspector.inspect_alkane_with_bytes(&wasm_bytes, &alkane_id, &inspect_config)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Inspection failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
         })
     }
 
@@ -3243,6 +3302,47 @@ impl WebProvider {
         self.keystore.is_some()
     }
 
+    /// Get addresses from the loaded wallet keystore
+    /// Uses the Keystore.get_addresses method from alkanes-cli-common
+    ///
+    /// # Arguments
+    /// * `address_type` - Address type: "p2tr", "p2wpkh", "p2sh-p2wpkh", "p2pkh"
+    /// * `start_index` - Starting index for address derivation
+    /// * `count` - Number of addresses to derive
+    /// * `chain` - Chain index (0 for external/receiving, 1 for internal/change)
+    ///
+    /// # Returns
+    /// Array of address info objects with: { derivation_path, address, script_type, index, used }
+    #[wasm_bindgen(js_name = walletGetAddresses)]
+    pub fn wallet_get_addresses_js(&self, address_type: String, start_index: u32, count: u32, chain: Option<u32>) -> std::result::Result<JsValue, JsValue> {
+        let keystore = self.keystore.as_ref()
+            .ok_or_else(|| JsValue::from_str("Wallet not loaded. Call walletCreate or walletLoadMnemonic first."))?;
+
+        let chain = chain.unwrap_or(0);
+
+        let addresses = keystore.get_addresses(self.network, &address_type, chain, start_index, count)
+            .map_err(|e| JsValue::from_str(&format!("Failed to get addresses: {}", e)))?;
+
+        // Convert to JS array
+        let js_array = js_sys::Array::new();
+        for addr_info in addresses {
+            let obj = js_sys::Object::new();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("derivation_path"), &JsValue::from_str(&addr_info.derivation_path))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set derivation_path: {:?}", e)))?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("address"), &JsValue::from_str(&addr_info.address))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set address: {:?}", e)))?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("script_type"), &JsValue::from_str(&addr_info.script_type))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set script_type: {:?}", e)))?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("index"), &JsValue::from_f64(addr_info.index as f64))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set index: {:?}", e)))?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("used"), &JsValue::from_bool(addr_info.used))
+                .map_err(|e| JsValue::from_str(&format!("Failed to set used: {:?}", e)))?;
+            js_array.push(&obj);
+        }
+
+        Ok(js_array.into())
+    }
+
     /// Send BTC to an address
     /// params: { address: string, amount: number (satoshis), fee_rate?: number }
     /// Wallet must be loaded first via walletLoadMnemonic
@@ -3382,6 +3482,99 @@ impl WebProvider {
             
             // Return the backup string (JSON format)
             Ok(JsValue::from_str(&backup_data))
+        })
+    }
+
+    // === FRBTC METHODS ===
+
+    /// Get the FrBTC signer address for the current network
+    #[wasm_bindgen(js_name = frbtcGetSignerAddress)]
+    pub fn frbtc_get_signer_address_method(&self) -> js_sys::Promise {
+        use alkanes_cli_common::brc20_prog::{FrBtcExecutor, get_frbtc_contract_address};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let executor = FrBtcExecutor::new(&mut provider);
+            match executor.get_signer_address().await {
+                Ok(addr) => Ok(JsValue::from_str(&addr)),
+                Err(e) => Err(JsValue::from_str(&format!("Failed to get signer address: {}", e))),
+            }
+        })
+    }
+
+    /// Wrap BTC to frBTC
+    /// params_json: { fee_rate?: number, from?: string[], change?: string }
+    #[wasm_bindgen(js_name = frbtcWrap)]
+    pub fn frbtc_wrap_method(&mut self, amount: u64, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::brc20_prog::{FrBtcExecutor, FrBtcWrapParams};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let params: serde_json::Value = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+
+            let wrap_params = FrBtcWrapParams {
+                amount,
+                from_addresses: params.get("from_addresses").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+                }),
+                change_address: params.get("change_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                fee_rate: params.get("fee_rate").and_then(|v| v.as_f64()).map(|f| f as f32),
+                raw_output: params.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                trace_enabled: params.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                mine_enabled: params.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                auto_confirm: params.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                use_slipstream: params.get("use_slipstream").and_then(|v| v.as_bool()).unwrap_or(false),
+                use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
+                rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
+                resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            };
+
+            let mut executor = FrBtcExecutor::new(&mut provider);
+            match executor.wrap(wrap_params).await {
+                Ok(result) => serde_wasm_bindgen::to_value(&result)
+                    .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e))),
+                Err(e) => Err(JsValue::from_str(&format!("Wrap failed: {}", e))),
+            }
+        })
+    }
+
+    /// Unwrap frBTC to BTC
+    /// params_json: { fee_rate?: number, from?: string[], change?: string }
+    #[wasm_bindgen(js_name = frbtcUnwrap)]
+    pub fn frbtc_unwrap_method(&mut self, amount: u64, vout: u64, recipient_address: String, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::brc20_prog::{FrBtcExecutor, FrBtcUnwrapParams};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let params: serde_json::Value = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+
+            let unwrap_params = FrBtcUnwrapParams {
+                amount,
+                vout,
+                recipient_address,
+                from_addresses: params.get("from_addresses").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+                }),
+                change_address: params.get("change_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                fee_rate: params.get("fee_rate").and_then(|v| v.as_f64()).map(|f| f as f32),
+                raw_output: params.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                trace_enabled: params.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                mine_enabled: params.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                auto_confirm: params.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                use_slipstream: params.get("use_slipstream").and_then(|v| v.as_bool()).unwrap_or(false),
+                use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
+                rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
+                resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            };
+
+            let mut executor = FrBtcExecutor::new(&mut provider);
+            match executor.unwrap(unwrap_params).await {
+                Ok(result) => serde_wasm_bindgen::to_value(&result)
+                    .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e))),
+                Err(e) => Err(JsValue::from_str(&format!("Unwrap failed: {}", e))),
+            }
         })
     }
 
@@ -6836,7 +7029,8 @@ impl DeezelProvider for WebProvider {
     }
 
     fn get_brc20_prog_rpc_url(&self) -> Option<String> {
-        None
+        self.rpc_config.brc20_prog_rpc_url.clone()
+            .or_else(|| Some(alkanes_cli_common::network::get_default_brc20_prog_rpc_url(self.network)))
     }
 
     fn clone_box(&self) -> Box<dyn DeezelProvider> {
@@ -7005,7 +7199,7 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
 
     async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_address_balances", serde_json::json!({
+        self.call(&target.url, "essentials.get_address_balances", serde_json::json!({
             "address": address,
             "include_outpoints": include_outpoints
         }), 1).await
@@ -7013,21 +7207,21 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
 
     async fn get_address_outpoints(&self, address: &str) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_address_outpoints", serde_json::json!({
+        self.call(&target.url, "essentials.get_address_outpoints", serde_json::json!({
             "address": address
         }), 1).await
     }
 
     async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_outpoint_balances", serde_json::json!({
+        self.call(&target.url, "essentials.get_outpoint_balances", serde_json::json!({
             "outpoint": outpoint
         }), 1).await
     }
 
     async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_holders", serde_json::json!({
+        self.call(&target.url, "essentials.get_holders", serde_json::json!({
             "alkane": alkane_id,
             "page": page,
             "limit": limit
@@ -7036,14 +7230,14 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
 
     async fn get_holders_count(&self, alkane_id: &str) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_holders_count", serde_json::json!({
+        self.call(&target.url, "essentials.get_holders_count", serde_json::json!({
             "alkane": alkane_id
         }), 1).await
     }
 
     async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
         let target = self.rpc_config.get_espo_rpc_target();
-        self.call(&target.url, "get_keys", serde_json::json!({
+        self.call(&target.url, "essentials.get_keys", serde_json::json!({
             "alkane": alkane_id,
             "page": page,
             "limit": limit,
@@ -7053,7 +7247,7 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
 
     async fn ping(&self) -> Result<String> {
         let target = self.rpc_config.get_espo_rpc_target();
-        let result = self.call(&target.url, "ping", serde_json::json!({}), 1).await?;
+        let result = self.call(&target.url, "essentials.ping", serde_json::json!({}), 1).await?;
         if let Some(s) = result.as_str() {
             return Ok(s.to_string());
         }

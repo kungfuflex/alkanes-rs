@@ -65,12 +65,14 @@ export {
   MetashrewClient,
   DataApiClient,
   LuaClient,
+  EspoClient,
   createProvider,
   NETWORK_PRESETS,
 } from './provider';
 
 export type {
   AlkanesProviderConfig,
+  LogLevel,
   PoolDetails,
   PoolWithDetails,
   TradeInfo,
@@ -78,7 +80,49 @@ export type {
   HolderInfo,
   ExecuteResult,
   LuaEvalResult,
+  // Espo API response types
+  PaginatedResponse,
+  OutpointEntry,
+  OutpointWithEntries,
+  AddressBalancesResponse,
+  AddressOutpointsResponse,
+  OutpointBalancesResponse,
+  HoldersResponse,
+  HoldersCountResponse,
+  StorageKeyEntry,
+  KeysResponse,
+  EspoCandle,
+  CandlesResponse,
+  EspoTrade,
+  TradesResponse,
+  EspoPool,
+  PoolsResponse,
+  SwapHop,
+  SwapPathResponse,
+  MevSwapResponse,
 } from './provider';
+
+// Amount parsing utilities
+export {
+  DEFAULT_DECIMALS,
+  parseAmount,
+  formatAmount,
+  toRawAmount,
+  parseAlkaneBalance,
+  parseAlkaneBalances,
+  parseReflectMetadata,
+  parsePoolDetails,
+  parseTrade,
+  satsToBtc,
+  btcToSats,
+} from './utils/amounts';
+
+export type {
+  ParsedAlkaneBalance,
+  ParsedReflectMetadata,
+  ParsedPoolDetails,
+  ParsedTrade,
+} from './utils/amounts';
 
 // Type exports
 export type {
@@ -109,6 +153,77 @@ export type {
   Brc20ProgWrapBtcParams,
   Brc20ProgExecuteResult,
 } from './types';
+
+// Response type exports (typed API responses)
+export type {
+  // Common types
+  TxStatus,
+  ScriptPubKey,
+  // Bitcoin RPC response types
+  BlockchainInfo,
+  NetworkInfo,
+  NetworkDetails,
+  LocalAddress,
+  MempoolInfo,
+  BitcoinVin,
+  BitcoinVout,
+  BitcoinTransaction,
+  BitcoinBlock,
+  BitcoinBlockHeader,
+  SmartFeeEstimate,
+  ChainTip,
+  // Esplora response types
+  AddressStats,
+  EsploraAddressInfo,
+  EsploraUtxo,
+  EsploraVin,
+  EsploraVout,
+  EsploraTransaction,
+  EsploraBlock,
+  FeeEstimates,
+  Outspend,
+  MerkleProof,
+  MempoolStats,
+  MempoolRecentTx,
+  // Alkanes response types
+  AlkaneIdResponse,
+  AlkaneBalanceResponse,
+  AlkaneReflectResponse,
+  AlkaneOutpoint,
+  AlkaneSpendablesResponse,
+  SimulationContext,
+  AlkaneSimulateResponse,
+  AlkaneTraceResponse,
+  AlkaneTraceEntry,
+  AlkanePoolResponse,
+  AlkanesByAddressResponse,
+  AlkaneSequenceResponse,
+  // Ord (Ordinals) response types
+  InscriptionResponse,
+  InscriptionsListResponse,
+  RuneResponse,
+  OrdOutput,
+  OrdBlockInfo,
+  // BRC20-Prog response types
+  Brc20ProgBalance,
+  Brc20ProgTxReceipt,
+  Brc20ProgLog,
+  Brc20ProgTransaction,
+  Brc20ProgBlock,
+  // Metashrew response types
+  MetashrewViewResponse,
+  // Data API response types
+  DataApiTrade,
+  DataApiCandle,
+  DataApiReserves,
+  DataApiHolder,
+  BitcoinPriceResponse,
+  MarketChartResponse,
+  DataApiPoolHistoryEvent,
+  DataApiPoolsResponse,
+  DataApiStorageKey,
+  DataApiAddressAlkanes,
+} from './types/responses';
 
 // Utility exports
 export {
@@ -201,7 +316,7 @@ export type {
   KeystoreSignerConfig,
   BrowserWalletSignerConfig,
   WalletSelection,
-  TransactionResult,
+  // Note: TransactionResult is already exported from './types'
   BalanceSummary,
   EnrichedBalance,
   WalletOption,

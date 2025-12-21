@@ -94,10 +94,12 @@ jobs:
       - name: Generate version
         id: version
         run: |
-          TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+          # Get base version from package.json
+          BASE_VERSION=$(node -p "require('./ts-sdk/package.json').version")
           SHORT_SHA=$(git rev-parse --short=7 HEAD)
-          VERSION="0.1.0-dev.${TIMESTAMP}.${SHORT_SHA}"
+          VERSION="${BASE_VERSION}-${SHORT_SHA}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
           echo "Generated version: ${VERSION}"
 
       - name: Configure npm authentication
@@ -190,11 +192,17 @@ jobs:
 
           echo "Zone ID: ${ZONE_ID}"
 
-          # Try purging specific files first
+          # Purge all package-related URLs
           RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache" \
             -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -H "Content-Type: application/json" \
-            --data '{"files":["https://pkg.alkanes.build/dist/@alkanes/ts-sdk"]}')
+            --data '{
+              "files": [
+                "https://pkg.alkanes.build/dist/@alkanes/ts-sdk",
+                "https://pkg.alkanes.build/@alkanes/ts-sdk",
+                "https://pkg.alkanes.build/versions/@alkanes/ts-sdk"
+              ]
+            }')
 
           echo "Purge response: ${RESPONSE}"
 
@@ -211,12 +219,19 @@ jobs:
           echo "=== Publication Summary ==="
           echo "✅ Published: @alkanes/ts-sdk@${{ steps.version.outputs.version }}"
           echo "📦 Registry: https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/"
-          echo "🔗 Install with:"
-          echo "   npm config set @alkanes:registry https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/"
-          echo "   npm install @alkanes/ts-sdk@${{ steps.version.outputs.version }}"
           echo ""
-          echo "Or install latest dev version:"
-          echo "   npm install @alkanes/ts-sdk@latest-dev"
+          echo "🔗 Install via tarball URL (recommended):"
+          echo "   # Latest version"
+          echo "   pnpm install --save-dev https://pkg.alkanes.build/dist/@alkanes/ts-sdk"
+          echo ""
+          echo "   # Specific version"
+          echo "   pnpm install --save-dev 'https://pkg.alkanes.build/dist/@alkanes/ts-sdk?v=${{ steps.version.outputs.version }}'"
+          echo ""
+          echo "📋 Query package info:"
+          echo "   curl https://pkg.alkanes.build/@alkanes/ts-sdk"
+          echo ""
+          echo "📋 List all versions:"
+          echo "   curl https://pkg.alkanes.build/versions/@alkanes/ts-sdk"
 
       - name: Create summary
         run: |
@@ -224,27 +239,32 @@ jobs:
           ## 📦 TypeScript SDK Published
 
           **Version:** \`${{ steps.version.outputs.version }}\`
+          **Commit:** \`${{ steps.version.outputs.short_sha }}\`
           **Registry:** [Google Artifact Registry](https://console.cloud.google.com/artifacts/npm/distributable-octet-pipeline/us-central1/npm-packages/@alkanes/ts-sdk?project=distributable-octet-pipeline)
-          **Commit:** \`${GITHUB_SHA:0:7}\`
 
-          ### Installation
+          ### Installation (via tarball URL - recommended)
 
           \`\`\`bash
-          # Configure npm
-          npm config set @alkanes:registry https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+          # Install latest version
+          pnpm install --save-dev https://pkg.alkanes.build/dist/@alkanes/ts-sdk
 
-          # Authenticate (requires gcloud)
-          npm config set //us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/:_authToken \$(gcloud auth print-access-token)
+          # Install this specific version
+          pnpm install --save-dev 'https://pkg.alkanes.build/dist/@alkanes/ts-sdk?v=${{ steps.version.outputs.version }}'
+          \`\`\`
 
-          # Install
-          npm install @alkanes/ts-sdk@${{ steps.version.outputs.version }}
+          ### Query Package Info
 
-          # Or install latest dev version
-          npm install @alkanes/ts-sdk@latest-dev
+          \`\`\`bash
+          # Get latest version and metadata
+          curl https://pkg.alkanes.build/@alkanes/ts-sdk
+
+          # List all available versions
+          curl https://pkg.alkanes.build/versions/@alkanes/ts-sdk
           \`\`\`
 
           ### Build Details
 
+          - **Version format:** \`{base-version}-{commit-hash}\` (e.g., \`0.1.1-abc1234\`)
           - **WASM built from:** \`crates/alkanes-web-sys\`
           - **Production WASMs vendored:** ✅
           - **TypeScript compiled:** ✅

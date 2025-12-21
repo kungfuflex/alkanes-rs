@@ -46297,18 +46297,47 @@ __export(provider_exports, {
   AlkanesProvider: () => AlkanesProvider,
   AlkanesRpcClient: () => AlkanesRpcClient,
   BitcoinRpcClient: () => BitcoinRpcClient,
+  Brc20ProgClient: () => Brc20ProgClient,
   DataApiClient: () => DataApiClient,
   EsploraClient: () => EsploraClient,
   EspoClient: () => EspoClient,
   LuaClient: () => LuaClient,
   MetashrewClient: () => MetashrewClient,
   NETWORK_PRESETS: () => NETWORK_PRESETS,
+  OrdClient: () => OrdClient,
   createProvider: () => createProvider
 });
+function mapToObject(value) {
+  if (value instanceof Map) {
+    const obj = {};
+    value.forEach((v, k) => {
+      obj[k] = mapToObject(v);
+    });
+    return obj;
+  }
+  if (Array.isArray(value)) {
+    return value.map(mapToObject);
+  }
+  return value;
+}
+function getLogLevelFromEnv() {
+  if (typeof process !== "undefined" && process.env) {
+    const alkLog = process.env.ALKANES_LOG_LEVEL;
+    const rustLog = process.env.RUST_LOG;
+    const level = alkLog || rustLog;
+    if (level) {
+      const normalized = level.toLowerCase();
+      if (["off", "error", "warn", "info", "debug", "trace"].includes(normalized)) {
+        return normalized;
+      }
+    }
+  }
+  return void 0;
+}
 function createProvider(config) {
   return new AlkanesProvider(config);
 }
-var bitcoin3, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, LuaClient, DataApiClient, EspoClient, AlkanesProvider;
+var bitcoin3, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, EspoClient, Logger, logger, AlkanesProvider;
 var init_provider = __esm({
   "src/provider/index.ts"() {
     "use strict";
@@ -46356,28 +46385,67 @@ var init_provider = __esm({
         return this.provider.bitcoindGetBlockHash(height);
       }
       async getBlock(hash, raw = false) {
-        return this.provider.bitcoindGetBlock(hash, raw);
+        const result = await this.provider.bitcoindGetBlock(hash, raw);
+        return mapToObject(result);
       }
       async sendRawTransaction(hex) {
         return this.provider.bitcoindSendRawTransaction(hex);
       }
       async getTransaction(txid, blockHash) {
-        return this.provider.bitcoindGetRawTransaction(txid, blockHash);
+        const result = await this.provider.bitcoindGetRawTransaction(txid, blockHash);
+        return mapToObject(result);
       }
       async getBlockchainInfo() {
-        return this.provider.bitcoindGetBlockchainInfo();
+        const result = await this.provider.bitcoindGetBlockchainInfo();
+        return mapToObject(result);
       }
       async getNetworkInfo() {
-        return this.provider.bitcoindGetNetworkInfo();
+        const result = await this.provider.bitcoindGetNetworkInfo();
+        return mapToObject(result);
       }
       async getMempoolInfo() {
-        return this.provider.bitcoindGetMempoolInfo();
+        const result = await this.provider.bitcoindGetMempoolInfo();
+        return mapToObject(result);
       }
       async estimateSmartFee(target) {
-        return this.provider.bitcoindEstimateSmartFee(target);
+        const result = await this.provider.bitcoindEstimateSmartFee(target);
+        return mapToObject(result);
       }
       async generateToAddress(nblocks, address2) {
-        return this.provider.bitcoindGenerateToAddress(nblocks, address2);
+        const result = await this.provider.bitcoindGenerateToAddress(nblocks, address2);
+        return mapToObject(result);
+      }
+      async generateFuture(address2) {
+        const result = await this.provider.bitcoindGenerateFuture(address2);
+        return mapToObject(result);
+      }
+      async getBlockHeader(hash) {
+        const result = await this.provider.bitcoindGetBlockHeader(hash);
+        return mapToObject(result);
+      }
+      async getBlockStats(hash) {
+        const result = await this.provider.bitcoindGetBlockStats(hash);
+        return mapToObject(result);
+      }
+      async getChainTips() {
+        const result = await this.provider.bitcoindGetChainTips();
+        return mapToObject(result);
+      }
+      async getRawMempool() {
+        const result = await this.provider.bitcoindGetRawMempool();
+        return mapToObject(result);
+      }
+      async getTxOut(txid, vout, includeMempool) {
+        const result = await this.provider.bitcoindGetTxOut(txid, vout, includeMempool);
+        return mapToObject(result);
+      }
+      async decodeRawTransaction(hex) {
+        const result = await this.provider.bitcoindDecodeRawTransaction(hex);
+        return mapToObject(result);
+      }
+      async decodePsbt(psbt) {
+        const result = await this.provider.bitcoindDecodePsbt(psbt);
+        return mapToObject(result);
       }
     };
     EsploraClient = class {
@@ -46385,19 +46453,24 @@ var init_provider = __esm({
         this.provider = provider;
       }
       async getAddressInfo(address2) {
-        return this.provider.esploraGetAddressInfo(address2);
+        const result = await this.provider.esploraGetAddressInfo(address2);
+        return mapToObject(result);
       }
       async getAddressUtxos(address2) {
-        return this.provider.esploraGetAddressUtxo(address2);
+        const result = await this.provider.esploraGetAddressUtxo(address2);
+        return mapToObject(result);
       }
       async getAddressTxs(address2) {
-        return this.provider.esploraGetAddressTxs(address2);
+        const result = await this.provider.esploraGetAddressTxs(address2);
+        return mapToObject(result);
       }
       async getTx(txid) {
-        return this.provider.esploraGetTx(txid);
+        const result = await this.provider.esploraGetTx(txid);
+        return mapToObject(result);
       }
       async getTxStatus(txid) {
-        return this.provider.esploraGetTxStatus(txid);
+        const result = await this.provider.esploraGetTxStatus(txid);
+        return mapToObject(result);
       }
       async getTxHex(txid) {
         return this.provider.esploraGetTxHex(txid);
@@ -46411,46 +46484,160 @@ var init_provider = __esm({
       async broadcastTx(txHex) {
         return this.provider.esploraBroadcastTx(txHex);
       }
+      async getFeeEstimates() {
+        const result = await this.provider.esploraGetFeeEstimates();
+        return mapToObject(result);
+      }
+      async getBlocks(startHeight) {
+        const result = await this.provider.esploraGetBlocks(startHeight);
+        return mapToObject(result);
+      }
+      async getBlockByHeight(height) {
+        const result = await this.provider.esploraGetBlockByHeight(height);
+        return mapToObject(result);
+      }
+      async getBlock(hash) {
+        const result = await this.provider.esploraGetBlock(hash);
+        return mapToObject(result);
+      }
+      async getBlockStatus(hash) {
+        const result = await this.provider.esploraGetBlockStatus(hash);
+        return mapToObject(result);
+      }
+      async getBlockTxids(hash) {
+        return this.provider.esploraGetBlockTxids(hash);
+      }
+      async getBlockHeader(hash) {
+        const result = await this.provider.esploraGetBlockHeader(hash);
+        return mapToObject(result);
+      }
+      async getBlockRaw(hash) {
+        return this.provider.esploraGetBlockRaw(hash);
+      }
+      async getBlockTxid(hash, index) {
+        return this.provider.esploraGetBlockTxid(hash, index);
+      }
+      async getBlockTxs(hash, startIndex) {
+        const result = await this.provider.esploraGetBlockTxs(hash, startIndex);
+        return mapToObject(result);
+      }
+      async getAddressTxsChain(address2, lastSeenTxid) {
+        const result = await this.provider.esploraGetAddressTxsChain(address2, lastSeenTxid);
+        return mapToObject(result);
+      }
+      async getAddressTxsMempool(address2) {
+        const result = await this.provider.esploraGetAddressTxsMempool(address2);
+        return mapToObject(result);
+      }
+      async getAddressPrefix(prefix) {
+        const result = await this.provider.esploraGetAddressPrefix(prefix);
+        return mapToObject(result);
+      }
+      async getTxRaw(txid) {
+        return this.provider.esploraGetTxRaw(txid);
+      }
+      async getTxMerkleProof(txid) {
+        const result = await this.provider.esploraGetTxMerkleProof(txid);
+        return mapToObject(result);
+      }
+      async getTxMerkleblockProof(txid) {
+        const result = await this.provider.esploraGetTxMerkleblockProof(txid);
+        return mapToObject(result);
+      }
+      async getTxOutspend(txid, index) {
+        const result = await this.provider.esploraGetTxOutspend(txid, index);
+        return mapToObject(result);
+      }
+      async getTxOutspends(txid) {
+        const result = await this.provider.esploraGetTxOutspends(txid);
+        return mapToObject(result);
+      }
+      async getMempool() {
+        const result = await this.provider.esploraGetMempool();
+        return mapToObject(result);
+      }
+      async getMempoolTxids() {
+        return this.provider.esploraGetMempoolTxids();
+      }
+      async getMempoolRecent() {
+        const result = await this.provider.esploraGetMempoolRecent();
+        return mapToObject(result);
+      }
     };
     AlkanesRpcClient = class {
       constructor(provider) {
         this.provider = provider;
       }
       async getBalance(address2) {
-        return this.provider.alkanesBalance(address2);
+        const result = await this.provider.alkanesBalance(address2);
+        return mapToObject(result);
       }
       async getByAddress(address2, blockTag, protocolTag) {
-        return this.provider.alkanesByAddress(address2, blockTag, protocolTag);
+        const result = await this.provider.alkanesByAddress(address2, blockTag, protocolTag);
+        return mapToObject(result);
       }
       async getByOutpoint(outpoint, blockTag, protocolTag) {
-        return this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
+        const result = await this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
+        return mapToObject(result);
       }
       async getBytecode(alkaneId, blockTag) {
         return this.provider.alkanesBytecode(alkaneId, blockTag);
       }
       async simulate(contractId, contextJson, blockTag) {
-        return this.provider.alkanesSimulate(contractId, contextJson, blockTag);
+        const result = await this.provider.alkanesSimulate(contractId, contextJson, blockTag);
+        return mapToObject(result);
       }
       async execute(paramsJson) {
-        return this.provider.alkanesExecute(paramsJson);
+        const result = await this.provider.alkanesExecute(paramsJson);
+        return mapToObject(result);
       }
       async trace(outpoint) {
-        return this.provider.alkanesTrace(outpoint);
+        const result = await this.provider.alkanesTrace(outpoint);
+        return mapToObject(result);
       }
       async traceBlock(height) {
-        return this.provider.traceBlock(height);
+        const result = await this.provider.traceBlock(height);
+        return mapToObject(result);
       }
       async view(contractId, viewFn, params, blockTag) {
-        return this.provider.alkanesView(contractId, viewFn, params, blockTag);
+        const result = await this.provider.alkanesView(contractId, viewFn, params, blockTag);
+        return mapToObject(result);
       }
       async getAllPools(factoryId) {
-        return this.provider.alkanesGetAllPools(factoryId);
+        const result = await this.provider.alkanesGetAllPools(factoryId);
+        return mapToObject(result);
       }
       async getAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent) {
-        return this.provider.alkanesGetAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent);
+        const result = await this.provider.alkanesGetAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent);
+        return mapToObject(result);
       }
       async getPendingUnwraps(blockTag) {
-        return this.provider.alkanesPendingUnwraps(blockTag);
+        const result = await this.provider.alkanesPendingUnwraps(blockTag);
+        return mapToObject(result);
+      }
+      async reflect(alkaneId) {
+        const result = await this.provider.alkanesReflect(alkaneId);
+        return mapToObject(result);
+      }
+      async getSequence(blockTag) {
+        const result = await this.provider.alkanesSequence(blockTag);
+        return mapToObject(result);
+      }
+      async getSpendables(address2) {
+        const result = await this.provider.alkanesSpendables(address2);
+        return mapToObject(result);
+      }
+      async getPoolDetails(poolId) {
+        const result = await this.provider.alkanesPoolDetails(poolId);
+        return mapToObject(result);
+      }
+      async reflectAlkaneRange(block, startTx, endTx) {
+        const result = await this.provider.alkanesReflectAlkaneRange(block, startTx, endTx);
+        return mapToObject(result);
+      }
+      async inspect(target, config) {
+        const result = await this.provider.alkanesInspect(target, config);
+        return mapToObject(result);
       }
     };
     MetashrewClient = class {
@@ -46487,6 +46674,105 @@ var init_provider = __esm({
        */
       async view(viewFn, payload, blockTag = "latest") {
         return this.provider.metashrewView(viewFn, payload, blockTag);
+      }
+    };
+    OrdClient = class {
+      constructor(provider) {
+        this.provider = provider;
+      }
+      async getInscription(id) {
+        const result = await this.provider.ordInscription(id);
+        return mapToObject(result);
+      }
+      async getInscriptions(page) {
+        const result = await this.provider.ordInscriptions(page);
+        return mapToObject(result);
+      }
+      async getOutputs(address2) {
+        const result = await this.provider.ordOutputs(address2);
+        return mapToObject(result);
+      }
+      async getRune(name) {
+        const result = await this.provider.ordRune(name);
+        return mapToObject(result);
+      }
+      async list(outpoint) {
+        const result = await this.provider.ordList(outpoint);
+        return mapToObject(result);
+      }
+      async find(sat) {
+        const result = await this.provider.ordFind(sat);
+        return mapToObject(result);
+      }
+      async getAddressInfo(address2) {
+        const result = await this.provider.ordAddressInfo(address2);
+        return mapToObject(result);
+      }
+      async getBlockInfo(query) {
+        const result = await this.provider.ordBlockInfo(query);
+        return mapToObject(result);
+      }
+      async getBlockCount() {
+        return this.provider.ordBlockCount();
+      }
+      async getBlocks() {
+        const result = await this.provider.ordBlocks();
+        return mapToObject(result);
+      }
+      async getChildren(inscriptionId, page) {
+        const result = await this.provider.ordChildren(inscriptionId, page);
+        return mapToObject(result);
+      }
+      async getContent(inscriptionId) {
+        const result = await this.provider.ordContent(inscriptionId);
+        return mapToObject(result);
+      }
+      async getParents(inscriptionId, page) {
+        const result = await this.provider.ordParents(inscriptionId, page);
+        return mapToObject(result);
+      }
+      async getTxInfo(txid) {
+        const result = await this.provider.ordTxInfo(txid);
+        return mapToObject(result);
+      }
+    };
+    Brc20ProgClient = class {
+      constructor(provider) {
+        this.provider = provider;
+      }
+      async getBalance(address2) {
+        const result = await this.provider.brc20progGetBalance(address2);
+        return mapToObject(result);
+      }
+      async getCode(address2) {
+        const result = await this.provider.brc20progGetCode(address2);
+        return mapToObject(result);
+      }
+      async getBlockNumber() {
+        return this.provider.brc20progBlockNumber();
+      }
+      async getChainId() {
+        return this.provider.brc20progChainId();
+      }
+      async getTxReceipt(hash) {
+        const result = await this.provider.brc20progGetTransactionReceipt(hash);
+        return mapToObject(result);
+      }
+      async getTx(hash) {
+        const result = await this.provider.brc20progGetTransactionByHash(hash);
+        return mapToObject(result);
+      }
+      async getBlock(number, includeTxs) {
+        const result = await this.provider.brc20progGetBlockByNumber(String(number), includeTxs);
+        return mapToObject(result);
+      }
+      async call(to, data, from, blockTag) {
+        const result = await this.provider.brc20progCall(to, data, from, blockTag);
+        return mapToObject(result);
+      }
+      async estimateGas(to, data, from) {
+        const result = await this.provider.brc20progEstimateGas(to, data, from);
+        return mapToObject(result);
       }
     };
     LuaClient = class {
@@ -46604,21 +46890,24 @@ var init_provider = __esm({
        * @param includeOutpoints - Include detailed outpoint information
        */
       async getAddressBalances(address2, includeOutpoints = false) {
-        return this.provider.espoGetAddressBalances(address2, includeOutpoints);
+        const result = await this.provider.espoGetAddressBalances(address2, includeOutpoints);
+        return mapToObject(result);
       }
       /**
        * Get outpoints containing alkanes for an address
        * @param address - Bitcoin address
        */
       async getAddressOutpoints(address2) {
-        return this.provider.espoGetAddressOutpoints(address2);
+        const result = await this.provider.espoGetAddressOutpoints(address2);
+        return mapToObject(result);
       }
       /**
        * Get alkanes balances at a specific outpoint
        * @param outpoint - Outpoint in format "txid:vout"
        */
       async getOutpointBalances(outpoint) {
-        return this.provider.espoGetOutpointBalances(outpoint);
+        const result = await this.provider.espoGetOutpointBalances(outpoint);
+        return mapToObject(result);
       }
       /**
        * Get holders of an alkane token with pagination
@@ -46627,14 +46916,16 @@ var init_provider = __esm({
        * @param limit - Items per page (default: 100)
        */
       async getHolders(alkaneId, page = 0, limit = 100) {
-        return this.provider.espoGetHolders(alkaneId, BigInt(page), BigInt(limit));
+        const result = await this.provider.espoGetHolders(alkaneId, page, limit);
+        return mapToObject(result);
       }
       /**
        * Get total holder count for an alkane
        * @param alkaneId - Alkane ID in format "block:tx"
        */
       async getHoldersCount(alkaneId) {
-        return this.provider.espoGetHoldersCount(alkaneId);
+        const result = await this.provider.espoGetHoldersCount(alkaneId);
+        return result;
       }
       /**
        * Get storage keys for an alkane contract with pagination
@@ -46643,7 +46934,8 @@ var init_provider = __esm({
        * @param limit - Items per page (default: 100)
        */
       async getKeys(alkaneId, page = 0, limit = 100) {
-        return this.provider.espoGetKeys(alkaneId, BigInt(page), BigInt(limit));
+        const result = await this.provider.espoGetKeys(alkaneId, page, limit);
+        return mapToObject(result);
       }
       // ============================================================================
       // AMM DATA MODULE
@@ -46663,13 +46955,14 @@ var init_provider = __esm({
        * @param page - Page number (default: 0)
        */
       async getCandles(pool, timeframe, side, limit, page) {
-        return this.provider.espoGetCandles(
+        const result = await this.provider.espoGetCandles(
           pool,
           timeframe,
           side,
-          limit !== void 0 ? BigInt(limit) : void 0,
-          page !== void 0 ? BigInt(page) : void 0
+          limit,
+          page
         );
+        return mapToObject(result);
       }
       /**
        * Get trade history for a pool
@@ -46682,15 +46975,16 @@ var init_provider = __esm({
        * @param dir - Sort direction: "asc" | "desc"
        */
       async getTrades(pool, limit, page, side, filterSide, sort, dir) {
-        return this.provider.espoGetTrades(
+        const result = await this.provider.espoGetTrades(
           pool,
-          limit !== void 0 ? BigInt(limit) : void 0,
-          page !== void 0 ? BigInt(page) : void 0,
+          limit,
+          page,
           side,
           filterSide,
           sort,
           dir
         );
+        return mapToObject(result);
       }
       /**
        * Get all pools with pagination
@@ -46698,10 +46992,8 @@ var init_provider = __esm({
        * @param page - Page number (default: 0)
        */
       async getPools(limit, page) {
-        return this.provider.espoGetPools(
-          limit !== void 0 ? BigInt(limit) : void 0,
-          page !== void 0 ? BigInt(page) : void 0
-        );
+        const result = await this.provider.espoGetPools(limit, page);
+        return mapToObject(result);
       }
       /**
        * Find the best swap path between two tokens
@@ -46717,7 +47009,7 @@ var init_provider = __esm({
        * @param maxHops - Maximum swap hops
        */
       async findBestSwapPath(tokenIn, tokenOut, mode, amountIn, amountOut, amountOutMin, amountInMax, availableIn, feeBps, maxHops) {
-        return this.provider.espoFindBestSwapPath(
+        const result = await this.provider.espoFindBestSwapPath(
           tokenIn,
           tokenOut,
           mode,
@@ -46726,9 +47018,10 @@ var init_provider = __esm({
           amountOutMin,
           amountInMax,
           availableIn,
-          feeBps !== void 0 ? BigInt(feeBps) : void 0,
-          maxHops !== void 0 ? BigInt(maxHops) : void 0
+          feeBps,
+          maxHops
         );
+        return mapToObject(result);
       }
       /**
        * Find the best MEV swap opportunity for a token
@@ -46737,13 +47030,49 @@ var init_provider = __esm({
        * @param maxHops - Maximum swap hops
        */
       async getBestMevSwap(token, feeBps, maxHops) {
-        return this.provider.espoGetBestMevSwap(
+        const result = await this.provider.espoGetBestMevSwap(
           token,
-          feeBps !== void 0 ? BigInt(feeBps) : void 0,
-          maxHops !== void 0 ? BigInt(maxHops) : void 0
+          feeBps,
+          maxHops
         );
+        return mapToObject(result);
       }
     };
+    Logger = class {
+      constructor(level = "off") {
+        this.levels = {
+          off: 0,
+          error: 1,
+          warn: 2,
+          info: 3,
+          debug: 4,
+          trace: 5
+        };
+        this.level = level;
+      }
+      setLevel(level) {
+        this.level = level;
+      }
+      shouldLog(msgLevel) {
+        return this.levels[msgLevel] <= this.levels[this.level];
+      }
+      error(...args) {
+        if (this.shouldLog("error")) console.error("[SDK Error]", ...args);
+      }
+      warn(...args) {
+        if (this.shouldLog("warn")) console.warn("[SDK Warn]", ...args);
+      }
+      info(...args) {
+        if (this.shouldLog("info")) console.info("[SDK Info]", ...args);
+      }
+      debug(...args) {
+        if (this.shouldLog("debug")) console.log("[SDK Debug]", ...args);
+      }
+      trace(...args) {
+        if (this.shouldLog("trace")) console.log("[SDK Trace]", ...args);
+      }
+    };
+    logger = new Logger();
     AlkanesProvider = class {
       constructor(config) {
         this._provider = null;
@@ -46754,11 +47083,15 @@ var init_provider = __esm({
         this._espo = null;
         this._lua = null;
         this._metashrew = null;
+        this._ord = null;
+        this._brc20prog = null;
         const preset = NETWORK_PRESETS[config.network] || NETWORK_PRESETS["mainnet"];
         this.networkPreset = config.network;
         this.networkType = preset.networkType;
         this.rpcUrl = config.rpcUrl || preset.rpcUrl;
         this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
+        this.logLevel = config.logLevel || getLogLevelFromEnv() || "off";
+        logger.setLevel(this.logLevel);
         if (config.bitcoinNetwork) {
           this.network = config.bitcoinNetwork;
         } else {
@@ -46775,6 +47108,7 @@ var init_provider = __esm({
               this.network = bitcoin3.networks.regtest;
           }
         }
+        logger.debug(`Provider configured for ${this.networkType} (${this.rpcUrl})`);
       }
       /**
        * Initialize the provider (loads WASM if needed)
@@ -46783,18 +47117,30 @@ var init_provider = __esm({
        */
       async initialize() {
         if (this._provider) return;
-        const wasm = await import(
-          /* @vite-ignore */
-          "@alkanes/ts-sdk/wasm"
-        );
-        if (typeof wasm.init === "function") {
-          await wasm.init();
+        let WebProviderClass;
+        const isNode2 = typeof process !== "undefined" && process.versions != null && process.versions.node != null;
+        if (isNode2) {
+          const loaderPath = "@alkanes/ts-sdk/wasm/node-loader.cjs";
+          const nodeLoaderModule = await import(
+            /* @vite-ignore */
+            loaderPath
+          );
+          const nodeLoader = nodeLoaderModule.default || nodeLoaderModule;
+          await nodeLoader.init();
+          WebProviderClass = nodeLoader.WebProvider;
+        } else {
+          const wasmPath = "@alkanes/ts-sdk/wasm";
+          const wasm = await import(
+            /* @vite-ignore */
+            wasmPath
+          );
+          WebProviderClass = wasm.WebProvider;
         }
         const providerName = this.networkPreset === "local" ? "regtest" : this.networkPreset;
         const configOverride = {
           jsonrpc_url: this.rpcUrl
         };
-        this._provider = new wasm.WebProvider(
+        this._provider = new WebProviderClass(
           providerName,
           configOverride
         );
@@ -46901,6 +47247,30 @@ var init_provider = __esm({
           this._metashrew = new MetashrewClient(this._provider);
         }
         return this._metashrew;
+      }
+      /**
+       * Ord (Ordinals) RPC client
+       */
+      get ord() {
+        if (!this._ord) {
+          if (!this._provider) {
+            throw new Error("Provider not initialized. Call initialize() first.");
+          }
+          this._ord = new OrdClient(this._provider);
+        }
+        return this._ord;
+      }
+      /**
+       * BRC-20 Prog (Programmable BRC-20) RPC client
+       */
+      get brc20prog() {
+        if (!this._brc20prog) {
+          if (!this._provider) {
+            throw new Error("Provider not initialized. Call initialize() first.");
+          }
+          this._brc20prog = new Brc20ProgClient(this._provider);
+        }
+        return this._brc20prog;
       }
       // ============================================================================
       // CONVENIENCE METHODS
@@ -48436,6 +48806,137 @@ init_keystore();
 init_wallet();
 init_provider();
 
+// src/utils/amounts.ts
+var DEFAULT_DECIMALS = 8;
+function parseAmount(amount) {
+  if (typeof amount === "bigint") return amount;
+  if (typeof amount === "number") return BigInt(Math.floor(amount));
+  if (amount.startsWith("0x")) {
+    return BigInt(amount);
+  }
+  return BigInt(amount.replace(/[^0-9-]/g, ""));
+}
+function formatAmount(amount, decimals = DEFAULT_DECIMALS) {
+  const value = parseAmount(amount);
+  const divisor = 10n ** BigInt(decimals);
+  const intPart = value / divisor;
+  const fracPart = value % divisor;
+  if (fracPart === 0n) {
+    return `${intPart}.0`;
+  }
+  const fracStr = fracPart.toString().padStart(decimals, "0");
+  const trimmed = fracStr.replace(/0+$/, "");
+  return `${intPart}.${trimmed}`;
+}
+function toRawAmount(amount, decimals = DEFAULT_DECIMALS) {
+  const strAmount = typeof amount === "number" ? amount.toString() : amount;
+  const [intPart, fracPart = ""] = strAmount.split(".");
+  const paddedFrac = fracPart.padEnd(decimals, "0").slice(0, decimals);
+  const combined = intPart + paddedFrac;
+  return BigInt(combined);
+}
+function parseAlkaneBalance(balance) {
+  const decimals = balance.decimals ?? DEFAULT_DECIMALS;
+  const rawAmount = parseAmount(balance.amount || balance.value || "0");
+  let block;
+  let tx;
+  let id;
+  if (typeof balance.id === "string") {
+    const [b, t] = balance.id.split(":").map(Number);
+    block = b;
+    tx = t;
+    id = balance.id;
+  } else if (balance.id && typeof balance.id === "object") {
+    block = balance.id.block;
+    tx = balance.id.tx;
+    id = `${block}:${tx}`;
+  } else {
+    block = balance.block ?? 0;
+    tx = balance.tx ?? 0;
+    id = `${block}:${tx}`;
+  }
+  return {
+    id,
+    block,
+    tx,
+    rawAmount,
+    amount: formatAmount(rawAmount, decimals),
+    name: balance.name,
+    symbol: balance.symbol,
+    decimals
+  };
+}
+function parseAlkaneBalances(balances) {
+  return balances.map(parseAlkaneBalance);
+}
+function parseReflectMetadata(metadata) {
+  const decimals = metadata.decimals ?? DEFAULT_DECIMALS;
+  const rawTotalSupply = parseAmount(metadata.total_supply || metadata.totalSupply || "0");
+  const rawCap = parseAmount(metadata.cap || "0");
+  const rawMinted = parseAmount(metadata.minted || "0");
+  const rawValuePerMint = parseAmount(metadata.value_per_mint || metadata.valuePerMint || "0");
+  const rawPremine = parseAmount(metadata.premine || "0");
+  return {
+    id: metadata.id || "",
+    name: metadata.name || "",
+    symbol: metadata.symbol || "",
+    rawTotalSupply,
+    totalSupply: formatAmount(rawTotalSupply, decimals),
+    rawCap,
+    cap: rawCap.toString(),
+    // Cap is typically a count, not an amount
+    rawMinted,
+    minted: rawMinted.toString(),
+    // Minted is typically a count
+    rawValuePerMint,
+    valuePerMint: formatAmount(rawValuePerMint, decimals),
+    rawPremine,
+    premine: formatAmount(rawPremine, decimals),
+    decimals,
+    data: metadata.data
+  };
+}
+function parsePoolDetails(pool, decimals0 = DEFAULT_DECIMALS, decimals1 = DEFAULT_DECIMALS) {
+  const rawReserve0 = parseAmount(pool.reserve0 || "0");
+  const rawReserve1 = parseAmount(pool.reserve1 || "0");
+  const rawTotalSupply = parseAmount(pool.total_supply || pool.totalSupply || "0");
+  return {
+    poolId: pool.pool_id || pool.poolId || "",
+    token0: pool.token0 || "",
+    token1: pool.token1 || "",
+    rawReserve0,
+    reserve0: formatAmount(rawReserve0, decimals0),
+    rawReserve1,
+    reserve1: formatAmount(rawReserve1, decimals1),
+    rawTotalSupply,
+    totalSupply: formatAmount(rawTotalSupply, DEFAULT_DECIMALS),
+    decimals0,
+    decimals1
+  };
+}
+function parseTrade(trade, decimalsIn = DEFAULT_DECIMALS, decimalsOut = DEFAULT_DECIMALS) {
+  const rawAmountIn = parseAmount(trade.amount_in || trade.amountIn || "0");
+  const rawAmountOut = parseAmount(trade.amount_out || trade.amountOut || "0");
+  return {
+    txid: trade.txid || "",
+    vout: trade.vout ?? 0,
+    blockHeight: trade.block_height || trade.blockHeight || 0,
+    timestamp: trade.timestamp || "",
+    side: trade.side || "",
+    rawAmountIn,
+    amountIn: formatAmount(rawAmountIn, decimalsIn),
+    rawAmountOut,
+    amountOut: formatAmount(rawAmountOut, decimalsOut),
+    price: trade.price || ""
+  };
+}
+function satsToBtc(sats) {
+  return formatAmount(sats, 8);
+}
+function btcToSats(btc) {
+  return toRawAmount(btc, 8);
+}
+
 // src/utils/index.ts
 var bitcoin4 = __toESM(require_src3());
 
@@ -49828,9 +50329,11 @@ export {
   BitcoinRpcClient,
   BrowserWalletSigner,
   ConnectedWallet,
+  DEFAULT_DECIMALS,
   DERIVATION_PATHS,
   DataApiClient,
   EsploraClient,
+  EspoClient,
   EventEmittingSigner,
   GoogleDriveBackup,
   KeystoreManager,
@@ -49851,6 +50354,7 @@ export {
   XverseAdapter,
   analyzeRunestone,
   btcToSatoshis,
+  btcToSats,
   bytesToHex,
   calculateFee,
   calculateWeight,
@@ -49866,6 +50370,7 @@ export {
   delay,
   estimateTxSize,
   formatAlkaneId,
+  formatAmount,
   formatBackupDate,
   formatTimestamp,
   getAvailableWallets,
@@ -49879,12 +50384,20 @@ export {
   isBrowser,
   isNode,
   isWalletInstalled,
+  parseAlkaneBalance,
+  parseAlkaneBalances,
   parseAlkaneId,
+  parseAmount,
+  parsePoolDetails,
+  parseReflectMetadata,
+  parseTrade,
   retry,
   reverseBytes,
   reversedHex,
   safeJsonParse,
   satoshisToBTC,
+  satsToBtc,
+  toRawAmount,
   unlockKeystore,
   validateAddress,
   weightToVsize

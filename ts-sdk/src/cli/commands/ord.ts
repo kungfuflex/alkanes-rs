@@ -1,11 +1,19 @@
 /**
  * Ord command group
  * Ordinals and Inscriptions operations
+ *
+ * The CLI uses the SDK's OrdClient via provider.ord for all operations.
  */
 
 import { Command } from 'commander';
 import { createProvider } from '../utils/provider.js';
-import { formatOutput, success, error } from '../utils/formatting.js';
+import {
+  formatOutput,
+  formatInscriptions,
+  formatBlockInfo,
+  success,
+  error,
+} from '../utils/formatting.js';
 import ora from 'ora';
 
 export function registerOrdCommands(program: Command): void {
@@ -15,6 +23,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('inscription <id>')
     .description('Get inscription by ID')
+    .option('--raw', 'Output raw JSON')
     .action(async (id, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -25,11 +34,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ord_inscription_js(id);
-        const inscription = JSON.parse(result);
+        const result = await provider.ord.getInscription(id);
 
         spinner.succeed();
-        console.log(formatOutput(inscription, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get inscription: ${err.message}`);
         process.exit(1);
@@ -41,6 +49,7 @@ export function registerOrdCommands(program: Command): void {
     .command('inscriptions')
     .description('List inscriptions')
     .option('--page <number>', 'Page number', '0')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -51,12 +60,14 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const page = options.page ? parseFloat(options.page) : null;
-        const result = await provider.ord_inscriptions_js(page);
-        const inscriptions = JSON.parse(result);
+        const result = await provider.ord.getInscriptions(parseInt(options.page));
 
         spinner.succeed();
-        console.log(formatOutput(inscriptions, globalOpts));
+        if (options.raw) {
+          console.log(formatOutput(result, { raw: true }));
+        } else {
+          console.log(formatInscriptions(result));
+        }
       } catch (err: any) {
         error(`Failed to get inscriptions: ${err.message}`);
         process.exit(1);
@@ -67,6 +78,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('outputs <address>')
     .description('Get ordinal outputs for an address')
+    .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -77,11 +89,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ord_outputs_js(address);
-        const outputs = JSON.parse(result);
+        const result = await provider.ord.getOutputs(address);
 
         spinner.succeed();
-        console.log(formatOutput(outputs, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get outputs: ${err.message}`);
         process.exit(1);
@@ -92,6 +103,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('rune <name>')
     .description('Get rune information')
+    .option('--raw', 'Output raw JSON')
     .action(async (name, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -102,11 +114,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ord_rune_js(name);
-        const rune = JSON.parse(result);
+        const result = await provider.ord.getRune(name);
 
         spinner.succeed();
-        console.log(formatOutput(rune, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get rune: ${err.message}`);
         process.exit(1);
@@ -117,6 +128,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('list <outpoint>')
     .description('List ordinals in an output')
+    .option('--raw', 'Output raw JSON')
     .action(async (outpoint, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -127,11 +139,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ord_list_js(outpoint);
-        const list = JSON.parse(result);
+        const result = await provider.ord.list(outpoint);
 
         spinner.succeed();
-        console.log(formatOutput(list, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to list ordinals: ${err.message}`);
         process.exit(1);
@@ -142,6 +153,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('find <sat>')
     .description('Find ordinal by satoshi number')
+    .option('--raw', 'Output raw JSON')
     .action(async (sat, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -152,11 +164,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ord_find_js(parseFloat(sat));
-        const location = JSON.parse(result);
+        const result = await provider.ord.find(parseInt(sat));
 
         spinner.succeed();
-        console.log(formatOutput(location, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to find ordinal: ${err.message}`);
         process.exit(1);
@@ -167,6 +178,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('address-info <address>')
     .description('Get address information')
+    .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -177,11 +189,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ordAddressInfo(address);
-        const addressInfo = JSON.parse(result);
+        const result = await provider.ord.getAddressInfo(address);
 
         spinner.succeed();
-        console.log(formatOutput(addressInfo, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get address info: ${err.message}`);
         process.exit(1);
@@ -192,6 +203,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('block-info <query>')
     .description('Get block information (height or hash)')
+    .option('--raw', 'Output raw JSON')
     .action(async (query, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -202,11 +214,14 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ordBlockInfo(query);
-        const blockInfo = JSON.parse(result);
+        const result = await provider.ord.getBlockInfo(query);
 
         spinner.succeed();
-        console.log(formatOutput(blockInfo, globalOpts));
+        if (options.raw) {
+          console.log(formatOutput(result, { raw: true }));
+        } else {
+          console.log(formatBlockInfo(result));
+        }
       } catch (err: any) {
         error(`Failed to get block info: ${err.message}`);
         process.exit(1);
@@ -217,6 +232,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('block-count')
     .description('Get latest block count')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -227,11 +243,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ordBlockCount();
-        const blockCount = JSON.parse(result);
+        const result = await provider.ord.getBlockCount();
 
         spinner.succeed();
-        console.log(formatOutput(blockCount, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get block count: ${err.message}`);
         process.exit(1);
@@ -242,6 +257,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('blocks')
     .description('Get latest blocks')
+    .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -252,11 +268,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ordBlocks();
-        const blocks = JSON.parse(result);
+        const result = await provider.ord.getBlocks();
 
         spinner.succeed();
-        console.log(formatOutput(blocks, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get blocks: ${err.message}`);
         process.exit(1);
@@ -268,6 +283,7 @@ export function registerOrdCommands(program: Command): void {
     .command('children <inscription-id>')
     .description('Get children of an inscription')
     .option('--page <number>', 'Page number', '0')
+    .option('--raw', 'Output raw JSON')
     .action(async (inscriptionId, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -278,12 +294,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const page = options.page ? parseFloat(options.page) : null;
-        const result = await provider.ordChildren(inscriptionId, page);
-        const children = JSON.parse(result);
+        const result = await provider.ord.getChildren(inscriptionId, parseInt(options.page));
 
         spinner.succeed();
-        console.log(formatOutput(children, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get children: ${err.message}`);
         process.exit(1);
@@ -294,6 +308,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('content <inscription-id>')
     .description('Get inscription content')
+    .option('--raw', 'Output raw JSON')
     .action(async (inscriptionId, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -304,11 +319,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ordContent(inscriptionId);
-        const content = JSON.parse(result);
+        const result = await provider.ord.getContent(inscriptionId);
 
         spinner.succeed();
-        console.log(formatOutput(content, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get content: ${err.message}`);
         process.exit(1);
@@ -320,6 +334,7 @@ export function registerOrdCommands(program: Command): void {
     .command('parents <inscription-id>')
     .description('Get parents of an inscription')
     .option('--page <number>', 'Page number', '0')
+    .option('--raw', 'Output raw JSON')
     .action(async (inscriptionId, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -330,12 +345,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const page = options.page ? parseFloat(options.page) : null;
-        const result = await provider.ordParents(inscriptionId, page);
-        const parents = JSON.parse(result);
+        const result = await provider.ord.getParents(inscriptionId, parseInt(options.page));
 
         spinner.succeed();
-        console.log(formatOutput(parents, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get parents: ${err.message}`);
         process.exit(1);
@@ -346,6 +359,7 @@ export function registerOrdCommands(program: Command): void {
   ord
     .command('tx-info <txid>')
     .description('Get transaction information')
+    .option('--raw', 'Output raw JSON')
     .action(async (txid, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -356,11 +370,10 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ordTxInfo(txid);
-        const txInfo = JSON.parse(result);
+        const result = await provider.ord.getTxInfo(txid);
 
         spinner.succeed();
-        console.log(formatOutput(txInfo, globalOpts));
+        console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get transaction info: ${err.message}`);
         process.exit(1);

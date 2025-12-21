@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: ['src/index.ts'],
   format: ['cjs', 'esm'],
-  dts: false,
+  dts: false, // Disabled due to WASM module resolution issues - types available via source
   clean: true,
   splitting: false,
   sourcemap: true,

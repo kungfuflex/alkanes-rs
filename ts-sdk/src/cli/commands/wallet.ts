@@ -66,26 +66,29 @@ export function registerWalletCommands(program: Command): void {
           }
 
           // Create wallet via WASM
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
+          // Use rawProvider to access low-level wallet methods
+          const rawProvider = provider.rawProvider;
 
-          const result = provider.wallet_create_js(
-            JSON.stringify(walletConfig),
+          // walletCreate takes (mnemonic?, passphrase?) and returns sync result
+          // The passphrase is used for BIP39 passphrase (optional seed extension)
+          const walletInfo = rawProvider.walletCreate(
             mnemonic || undefined,
             passphrase
           );
 
-          // Wait for promise to resolve
-          const walletInfo = await result;
+          // Save wallet data to file
+          saveWalletFile(walletPath, {
+            mnemonic: walletInfo.mnemonic,
+            network: globalOpts.provider || 'mainnet',
+            created_at: new Date().toISOString(),
+          });
 
           spinner.succeed('Wallet created successfully!');
 
           // Display wallet info
           console.log();
           success(`Wallet saved to: ${walletPath}`);
-          info(`Network: ${walletInfo.network}`);
+          info(`Network: ${walletInfo.network || globalOpts.provider || 'mainnet'}`);
           info(`First address (p2tr:0): ${walletInfo.address}`);
 
           if (walletInfo.mnemonic && !options.mnemonic) {
@@ -132,12 +135,18 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
+          const rawProvider = provider.rawProvider;
 
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
+          // Load wallet with mnemonic from saved wallet file
+          const walletData = loadWalletFile(walletPath);
+          if (!walletData || !walletData.mnemonic) {
+            spinner.fail();
+            error('Failed to load wallet or wallet has no mnemonic');
+            return;
+          }
+
+          // Load the mnemonic into the provider (passphrase is for BIP39 seed extension)
+          rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
           spinner.succeed('Wallet loaded');
 
           // Parse the spec to get address type and range
@@ -159,13 +168,15 @@ export function registerWalletCommands(program: Command): void {
             indices.push(Number(range));
           }
 
-          // Get addresses
-          console.log();
-          const table = createTable(['Index', 'Address Type', 'Address']);
+          // Get addresses using the Keystore.get_addresses method via WASM
+          const startIndex = indices[0];
+          const count = indices.length;
+          const addresses = rawProvider.walletGetAddresses(addressType, startIndex, count);
 
-          for (const index of indices) {
-            const addr = await provider.get_address(addressType, index);
-            table.push([String(index), addressType, addr]);
+          console.log();
+          const table = createTable(['Index', 'Address Type', 'Derivation Path', 'Address']);
+          for (const addr of addresses) {
+            table.push([String(addr.index), addr.script_type, addr.derivation_path, addr.address]);
           }
 
           console.log(table.toString());
@@ -205,16 +216,21 @@ export function registerWalletCommands(program: Command): void {
             esploraUrl: globalOpts.esploraUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
+          const rawProvider = provider.rawProvider;
 
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
+          // Load wallet with mnemonic from saved wallet file
+          const walletData = loadWalletFile(walletPath);
+          if (!walletData || !walletData.mnemonic) {
+            spinner.fail();
+            error('Failed to load wallet or wallet has no mnemonic');
+            return;
+          }
 
-          // Get UTXOs via the UtxoProvider trait we implemented
-          const utxos_result = await provider.get_utxos_by_spec_js([spec]);
-          const utxos = JSON.parse(utxos_result);
+          // Load the mnemonic into the provider
+          rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
+
+          // Get UTXOs via walletGetUtxos
+          const utxos = await rawProvider.walletGetUtxos();
 
           spinner.succeed(`Found ${utxos.length} UTXOs`);
 
@@ -278,27 +294,30 @@ export function registerWalletCommands(program: Command): void {
             esploraUrl: globalOpts.esploraUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
+          const rawProvider = provider.rawProvider;
 
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
+          // Load wallet with mnemonic from saved wallet file
+          const walletData = loadWalletFile(walletPath);
+          if (!walletData || !walletData.mnemonic) {
+            spinner.fail();
+            error('Failed to load wallet or wallet has no mnemonic');
+            return;
+          }
 
-          // Get balance via WASM
-          const balance_result = await provider.wallet_get_balance_js(options.address);
-          const balance = JSON.parse(balance_result);
+          // Load the mnemonic into the provider
+          rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
+
+          // Get balance via WASM - walletGetBalance returns {confirmed, pending}
+          const balance = await rawProvider.walletGetBalance();
 
           spinner.succeed('Balance calculated');
 
           console.log();
-          success(`Total Balance: ${formatBTC(balance.total || 0)}`);
-
-          if (balance.confirmed !== undefined) {
-            info(`Confirmed: ${formatBTC(balance.confirmed)}`);
-          }
-          if (balance.unconfirmed !== undefined && balance.unconfirmed > 0) {
-            info(`Unconfirmed: ${formatBTC(balance.unconfirmed)}`);
+          const total = (balance.confirmed || 0) + (balance.pending || 0);
+          success(`Total Balance: ${formatBTC(total)}`);
+          info(`Confirmed: ${formatBTC(balance.confirmed || 0)}`);
+          if (balance.pending && balance.pending > 0) {
+            info(`Pending: ${formatBTC(balance.pending)}`);
           }
         } catch (err: any) {
           spinner.fail();
@@ -349,23 +368,28 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
+          const rawProvider = provider.rawProvider;
 
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
+          // Load wallet with mnemonic from saved wallet file
+          const walletData = loadWalletFile(walletPath);
+          if (!walletData || !walletData.mnemonic) {
+            spinner.fail();
+            error('Failed to load wallet or wallet has no mnemonic');
+            return;
+          }
 
-          // Send transaction via WASM
+          // Load the mnemonic into the provider
+          rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
+
+          // Send transaction via WASM - walletSend takes JSON params
           const sendParams = {
-            to_address: address,
-            amount: parseFloat(amount) * 100_000_000,  // Convert BTC to satoshis
+            address: address,
+            amount: Math.round(parseFloat(amount) * 100_000_000),  // Convert BTC to satoshis
             fee_rate: parseFloat(options.feeRate),
-            from: options.from,
+            from: options.from ? [options.from] : undefined,
           };
 
-          const txid_result = await provider.wallet_send_js(JSON.stringify(sendParams));
-          const txid = JSON.parse(txid_result);
+          const txid = await rawProvider.walletSend(JSON.stringify(sendParams));
 
           spinner.succeed('Transaction broadcast successfully!');
 
@@ -406,18 +430,21 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
+          const rawProvider = provider.rawProvider;
 
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
+          // Load wallet with mnemonic from saved wallet file
+          const walletData = loadWalletFile(walletPath);
+          if (!walletData || !walletData.mnemonic) {
+            spinner.fail();
+            error('Failed to load wallet or wallet has no mnemonic');
+            return;
+          }
 
-          const history_result = await provider.wallet_get_history_js(
-            options.address,
-            parseInt(options.count)
-          );
-          const history = JSON.parse(history_result);
+          // Load the mnemonic into the provider
+          rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
+
+          // Get history via walletGetHistory
+          const history = await rawProvider.walletGetHistory(options.address);
 
           spinner.succeed('Transaction history fetched');
 
@@ -472,21 +499,9 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
-
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-
-          const signed_result = await provider.wallet_sign_psbt_js(psbt);
-          const signed = JSON.parse(signed_result);
-
-          spinner.succeed('PSBT signed');
-
-          console.log();
-          success('Signed PSBT:');
-          console.log(formatOutput(signed, globalOpts));
+          spinner.fail();
+          error('PSBT signing is not yet available in the WASM CLI');
+          info('Use a full node wallet for PSBT operations');
         } catch (err: any) {
           spinner.fail();
           throw err;
@@ -521,16 +536,9 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
-
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-
-          await provider.wallet_freeze_utxo_js(outpoint, options.reason || '');
-
-          spinner.succeed(`UTXO ${outpoint} frozen`);
+          spinner.fail();
+          error('UTXO freezing is not yet available in the WASM CLI');
+          info('Use a full node wallet for UTXO management');
         } catch (err: any) {
           spinner.fail();
           throw err;
@@ -564,16 +572,9 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
-
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-
-          await provider.wallet_unfreeze_utxo_js(outpoint);
-
-          spinner.succeed(`UTXO ${outpoint} unfrozen`);
+          spinner.fail();
+          error('UTXO unfreezing is not yet available in the WASM CLI');
+          info('Use a full node wallet for UTXO management');
         } catch (err: any) {
           spinner.fail();
           throw err;
@@ -610,24 +611,9 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
-
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-
-          const tx_result = await provider.wallet_create_tx_js(
-            options.to,
-            parseInt(options.amount),
-            parseFloat(options.feeRate)
-          );
-          const tx = JSON.parse(tx_result);
-
-          spinner.succeed('Transaction created');
-
-          console.log();
-          console.log(formatOutput(tx, globalOpts));
+          spinner.fail();
+          error('Transaction creation (PSBT) is not yet available in the WASM CLI');
+          info('Use walletSend for direct transactions or a full node wallet for PSBT operations');
         } catch (err: any) {
           spinner.fail();
           throw err;
@@ -661,21 +647,9 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
-
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-
-          const signed_result = await provider.wallet_sign_tx_js(txHex);
-          const signed = JSON.parse(signed_result);
-
-          spinner.succeed('Transaction signed');
-
-          console.log();
-          success('Signed transaction:');
-          console.log(formatOutput(signed, globalOpts));
+          spinner.fail();
+          error('Transaction signing is not yet available in the WASM CLI');
+          info('Use walletSend for direct transactions or a full node wallet for signing');
         } catch (err: any) {
           spinner.fail();
           throw err;
@@ -701,8 +675,7 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const decoded_result = await provider.bitcoin_decoderawtransaction_js(txHex);
-          const decoded = JSON.parse(decoded_result);
+          const decoded = await provider.rawProvider.bitcoindDecodeRawTransaction(txHex);
 
           spinner.succeed('Transaction decoded');
 
@@ -733,8 +706,7 @@ export function registerWalletCommands(program: Command): void {
             jsonrpcUrl: globalOpts.jsonrpcUrl,
           });
 
-          const txid_result = await provider.bitcoin_sendrawtransaction_js(txHex);
-          const txid = JSON.parse(txid_result);
+          const txid = await provider.rawProvider.bitcoindSendRawTransaction(txHex);
 
           spinner.succeed('Transaction broadcast');
 
@@ -767,38 +739,8 @@ export function registerWalletCommands(program: Command): void {
           return;
         }
 
-        const passphrase = globalOpts.passphrase || await promptPassword('Enter wallet passphrase:');
-        const spinner = ora('Estimating fee...').start();
-
-        try {
-          const provider = await createProvider({
-            network: globalOpts.provider,
-            jsonrpcUrl: globalOpts.jsonrpcUrl,
-          });
-
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
-
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-
-          const fee_result = await provider.wallet_estimate_fee_js(
-            options.to,
-            parseInt(options.amount),
-            parseFloat(options.feeRate)
-          );
-          const fee = JSON.parse(fee_result);
-
-          spinner.succeed('Fee estimated');
-
-          console.log();
-          info(`Estimated fee: ${formatBTC(fee.fee || 0)}`);
-          info(`Total: ${formatBTC((parseInt(options.amount) + (fee.fee || 0)))}`);
-        } catch (err: any) {
-          spinner.fail();
-          throw err;
-        }
+        error('Fee estimation is not yet available in the WASM CLI');
+        info('Use esplora fee-estimates for current network fee rates');
       } catch (err: any) {
         error(`Failed to estimate fee: ${err.message}`);
         process.exit(1);
@@ -821,8 +763,7 @@ export function registerWalletCommands(program: Command): void {
             esploraUrl: globalOpts.esploraUrl,
           });
 
-          const rates_result = await provider.esplora_get_fee_estimates_js();
-          const rates = JSON.parse(rates_result);
+          const rates = await provider.rawProvider.esploraGetFeeEstimates();
 
           spinner.succeed('Fee rates fetched');
 
@@ -852,28 +793,8 @@ export function registerWalletCommands(program: Command): void {
           return;
         }
 
-        const passphrase = globalOpts.passphrase || await promptPassword('Enter wallet passphrase:');
-        const spinner = ora('Syncing wallet...').start();
-
-        try {
-          const provider = await createProvider({
-            network: globalOpts.provider,
-            jsonrpcUrl: globalOpts.jsonrpcUrl,
-          });
-
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
-
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-          await provider.wallet_sync_js();
-
-          spinner.succeed('Wallet synced');
-        } catch (err: any) {
-          spinner.fail();
-          throw err;
-        }
+        error('Wallet sync is not yet available in the WASM CLI');
+        info('The WASM wallet syncs automatically when querying balance/UTXOs');
       } catch (err: any) {
         error(`Failed to sync wallet: ${err.message}`);
         process.exit(1);
@@ -927,35 +848,18 @@ export function registerWalletCommands(program: Command): void {
           return;
         }
 
-        const passphrase = globalOpts.passphrase || await promptPassword('Enter wallet passphrase:');
-        const spinner = ora('Getting mnemonic...').start();
-
-        try {
-          const provider = await createProvider({
-            network: globalOpts.provider,
-            jsonrpcUrl: globalOpts.jsonrpcUrl,
-          });
-
-          const walletConfig = {
-            wallet_path: walletPath,
-            network: globalOpts.provider || 'mainnet',
-          };
-
-          await provider.wallet_load_js(JSON.stringify(walletConfig), passphrase);
-          const mnemonic_result = await provider.wallet_get_mnemonic_js();
-          const mnemonic = JSON.parse(mnemonic_result);
-
-          spinner.succeed('Mnemonic retrieved');
-
-          console.log();
-          console.log(chalk.yellow.bold('⚠ WARNING: Keep this mnemonic safe and private!'));
-          console.log();
-          console.log(chalk.cyan(mnemonic));
-          console.log();
-        } catch (err: any) {
-          spinner.fail();
-          throw err;
+        // Simply load from file - the wallet file stores the mnemonic
+        const walletData = loadWalletFile(walletPath);
+        if (!walletData || !walletData.mnemonic) {
+          error('Failed to load wallet or wallet has no mnemonic');
+          return;
         }
+
+        console.log();
+        console.log(chalk.yellow.bold('⚠ WARNING: Keep this mnemonic safe and private!'));
+        console.log();
+        console.log(chalk.cyan(walletData.mnemonic));
+        console.log();
       } catch (err: any) {
         error(`Failed to get mnemonic: ${err.message}`);
         process.exit(1);

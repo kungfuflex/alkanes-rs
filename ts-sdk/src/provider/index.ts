@@ -17,6 +17,58 @@ import {
   AlkaneId,
 } from '../types';
 
+import {
+  // Bitcoin RPC response types
+  BlockchainInfo,
+  NetworkInfo,
+  MempoolInfo,
+  BitcoinTransaction,
+  BitcoinBlock,
+  BitcoinBlockHeader,
+  SmartFeeEstimate,
+  ChainTip,
+  // Esplora response types
+  EsploraAddressInfo,
+  EsploraUtxo,
+  EsploraTransaction,
+  EsploraBlock,
+  FeeEstimates,
+  Outspend,
+  MerkleProof,
+  MempoolStats,
+  MempoolRecentTx,
+  TxStatus,
+  // Alkanes response types
+  AlkaneBalanceResponse,
+  AlkaneReflectResponse,
+  AlkanesByAddressResponse,
+  AlkaneSpendablesResponse,
+  AlkaneSimulateResponse,
+  AlkaneTraceResponse,
+  AlkaneTraceEntry,
+  AlkaneSequenceResponse,
+  AlkanePoolResponse,
+  // Ord response types
+  InscriptionResponse,
+  InscriptionsListResponse,
+  RuneResponse,
+  OrdOutput,
+  OrdBlockInfo,
+  // BRC20-Prog response types
+  Brc20ProgBalance,
+  Brc20ProgTxReceipt,
+  Brc20ProgTransaction,
+  Brc20ProgBlock,
+  // Data API response types
+  DataApiReserves,
+  DataApiPoolHistoryEvent,
+  DataApiPoolsResponse,
+  DataApiStorageKey,
+  DataApiAddressAlkanes,
+  BitcoinPriceResponse,
+  MarketChartResponse,
+} from '../types/responses';
+
 // WASM provider type - loaded dynamically at runtime
 type WasmWebProvider = any;
 
@@ -54,6 +106,17 @@ export const NETWORK_PRESETS: Record<string, { rpcUrl: string; dataApiUrl: strin
   },
 };
 
+/**
+ * Log level for SDK operations
+ * - 'off': No logging (default)
+ * - 'error': Only errors
+ * - 'warn': Errors and warnings
+ * - 'info': Errors, warnings, and info messages
+ * - 'debug': All messages including debug output
+ * - 'trace': Most verbose, includes WASM internals
+ */
+export type LogLevel = 'off' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
+
 // Extended provider configuration
 export interface AlkanesProviderConfig {
   /** Network type or preset name */
@@ -64,6 +127,12 @@ export interface AlkanesProviderConfig {
   dataApiUrl?: string;
   /** bitcoinjs-lib network (auto-detected if not provided) */
   bitcoinNetwork?: bitcoin.Network;
+  /**
+   * Log level for SDK operations.
+   * Can also be set via RUST_LOG or ALKANES_LOG_LEVEL environment variables.
+   * Priority: config > ALKANES_LOG_LEVEL > RUST_LOG > 'off'
+   */
+  logLevel?: LogLevel;
 }
 
 // Pool details from factory
@@ -115,6 +184,170 @@ export interface HolderInfo {
   amount: string;
 }
 
+// ============================================================================
+// ESPO API RESPONSE TYPES
+// ============================================================================
+
+/** Paginated response base */
+export interface PaginatedResponse {
+  ok: boolean;
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+/** Address balance entry with outpoint details */
+export interface OutpointEntry {
+  alkane: string;
+  amount: string;
+}
+
+export interface OutpointWithEntries {
+  outpoint: string;
+  entries: OutpointEntry[];
+}
+
+/** Response from getAddressBalances */
+export interface AddressBalancesResponse {
+  ok: boolean;
+  address: string;
+  balances: Record<string, string>; // alkane_id -> amount
+  outpoints?: OutpointWithEntries[];
+}
+
+/** Response from getAddressOutpoints */
+export interface AddressOutpointsResponse {
+  ok: boolean;
+  address: string;
+  outpoints: OutpointWithEntries[];
+}
+
+/** Response from getOutpointBalances */
+export interface OutpointBalancesResponse {
+  ok: boolean;
+  outpoint: string;
+  items: OutpointWithEntries[];
+}
+
+/** Response from getHolders */
+export interface HoldersResponse extends PaginatedResponse {
+  alkane: string;
+  items: HolderInfo[];
+}
+
+/** Response from getHoldersCount */
+export interface HoldersCountResponse {
+  ok: boolean;
+  count: number;
+}
+
+/** Storage key entry */
+export interface StorageKeyEntry {
+  key: string;
+  key_hex: string;
+  value: string;
+  value_hex: string;
+}
+
+/** Response from getKeys */
+export interface KeysResponse extends PaginatedResponse {
+  alkane: string;
+  items: StorageKeyEntry[];
+}
+
+/** Candle data from AMM */
+export interface EspoCandle {
+  open_time: string;
+  close_time: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume0: string;
+  volume1: string;
+  trade_count: number;
+}
+
+/** Response from getCandles */
+export interface CandlesResponse extends PaginatedResponse {
+  pool: string;
+  timeframe: string;
+  side: string;
+  candles: EspoCandle[];
+}
+
+/** Trade data from AMM */
+export interface EspoTrade {
+  txid: string;
+  vout: number;
+  block_height: number;
+  timestamp: string;
+  side: string;
+  amount_in: string;
+  amount_out: string;
+  price: string;
+}
+
+/** Response from getTrades */
+export interface TradesResponse extends PaginatedResponse {
+  pool: string;
+  side: string;
+  filter_side: string;
+  sort: string;
+  dir: string;
+  trades: EspoTrade[];
+}
+
+/** Pool info from AMM */
+export interface EspoPool {
+  pool_id: string;
+  token0: string;
+  token1: string;
+  reserve0: string;
+  reserve1: string;
+  total_supply: string;
+}
+
+/** Response from getPools */
+export interface PoolsResponse extends PaginatedResponse {
+  pools: EspoPool[];
+}
+
+/** Swap hop info */
+export interface SwapHop {
+  pool: string;
+  token_in: string;
+  token_out: string;
+  amount_in: string;
+  amount_out: string;
+}
+
+/** Response from findBestSwapPath */
+export interface SwapPathResponse {
+  ok: boolean;
+  mode: string;
+  token_in: string;
+  token_out: string;
+  fee_bps: number;
+  max_hops: number;
+  amount_in: string;
+  amount_out: string;
+  hops: SwapHop[];
+}
+
+/** Response from getBestMevSwap */
+export interface MevSwapResponse {
+  ok: boolean;
+  token: string;
+  fee_bps: number;
+  max_hops: number;
+  amount_in: string;
+  amount_out: string;
+  profit: string;
+  hops: SwapHop[];
+}
+
 // Execute result
 export interface ExecuteResult {
   txid: string;
@@ -137,36 +370,95 @@ export class BitcoinRpcClient {
     return this.provider.bitcoindGetBlockHash(height);
   }
 
-  async getBlock(hash: string, raw: boolean = false): Promise<any> {
-    return this.provider.bitcoindGetBlock(hash, raw);
+  async getBlock(hash: string, raw: boolean = false): Promise<BitcoinBlock> {
+    const result = await this.provider.bitcoindGetBlock(hash, raw);
+    return mapToObject(result);
   }
 
   async sendRawTransaction(hex: string): Promise<string> {
     return this.provider.bitcoindSendRawTransaction(hex);
   }
 
-  async getTransaction(txid: string, blockHash?: string): Promise<any> {
-    return this.provider.bitcoindGetRawTransaction(txid, blockHash);
+  async getTransaction(txid: string, blockHash?: string): Promise<BitcoinTransaction> {
+    const result = await this.provider.bitcoindGetRawTransaction(txid, blockHash);
+    return mapToObject(result);
   }
 
-  async getBlockchainInfo(): Promise<any> {
-    return this.provider.bitcoindGetBlockchainInfo();
+  async getBlockchainInfo(): Promise<BlockchainInfo> {
+    const result = await this.provider.bitcoindGetBlockchainInfo();
+    return mapToObject(result);
   }
 
-  async getNetworkInfo(): Promise<any> {
-    return this.provider.bitcoindGetNetworkInfo();
+  async getNetworkInfo(): Promise<NetworkInfo> {
+    const result = await this.provider.bitcoindGetNetworkInfo();
+    return mapToObject(result);
   }
 
-  async getMempoolInfo(): Promise<any> {
-    return this.provider.bitcoindGetMempoolInfo();
+  async getMempoolInfo(): Promise<MempoolInfo> {
+    const result = await this.provider.bitcoindGetMempoolInfo();
+    return mapToObject(result);
   }
 
-  async estimateSmartFee(target: number): Promise<any> {
-    return this.provider.bitcoindEstimateSmartFee(target);
+  async estimateSmartFee(target: number): Promise<SmartFeeEstimate> {
+    const result = await this.provider.bitcoindEstimateSmartFee(target);
+    return mapToObject(result);
   }
 
-  async generateToAddress(nblocks: number, address: string): Promise<any> {
-    return this.provider.bitcoindGenerateToAddress(nblocks, address);
+  async generateToAddress(nblocks: number, address: string): Promise<string[]> {
+    const result = await this.provider.bitcoindGenerateToAddress(nblocks, address);
+    return mapToObject(result);
+  }
+
+  async generateFuture(address: string): Promise<string[]> {
+    const result = await this.provider.bitcoindGenerateFuture(address);
+    return mapToObject(result);
+  }
+
+  async getBlockHeader(hash: string): Promise<BitcoinBlockHeader> {
+    const result = await this.provider.bitcoindGetBlockHeader(hash);
+    return mapToObject(result);
+  }
+
+  async getBlockStats(hash: string): Promise<Record<string, number>> {
+    const result = await this.provider.bitcoindGetBlockStats(hash);
+    return mapToObject(result);
+  }
+
+  async getChainTips(): Promise<ChainTip[]> {
+    const result = await this.provider.bitcoindGetChainTips();
+    return mapToObject(result);
+  }
+
+  async getRawMempool(): Promise<string[]> {
+    const result = await this.provider.bitcoindGetRawMempool();
+    return mapToObject(result);
+  }
+
+  async getTxOut(txid: string, vout: number, includeMempool?: boolean): Promise<{
+    bestblock: string;
+    confirmations: number;
+    value: number;
+    scriptPubKey: { asm: string; hex: string; type: string; address?: string };
+    coinbase: boolean;
+  } | null> {
+    const result = await this.provider.bitcoindGetTxOut(txid, vout, includeMempool);
+    return mapToObject(result);
+  }
+
+  async decodeRawTransaction(hex: string): Promise<BitcoinTransaction> {
+    const result = await this.provider.bitcoindDecodeRawTransaction(hex);
+    return mapToObject(result);
+  }
+
+  async decodePsbt(psbt: string): Promise<{
+    tx: BitcoinTransaction;
+    unknown: Record<string, string>;
+    inputs: any[];
+    outputs: any[];
+    fee?: number;
+  }> {
+    const result = await this.provider.bitcoindDecodePsbt(psbt);
+    return mapToObject(result);
   }
 }
 
@@ -176,24 +468,29 @@ export class BitcoinRpcClient {
 export class EsploraClient {
   constructor(private provider: WasmWebProvider) {}
 
-  async getAddressInfo(address: string): Promise<any> {
-    return this.provider.esploraGetAddressInfo(address);
+  async getAddressInfo(address: string): Promise<EsploraAddressInfo> {
+    const result = await this.provider.esploraGetAddressInfo(address);
+    return mapToObject(result);
   }
 
-  async getAddressUtxos(address: string): Promise<UTXO[]> {
-    return this.provider.esploraGetAddressUtxo(address);
+  async getAddressUtxos(address: string): Promise<EsploraUtxo[]> {
+    const result = await this.provider.esploraGetAddressUtxo(address);
+    return mapToObject(result);
   }
 
-  async getAddressTxs(address: string): Promise<any[]> {
-    return this.provider.esploraGetAddressTxs(address);
+  async getAddressTxs(address: string): Promise<EsploraTransaction[]> {
+    const result = await this.provider.esploraGetAddressTxs(address);
+    return mapToObject(result);
   }
 
-  async getTx(txid: string): Promise<any> {
-    return this.provider.esploraGetTx(txid);
+  async getTx(txid: string): Promise<EsploraTransaction> {
+    const result = await this.provider.esploraGetTx(txid);
+    return mapToObject(result);
   }
 
-  async getTxStatus(txid: string): Promise<any> {
-    return this.provider.esploraGetTxStatus(txid);
+  async getTxStatus(txid: string): Promise<TxStatus> {
+    const result = await this.provider.esploraGetTxStatus(txid);
+    return mapToObject(result);
   }
 
   async getTxHex(txid: string): Promise<string> {
@@ -211,6 +508,106 @@ export class EsploraClient {
   async broadcastTx(txHex: string): Promise<string> {
     return this.provider.esploraBroadcastTx(txHex);
   }
+
+  async getFeeEstimates(): Promise<FeeEstimates> {
+    const result = await this.provider.esploraGetFeeEstimates();
+    return mapToObject(result);
+  }
+
+  async getBlocks(startHeight?: number): Promise<EsploraBlock[]> {
+    const result = await this.provider.esploraGetBlocks(startHeight);
+    return mapToObject(result);
+  }
+
+  async getBlockByHeight(height: number): Promise<EsploraBlock> {
+    const result = await this.provider.esploraGetBlockByHeight(height);
+    return mapToObject(result);
+  }
+
+  async getBlock(hash: string): Promise<EsploraBlock> {
+    const result = await this.provider.esploraGetBlock(hash);
+    return mapToObject(result);
+  }
+
+  async getBlockStatus(hash: string): Promise<{ in_best_chain: boolean; height?: number; next_best?: string }> {
+    const result = await this.provider.esploraGetBlockStatus(hash);
+    return mapToObject(result);
+  }
+
+  async getBlockTxids(hash: string): Promise<string[]> {
+    return this.provider.esploraGetBlockTxids(hash);
+  }
+
+  async getBlockHeader(hash: string): Promise<string> {
+    const result = await this.provider.esploraGetBlockHeader(hash);
+    return mapToObject(result);
+  }
+
+  async getBlockRaw(hash: string): Promise<Uint8Array> {
+    return this.provider.esploraGetBlockRaw(hash);
+  }
+
+  async getBlockTxid(hash: string, index: number): Promise<string> {
+    return this.provider.esploraGetBlockTxid(hash, index);
+  }
+
+  async getBlockTxs(hash: string, startIndex?: number): Promise<EsploraTransaction[]> {
+    const result = await this.provider.esploraGetBlockTxs(hash, startIndex);
+    return mapToObject(result);
+  }
+
+  async getAddressTxsChain(address: string, lastSeenTxid?: string): Promise<EsploraTransaction[]> {
+    const result = await this.provider.esploraGetAddressTxsChain(address, lastSeenTxid);
+    return mapToObject(result);
+  }
+
+  async getAddressTxsMempool(address: string): Promise<EsploraTransaction[]> {
+    const result = await this.provider.esploraGetAddressTxsMempool(address);
+    return mapToObject(result);
+  }
+
+  async getAddressPrefix(prefix: string): Promise<string[]> {
+    const result = await this.provider.esploraGetAddressPrefix(prefix);
+    return mapToObject(result);
+  }
+
+  async getTxRaw(txid: string): Promise<Uint8Array> {
+    return this.provider.esploraGetTxRaw(txid);
+  }
+
+  async getTxMerkleProof(txid: string): Promise<MerkleProof> {
+    const result = await this.provider.esploraGetTxMerkleProof(txid);
+    return mapToObject(result);
+  }
+
+  async getTxMerkleblockProof(txid: string): Promise<string> {
+    const result = await this.provider.esploraGetTxMerkleblockProof(txid);
+    return mapToObject(result);
+  }
+
+  async getTxOutspend(txid: string, index: number): Promise<Outspend> {
+    const result = await this.provider.esploraGetTxOutspend(txid, index);
+    return mapToObject(result);
+  }
+
+  async getTxOutspends(txid: string): Promise<Outspend[]> {
+    const result = await this.provider.esploraGetTxOutspends(txid);
+    return mapToObject(result);
+  }
+
+  async getMempool(): Promise<MempoolStats> {
+    const result = await this.provider.esploraGetMempool();
+    return mapToObject(result);
+  }
+
+  async getMempoolTxids(): Promise<string[]> {
+    return this.provider.esploraGetMempoolTxids();
+  }
+
+  async getMempoolRecent(): Promise<MempoolRecentTx[]> {
+    const result = await this.provider.esploraGetMempoolRecent();
+    return mapToObject(result);
+  }
 }
 
 /**
@@ -219,52 +616,162 @@ export class EsploraClient {
 export class AlkanesRpcClient {
   constructor(private provider: WasmWebProvider) {}
 
-  async getBalance(address?: string): Promise<AlkaneBalance[]> {
-    return this.provider.alkanesBalance(address);
+  async getBalance(address?: string): Promise<AlkaneBalanceResponse[]> {
+    const result = await this.provider.alkanesBalance(address);
+    return mapToObject(result);
   }
 
-  async getByAddress(address: string, blockTag?: string, protocolTag?: number): Promise<any> {
-    return this.provider.alkanesByAddress(address, blockTag, protocolTag);
+  async getByAddress(address: string, blockTag?: string, protocolTag?: number): Promise<AlkanesByAddressResponse> {
+    const result = await this.provider.alkanesByAddress(address, blockTag, protocolTag);
+    return mapToObject(result);
   }
 
-  async getByOutpoint(outpoint: string, blockTag?: string, protocolTag?: number): Promise<any> {
-    return this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
+  async getByOutpoint(outpoint: string, blockTag?: string, protocolTag?: number): Promise<{
+    outpoint: string;
+    alkanes: AlkaneBalanceResponse[];
+    value?: number;
+  }> {
+    const result = await this.provider.alkanesByOutpoint(outpoint, blockTag, protocolTag);
+    return mapToObject(result);
   }
 
   async getBytecode(alkaneId: string, blockTag?: string): Promise<string> {
     return this.provider.alkanesBytecode(alkaneId, blockTag);
   }
 
-  async simulate(contractId: string, contextJson: string, blockTag?: string): Promise<any> {
-    return this.provider.alkanesSimulate(contractId, contextJson, blockTag);
+  async simulate(contractId: string, contextJson: string, blockTag?: string): Promise<AlkaneSimulateResponse> {
+    const result = await this.provider.alkanesSimulate(contractId, contextJson, blockTag);
+    return mapToObject(result);
   }
 
-  async execute(paramsJson: string): Promise<any> {
-    return this.provider.alkanesExecute(paramsJson);
+  async execute(paramsJson: string): Promise<ExecuteResult> {
+    const result = await this.provider.alkanesExecute(paramsJson);
+    return mapToObject(result);
   }
 
-  async trace(outpoint: string): Promise<any> {
-    return this.provider.alkanesTrace(outpoint);
+  async trace(outpoint: string): Promise<AlkaneTraceResponse> {
+    const result = await this.provider.alkanesTrace(outpoint);
+    return mapToObject(result);
   }
 
-  async traceBlock(height: number): Promise<any> {
-    return this.provider.traceBlock(height);
+  async traceBlock(height: number): Promise<AlkaneTraceResponse[]> {
+    const result = await this.provider.traceBlock(height);
+    return mapToObject(result);
   }
 
-  async view(contractId: string, viewFn: string, params?: Uint8Array, blockTag?: string): Promise<any> {
-    return this.provider.alkanesView(contractId, viewFn, params, blockTag);
+  async view(contractId: string, viewFn: string, params?: Uint8Array, blockTag?: string): Promise<{ data?: any; error?: string }> {
+    const result = await this.provider.alkanesView(contractId, viewFn, params, blockTag);
+    return mapToObject(result);
   }
 
-  async getAllPools(factoryId: string): Promise<any> {
-    return this.provider.alkanesGetAllPools(factoryId);
+  async getAllPools(factoryId: string): Promise<string[]> {
+    const result = await this.provider.alkanesGetAllPools(factoryId);
+    return mapToObject(result);
   }
 
   async getAllPoolsWithDetails(factoryId: string, chunkSize?: number, maxConcurrent?: number): Promise<PoolWithDetails[]> {
-    return this.provider.alkanesGetAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent);
+    const result = await this.provider.alkanesGetAllPoolsWithDetails(factoryId, chunkSize, maxConcurrent);
+    return mapToObject(result);
   }
 
-  async getPendingUnwraps(blockTag?: string): Promise<any> {
-    return this.provider.alkanesPendingUnwraps(blockTag);
+  async getPendingUnwraps(blockTag?: string): Promise<{
+    unwraps: Array<{ txid: string; vout: number; amount: string; recipient: string }>;
+  }> {
+    const result = await this.provider.alkanesPendingUnwraps(blockTag);
+    return mapToObject(result);
+  }
+
+  async reflect(alkaneId: string): Promise<AlkaneReflectResponse> {
+    const result = await this.provider.alkanesReflect(alkaneId);
+    return mapToObject(result);
+  }
+
+  async getSequence(blockTag?: string): Promise<AlkaneSequenceResponse> {
+    const result = await this.provider.alkanesSequence(blockTag);
+    return mapToObject(result);
+  }
+
+  async getSpendables(address: string): Promise<AlkaneSpendablesResponse> {
+    const result = await this.provider.alkanesSpendables(address);
+    return mapToObject(result);
+  }
+
+  async getPoolDetails(poolId: string): Promise<AlkanePoolResponse> {
+    const result = await this.provider.alkanesPoolDetails(poolId);
+    return mapToObject(result);
+  }
+
+  async reflectAlkaneRange(block: number, startTx: number, endTx: number): Promise<AlkaneReflectResponse[]> {
+    const result = await this.provider.alkanesReflectAlkaneRange(block, startTx, endTx);
+    return mapToObject(result);
+  }
+
+  async inspect(target: string, config: any): Promise<{
+    storage?: Record<string, string>;
+    balances?: AlkaneBalanceResponse[];
+    metadata?: AlkaneReflectResponse;
+  }> {
+    const result = await this.provider.alkanesInspect(target, config);
+    return mapToObject(result);
+  }
+
+  /**
+   * Inspect alkanes bytecode directly from WASM bytes.
+   * This allows inspection without fetching from RPC - useful for local/offline analysis.
+   *
+   * @param bytecodeHex - The WASM bytecode as hex string (with or without 0x prefix)
+   * @param alkaneId - The alkane ID in format "block:tx"
+   * @param config - Inspection configuration
+   * @returns Inspection result with codehash, disassembly, metadata, and fuzzing results
+   */
+  async inspectBytecode(bytecodeHex: string, alkaneId: string, config: {
+    disasm?: boolean;
+    fuzz?: boolean;
+    fuzz_ranges?: string;
+    meta?: boolean;
+    codehash?: boolean;
+    raw?: boolean;
+  }): Promise<{
+    alkane_id: { block: number; tx: number };
+    bytecode_length: number;
+    codehash?: string;
+    disassembly?: string;
+    metadata?: {
+      name: string;
+      version: string;
+      description?: string;
+      methods: Array<{
+        name: string;
+        opcode: number;
+        params: string[];
+        returns: string;
+      }>;
+    };
+    metadata_error?: string;
+    fuzzing_results?: {
+      total_opcodes_tested: number;
+      opcodes_filtered_out: number;
+      successful_executions: number;
+      failed_executions: number;
+      implemented_opcodes: number[];
+      opcode_results: Array<{
+        success: boolean;
+        return_value?: number;
+        return_data: number[];
+        error?: string;
+        execution_time_micros: number;
+        opcode: number;
+        host_calls: Array<{
+          function_name: string;
+          parameters: string[];
+          result: string;
+          timestamp_micros: number;
+        }>;
+      }>;
+    };
+  }> {
+    const result = await this.provider.alkanesInspectBytecode(bytecodeHex, alkaneId, config);
+    return mapToObject(result);
   }
 }
 
@@ -314,6 +821,141 @@ export class MetashrewClient {
 }
 
 /**
+ * Ord (Ordinals) RPC client (uses WebProvider internally)
+ */
+export class OrdClient {
+  constructor(private provider: WasmWebProvider) {}
+
+  async getInscription(id: string): Promise<InscriptionResponse> {
+    const result = await this.provider.ordInscription(id);
+    return mapToObject(result);
+  }
+
+  async getInscriptions(page?: number): Promise<InscriptionsListResponse> {
+    const result = await this.provider.ordInscriptions(page);
+    return mapToObject(result);
+  }
+
+  async getOutputs(address: string): Promise<OrdOutput[]> {
+    const result = await this.provider.ordOutputs(address);
+    return mapToObject(result);
+  }
+
+  async getRune(name: string): Promise<RuneResponse> {
+    const result = await this.provider.ordRune(name);
+    return mapToObject(result);
+  }
+
+  async list(outpoint: string): Promise<OrdOutput> {
+    const result = await this.provider.ordList(outpoint);
+    return mapToObject(result);
+  }
+
+  async find(sat: number): Promise<{ outpoint: string; offset: number }> {
+    const result = await this.provider.ordFind(sat);
+    return mapToObject(result);
+  }
+
+  async getAddressInfo(address: string): Promise<{
+    outputs: OrdOutput[];
+    inscriptions: string[];
+    sat_balance: number;
+    runes_balances: Record<string, { amount: string; divisibility: number; symbol?: string }>;
+  }> {
+    const result = await this.provider.ordAddressInfo(address);
+    return mapToObject(result);
+  }
+
+  async getBlockInfo(query: string): Promise<OrdBlockInfo> {
+    const result = await this.provider.ordBlockInfo(query);
+    return mapToObject(result);
+  }
+
+  async getBlockCount(): Promise<number> {
+    return this.provider.ordBlockCount();
+  }
+
+  async getBlocks(): Promise<OrdBlockInfo[]> {
+    const result = await this.provider.ordBlocks();
+    return mapToObject(result);
+  }
+
+  async getChildren(inscriptionId: string, page?: number): Promise<InscriptionsListResponse> {
+    const result = await this.provider.ordChildren(inscriptionId, page);
+    return mapToObject(result);
+  }
+
+  async getContent(inscriptionId: string): Promise<{ content_type: string; content: Uint8Array }> {
+    const result = await this.provider.ordContent(inscriptionId);
+    return mapToObject(result);
+  }
+
+  async getParents(inscriptionId: string, page?: number): Promise<InscriptionsListResponse> {
+    const result = await this.provider.ordParents(inscriptionId, page);
+    return mapToObject(result);
+  }
+
+  async getTxInfo(txid: string): Promise<{
+    txid: string;
+    inscriptions: string[];
+    runes: Record<string, { amount: string; divisibility: number; symbol?: string }>;
+  }> {
+    const result = await this.provider.ordTxInfo(txid);
+    return mapToObject(result);
+  }
+}
+
+/**
+ * BRC-20 Prog (Programmable BRC-20) RPC client (uses WebProvider internally)
+ */
+export class Brc20ProgClient {
+  constructor(private provider: WasmWebProvider) {}
+
+  async getBalance(address: string): Promise<Brc20ProgBalance> {
+    const result = await this.provider.brc20progGetBalance(address);
+    return mapToObject(result);
+  }
+
+  async getCode(address: string): Promise<string> {
+    const result = await this.provider.brc20progGetCode(address);
+    return mapToObject(result);
+  }
+
+  async getBlockNumber(): Promise<number> {
+    return this.provider.brc20progBlockNumber();
+  }
+
+  async getChainId(): Promise<number> {
+    return this.provider.brc20progChainId();
+  }
+
+  async getTxReceipt(hash: string): Promise<Brc20ProgTxReceipt | null> {
+    const result = await this.provider.brc20progGetTransactionReceipt(hash);
+    return mapToObject(result);
+  }
+
+  async getTx(hash: string): Promise<Brc20ProgTransaction | null> {
+    const result = await this.provider.brc20progGetTransactionByHash(hash);
+    return mapToObject(result);
+  }
+
+  async getBlock(number: string | number, includeTxs?: boolean): Promise<Brc20ProgBlock | null> {
+    const result = await this.provider.brc20progGetBlockByNumber(String(number), includeTxs);
+    return mapToObject(result);
+  }
+
+  async call(to: string, data: string, from?: string, blockTag?: string): Promise<string> {
+    const result = await this.provider.brc20progCall(to, data, from, blockTag);
+    return mapToObject(result);
+  }
+
+  async estimateGas(to: string, data: string, from?: string): Promise<string> {
+    const result = await this.provider.brc20progEstimateGas(to, data, from);
+    return mapToObject(result);
+  }
+}
+
+/**
  * Lua script execution result
  */
 export interface LuaEvalResult {
@@ -357,7 +999,7 @@ export class LuaClient {
    * @param script - The Lua script content
    * @returns The script execution result
    */
-  async evalScript(script: string): Promise<any> {
+  async evalScript(script: string): Promise<LuaEvalResult> {
     return this.provider.luaEvalScript(script);
   }
 }
@@ -369,27 +1011,27 @@ export class DataApiClient {
   constructor(private provider: WasmWebProvider) {}
 
   // Pool operations
-  async getPools(factoryId: string): Promise<any> {
+  async getPools(factoryId: string): Promise<DataApiPoolsResponse> {
     return this.provider.dataApiGetPools(factoryId);
   }
 
-  async getPoolHistory(poolId: string, category?: string, limit?: number, offset?: number): Promise<any> {
+  async getPoolHistory(poolId: string, category?: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetPoolHistory(poolId, category, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
-  async getAllHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+  async getAllHistory(poolId: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetAllHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
-  async getSwapHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+  async getSwapHistory(poolId: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetSwapHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
-  async getMintHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+  async getMintHistory(poolId: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetMintHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
-  async getBurnHistory(poolId: string, limit?: number, offset?: number): Promise<any> {
+  async getBurnHistory(poolId: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetBurnHistory(poolId, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }
 
@@ -402,16 +1044,16 @@ export class DataApiClient {
     return this.provider.dataApiGetCandles(pool, interval, startTime, endTime, limit ? BigInt(limit) : undefined);
   }
 
-  async getReserves(pool: string): Promise<any> {
+  async getReserves(pool: string): Promise<DataApiReserves> {
     return this.provider.dataApiGetReserves(pool);
   }
 
   // Balance operations
-  async getAlkanesByAddress(address: string): Promise<any> {
+  async getAlkanesByAddress(address: string): Promise<DataApiAddressAlkanes> {
     return this.provider.dataApiGetAlkanesByAddress(address);
   }
 
-  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<any> {
+  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<AddressBalancesResponse> {
     return this.provider.dataApiGetAddressBalances(address, includeOutpoints);
   }
 
@@ -424,18 +1066,36 @@ export class DataApiClient {
     return this.provider.dataApiGetHoldersCount(alkane);
   }
 
-  async getKeys(alkane: string, prefix?: string, limit: number = 100): Promise<any> {
+  async getKeys(alkane: string, prefix?: string, limit: number = 100): Promise<DataApiStorageKey[]> {
     return this.provider.dataApiGetKeys(alkane, prefix, BigInt(limit));
   }
 
   // Market data
-  async getBitcoinPrice(): Promise<any> {
+  async getBitcoinPrice(): Promise<BitcoinPriceResponse> {
     return this.provider.dataApiGetBitcoinPrice();
   }
 
-  async getBitcoinMarketChart(days: string): Promise<any> {
+  async getBitcoinMarketChart(days: string): Promise<MarketChartResponse> {
     return this.provider.dataApiGetBitcoinMarketChart(days);
   }
+}
+
+/**
+ * Convert Map objects (from serde_wasm_bindgen) to plain objects recursively.
+ * This is needed because serde_wasm_bindgen serializes JSON as JavaScript Maps.
+ */
+function mapToObject(value: any): any {
+  if (value instanceof Map) {
+    const obj: any = {};
+    value.forEach((v, k) => {
+      obj[k] = mapToObject(v);
+    });
+    return obj;
+  }
+  if (Array.isArray(value)) {
+    return value.map(mapToObject);
+  }
+  return value;
 }
 
 /**
@@ -472,24 +1132,27 @@ export class EspoClient {
    * @param address - Bitcoin address
    * @param includeOutpoints - Include detailed outpoint information
    */
-  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<any> {
-    return this.provider.espoGetAddressBalances(address, includeOutpoints);
+  async getAddressBalances(address: string, includeOutpoints: boolean = false): Promise<AddressBalancesResponse> {
+    const result = await this.provider.espoGetAddressBalances(address, includeOutpoints);
+    return mapToObject(result);
   }
 
   /**
    * Get outpoints containing alkanes for an address
    * @param address - Bitcoin address
    */
-  async getAddressOutpoints(address: string): Promise<any> {
-    return this.provider.espoGetAddressOutpoints(address);
+  async getAddressOutpoints(address: string): Promise<AddressOutpointsResponse> {
+    const result = await this.provider.espoGetAddressOutpoints(address);
+    return mapToObject(result);
   }
 
   /**
    * Get alkanes balances at a specific outpoint
    * @param outpoint - Outpoint in format "txid:vout"
    */
-  async getOutpointBalances(outpoint: string): Promise<any> {
-    return this.provider.espoGetOutpointBalances(outpoint);
+  async getOutpointBalances(outpoint: string): Promise<OutpointBalancesResponse> {
+    const result = await this.provider.espoGetOutpointBalances(outpoint);
+    return mapToObject(result);
   }
 
   /**
@@ -498,8 +1161,9 @@ export class EspoClient {
    * @param page - Page number (default: 0)
    * @param limit - Items per page (default: 100)
    */
-  async getHolders(alkaneId: string, page: number = 0, limit: number = 100): Promise<any> {
-    return this.provider.espoGetHolders(alkaneId, BigInt(page), BigInt(limit));
+  async getHolders(alkaneId: string, page: number = 0, limit: number = 100): Promise<HoldersResponse> {
+    const result = await this.provider.espoGetHolders(alkaneId, page, limit);
+    return mapToObject(result);
   }
 
   /**
@@ -507,7 +1171,9 @@ export class EspoClient {
    * @param alkaneId - Alkane ID in format "block:tx"
    */
   async getHoldersCount(alkaneId: string): Promise<number> {
-    return this.provider.espoGetHoldersCount(alkaneId);
+    // WASM method returns the count directly as a number
+    const result = await this.provider.espoGetHoldersCount(alkaneId);
+    return result;
   }
 
   /**
@@ -516,8 +1182,9 @@ export class EspoClient {
    * @param page - Page number (default: 0)
    * @param limit - Items per page (default: 100)
    */
-  async getKeys(alkaneId: string, page: number = 0, limit: number = 100): Promise<any> {
-    return this.provider.espoGetKeys(alkaneId, BigInt(page), BigInt(limit));
+  async getKeys(alkaneId: string, page: number = 0, limit: number = 100): Promise<KeysResponse> {
+    const result = await this.provider.espoGetKeys(alkaneId, page, limit);
+    return mapToObject(result);
   }
 
   // ============================================================================
@@ -545,14 +1212,15 @@ export class EspoClient {
     side?: string,
     limit?: number,
     page?: number
-  ): Promise<any> {
-    return this.provider.espoGetCandles(
+  ): Promise<CandlesResponse> {
+    const result = await this.provider.espoGetCandles(
       pool,
       timeframe,
       side,
-      limit !== undefined ? BigInt(limit) : undefined,
-      page !== undefined ? BigInt(page) : undefined
+      limit,
+      page
     );
+    return mapToObject(result);
   }
 
   /**
@@ -573,16 +1241,17 @@ export class EspoClient {
     filterSide?: string,
     sort?: string,
     dir?: string
-  ): Promise<any> {
-    return this.provider.espoGetTrades(
+  ): Promise<TradesResponse> {
+    const result = await this.provider.espoGetTrades(
       pool,
-      limit !== undefined ? BigInt(limit) : undefined,
-      page !== undefined ? BigInt(page) : undefined,
+      limit,
+      page,
       side,
       filterSide,
       sort,
       dir
     );
+    return mapToObject(result);
   }
 
   /**
@@ -590,11 +1259,9 @@ export class EspoClient {
    * @param limit - Number of pools (default: 100)
    * @param page - Page number (default: 0)
    */
-  async getPools(limit?: number, page?: number): Promise<any> {
-    return this.provider.espoGetPools(
-      limit !== undefined ? BigInt(limit) : undefined,
-      page !== undefined ? BigInt(page) : undefined
-    );
+  async getPools(limit?: number, page?: number): Promise<PoolsResponse> {
+    const result = await this.provider.espoGetPools(limit, page);
+    return mapToObject(result);
   }
 
   /**
@@ -621,8 +1288,8 @@ export class EspoClient {
     availableIn?: string,
     feeBps?: number,
     maxHops?: number
-  ): Promise<any> {
-    return this.provider.espoFindBestSwapPath(
+  ): Promise<SwapPathResponse> {
+    const result = await this.provider.espoFindBestSwapPath(
       tokenIn,
       tokenOut,
       mode,
@@ -631,9 +1298,10 @@ export class EspoClient {
       amountOutMin,
       amountInMax,
       availableIn,
-      feeBps !== undefined ? BigInt(feeBps) : undefined,
-      maxHops !== undefined ? BigInt(maxHops) : undefined
+      feeBps,
+      maxHops
     );
+    return mapToObject(result);
   }
 
   /**
@@ -646,12 +1314,13 @@ export class EspoClient {
     token: string,
     feeBps?: number,
     maxHops?: number
-  ): Promise<any> {
-    return this.provider.espoGetBestMevSwap(
+  ): Promise<MevSwapResponse> {
+    const result = await this.provider.espoGetBestMevSwap(
       token,
-      feeBps !== undefined ? BigInt(feeBps) : undefined,
-      maxHops !== undefined ? BigInt(maxHops) : undefined
+      feeBps,
+      maxHops
     );
+    return mapToObject(result);
   }
 }
 
@@ -667,6 +1336,76 @@ export class EspoClient {
  * - Lua script execution with caching
  * - Metashrew low-level RPC access
  */
+/**
+ * Get log level from environment variables
+ */
+function getLogLevelFromEnv(): LogLevel | undefined {
+  // Only check env vars in Node.js environment
+  if (typeof process !== 'undefined' && process.env) {
+    const alkLog = process.env.ALKANES_LOG_LEVEL;
+    const rustLog = process.env.RUST_LOG;
+
+    const level = alkLog || rustLog;
+    if (level) {
+      const normalized = level.toLowerCase();
+      if (['off', 'error', 'warn', 'info', 'debug', 'trace'].includes(normalized)) {
+        return normalized as LogLevel;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Logger instance that respects log level configuration
+ */
+class Logger {
+  private level: LogLevel;
+  private readonly levels: Record<LogLevel, number> = {
+    off: 0,
+    error: 1,
+    warn: 2,
+    info: 3,
+    debug: 4,
+    trace: 5,
+  };
+
+  constructor(level: LogLevel = 'off') {
+    this.level = level;
+  }
+
+  setLevel(level: LogLevel): void {
+    this.level = level;
+  }
+
+  private shouldLog(msgLevel: LogLevel): boolean {
+    return this.levels[msgLevel] <= this.levels[this.level];
+  }
+
+  error(...args: any[]): void {
+    if (this.shouldLog('error')) console.error('[SDK Error]', ...args);
+  }
+
+  warn(...args: any[]): void {
+    if (this.shouldLog('warn')) console.warn('[SDK Warn]', ...args);
+  }
+
+  info(...args: any[]): void {
+    if (this.shouldLog('info')) console.info('[SDK Info]', ...args);
+  }
+
+  debug(...args: any[]): void {
+    if (this.shouldLog('debug')) console.log('[SDK Debug]', ...args);
+  }
+
+  trace(...args: any[]): void {
+    if (this.shouldLog('trace')) console.log('[SDK Trace]', ...args);
+  }
+}
+
+// Global logger instance
+const logger = new Logger();
+
 export class AlkanesProvider {
   private _provider: WasmWebProvider | null = null;
   private _bitcoin: BitcoinRpcClient | null = null;
@@ -676,11 +1415,14 @@ export class AlkanesProvider {
   private _espo: EspoClient | null = null;
   private _lua: LuaClient | null = null;
   private _metashrew: MetashrewClient | null = null;
+  private _ord: OrdClient | null = null;
+  private _brc20prog: Brc20ProgClient | null = null;
 
   public readonly network: bitcoin.Network;
   public readonly networkType: NetworkType;
   public readonly rpcUrl: string;
   public readonly dataApiUrl: string;
+  public readonly logLevel: LogLevel;
   private readonly networkPreset: string;
 
   constructor(config: AlkanesProviderConfig) {
@@ -690,6 +1432,10 @@ export class AlkanesProvider {
     this.networkType = preset.networkType;
     this.rpcUrl = config.rpcUrl || preset.rpcUrl;
     this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
+
+    // Resolve log level: config > env > off
+    this.logLevel = config.logLevel || getLogLevelFromEnv() || 'off';
+    logger.setLevel(this.logLevel);
 
     // Set bitcoinjs network
     if (config.bitcoinNetwork) {
@@ -708,6 +1454,8 @@ export class AlkanesProvider {
           this.network = bitcoin.networks.regtest;
       }
     }
+
+    logger.debug(`Provider configured for ${this.networkType} (${this.rpcUrl})`);
   }
 
   /**
@@ -718,12 +1466,27 @@ export class AlkanesProvider {
   async initialize(): Promise<void> {
     if (this._provider) return;
 
-    // Dynamic import of WASM module using cross-platform loader
-    const wasm = await import(/* @vite-ignore */ '@alkanes/ts-sdk/wasm');
+    let WebProviderClass: any;
 
-    // For Node.js, we need to call init() first to load the WASM
-    if (typeof wasm.init === 'function') {
-      await wasm.init();
+    // Detect environment and use appropriate loader
+    const isNode = typeof process !== 'undefined' &&
+      process.versions != null &&
+      process.versions.node != null;
+
+    if (isNode) {
+      // Node.js: Use the CommonJS loader that manually instantiates WASM
+      // Dynamic import of CommonJS module wraps exports in 'default'
+      // Use string concatenation to prevent bundler static analysis issues
+      const loaderPath = '@alkanes/ts-sdk' + '/wasm/node-loader.cjs';
+      const nodeLoaderModule = await import(/* @vite-ignore */ loaderPath);
+      const nodeLoader = nodeLoaderModule.default || nodeLoaderModule;
+      await nodeLoader.init();
+      WebProviderClass = nodeLoader.WebProvider;
+    } else {
+      // Browser: Use the ESM module (expects bundler support)
+      const wasmPath = '@alkanes/ts-sdk' + '/wasm';
+      const wasm = await import(/* @vite-ignore */ wasmPath);
+      WebProviderClass = wasm.WebProvider;
     }
 
     // Create provider with appropriate network name
@@ -734,7 +1497,7 @@ export class AlkanesProvider {
       jsonrpc_url: this.rpcUrl
     };
 
-    this._provider = new wasm.WebProvider(
+    this._provider = new WebProviderClass(
       providerName,
       configOverride
     );
@@ -748,6 +1511,22 @@ export class AlkanesProvider {
       await this.initialize();
     }
     return this._provider!;
+  }
+
+  /**
+   * Get the raw WASM WebProvider for direct access to low-level methods.
+   *
+   * This is useful for CLI tools that need access to wallet methods
+   * like wallet_create_js, wallet_load_js, etc. that are not wrapped
+   * by the higher-level API.
+   *
+   * @throws Error if provider is not initialized
+   */
+  get rawProvider(): WasmWebProvider {
+    if (!this._provider) {
+      throw new Error('Provider not initialized. Call initialize() first.');
+    }
+    return this._provider;
   }
 
   /**
@@ -851,6 +1630,32 @@ export class AlkanesProvider {
     return this._metashrew;
   }
 
+  /**
+   * Ord (Ordinals) RPC client
+   */
+  get ord(): OrdClient {
+    if (!this._ord) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._ord = new OrdClient(this._provider);
+    }
+    return this._ord;
+  }
+
+  /**
+   * BRC-20 Prog (Programmable BRC-20) RPC client
+   */
+  get brc20prog(): Brc20ProgClient {
+    if (!this._brc20prog) {
+      if (!this._provider) {
+        throw new Error('Provider not initialized. Call initialize() first.');
+      }
+      this._brc20prog = new Brc20ProgClient(this._provider);
+    }
+    return this._brc20prog;
+  }
+
   // ============================================================================
   // CONVENIENCE METHODS
   // ============================================================================
@@ -874,7 +1679,12 @@ export class AlkanesProvider {
   /**
    * Get enriched balances (BTC + alkanes) for an address
    */
-  async getEnrichedBalances(address: string, protocolTag?: string): Promise<any> {
+  async getEnrichedBalances(address: string, protocolTag?: string): Promise<{
+    address: string;
+    btc: { confirmed: number; unconfirmed: number };
+    alkanes: AlkaneBalanceResponse[];
+    outpoints: Array<{ outpoint: string; value: number; alkanes: AlkaneBalanceResponse[] }>;
+  }> {
     const provider = await this.getProvider();
     return provider.getEnrichedBalances(address, protocolTag);
   }
@@ -898,7 +1708,13 @@ export class AlkanesProvider {
   /**
    * Get alkane token details
    */
-  async getAlkaneTokenDetails(params: { alkaneId: AlkaneId }): Promise<any> {
+  async getAlkaneTokenDetails(params: { alkaneId: AlkaneId }): Promise<{
+    id: AlkaneId;
+    name: string;
+    symbol: string;
+    decimals: number;
+    totalSupply: string;
+  }> {
     const provider = await this.getProvider();
     const id = `${params.alkaneId.block}:${params.alkaneId.tx}`;
 
@@ -920,7 +1736,7 @@ export class AlkanesProvider {
   /**
    * Get transaction history for an address (first page, max 25 transactions)
    */
-  async getAddressHistory(address: string): Promise<any[]> {
+  async getAddressHistory(address: string): Promise<EsploraTransaction[]> {
     const provider = await this.getProvider();
     return provider.getAddressTxs(address);
   }
@@ -928,7 +1744,7 @@ export class AlkanesProvider {
   /**
    * Get transaction history for an address from Esplora (first page, max 25 transactions)
    */
-  async getAddressTxs(address: string): Promise<any[]> {
+  async getAddressTxs(address: string): Promise<EsploraTransaction[]> {
     const provider = await this.getProvider();
     return provider.esploraGetAddressTxs(address);
   }
@@ -938,7 +1754,7 @@ export class AlkanesProvider {
    * @param address The address to fetch transactions for
    * @param lastSeenTxid The last transaction ID from the previous page (undefined for first page)
    */
-  async getAddressTxsChain(address: string, lastSeenTxid?: string): Promise<any[]> {
+  async getAddressTxsChain(address: string, lastSeenTxid?: string): Promise<EsploraTransaction[]> {
     const provider = await this.getProvider();
     return provider.esploraGetAddressTxsChain(address, lastSeenTxid);
   }
@@ -958,7 +1774,9 @@ export class AlkanesProvider {
   /**
    * Get address history with alkane traces
    */
-  async getAddressHistoryWithTraces(address: string, excludeCoinbase?: boolean): Promise<any[]> {
+  async getAddressHistoryWithTraces(address: string, excludeCoinbase?: boolean): Promise<Array<
+    EsploraTransaction & { alkane_traces?: AlkaneTraceEntry[] }
+  >> {
     const provider = await this.getProvider();
     return provider.getAddressTxsWithTraces(address, excludeCoinbase);
   }
@@ -990,7 +1808,7 @@ export class AlkanesProvider {
   /**
    * Get pool reserves
    */
-  async getPoolReserves(poolId: string): Promise<any> {
+  async getPoolReserves(poolId: string): Promise<DataApiReserves> {
     const provider = await this.getProvider();
     return provider.dataApiGetReserves(poolId);
   }
@@ -1042,7 +1860,7 @@ export class AlkanesProvider {
   /**
    * Simulate an alkanes contract call (read-only)
    */
-  async simulateAlkanes(contractId: string, calldata: number[], blockTag?: string): Promise<any> {
+  async simulateAlkanes(contractId: string, calldata: number[], blockTag?: string): Promise<AlkaneSimulateResponse> {
     const provider = await this.getProvider();
     const context = {
       alkanes: [],

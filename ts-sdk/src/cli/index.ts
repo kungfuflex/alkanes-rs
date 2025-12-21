@@ -9,7 +9,49 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { error as logError } from './utils/formatting.js';
+import { error as logError, setVerbosity, getVerbosity } from './utils/formatting.js';
+
+// Store original console methods for verbose filtering
+const originalConsoleLog = console.log;
+const originalConsoleInfo = console.info;
+
+// Filter console output based on verbosity level
+// WASM logging uses console.log with [INFO] prefix
+function setupLogging(verbose: number): void {
+  setVerbosity(verbose);
+
+  // Replace console.log to filter WASM debug output
+  console.log = (...args: any[]) => {
+    const message = args.map(a => String(a)).join(' ');
+
+    // WASM RPC debug logs have specific patterns
+    if (message.includes('[INFO]') ||
+        message.includes('JsonRpcProvider::call') ||
+        message.includes('Raw RPC response')) {
+      // Only show if verbosity >= 3 (-vvv)
+      if (verbose >= 3) {
+        originalConsoleLog.apply(console, [chalk.dim(...args)]);
+      }
+      return;
+    }
+
+    // Pass through all other logs
+    originalConsoleLog.apply(console, args);
+  };
+
+  console.info = (...args: any[]) => {
+    const message = args.map(a => String(a)).join(' ');
+
+    if (message.includes('[INFO]')) {
+      if (verbose >= 2) {
+        originalConsoleInfo.apply(console, [chalk.dim(...args)]);
+      }
+      return;
+    }
+
+    originalConsoleInfo.apply(console, args);
+  };
+}
 
 const program = new Command();
 
@@ -24,7 +66,7 @@ program
   .option('--jsonrpc-url <url>', 'JSON-RPC URL')
   .option('--esplora-url <url>', 'Esplora API URL')
   .option('--metashrew-url <url>', 'Metashrew RPC URL')
-  .option('--raw', 'Output raw JSON')
+  .option('-v, --verbose', 'Verbose output (-v, -vv, -vvv for increasing levels)', (_, prev) => prev + 1, 0)
   .option('-y, --auto-confirm', 'Skip confirmation prompts');
 
 // Import and register all command groups
@@ -105,6 +147,13 @@ process.on('uncaughtException', (error) => {
   }
   process.exit(1);
 });
+
+// Pre-parse to get verbosity level before command execution
+// This is needed to setup logging before any WASM calls
+const preParseOpts = program.opts();
+const verboseCount = process.argv.filter(arg => arg === '-v' || arg === '--verbose').length +
+  (process.argv.filter(arg => arg.match(/^-v+$/)).reduce((acc, arg) => acc + arg.length - 1, 0));
+setupLogging(verboseCount);
 
 // Parse command line arguments
 program.parse(process.argv);

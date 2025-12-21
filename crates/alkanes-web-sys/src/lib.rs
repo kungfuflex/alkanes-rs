@@ -477,3 +477,338 @@ pub fn brc20_prog_wrap_btc(
             .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
     })
 }
+
+/// Simple wrap: convert BTC to frBTC without executing any contract
+///
+/// This calls the wrap() function on the FrBTC contract.
+///
+/// # Arguments
+///
+/// * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+/// * `amount` - Amount of BTC to wrap (in satoshis)
+/// * `params_json` - JSON string with execution parameters:
+///   ```json
+///   {
+///     "from_addresses": ["address1", "address2"],  // optional
+///     "change_address": "address",                  // optional
+///     "fee_rate": 100.0                             // optional, sat/vB
+///   }
+///   ```
+///
+/// # Returns
+///
+/// A JSON string with transaction details
+#[wasm_bindgen]
+pub fn frbtc_wrap(
+    network: &str,
+    amount: u64,
+    params_json: &str,
+) -> Promise {
+    use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapParams};
+
+    let network_str = network.to_string();
+    let params_json = params_json.to_string();
+
+    future_to_promise(async move {
+        // Parse base parameters
+        #[derive(serde::Deserialize, Default)]
+        struct BaseParams {
+            from_addresses: Option<Vec<String>>,
+            change_address: Option<String>,
+            fee_rate: Option<f32>,
+            use_slipstream: Option<bool>,
+            use_rebar: Option<bool>,
+            rebar_tier: Option<u8>,
+            resume_from_commit: Option<String>,
+        }
+        let base_params: BaseParams = serde_json::from_str(&params_json).unwrap_or_default();
+
+        let params = FrBtcWrapParams {
+            amount,
+            from_addresses: base_params.from_addresses,
+            change_address: base_params.change_address,
+            fee_rate: base_params.fee_rate,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: true,
+            use_slipstream: base_params.use_slipstream.unwrap_or(false),
+            use_rebar: base_params.use_rebar.unwrap_or(false),
+            rebar_tier: base_params.rebar_tier,
+            resume_from_commit: base_params.resume_from_commit,
+        };
+
+        let mut provider = WebProvider::new(network_str).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create provider: {:?}", e)))?;
+        let mut executor = FrBtcExecutor::new(&mut provider);
+
+        let result = executor.wrap(params).await
+            .map_err(|e| JsValue::from_str(&format!("FrBTC wrap failed: {:?}", e)))?;
+
+        serde_json::to_string(&result)
+            .map(|json| JsValue::from_str(&json))
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+    })
+}
+
+/// Unwrap frBTC to BTC
+///
+/// This calls unwrap2() on the FrBTC contract to burn frBTC and queue a BTC payment.
+///
+/// # Arguments
+///
+/// * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+/// * `amount` - Amount of frBTC to unwrap (in satoshis)
+/// * `vout` - Vout index for the inscription output
+/// * `recipient_address` - Bitcoin address to receive the unwrapped BTC
+/// * `params_json` - JSON string with execution parameters
+///
+/// # Returns
+///
+/// A JSON string with transaction details
+#[wasm_bindgen]
+pub fn frbtc_unwrap(
+    network: &str,
+    amount: u64,
+    vout: u64,
+    recipient_address: &str,
+    params_json: &str,
+) -> Promise {
+    use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcUnwrapParams};
+
+    let network_str = network.to_string();
+    let recipient_address = recipient_address.to_string();
+    let params_json = params_json.to_string();
+
+    future_to_promise(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct BaseParams {
+            from_addresses: Option<Vec<String>>,
+            change_address: Option<String>,
+            fee_rate: Option<f32>,
+            use_slipstream: Option<bool>,
+            use_rebar: Option<bool>,
+            rebar_tier: Option<u8>,
+            resume_from_commit: Option<String>,
+        }
+        let base_params: BaseParams = serde_json::from_str(&params_json).unwrap_or_default();
+
+        let params = FrBtcUnwrapParams {
+            amount,
+            vout,
+            recipient_address,
+            from_addresses: base_params.from_addresses,
+            change_address: base_params.change_address,
+            fee_rate: base_params.fee_rate,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: true,
+            use_slipstream: base_params.use_slipstream.unwrap_or(false),
+            use_rebar: base_params.use_rebar.unwrap_or(false),
+            rebar_tier: base_params.rebar_tier,
+            resume_from_commit: base_params.resume_from_commit,
+        };
+
+        let mut provider = WebProvider::new(network_str).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create provider: {:?}", e)))?;
+        let mut executor = FrBtcExecutor::new(&mut provider);
+
+        let result = executor.unwrap(params).await
+            .map_err(|e| JsValue::from_str(&format!("FrBTC unwrap failed: {:?}", e)))?;
+
+        serde_json::to_string(&result)
+            .map(|json| JsValue::from_str(&json))
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+    })
+}
+
+/// Wrap BTC and deploy+execute a script (wrapAndExecute)
+///
+/// This calls wrapAndExecute() on the FrBTC contract.
+///
+/// # Arguments
+///
+/// * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+/// * `amount` - Amount of BTC to wrap (in satoshis)
+/// * `script_bytecode` - Script bytecode to deploy and execute (hex-encoded)
+/// * `params_json` - JSON string with execution parameters
+///
+/// # Returns
+///
+/// A JSON string with transaction details
+#[wasm_bindgen]
+pub fn frbtc_wrap_and_execute(
+    network: &str,
+    amount: u64,
+    script_bytecode: &str,
+    params_json: &str,
+) -> Promise {
+    use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapAndExecuteParams};
+
+    let network_str = network.to_string();
+    let script_bytecode = script_bytecode.to_string();
+    let params_json = params_json.to_string();
+
+    future_to_promise(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct BaseParams {
+            from_addresses: Option<Vec<String>>,
+            change_address: Option<String>,
+            fee_rate: Option<f32>,
+            use_slipstream: Option<bool>,
+            use_rebar: Option<bool>,
+            rebar_tier: Option<u8>,
+            resume_from_commit: Option<String>,
+        }
+        let base_params: BaseParams = serde_json::from_str(&params_json).unwrap_or_default();
+
+        let params = FrBtcWrapAndExecuteParams {
+            amount,
+            script_bytecode,
+            from_addresses: base_params.from_addresses,
+            change_address: base_params.change_address,
+            fee_rate: base_params.fee_rate,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: true,
+            use_slipstream: base_params.use_slipstream.unwrap_or(false),
+            use_rebar: base_params.use_rebar.unwrap_or(false),
+            rebar_tier: base_params.rebar_tier,
+            resume_from_commit: base_params.resume_from_commit,
+        };
+
+        let mut provider = WebProvider::new(network_str).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create provider: {:?}", e)))?;
+        let mut executor = FrBtcExecutor::new(&mut provider);
+
+        let result = executor.wrap_and_execute(params).await
+            .map_err(|e| JsValue::from_str(&format!("FrBTC wrapAndExecute failed: {:?}", e)))?;
+
+        serde_json::to_string(&result)
+            .map(|json| JsValue::from_str(&json))
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+    })
+}
+
+/// Wrap BTC and call an existing contract (wrapAndExecute2)
+///
+/// This calls wrapAndExecute2() on the FrBTC contract.
+///
+/// # Arguments
+///
+/// * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+/// * `amount` - Amount of BTC to wrap (in satoshis)
+/// * `target_address` - Target contract address
+/// * `function_signature` - Function signature (e.g., "deposit()")
+/// * `calldata_args` - Comma-separated calldata arguments
+/// * `params_json` - JSON string with execution parameters
+///
+/// # Returns
+///
+/// A JSON string with transaction details
+#[wasm_bindgen]
+pub fn frbtc_wrap_and_execute2(
+    network: &str,
+    amount: u64,
+    target_address: &str,
+    function_signature: &str,
+    calldata_args: &str,
+    params_json: &str,
+) -> Promise {
+    use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapAndExecute2Params};
+
+    let network_str = network.to_string();
+    let target_address = target_address.to_string();
+    let signature = function_signature.to_string();
+    let calldata_args = calldata_args.to_string();
+    let params_json = params_json.to_string();
+
+    future_to_promise(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct BaseParams {
+            from_addresses: Option<Vec<String>>,
+            change_address: Option<String>,
+            fee_rate: Option<f32>,
+            use_slipstream: Option<bool>,
+            use_rebar: Option<bool>,
+            rebar_tier: Option<u8>,
+            resume_from_commit: Option<String>,
+        }
+        let base_params: BaseParams = serde_json::from_str(&params_json).unwrap_or_default();
+
+        let params = FrBtcWrapAndExecute2Params {
+            amount,
+            target_address,
+            signature,
+            calldata_args,
+            from_addresses: base_params.from_addresses,
+            change_address: base_params.change_address,
+            fee_rate: base_params.fee_rate,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: true,
+            use_slipstream: base_params.use_slipstream.unwrap_or(false),
+            use_rebar: base_params.use_rebar.unwrap_or(false),
+            rebar_tier: base_params.rebar_tier,
+            resume_from_commit: base_params.resume_from_commit,
+        };
+
+        let mut provider = WebProvider::new(network_str).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create provider: {:?}", e)))?;
+        let mut executor = FrBtcExecutor::new(&mut provider);
+
+        let result = executor.wrap_and_execute2(params).await
+            .map_err(|e| JsValue::from_str(&format!("FrBTC wrapAndExecute2 failed: {:?}", e)))?;
+
+        serde_json::to_string(&result)
+            .map(|json| JsValue::from_str(&json))
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+    })
+}
+
+/// Get the FrBTC signer address for a network
+///
+/// This calls getSignerAddress() on the FrBTC contract to get the p2tr address
+/// where BTC should be sent for wrapping.
+///
+/// # Arguments
+///
+/// * `network` - Network to use ("mainnet", "testnet", "signet", "regtest")
+///
+/// # Returns
+///
+/// A JSON string containing:
+/// - `network`: The network name
+/// - `frbtc_contract`: The FrBTC contract address
+/// - `signer_address`: The Bitcoin p2tr address for the signer
+#[wasm_bindgen]
+pub fn frbtc_get_signer_address(network: &str) -> Promise {
+    use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, get_frbtc_contract_address};
+
+    let network_str = network.to_string();
+
+    future_to_promise(async move {
+        let mut provider = WebProvider::new(network_str.clone()).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create provider: {:?}", e)))?;
+
+        let bitcoin_network = provider.network();
+        let frbtc_contract = get_frbtc_contract_address(bitcoin_network);
+
+        let mut executor = FrBtcExecutor::new(&mut provider);
+        let signer_address = executor.get_signer_address().await
+            .map_err(|e| JsValue::from_str(&format!("Failed to get signer address: {:?}", e)))?;
+
+        let result = serde_json::json!({
+            "network": network_str,
+            "frbtc_contract": frbtc_contract,
+            "signer_address": signer_address,
+        });
+
+        serde_json::to_string(&result)
+            .map(|json| JsValue::from_str(&json))
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+    })
+}

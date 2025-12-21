@@ -1,34 +1,13 @@
 /**
  * Provider initialization utilities for the CLI
+ *
+ * The CLI uses the SDK's AlkanesProvider which wraps the WASM WebProvider.
+ * This ensures the CLI and SDK share the same typed interface.
+ *
+ * Uses dynamic imports to avoid bundling WASM files during CLI build.
  */
 
-import * as path from 'path';
-import { fileURLToPath } from 'url';
-import { getConfig, CLIConfig } from './config.js';
-
-// Dynamically import WASM module at runtime
-// This is necessary because the CLI is bundled to dist/ but WASM is in wasm/
-let WebProvider: any = null;
-
-async function loadWasmModule() {
-  if (WebProvider) return WebProvider;
-
-  // Resolve path to WASM module relative to the CLI executable
-  const wasmPath = path.join(process.cwd(), 'node_modules', '@alkanes', 'ts-sdk', 'wasm', 'alkanes_web_sys.js');
-
-  // Try to load from global installation or local
-  try {
-    const wasmModule = await import(wasmPath);
-    WebProvider = wasmModule.WebProvider;
-    return WebProvider;
-  } catch {
-    // Fallback to relative path from the package
-    const relativePath = path.join(__dirname, '..', '..', '..', 'wasm', 'alkanes_web_sys.js');
-    const wasmModule = await import(relativePath);
-    WebProvider = wasmModule.WebProvider;
-    return WebProvider;
-  }
-}
+import { getConfig } from './config.js';
 
 export interface ProviderOptions {
   network?: string;
@@ -37,29 +16,44 @@ export interface ProviderOptions {
   metashrewUrl?: string;
 }
 
+// Cache the provider instance for reuse within the same CLI session
+let cachedProvider: any = null;
+let cachedNetwork: string | null = null;
+
 /**
- * Create and initialize a WebProvider instance for CLI usage
+ * Create and initialize an AlkanesProvider instance for CLI usage.
+ * This uses the SDK's high-level provider which wraps the WASM WebProvider.
+ *
+ * Uses dynamic imports to avoid bundling issues with WASM.
  */
 export async function createProvider(options: ProviderOptions): Promise<any> {
-  // Ensure WASM module is loaded
-  const Provider = await loadWasmModule();
   const config = await getConfig();
 
   // Merge CLI options with config file
   const network = options.network || config.network || 'mainnet';
-  const jsonrpcUrl = options.jsonrpcUrl || config.jsonrpcUrl;
-  const esploraUrl = options.esploraUrl || config.esploraUrl;
-  const metashrewUrl = options.metashrewUrl || config.metashrewUrl;
+  const rpcUrl = options.jsonrpcUrl || config.jsonrpcUrl;
+
+  // Return cached provider if network matches
+  if (cachedProvider && cachedNetwork === network) {
+    return cachedProvider;
+  }
+
+  // Dynamic import to avoid bundling WASM during CLI build
+  const { AlkanesProvider } = await import('../../provider/index.js');
 
   // Build provider config
-  const providerConfig: any = {
-    jsonrpc_url: jsonrpcUrl,
-    esplora_url: esploraUrl,
-    metashrew_url: metashrewUrl,
+  const providerConfig = {
+    network,
+    rpcUrl,
   };
 
-  // Create provider
-  const provider = new Provider(network, JSON.stringify(providerConfig));
+  // Create and initialize the SDK provider
+  const provider = new AlkanesProvider(providerConfig);
+  await provider.initialize();
+
+  // Cache for reuse
+  cachedProvider = provider;
+  cachedNetwork = network;
 
   return provider;
 }
