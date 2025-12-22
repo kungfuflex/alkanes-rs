@@ -2123,6 +2123,7 @@ export class AlkanesProvider {
    *   amount: 100000n,
    *   toAddress: myAddress,
    *   feeRate: 100,
+   *   mineEnabled: true, // Auto-mine on regtest
    * });
    * ```
    */
@@ -2132,6 +2133,8 @@ export class AlkanesProvider {
     fromAddress?: string;
     changeAddress?: string;
     feeRate?: number;
+    traceEnabled?: boolean;
+    mineEnabled?: boolean;
     autoConfirm?: boolean;
   }): Promise<any> {
     const provider = await this.getProvider();
@@ -2141,6 +2144,8 @@ export class AlkanesProvider {
       to_address: params.toAddress,
       fee_rate: params.feeRate ?? 1,
       auto_confirm: params.autoConfirm ?? true,
+      trace_enabled: params.traceEnabled ?? false,
+      mine_enabled: params.mineEnabled ?? false,
     };
     if (params.fromAddress) wrapParams.from_address = params.fromAddress;
     if (params.changeAddress) wrapParams.change_address = params.changeAddress;

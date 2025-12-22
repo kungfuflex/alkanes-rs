@@ -47676,6 +47676,7 @@ var init_provider = __esm({
        *   amount: 100000n,
        *   toAddress: myAddress,
        *   feeRate: 100,
+       *   mineEnabled: true, // Auto-mine on regtest
        * });
        * ```
        */
@@ -47685,7 +47686,9 @@ var init_provider = __esm({
           amount: String(params.amount),
           to_address: params.toAddress,
           fee_rate: params.feeRate ?? 1,
-          auto_confirm: params.autoConfirm ?? true
+          auto_confirm: params.autoConfirm ?? true,
+          trace_enabled: params.traceEnabled ?? false,
+          mine_enabled: params.mineEnabled ?? false
         };
         if (params.fromAddress) wrapParams.from_address = params.fromAddress;
         if (params.changeAddress) wrapParams.change_address = params.changeAddress;

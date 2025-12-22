@@ -309,12 +309,28 @@ async function deployContract(
       envelopeHex: envelopeHex,
       fromAddresses: [walletAddress],  // Source UTXOs from wallet
       changeAddress: walletAddress,
+      traceEnabled: true,  // Enable trace for verification
       autoConfirm: true,
       mineEnabled: true,  // Auto-mine on regtest
     });
 
     logSuccess(`${contractName} deployed to [4, ${targetTx}]`);
-    logInfo(`  Reveal TXID: ${result?.reveal_txid || result?.txid || 'N/A'}`);
+
+    // Debug: Show full result structure to understand trace format
+    const resultKeys = Object.keys(result || {});
+    logInfo(`  Result keys: ${resultKeys.join(', ')}`);
+
+    // Show trace output if available - check various possible field names
+    const traces = result?.traces || result?.trace || result?.execution_traces;
+    if (traces) {
+      logInfo(`  Trace data found: ${JSON.stringify(traces).substring(0, 500)}`);
+    }
+
+    // Show txid info
+    const txid = result?.reveal_txid || result?.txid || result?.transaction_id;
+    if (txid) {
+      logInfo(`  TXID: ${txid}`);
+    }
 
     // Wait for metashrew to index
     logInfo('Waiting for metashrew to index (5 seconds)...');
@@ -371,18 +387,32 @@ async function mineDiesel(provider: AlkanesProvider, walletAddress: string): Pro
   logInfo('Mining DIESEL tokens...');
 
   try {
-    await provider.alkanesExecuteTyped({
+    const result = await provider.alkanesExecuteTyped({
       toAddresses: [walletAddress],
       inputRequirements: '',
       protostones: '[2,0,77]:v0:v0',  // Call DIESEL mint (opcode 77)
       feeRate: 1,
       fromAddresses: [walletAddress],
       changeAddress: walletAddress,
+      traceEnabled: true,
       autoConfirm: true,
       mineEnabled: true,
     });
 
     logSuccess('DIESEL mined');
+    logInfo(`  TXID: ${result?.reveal_txid || result?.txid || 'N/A'}`);
+
+    // Show trace output if available
+    if (result?.traces && Array.isArray(result.traces) && result.traces.length > 0) {
+      for (const trace of result.traces) {
+        if (trace.status === 'success' || trace.success) {
+          logSuccess(`  ✓ Trace: DIESEL mint - SUCCESS`);
+        } else {
+          logWarn(`  ✗ Trace: DIESEL mint - ${trace.error || 'failed'}`);
+        }
+      }
+    }
+
     return true;
   } catch (err) {
     const error = err as Error;
@@ -399,15 +429,30 @@ async function wrapBtc(
   logInfo(`Wrapping ${amount} sats to frBTC...`);
 
   try {
-    await provider.frbtcWrapTyped({
+    const result = await provider.frbtcWrapTyped({
       amount: BigInt(amount),
       toAddress: walletAddress,
       fromAddress: walletAddress,
       feeRate: 1,
+      traceEnabled: true,
+      mineEnabled: true,  // Auto-mine on regtest
       autoConfirm: true,
     });
 
     logSuccess('frBTC wrapped');
+    logInfo(`  TXID: ${result?.reveal_txid || result?.txid || 'N/A'}`);
+
+    // Show trace output if available
+    if (result?.traces && Array.isArray(result.traces) && result.traces.length > 0) {
+      for (const trace of result.traces) {
+        if (trace.status === 'success' || trace.success) {
+          logSuccess(`  ✓ Trace: frBTC wrap - SUCCESS`);
+        } else {
+          logWarn(`  ✗ Trace: frBTC wrap - ${trace.error || 'failed'}`);
+        }
+      }
+    }
+
     return true;
   } catch (err) {
     const error = err as Error;
@@ -432,7 +477,7 @@ async function initializeFactory(
   logInfo('  Opcode 0 = InitFactory(pool_beacon_proxy_id, pool_beacon_id)');
 
   try {
-    await provider.alkanesExecuteTyped({
+    const result = await provider.alkanesExecuteTyped({
       toAddresses: [walletAddress],
       inputRequirements: '2:1:1',  // Input: 1 auth token from 2:1
       protostones: protostone,
@@ -445,6 +490,25 @@ async function initializeFactory(
     });
 
     logSuccess('OYL Factory initialized successfully!');
+    logInfo(`  TXID: ${result?.reveal_txid || result?.txid || 'N/A'}`);
+
+    // Show trace output - this is critical for verifying success
+    if (result?.traces && Array.isArray(result.traces) && result.traces.length > 0) {
+      logInfo(`  Trace entries: ${result.traces.length}`);
+      for (const trace of result.traces) {
+        const alkaneId = trace.alkane_id || trace.alkaneId || 'unknown';
+        if (trace.status === 'success' || trace.success) {
+          logSuccess(`  ✓ Trace: ${alkaneId} - SUCCESS`);
+          if (trace.return_data) {
+            logInfo(`    Return data: ${JSON.stringify(trace.return_data)}`);
+          }
+        } else {
+          logError(`  ✗ Trace: ${alkaneId} - ${trace.error || 'failed'}`);
+        }
+      }
+    } else {
+      logWarn('  No trace data returned');
+    }
 
     logInfo('Waiting for metashrew to index (5 seconds)...');
     await sleep(5000);
@@ -453,6 +517,8 @@ async function initializeFactory(
   } catch (err) {
     const error = err as Error;
     logError(`Failed to initialize OYL Factory: ${error.message}`);
+    // Log the full error for debugging
+    console.error('Full error:', JSON.stringify(err, null, 2));
     return false;
   }
 }

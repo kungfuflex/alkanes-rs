@@ -133,6 +133,12 @@ pub struct Brc20ProgExecuteParams {
 /// Result of a BRC20-prog execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Brc20ProgExecuteResult {
+    /// Split transaction ID (if inscribed UTXOs were split)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_txid: Option<String>,
+    /// Split transaction fee (if split was needed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_fee: Option<u64>,
     /// Commit transaction ID
     pub commit_txid: String,
     /// Reveal transaction ID

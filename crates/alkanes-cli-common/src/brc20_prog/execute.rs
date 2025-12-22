@@ -2,7 +2,8 @@
 // This module handles the commit-reveal transaction pattern for BRC20-prog inscriptions
 
 use crate::{AlkanesError, DeezelProvider, Result};
-use crate::traits::{WalletProvider, UtxoInfo};
+use crate::traits::{WalletProvider, UtxoInfo, OrdProvider};
+use crate::vendored_ord::InscriptionId;
 use bitcoin::{Transaction, ScriptBuf, OutPoint, TxOut, Address, XOnlyPublicKey, psbt::Psbt, Txid};
 use bitcoin::blockdata::script::Builder as ScriptBuilder;
 use bitcoin_hashes::Hash;
@@ -24,6 +25,36 @@ struct RebarPaymentInfo {
     payment_amount: u64,
 }
 
+/// Information about an inscription on a UTXO
+#[derive(Debug, Clone)]
+struct InscriptionInfo {
+    /// Inscription ID
+    inscription_id: InscriptionId,
+    /// Offset of the inscribed sat within the UTXO (0-indexed)
+    sat_offset: u64,
+}
+
+/// Plan for splitting a UTXO to protect inscriptions
+#[derive(Debug, Clone)]
+struct SplitPlan {
+    /// The outpoint being split
+    outpoint: OutPoint,
+    /// Amount to send to safe output (contains inscribed sats)
+    safe_amount: u64,
+    /// Amount to send to clean output (for funding)
+    clean_amount: u64,
+}
+
+/// Result of building a split transaction
+struct SplitResult {
+    /// The split PSBT
+    psbt: Psbt,
+    /// The fee paid
+    fee: u64,
+    /// Clean outpoints to use for commit transaction funding
+    clean_outpoints: Vec<OutPoint>,
+}
+
 /// BRC20-Prog executor for contract operations
 pub struct Brc20ProgExecutor<'a> {
     pub provider: &'a mut dyn DeezelProvider,
@@ -37,7 +68,7 @@ impl<'a> Brc20ProgExecutor<'a> {
 
     /// Execute BRC20-prog with Presign+RBF hybrid strategy
     /// This strategy:
-    /// 1. Pre-builds and signs all transactions (commit, reveal, activation) with RBF-enabled sequences
+    /// 1. Pre-builds and signs all transactions (split, commit, reveal, activation) with RBF-enabled sequences
     /// 2. Broadcasts all transactions simultaneously to minimize timing gaps
     /// 3. Monitors mempool for frontrunning attempts
     /// 4. If frontrunning detected, RBF-bumps commit and rebuilds/rebroadcasts reveal+activation
@@ -49,9 +80,16 @@ impl<'a> Brc20ProgExecutor<'a> {
         // Create the envelope
         let envelope = Brc20ProgEnvelope::new(params.inscription_content.as_bytes().to_vec());
 
-        // Step 1: Build commit transaction (unsigned)
-        log::info!("📝 Step 1/6: Building commit transaction...");
-        let (commit_psbt, commit_fee, commit_internal_key, ephemeral_secret) = self.build_commit_psbt_for_presign(&params, &envelope).await?;
+        // Step 1: Build commit transaction (and optional split transaction for inscribed UTXOs)
+        log::info!("📝 Step 1/7: Building commit transaction (with inscription check)...");
+        let (split_psbt_opt, split_fee_opt, commit_psbt, commit_fee, commit_internal_key, ephemeral_secret) =
+            self.build_commit_psbt_for_presign(&params, &envelope).await?;
+
+        // Log split transaction if present
+        if let Some(ref split_psbt) = split_psbt_opt {
+            let split_txid = split_psbt.unsigned_tx.txid();
+            log::info!("   🔀 Split txid (pre-calculated): {} - protects inscribed UTXOs", split_txid);
+        }
 
         // Calculate commit txid from unsigned transaction
         let commit_tx = commit_psbt.unsigned_tx.clone();
@@ -68,7 +106,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         let commit_change_outpoint = OutPoint { txid: commit_txid, vout: 1 };
 
         // Step 2: Build reveal transaction (unsigned, spending future commit output)
-        log::info!("📝 Step 2/6: Building reveal transaction...");
+        log::info!("📝 Step 2/7: Building reveal transaction...");
         let (reveal_psbt, reveal_fee, reveal_inscription_outpoint) = self.build_reveal_psbt_for_presign(
             &params,
             &envelope,
@@ -88,7 +126,7 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Step 3: Build activation transaction (if needed)
         let (activation_psbt_opt, activation_fee_opt) = if params.use_activation {
-            log::info!("📝 Step 3/6: Building activation transaction...");
+            log::info!("📝 Step 3/7: Building activation transaction...");
             // Use commit change output to fund activation fee
             let (act_psbt, act_fee) = self.build_activation_psbt_for_presign(
                 &params,
@@ -102,12 +140,20 @@ impl<'a> Brc20ProgExecutor<'a> {
             log::info!("   Activation txid (pre-calculated): {}", act_txid);
             (Some(act_psbt), Some(act_fee))
         } else {
-            log::info!("📝 Step 3/6: Skipping activation (2-tx pattern)");
+            log::info!("📝 Step 3/7: Skipping activation (2-tx pattern)");
             (None, None)
         };
 
         // Step 4: Sign all transactions
-        log::info!("✍️  Step 4/6: Signing all transactions...");
+        log::info!("✍️  Step 4/7: Signing all transactions...");
+
+        // Sign split transaction if present
+        let signed_split = if let Some(split_psbt) = split_psbt_opt {
+            Some(self.sign_and_finalize_psbt(split_psbt).await?)
+        } else {
+            None
+        };
+
         let signed_commit = self.sign_and_finalize_psbt(commit_psbt).await?;
         let signed_reveal = self.sign_and_finalize_reveal_psbt_simple(reveal_psbt, &envelope, commit_internal_key, Some(ephemeral_secret)).await?;
         let signed_activation = if let Some(act_psbt) = activation_psbt_opt {
@@ -119,13 +165,22 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("   ✅ All transactions signed");
 
         // Step 5: Broadcast all transactions atomically in a single batch
-        log::info!("📡 Step 5/6: Broadcasting all transactions ATOMICALLY to prevent frontrunning...");
+        log::info!("📡 Step 5/7: Broadcasting all transactions ATOMICALLY to prevent frontrunning...");
+
+        // Build array of all transactions to broadcast together
+        // Order: split (if present) → commit → reveal → activation (if present)
+        let mut tx_hexes = Vec::new();
+
+        if let Some(ref split_tx) = signed_split {
+            let split_hex = bitcoin::consensus::encode::serialize_hex(split_tx);
+            tx_hexes.push(split_hex);
+        }
 
         let commit_hex = bitcoin::consensus::encode::serialize_hex(&signed_commit);
         let reveal_hex = bitcoin::consensus::encode::serialize_hex(&signed_reveal);
+        tx_hexes.push(commit_hex);
+        tx_hexes.push(reveal_hex);
 
-        // Build array of all transactions to broadcast together
-        let mut tx_hexes = vec![commit_hex, reveal_hex];
         if let Some(ref act_tx) = signed_activation {
             let act_hex = bitcoin::consensus::encode::serialize_hex(act_tx);
             tx_hexes.push(act_hex);
@@ -135,20 +190,41 @@ impl<'a> Brc20ProgExecutor<'a> {
         use crate::traits::BitcoinRpcProvider;
         let txids = self.provider.send_raw_transactions(&tx_hexes).await?;
 
-        let final_commit_txid = txids.get(0)
+        // Parse txids based on which transactions were included
+        let mut txid_idx = 0;
+
+        let final_split_txid = if signed_split.is_some() {
+            let txid = txids.get(txid_idx)
+                .ok_or_else(|| AlkanesError::RpcError("No split txid in batch response".to_string()))?
+                .clone();
+            txid_idx += 1;
+            Some(txid)
+        } else {
+            None
+        };
+
+        let final_commit_txid = txids.get(txid_idx)
             .ok_or_else(|| AlkanesError::RpcError("No commit txid in batch response".to_string()))?
             .clone();
-        let final_reveal_txid = txids.get(1)
+        txid_idx += 1;
+
+        let final_reveal_txid = txids.get(txid_idx)
             .ok_or_else(|| AlkanesError::RpcError("No reveal txid in batch response".to_string()))?
             .clone();
+        txid_idx += 1;
+
         let final_activation_txid = if signed_activation.is_some() {
-            Some(txids.get(2)
+            Some(txids.get(txid_idx)
                 .ok_or_else(|| AlkanesError::RpcError("No activation txid in batch response".to_string()))?
                 .clone())
         } else {
             None
         };
 
+        // Log broadcast results
+        if let Some(ref split_txid) = final_split_txid {
+            log::info!("   ✅ Split broadcast: {} (protected inscribed UTXOs)", split_txid);
+        }
         log::info!("   ✅ Commit broadcast: {}", final_commit_txid);
         log::info!("   ✅ Reveal broadcast: {}", final_reveal_txid);
         if let Some(ref act_txid) = final_activation_txid {
@@ -157,7 +233,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("   🎯 All {} transactions broadcast atomically in single RPC call!", tx_hexes.len());
 
         // Step 6: Monitor for frontrunning and RBF if needed
-        log::info!("🔍 Step 6/6: Monitoring for frontrunning attacks...");
+        log::info!("🔍 Step 6/7: Monitoring for frontrunning attacks...");
         self.monitor_and_bump_presigned_txs(
             &final_commit_txid,
             &final_reveal_txid,
@@ -169,6 +245,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("✅ Presign+RBF strategy completed successfully!");
 
         Ok(Brc20ProgExecuteResult {
+            split_txid: final_split_txid,
+            split_fee: split_fee_opt,
             commit_txid: final_commit_txid,
             reveal_txid: final_reveal_txid,
             activation_txid: final_activation_txid,
@@ -307,6 +385,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         };
 
         Ok(Brc20ProgExecuteResult {
+            split_txid: None,
+            split_fee: None,
             commit_txid: commit_txid.to_string(),
             reveal_txid: reveal_txid.to_string(),
             activation_txid,
@@ -829,11 +909,12 @@ impl<'a> Brc20ProgExecutor<'a> {
     }
 
     /// Build commit PSBT for presign strategy (uses final sequences for deterministic txid)
+    /// Returns: (split_psbt, split_fee, commit_psbt, commit_fee, internal_key, ephemeral_secret)
     async fn build_commit_psbt_for_presign(
         &mut self,
         params: &Brc20ProgExecuteParams,
         envelope: &Brc20ProgEnvelope,
-    ) -> Result<(Psbt, u64, XOnlyPublicKey, bitcoin::secp256k1::SecretKey)> {
+    ) -> Result<(Option<Psbt>, Option<u64>, Psbt, u64, XOnlyPublicKey, bitcoin::secp256k1::SecretKey)> {
         // ANTI-FRONTRUNNING: Get ephemeral key with secret for signing
         let (internal_key, ephemeral_secret, _) = self.provider.get_internal_key_with_secret().await?;
         let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
@@ -926,6 +1007,50 @@ impl<'a> Brc20ProgExecutor<'a> {
             &params.from_addresses,
         ).await?;
 
+        // Get change address for split transaction
+        let change_address_str = if let Some(ref addr) = params.change_address {
+            addr.clone()
+        } else {
+            WalletProvider::get_address(self.provider).await?
+        };
+        let change_addr = Address::from_str(&change_address_str)?
+            .require_network(self.provider.get_network())?;
+
+        // Check if any selected UTXOs have inscriptions and need splitting
+        let split_result = self.build_split_psbt_if_needed(
+            &funding_utxos,
+            &change_addr,
+            fee_rate,
+        ).await?;
+
+        // Determine which UTXOs to use for commit
+        let (final_funding_utxos, split_psbt, split_fee) = match split_result {
+            Some(split) => {
+                log::info!("🔀 Split transaction will be used to protect inscriptions");
+                // Use clean outpoints from split transaction instead of original UTXOs
+                // Also include any original UTXOs that didn't need splitting
+                let mut clean_utxos = split.clean_outpoints.clone();
+
+                // Add any UTXOs that didn't need splitting (weren't in the split)
+                let split_originals: Vec<_> = funding_utxos.iter()
+                    .filter(|op| split.psbt.unsigned_tx.input.iter().any(|i| &i.previous_output == *op))
+                    .cloned()
+                    .collect();
+
+                for outpoint in &funding_utxos {
+                    if !split_originals.contains(outpoint) {
+                        clean_utxos.push(*outpoint);
+                    }
+                }
+
+                (clean_utxos, Some(split.psbt), Some(split.fee))
+            }
+            None => {
+                // No split needed - use original UTXOs
+                (funding_utxos, None, None)
+            }
+        };
+
         let commit_output = TxOut {
             value: bitcoin::Amount::from_sat(commit_output_amount),
             script_pubkey: commit_address.script_pubkey(),
@@ -933,13 +1058,13 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Build commit with FINAL sequences (no RBF) for deterministic txid
         let (commit_psbt, commit_fee) = self.build_commit_psbt_final_seq(
-            funding_utxos,
+            final_funding_utxos,
             commit_output,
             params.fee_rate,
             &params.change_address,
         ).await?;
 
-        Ok((commit_psbt, commit_fee, internal_key, ephemeral_secret))
+        Ok((split_psbt, split_fee, commit_psbt, commit_fee, internal_key, ephemeral_secret))
     }
 
     /// Build commit PSBT with final sequences (for presign)
@@ -1793,6 +1918,271 @@ impl<'a> Brc20ProgExecutor<'a> {
             bitcoin_collected
         );
         Ok(selected_outpoints)
+    }
+
+    /// Query ord for inscriptions on a specific UTXO
+    /// Returns a list of inscription IDs and their sat offsets within the UTXO
+    ///
+    /// If ord is unavailable, logs a warning and returns empty list (fail-open)
+    async fn get_utxo_inscriptions(&self, outpoint: &OutPoint) -> Result<Vec<InscriptionInfo>> {
+        let output_str = format!("{}:{}", outpoint.txid, outpoint.vout);
+
+        // Try to query ord for the output
+        match self.provider.get_output(&output_str).await {
+            Ok(output) => {
+                // Check if output has inscriptions
+                let inscription_ids = match output.inscriptions {
+                    Some(ids) if !ids.is_empty() => ids,
+                    _ => return Ok(vec![]), // No inscriptions
+                };
+
+                let mut inscriptions = Vec::new();
+
+                // For each inscription, query its satpoint to get the offset
+                for inscription_id in inscription_ids {
+                    let inscription_id_str = inscription_id.to_string();
+                    match self.provider.get_inscription(&inscription_id_str).await {
+                        Ok(inscription) => {
+                            // SatPoint contains outpoint and offset
+                            // The offset tells us which sat within the UTXO is inscribed
+                            inscriptions.push(InscriptionInfo {
+                                inscription_id: inscription.id,
+                                sat_offset: inscription.satpoint.offset,
+                            });
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Could not query inscription {}: {} - skipping",
+                                inscription_id_str, e
+                            );
+                            // Continue with other inscriptions
+                        }
+                    }
+                }
+
+                if !inscriptions.is_empty() {
+                    log::info!(
+                        "Found {} inscription(s) on {}: {:?}",
+                        inscriptions.len(),
+                        output_str,
+                        inscriptions.iter().map(|i| format!("{}@{}", i.inscription_id, i.sat_offset)).collect::<Vec<_>>()
+                    );
+                }
+
+                Ok(inscriptions)
+            }
+            Err(e) => {
+                // Ord unavailable - fail-open with warning
+                log::warn!(
+                    "⚠️ Could not query ord for {} - proceeding without inscription check: {}",
+                    output_str, e
+                );
+                Ok(vec![])
+            }
+        }
+    }
+
+    /// Calculate how to split a UTXO to protect inscriptions
+    ///
+    /// Given a UTXO with inscriptions at various offsets, calculates the split amounts:
+    /// - Safe output: receives all sats up to and including the highest inscribed sat
+    /// - Clean output: receives remaining sats (safe for funding)
+    ///
+    /// Returns None if no split is needed (all inscriptions are in the last sat which would
+    /// go to change anyway, or not enough clean sats remain after split)
+    fn calculate_split(&self, utxo_value: u64, inscriptions: &[InscriptionInfo], fee_rate: f32) -> Option<SplitPlan> {
+        if inscriptions.is_empty() {
+            return None;
+        }
+
+        // Find the highest offset among all inscriptions
+        // We need to send all sats up to and including this sat to the safe output
+        let max_offset = inscriptions.iter().map(|i| i.sat_offset).max().unwrap_or(0);
+
+        // Safe amount = offset + 1 (because offset is 0-indexed)
+        // This ensures the inscribed sat goes to the first output (safe)
+        let safe_amount = max_offset + 1;
+
+        // Ensure safe amount is at least dust limit
+        let safe_amount = safe_amount.max(DUST_LIMIT);
+
+        // Calculate clean amount (remaining sats)
+        if utxo_value <= safe_amount {
+            // Not enough sats after protecting inscriptions
+            log::warn!(
+                "UTXO has {} sats but inscription at offset {} requires {} sats for safe output - cannot split",
+                utxo_value, max_offset, safe_amount
+            );
+            return None;
+        }
+
+        // Estimate split tx fee (1 input, 2 outputs, ~140 vB for p2tr)
+        let estimated_split_fee = (fee_rate * 140.0).ceil() as u64;
+
+        let clean_amount = utxo_value.saturating_sub(safe_amount).saturating_sub(estimated_split_fee);
+
+        // Ensure clean amount is at least dust limit + some buffer for actual funding
+        if clean_amount < DUST_LIMIT * 2 {
+            log::warn!(
+                "After protecting inscriptions and fees, only {} sats remain - not enough for funding",
+                clean_amount
+            );
+            return None;
+        }
+
+        log::info!(
+            "Split plan: {} sats → safe({}) + clean({}) + fee(~{})",
+            utxo_value, safe_amount, clean_amount, estimated_split_fee
+        );
+
+        Some(SplitPlan {
+            outpoint: OutPoint::null(), // Will be filled in by caller
+            safe_amount,
+            clean_amount,
+        })
+    }
+
+    /// Check selected UTXOs for inscriptions and build split transaction if needed
+    ///
+    /// Returns None if no split is needed, or Some(SplitResult) with the split PSBT
+    /// and clean outpoints to use for commit transaction funding
+    async fn build_split_psbt_if_needed(
+        &mut self,
+        funding_utxos: &[OutPoint],
+        change_address: &Address,
+        fee_rate: f32,
+    ) -> Result<Option<SplitResult>> {
+        let mut split_plans: Vec<SplitPlan> = Vec::new();
+        let mut utxo_info: Vec<(OutPoint, TxOut)> = Vec::new();
+
+        // Check each UTXO for inscriptions
+        for outpoint in funding_utxos {
+            let inscriptions = self.get_utxo_inscriptions(outpoint).await?;
+
+            if !inscriptions.is_empty() {
+                // Get UTXO value
+                let utxo = self.provider.get_utxo(outpoint).await?
+                    .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", outpoint)))?;
+                let utxo_value = utxo.value.to_sat();
+
+                // Calculate split plan
+                if let Some(mut plan) = self.calculate_split(utxo_value, &inscriptions, fee_rate) {
+                    plan.outpoint = *outpoint;
+                    split_plans.push(plan);
+                    utxo_info.push((*outpoint, TxOut {
+                        value: utxo.value,
+                        script_pubkey: utxo.script_pubkey.clone(),
+                    }));
+                } else {
+                    // Cannot split this UTXO - return error
+                    return Err(AlkanesError::Wallet(format!(
+                        "UTXO {} contains inscriptions but cannot be safely split. \
+                        Please use a different UTXO without inscriptions.",
+                        outpoint
+                    )));
+                }
+            }
+        }
+
+        if split_plans.is_empty() {
+            return Ok(None); // No split needed
+        }
+
+        log::info!("🔀 Building split transaction to protect {} inscribed UTXO(s)", split_plans.len());
+
+        // Build the split transaction
+        // Each inscribed UTXO becomes an input with 2 outputs (safe + clean)
+        let mut inputs = Vec::new();
+        let mut outputs = Vec::new();
+
+        for (plan, (outpoint, _txout)) in split_plans.iter().zip(utxo_info.iter()) {
+            inputs.push(bitcoin::TxIn {
+                previous_output: *outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            });
+
+            // Safe output (inscribed sats go here - to change address for safekeeping)
+            outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(plan.safe_amount),
+                script_pubkey: change_address.script_pubkey(),
+            });
+
+            // Clean output (for funding - also to change address, will be spent in commit)
+            outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(plan.clean_amount),
+                script_pubkey: change_address.script_pubkey(),
+            });
+        }
+
+        // Create the transaction
+        let split_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: inputs,
+            output: outputs.clone(),
+        };
+
+        // Calculate actual fee
+        let vsize = split_tx.vsize() + (split_plans.len() * 65); // Add witness size estimate
+        let fee = (fee_rate * vsize as f32).ceil() as u64;
+
+        // Adjust last clean output to absorb fee
+        let last_clean_idx = outputs.len() - 1;
+        let adjusted_value = outputs[last_clean_idx].value.to_sat().saturating_sub(fee);
+        if adjusted_value < DUST_LIMIT {
+            return Err(AlkanesError::Wallet(
+                "Not enough funds in split outputs after fee".to_string()
+            ));
+        }
+
+        let mut final_outputs = outputs;
+        final_outputs[last_clean_idx].value = bitcoin::Amount::from_sat(adjusted_value);
+
+        let final_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: split_tx.input.clone(),
+            output: final_outputs,
+        };
+
+        let split_txid = final_tx.txid();
+
+        // Create PSBT
+        let mut psbt = Psbt::from_unsigned_tx(final_tx)?;
+
+        // Add witness UTXOs to PSBT inputs
+        for (i, (_, txout)) in utxo_info.iter().enumerate() {
+            psbt.inputs[i].witness_utxo = Some(txout.clone());
+        }
+
+        // Calculate clean outpoints (every second output, starting from index 1)
+        let mut clean_outpoints = Vec::new();
+        for (i, plan) in split_plans.iter().enumerate() {
+            let clean_vout = (i * 2 + 1) as u32; // 1, 3, 5, ...
+            clean_outpoints.push(OutPoint {
+                txid: split_txid,
+                vout: clean_vout,
+            });
+            log::info!(
+                "   UTXO {} → safe output :0 ({}s), clean output :{} ({}s)",
+                plan.outpoint, plan.safe_amount, clean_vout,
+                if clean_vout as usize == clean_outpoints.len() * 2 - 1 && i == split_plans.len() - 1 {
+                    adjusted_value
+                } else {
+                    plan.clean_amount
+                }
+            );
+        }
+
+        log::info!("   Split txid: {}", split_txid);
+
+        Ok(Some(SplitResult {
+            psbt,
+            fee,
+            clean_outpoints,
+        }))
     }
 
     /// Build commit PSBT
