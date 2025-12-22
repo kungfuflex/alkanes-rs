@@ -48,6 +48,7 @@ import {
   AlkaneTraceEntry,
   AlkaneSequenceResponse,
   AlkanePoolResponse,
+  SimulationContext,
   // Ord response types
   InscriptionResponse,
   InscriptionsListResponse,
@@ -348,6 +349,18 @@ export interface MevSwapResponse {
   hops: SwapHop[];
 }
 
+// Execute params for AlkanesRpcClient.execute()
+export interface RpcExecuteParams {
+  /** Target contract ID in "block:tx" format */
+  target: string;
+  /** Calldata as array of bytes */
+  calldata: number[];
+  /** Fee rate in sat/vB (optional) */
+  fee_rate?: number;
+  /** Input UTXOs to use (optional) */
+  inputs?: any[];
+}
+
 // Execute result
 export interface ExecuteResult {
   txid: string;
@@ -639,12 +652,55 @@ export class AlkanesRpcClient {
     return this.provider.alkanesBytecode(alkaneId, blockTag);
   }
 
-  async simulate(contractId: string, contextJson: string, blockTag?: string): Promise<AlkaneSimulateResponse> {
+  /**
+   * Simulate an Alkanes contract call (read-only)
+   *
+   * @param contractId - Contract ID in "block:tx" format (e.g., "2:0")
+   * @param context - Simulation context (object or JSON string for backward compatibility)
+   * @param blockTag - Optional block tag for historical simulation
+   * @returns Simulation result
+   *
+   * @example
+   * ```typescript
+   * const result = await provider.alkanes.simulate('2:0', {
+   *   alkanes: [],
+   *   transaction: [],
+   *   block: [],
+   *   height: 800000,
+   *   vout: 0,
+   *   txindex: 0,
+   *   calldata: [77],  // opcode 77 = mint
+   *   pointer: 0,
+   *   refund_pointer: 0,
+   * });
+   * ```
+   */
+  async simulate(contractId: string, context: SimulationContext | string, blockTag?: string): Promise<AlkaneSimulateResponse> {
+    // Accept both object and JSON string for backward compatibility
+    const contextJson = typeof context === 'string' ? context : JSON.stringify(context);
     const result = await this.provider.alkanesSimulate(contractId, contextJson, blockTag);
     return mapToObject(result);
   }
 
-  async execute(paramsJson: string): Promise<ExecuteResult> {
+  /**
+   * Execute an Alkanes contract call
+   *
+   * @param params - Execute parameters (object or JSON string for backward compatibility)
+   * @returns Execution result with txid
+   *
+   * @example
+   * ```typescript
+   * const result = await provider.alkanes.execute({
+   *   target: '2:0',
+   *   calldata: [77],  // opcode 77 = mint
+   *   fee_rate: 10,
+   * });
+   * console.log('TXID:', result.txid);
+   * ```
+   */
+  async execute(params: RpcExecuteParams | string): Promise<ExecuteResult> {
+    // Accept both object and JSON string for backward compatibility
+    const paramsJson = typeof params === 'string' ? params : JSON.stringify(params);
     const result = await this.provider.alkanesExecute(paramsJson);
     return mapToObject(result);
   }
@@ -1874,6 +1930,308 @@ export class AlkanesProvider {
       refund_pointer: 0,
     };
     return provider.alkanesSimulate(contractId, JSON.stringify(context), blockTag);
+  }
+
+  // ============================================================================
+  // WALLET OPERATIONS
+  // ============================================================================
+
+  /**
+   * Create a new wallet
+   *
+   * @param options - Wallet creation options
+   * @returns Wallet info including address and mnemonic
+   *
+   * @example
+   * ```typescript
+   * const wallet = await provider.walletCreate();
+   * console.log('Address:', wallet.address);
+   * console.log('Mnemonic:', wallet.mnemonic); // Save this!
+   * ```
+   */
+  walletCreate(options?: {
+    mnemonic?: string;
+    passphrase?: string;
+  }): { address: string; mnemonic: string; network: string } {
+    if (!this._provider) {
+      throw new Error('Provider not initialized. Call initialize() first.');
+    }
+    return this._provider.walletCreate(
+      options?.mnemonic ?? undefined,
+      options?.passphrase ?? undefined
+    );
+  }
+
+  /**
+   * Load an existing wallet from storage
+   *
+   * @param passphrase - Optional passphrase for BIP39
+   */
+  async walletLoad(passphrase?: string): Promise<any> {
+    const provider = await this.getProvider();
+    return provider.walletLoad(passphrase ?? undefined);
+  }
+
+  /**
+   * Load a wallet from mnemonic for signing transactions
+   *
+   * @param mnemonic - The mnemonic phrase
+   * @param passphrase - Optional BIP39 passphrase
+   */
+  walletLoadMnemonic(mnemonic: string, passphrase?: string): void {
+    if (!this._provider) {
+      throw new Error('Provider not initialized. Call initialize() first.');
+    }
+    this._provider.walletLoadMnemonic(mnemonic, passphrase ?? undefined);
+  }
+
+  /**
+   * Check if wallet is loaded (has keystore for signing)
+   */
+  walletIsLoaded(): boolean {
+    if (!this._provider) {
+      return false;
+    }
+    return this._provider.walletIsLoaded();
+  }
+
+  /**
+   * Get the wallet's primary address
+   */
+  async walletGetAddress(): Promise<string> {
+    const provider = await this.getProvider();
+    const result = await provider.walletGetAddress();
+    return result?.address || result;
+  }
+
+  /**
+   * Get addresses from the loaded wallet
+   *
+   * @param addressType - Address type: 'p2tr', 'p2wpkh', 'p2sh-p2wpkh', 'p2pkh'
+   * @param startIndex - Starting derivation index
+   * @param count - Number of addresses to generate
+   * @param chain - Optional chain (0 = external/receiving, 1 = internal/change)
+   * @returns Array of address info objects
+   *
+   * @example
+   * ```typescript
+   * const addresses = provider.walletGetAddresses('p2tr', 0, 5);
+   * console.log(addresses[0].address);
+   * ```
+   */
+  walletGetAddresses(
+    addressType: 'p2tr' | 'p2wpkh' | 'p2sh-p2wpkh' | 'p2pkh',
+    startIndex: number,
+    count: number,
+    chain?: number
+  ): Array<{ address: string; path: string; index: number }> {
+    if (!this._provider) {
+      throw new Error('Provider not initialized. Call initialize() first.');
+    }
+    return this._provider.walletGetAddresses(addressType, startIndex, count, chain ?? undefined);
+  }
+
+  /**
+   * Get wallet BTC balance
+   *
+   * @param addresses - Optional specific addresses to check
+   */
+  async walletGetBalance(addresses?: string[]): Promise<{ confirmed: number; unconfirmed: number }> {
+    const provider = await this.getProvider();
+    return provider.walletGetBalance(addresses ?? undefined);
+  }
+
+  /**
+   * Get wallet UTXOs
+   *
+   * @param addresses - Optional specific addresses to check
+   */
+  async walletGetUtxos(addresses?: string[]): Promise<any[]> {
+    const provider = await this.getProvider();
+    return provider.walletGetUtxos(addresses ?? undefined);
+  }
+
+  // ============================================================================
+  // TYPED ALKANES EXECUTE OPERATIONS
+  // ============================================================================
+
+  /**
+   * Execute an Alkanes contract call with full control (typed parameters)
+   *
+   * This method accepts TypeScript objects and handles JSON serialization internally.
+   *
+   * @param params - Execute parameters
+   * @returns Execution result
+   *
+   * @example
+   * ```typescript
+   * // Mint DIESEL tokens
+   * const result = await provider.alkanesExecuteTyped({
+   *   toAddresses: [myAddress],
+   *   inputRequirements: 'B:10000',
+   *   protostones: '[2,0,77]:v0:v0',
+   *   feeRate: 100,
+   * });
+   * ```
+   */
+  async alkanesExecuteTyped(params: {
+    toAddresses: string[];
+    inputRequirements: string;
+    protostones: string;
+    feeRate?: number;
+    envelopeHex?: string;
+    traceEnabled?: boolean;
+    mineEnabled?: boolean;
+    autoConfirm?: boolean;
+    rawOutput?: boolean;
+  }): Promise<any> {
+    const provider = await this.getProvider();
+
+    const options: Record<string, any> = {};
+    if (params.traceEnabled !== undefined) options.trace_enabled = params.traceEnabled;
+    if (params.mineEnabled !== undefined) options.mine_enabled = params.mineEnabled;
+    if (params.autoConfirm !== undefined) options.auto_confirm = params.autoConfirm;
+    if (params.rawOutput !== undefined) options.raw_output = params.rawOutput;
+
+    const result = await provider.alkanesExecuteWithStrings(
+      JSON.stringify(params.toAddresses),
+      params.inputRequirements,
+      params.protostones,
+      params.feeRate ?? null,
+      params.envelopeHex ?? null,
+      Object.keys(options).length > 0 ? JSON.stringify(options) : null
+    );
+
+    return typeof result === 'string' ? JSON.parse(result) : result;
+  }
+
+  /**
+   * Wrap BTC to frBTC (typed parameters)
+   *
+   * @param params - Wrap parameters
+   * @returns Transaction result
+   *
+   * @example
+   * ```typescript
+   * const result = await provider.frbtcWrapTyped({
+   *   amount: 100000n,
+   *   toAddress: myAddress,
+   *   feeRate: 100,
+   * });
+   * ```
+   */
+  async frbtcWrapTyped(params: {
+    amount: bigint | number;
+    toAddress: string;
+    fromAddress?: string;
+    changeAddress?: string;
+    feeRate?: number;
+    autoConfirm?: boolean;
+  }): Promise<any> {
+    const provider = await this.getProvider();
+
+    const wrapParams: Record<string, any> = {
+      amount: String(params.amount),
+      to_address: params.toAddress,
+      fee_rate: params.feeRate ?? 1,
+      auto_confirm: params.autoConfirm ?? true,
+    };
+    if (params.fromAddress) wrapParams.from_address = params.fromAddress;
+    if (params.changeAddress) wrapParams.change_address = params.changeAddress;
+
+    const result = await provider.alkanesWrapBtc(JSON.stringify(wrapParams));
+    return typeof result === 'string' ? JSON.parse(result) : result;
+  }
+
+  /**
+   * Initialize a new AMM liquidity pool (typed parameters)
+   *
+   * @param params - Pool initialization parameters
+   * @returns Transaction ID
+   *
+   * @example
+   * ```typescript
+   * const txid = await provider.alkanesInitPoolTyped({
+   *   factoryId: { block: 4, tx: 65522 },
+   *   token0: { block: 2, tx: 0 },
+   *   token1: { block: 32, tx: 0 },
+   *   amount0: '300000000',
+   *   amount1: '50000',
+   *   toAddress: myAddress,
+   *   feeRate: 100,
+   * });
+   * ```
+   */
+  async alkanesInitPoolTyped(params: {
+    factoryId: { block: number; tx: number };
+    token0: { block: number; tx: number };
+    token1: { block: number; tx: number };
+    amount0: string | number | bigint;
+    amount1: string | number | bigint;
+    minimumLp?: string | number | bigint;
+    toAddress: string;
+    fromAddress?: string;
+    changeAddress?: string;
+    feeRate?: number;
+    trace?: boolean;
+    autoConfirm?: boolean;
+  }): Promise<string> {
+    const provider = await this.getProvider();
+
+    const poolParams: Record<string, any> = {
+      factory_id: params.factoryId,
+      token0: params.token0,
+      token1: params.token1,
+      amount0: String(params.amount0),
+      amount1: String(params.amount1),
+      to_address: params.toAddress,
+      fee_rate: params.feeRate ?? 1,
+      trace: params.trace ?? false,
+      auto_confirm: params.autoConfirm ?? true,
+    };
+    if (params.minimumLp) poolParams.minimum_lp = String(params.minimumLp);
+    if (params.fromAddress) poolParams.from_address = params.fromAddress;
+    if (params.changeAddress) poolParams.change_address = params.changeAddress;
+
+    return provider.alkanesInitPool(JSON.stringify(poolParams));
+  }
+
+  /**
+   * Execute an AMM swap (typed parameters)
+   *
+   * @param params - Swap parameters
+   * @returns Transaction ID
+   */
+  async alkanesSwapTyped(params: {
+    factoryId: { block: number; tx: number };
+    path: Array<{ block: number; tx: number }>;
+    inputAmount: string | number | bigint;
+    minimumOutput: string | number | bigint;
+    expires: number;
+    toAddress: string;
+    fromAddress?: string;
+    changeAddress?: string;
+    feeRate?: number;
+    trace?: boolean;
+    autoConfirm?: boolean;
+  }): Promise<string> {
+    const provider = await this.getProvider();
+
+    const swapParams: Record<string, any> = {
+      factory_id: params.factoryId,
+      path: params.path,
+      input_amount: String(params.inputAmount),
+      minimum_output: String(params.minimumOutput),
+      expires: params.expires,
+      to_address: params.toAddress,
+      fee_rate: params.feeRate ?? 1,
+      trace: params.trace ?? false,
+      auto_confirm: params.autoConfirm ?? true,
+    };
+    if (params.fromAddress) swapParams.from_address = params.fromAddress;
+    if (params.changeAddress) swapParams.change_address = params.changeAddress;
+
+    return provider.alkanesSwap(JSON.stringify(swapParams));
   }
 }
 

@@ -215,3 +215,23 @@ export type {
   Brc20ProgWrapBtcParams,
   Brc20ProgExecuteResult,
 } from './brc20-prog';
+
+/**
+ * Alkanes types (frBTC, AMM, execute)
+ */
+export type {
+  AlkaneId as AlkanesAlkaneId,
+  AlkanesExecuteBaseParams,
+  FrbtcWrapParams,
+  FrbtcUnwrapParams,
+  FrbtcWrapAndExecuteParams,
+  FrbtcWrapAndExecute2Params,
+  AlkanesSwapParams,
+  AlkanesInitPoolParams,
+  AlkanesExecuteParams,
+  AlkanesExecuteResult,
+  PendingUnwrap,
+  PendingUnwrapsResult,
+  PoolDetailsResult,
+  SignerAddressResult,
+} from './alkanes';

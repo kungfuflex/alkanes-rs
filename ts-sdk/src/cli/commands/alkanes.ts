@@ -294,7 +294,7 @@ export function registerAlkanesCommands(program: Command): void {
         };
 
         const contractIdStr = `${targetBlock}:${targetTx}`;
-        const result = await provider.alkanes.simulate(contractIdStr, JSON.stringify(context), options.blockTag);
+        const result = await provider.alkanes.simulate(contractIdStr, context, options.blockTag);
 
         spinner.succeed();
 

@@ -79,6 +79,7 @@ export type {
   CandleInfo,
   HolderInfo,
   ExecuteResult,
+  RpcExecuteParams,
   LuaEvalResult,
   // Espo API response types
   PaginatedResponse,
@@ -152,6 +153,21 @@ export type {
   Brc20ProgTransactParams,
   Brc20ProgWrapBtcParams,
   Brc20ProgExecuteResult,
+  // Alkanes types (frBTC, AMM, execute)
+  AlkanesAlkaneId,
+  AlkanesExecuteBaseParams,
+  FrbtcWrapParams,
+  FrbtcUnwrapParams,
+  FrbtcWrapAndExecuteParams,
+  FrbtcWrapAndExecute2Params,
+  AlkanesSwapParams,
+  AlkanesInitPoolParams,
+  AlkanesExecuteParams,
+  AlkanesExecuteResult,
+  PendingUnwrap,
+  PendingUnwrapsResult,
+  PoolDetailsResult,
+  SignerAddressResult,
 } from './types';
 
 // Response type exports (typed API responses)
