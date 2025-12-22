@@ -1,9 +1,5 @@
 /* tslint:disable */
 /* eslint-disable */
-/**
- * Asynchronously encrypts data using the Web Crypto API.
- */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export function analyze_psbt(psbt_base64: string, network_str: string): string;
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
 export function get_alkane_bytecode(network: string, block: number, tx: number, block_tag: string): Promise<any>;
@@ -270,6 +266,10 @@ export function frbtc_wrap_and_execute2(network: string, amount: bigint, target_
  * - `signer_address`: The Bitcoin p2tr address for the signer
  */
 export function frbtc_get_signer_address(network: string): Promise<any>;
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;
@@ -487,6 +487,17 @@ export class WebProvider {
    * - `options_json`: Optional JSON with additional options (trace_enabled, mine_enabled, auto_confirm, raw_output)
    */
   alkanesExecuteWithStrings(to_addresses_json: string, input_requirements: string, protostones: string, fee_rate?: number | null, envelope_hex?: string | null, options_json?: string | null): Promise<any>;
+  /**
+   * Execute an alkanes smart contract fully (handles complete flow internally)
+   *
+   * This method handles the complete execution flow:
+   * - For deployments (with envelope): commit -> reveal -> mine -> trace
+   * - For simple transactions: sign -> broadcast -> mine -> trace
+   *
+   * Returns the final EnhancedExecuteResult directly, avoiding serialization issues
+   * with intermediate states.
+   */
+  alkanesExecuteFull(to_addresses_json: string, input_requirements: string, protostones: string, fee_rate?: number | null, envelope_hex?: string | null, options_json?: string | null): Promise<any>;
   /**
    * Resume execution after user confirmation (for simple transactions)
    */

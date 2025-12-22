@@ -1,9 +1,19 @@
 /**
  * BRC20-Prog Types for TypeScript SDK
- * 
+ *
  * These types provide a clean object-based API for BRC20-prog operations,
  * wrapping the underlying WASM functions that accept JSON strings.
  */
+
+/**
+ * Anti-frontrunning strategy for BRC20-Prog transactions
+ *
+ * - 'presign': Pre-sign all transactions and broadcast together atomically
+ * - 'cpfp': Use Child-Pays-For-Parent to accelerate commit transaction
+ * - 'cltv': Use CheckLockTimeVerify to timelock reveal transaction
+ * - 'rbf': Monitor mempool and use RBF to bump fees if frontrunning detected
+ */
+export type AntiFrontrunningStrategy = 'presign' | 'cpfp' | 'cltv' | 'rbf';
 
 /**
  * Base execution parameters for BRC20-prog operations
@@ -25,6 +35,14 @@ export interface Brc20ProgExecuteParams {
   rebar_tier?: 1 | 2;
   /** Resume from existing commit or reveal transaction (txid) (optional) */
   resume_from_commit?: string;
+  /** Anti-frontrunning strategy to use (optional, defaults to 'presign') */
+  strategy?: AntiFrontrunningStrategy;
+  /**
+   * Enable mempool indexer for tracing inscription state of pending UTXOs.
+   * When enabled, if we must use pending (unconfirmed) UTXOs, we'll trace back
+   * through parent transactions to determine inscription state from settled UTXOs.
+   */
+  mempool_indexer?: boolean;
 }
 
 /**
@@ -71,6 +89,10 @@ export interface Brc20ProgWrapBtcParams {
  * Result of a BRC20-prog execution
  */
 export interface Brc20ProgExecuteResult {
+  /** Split transaction ID (if inscribed UTXOs were split to protect inscriptions) */
+  split_txid?: string;
+  /** Split transaction fee in sats (if split was needed) */
+  split_fee?: number;
   /** Commit transaction ID */
   commit_txid: string;
   /** Reveal transaction ID */

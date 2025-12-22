@@ -209,6 +209,7 @@ export interface ImportOptions {
  * BRC20-Prog types
  */
 export type {
+  AntiFrontrunningStrategy,
   Brc20ProgExecuteParams,
   Brc20ProgDeployParams,
   Brc20ProgTransactParams,

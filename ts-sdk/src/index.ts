@@ -148,6 +148,7 @@ export type {
   ExportOptions,
   ImportOptions,
   // BRC20-Prog types
+  AntiFrontrunningStrategy,
   Brc20ProgExecuteParams,
   Brc20ProgDeployParams,
   Brc20ProgTransactParams,

@@ -1801,7 +1801,7 @@ var init_provider = __esm({
         if (params.autoConfirm !== void 0) options.auto_confirm = params.autoConfirm;
         if (params.rawOutput !== void 0) options.raw_output = params.rawOutput;
         const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;
-        let result = await provider.alkanesExecuteWithStrings(
+        const result = await provider.alkanesExecuteFull(
           JSON.stringify(params.toAddresses),
           params.inputRequirements,
           params.protostones,
@@ -1809,43 +1809,7 @@ var init_provider = __esm({
           params.envelopeHex ?? null,
           optionsJson
         );
-        result = typeof result === "string" ? JSON.parse(result) : result;
-        const autoConfirm = params.autoConfirm !== false;
-        if (autoConfirm) {
-          if (result.readyToSignCommit) {
-            const commitStateJson = JSON.stringify(result.readyToSignCommit);
-            let commitResult = await provider.alkanesResumeCommitExecution(commitStateJson);
-            commitResult = typeof commitResult === "string" ? JSON.parse(commitResult) : commitResult;
-            if (commitResult.readyToSignReveal) {
-              const revealStateJson = JSON.stringify(commitResult.readyToSignReveal);
-              let revealResult = await provider.alkanesResumeRevealExecution(revealStateJson);
-              revealResult = typeof revealResult === "string" ? JSON.parse(revealResult) : revealResult;
-              return revealResult;
-            }
-            return commitResult;
-          }
-          if (result.readyToSign) {
-            const paramsJson = JSON.stringify({
-              fee_rate: params.feeRate,
-              to_addresses: params.toAddresses,
-              from_addresses: params.fromAddresses,
-              change_address: params.changeAddress,
-              alkanes_change_address: params.alkanesChangeAddress,
-              input_requirements: [],
-              protostones: [],
-              envelope_data: null,
-              raw_output: params.rawOutput ?? false,
-              trace_enabled: params.traceEnabled ?? false,
-              mine_enabled: params.mineEnabled ?? false,
-              auto_confirm: true
-            });
-            const stateJson = JSON.stringify(result.readyToSign);
-            let execResult = await provider.alkanesResumeExecution(stateJson, paramsJson);
-            execResult = typeof execResult === "string" ? JSON.parse(execResult) : execResult;
-            return execResult;
-          }
-        }
-        return result;
+        return typeof result === "string" ? JSON.parse(result) : result;
       }
       /**
        * Wrap BTC to frBTC (typed parameters)
@@ -1937,6 +1901,106 @@ var init_provider = __esm({
         if (params.fromAddress) swapParams.from_address = params.fromAddress;
         if (params.changeAddress) swapParams.change_address = params.changeAddress;
         return provider.alkanesSwap(JSON.stringify(swapParams));
+      }
+      // ============================================================================
+      // BRC20-PROG DEPLOY/TRANSACT OPERATIONS
+      // ============================================================================
+      /**
+       * Deploy a BRC20-prog smart contract (typed parameters)
+       *
+       * Uses the presign anti-frontrunning strategy by default, which:
+       * 1. Pre-signs all transactions (split, commit, reveal, activation)
+       * 2. Broadcasts all transactions atomically via sendrawtransactions
+       * 3. Protects inscribed UTXOs by splitting them if necessary
+       *
+       * @param params - Deployment parameters
+       * @returns Deployment result with transaction IDs and fees
+       *
+       * @example
+       * ```typescript
+       * const result = await provider.brc20ProgDeployTyped({
+       *   foundryJson: contractJson,  // Foundry build output JSON
+       *   feeRate: 10,
+       *   strategy: 'presign',        // Anti-frontrunning strategy
+       *   mempool_indexer: true,      // Trace pending UTXO inscriptions
+       *   mineEnabled: true,          // Auto-mine on regtest
+       * });
+       * console.log('Deployed! Reveal:', result.reveal_txid);
+       * ```
+       */
+      async brc20ProgDeployTyped(params) {
+        const provider = await this.getProvider();
+        const foundryJsonStr = typeof params.foundryJson === "string" ? params.foundryJson : JSON.stringify(params.foundryJson);
+        const executeParams = {
+          fee_rate: params.feeRate ?? 10,
+          use_activation: params.useActivation ?? false,
+          use_slipstream: params.useSlipstream ?? false,
+          use_rebar: params.useRebar ?? false,
+          auto_confirm: params.autoConfirm ?? true,
+          trace_enabled: params.traceEnabled ?? false,
+          mine_enabled: params.mineEnabled ?? false,
+          raw_output: false
+        };
+        if (params.fromAddresses) executeParams.from_addresses = params.fromAddresses;
+        if (params.changeAddress) executeParams.change_address = params.changeAddress;
+        if (params.rebarTier) executeParams.rebar_tier = params.rebarTier;
+        if (params.resumeFromCommit) executeParams.resume_from_commit = params.resumeFromCommit;
+        if (params.strategy) executeParams.strategy = params.strategy;
+        if (params.mempool_indexer !== void 0) executeParams.mempool_indexer = params.mempool_indexer;
+        const result = await provider.brc20ProgDeployContract(
+          foundryJsonStr,
+          JSON.stringify(executeParams)
+        );
+        return typeof result === "string" ? JSON.parse(result) : result;
+      }
+      /**
+       * Call a BRC20-prog contract function (typed parameters)
+       *
+       * Uses the presign anti-frontrunning strategy by default, which:
+       * 1. Pre-signs all transactions (split, commit, reveal, activation)
+       * 2. Broadcasts all transactions atomically via sendrawtransactions
+       * 3. Protects inscribed UTXOs by splitting them if necessary
+       *
+       * @param params - Transaction parameters
+       * @returns Transaction result with IDs and fees
+       *
+       * @example
+       * ```typescript
+       * const result = await provider.brc20ProgTransactTyped({
+       *   contractAddress: '0x1234...abcd',
+       *   functionSignature: 'transfer(address,uint256)',
+       *   calldata: ['0xrecipient', '1000'],
+       *   feeRate: 10,
+       *   strategy: 'presign',
+       * });
+       * console.log('Transaction sent! Reveal:', result.reveal_txid);
+       * ```
+       */
+      async brc20ProgTransactTyped(params) {
+        const provider = await this.getProvider();
+        const calldataStr = Array.isArray(params.calldata) ? params.calldata.join(",") : params.calldata;
+        const executeParams = {
+          fee_rate: params.feeRate ?? 10,
+          use_slipstream: params.useSlipstream ?? false,
+          use_rebar: params.useRebar ?? false,
+          auto_confirm: params.autoConfirm ?? true,
+          trace_enabled: params.traceEnabled ?? false,
+          mine_enabled: params.mineEnabled ?? false,
+          raw_output: false
+        };
+        if (params.fromAddresses) executeParams.from_addresses = params.fromAddresses;
+        if (params.changeAddress) executeParams.change_address = params.changeAddress;
+        if (params.rebarTier) executeParams.rebar_tier = params.rebarTier;
+        if (params.resumeFromCommit) executeParams.resume_from_commit = params.resumeFromCommit;
+        if (params.strategy) executeParams.strategy = params.strategy;
+        if (params.mempool_indexer !== void 0) executeParams.mempool_indexer = params.mempool_indexer;
+        const result = await provider.brc20ProgTransact(
+          params.contractAddress,
+          params.functionSignature,
+          calldataStr,
+          JSON.stringify(executeParams)
+        );
+        return typeof result === "string" ? JSON.parse(result) : result;
       }
     };
   }
@@ -9952,6 +10016,129 @@ function registerBrc20ProgCommands(program2) {
       }
     } catch (err) {
       error(`Failed to get signer address: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  brc20Prog.command("deploy <foundry-json>").description("Deploy a BRC20-prog smart contract from Foundry build JSON").option("--from <addresses...>", "Addresses to source UTXOs from (can be p2tr:0, p2wpkh:0, or raw addresses)").option("--change <address>", "Change address (can be p2tr:0, p2wpkh:0, or raw address)").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--use-activation", "Use 3-transaction activation pattern").option("--use-slipstream", "Use MARA Slipstream for broadcasting").option("--use-rebar", "Use Rebar Shield for private relay").option("--rebar-tier <tier>", "Rebar fee tier (1 or 2)", parseInt).option("--strategy <strategy>", "Anti-frontrunning strategy: presign, cpfp, cltv, rbf", "presign").option("--mempool-indexer", "Enable mempool indexer for pending UTXO inscription tracing").option("--resume <txid>", "Resume from existing commit transaction").option("--trace", "Enable transaction tracing").option("--mine", "Mine a block after broadcasting (regtest only)").option("--raw", "Output raw JSON").action(async (foundryJsonPath, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora12.default)("Deploying BRC20-prog contract...").start();
+      const fs3 = await import("fs");
+      if (!fs3.existsSync(foundryJsonPath)) {
+        spinner.fail();
+        error(`Foundry JSON file not found: ${foundryJsonPath}`);
+        process.exit(1);
+      }
+      const foundryJson = fs3.readFileSync(foundryJsonPath, "utf8");
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
+      });
+      const resolverOpts = {
+        walletFile: globalOpts.walletFile,
+        passphrase: globalOpts.passphrase,
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
+      };
+      const resolvedFrom = options.from ? await resolveAddressesWithProvider(options.from, provider, resolverOpts) : void 0;
+      const resolvedChange = options.change ? await resolveAddressWithProvider(options.change, provider, resolverOpts) : void 0;
+      const result = await provider.brc20ProgDeployTyped({
+        foundryJson,
+        fromAddresses: resolvedFrom,
+        changeAddress: resolvedChange,
+        feeRate: options.feeRate,
+        useActivation: options.useActivation,
+        useSlipstream: options.useSlipstream,
+        useRebar: options.useRebar,
+        rebarTier: options.rebarTier,
+        strategy: options.strategy,
+        mempool_indexer: options.mempoolIndexer,
+        resumeFromCommit: options.resume,
+        traceEnabled: options.trace,
+        mineEnabled: options.mine,
+        autoConfirm: true
+      });
+      spinner.succeed("BRC20-prog contract deployed!");
+      if (options.raw) {
+        console.log(formatOutput(result, { raw: true }));
+      } else {
+        console.log("\nDeployment Result:");
+        if (result.split_txid) {
+          console.log(`   Split TXID:      ${result.split_txid}`);
+          console.log(`   Split Fee:       ${result.split_fee} sats`);
+        }
+        console.log(`   Commit TXID:     ${result.commit_txid}`);
+        console.log(`   Reveal TXID:     ${result.reveal_txid}`);
+        if (result.activation_txid) {
+          console.log(`   Activation TXID: ${result.activation_txid}`);
+        }
+        console.log(`   Commit Fee:      ${result.commit_fee} sats`);
+        console.log(`   Reveal Fee:      ${result.reveal_fee} sats`);
+        if (result.activation_fee) {
+          console.log(`   Activation Fee:  ${result.activation_fee} sats`);
+        }
+      }
+    } catch (err) {
+      error(`Failed to deploy contract: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  brc20Prog.command("transact <address> <signature> [calldata...]").description("Call a BRC20-prog contract function").option("--from <addresses...>", "Addresses to source UTXOs from (can be p2tr:0, p2wpkh:0, or raw addresses)").option("--change <address>", "Change address (can be p2tr:0, p2wpkh:0, or raw address)").option("--fee-rate <rate>", "Fee rate in sat/vB", parseFloat).option("--use-slipstream", "Use MARA Slipstream for broadcasting").option("--use-rebar", "Use Rebar Shield for private relay").option("--rebar-tier <tier>", "Rebar fee tier (1 or 2)", parseInt).option("--strategy <strategy>", "Anti-frontrunning strategy: presign, cpfp, cltv, rbf", "presign").option("--mempool-indexer", "Enable mempool indexer for pending UTXO inscription tracing").option("--resume <txid>", "Resume from existing commit transaction").option("--trace", "Enable transaction tracing").option("--mine", "Mine a block after broadcasting (regtest only)").option("--raw", "Output raw JSON").action(async (address, signature, calldata, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora12.default)("Calling BRC20-prog contract...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
+      });
+      const resolverOpts = {
+        walletFile: globalOpts.walletFile,
+        passphrase: globalOpts.passphrase,
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl
+      };
+      const resolvedFrom = options.from ? await resolveAddressesWithProvider(options.from, provider, resolverOpts) : void 0;
+      const resolvedChange = options.change ? await resolveAddressWithProvider(options.change, provider, resolverOpts) : void 0;
+      const calldataStr = Array.isArray(calldata) ? calldata.join(",") : calldata || "";
+      const result = await provider.brc20ProgTransactTyped({
+        contractAddress: address,
+        functionSignature: signature,
+        calldata: calldataStr,
+        fromAddresses: resolvedFrom,
+        changeAddress: resolvedChange,
+        feeRate: options.feeRate,
+        useSlipstream: options.useSlipstream,
+        useRebar: options.useRebar,
+        rebarTier: options.rebarTier,
+        strategy: options.strategy,
+        mempool_indexer: options.mempoolIndexer,
+        resumeFromCommit: options.resume,
+        traceEnabled: options.trace,
+        mineEnabled: options.mine,
+        autoConfirm: true
+      });
+      spinner.succeed("BRC20-prog contract called!");
+      if (options.raw) {
+        console.log(formatOutput(result, { raw: true }));
+      } else {
+        console.log("\nTransaction Result:");
+        if (result.split_txid) {
+          console.log(`   Split TXID:      ${result.split_txid}`);
+          console.log(`   Split Fee:       ${result.split_fee} sats`);
+        }
+        console.log(`   Commit TXID:     ${result.commit_txid}`);
+        console.log(`   Reveal TXID:     ${result.reveal_txid}`);
+        if (result.activation_txid) {
+          console.log(`   Activation TXID: ${result.activation_txid}`);
+        }
+        console.log(`   Commit Fee:      ${result.commit_fee} sats`);
+        console.log(`   Reveal Fee:      ${result.reveal_fee} sats`);
+        if (result.activation_fee) {
+          console.log(`   Activation Fee:  ${result.activation_fee} sats`);
+        }
+      }
+    } catch (err) {
+      error(`Failed to call contract: ${err.message}`);
       process.exit(1);
     }
   });

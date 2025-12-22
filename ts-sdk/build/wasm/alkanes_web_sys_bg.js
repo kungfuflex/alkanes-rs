@@ -241,21 +241,6 @@ function passArrayJsValueToWasm0(array, malloc) {
     return ptr;
 }
 /**
- * Asynchronously encrypts data using the Web Crypto API.
- * @param {string} mnemonic
- * @param {string} passphrase
- * @returns {Promise<any>}
- */
-export function encryptMnemonic(mnemonic, passphrase) {
-    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
-    return ret;
-}
-
-/**
  * @param {string} psbt_base64
  * @param {string} network_str
  * @returns {string}
@@ -747,6 +732,21 @@ export function frbtc_get_signer_address(network) {
     const ptr0 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.frbtc_get_signer_address(ptr0, len0);
+    return ret;
+}
+
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ * @param {string} mnemonic
+ * @param {string} passphrase
+ * @returns {Promise<any>}
+ */
+export function encryptMnemonic(mnemonic, passphrase) {
+    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
     return ret;
 }
 
@@ -1462,6 +1462,37 @@ export class WebProvider {
         var ptr4 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len4 = WASM_VECTOR_LEN;
         const ret = wasm.webprovider_alkanesExecuteWithStrings(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, isLikeNone(fee_rate) ? 0x100000001 : Math.fround(fee_rate), ptr3, len3, ptr4, len4);
+        return ret;
+    }
+    /**
+     * Execute an alkanes smart contract fully (handles complete flow internally)
+     *
+     * This method handles the complete execution flow:
+     * - For deployments (with envelope): commit -> reveal -> mine -> trace
+     * - For simple transactions: sign -> broadcast -> mine -> trace
+     *
+     * Returns the final EnhancedExecuteResult directly, avoiding serialization issues
+     * with intermediate states.
+     * @param {string} to_addresses_json
+     * @param {string} input_requirements
+     * @param {string} protostones
+     * @param {number | null} [fee_rate]
+     * @param {string | null} [envelope_hex]
+     * @param {string | null} [options_json]
+     * @returns {Promise<any>}
+     */
+    alkanesExecuteFull(to_addresses_json, input_requirements, protostones, fee_rate, envelope_hex, options_json) {
+        const ptr0 = passStringToWasm0(to_addresses_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(input_requirements, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(protostones, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(envelope_hex) ? 0 : passStringToWasm0(envelope_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        var ptr4 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len4 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesExecuteFull(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, isLikeNone(fee_rate) ? 0x100000001 : Math.fround(fee_rate), ptr3, len3, ptr4, len4);
         return ret;
     }
     /**
@@ -4577,21 +4608,27 @@ export function __wbindgen_cast_2241b6af4c4b2941(arg0, arg1) {
     return ret;
 };
 
-export function __wbindgen_cast_343ce45ff135cea7(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3235, function: Function { arguments: [], shim_idx: 3236, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb154d7ec25b6c414, wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925);
-    return ret;
-};
-
 export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     // Cast intrinsic for `U64 -> Externref`.
     const ret = BigInt.asUintN(64, arg0);
     return ret;
 };
 
+export function __wbindgen_cast_9a1f949948a7a762(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 4146, function: Function { arguments: [Externref], shim_idx: 4147, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
+    return ret;
+};
+
 export function __wbindgen_cast_9ae0607507abb057(arg0) {
     // Cast intrinsic for `I64 -> Externref`.
     const ret = arg0;
+    return ret;
+};
+
+export function __wbindgen_cast_ca142fbd1a7f63ee(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3441, function: Function { arguments: [], shim_idx: 3442, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb154d7ec25b6c414, wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925);
     return ret;
 };
 
@@ -4604,12 +4641,6 @@ export function __wbindgen_cast_cb9088102bce6b30(arg0, arg1) {
 export function __wbindgen_cast_d6cd19b81560fd6e(arg0) {
     // Cast intrinsic for `F64 -> Externref`.
     const ret = arg0;
-    return ret;
-};
-
-export function __wbindgen_cast_e672889fd5054d60(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3938, function: Function { arguments: [Externref], shim_idx: 3939, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 

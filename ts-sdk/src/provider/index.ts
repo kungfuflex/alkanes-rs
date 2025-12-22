@@ -2248,6 +2248,211 @@ export class AlkanesProvider {
 
     return provider.alkanesSwap(JSON.stringify(swapParams));
   }
+
+  // ============================================================================
+  // BRC20-PROG DEPLOY/TRANSACT OPERATIONS
+  // ============================================================================
+
+  /**
+   * Deploy a BRC20-prog smart contract (typed parameters)
+   *
+   * Uses the presign anti-frontrunning strategy by default, which:
+   * 1. Pre-signs all transactions (split, commit, reveal, activation)
+   * 2. Broadcasts all transactions atomically via sendrawtransactions
+   * 3. Protects inscribed UTXOs by splitting them if necessary
+   *
+   * @param params - Deployment parameters
+   * @returns Deployment result with transaction IDs and fees
+   *
+   * @example
+   * ```typescript
+   * const result = await provider.brc20ProgDeployTyped({
+   *   foundryJson: contractJson,  // Foundry build output JSON
+   *   feeRate: 10,
+   *   strategy: 'presign',        // Anti-frontrunning strategy
+   *   mempool_indexer: true,      // Trace pending UTXO inscriptions
+   *   mineEnabled: true,          // Auto-mine on regtest
+   * });
+   * console.log('Deployed! Reveal:', result.reveal_txid);
+   * ```
+   */
+  async brc20ProgDeployTyped(params: {
+    /** Foundry build JSON containing contract bytecode (string or object) */
+    foundryJson: string | object;
+    /** Addresses to source UTXOs from (optional) */
+    fromAddresses?: string[];
+    /** Change address (optional, defaults to signer address) */
+    changeAddress?: string;
+    /** Fee rate in sat/vB (optional, defaults to 10) */
+    feeRate?: number;
+    /** Use 3-transaction activation pattern (optional) */
+    useActivation?: boolean;
+    /** Use MARA Slipstream service for broadcasting (optional) */
+    useSlipstream?: boolean;
+    /** Use Rebar Shield for private transaction relay (optional) */
+    useRebar?: boolean;
+    /** Rebar fee tier: 1 (~8% hashrate) or 2 (~16% hashrate) (optional) */
+    rebarTier?: 1 | 2;
+    /** Resume from existing commit transaction (txid) (optional) */
+    resumeFromCommit?: string;
+    /** Anti-frontrunning strategy (optional, defaults to 'presign') */
+    strategy?: 'presign' | 'cpfp' | 'cltv' | 'rbf';
+    /** Enable mempool indexer for pending UTXO inscription tracing (optional) */
+    mempool_indexer?: boolean;
+    /** Enable transaction tracing (optional) */
+    traceEnabled?: boolean;
+    /** Mine a block after broadcasting - regtest only (optional) */
+    mineEnabled?: boolean;
+    /** Automatically confirm the transaction preview (optional) */
+    autoConfirm?: boolean;
+  }): Promise<{
+    split_txid?: string;
+    split_fee?: number;
+    commit_txid: string;
+    reveal_txid: string;
+    activation_txid?: string;
+    commit_fee: number;
+    reveal_fee: number;
+    activation_fee?: number;
+    inputs_used: string[];
+    outputs_created: string[];
+    traces?: any[];
+  }> {
+    const provider = await this.getProvider();
+
+    // Convert foundryJson to string if it's an object
+    const foundryJsonStr = typeof params.foundryJson === 'string'
+      ? params.foundryJson
+      : JSON.stringify(params.foundryJson);
+
+    // Build execution params
+    const executeParams: Record<string, any> = {
+      fee_rate: params.feeRate ?? 10,
+      use_activation: params.useActivation ?? false,
+      use_slipstream: params.useSlipstream ?? false,
+      use_rebar: params.useRebar ?? false,
+      auto_confirm: params.autoConfirm ?? true,
+      trace_enabled: params.traceEnabled ?? false,
+      mine_enabled: params.mineEnabled ?? false,
+      raw_output: false,
+    };
+    if (params.fromAddresses) executeParams.from_addresses = params.fromAddresses;
+    if (params.changeAddress) executeParams.change_address = params.changeAddress;
+    if (params.rebarTier) executeParams.rebar_tier = params.rebarTier;
+    if (params.resumeFromCommit) executeParams.resume_from_commit = params.resumeFromCommit;
+    if (params.strategy) executeParams.strategy = params.strategy;
+    if (params.mempool_indexer !== undefined) executeParams.mempool_indexer = params.mempool_indexer;
+
+    // Call the WASM binding
+    const result = await provider.brc20ProgDeployContract(
+      foundryJsonStr,
+      JSON.stringify(executeParams)
+    );
+
+    return typeof result === 'string' ? JSON.parse(result) : result;
+  }
+
+  /**
+   * Call a BRC20-prog contract function (typed parameters)
+   *
+   * Uses the presign anti-frontrunning strategy by default, which:
+   * 1. Pre-signs all transactions (split, commit, reveal, activation)
+   * 2. Broadcasts all transactions atomically via sendrawtransactions
+   * 3. Protects inscribed UTXOs by splitting them if necessary
+   *
+   * @param params - Transaction parameters
+   * @returns Transaction result with IDs and fees
+   *
+   * @example
+   * ```typescript
+   * const result = await provider.brc20ProgTransactTyped({
+   *   contractAddress: '0x1234...abcd',
+   *   functionSignature: 'transfer(address,uint256)',
+   *   calldata: ['0xrecipient', '1000'],
+   *   feeRate: 10,
+   *   strategy: 'presign',
+   * });
+   * console.log('Transaction sent! Reveal:', result.reveal_txid);
+   * ```
+   */
+  async brc20ProgTransactTyped(params: {
+    /** Contract address to call (0x-prefixed hex) */
+    contractAddress: string;
+    /** Function signature (e.g., "transfer(address,uint256)") */
+    functionSignature: string;
+    /** Calldata arguments as array or comma-separated string */
+    calldata: string[] | string;
+    /** Addresses to source UTXOs from (optional) */
+    fromAddresses?: string[];
+    /** Change address (optional, defaults to signer address) */
+    changeAddress?: string;
+    /** Fee rate in sat/vB (optional, defaults to 10) */
+    feeRate?: number;
+    /** Use MARA Slipstream service for broadcasting (optional) */
+    useSlipstream?: boolean;
+    /** Use Rebar Shield for private transaction relay (optional) */
+    useRebar?: boolean;
+    /** Rebar fee tier: 1 (~8% hashrate) or 2 (~16% hashrate) (optional) */
+    rebarTier?: 1 | 2;
+    /** Resume from existing commit transaction (txid) (optional) */
+    resumeFromCommit?: string;
+    /** Anti-frontrunning strategy (optional, defaults to 'presign') */
+    strategy?: 'presign' | 'cpfp' | 'cltv' | 'rbf';
+    /** Enable mempool indexer for pending UTXO inscription tracing (optional) */
+    mempool_indexer?: boolean;
+    /** Enable transaction tracing (optional) */
+    traceEnabled?: boolean;
+    /** Mine a block after broadcasting - regtest only (optional) */
+    mineEnabled?: boolean;
+    /** Automatically confirm the transaction preview (optional) */
+    autoConfirm?: boolean;
+  }): Promise<{
+    split_txid?: string;
+    split_fee?: number;
+    commit_txid: string;
+    reveal_txid: string;
+    activation_txid?: string;
+    commit_fee: number;
+    reveal_fee: number;
+    activation_fee?: number;
+    inputs_used: string[];
+    outputs_created: string[];
+    traces?: any[];
+  }> {
+    const provider = await this.getProvider();
+
+    // Convert calldata to comma-separated string if it's an array
+    const calldataStr = Array.isArray(params.calldata)
+      ? params.calldata.join(',')
+      : params.calldata;
+
+    // Build execution params
+    const executeParams: Record<string, any> = {
+      fee_rate: params.feeRate ?? 10,
+      use_slipstream: params.useSlipstream ?? false,
+      use_rebar: params.useRebar ?? false,
+      auto_confirm: params.autoConfirm ?? true,
+      trace_enabled: params.traceEnabled ?? false,
+      mine_enabled: params.mineEnabled ?? false,
+      raw_output: false,
+    };
+    if (params.fromAddresses) executeParams.from_addresses = params.fromAddresses;
+    if (params.changeAddress) executeParams.change_address = params.changeAddress;
+    if (params.rebarTier) executeParams.rebar_tier = params.rebarTier;
+    if (params.resumeFromCommit) executeParams.resume_from_commit = params.resumeFromCommit;
+    if (params.strategy) executeParams.strategy = params.strategy;
+    if (params.mempool_indexer !== undefined) executeParams.mempool_indexer = params.mempool_indexer;
+
+    // Call the WASM binding
+    const result = await provider.brc20ProgTransact(
+      params.contractAddress,
+      params.functionSignature,
+      calldataStr,
+      JSON.stringify(executeParams)
+    );
+
+    return typeof result === 'string' ? JSON.parse(result) : result;
+  }
 }
 
 /**

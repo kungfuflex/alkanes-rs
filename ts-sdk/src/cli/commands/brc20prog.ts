@@ -597,4 +597,192 @@ export function registerBrc20ProgCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  // ============================================================================
+  // BRC20-Prog Contract Operations
+  // ============================================================================
+
+  // deploy - Deploy a BRC20-prog contract
+  brc20Prog
+    .command('deploy <foundry-json>')
+    .description('Deploy a BRC20-prog smart contract from Foundry build JSON')
+    .option('--from <addresses...>', 'Addresses to source UTXOs from (can be p2tr:0, p2wpkh:0, or raw addresses)')
+    .option('--change <address>', 'Change address (can be p2tr:0, p2wpkh:0, or raw address)')
+    .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
+    .option('--use-activation', 'Use 3-transaction activation pattern')
+    .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
+    .option('--use-rebar', 'Use Rebar Shield for private relay')
+    .option('--rebar-tier <tier>', 'Rebar fee tier (1 or 2)', parseInt)
+    .option('--strategy <strategy>', 'Anti-frontrunning strategy: presign, cpfp, cltv, rbf', 'presign')
+    .option('--mempool-indexer', 'Enable mempool indexer for pending UTXO inscription tracing')
+    .option('--resume <txid>', 'Resume from existing commit transaction')
+    .option('--trace', 'Enable transaction tracing')
+    .option('--mine', 'Mine a block after broadcasting (regtest only)')
+    .option('--raw', 'Output raw JSON')
+    .action(async (foundryJsonPath, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Deploying BRC20-prog contract...').start();
+
+        // Read Foundry JSON file
+        const fs = await import('fs');
+        if (!fs.existsSync(foundryJsonPath)) {
+          spinner.fail();
+          error(`Foundry JSON file not found: ${foundryJsonPath}`);
+          process.exit(1);
+        }
+        const foundryJson = fs.readFileSync(foundryJsonPath, 'utf8');
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        // Resolve wallet address identifiers
+        const resolverOpts = {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        };
+
+        const resolvedFrom = options.from
+          ? await resolveAddressesWithProvider(options.from, provider, resolverOpts)
+          : undefined;
+        const resolvedChange = options.change
+          ? await resolveAddressWithProvider(options.change, provider, resolverOpts)
+          : undefined;
+
+        const result = await provider.brc20ProgDeployTyped({
+          foundryJson,
+          fromAddresses: resolvedFrom,
+          changeAddress: resolvedChange,
+          feeRate: options.feeRate,
+          useActivation: options.useActivation,
+          useSlipstream: options.useSlipstream,
+          useRebar: options.useRebar,
+          rebarTier: options.rebarTier,
+          strategy: options.strategy,
+          mempool_indexer: options.mempoolIndexer,
+          resumeFromCommit: options.resume,
+          traceEnabled: options.trace,
+          mineEnabled: options.mine,
+          autoConfirm: true,
+        });
+
+        spinner.succeed('BRC20-prog contract deployed!');
+
+        if (options.raw) {
+          console.log(formatOutput(result, { raw: true }));
+        } else {
+          console.log('\nDeployment Result:');
+          if (result.split_txid) {
+            console.log(`   Split TXID:      ${result.split_txid}`);
+            console.log(`   Split Fee:       ${result.split_fee} sats`);
+          }
+          console.log(`   Commit TXID:     ${result.commit_txid}`);
+          console.log(`   Reveal TXID:     ${result.reveal_txid}`);
+          if (result.activation_txid) {
+            console.log(`   Activation TXID: ${result.activation_txid}`);
+          }
+          console.log(`   Commit Fee:      ${result.commit_fee} sats`);
+          console.log(`   Reveal Fee:      ${result.reveal_fee} sats`);
+          if (result.activation_fee) {
+            console.log(`   Activation Fee:  ${result.activation_fee} sats`);
+          }
+        }
+      } catch (err: any) {
+        error(`Failed to deploy contract: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // transact - Call a BRC20-prog contract function
+  brc20Prog
+    .command('transact <address> <signature> [calldata...]')
+    .description('Call a BRC20-prog contract function')
+    .option('--from <addresses...>', 'Addresses to source UTXOs from (can be p2tr:0, p2wpkh:0, or raw addresses)')
+    .option('--change <address>', 'Change address (can be p2tr:0, p2wpkh:0, or raw address)')
+    .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
+    .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
+    .option('--use-rebar', 'Use Rebar Shield for private relay')
+    .option('--rebar-tier <tier>', 'Rebar fee tier (1 or 2)', parseInt)
+    .option('--strategy <strategy>', 'Anti-frontrunning strategy: presign, cpfp, cltv, rbf', 'presign')
+    .option('--mempool-indexer', 'Enable mempool indexer for pending UTXO inscription tracing')
+    .option('--resume <txid>', 'Resume from existing commit transaction')
+    .option('--trace', 'Enable transaction tracing')
+    .option('--mine', 'Mine a block after broadcasting (regtest only)')
+    .option('--raw', 'Output raw JSON')
+    .action(async (address, signature, calldata, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Calling BRC20-prog contract...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        // Resolve wallet address identifiers
+        const resolverOpts = {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        };
+
+        const resolvedFrom = options.from
+          ? await resolveAddressesWithProvider(options.from, provider, resolverOpts)
+          : undefined;
+        const resolvedChange = options.change
+          ? await resolveAddressWithProvider(options.change, provider, resolverOpts)
+          : undefined;
+
+        // Join calldata arguments
+        const calldataStr = Array.isArray(calldata) ? calldata.join(',') : calldata || '';
+
+        const result = await provider.brc20ProgTransactTyped({
+          contractAddress: address,
+          functionSignature: signature,
+          calldata: calldataStr,
+          fromAddresses: resolvedFrom,
+          changeAddress: resolvedChange,
+          feeRate: options.feeRate,
+          useSlipstream: options.useSlipstream,
+          useRebar: options.useRebar,
+          rebarTier: options.rebarTier,
+          strategy: options.strategy,
+          mempool_indexer: options.mempoolIndexer,
+          resumeFromCommit: options.resume,
+          traceEnabled: options.trace,
+          mineEnabled: options.mine,
+          autoConfirm: true,
+        });
+
+        spinner.succeed('BRC20-prog contract called!');
+
+        if (options.raw) {
+          console.log(formatOutput(result, { raw: true }));
+        } else {
+          console.log('\nTransaction Result:');
+          if (result.split_txid) {
+            console.log(`   Split TXID:      ${result.split_txid}`);
+            console.log(`   Split Fee:       ${result.split_fee} sats`);
+          }
+          console.log(`   Commit TXID:     ${result.commit_txid}`);
+          console.log(`   Reveal TXID:     ${result.reveal_txid}`);
+          if (result.activation_txid) {
+            console.log(`   Activation TXID: ${result.activation_txid}`);
+          }
+          console.log(`   Commit Fee:      ${result.commit_fee} sats`);
+          console.log(`   Reveal Fee:      ${result.reveal_fee} sats`);
+          if (result.activation_fee) {
+            console.log(`   Activation Fee:  ${result.activation_fee} sats`);
+          }
+        }
+      } catch (err: any) {
+        error(`Failed to call contract: ${err.message}`);
+        process.exit(1);
+      }
+    });
 }
