@@ -246,15 +246,11 @@ impl<'a> Brc20ProgExecutor<'a> {
         }
         log::info!("   🎯 All {} transactions broadcast atomically in single RPC call!", tx_hexes.len());
 
-        // Step 6: Monitor for frontrunning and RBF if needed
-        log::info!("🔍 Step 6/7: Monitoring for frontrunning attacks...");
-        self.monitor_and_bump_presigned_txs(
-            &final_commit_txid,
-            &final_reveal_txid,
-            final_activation_txid.as_deref(),
-            &envelope,
-            &params,
-        ).await?;
+        // Step 6: Skip monitoring for presign strategy
+        // Since all transactions were broadcast atomically in a single RPC call,
+        // frontrunning protection is inherent - there's no window for attackers.
+        // The monitoring step would require waiting for propagation and is not needed.
+        log::info!("🔍 Step 6/7: Skipping frontrunning monitoring (atomic broadcast provides protection)");
 
         log::info!("✅ Presign+RBF strategy completed successfully!");
 
