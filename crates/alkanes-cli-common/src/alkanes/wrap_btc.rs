@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn test_wrap_protostones_structure() {
         use alkanes_support::id::AlkaneId as SupportAlkaneId;
-        
+
         // Mock provider not needed for this test
         let protostones = vec![
             ProtostoneSpec {
@@ -177,6 +177,8 @@ mod tests {
                 }),
                 edicts: vec![],
                 bitcoin_transfer: None,
+                pointer: None,
+                refund: None,
             },
             ProtostoneSpec {
                 cellpack: Some(alkanes_support::cellpack::Cellpack {
@@ -188,6 +190,8 @@ mod tests {
                 }),
                 edicts: vec![],
                 bitcoin_transfer: None,
+                pointer: None,
+                refund: None,
             },
         ];
 

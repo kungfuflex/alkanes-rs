@@ -2099,13 +2099,17 @@ export class AlkanesProvider {
     if (params.autoConfirm !== undefined) options.auto_confirm = params.autoConfirm;
     if (params.rawOutput !== undefined) options.raw_output = params.rawOutput;
 
-    const result = await provider.alkanesExecuteWithStrings(
+    const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;
+
+    // Use alkanesExecuteFull which handles the complete flow internally
+    // This avoids serialization issues when passing state between JS and Rust
+    const result = await provider.alkanesExecuteFull(
       JSON.stringify(params.toAddresses),
       params.inputRequirements,
       params.protostones,
       params.feeRate ?? null,
       params.envelopeHex ?? null,
-      Object.keys(options).length > 0 ? JSON.stringify(options) : null
+      optionsJson
     );
 
     return typeof result === 'string' ? JSON.parse(result) : result;

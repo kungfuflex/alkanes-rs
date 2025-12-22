@@ -739,6 +739,102 @@ impl WebProvider {
         })
     }
 
+    /// Execute an alkanes smart contract fully (handles complete flow internally)
+    ///
+    /// This method handles the complete execution flow:
+    /// - For deployments (with envelope): commit -> reveal -> mine -> trace
+    /// - For simple transactions: sign -> broadcast -> mine -> trace
+    ///
+    /// Returns the final EnhancedExecuteResult directly, avoiding serialization issues
+    /// with intermediate states.
+    #[wasm_bindgen(js_name = alkanesExecuteFull)]
+    pub fn alkanes_execute_full_js(
+        &self,
+        to_addresses_json: String,
+        input_requirements: String,
+        protostones: String,
+        fee_rate: Option<f32>,
+        envelope_hex: Option<String>,
+        options_json: Option<String>,
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use alkanes_cli_common::alkanes::types::EnhancedExecuteParams;
+        use alkanes_cli_common::alkanes::parsing::{parse_input_requirements, parse_protostones};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            // Parse to_addresses from JSON array
+            let to_addresses: Vec<String> = serde_json::from_str(&to_addresses_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid to_addresses JSON: {}", e)))?;
+
+            // Parse input requirements from string format
+            let input_reqs = parse_input_requirements(&input_requirements)
+                .map_err(|e| JsValue::from_str(&format!("Invalid input_requirements: {}", e)))?;
+
+            // Parse protostones from string format
+            let proto_specs = parse_protostones(&protostones)
+                .map_err(|e| JsValue::from_str(&format!("Invalid protostones: {}", e)))?;
+
+            // Parse envelope data if provided
+            let envelope_data = if let Some(hex) = envelope_hex {
+                Some(hex::decode(&hex)
+                    .map_err(|e| JsValue::from_str(&format!("Invalid envelope hex: {}", e)))?)
+            } else {
+                None
+            };
+
+            // Parse options
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address) = if let Some(opts_json) = &options_json {
+                let opts: serde_json::Value = serde_json::from_str(opts_json)
+                    .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
+
+                let from_addrs: Option<Vec<String>> = opts.get("from_addresses")
+                    .or_else(|| opts.get("from"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+                let change_addr: Option<String> = opts.get("change_address")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let alkanes_change_addr: Option<String> = opts.get("alkanes_change_address")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                (
+                    opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                    opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                    opts.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                    opts.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                    from_addrs,
+                    change_addr,
+                    alkanes_change_addr,
+                )
+            } else {
+                (false, false, true, false, None, None, None)
+            };
+
+            let params = EnhancedExecuteParams {
+                fee_rate,
+                to_addresses,
+                from_addresses,
+                change_address,
+                alkanes_change_address,
+                input_requirements: input_reqs,
+                protostones: proto_specs,
+                envelope_data,
+                raw_output,
+                trace_enabled,
+                mine_enabled,
+                auto_confirm,
+            };
+
+            // Use execute_full to handle the complete flow internally
+            provider.execute_full(params).await
+                .and_then(|r| serde_wasm_bindgen::to_value(&r).map_err(|e| alkanes_cli_common::AlkanesError::Serialization(e.to_string())))
+                .map_err(|e| JsValue::from_str(&format!("Execution failed: {}", e)))
+        })
+    }
+
     /// Resume execution after user confirmation (for simple transactions)
     #[wasm_bindgen(js_name = alkanesResumeExecution)]
     pub fn alkanes_resume_execution_js(&self, state_json: String, params_json: String) -> js_sys::Promise {
@@ -6627,6 +6723,11 @@ impl AlkanesProvider for WebProvider {
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
         let mut executor = EnhancedAlkanesExecutor::new(self);
         executor.execute(params).await
+    }
+
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.execute_full(params).await
     }
 
     async fn resume_execution(

@@ -846,8 +846,18 @@ pub trait OrdProvider {
 /// Trait for alkanes operations
 #[async_trait(?Send)]
 pub trait AlkanesProvider {
-    /// Execute alkanes smart contract
+    /// Execute alkanes smart contract (returns intermediate state for manual control)
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState>;
+
+    /// Execute alkanes smart contract fully (handles all steps internally)
+    ///
+    /// This method handles the complete execution flow:
+    /// - For deployments (with envelope): commit -> reveal -> mine -> trace
+    /// - For simple transactions: sign -> broadcast -> mine -> trace
+    ///
+    /// Use this instead of `execute` when you don't need manual control over
+    /// intermediate states (e.g., when auto_confirm is true).
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult>;
 
     /// Resume execution after user confirmation (for simple transactions)
     async fn resume_execution(
@@ -1604,6 +1614,9 @@ impl<T: DeezelProvider + ?Sized> OrdProvider for Box<T> {
 impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
         (**self).execute(params).await
+    }
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult> {
+        (**self).execute_full(params).await
     }
     async fn resume_execution(
         &mut self,

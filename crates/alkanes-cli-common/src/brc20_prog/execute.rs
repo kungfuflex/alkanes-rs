@@ -51,8 +51,22 @@ struct SplitResult {
     psbt: Psbt,
     /// The fee paid
     fee: u64,
-    /// Clean outpoints to use for commit transaction funding
-    clean_outpoints: Vec<OutPoint>,
+    /// Clean outpoints to use for commit transaction funding, with their TxOut data
+    /// (We include TxOut because the split tx hasn't been broadcast yet)
+    clean_utxos: Vec<(OutPoint, TxOut)>,
+}
+
+/// Traced inscription info for a pending UTXO
+/// When a UTXO is unconfirmed, we trace back through parent transactions
+/// to determine inscription state from settled UTXOs
+#[derive(Debug, Clone)]
+struct TracedInscriptionInfo {
+    /// Original inscription ID (from the settled UTXO)
+    inscription_id: InscriptionId,
+    /// Current offset within this UTXO after sat flow through pending txs
+    sat_offset: u64,
+    /// Chain of txids from settled UTXO to this pending UTXO
+    trace_path: Vec<Txid>,
 }
 
 /// BRC20-Prog executor for contract operations
@@ -1021,17 +1035,20 @@ impl<'a> Brc20ProgExecutor<'a> {
             &funding_utxos,
             &change_addr,
             fee_rate,
+            params.mempool_indexer,
         ).await?;
 
         // Determine which UTXOs to use for commit
-        let (final_funding_utxos, split_psbt, split_fee) = match split_result {
+        // We need to track both outpoints AND their TxOut data (for split outputs that don't exist yet)
+        let (final_funding_utxos_with_txouts, split_psbt, split_fee) = match split_result {
             Some(split) => {
                 log::info!("🔀 Split transaction will be used to protect inscriptions");
-                // Use clean outpoints from split transaction instead of original UTXOs
-                // Also include any original UTXOs that didn't need splitting
-                let mut clean_utxos = split.clean_outpoints.clone();
+
+                // Start with clean outputs from split (we have their TxOut data)
+                let mut utxos_with_txouts: Vec<(OutPoint, TxOut)> = split.clean_utxos.clone();
 
                 // Add any UTXOs that didn't need splitting (weren't in the split)
+                // For these, we need to look them up
                 let split_originals: Vec<_> = funding_utxos.iter()
                     .filter(|op| split.psbt.unsigned_tx.input.iter().any(|i| &i.previous_output == *op))
                     .cloned()
@@ -1039,15 +1056,30 @@ impl<'a> Brc20ProgExecutor<'a> {
 
                 for outpoint in &funding_utxos {
                     if !split_originals.contains(outpoint) {
-                        clean_utxos.push(*outpoint);
+                        // Look up this UTXO since it wasn't split
+                        let utxo = self.provider.get_utxo(outpoint).await?
+                            .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", outpoint)))?;
+                        utxos_with_txouts.push((*outpoint, TxOut {
+                            value: utxo.value,
+                            script_pubkey: utxo.script_pubkey.clone(),
+                        }));
                     }
                 }
 
-                (clean_utxos, Some(split.psbt), Some(split.fee))
+                (utxos_with_txouts, Some(split.psbt), Some(split.fee))
             }
             None => {
-                // No split needed - use original UTXOs
-                (funding_utxos, None, None)
+                // No split needed - look up all UTXOs
+                let mut utxos_with_txouts = Vec::new();
+                for outpoint in &funding_utxos {
+                    let utxo = self.provider.get_utxo(outpoint).await?
+                        .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", outpoint)))?;
+                    utxos_with_txouts.push((*outpoint, TxOut {
+                        value: utxo.value,
+                        script_pubkey: utxo.script_pubkey.clone(),
+                    }));
+                }
+                (utxos_with_txouts, None, None)
             }
         };
 
@@ -1057,8 +1089,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         };
 
         // Build commit with FINAL sequences (no RBF) for deterministic txid
-        let (commit_psbt, commit_fee) = self.build_commit_psbt_final_seq(
-            final_funding_utxos,
+        let (commit_psbt, commit_fee) = self.build_commit_psbt_final_seq_with_txouts(
+            final_funding_utxos_with_txouts,
             commit_output,
             params.fee_rate,
             &params.change_address,
@@ -1138,6 +1170,95 @@ impl<'a> Brc20ProgExecutor<'a> {
                 previous_output: *outpoint,
                 script_sig: ScriptBuf::new(),
                 sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME, // RBF-enabled
+                witness: bitcoin::Witness::new(),
+            }).collect(),
+            output: final_outputs,
+        };
+
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
+        for (i, utxo) in input_txouts.iter().enumerate() {
+            psbt.inputs[i] = PsbtInput {
+                witness_utxo: Some(utxo.clone()),
+                ..Default::default()
+            };
+        }
+
+        Ok((psbt, fee))
+    }
+
+    /// Build commit PSBT with final sequences, using pre-fetched TxOut data
+    /// This version is used when we have split outputs that haven't been broadcast yet
+    async fn build_commit_psbt_final_seq_with_txouts(
+        &mut self,
+        funding_utxos_with_txouts: Vec<(OutPoint, TxOut)>,
+        commit_output: TxOut,
+        fee_rate: Option<f32>,
+        change_address: &Option<String>,
+    ) -> Result<(Psbt, u64)> {
+        use bitcoin::psbt::Input as PsbtInput;
+
+        let mut total_input_value = 0u64;
+        let mut input_txouts = Vec::new();
+        let mut outpoints = Vec::new();
+
+        for (outpoint, txout) in &funding_utxos_with_txouts {
+            total_input_value += txout.value.to_sat();
+            input_txouts.push(txout.clone());
+            outpoints.push(*outpoint);
+        }
+
+        let change_address_str = if let Some(ref addr) = change_address {
+            addr.clone()
+        } else {
+            WalletProvider::get_address(self.provider).await?
+        };
+        let change_addr = Address::from_str(&change_address_str)?
+            .require_network(self.provider.get_network())?;
+
+        // Estimate fee
+        let temp_outputs = vec![commit_output.clone(), TxOut {
+            value: bitcoin::Amount::from_sat(0),
+            script_pubkey: change_addr.script_pubkey(),
+        }];
+
+        let temp_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: outpoints.iter().map(|outpoint| bitcoin::TxIn {
+                previous_output: *outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::from_slice(&[vec![0u8; 65]]),
+            }).collect(),
+            output: temp_outputs,
+        };
+
+        let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+        let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
+        let change_value = total_input_value.saturating_sub(commit_output.value.to_sat()).saturating_sub(fee);
+
+        if change_value < 546 {
+            return Err(AlkanesError::Wallet(format!(
+                "Not enough funds for commit and change: have {} sats, need {} for commit + {} fee, leaving {} for change (min 546)",
+                total_input_value, commit_output.value.to_sat(), fee, change_value
+            )));
+        }
+
+        let final_outputs = vec![
+            commit_output,
+            TxOut {
+                value: bitcoin::Amount::from_sat(change_value),
+                script_pubkey: change_addr.script_pubkey(),
+            },
+        ];
+
+        let unsigned_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: outpoints.iter().map(|outpoint| bitcoin::TxIn {
+                previous_output: *outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
                 witness: bitcoin::Witness::new(),
             }).collect(),
             output: final_outputs,
@@ -1875,6 +1996,7 @@ impl<'a> Brc20ProgExecutor<'a> {
     }
 
     /// Select UTXOs for a specific Bitcoin amount, excluding specific transactions
+    /// Prioritizes confirmed UTXOs over pending (unconfirmed) ones
     async fn select_utxos_for_amount_excluding(
         &self,
         amount: u64,
@@ -1884,20 +2006,39 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("Selecting UTXOs for {} sats", amount);
 
         let utxos = self.provider.get_utxos(true, from_addresses.clone()).await?;
-        let spendable_utxos: Vec<(OutPoint, UtxoInfo)> = utxos
+        let mut spendable_utxos: Vec<(OutPoint, UtxoInfo)> = utxos
             .into_iter()
             .filter(|(outpoint, info)| {
                 !info.frozen && !exclude_txids.contains(&outpoint.txid)
             })
             .collect();
 
-        log::info!("Found {} spendable UTXOs", spendable_utxos.len());
+        // Sort UTXOs: confirmed first (by confirmations desc), then pending
+        // This ensures we use confirmed UTXOs before falling back to pending ones
+        spendable_utxos.sort_by(|(_, a), (_, b)| {
+            // Confirmed UTXOs (confirmations > 0) come before pending (confirmations == 0)
+            match (a.confirmations > 0, b.confirmations > 0) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => b.confirmations.cmp(&a.confirmations), // Higher confirmations first
+            }
+        });
+
+        let confirmed_count = spendable_utxos.iter().filter(|(_, u)| u.confirmations > 0).count();
+        let pending_count = spendable_utxos.len() - confirmed_count;
+        log::info!("Found {} spendable UTXOs ({} confirmed, {} pending)",
+            spendable_utxos.len(), confirmed_count, pending_count);
 
         let mut selected_outpoints = Vec::new();
         let mut bitcoin_collected = 0u64;
+        let mut using_pending = false;
 
         for (outpoint, utxo) in spendable_utxos {
             if bitcoin_collected < amount {
+                if utxo.confirmations == 0 && !using_pending {
+                    using_pending = true;
+                    log::warn!("⚠️ Falling back to pending (unconfirmed) UTXOs - confirmed UTXOs insufficient");
+                }
                 bitcoin_collected += utxo.amount;
                 selected_outpoints.push(outpoint);
             } else {
@@ -1924,7 +2065,9 @@ impl<'a> Brc20ProgExecutor<'a> {
     /// Returns a list of inscription IDs and their sat offsets within the UTXO
     ///
     /// If ord is unavailable, logs a warning and returns empty list (fail-open)
-    async fn get_utxo_inscriptions(&self, outpoint: &OutPoint) -> Result<Vec<InscriptionInfo>> {
+    /// If mempool_indexer is enabled and the UTXO is pending, traces back through
+    /// parent transactions to determine inscription state from settled UTXOs.
+    async fn get_utxo_inscriptions(&self, outpoint: &OutPoint, mempool_indexer: bool) -> Result<Vec<InscriptionInfo>> {
         let output_str = format!("{}:{}", outpoint.txid, outpoint.vout);
 
         // Try to query ord for the output
@@ -1972,14 +2115,162 @@ impl<'a> Brc20ProgExecutor<'a> {
                 Ok(inscriptions)
             }
             Err(e) => {
-                // Ord unavailable - fail-open with warning
-                log::warn!(
-                    "⚠️ Could not query ord for {} - proceeding without inscription check: {}",
-                    output_str, e
-                );
-                Ok(vec![])
+                // Ord can't find this output - it might be pending (unconfirmed)
+                if mempool_indexer {
+                    log::info!(
+                        "🔍 Ord can't find {} - attempting mempool trace for pending UTXO",
+                        output_str
+                    );
+                    // Try to trace back through parent transactions
+                    match self.trace_pending_utxo_inscriptions(outpoint).await {
+                        Ok(traced) => {
+                            if !traced.is_empty() {
+                                log::info!(
+                                    "🔍 Traced {} inscription(s) on pending UTXO {}: {:?}",
+                                    traced.len(),
+                                    output_str,
+                                    traced.iter().map(|i| format!("{}@{}", i.inscription_id, i.sat_offset)).collect::<Vec<_>>()
+                                );
+                            }
+                            // Convert TracedInscriptionInfo to InscriptionInfo
+                            Ok(traced.into_iter().map(|t| InscriptionInfo {
+                                inscription_id: t.inscription_id,
+                                sat_offset: t.sat_offset,
+                            }).collect())
+                        }
+                        Err(trace_err) => {
+                            log::warn!(
+                                "⚠️ Could not trace pending UTXO {} - proceeding without inscription check: {}",
+                                output_str, trace_err
+                            );
+                            Ok(vec![])
+                        }
+                    }
+                } else {
+                    // mempool_indexer disabled - fail-open with warning
+                    log::warn!(
+                        "⚠️ Could not query ord for {} - proceeding without inscription check: {}",
+                        output_str, e
+                    );
+                    log::warn!(
+                        "   Hint: Enable --mempool-indexer to trace inscription state of pending UTXOs"
+                    );
+                    Ok(vec![])
+                }
             }
         }
+    }
+
+    /// Trace inscription state of a pending UTXO by backtracing through parent transactions
+    ///
+    /// When a UTXO is unconfirmed, ord can't tell us about its inscriptions.
+    /// We trace back through the transaction chain until we find settled UTXOs,
+    /// then calculate how inscriptions flow forward to determine the pending UTXO's state.
+    async fn trace_pending_utxo_inscriptions(&self, outpoint: &OutPoint) -> Result<Vec<TracedInscriptionInfo>> {
+        use crate::traits::EsploraProvider;
+
+        log::info!("🔍 Tracing pending UTXO: {}:{}", outpoint.txid, outpoint.vout);
+
+        // Fetch the pending transaction
+        let tx_hex = self.provider.get_tx_hex(&outpoint.txid.to_string()).await?;
+        let tx_bytes = hex::decode(&tx_hex)?;
+        let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
+
+        // Get the output we care about
+        let target_output = tx.output.get(outpoint.vout as usize)
+            .ok_or_else(|| AlkanesError::Wallet(format!(
+                "Output {} not found in tx {}", outpoint.vout, outpoint.txid
+            )))?;
+        let target_value = target_output.value.to_sat();
+
+        // Calculate sat ranges for each output (ordinal-style sat flow)
+        // Sats flow from inputs to outputs in order
+        let mut output_sat_ranges: Vec<(u64, u64)> = Vec::new();
+        let mut sat_cursor = 0u64;
+
+        for output in &tx.output {
+            let start = sat_cursor;
+            let end = sat_cursor + output.value.to_sat();
+            output_sat_ranges.push((start, end));
+            sat_cursor = end;
+        }
+
+        let (target_start, target_end) = output_sat_ranges[outpoint.vout as usize];
+        log::debug!("   Target output sat range: {}..{}", target_start, target_end);
+
+        // Trace each input to find inscriptions
+        let mut traced_inscriptions: Vec<TracedInscriptionInfo> = Vec::new();
+        let mut input_sat_cursor = 0u64;
+
+        for (input_idx, input) in tx.input.iter().enumerate() {
+            let input_outpoint = &input.previous_output;
+
+            // Try to get inscription info for this input
+            // First check if it's settled (ord can find it)
+            let input_output_str = format!("{}:{}", input_outpoint.txid, input_outpoint.vout);
+
+            let (input_inscriptions, input_value) = match self.provider.get_output(&input_output_str).await {
+                Ok(output) => {
+                    // Settled UTXO - get inscriptions from ord
+                    let mut inscriptions = Vec::new();
+                    if let Some(ids) = output.inscriptions {
+                        for inscription_id in ids {
+                            let inscription_id_str = inscription_id.to_string();
+                            if let Ok(inscription) = self.provider.get_inscription(&inscription_id_str).await {
+                                inscriptions.push((inscription.id, inscription.satpoint.offset));
+                            }
+                        }
+                    }
+                    (inscriptions, output.value)
+                }
+                Err(_) => {
+                    // This input is also pending - recursively trace it
+                    log::debug!("   Input {} is also pending, recursively tracing...", input_idx);
+                    let recursive_traced = Box::pin(self.trace_pending_utxo_inscriptions(input_outpoint)).await?;
+
+                    // Get the input value from the parent transaction
+                    let parent_tx_hex = self.provider.get_tx_hex(&input_outpoint.txid.to_string()).await?;
+                    let parent_tx_bytes = hex::decode(&parent_tx_hex)?;
+                    let parent_tx: Transaction = bitcoin::consensus::deserialize(&parent_tx_bytes)?;
+                    let parent_output = parent_tx.output.get(input_outpoint.vout as usize)
+                        .ok_or_else(|| AlkanesError::Wallet(format!(
+                            "Output {} not found in parent tx {}", input_outpoint.vout, input_outpoint.txid
+                        )))?;
+
+                    let inscriptions: Vec<(InscriptionId, u64)> = recursive_traced.iter()
+                        .map(|t| (t.inscription_id.clone(), t.sat_offset))
+                        .collect();
+                    (inscriptions, parent_output.value.to_sat())
+                }
+            };
+
+            // Calculate which sats from this input flow to our target output
+            let input_start = input_sat_cursor;
+            let input_end = input_sat_cursor + input_value;
+            input_sat_cursor = input_end;
+
+            // Check if any inscription sats from this input land in our target output
+            for (inscription_id, sat_offset_in_input) in input_inscriptions {
+                // Calculate the absolute position of this inscribed sat
+                let absolute_sat_pos = input_start + sat_offset_in_input;
+
+                // Check if this sat lands in our target output
+                if absolute_sat_pos >= target_start && absolute_sat_pos < target_end {
+                    let new_offset = absolute_sat_pos - target_start;
+                    log::debug!(
+                        "   Inscription {} flows from input {} offset {} to output {} offset {}",
+                        inscription_id, input_idx, sat_offset_in_input, outpoint.vout, new_offset
+                    );
+                    traced_inscriptions.push(TracedInscriptionInfo {
+                        inscription_id,
+                        sat_offset: new_offset,
+                        trace_path: vec![outpoint.txid],
+                    });
+                }
+            }
+        }
+
+        Ok(traced_inscriptions)
     }
 
     /// Calculate how to split a UTXO to protect inscriptions
@@ -2046,18 +2337,22 @@ impl<'a> Brc20ProgExecutor<'a> {
     ///
     /// Returns None if no split is needed, or Some(SplitResult) with the split PSBT
     /// and clean outpoints to use for commit transaction funding
+    ///
+    /// If mempool_indexer is true, pending UTXOs will be traced back through parent
+    /// transactions to determine inscription state.
     async fn build_split_psbt_if_needed(
         &mut self,
         funding_utxos: &[OutPoint],
         change_address: &Address,
         fee_rate: f32,
+        mempool_indexer: bool,
     ) -> Result<Option<SplitResult>> {
         let mut split_plans: Vec<SplitPlan> = Vec::new();
         let mut utxo_info: Vec<(OutPoint, TxOut)> = Vec::new();
 
         // Check each UTXO for inscriptions
         for outpoint in funding_utxos {
-            let inscriptions = self.get_utxo_inscriptions(outpoint).await?;
+            let inscriptions = self.get_utxo_inscriptions(outpoint, mempool_indexer).await?;
 
             if !inscriptions.is_empty() {
                 // Get UTXO value
@@ -2157,22 +2452,23 @@ impl<'a> Brc20ProgExecutor<'a> {
             psbt.inputs[i].witness_utxo = Some(txout.clone());
         }
 
-        // Calculate clean outpoints (every second output, starting from index 1)
-        let mut clean_outpoints = Vec::new();
+        // Calculate clean outpoints with their TxOut data (every second output, starting from index 1)
+        let mut clean_utxos = Vec::new();
         for (i, plan) in split_plans.iter().enumerate() {
             let clean_vout = (i * 2 + 1) as u32; // 1, 3, 5, ...
-            clean_outpoints.push(OutPoint {
+            let clean_outpoint = OutPoint {
                 txid: split_txid,
                 vout: clean_vout,
-            });
+            };
+            // Get the actual output value from the final transaction
+            let clean_txout = psbt.unsigned_tx.output[clean_vout as usize].clone();
+            clean_utxos.push((clean_outpoint, clean_txout.clone()));
+
             log::info!(
-                "   UTXO {} → safe output :0 ({}s), clean output :{} ({}s)",
-                plan.outpoint, plan.safe_amount, clean_vout,
-                if clean_vout as usize == clean_outpoints.len() * 2 - 1 && i == split_plans.len() - 1 {
-                    adjusted_value
-                } else {
-                    plan.clean_amount
-                }
+                "   UTXO {} → safe output :{} ({}s), clean output :{} ({}s)",
+                plan.outpoint,
+                i * 2, plan.safe_amount,
+                clean_vout, clean_txout.value.to_sat()
             );
         }
 
@@ -2181,7 +2477,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         Ok(Some(SplitResult {
             psbt,
             fee,
-            clean_outpoints,
+            clean_utxos,
         }))
     }
 
@@ -2699,5 +2995,138 @@ impl<'a> Brc20ProgExecutor<'a> {
             // Standard broadcast
             self.provider.broadcast_transaction(tx_hex.to_string()).await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test sat flow calculation for inscription tracing
+    /// This verifies the core ordinal sat-flow logic used in trace_pending_utxo_inscriptions
+    #[test]
+    fn test_sat_flow_calculation() {
+        // Simulate a transaction with 3 inputs and 2 outputs
+        // Input 0: 50,000 sats (has inscription at offset 10,000)
+        // Input 1: 30,000 sats (no inscription)
+        // Input 2: 20,000 sats (has inscription at offset 5,000)
+        // Output 0: 40,000 sats
+        // Output 1: 60,000 sats
+
+        let input_values = vec![50_000u64, 30_000, 20_000];
+        let output_values = vec![40_000u64, 60_000];
+
+        // Calculate output sat ranges
+        let mut output_sat_ranges: Vec<(u64, u64)> = Vec::new();
+        let mut sat_cursor = 0u64;
+        for value in &output_values {
+            let start = sat_cursor;
+            let end = sat_cursor + value;
+            output_sat_ranges.push((start, end));
+            sat_cursor = end;
+        }
+
+        assert_eq!(output_sat_ranges, vec![(0, 40_000), (40_000, 100_000)]);
+
+        // Calculate which output each inscription lands in
+        // Inscription 1: input 0 offset 10,000 -> absolute position 10,000 -> output 0 (0..40000)
+        let inscription_1_abs_pos = 0 + 10_000; // input_start + offset
+        assert!(inscription_1_abs_pos >= output_sat_ranges[0].0 && inscription_1_abs_pos < output_sat_ranges[0].1);
+        let inscription_1_new_offset = inscription_1_abs_pos - output_sat_ranges[0].0;
+        assert_eq!(inscription_1_new_offset, 10_000);
+
+        // Inscription 2: input 2 offset 5,000 -> absolute position 80,000 + 5,000 = 85,000 -> output 1 (40000..100000)
+        let inscription_2_abs_pos = (50_000 + 30_000) + 5_000; // inputs 0+1 + offset
+        assert!(inscription_2_abs_pos >= output_sat_ranges[1].0 && inscription_2_abs_pos < output_sat_ranges[1].1);
+        let inscription_2_new_offset = inscription_2_abs_pos - output_sat_ranges[1].0;
+        assert_eq!(inscription_2_new_offset, 45_000);
+    }
+
+    /// Test that inscription at boundary correctly flows to expected output
+    #[test]
+    fn test_sat_flow_boundary() {
+        // Output 0 ends at sat 40,000 (exclusive)
+        // Output 1 starts at sat 40,000 (inclusive)
+        let output_sat_ranges = vec![(0u64, 40_000), (40_000u64, 100_000)];
+
+        // Sat at position 39,999 should go to output 0
+        let pos_39999 = 39_999u64;
+        assert!(pos_39999 >= output_sat_ranges[0].0 && pos_39999 < output_sat_ranges[0].1);
+
+        // Sat at position 40,000 should go to output 1
+        let pos_40000 = 40_000u64;
+        assert!(pos_40000 >= output_sat_ranges[1].0 && pos_40000 < output_sat_ranges[1].1);
+    }
+
+    /// Test split calculation for protecting inscriptions
+    #[test]
+    fn test_split_calculation_basic() {
+        // UTXO with 100,000 sats, inscription at offset 50,000
+        let utxo_value = 100_000u64;
+        let max_offset = 50_000u64;
+        let fee_rate = 10.0f32;
+
+        // Safe amount = offset + 1 (to include the inscribed sat)
+        let safe_amount = (max_offset + 1).max(DUST_LIMIT);
+        assert_eq!(safe_amount, 50_001);
+
+        // Estimated split tx fee (1 input, 2 outputs, ~140 vB for p2tr)
+        let estimated_split_fee = (fee_rate * 140.0).ceil() as u64;
+        assert_eq!(estimated_split_fee, 1400);
+
+        // Clean amount = remaining after safe and fee
+        let clean_amount = utxo_value.saturating_sub(safe_amount).saturating_sub(estimated_split_fee);
+        assert_eq!(clean_amount, 100_000 - 50_001 - 1400);
+        assert_eq!(clean_amount, 48_599);
+
+        // Verify clean amount is above dust
+        assert!(clean_amount >= DUST_LIMIT);
+    }
+
+    /// Test split calculation when inscription is near the end
+    #[test]
+    fn test_split_calculation_inscription_near_end() {
+        // UTXO with 10,000 sats, inscription at offset 9,000
+        let utxo_value = 10_000u64;
+        let max_offset = 9_000u64;
+        let fee_rate = 10.0f32;
+
+        let safe_amount = (max_offset + 1).max(DUST_LIMIT);
+        assert_eq!(safe_amount, 9_001);
+
+        let estimated_split_fee = (fee_rate * 140.0).ceil() as u64;
+
+        // Clean amount would be negative or below dust - cannot split
+        let remaining = utxo_value.saturating_sub(safe_amount);
+        assert!(remaining < estimated_split_fee + DUST_LIMIT);
+        // This UTXO cannot be safely split
+    }
+
+    /// Test split calculation with multiple inscriptions
+    #[test]
+    fn test_split_calculation_multiple_inscriptions() {
+        // UTXO with 100,000 sats, inscriptions at offsets 10,000, 30,000, and 50,000
+        let offsets = vec![10_000u64, 30_000, 50_000];
+        let utxo_value = 100_000u64;
+
+        // Must protect up to the highest offset
+        let max_offset = offsets.iter().max().unwrap();
+        assert_eq!(*max_offset, 50_000);
+
+        // Safe amount covers all inscriptions
+        let safe_amount = (max_offset + 1).max(DUST_LIMIT);
+        assert_eq!(safe_amount, 50_001);
+    }
+
+    /// Test that inscription at offset 0 is handled correctly
+    #[test]
+    fn test_split_calculation_offset_zero() {
+        // Inscription at offset 0 means the very first sat is inscribed
+        let max_offset = 0u64;
+        let utxo_value = 10_000u64;
+
+        // Safe amount = 1 sat, but must be at least dust limit
+        let safe_amount = (max_offset + 1).max(DUST_LIMIT);
+        assert_eq!(safe_amount, DUST_LIMIT); // Should be 546 (dust limit)
     }
 }

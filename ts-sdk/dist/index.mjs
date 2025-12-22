@@ -47652,15 +47652,52 @@ var init_provider = __esm({
         if (params.mineEnabled !== void 0) options.mine_enabled = params.mineEnabled;
         if (params.autoConfirm !== void 0) options.auto_confirm = params.autoConfirm;
         if (params.rawOutput !== void 0) options.raw_output = params.rawOutput;
-        const result = await provider.alkanesExecuteWithStrings(
+        const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;
+        let result = await provider.alkanesExecuteWithStrings(
           JSON.stringify(params.toAddresses),
           params.inputRequirements,
           params.protostones,
           params.feeRate ?? null,
           params.envelopeHex ?? null,
-          Object.keys(options).length > 0 ? JSON.stringify(options) : null
+          optionsJson
         );
-        return typeof result === "string" ? JSON.parse(result) : result;
+        result = typeof result === "string" ? JSON.parse(result) : result;
+        const autoConfirm = params.autoConfirm !== false;
+        if (autoConfirm) {
+          if (result.readyToSignCommit) {
+            const commitStateJson = JSON.stringify(result.readyToSignCommit);
+            let commitResult = await provider.alkanesResumeCommitExecution(commitStateJson);
+            commitResult = typeof commitResult === "string" ? JSON.parse(commitResult) : commitResult;
+            if (commitResult.readyToSignReveal) {
+              const revealStateJson = JSON.stringify(commitResult.readyToSignReveal);
+              let revealResult = await provider.alkanesResumeRevealExecution(revealStateJson);
+              revealResult = typeof revealResult === "string" ? JSON.parse(revealResult) : revealResult;
+              return revealResult;
+            }
+            return commitResult;
+          }
+          if (result.readyToSign) {
+            const paramsJson = JSON.stringify({
+              fee_rate: params.feeRate,
+              to_addresses: params.toAddresses,
+              from_addresses: params.fromAddresses,
+              change_address: params.changeAddress,
+              alkanes_change_address: params.alkanesChangeAddress,
+              input_requirements: [],
+              protostones: [],
+              envelope_data: null,
+              raw_output: params.rawOutput ?? false,
+              trace_enabled: params.traceEnabled ?? false,
+              mine_enabled: params.mineEnabled ?? false,
+              auto_confirm: true
+            });
+            const stateJson = JSON.stringify(result.readyToSign);
+            let execResult = await provider.alkanesResumeExecution(stateJson, paramsJson);
+            execResult = typeof execResult === "string" ? JSON.parse(execResult) : execResult;
+            return execResult;
+          }
+        }
+        return result;
       }
       /**
        * Wrap BTC to frBTC (typed parameters)

@@ -790,6 +790,11 @@ impl AlkanesProvider for MockProvider {
         executor.execute(params).await
     }
 
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.execute_full(params).await
+    }
+
     async fn resume_execution(
         &mut self,
         state: ReadyToSignTx,
@@ -957,6 +962,7 @@ use crate::ord::{
     ParentInscriptions as OrdParents, SatResponse as OrdSat, RuneInfo as OrdRuneInfo,
     Runes as OrdRunes, TxInfo as OrdTxInfo,
 };
+use crate::traits::EspoProvider;
 
 #[async_trait(?Send)]
 impl OrdProvider for MockProvider {
@@ -1097,5 +1103,101 @@ impl LuaScriptExecutor for MockProvider {
         _args: Vec<JsonValue>,
     ) -> Result<JsonValue> {
         Ok(serde_json::json!({}))
+    }
+}
+
+#[async_trait(?Send)]
+impl EspoProvider for MockProvider {
+    async fn get_espo_height(&self) -> Result<u64> {
+        Ok(800000)
+    }
+
+    async fn get_address_balances(&self, _address: &str, _include_outpoints: bool) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "balances": {}}))
+    }
+
+    async fn get_address_outpoints(&self, _address: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "outpoints": []}))
+    }
+
+    async fn get_outpoint_balances(&self, _outpoint: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": []}))
+    }
+
+    async fn get_holders(&self, _alkane_id: &str, _page: u64, _limit: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": []}))
+    }
+
+    async fn get_holders_count(&self, _alkane_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "count": 0}))
+    }
+
+    async fn get_keys(&self, _alkane_id: &str, _page: u64, _limit: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": {}}))
+    }
+
+    async fn ping(&self) -> Result<String> {
+        Ok("pong".to_string())
+    }
+
+    async fn ammdata_ping(&self) -> Result<String> {
+        Ok("pong".to_string())
+    }
+
+    async fn get_candles(
+        &self,
+        _pool: &str,
+        _timeframe: Option<&str>,
+        _side: Option<&str>,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "candles": []}))
+    }
+
+    async fn get_trades(
+        &self,
+        _pool: &str,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+        _side: Option<&str>,
+        _filter_side: Option<&str>,
+        _sort: Option<&str>,
+        _dir: Option<&str>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "trades": []}))
+    }
+
+    async fn get_pools(
+        &self,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "pools": {}}))
+    }
+
+    async fn find_best_swap_path(
+        &self,
+        _token_in: &str,
+        _token_out: &str,
+        _mode: Option<&str>,
+        _amount_in: Option<&str>,
+        _amount_out: Option<&str>,
+        _amount_out_min: Option<&str>,
+        _amount_in_max: Option<&str>,
+        _available_in: Option<&str>,
+        _fee_bps: Option<u64>,
+        _max_hops: Option<u64>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "hops": []}))
+    }
+
+    async fn get_best_mev_swap(
+        &self,
+        _token: &str,
+        _fee_bps: Option<u64>,
+        _max_hops: Option<u64>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true}))
     }
 }

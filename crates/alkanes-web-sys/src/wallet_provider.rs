@@ -1580,6 +1580,10 @@ impl AlkanesProvider for BrowserWalletProvider {
         self.web_provider.execute(params).await
     }
 
+    async fn execute_full(&mut self, params: alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
+        self.web_provider.execute_full(params).await
+    }
+
     async fn resume_execution(
         &mut self,
         state: alkanes_cli_common::alkanes::types::ReadyToSignTx,

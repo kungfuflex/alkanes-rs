@@ -149,6 +149,52 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
     }
 
+    /// Execute the full transaction flow, returning the final result
+    ///
+    /// This method handles the complete execution flow internally:
+    /// - For deployments (with envelope): commit -> reveal -> mine -> trace
+    /// - For simple transactions: sign -> broadcast -> mine -> trace
+    ///
+    /// This avoids serialization issues when passing state between JS and Rust.
+    pub async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult> {
+        log::info!("Starting full enhanced alkanes execution");
+
+        self.validate_envelope_cellpack_usage(&params)?;
+
+        if let Some(envelope_data) = &params.envelope_data {
+            log::info!("CONTRACT DEPLOYMENT: Using envelope with BIN data for contract deployment");
+            log::info!("Envelope data size: {} bytes", envelope_data.len());
+            let envelope = AlkanesEnvelope::for_contract(envelope_data.clone());
+            log::info!("Created AlkanesEnvelope with BIN protocol tag and gzip compression");
+
+            // Build commit transaction
+            let commit_state = match self.build_commit_reveal_pattern(params, &envelope).await? {
+                ExecutionState::ReadyToSignCommit(state) => state,
+                other => return Err(AlkanesError::Other(format!("Unexpected state after commit build: {:?}", other))),
+            };
+
+            // Execute commit
+            let reveal_state = match self.resume_commit_execution(commit_state).await? {
+                ExecutionState::ReadyToSignReveal(state) => state,
+                other => return Err(AlkanesError::Other(format!("Unexpected state after commit execution: {:?}", other))),
+            };
+
+            // Execute reveal
+            self.resume_reveal_execution(reveal_state).await
+        } else {
+            log::info!("CONTRACT EXECUTION: Single transaction without envelope");
+
+            // Build transaction
+            let sign_state = match self.build_single_transaction(&params).await? {
+                ExecutionState::ReadyToSign(state) => state,
+                other => return Err(AlkanesError::Other(format!("Unexpected state after build: {:?}", other))),
+            };
+
+            // Execute
+            self.resume_execution(sign_state, &params).await
+        }
+    }
+
     pub async fn resume_execution(
         &mut self,
         state: ReadyToSignTx,
@@ -1852,11 +1898,11 @@ mod tests {
     async fn test_create_outputs_dust_limit() {
         let mut provider = MockProvider::new(Network::Regtest);
         let addr1 = WalletProvider::get_address(&provider).await.unwrap();
-        let executor = EnhancedAlkanesExecutor::new(&mut provider);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut provider);
         let to_addresses = vec![addr1.clone(), addr1];
         let input_requirements = vec![];
 
-        let outputs = executor.create_outputs(&to_addresses, &None, &input_requirements).await.unwrap();
+        let outputs = executor.create_outputs(&to_addresses, &None, &input_requirements, &[]).await.unwrap();
 
         assert_eq!(outputs.len(), 2);
         for output in outputs {
@@ -1868,11 +1914,11 @@ mod tests {
     async fn test_create_outputs_with_explicit_bitcoin() {
         let mut provider = MockProvider::new(Network::Regtest);
         let addr1 = WalletProvider::get_address(&provider).await.unwrap();
-        let executor = EnhancedAlkanesExecutor::new(&mut provider);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut provider);
         let to_addresses = vec![addr1.clone(), addr1];
         let input_requirements = vec![InputRequirement::Bitcoin { amount: 20000 }];
 
-        let outputs = executor.create_outputs(&to_addresses, &None, &input_requirements).await.unwrap();
+        let outputs = executor.create_outputs(&to_addresses, &None, &input_requirements, &[]).await.unwrap();
 
         assert_eq!(outputs.len(), 2);
         for output in outputs {

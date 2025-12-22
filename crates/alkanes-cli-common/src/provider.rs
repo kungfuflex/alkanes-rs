@@ -3012,6 +3012,11 @@ impl AlkanesProvider for ConcreteProvider {
         executor.execute(params).await
     }
 
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.execute_full(params).await
+    }
+
     async fn resume_execution(
         &mut self,
         state: ReadyToSignTx,

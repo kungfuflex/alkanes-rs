@@ -264,6 +264,7 @@ impl<'a> FrBtcExecutor<'a> {
             strategy: None,
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
+            mempool_indexer: false,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -352,6 +353,7 @@ impl<'a> FrBtcExecutor<'a> {
             strategy: None,
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
+            mempool_indexer: false,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -428,6 +430,7 @@ impl<'a> FrBtcExecutor<'a> {
             strategy: None,
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
+            mempool_indexer: false,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -505,6 +508,7 @@ impl<'a> FrBtcExecutor<'a> {
             strategy: None,
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
+            mempool_indexer: false,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);

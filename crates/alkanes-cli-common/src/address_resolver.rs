@@ -1079,6 +1079,15 @@ impl AlkanesProvider for StandaloneAddressResolver {
         ))
     }
 
+    async fn execute_full(
+        &mut self,
+        _params: crate::alkanes::types::EnhancedExecuteParams,
+    ) -> Result<crate::alkanes::types::EnhancedExecuteResult> {
+        Err(AlkanesError::NotImplemented(
+            "StandaloneAddressResolver does not support alkanes operations".to_string(),
+        ))
+    }
+
     async fn resume_execution(
         &mut self,
         _state: crate::alkanes::types::ReadyToSignTx,

@@ -141,6 +141,10 @@ mod tests {
             unimplemented!()
         }
 
+        async fn execute_full(&mut self, _params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult, AlkanesError> {
+            unimplemented!()
+        }
+
         async fn resume_execution(
             &mut self,
             _state: ReadyToSignTx,
@@ -162,7 +166,7 @@ mod tests {
         ) -> Result<EnhancedExecuteResult, AlkanesError> {
             unimplemented!()
         }
-        
+
         async fn protorunes_by_address(
             &self,
             _address: &str,
@@ -180,16 +184,22 @@ mod tests {
         ) -> Result<ProtoruneOutpointResponse, AlkanesError> {
             unimplemented!()
         }
-        async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<JsonValue, AlkanesError> {
+        async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>, _block_tag: Option<String>) -> Result<JsonValue, AlkanesError> {
+            unimplemented!()
+        }
+        async fn simulate(&self, _contract_id: &str, _context: &crate::proto::alkanes::MessageContextParcel, _block_tag: Option<String>) -> Result<JsonValue, AlkanesError> {
             unimplemented!()
         }
         async fn trace(&self, _outpoint: &str) -> Result<alkanes_pb::Trace, AlkanesError> {
             unimplemented!()
         }
+        async fn trace_protostones(&self, _txid: &str) -> Result<Option<Vec<JsonValue>>, AlkanesError> {
+            unimplemented!()
+        }
         async fn get_block(&self, _height: u64) -> Result<alkanes_pb::BlockResponse, AlkanesError> {
             unimplemented!()
         }
-        async fn sequence(&self) -> Result<JsonValue, AlkanesError> {
+        async fn sequence(&self, _block_tag: Option<String>) -> Result<JsonValue, AlkanesError> {
             unimplemented!()
         }
         async fn spendables_by_address(&self, _address: &str) -> Result<JsonValue, AlkanesError> {
@@ -210,13 +220,16 @@ mod tests {
         async fn pending_unwraps(&self, _block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>, AlkanesError> {
             unimplemented!()
         }
+        async fn tx_script(&self, _wasm_bytes: &[u8], _inputs: Vec<u128>, _block_tag: Option<String>) -> Result<Vec<u8>, AlkanesError> {
+            unimplemented!()
+        }
     }
 
     #[tokio::test]
     async fn test_alkane_inspector_creation() {
         let provider = MockRpcProvider;
         let inspector = AlkaneInspector::new();
-        
+
         let alkane_id = AlkaneId { block: 1, tx: 100 };
         let config = InspectionConfig {
             disasm: false,
@@ -226,8 +239,8 @@ mod tests {
             codehash: true,
             raw: false,
         };
-        
-        let result = inspector.inspect_alkane(&alkane_id, &config).await;
+
+        let result = inspector.inspect_alkane(&alkane_id, &config, &provider).await;
         assert!(result.is_ok());
     }
 }

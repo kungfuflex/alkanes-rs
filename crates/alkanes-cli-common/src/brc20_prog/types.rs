@@ -128,6 +128,11 @@ pub struct Brc20ProgExecuteParams {
     /// Additional outputs to include in the activation transaction
     /// Used for FrBTC wrap (send BTC to signer) or unwrap (dust to signer)
     pub additional_outputs: Option<Vec<AdditionalOutput>>,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    /// When enabled, if we must use pending (unconfirmed) UTXOs, we'll trace back through
+    /// parent transactions to determine inscription state from settled UTXOs
+    #[serde(default)]
+    pub mempool_indexer: bool,
 }
 
 /// Result of a BRC20-prog execution

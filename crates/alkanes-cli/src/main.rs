@@ -4333,6 +4333,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 strategy: parsed_strategy,
                 resume_from_commit: resume,
                 additional_outputs: None, // Not used for deploy
+                mempool_indexer: false, // TODO: Add CLI flag when needed
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4408,6 +4409,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 strategy: parsed_strategy,
                 resume_from_commit: resume,
                 additional_outputs: None, // Not used for transact
+                mempool_indexer: false, // TODO: Add CLI flag when needed
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);

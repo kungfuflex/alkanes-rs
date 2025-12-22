@@ -34,9 +34,15 @@ mod tests {
             txid: txid.to_string(),
             vout,
             amount,
-            script_pubkey: ScriptBuf::new(),
+            address: "tb1qmockaddress".to_string(),
+            script_pubkey: Some(ScriptBuf::new()),
             confirmations,
             frozen,
+            freeze_reason: None,
+            block_height: Some(800000),
+            has_inscriptions: false,
+            has_runes: false,
+            has_alkanes: false,
             is_coinbase,
         };
         (outpoint, utxo)
@@ -238,11 +244,12 @@ mod tests {
         // When: Build transaction
         // Then: All protostones should be encoded in runestone
 
-        let protostones = vec![
+        let protostones: Vec<ProtostoneSpec> = vec![
             // TODO: Create mock protostone specs
         ];
 
         // TODO: Verify runestone contains all protostones
+        let _ = protostones; // Suppress unused warning for now
     }
 
     #[test]
