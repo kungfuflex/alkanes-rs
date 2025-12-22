@@ -1109,7 +1109,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             .require_network(network)?;
 
         let op_return_output = TxOut {
-            value: bitcoin::Amount::from_sat(0), // 0 sat for OP_RETURN (non-standard but accepted)
+            value: bitcoin::Amount::from_sat(1), // 1 sat for OP_RETURN - inscription goes to this sat
             script_pubkey: self.create_brc20prog_op_return(),
         };
 
@@ -1165,8 +1165,8 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Total inputs: inscription (546) + commit change
         let total_input = reveal_inscription_output.value.to_sat() + commit_change_output.value.to_sat();
-        // Outputs: OP_RETURN (0) + additional outputs + change
-        let change_value = total_input.saturating_sub(additional_outputs_total).saturating_sub(fee);
+        // Outputs: OP_RETURN (1) + additional outputs + change
+        let change_value = total_input.saturating_sub(1).saturating_sub(additional_outputs_total).saturating_sub(fee);
 
         if change_value < 546 {
             return Err(AlkanesError::Wallet(format!(

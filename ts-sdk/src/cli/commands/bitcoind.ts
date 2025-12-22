@@ -13,8 +13,16 @@ import {
   formatBlockInfo,
   success,
   error,
+  info,
 } from '../utils/formatting.js';
 import ora from 'ora';
+import {
+  containsIdentifiers,
+  createAddressResolver,
+  resolveAddress,
+} from '../utils/address-resolver.js';
+import { expandPath } from '../utils/config.js';
+import { walletExists, loadWalletFile } from '../utils/wallet.js';
 
 export function registerBitcoindCommands(program: Command): void {
   const bitcoind = program.command('bitcoind').description('Bitcoin Core RPC commands');
@@ -47,7 +55,7 @@ export function registerBitcoindCommands(program: Command): void {
   // generatetoaddress
   bitcoind
     .command('generatetoaddress <nblocks> <address>')
-    .description('Generate blocks to an address (regtest only)')
+    .description('Generate blocks to an address (regtest only). Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--raw', 'Output raw JSON')
     .action(async (nblocks, address, options, command) => {
       try {
@@ -59,9 +67,44 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const hashes = await provider.bitcoin.generateToAddress(parseInt(nblocks), address);
+        // Resolve wallet address identifiers (e.g., p2tr:0) to actual addresses
+        let resolvedAddress = address;
+        if (containsIdentifiers(address)) {
+          spinner.text = 'Loading wallet...';
 
-        spinner.succeed(`Generated ${nblocks} blocks`);
+          const walletPath = expandPath(globalOpts.walletFile || '~/.alkanes/wallet.json');
+          if (!walletExists(walletPath)) {
+            spinner.fail();
+            error(`Wallet not found at ${walletPath}`);
+            info('Create a wallet first with: alkanes-bindgen-cli wallet create');
+            process.exit(1);
+          }
+
+          const walletData = loadWalletFile(walletPath);
+          if (!walletData || !walletData.mnemonic) {
+            spinner.fail();
+            error('Failed to load wallet or wallet has no mnemonic');
+            process.exit(1);
+          }
+
+          // Load mnemonic and resolve address
+          const rawProvider = provider.rawProvider;
+          rawProvider.walletLoadMnemonic(walletData.mnemonic, globalOpts.passphrase || '');
+
+          const resolver = await createAddressResolver({
+            walletFile: walletPath,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          }, createProvider);
+
+          resolvedAddress = await resolver.resolve(address);
+          spinner.text = `Generating ${nblocks} blocks to ${resolvedAddress}...`;
+        }
+
+        const hashes = await provider.bitcoin.generateToAddress(parseInt(nblocks), resolvedAddress);
+
+        spinner.succeed(`Generated ${nblocks} blocks to ${resolvedAddress}`);
         console.log(formatOutput(hashes, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to generate blocks: ${err.message}`);
@@ -264,7 +307,7 @@ export function registerBitcoindCommands(program: Command): void {
   // generatefuture
   bitcoind
     .command('generatefuture <address>')
-    .description('Generate a future block (regtest only)')
+    .description('Generate a future block (regtest only). Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
@@ -276,9 +319,44 @@ export function registerBitcoindCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const hash = await provider.bitcoin.generateFuture(address);
+        // Resolve wallet address identifiers (e.g., p2tr:0) to actual addresses
+        let resolvedAddress = address;
+        if (containsIdentifiers(address)) {
+          spinner.text = 'Loading wallet...';
 
-        spinner.succeed('Future block generated');
+          const walletPath = expandPath(globalOpts.walletFile || '~/.alkanes/wallet.json');
+          if (!walletExists(walletPath)) {
+            spinner.fail();
+            error(`Wallet not found at ${walletPath}`);
+            info('Create a wallet first with: alkanes-bindgen-cli wallet create');
+            process.exit(1);
+          }
+
+          const walletData = loadWalletFile(walletPath);
+          if (!walletData || !walletData.mnemonic) {
+            spinner.fail();
+            error('Failed to load wallet or wallet has no mnemonic');
+            process.exit(1);
+          }
+
+          // Load mnemonic and resolve address
+          const rawProvider = provider.rawProvider;
+          rawProvider.walletLoadMnemonic(walletData.mnemonic, globalOpts.passphrase || '');
+
+          const resolver = await createAddressResolver({
+            walletFile: walletPath,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          }, createProvider);
+
+          resolvedAddress = await resolver.resolve(address);
+          spinner.text = `Generating future block to ${resolvedAddress}...`;
+        }
+
+        const hash = await provider.bitcoin.generateFuture(resolvedAddress);
+
+        spinner.succeed(`Future block generated to ${resolvedAddress}`);
         console.log(formatOutput(hash, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to generate future block: ${err.message}`);

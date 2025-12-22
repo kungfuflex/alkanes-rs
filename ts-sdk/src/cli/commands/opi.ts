@@ -5,8 +5,9 @@
 
 import { Command } from 'commander';
 import { createProvider } from '../utils/provider.js';
-import { formatOutput, success, error } from '../utils/formatting.js';
+import { formatOutput, success, error, info } from '../utils/formatting.js';
 import ora from 'ora';
+import { resolveAddressWithProvider } from '../utils/address-resolver.js';
 
 export function registerOpiCommands(program: Command): void {
   const opi = program.command('opi').description('Open Protocol Indexer operations');
@@ -201,7 +202,7 @@ export function registerOpiCommands(program: Command): void {
     .command('current-balance <ticker>')
     .description('Get current balance for a ticker')
     .option('--opi-url <url>', 'OPI base URL', DEFAULT_OPI_URL)
-    .option('--address <address>', 'Wallet address')
+    .option('--address <address>', 'Wallet address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--pkscript <pkscript>', 'PK script')
     .action(async (ticker, options, command) => {
       try {
@@ -210,16 +211,31 @@ export function registerOpiCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
+
+        // Resolve wallet address identifiers
+        let resolvedAddress = options.address;
+        if (options.address) {
+          resolvedAddress = await resolveAddressWithProvider(options.address, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+        }
 
         const result = await provider.opiCurrentBalance(
           options.opiUrl,
           ticker,
-          options.address || null,
+          resolvedAddress || null,
           options.pkscript || null
         );
 
         spinner.succeed();
+        if (options.address && options.address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${options.address})`);
+        }
         const parsed = JSON.parse(result);
         console.log(formatOutput(parsed, globalOpts));
       } catch (err: any) {
@@ -233,7 +249,7 @@ export function registerOpiCommands(program: Command): void {
     .command('valid-tx-notes-of-wallet')
     .description('Get valid transaction notes for a wallet')
     .option('--opi-url <url>', 'OPI base URL', DEFAULT_OPI_URL)
-    .option('--address <address>', 'Wallet address')
+    .option('--address <address>', 'Wallet address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--pkscript <pkscript>', 'PK script')
     .action(async (options, command) => {
       try {
@@ -242,15 +258,30 @@ export function registerOpiCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
+
+        // Resolve wallet address identifiers
+        let resolvedAddress = options.address;
+        if (options.address) {
+          resolvedAddress = await resolveAddressWithProvider(options.address, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+        }
 
         const result = await provider.opiValidTxNotesOfWallet(
           options.opiUrl,
-          options.address || null,
+          resolvedAddress || null,
           options.pkscript || null
         );
 
         spinner.succeed();
+        if (options.address && options.address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${options.address})`);
+        }
         const parsed = JSON.parse(result);
         console.log(formatOutput(parsed, globalOpts));
       } catch (err: any) {
@@ -525,7 +556,7 @@ export function registerOpiCommands(program: Command): void {
     .command('runes-current-balance')
     .description('Get current Runes balance for a wallet')
     .option('--opi-url <url>', 'OPI base URL', DEFAULT_OPI_URL)
-    .option('--address <address>', 'Wallet address')
+    .option('--address <address>', 'Wallet address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--pkscript <pkscript>', 'PK script')
     .action(async (options, command) => {
       try {
@@ -534,15 +565,30 @@ export function registerOpiCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
+
+        // Resolve wallet address identifiers
+        let resolvedAddress = options.address;
+        if (options.address) {
+          resolvedAddress = await resolveAddressWithProvider(options.address, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+        }
 
         const result = await provider.opiRunesCurrentBalanceOfWallet(
           options.opiUrl,
-          options.address || null,
+          resolvedAddress || null,
           options.pkscript || null
         );
 
         spinner.succeed();
+        if (options.address && options.address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${options.address})`);
+        }
         const parsed = JSON.parse(result);
         console.log(formatOutput(parsed, globalOpts));
       } catch (err: any) {
@@ -556,7 +602,7 @@ export function registerOpiCommands(program: Command): void {
     .command('runes-unspent-outpoints')
     .description('Get unspent Runes outpoints for a wallet')
     .option('--opi-url <url>', 'OPI base URL', DEFAULT_OPI_URL)
-    .option('--address <address>', 'Wallet address')
+    .option('--address <address>', 'Wallet address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--pkscript <pkscript>', 'PK script')
     .action(async (options, command) => {
       try {
@@ -565,15 +611,30 @@ export function registerOpiCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
+
+        // Resolve wallet address identifiers
+        let resolvedAddress = options.address;
+        if (options.address) {
+          resolvedAddress = await resolveAddressWithProvider(options.address, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+        }
 
         const result = await provider.opiRunesUnspentOutpointsOfWallet(
           options.opiUrl,
-          options.address || null,
+          resolvedAddress || null,
           options.pkscript || null
         );
 
         spinner.succeed();
+        if (options.address && options.address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${options.address})`);
+        }
         const parsed = JSON.parse(result);
         console.log(formatOutput(parsed, globalOpts));
       } catch (err: any) {
@@ -852,7 +913,7 @@ export function registerOpiCommands(program: Command): void {
     .command('pow20-current-balance')
     .description('Get current POW20 balance for a wallet')
     .option('--opi-url <url>', 'OPI base URL', DEFAULT_OPI_URL)
-    .option('--address <address>', 'Wallet address')
+    .option('--address <address>', 'Wallet address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--pkscript <pkscript>', 'PK script')
     .action(async (options, command) => {
       try {
@@ -861,15 +922,30 @@ export function registerOpiCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
+
+        // Resolve wallet address identifiers
+        let resolvedAddress = options.address;
+        if (options.address) {
+          resolvedAddress = await resolveAddressWithProvider(options.address, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+        }
 
         const result = await provider.opiPow20CurrentBalanceOfWallet(
           options.opiUrl,
-          options.address || null,
+          resolvedAddress || null,
           options.pkscript || null
         );
 
         spinner.succeed();
+        if (options.address && options.address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${options.address})`);
+        }
         const parsed = JSON.parse(result);
         console.log(formatOutput(parsed, globalOpts));
       } catch (err: any) {
@@ -883,7 +959,7 @@ export function registerOpiCommands(program: Command): void {
     .command('pow20-valid-tx-notes-of-wallet')
     .description('Get valid POW20 transaction notes for a wallet')
     .option('--opi-url <url>', 'OPI base URL', DEFAULT_OPI_URL)
-    .option('--address <address>', 'Wallet address')
+    .option('--address <address>', 'Wallet address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--pkscript <pkscript>', 'PK script')
     .action(async (options, command) => {
       try {
@@ -892,15 +968,30 @@ export function registerOpiCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
+
+        // Resolve wallet address identifiers
+        let resolvedAddress = options.address;
+        if (options.address) {
+          resolvedAddress = await resolveAddressWithProvider(options.address, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+        }
 
         const result = await provider.opiPow20ValidTxNotesOfWallet(
           options.opiUrl,
-          options.address || null,
+          resolvedAddress || null,
           options.pkscript || null
         );
 
         spinner.succeed();
+        if (options.address && options.address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${options.address})`);
+        }
         const parsed = JSON.parse(result);
         console.log(formatOutput(parsed, globalOpts));
       } catch (err: any) {

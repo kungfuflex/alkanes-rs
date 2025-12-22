@@ -2080,6 +2080,9 @@ export class AlkanesProvider {
     protostones: string;
     feeRate?: number;
     envelopeHex?: string;
+    fromAddresses?: string[];
+    changeAddress?: string;
+    alkanesChangeAddress?: string;
     traceEnabled?: boolean;
     mineEnabled?: boolean;
     autoConfirm?: boolean;
@@ -2088,6 +2091,9 @@ export class AlkanesProvider {
     const provider = await this.getProvider();
 
     const options: Record<string, any> = {};
+    if (params.fromAddresses !== undefined) options.from_addresses = params.fromAddresses;
+    if (params.changeAddress !== undefined) options.change_address = params.changeAddress;
+    if (params.alkanesChangeAddress !== undefined) options.alkanes_change_address = params.alkanesChangeAddress;
     if (params.traceEnabled !== undefined) options.trace_enabled = params.traceEnabled;
     if (params.mineEnabled !== undefined) options.mine_enabled = params.mineEnabled;
     if (params.autoConfirm !== undefined) options.auto_confirm = params.autoConfirm;

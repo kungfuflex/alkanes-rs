@@ -5,8 +5,9 @@
 
 import { Command } from 'commander';
 import { createProvider } from '../utils/provider.js';
-import { formatOutput, success, error } from '../utils/formatting.js';
+import { formatOutput, success, error, info } from '../utils/formatting.js';
 import ora from 'ora';
+import { resolveAddressWithProvider } from '../utils/address-resolver.js';
 
 export function registerProtorunesCommands(program: Command): void {
   const protorunes = program.command('protorunes').description('Protorunes protocol operations');
@@ -14,7 +15,7 @@ export function registerProtorunesCommands(program: Command): void {
   // by-address
   protorunes
     .command('by-address <address>')
-    .description('Get protorunes by address')
+    .description('Get protorunes by address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--block-tag <tag>', 'Block tag (e.g., "latest" or height)')
     .action(async (address, options, command) => {
       try {
@@ -27,15 +28,26 @@ export function registerProtorunesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
         // Protocol tag 1 = Protorunes
         const result = await provider.alkanesByAddress(
-          address,
+          resolvedAddress,
           options.blockTag || null,
           1
         );
         const protorunes = JSON.parse(result);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(protorunes, globalOpts));
       } catch (err: any) {
         error(`Failed to get protorunes: ${err.message}`);

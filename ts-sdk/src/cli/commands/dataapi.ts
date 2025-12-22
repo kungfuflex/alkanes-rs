@@ -5,8 +5,9 @@
 
 import { Command } from 'commander';
 import { createProvider } from '../utils/provider.js';
-import { formatOutput, success, error } from '../utils/formatting.js';
+import { formatOutput, success, error, info } from '../utils/formatting.js';
 import ora from 'ora';
+import { resolveAddressWithProvider } from '../utils/address-resolver.js';
 
 export function registerDataapiCommands(program: Command): void {
   const dataapi = program.command('dataapi').description('Analytics and data API operations');
@@ -262,7 +263,7 @@ export function registerDataapiCommands(program: Command): void {
   // address-balances
   dataapi
     .command('address-balances <address>')
-    .description('Get alkanes balances for address')
+    .description('Get alkanes balances for address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--include-outpoints', 'Include outpoint details', false)
     .action(async (address, options, command) => {
       try {
@@ -271,15 +272,27 @@ export function registerDataapiCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
         const result = await provider.data_api_get_address_balances_js(
-          address,
+          resolvedAddress,
           options.includeOutpoints
         );
         const balances = JSON.parse(result);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(balances, globalOpts));
       } catch (err: any) {
         error(`Failed to get balances: ${err.message}`);
@@ -290,7 +303,7 @@ export function registerDataapiCommands(program: Command): void {
   // alkanes-by-address
   dataapi
     .command('alkanes-by-address <address>')
-    .description('Get alkanes owned by address')
+    .description('Get alkanes owned by address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .action(async (address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -298,12 +311,24 @@ export function registerDataapiCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.data_api_get_alkanes_by_address_js(address);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.data_api_get_alkanes_by_address_js(resolvedAddress);
         const alkanes = JSON.parse(result);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(alkanes, globalOpts));
       } catch (err: any) {
         error(`Failed to get alkanes: ${err.message}`);

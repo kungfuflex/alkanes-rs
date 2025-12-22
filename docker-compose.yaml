@@ -139,8 +139,6 @@ services:
       POSTGRES_USER: alkanes_user
       POSTGRES_PASSWORD: alkanes_pass
       POSTGRES_DB: alkanes_indexer
-    ports:
-      - "5432:5432"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U alkanes_user -d alkanes_indexer"]
@@ -152,8 +150,6 @@ services:
     image: redis:7-alpine
     volumes:
       - redis-data:/data
-    ports:
-      - "6379:6379"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

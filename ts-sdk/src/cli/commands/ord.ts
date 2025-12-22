@@ -13,8 +13,10 @@ import {
   formatBlockInfo,
   success,
   error,
+  info,
 } from '../utils/formatting.js';
 import ora from 'ora';
+import { resolveAddressWithProvider } from '../utils/address-resolver.js';
 
 export function registerOrdCommands(program: Command): void {
   const ord = program.command('ord').description('Ordinals and Inscriptions operations');
@@ -77,7 +79,7 @@ export function registerOrdCommands(program: Command): void {
   // outputs
   ord
     .command('outputs <address>')
-    .description('Get ordinal outputs for an address')
+    .description('Get ordinal outputs for an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
@@ -89,9 +91,20 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ord.getOutputs(address);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.ord.getOutputs(resolvedAddress);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get outputs: ${err.message}`);
@@ -177,7 +190,7 @@ export function registerOrdCommands(program: Command): void {
   // address-info
   ord
     .command('address-info <address>')
-    .description('Get address information')
+    .description('Get address information. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
@@ -189,9 +202,20 @@ export function registerOrdCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.ord.getAddressInfo(address);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.ord.getAddressInfo(resolvedAddress);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get address info: ${err.message}`);

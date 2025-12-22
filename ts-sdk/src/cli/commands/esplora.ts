@@ -13,8 +13,13 @@ import {
   formatBlockInfo,
   success,
   error,
+  info,
 } from '../utils/formatting.js';
 import ora from 'ora';
+import {
+  resolveAddressWithProvider,
+  containsIdentifiers,
+} from '../utils/address-resolver.js';
 
 export function registerEsploraCommands(program: Command): void {
   const esplora = program.command('esplora').description('Esplora REST API operations');
@@ -72,7 +77,7 @@ export function registerEsploraCommands(program: Command): void {
   // address
   esplora
     .command('address <address>')
-    .description('Get address information')
+    .description('Get address information. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
@@ -84,10 +89,20 @@ export function registerEsploraCommands(program: Command): void {
           esploraUrl: globalOpts.esploraUrl,
         });
 
-        const info = await provider.esplora.getAddressInfo(address);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+        });
+
+        const addrInfo = await provider.esplora.getAddressInfo(resolvedAddress);
 
         spinner.succeed();
-        console.log(formatOutput(info, { raw: options.raw }));
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
+        console.log(formatOutput(addrInfo, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get address info: ${err.message}`);
         process.exit(1);
@@ -97,7 +112,7 @@ export function registerEsploraCommands(program: Command): void {
   // address-utxos
   esplora
     .command('address-utxos <address>')
-    .description('Get UTXOs for an address')
+    .description('Get UTXOs for an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
@@ -109,9 +124,19 @@ export function registerEsploraCommands(program: Command): void {
           esploraUrl: globalOpts.esploraUrl,
         });
 
-        const utxos = await provider.esplora.getAddressUtxos(address);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+        });
+
+        const utxos = await provider.esplora.getAddressUtxos(resolvedAddress);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(utxos, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get UTXOs: ${err.message}`);
@@ -122,7 +147,7 @@ export function registerEsploraCommands(program: Command): void {
   // address-txs
   esplora
     .command('address-txs <address>')
-    .description('Get transactions for an address')
+    .description('Get transactions for an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
@@ -134,9 +159,19 @@ export function registerEsploraCommands(program: Command): void {
           esploraUrl: globalOpts.esploraUrl,
         });
 
-        const txs = await provider.esplora.getAddressTxs(address);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+        });
+
+        const txs = await provider.esplora.getAddressTxs(resolvedAddress);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(txs, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get transactions: ${err.message}`);
@@ -147,7 +182,7 @@ export function registerEsploraCommands(program: Command): void {
   // address-txs-chain
   esplora
     .command('address-txs-chain <address>')
-    .description('Get paginated transactions for an address')
+    .description('Get paginated transactions for an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--last-seen <txid>', 'Last seen txid for pagination')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
@@ -160,9 +195,19 @@ export function registerEsploraCommands(program: Command): void {
           esploraUrl: globalOpts.esploraUrl,
         });
 
-        const txs = await provider.esplora.getAddressTxsChain(address, options.lastSeen);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+        });
+
+        const txs = await provider.esplora.getAddressTxsChain(resolvedAddress, options.lastSeen);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(txs, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get transactions: ${err.message}`);

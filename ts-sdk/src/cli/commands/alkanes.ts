@@ -14,8 +14,14 @@ import {
   formatReflectMetadata,
   success,
   error,
+  info,
 } from '../utils/formatting.js';
 import ora from 'ora';
+import {
+  resolveAddressWithProvider,
+  resolveAddressesWithProvider,
+  containsIdentifiers,
+} from '../utils/address-resolver.js';
 
 export function registerAlkanesCommands(program: Command): void {
   const alkanes = program.command('alkanes').description('Alkanes smart contract operations');
@@ -50,8 +56,8 @@ export function registerAlkanesCommands(program: Command): void {
   // balance
   alkanes
     .command('balance')
-    .description('Get alkanes balance for an address')
-    .option('--address <address>', 'Address to check (defaults to wallet)')
+    .description('Get alkanes balance for an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
+    .option('--address <address>', 'Address to check (e.g., p2tr:0 or bc1q...)')
     .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
       try {
@@ -64,9 +70,23 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const balance = await provider.alkanes.getBalance(options.address);
+        // Resolve wallet address identifiers if provided
+        let resolvedAddress = options.address;
+        if (options.address) {
+          resolvedAddress = await resolveAddressWithProvider(options.address, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+        }
+
+        const balance = await provider.alkanes.getBalance(resolvedAddress);
 
         spinner.succeed();
+        if (options.address && options.address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${options.address})`);
+        }
         if (options.raw) {
           console.log(formatOutput(balance, { raw: true }));
         } else if (Array.isArray(balance)) {
@@ -480,7 +500,7 @@ export function registerAlkanesCommands(program: Command): void {
   // by-address
   alkanes
     .command('by-address <address>')
-    .description('Get alkanes by address')
+    .description('Get alkanes by address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--block-tag <tag>', 'Block tag')
     .option('--protocol-tag <tag>', 'Protocol tag')
     .option('--raw', 'Output raw JSON')
@@ -495,13 +515,24 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
         const result = await provider.alkanes.getByAddress(
-          address,
+          resolvedAddress,
           options.blockTag,
           options.protocolTag ? parseInt(options.protocolTag) : undefined
         );
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         if (options.raw) {
           console.log(formatOutput(result, { raw: true }));
         } else if (Array.isArray(result)) {
@@ -603,7 +634,7 @@ export function registerAlkanesCommands(program: Command): void {
   // spendables
   alkanes
     .command('spendables <address>')
-    .description('Get spendable outpoints for an address')
+    .description('Get spendable outpoints for an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
@@ -616,9 +647,20 @@ export function registerAlkanesCommands(program: Command): void {
           metashrewUrl: globalOpts.metashrewUrl,
         });
 
-        const result = await provider.alkanes.getSpendables(address);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.alkanes.getSpendables(resolvedAddress);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get spendables: ${err.message}`);

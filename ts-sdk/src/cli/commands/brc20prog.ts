@@ -12,8 +12,14 @@ import {
   formatBlockInfo,
   success,
   error,
+  info,
 } from '../utils/formatting.js';
 import ora from 'ora';
+import {
+  resolveAddressWithProvider,
+  resolveAddressesWithProvider,
+  containsIdentifiers,
+} from '../utils/address-resolver.js';
 
 export function registerBrc20ProgCommands(program: Command): void {
   const brc20Prog = program.command('brc20-prog').description('Programmable BRC-20 operations');
@@ -21,7 +27,7 @@ export function registerBrc20ProgCommands(program: Command): void {
   // balance
   brc20Prog
     .command('balance <address>')
-    .description('Get balance for address')
+    .description('Get balance for address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--block <tag>', 'Block tag')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
@@ -34,9 +40,20 @@ export function registerBrc20ProgCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog.getBalance(address, options.block);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.brc20prog.getBalance(resolvedAddress, options.block);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get balance: ${err.message}`);
@@ -47,7 +64,7 @@ export function registerBrc20ProgCommands(program: Command): void {
   // code
   brc20Prog
     .command('code <address>')
-    .description('Get contract code')
+    .description('Get contract code. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--raw', 'Output raw JSON')
     .action(async (address, options, command) => {
       try {
@@ -59,9 +76,20 @@ export function registerBrc20ProgCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog.getCode(address);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.brc20prog.getCode(resolvedAddress);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(result, { raw: options.raw }));
       } catch (err: any) {
         error(`Failed to get code: ${err.message}`);
@@ -202,8 +230,8 @@ export function registerBrc20ProgCommands(program: Command): void {
   // call
   brc20Prog
     .command('call <to> <data>')
-    .description('Call contract function')
-    .option('--from <address>', 'Caller address')
+    .description('Call contract function. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
+    .option('--from <address>', 'Caller address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--block-tag <tag>', 'Block tag (latest, pending, or number)')
     .option('--raw', 'Output raw JSON')
     .action(async (to, data, options, command) => {
@@ -216,7 +244,18 @@ export function registerBrc20ProgCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog.call(to, data, options.from, options.blockTag);
+        // Resolve wallet address identifiers for --from option
+        let resolvedFrom = options.from;
+        if (options.from) {
+          resolvedFrom = await resolveAddressWithProvider(options.from, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+        }
+
+        const result = await provider.brc20prog.call(to, data, resolvedFrom, options.blockTag);
 
         spinner.succeed();
         console.log(formatOutput(result, { raw: options.raw }));
@@ -229,8 +268,8 @@ export function registerBrc20ProgCommands(program: Command): void {
   // estimate-gas
   brc20Prog
     .command('estimate-gas <to> <data>')
-    .description('Estimate gas for transaction')
-    .option('--from <address>', 'Caller address')
+    .description('Estimate gas for transaction. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
+    .option('--from <address>', 'Caller address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--raw', 'Output raw JSON')
     .action(async (to, data, options, command) => {
       try {
@@ -242,7 +281,18 @@ export function registerBrc20ProgCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const result = await provider.brc20prog.estimateGas(to, data, options.from);
+        // Resolve wallet address identifiers for --from option
+        let resolvedFrom = options.from;
+        if (options.from) {
+          resolvedFrom = await resolveAddressWithProvider(options.from, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase: globalOpts.passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+        }
+
+        const result = await provider.brc20prog.estimateGas(to, data, resolvedFrom);
 
         spinner.succeed();
         console.log(formatOutput(result, { raw: options.raw }));
@@ -260,8 +310,8 @@ export function registerBrc20ProgCommands(program: Command): void {
   brc20Prog
     .command('wrap-btc <amount>')
     .description('Wrap BTC to frBTC (simple wrap without execution)')
-    .option('--from <addresses...>', 'Addresses to source UTXOs from')
-    .option('--change <address>', 'Change address')
+    .option('--from <addresses...>', 'Addresses to source UTXOs from (can be p2tr:0, p2wpkh:0, or raw addresses)')
+    .option('--change <address>', 'Change address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
     .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
     .option('--use-rebar', 'Use Rebar Shield for private relay')
@@ -278,9 +328,24 @@ export function registerBrc20ProgCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
+        // Resolve wallet address identifiers
+        const resolverOpts = {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        };
+
+        const resolvedFrom = options.from
+          ? await resolveAddressesWithProvider(options.from, provider, resolverOpts)
+          : undefined;
+        const resolvedChange = options.change
+          ? await resolveAddressWithProvider(options.change, provider, resolverOpts)
+          : undefined;
+
         const params = {
-          from_addresses: options.from,
-          change_address: options.change,
+          from_addresses: resolvedFrom,
+          change_address: resolvedChange,
           fee_rate: options.feeRate,
           use_slipstream: options.useSlipstream,
           use_rebar: options.useRebar,
@@ -304,10 +369,10 @@ export function registerBrc20ProgCommands(program: Command): void {
   brc20Prog
     .command('unwrap-btc <amount>')
     .description('Unwrap frBTC to BTC (burns frBTC and queues BTC payment)')
-    .requiredOption('--to <address>', 'Recipient address for the unwrapped BTC')
+    .requiredOption('--to <address>', 'Recipient address for the unwrapped BTC (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--vout <index>', 'Vout index for inscription output', parseInt, 0)
-    .option('--from <addresses...>', 'Addresses to source UTXOs from')
-    .option('--change <address>', 'Change address')
+    .option('--from <addresses...>', 'Addresses to source UTXOs from (can be p2tr:0, p2wpkh:0, or raw addresses)')
+    .option('--change <address>', 'Change address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
     .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
     .option('--use-rebar', 'Use Rebar Shield for private relay')
@@ -324,9 +389,25 @@ export function registerBrc20ProgCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
+        // Resolve wallet address identifiers
+        const resolverOpts = {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        };
+
+        const resolvedTo = await resolveAddressWithProvider(options.to, provider, resolverOpts);
+        const resolvedFrom = options.from
+          ? await resolveAddressesWithProvider(options.from, provider, resolverOpts)
+          : undefined;
+        const resolvedChange = options.change
+          ? await resolveAddressWithProvider(options.change, provider, resolverOpts)
+          : undefined;
+
         const params = {
-          from_addresses: options.from,
-          change_address: options.change,
+          from_addresses: resolvedFrom,
+          change_address: resolvedChange,
           fee_rate: options.feeRate,
           use_slipstream: options.useSlipstream,
           use_rebar: options.useRebar,
@@ -339,13 +420,13 @@ export function registerBrc20ProgCommands(program: Command): void {
         const result = await rawProvider.frbtcUnwrap(
           BigInt(amount),
           BigInt(options.vout || 0),
-          options.to,
+          resolvedTo,
           JSON.stringify(params)
         );
 
         spinner.succeed('frBTC unwrap queued successfully!');
         console.log(formatOutput(result, { raw: options.raw }));
-        success(`BTC will be sent to ${options.to} by the subfrost operator`);
+        success(`BTC will be sent to ${resolvedTo} by the subfrost operator`);
       } catch (err: any) {
         error(`Failed to unwrap frBTC: ${err.message}`);
         process.exit(1);
@@ -357,8 +438,8 @@ export function registerBrc20ProgCommands(program: Command): void {
     .command('wrap-and-execute <amount>')
     .description('Wrap BTC and deploy+execute a script (wrapAndExecute)')
     .requiredOption('--script <bytecode>', 'Script bytecode to deploy and execute (hex)')
-    .option('--from <addresses...>', 'Addresses to source UTXOs from')
-    .option('--change <address>', 'Change address')
+    .option('--from <addresses...>', 'Addresses to source UTXOs from (can be p2tr:0, p2wpkh:0, or raw addresses)')
+    .option('--change <address>', 'Change address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
     .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
     .option('--use-rebar', 'Use Rebar Shield for private relay')
@@ -375,9 +456,24 @@ export function registerBrc20ProgCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
+        // Resolve wallet address identifiers
+        const resolverOpts = {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        };
+
+        const resolvedFrom = options.from
+          ? await resolveAddressesWithProvider(options.from, provider, resolverOpts)
+          : undefined;
+        const resolvedChange = options.change
+          ? await resolveAddressWithProvider(options.change, provider, resolverOpts)
+          : undefined;
+
         const params = {
-          from_addresses: options.from,
-          change_address: options.change,
+          from_addresses: resolvedFrom,
+          change_address: resolvedChange,
           fee_rate: options.feeRate,
           use_slipstream: options.useSlipstream,
           use_rebar: options.useRebar,
@@ -408,8 +504,8 @@ export function registerBrc20ProgCommands(program: Command): void {
     .requiredOption('--target <address>', 'Target contract address')
     .requiredOption('--signature <sig>', 'Function signature (e.g., "deposit()")')
     .option('--calldata <args>', 'Comma-separated calldata arguments', '')
-    .option('--from <addresses...>', 'Addresses to source UTXOs from')
-    .option('--change <address>', 'Change address')
+    .option('--from <addresses...>', 'Addresses to source UTXOs from (can be p2tr:0, p2wpkh:0, or raw addresses)')
+    .option('--change <address>', 'Change address (can be p2tr:0, p2wpkh:0, or raw address)')
     .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
     .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
     .option('--use-rebar', 'Use Rebar Shield for private relay')
@@ -426,9 +522,24 @@ export function registerBrc20ProgCommands(program: Command): void {
           jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
+        // Resolve wallet address identifiers
+        const resolverOpts = {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        };
+
+        const resolvedFrom = options.from
+          ? await resolveAddressesWithProvider(options.from, provider, resolverOpts)
+          : undefined;
+        const resolvedChange = options.change
+          ? await resolveAddressWithProvider(options.change, provider, resolverOpts)
+          : undefined;
+
         const params = {
-          from_addresses: options.from,
-          change_address: options.change,
+          from_addresses: resolvedFrom,
+          change_address: resolvedChange,
           fee_rate: options.feeRate,
           use_slipstream: options.useSlipstream,
           use_rebar: options.useRebar,

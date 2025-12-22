@@ -8,8 +8,9 @@
 
 import { Command } from 'commander';
 import { createProvider } from '../utils/provider.js';
-import { formatOutput, success, error } from '../utils/formatting.js';
+import { formatOutput, success, error, info } from '../utils/formatting.js';
 import ora from 'ora';
+import { resolveAddressWithProvider } from '../utils/address-resolver.js';
 
 export function registerEspoCommands(program: Command): void {
   const espo = program.command('espo').description('ESPO balance indexer operations');
@@ -63,7 +64,7 @@ export function registerEspoCommands(program: Command): void {
   // address-balances
   espo
     .command('address-balances <address>')
-    .description('Get balances for an address')
+    .description('Get balances for an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--include-outpoints', 'Include outpoint details', false)
     .action(async (address, options, command) => {
       try {
@@ -72,14 +73,26 @@ export function registerEspoCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
         const balances = await provider.espo.getAddressBalances(
-          address,
+          resolvedAddress,
           options.includeOutpoints
         );
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(balances, globalOpts));
       } catch (err: any) {
         error(`Failed to get balances: ${err.message}`);
@@ -90,7 +103,7 @@ export function registerEspoCommands(program: Command): void {
   // address-outpoints
   espo
     .command('address-outpoints <address>')
-    .description('Get outpoints for an address')
+    .description('Get outpoints for an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .action(async (address, options, command) => {
       try {
         const globalOpts = command.parent?.parent?.opts() || {};
@@ -98,11 +111,23 @@ export function registerEspoCommands(program: Command): void {
 
         const provider = await createProvider({
           network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
         });
 
-        const outpoints = await provider.espo.getAddressOutpoints(address);
+        // Resolve wallet address identifiers
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const outpoints = await provider.espo.getAddressOutpoints(resolvedAddress);
 
         spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
         console.log(formatOutput(outpoints, globalOpts));
       } catch (err: any) {
         error(`Failed to get outpoints: ${err.message}`);

@@ -47647,6 +47647,9 @@ var init_provider = __esm({
       async alkanesExecuteTyped(params) {
         const provider = await this.getProvider();
         const options = {};
+        if (params.fromAddresses !== void 0) options.from_addresses = params.fromAddresses;
+        if (params.changeAddress !== void 0) options.change_address = params.changeAddress;
+        if (params.alkanesChangeAddress !== void 0) options.alkanes_change_address = params.alkanesChangeAddress;
         if (params.traceEnabled !== void 0) options.trace_enabled = params.traceEnabled;
         if (params.mineEnabled !== void 0) options.mine_enabled = params.mineEnabled;
         if (params.autoConfirm !== void 0) options.auto_confirm = params.autoConfirm;

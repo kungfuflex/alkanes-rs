@@ -11,6 +11,11 @@ import { walletExists, saveWalletFile, loadWalletFile, isValidMnemonic } from '.
 import { success, error, info, formatOutput, createTable, formatAddress, formatBTC } from '../utils/formatting.js';
 import { confirm, password as promptPassword, input } from '../utils/prompts.js';
 import ora from 'ora';
+import {
+  resolveAddressWithProvider,
+  resolveAddressesWithProvider,
+  containsIdentifiers,
+} from '../utils/address-resolver.js';
 
 export function registerWalletCommands(program: Command): void {
   const wallet = program.command('wallet').description('Wallet management operations');
@@ -332,7 +337,7 @@ export function registerWalletCommands(program: Command): void {
   // wallet send
   wallet
     .command('send <address> <amount>')
-    .description('Send BTC to an address')
+    .description('Send BTC to an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--fee-rate <sats/vB>', 'Fee rate in satoshis per virtual byte', '1')
     .option('--from <spec>', 'Source addresses (e.g., p2tr:0-5)')
     .action(async (address, amount, options, command) => {
@@ -347,19 +352,7 @@ export function registerWalletCommands(program: Command): void {
 
         const passphrase = globalOpts.passphrase || await promptPassword('Enter wallet passphrase:');
 
-        // Confirm transaction
-        if (!globalOpts.autoConfirm) {
-          console.log();
-          info(`Sending ${amount} BTC to ${address}`);
-          info(`Fee rate: ${options.feeRate} sats/vB`);
-          const confirmed = await confirm('Proceed with transaction?', false);
-          if (!confirmed) {
-            info('Transaction cancelled');
-            return;
-          }
-        }
-
-        const spinner = ora('Creating and broadcasting transaction...').start();
+        const spinner = ora('Loading wallet...').start();
 
         try {
           // Create provider and load wallet
@@ -381,12 +374,49 @@ export function registerWalletCommands(program: Command): void {
           // Load the mnemonic into the provider
           rawProvider.walletLoadMnemonic(walletData.mnemonic, passphrase);
 
+          // Resolve address identifiers
+          const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+            walletFile: globalOpts.walletFile,
+            passphrase,
+            network: globalOpts.provider,
+            jsonrpcUrl: globalOpts.jsonrpcUrl,
+          });
+
+          // Resolve from addresses if specified
+          const resolvedFrom = options.from
+            ? await resolveAddressesWithProvider([options.from], provider, {
+                walletFile: globalOpts.walletFile,
+                passphrase,
+                network: globalOpts.provider,
+                jsonrpcUrl: globalOpts.jsonrpcUrl,
+              })
+            : undefined;
+
+          spinner.stop();
+
+          // Confirm transaction
+          if (!globalOpts.autoConfirm) {
+            console.log();
+            info(`Sending ${amount} BTC to ${resolvedAddress}`);
+            if (address !== resolvedAddress) {
+              info(`  (resolved from ${address})`);
+            }
+            info(`Fee rate: ${options.feeRate} sats/vB`);
+            const confirmed = await confirm('Proceed with transaction?', false);
+            if (!confirmed) {
+              info('Transaction cancelled');
+              return;
+            }
+          }
+
+          spinner.start('Creating and broadcasting transaction...');
+
           // Send transaction via WASM - walletSend takes JSON params
           const sendParams = {
-            address: address,
+            address: resolvedAddress,
             amount: Math.round(parseFloat(amount) * 100_000_000),  // Convert BTC to satoshis
             fee_rate: parseFloat(options.feeRate),
-            from: options.from ? [options.from] : undefined,
+            from: resolvedFrom,
           };
 
           const txid = await rawProvider.walletSend(JSON.stringify(sendParams));
