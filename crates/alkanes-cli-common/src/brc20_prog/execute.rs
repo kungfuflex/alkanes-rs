@@ -893,8 +893,36 @@ impl<'a> Brc20ProgExecutor<'a> {
                    fee_rate, reveal_vsize, reveal_fee);
         log::info!("   Reveal output: {} sats, No change (avoids dust)", reveal_output_value);
 
+        // Calculate additional funding needed for activation transaction's additional outputs
+        // This is used for FrBTC wrap (send BTC to signer) or unwrap (dust to signer)
+        let additional_outputs_total: u64 = params.additional_outputs
+            .as_ref()
+            .map(|outputs| outputs.iter().map(|o| o.amount).sum())
+            .unwrap_or(0);
+
+        // Estimate activation fee (2 inputs: inscription + change, outputs: OP_RETURN + additional + change)
+        // Rough estimate: ~150 vB base + ~34 vB per additional output
+        let additional_output_count = params.additional_outputs.as_ref().map(|o| o.len()).unwrap_or(0);
+        let estimated_activation_vsize = 150 + (additional_output_count as u64 * 34);
+        let estimated_activation_fee = (fee_rate * estimated_activation_vsize as f32).ceil() as u64;
+
+        // Total required beyond commit output: activation fee + additional outputs + dust change (546)
+        let additional_funding_required = if params.use_activation {
+            estimated_activation_fee + additional_outputs_total + 546
+        } else {
+            0
+        };
+
+        if additional_outputs_total > 0 {
+            log::info!("   Additional outputs for activation: {} sats ({} outputs)",
+                       additional_outputs_total, additional_output_count);
+            log::info!("   Estimated activation funding needed: {} sats", additional_funding_required);
+        }
+
+        // Select UTXOs for both commit output AND activation funding
+        let total_funding_required = commit_output_amount + additional_funding_required;
         let funding_utxos = self.select_utxos_for_amount(
-            commit_output_amount,
+            total_funding_required,
             &params.from_addresses,
         ).await?;
 
@@ -1060,6 +1088,7 @@ impl<'a> Brc20ProgExecutor<'a> {
     }
 
     /// Build activation PSBT for presign strategy
+    /// Supports additional outputs for FrBTC wrap (send BTC to signer) or unwrap (dust to signer)
     async fn build_activation_psbt_for_presign(
         &mut self,
         params: &Brc20ProgExecuteParams,
@@ -1070,20 +1099,47 @@ impl<'a> Brc20ProgExecutor<'a> {
     ) -> Result<(Psbt, u64)> {
         use bitcoin::psbt::Input as PsbtInput;
 
+        let network = self.provider.get_network();
         let change_address_str = if let Some(ref addr) = params.change_address {
             addr.clone()
         } else {
             WalletProvider::get_address(self.provider).await?
         };
         let change_address = Address::from_str(&change_address_str)?
-            .require_network(self.provider.get_network())?;
+            .require_network(network)?;
 
         let op_return_output = TxOut {
-            value: bitcoin::Amount::from_sat(1), // 1 sat for OP_RETURN
+            value: bitcoin::Amount::from_sat(0), // 0 sat for OP_RETURN (non-standard but accepted)
             script_pubkey: self.create_brc20prog_op_return(),
         };
 
-        // Estimate fee using 2 inputs (inscription + commit change)
+        // Build additional outputs (for FrBTC wrap/unwrap)
+        let mut additional_txouts = Vec::new();
+        let mut additional_outputs_total = 0u64;
+        if let Some(ref additional_outputs) = params.additional_outputs {
+            for output in additional_outputs {
+                let addr = Address::from_str(&output.address)
+                    .map_err(|e| AlkanesError::AddressResolution(format!("Invalid additional output address '{}': {}", output.address, e)))?
+                    .require_network(network)
+                    .map_err(|e| AlkanesError::AddressResolution(format!("Address network mismatch for '{}': {}", output.address, e)))?;
+
+                additional_txouts.push(TxOut {
+                    value: bitcoin::Amount::from_sat(output.amount),
+                    script_pubkey: addr.script_pubkey(),
+                });
+                additional_outputs_total += output.amount;
+                log::info!("   Adding output to {}: {} sats", output.address, output.amount);
+            }
+        }
+
+        // Estimate fee using 2 inputs and all outputs
+        let mut temp_outputs = vec![op_return_output.clone()];
+        temp_outputs.extend(additional_txouts.iter().cloned());
+        temp_outputs.push(TxOut {
+            value: bitcoin::Amount::from_sat(0),
+            script_pubkey: change_address.script_pubkey(),
+        });
+
         let temp_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,
             lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -1101,13 +1157,7 @@ impl<'a> Brc20ProgExecutor<'a> {
                     witness: bitcoin::Witness::from_slice(&[vec![0u8; 65]]),
                 },
             ],
-            output: vec![
-                op_return_output.clone(),
-                TxOut {
-                    value: bitcoin::Amount::from_sat(0),
-                    script_pubkey: change_address.script_pubkey(),
-                },
-            ],
+            output: temp_outputs,
         };
 
         let fee_rate_sat_vb = params.fee_rate.unwrap_or(600.0);
@@ -1115,23 +1165,26 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Total inputs: inscription (546) + commit change
         let total_input = reveal_inscription_output.value.to_sat() + commit_change_output.value.to_sat();
-        // Outputs: OP_RETURN (1) + change
-        let change_value = total_input.saturating_sub(1).saturating_sub(fee);
+        // Outputs: OP_RETURN (0) + additional outputs + change
+        let change_value = total_input.saturating_sub(additional_outputs_total).saturating_sub(fee);
 
         if change_value < 546 {
             return Err(AlkanesError::Wallet(format!(
-                "Not enough funds for activation: total_input={}, fee={}, change={}",
-                total_input, fee, change_value
+                "Not enough funds for activation: total_input={}, additional_outputs={}, fee={}, change={}",
+                total_input, additional_outputs_total, fee, change_value
             )));
         }
 
-        let final_outputs = vec![
-            op_return_output,
-            TxOut {
-                value: bitcoin::Amount::from_sat(change_value),
-                script_pubkey: change_address.script_pubkey(),
-            },
-        ];
+        log::info!("   Activation tx: {} inputs, {} + {} outputs, fee={}, change={}",
+                   2, 1 + additional_txouts.len(), 1, fee, change_value);
+
+        // Build final outputs: OP_RETURN, additional outputs, then change
+        let mut final_outputs = vec![op_return_output];
+        final_outputs.extend(additional_txouts);
+        final_outputs.push(TxOut {
+            value: bitcoin::Amount::from_sat(change_value),
+            script_pubkey: change_address.script_pubkey(),
+        });
 
         let unsigned_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,

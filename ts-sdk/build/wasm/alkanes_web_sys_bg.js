@@ -2799,6 +2799,22 @@ export class WebProvider {
         return ret;
     }
     /**
+     * Inspect alkanes bytecode directly from WASM bytes (hex-encoded or raw bytes)
+     * This allows inspection without fetching from RPC - useful for local/offline analysis
+     * @param {string} bytecode_hex
+     * @param {string} alkane_id
+     * @param {any} config
+     * @returns {Promise<any>}
+     */
+    alkanesInspectBytecode(bytecode_hex, alkane_id, config) {
+        const ptr0 = passStringToWasm0(bytecode_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_alkanesInspectBytecode(this.__wbg_ptr, ptr0, len0, ptr1, len1, config);
+        return ret;
+    }
+    /**
      * @param {string | null} [block_tag]
      * @returns {Promise<any>}
      */
@@ -3235,6 +3251,82 @@ export class WebProvider {
      */
     walletBackup() {
         const ret = wasm.webprovider_walletBackup(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Get the FrBTC signer address for the current network
+     * @returns {Promise<any>}
+     */
+    frbtcGetSignerAddress() {
+        const ret = wasm.webprovider_frbtcGetSignerAddress(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Wrap BTC to frBTC
+     * params_json: { fee_rate?: number, from?: string[], change?: string }
+     * @param {bigint} amount
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    frbtcWrap(amount, params_json) {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_frbtcWrap(this.__wbg_ptr, amount, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Unwrap frBTC to BTC
+     * params_json: { fee_rate?: number, from?: string[], change?: string }
+     * @param {bigint} amount
+     * @param {bigint} vout
+     * @param {string} recipient_address
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    frbtcUnwrap(amount, vout, recipient_address, params_json) {
+        const ptr0 = passStringToWasm0(recipient_address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_frbtcUnwrap(this.__wbg_ptr, amount, vout, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Wrap BTC and deploy+execute a script (wrapAndExecute)
+     * params_json: { fee_rate?: number, from_addresses?: string[], change_address?: string, ... }
+     * @param {bigint} amount
+     * @param {string} script_bytecode
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    frbtcWrapAndExecute(amount, script_bytecode, params_json) {
+        const ptr0 = passStringToWasm0(script_bytecode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_frbtcWrapAndExecute(this.__wbg_ptr, amount, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Wrap BTC and call an existing contract (wrapAndExecute2)
+     * params_json: { fee_rate?: number, from_addresses?: string[], change_address?: string, ... }
+     * @param {bigint} amount
+     * @param {string} target_address
+     * @param {string} signature
+     * @param {string} calldata_args
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    frbtcWrapAndExecute2(amount, target_address, signature, calldata_args, params_json) {
+        const ptr0 = passStringToWasm0(target_address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(calldata_args, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_frbtcWrapAndExecute2(this.__wbg_ptr, amount, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         return ret;
     }
     /**
@@ -4061,6 +4153,17 @@ export function __wbg_instanceof_Map_8579b5e2ab5437c7(arg0) {
     return ret;
 };
 
+export function __wbg_instanceof_Object_10bb762262230c68(arg0) {
+    let result;
+    try {
+        result = arg0 instanceof Object;
+    } catch (_) {
+        result = false;
+    }
+    const ret = result;
+    return ret;
+};
+
 export function __wbg_instanceof_Response_f4f3e87e07f3135c(arg0) {
     let result;
     try {
@@ -4480,12 +4583,6 @@ export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_832dfe82587c7cfc(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3070, function: Function { arguments: [], shim_idx: 3071, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h264445b1cd05789c, wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb);
-    return ret;
-};
-
 export function __wbindgen_cast_9ae0607507abb057(arg0) {
     // Cast intrinsic for `I64 -> Externref`.
     const ret = arg0;
@@ -4504,15 +4601,21 @@ export function __wbindgen_cast_d6cd19b81560fd6e(arg0) {
     return ret;
 };
 
+export function __wbindgen_cast_dc0f5a50332e1ec3(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3886, function: Function { arguments: [Externref], shim_idx: 3887, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
+    return ret;
+};
+
 export function __wbindgen_cast_e7b45dd881f38ce3(arg0, arg1) {
     // Cast intrinsic for `U128 -> Externref`.
     const ret = (BigInt.asUintN(64, arg0) | (BigInt.asUintN(64, arg1) << BigInt(64)));
     return ret;
 };
 
-export function __wbindgen_cast_facf2bd55df381c1(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3752, function: Function { arguments: [Externref], shim_idx: 3753, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
+export function __wbindgen_cast_f4961a0985a4a334(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3190, function: Function { arguments: [], shim_idx: 3191, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h264445b1cd05789c, wasm_bindgen__convert__closures_____invoke__h8d00541115e24acb);
     return ret;
 };
 

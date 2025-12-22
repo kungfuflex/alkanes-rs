@@ -84,6 +84,16 @@ pub struct Brc20ProgTransactParams {
     pub strategy: Option<AntiFrontrunningStrategy>,
 }
 
+/// Additional output to include in the activation transaction
+/// Used for FrBTC wrap/unwrap operations where BTC must be sent to the signer address
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdditionalOutput {
+    /// Destination address (p2tr, p2wpkh, etc.)
+    pub address: String,
+    /// Amount in satoshis
+    pub amount: u64,
+}
+
 /// Generic execution parameters for BRC20-prog operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Brc20ProgExecuteParams {
@@ -115,6 +125,9 @@ pub struct Brc20ProgExecuteParams {
     pub strategy: Option<AntiFrontrunningStrategy>,
     /// Resume from existing commit transaction (commit txid)
     pub resume_from_commit: Option<String>,
+    /// Additional outputs to include in the activation transaction
+    /// Used for FrBTC wrap (send BTC to signer) or unwrap (dust to signer)
+    pub additional_outputs: Option<Vec<AdditionalOutput>>,
 }
 
 /// Result of a BRC20-prog execution

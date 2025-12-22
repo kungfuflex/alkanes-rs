@@ -780,6 +780,11 @@ export class WebProvider {
   bitcoindDecodePsbt(psbt: string): Promise<any>;
   alkanesView(contract_id: string, view_fn: string, params?: Uint8Array | null, block_tag?: string | null): Promise<any>;
   alkanesInspect(target: string, config: any): Promise<any>;
+  /**
+   * Inspect alkanes bytecode directly from WASM bytes (hex-encoded or raw bytes)
+   * This allows inspection without fetching from RPC - useful for local/offline analysis
+   */
+  alkanesInspectBytecode(bytecode_hex: string, alkane_id: string, config: any): Promise<any>;
   alkanesPendingUnwraps(block_tag?: string | null): Promise<any>;
   brc20progCall(to: string, data: string, block?: string | null): Promise<any>;
   brc20progGetBalance(address: string, block?: string | null): Promise<any>;
@@ -891,6 +896,30 @@ export class WebProvider {
   walletCreatePsbt(params_json: string): Promise<any>;
   walletExport(): Promise<any>;
   walletBackup(): Promise<any>;
+  /**
+   * Get the FrBTC signer address for the current network
+   */
+  frbtcGetSignerAddress(): Promise<any>;
+  /**
+   * Wrap BTC to frBTC
+   * params_json: { fee_rate?: number, from?: string[], change?: string }
+   */
+  frbtcWrap(amount: bigint, params_json: string): Promise<any>;
+  /**
+   * Unwrap frBTC to BTC
+   * params_json: { fee_rate?: number, from?: string[], change?: string }
+   */
+  frbtcUnwrap(amount: bigint, vout: bigint, recipient_address: string, params_json: string): Promise<any>;
+  /**
+   * Wrap BTC and deploy+execute a script (wrapAndExecute)
+   * params_json: { fee_rate?: number, from_addresses?: string[], change_address?: string, ... }
+   */
+  frbtcWrapAndExecute(amount: bigint, script_bytecode: string, params_json: string): Promise<any>;
+  /**
+   * Wrap BTC and call an existing contract (wrapAndExecute2)
+   * params_json: { fee_rate?: number, from_addresses?: string[], change_address?: string, ... }
+   */
+  frbtcWrapAndExecute2(amount: bigint, target_address: string, signature: string, calldata_args: string, params_json: string): Promise<any>;
   dataApiGetPoolHistory(pool_id: string, category?: string | null, limit?: bigint | null, offset?: bigint | null): Promise<any>;
   dataApiGetPools(factory_id: string): Promise<any>;
   dataApiGetAlkanesByAddress(address: string): Promise<any>;

@@ -353,39 +353,105 @@ export function registerBrc20ProgCommands(program: Command): void {
     });
 
   // wrap-and-execute - Wrap BTC and deploy+execute a script
-  // NOTE: This advanced feature is not yet implemented in the CLI.
-  // Use alkanes-cli directly for wrap-and-execute operations.
   brc20Prog
     .command('wrap-and-execute <amount>')
-    .description('Wrap BTC and deploy+execute a script (wrapAndExecute) [Not yet implemented]')
+    .description('Wrap BTC and deploy+execute a script (wrapAndExecute)')
     .requiredOption('--script <bytecode>', 'Script bytecode to deploy and execute (hex)')
     .option('--from <addresses...>', 'Addresses to source UTXOs from')
     .option('--change <address>', 'Change address')
     .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
+    .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
+    .option('--use-rebar', 'Use Rebar Shield for private relay')
+    .option('--rebar-tier <tier>', 'Rebar fee tier (1 or 2)', parseInt)
+    .option('--resume <txid>', 'Resume from existing commit transaction')
     .option('--raw', 'Output raw JSON')
-    .action(async (_amount, _options, _command) => {
-      error('wrap-and-execute is not yet implemented in alkanes-bindgen-cli.');
-      error('Please use alkanes-cli directly for this operation.');
-      process.exit(1);
+    .action(async (amount, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Wrapping BTC and executing script...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const params = {
+          from_addresses: options.from,
+          change_address: options.change,
+          fee_rate: options.feeRate,
+          use_slipstream: options.useSlipstream,
+          use_rebar: options.useRebar,
+          rebar_tier: options.rebarTier,
+          resume_from_commit: options.resume,
+          auto_confirm: true,
+        };
+
+        const rawProvider = provider.rawProvider;
+        const result = await rawProvider.frbtcWrapAndExecute(
+          BigInt(amount),
+          options.script,
+          JSON.stringify(params)
+        );
+
+        spinner.succeed('BTC wrapped and script executed successfully!');
+        console.log(formatOutput(result, { raw: options.raw }));
+      } catch (err: any) {
+        error(`Failed to wrap and execute: ${err.message}`);
+        process.exit(1);
+      }
     });
 
   // wrap-and-execute2 - Wrap BTC and call an existing contract
-  // NOTE: This advanced feature is not yet implemented in the CLI.
-  // Use alkanes-cli directly for wrap-and-execute2 operations.
   brc20Prog
     .command('wrap-and-execute2 <amount>')
-    .description('Wrap BTC and call an existing contract (wrapAndExecute2) [Not yet implemented]')
+    .description('Wrap BTC and call an existing contract (wrapAndExecute2)')
     .requiredOption('--target <address>', 'Target contract address')
     .requiredOption('--signature <sig>', 'Function signature (e.g., "deposit()")')
     .option('--calldata <args>', 'Comma-separated calldata arguments', '')
     .option('--from <addresses...>', 'Addresses to source UTXOs from')
     .option('--change <address>', 'Change address')
     .option('--fee-rate <rate>', 'Fee rate in sat/vB', parseFloat)
+    .option('--use-slipstream', 'Use MARA Slipstream for broadcasting')
+    .option('--use-rebar', 'Use Rebar Shield for private relay')
+    .option('--rebar-tier <tier>', 'Rebar fee tier (1 or 2)', parseInt)
+    .option('--resume <txid>', 'Resume from existing commit transaction')
     .option('--raw', 'Output raw JSON')
-    .action(async (_amount, _options, _command) => {
-      error('wrap-and-execute2 is not yet implemented in alkanes-bindgen-cli.');
-      error('Please use alkanes-cli directly for this operation.');
-      process.exit(1);
+    .action(async (amount, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Wrapping BTC and calling contract...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const params = {
+          from_addresses: options.from,
+          change_address: options.change,
+          fee_rate: options.feeRate,
+          use_slipstream: options.useSlipstream,
+          use_rebar: options.useRebar,
+          rebar_tier: options.rebarTier,
+          resume_from_commit: options.resume,
+          auto_confirm: true,
+        };
+
+        const rawProvider = provider.rawProvider;
+        const result = await rawProvider.frbtcWrapAndExecute2(
+          BigInt(amount),
+          options.target,
+          options.signature,
+          options.calldata || '',
+          JSON.stringify(params)
+        );
+
+        spinner.succeed('BTC wrapped and contract called successfully!');
+        console.log(formatOutput(result, { raw: options.raw }));
+      } catch (err: any) {
+        error(`Failed to wrap and execute2: ${err.message}`);
+        process.exit(1);
+      }
     });
 
   // signer-address - Get the FrBTC signer address

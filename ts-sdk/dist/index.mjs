@@ -46639,6 +46639,19 @@ var init_provider = __esm({
         const result = await this.provider.alkanesInspect(target, config);
         return mapToObject(result);
       }
+      /**
+       * Inspect alkanes bytecode directly from WASM bytes.
+       * This allows inspection without fetching from RPC - useful for local/offline analysis.
+       *
+       * @param bytecodeHex - The WASM bytecode as hex string (with or without 0x prefix)
+       * @param alkaneId - The alkane ID in format "block:tx"
+       * @param config - Inspection configuration
+       * @returns Inspection result with codehash, disassembly, metadata, and fuzzing results
+       */
+      async inspectBytecode(bytecodeHex, alkaneId, config) {
+        const result = await this.provider.alkanesInspectBytecode(bytecodeHex, alkaneId, config);
+        return mapToObject(result);
+      }
     };
     MetashrewClient = class {
       constructor(provider) {
@@ -47151,6 +47164,21 @@ var init_provider = __esm({
       async getProvider() {
         if (!this._provider) {
           await this.initialize();
+        }
+        return this._provider;
+      }
+      /**
+       * Get the raw WASM WebProvider for direct access to low-level methods.
+       *
+       * This is useful for CLI tools that need access to wallet methods
+       * like wallet_create_js, wallet_load_js, etc. that are not wrapped
+       * by the higher-level API.
+       *
+       * @throws Error if provider is not initialized
+       */
+      get rawProvider() {
+        if (!this._provider) {
+          throw new Error("Provider not initialized. Call initialize() first.");
         }
         return this._provider;
       }

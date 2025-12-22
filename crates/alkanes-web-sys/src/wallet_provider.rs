@@ -1266,7 +1266,11 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
         <WebProvider as BitcoinRpcProvider>::send_raw_transaction(&self.web_provider, tx_hex).await
     }
-    
+
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        <WebProvider as BitcoinRpcProvider>::send_raw_transactions(&self.web_provider, tx_hexes).await
+    }
+
     async fn get_mempool_info(&self) -> Result<JsonValue> {
         <WebProvider as BitcoinRpcProvider>::get_mempool_info(&self.web_provider).await
     }

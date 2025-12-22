@@ -1,5 +1,9 @@
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export function analyze_psbt(psbt_base64: string, network_str: string): string;
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
 export function get_alkane_bytecode(network: string, block: number, tx: number, block_tag: string): Promise<any>;
@@ -266,10 +270,6 @@ export function frbtc_wrap_and_execute2(network: string, amount: bigint, target_
  * - `signer_address`: The Bitcoin p2tr address for the signer
  */
 export function frbtc_get_signer_address(network: string): Promise<any>;
-/**
- * Asynchronously encrypts data using the Web Crypto API.
- */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;
@@ -910,6 +910,16 @@ export class WebProvider {
    * params_json: { fee_rate?: number, from?: string[], change?: string }
    */
   frbtcUnwrap(amount: bigint, vout: bigint, recipient_address: string, params_json: string): Promise<any>;
+  /**
+   * Wrap BTC and deploy+execute a script (wrapAndExecute)
+   * params_json: { fee_rate?: number, from_addresses?: string[], change_address?: string, ... }
+   */
+  frbtcWrapAndExecute(amount: bigint, script_bytecode: string, params_json: string): Promise<any>;
+  /**
+   * Wrap BTC and call an existing contract (wrapAndExecute2)
+   * params_json: { fee_rate?: number, from_addresses?: string[], change_address?: string, ... }
+   */
+  frbtcWrapAndExecute2(amount: bigint, target_address: string, signature: string, calldata_args: string, params_json: string): Promise<any>;
   dataApiGetPoolHistory(pool_id: string, category?: string | null, limit?: bigint | null, offset?: bigint | null): Promise<any>;
   dataApiGetPools(factory_id: string): Promise<any>;
   dataApiGetAlkanesByAddress(address: string): Promise<any>;

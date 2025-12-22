@@ -3578,6 +3578,84 @@ impl WebProvider {
         })
     }
 
+    /// Wrap BTC and deploy+execute a script (wrapAndExecute)
+    /// params_json: { fee_rate?: number, from_addresses?: string[], change_address?: string, ... }
+    #[wasm_bindgen(js_name = frbtcWrapAndExecute)]
+    pub fn frbtc_wrap_and_execute_method(&mut self, amount: u64, script_bytecode: String, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::brc20_prog::{FrBtcExecutor, FrBtcWrapAndExecuteParams};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let params: serde_json::Value = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+
+            let wrap_params = FrBtcWrapAndExecuteParams {
+                amount,
+                script_bytecode,
+                from_addresses: params.get("from_addresses").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+                }),
+                change_address: params.get("change_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                fee_rate: params.get("fee_rate").and_then(|v| v.as_f64()).map(|f| f as f32),
+                raw_output: params.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                trace_enabled: params.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                mine_enabled: params.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                auto_confirm: params.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                use_slipstream: params.get("use_slipstream").and_then(|v| v.as_bool()).unwrap_or(false),
+                use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
+                rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
+                resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            };
+
+            let mut executor = FrBtcExecutor::new(&mut provider);
+            match executor.wrap_and_execute(wrap_params).await {
+                Ok(result) => serde_wasm_bindgen::to_value(&result)
+                    .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e))),
+                Err(e) => Err(JsValue::from_str(&format!("WrapAndExecute failed: {}", e))),
+            }
+        })
+    }
+
+    /// Wrap BTC and call an existing contract (wrapAndExecute2)
+    /// params_json: { fee_rate?: number, from_addresses?: string[], change_address?: string, ... }
+    #[wasm_bindgen(js_name = frbtcWrapAndExecute2)]
+    pub fn frbtc_wrap_and_execute2_method(&mut self, amount: u64, target_address: String, signature: String, calldata_args: String, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::brc20_prog::{FrBtcExecutor, FrBtcWrapAndExecute2Params};
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let params: serde_json::Value = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+
+            let wrap_params = FrBtcWrapAndExecute2Params {
+                amount,
+                target_address,
+                signature,
+                calldata_args,
+                from_addresses: params.get("from_addresses").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+                }),
+                change_address: params.get("change_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                fee_rate: params.get("fee_rate").and_then(|v| v.as_f64()).map(|f| f as f32),
+                raw_output: params.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                trace_enabled: params.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                mine_enabled: params.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                auto_confirm: params.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                use_slipstream: params.get("use_slipstream").and_then(|v| v.as_bool()).unwrap_or(false),
+                use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
+                rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
+                resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            };
+
+            let mut executor = FrBtcExecutor::new(&mut provider);
+            match executor.wrap_and_execute2(wrap_params).await {
+                Ok(result) => serde_wasm_bindgen::to_value(&result)
+                    .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e))),
+                Err(e) => Err(JsValue::from_str(&format!("WrapAndExecute2 failed: {}", e))),
+            }
+        })
+    }
+
     // === DATA API METHODS ===
 
     #[wasm_bindgen(js_name = dataApiGetPoolHistory)]
@@ -6126,7 +6204,16 @@ impl BitcoinRpcProvider for WebProvider {
         let result = self.call(&self.sandshrew_rpc_url(), "sendrawtransaction", params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
     }
-    
+
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        let mut txids = Vec::new();
+        for tx_hex in tx_hexes {
+            let txid = self.send_raw_transaction(tx_hex).await?;
+            txids.push(txid);
+        }
+        Ok(txids)
+    }
+
     async fn get_mempool_info(&self) -> Result<JsonValue> {
         self.call(&self.sandshrew_rpc_url(), "getmempoolinfo", serde_json::json!([]), 1).await
     }

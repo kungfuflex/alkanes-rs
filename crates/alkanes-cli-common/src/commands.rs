@@ -893,12 +893,196 @@ pub enum Brc20ProgCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Wrap BTC to frBTC using the FrBTC contract
+    #[command(name = "frbtc-wrap")]
+    FrbtcWrap {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+    },
+    /// Unwrap frBTC to receive BTC via the FrBTC contract
+    #[command(name = "frbtc-unwrap")]
+    FrbtcUnwrap {
+        /// Amount of frBTC to unwrap (in satoshis)
+        amount: u64,
+        /// Recipient Bitcoin address for the unwrapped BTC
+        #[arg(long)]
+        recipient: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+    },
+    /// Wrap BTC and deploy+execute a script atomically
+    #[command(name = "frbtc-wrap-and-execute")]
+    FrbtcWrapAndExecute {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Bytecode of the script to deploy and execute (hex, 0x prefix optional)
+        #[arg(long)]
+        script: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+    },
+    /// Wrap BTC and call an existing contract atomically
+    #[command(name = "frbtc-wrap-and-execute2")]
+    FrbtcWrapAndExecute2 {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Target contract address (0x prefixed hex)
+        #[arg(long)]
+        target: String,
+        /// Function signature to call on target (e.g., "deposit()")
+        #[arg(long)]
+        signature: String,
+        /// Calldata arguments as comma-separated values
+        #[arg(long, default_value = "")]
+        calldata: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+    },
+    /// Get the FrBTC signer address for the current network
+    #[command(name = "frbtc-signer")]
+    FrbtcSigner {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl Brc20ProgCommands {
     /// Check if the command requires signing and thus a decrypted private key
     pub fn requires_signing(&self) -> bool {
-        true // All BRC20-Prog commands require signing
+        match self {
+            // Query commands don't require signing
+            Brc20ProgCommands::Unwrap { .. } => false,
+            Brc20ProgCommands::FrbtcSigner { .. } => false,
+            // All other commands require signing
+            _ => true,
+        }
     }
 }
 

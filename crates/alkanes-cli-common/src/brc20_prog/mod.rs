@@ -24,7 +24,7 @@ pub use foundry::{parse_foundry_json, extract_deployment_bytecode};
 pub use types::{
     Brc20ProgDeployParams, Brc20ProgTransactParams, Brc20ProgExecuteParams,
     Brc20ProgExecuteResult, Brc20ProgInscriptionType, Brc20ProgDeployInscription,
-    Brc20ProgCallInscription,
+    Brc20ProgCallInscription, AdditionalOutput,
 };
 pub use wrap_btc::{
     Brc20ProgWrapBtcExecutor, Brc20ProgWrapBtcParams,

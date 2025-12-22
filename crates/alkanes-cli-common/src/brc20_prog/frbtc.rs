@@ -4,7 +4,7 @@
 use crate::{AlkanesError, DeezelProvider, Result};
 use crate::traits::{WalletProvider, JsonRpcProvider};
 use crate::brc20_prog::execute::Brc20ProgExecutor;
-use crate::brc20_prog::types::{Brc20ProgExecuteParams, Brc20ProgExecuteResult, Brc20ProgCallInscription};
+use crate::brc20_prog::types::{Brc20ProgExecuteParams, Brc20ProgExecuteResult, Brc20ProgCallInscription, AdditionalOutput};
 use crate::brc20_prog::calldata::encode_function_call;
 use crate::brc20_prog::eth_call::get_signer_address;
 use crate::unwrap::brc20_prog::script_pubkey_to_address;
@@ -240,9 +240,14 @@ impl<'a> FrBtcExecutor<'a> {
 
         log::info!("BRC20-prog inscription: {}", inscription_json);
 
-        // Build execute params
-        // NOTE: The brc20-prog executor needs to be modified to support sending BTC to a specific address
-        // For now, we use the standard execute path
+        // Build execute params with the signer address as additional output
+        // The activation tx will include an output sending params.amount to the signer
+        use crate::brc20_prog::AdditionalOutput;
+        let additional_outputs = vec![AdditionalOutput {
+            address: signer_address.clone(),
+            amount: params.amount,
+        }];
+
         let execute_params = Brc20ProgExecuteParams {
             inscription_content: inscription_json,
             from_addresses: params.from_addresses,
@@ -252,12 +257,13 @@ impl<'a> FrBtcExecutor<'a> {
             trace_enabled: params.trace_enabled,
             mine_enabled: params.mine_enabled,
             auto_confirm: params.auto_confirm,
-            use_activation: false,
+            use_activation: true, // Must use 3-tx pattern for wrap
             use_slipstream: params.use_slipstream,
             use_rebar: params.use_rebar,
             rebar_tier: params.rebar_tier,
             strategy: None,
             resume_from_commit: params.resume_from_commit,
+            additional_outputs: Some(additional_outputs),
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -266,6 +272,9 @@ impl<'a> FrBtcExecutor<'a> {
         log::info!("✅ FrBTC wrap completed");
         log::info!("   Commit TXID: {}", result.commit_txid);
         log::info!("   Reveal TXID: {}", result.reveal_txid);
+        if let Some(ref activation_txid) = result.activation_txid {
+            log::info!("   Activation TXID: {} (sent {} sats to {})", activation_txid, params.amount, signer_address);
+        }
 
         Ok(result)
     }
@@ -284,6 +293,10 @@ impl<'a> FrBtcExecutor<'a> {
         let network = self.provider.get_network();
         let frbtc_address = get_frbtc_contract_address(network);
 
+        // Get the signer address for the dust output
+        let signer_address = self.get_signer_address().await?;
+        log::info!("Signer address for dust output: {}", signer_address);
+
         // Parse the recipient address and get its script_pubkey
         let recipient_address = bitcoin::Address::from_str(&params.recipient_address)
             .map_err(|e| AlkanesError::AddressResolution(format!("Invalid recipient address: {}", e)))?
@@ -296,10 +309,14 @@ impl<'a> FrBtcExecutor<'a> {
         log::info!("Unwrapping {} sats to {} (script: 0x{})",
             params.amount, params.recipient_address, recipient_script_hex);
 
+        // The dust output will be at vout 1 in activation tx (after OP_RETURN at vout 0)
+        // This is the index the contract expects for validation
+        let dust_vout = 1u64;
+
         // Build the unwrap2(uint256 amount, uint256 vout, bytes calldata pkscriptRecipient) calldata
         let calldata = encode_function_call(
             "unwrap2(uint256,uint256,bytes)",
-            &format!("{},{},0x{}", params.amount, params.vout, recipient_script_hex),
+            &format!("{},{},0x{}", params.amount, dust_vout, recipient_script_hex),
         )?;
 
         // Create the inscription
@@ -312,6 +329,13 @@ impl<'a> FrBtcExecutor<'a> {
 
         log::info!("BRC20-prog inscription: {}", inscription_json);
 
+        // Add dust output to signer address (546 sats is the activation marker)
+        use crate::brc20_prog::AdditionalOutput;
+        let additional_outputs = vec![AdditionalOutput {
+            address: signer_address.clone(),
+            amount: 546, // Dust output for activation
+        }];
+
         let execute_params = Brc20ProgExecuteParams {
             inscription_content: inscription_json,
             from_addresses: params.from_addresses,
@@ -321,12 +345,13 @@ impl<'a> FrBtcExecutor<'a> {
             trace_enabled: params.trace_enabled,
             mine_enabled: params.mine_enabled,
             auto_confirm: params.auto_confirm,
-            use_activation: false,
+            use_activation: true, // Must use 3-tx pattern for unwrap
             use_slipstream: params.use_slipstream,
             use_rebar: params.use_rebar,
             rebar_tier: params.rebar_tier,
             strategy: None,
             resume_from_commit: params.resume_from_commit,
+            additional_outputs: Some(additional_outputs),
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -335,6 +360,9 @@ impl<'a> FrBtcExecutor<'a> {
         log::info!("✅ FrBTC unwrap queued");
         log::info!("   Commit TXID: {}", result.commit_txid);
         log::info!("   Reveal TXID: {}", result.reveal_txid);
+        if let Some(ref activation_txid) = result.activation_txid {
+            log::info!("   Activation TXID: {} (dust output to {})", activation_txid, signer_address);
+        }
         log::info!("   Recipient will receive {} sats at {}", params.amount, params.recipient_address);
 
         Ok(result)
@@ -378,6 +406,12 @@ impl<'a> FrBtcExecutor<'a> {
 
         log::info!("BRC20-prog inscription: {}", inscription_json);
 
+        // Additional output sends the wrap amount to signer address
+        let additional_outputs = vec![AdditionalOutput {
+            address: signer_address.clone(),
+            amount: params.amount,
+        }];
+
         let execute_params = Brc20ProgExecuteParams {
             inscription_content: inscription_json,
             from_addresses: params.from_addresses,
@@ -387,12 +421,13 @@ impl<'a> FrBtcExecutor<'a> {
             trace_enabled: params.trace_enabled,
             mine_enabled: params.mine_enabled,
             auto_confirm: params.auto_confirm,
-            use_activation: false,
+            use_activation: true, // Need activation to send BTC to signer
             use_slipstream: params.use_slipstream,
             use_rebar: params.use_rebar,
             rebar_tier: params.rebar_tier,
             strategy: None,
             resume_from_commit: params.resume_from_commit,
+            additional_outputs: Some(additional_outputs),
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -401,6 +436,9 @@ impl<'a> FrBtcExecutor<'a> {
         log::info!("✅ FrBTC wrapAndExecute completed");
         log::info!("   Commit TXID: {}", result.commit_txid);
         log::info!("   Reveal TXID: {}", result.reveal_txid);
+        if let Some(ref activation_txid) = result.activation_txid {
+            log::info!("   Activation TXID: {} ({} sats to {})", activation_txid, params.amount, signer_address);
+        }
 
         Ok(result)
     }
@@ -445,6 +483,12 @@ impl<'a> FrBtcExecutor<'a> {
 
         log::info!("BRC20-prog inscription: {}", inscription_json);
 
+        // Additional output sends the wrap amount to signer address
+        let additional_outputs = vec![AdditionalOutput {
+            address: signer_address.clone(),
+            amount: params.amount,
+        }];
+
         let execute_params = Brc20ProgExecuteParams {
             inscription_content: inscription_json,
             from_addresses: params.from_addresses,
@@ -454,12 +498,13 @@ impl<'a> FrBtcExecutor<'a> {
             trace_enabled: params.trace_enabled,
             mine_enabled: params.mine_enabled,
             auto_confirm: params.auto_confirm,
-            use_activation: false,
+            use_activation: true, // Need activation to send BTC to signer
             use_slipstream: params.use_slipstream,
             use_rebar: params.use_rebar,
             rebar_tier: params.rebar_tier,
             strategy: None,
             resume_from_commit: params.resume_from_commit,
+            additional_outputs: Some(additional_outputs),
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -468,6 +513,9 @@ impl<'a> FrBtcExecutor<'a> {
         log::info!("✅ FrBTC wrapAndExecute2 completed");
         log::info!("   Commit TXID: {}", result.commit_txid);
         log::info!("   Reveal TXID: {}", result.reveal_txid);
+        if let Some(ref activation_txid) = result.activation_txid {
+            log::info!("   Activation TXID: {} ({} sats to {})", activation_txid, params.amount, signer_address);
+        }
 
         Ok(result)
     }
