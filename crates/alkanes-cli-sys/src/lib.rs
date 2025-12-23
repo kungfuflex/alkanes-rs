@@ -55,7 +55,16 @@ pub struct SystemAlkanes {
 }
 
 impl SystemAlkanes {
+    /// Create a new SystemAlkanes instance
+    ///
+    /// If `skip_wallet_init` is true, keystore loading will be skipped.
+    /// This is useful for read-only commands that don't need wallet access.
     pub async fn new(args: &Args) -> anyhow::Result<Self> {
+        Self::new_with_options(args, false).await
+    }
+
+    /// Create a new SystemAlkanes instance with optional wallet initialization
+    pub async fn new_with_options(args: &Args, skip_wallet_init: bool) -> anyhow::Result<Self> {
         // Validate RPC config (ensure only one backend is configured)
         args.rpc_config.validate()?;
         
@@ -213,8 +222,10 @@ impl SystemAlkanes {
             log::debug!("No passphrase provided");
         }
 
-        // Handle different wallet modes
-        if let Some(ref address) = args.wallet_address {
+        // Handle different wallet modes (skip if not needed for this command)
+        if skip_wallet_init {
+            log::debug!("Skipping wallet initialization (not needed for this command)");
+        } else if let Some(ref address) = args.wallet_address {
             // Address-only mode: no keystore needed
             log::info!("Using address-only mode with address: {}", address);
             provider.set_address_only_mode(address.clone(), "p2wpkh".to_string());
@@ -1512,8 +1523,10 @@ impl SystemWallet for SystemAlkanes {
                    use_rebar,
                    rebar_tier,
                    lock_alkanes,
+                   ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                   mempool_indexer: false,
                };
-               
+
                match provider.send(send_params).await {
                    Ok(txid) => {
                        println!("✅ Transaction sent successfully!");
@@ -1541,8 +1554,10 @@ impl SystemWallet for SystemAlkanes {
                    use_rebar: false,
                    rebar_tier: 1,
                    lock_alkanes: false,
+                   ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                   mempool_indexer: false,
                };
-               
+
                match provider.send(send_params).await {
                    Ok(txid) => {
                        println!("✅ All funds sent successfully!");
@@ -1570,8 +1585,10 @@ impl SystemWallet for SystemAlkanes {
                    use_rebar: false,
                    rebar_tier: 1,
                    lock_alkanes: false,
+                   ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                   mempool_indexer: false,
                };
-               
+
                match provider.create_transaction(create_params).await {
                    Ok(tx_hex) => {
                        println!("✅ Transaction created successfully!");
@@ -2720,6 +2737,8 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                     trace_enabled: trace,
                     mine_enabled: mine,
                     auto_confirm: yes, // Use the new field name
+                    ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                    mempool_indexer: false,
                 };
 
                 let mut current_state = provider.execute(execute_params.clone()).await?;

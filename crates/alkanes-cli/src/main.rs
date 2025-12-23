@@ -86,8 +86,11 @@ async fn main() -> Result<()> {
     // Validate RPC config (ensure only one backend is configured)
     alkanes_args.rpc_config.validate()?;
 
-    // Create a new SystemAlkanes instance
-    let mut system = SystemAlkanes::new(&alkanes_args).await?;
+    // Check if this command needs wallet access
+    let skip_wallet_init = !args.command.requires_wallet();
+
+    // Create a new SystemAlkanes instance (skip wallet init for read-only commands)
+    let mut system = SystemAlkanes::new_with_options(&alkanes_args, skip_wallet_init).await?;
 
     // Set default brc20-prog RPC URL based on network if not provided
     let brc20_prog_rpc_url = alkanes_args.brc20_prog_rpc_url.clone()
@@ -788,6 +791,8 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
                 use_rebar,
                 rebar_tier,
                 lock_alkanes,
+                ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                mempool_indexer: false,
             };
             let txid = system.provider_mut().send(params).await?;
             println!("Transaction sent: {txid}");
@@ -2853,8 +2858,10 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 trace_enabled: trace,
                 mine_enabled: mine,
                 auto_confirm,
+                ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                mempool_indexer: false,
             };
-            
+
             println!("\n📤 Executing swap...");
             let state = executor.execute(execute_params.clone()).await?;
             let result = match state {
@@ -3575,6 +3582,8 @@ fn to_enhanced_execute_params(args: AlkanesExecute) -> Result<alkanes::types::En
         trace_enabled: args.trace,
         mine_enabled: args.mine,
         auto_confirm: args.auto_confirm,
+        ordinals_strategy: alkanes::types::OrdinalsStrategy::default(),
+        mempool_indexer: false,
     })
 }
 

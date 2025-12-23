@@ -1,5 +1,10 @@
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Initialize the panic hook for better error messages in WASM
+ * This should be called early in your application
+ */
+export function init_panic_hook(): void;
 export function analyze_psbt(psbt_base64: string, network_str: string): string;
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
 export function get_alkane_bytecode(network: string, block: number, tx: number, block_tag: string): Promise<any>;

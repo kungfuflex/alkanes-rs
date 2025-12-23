@@ -14,6 +14,15 @@ export interface AlkaneId {
 }
 
 /**
+ * Strategy for handling UTXOs that contain ordinal inscriptions
+ *
+ * - 'exclude': (default) Fail if any selected UTXO contains inscriptions
+ * - 'preserve': Split inscribed UTXOs to protect inscriptions, broadcast atomically
+ * - 'burn': Allow spending inscribed UTXOs without protection (destroys inscriptions)
+ */
+export type OrdinalsStrategy = 'exclude' | 'preserve' | 'burn';
+
+/**
  * Base execution parameters for Alkanes operations
  */
 export interface AlkanesExecuteBaseParams {
@@ -33,6 +42,19 @@ export interface AlkanesExecuteBaseParams {
   resume_from_commit?: string;
   /** Auto-confirm transaction without prompting (optional) */
   auto_confirm?: boolean;
+  /**
+   * Strategy for handling UTXOs that contain ordinal inscriptions (optional)
+   * - 'exclude': (default) Fail if inscribed UTXOs must be spent
+   * - 'preserve': Split inscribed UTXOs to protect inscriptions
+   * - 'burn': Allow spending inscribed UTXOs (destroys inscriptions)
+   */
+  ordinals_strategy?: OrdinalsStrategy;
+  /**
+   * Enable mempool indexer for tracing inscription state of pending UTXOs (optional)
+   * When enabled, if spending unconfirmed UTXOs, traces inscription state
+   * through parent transactions to detect inscriptions on pending outputs
+   */
+  mempool_indexer?: boolean;
 }
 
 // ============================================================================
@@ -168,14 +190,18 @@ export interface AlkanesExecuteParams extends AlkanesExecuteBaseParams {
  * Result of an Alkanes execution
  */
 export interface AlkanesExecuteResult {
+  /** Split transaction ID (if inscribed UTXOs were protected) */
+  split_txid?: string;
+  /** Split transaction fee in sats (if applicable) */
+  split_fee?: number;
   /** Commit transaction ID */
-  commit_txid: string;
+  commit_txid?: string;
   /** Reveal transaction ID */
   reveal_txid: string;
   /** Activation transaction ID (if applicable) */
   activation_txid?: string;
   /** Commit transaction fee in sats */
-  commit_fee: number;
+  commit_fee?: number;
   /** Reveal transaction fee in sats */
   reveal_fee: number;
   /** Activation transaction fee in sats (if applicable) */

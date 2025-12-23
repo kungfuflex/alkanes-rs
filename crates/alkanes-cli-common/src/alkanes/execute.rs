@@ -16,7 +16,10 @@
 
 use crate::{Result, AlkanesError, DeezelProvider};
 use crate::traits::{WalletProvider, UtxoInfo};
+use crate::ordinals::{check_utxos_for_inscriptions_with_provider, SplitPlan};
+use super::types::OrdinalsStrategy;
 use bitcoin::{Transaction, ScriptBuf, OutPoint, TxOut, Address, XOnlyPublicKey, psbt::Psbt};
+use bitcoin::hashes::Hash;
 use anyhow::Context;
 use core::str::FromStr;
 #[cfg(not(feature = "std"))]
@@ -203,6 +206,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let unsigned_tx = &state.psbt.unsigned_tx;
 
         if !params.auto_confirm {
+            // Show split transaction preview if present
+            if let Some(ref split_psbt) = state.split_psbt {
+                if !params.raw_output {
+                    log::info!("📋 Split Transaction Preview (protects inscribed UTXOs):");
+                    log::info!("   Inputs: {}", split_psbt.unsigned_tx.input.len());
+                    log::info!("   Outputs: {}", split_psbt.unsigned_tx.output.len());
+                    log::info!("   Fee: {} sats", state.split_fee.unwrap_or(0));
+                }
+            }
+
             self.show_preview_and_confirm(
                 unsigned_tx,
                 &serde_json::to_value(&state.analysis)?,
@@ -212,9 +225,44 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             )?;
         }
 
+        // Sign split PSBT if present
+        let (split_txid, split_tx_hex) = if let Some(split_psbt) = state.split_psbt {
+            log::info!("🔀 Signing split transaction...");
+            let split_tx = self.sign_and_finalize_psbt(split_psbt).await?;
+            let split_txid = split_tx.compute_txid().to_string();
+            let split_hex = bitcoin::consensus::encode::serialize_hex(&split_tx);
+            (Some(split_txid), Some(split_hex))
+        } else {
+            (None, None)
+        };
+
+        // Sign main transaction
         let tx = self.sign_and_finalize_psbt(state.psbt).await?;
         let tx_hex = bitcoin::consensus::encode::serialize_hex(&tx);
-        let txid = self.provider.broadcast_transaction(tx_hex).await?;
+        let main_txid = tx.compute_txid().to_string();
+
+        // Broadcast atomically using send_raw_transactions if we have a split
+        let txid = if let Some(split_hex) = split_tx_hex {
+            use crate::traits::BitcoinRpcProvider;
+            log::info!("🚀 Broadcasting split + main transactions atomically...");
+            let tx_hexes = vec![split_hex, tx_hex];
+            let txids = self.provider.send_raw_transactions(&tx_hexes).await?;
+
+            if txids.len() >= 2 {
+                log::info!("✅ Split transaction broadcast: {}", txids[0]);
+                log::info!("✅ Main transaction broadcast: {}", txids[1]);
+                txids[1].clone()
+            } else if txids.len() == 1 {
+                // Fallback: only one txid returned, use it
+                log::warn!("⚠️ Only one txid returned from batch broadcast");
+                txids[0].clone()
+            } else {
+                return Err(AlkanesError::RpcError("No txids returned from broadcast".to_string()));
+            }
+        } else {
+            // No split, just broadcast the main transaction
+            self.provider.broadcast_transaction(tx_hex).await?
+        };
 
         if !params.raw_output {
             log::info!("✅ Transaction broadcast successfully!");
@@ -233,6 +281,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         };
 
         Ok(EnhancedExecuteResult {
+            split_txid,
+            split_fee: state.split_fee,
             commit_txid: None,
             reveal_txid: txid,
             commit_fee: None,
@@ -249,11 +299,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     ) -> Result<ExecutionState> {
         // 1. Sign and broadcast the commit transaction
         let commit_tx = self.sign_and_finalize_psbt(state.psbt).await?;
-        let commit_txid = self
+        log::info!("[DEBUG] About to broadcast commit transaction");
+        let commit_txid_result = self
             .provider
             .broadcast_transaction(bitcoin::consensus::encode::serialize_hex(&commit_tx))
-            .await?;
-        log::info!("✅ Commit transaction broadcast successfully: {commit_txid}");
+            .await;
+        log::info!("[DEBUG] broadcast_transaction returned");
+        let commit_txid = commit_txid_result?;
+        log::info!("[DEBUG] Got commit_txid: {}", commit_txid);
+        log::info!("Commit transaction broadcast successfully: {commit_txid}");
 
         // Mine a block to confirm the commit transaction if on regtest
         if state.params.mine_enabled {
@@ -345,6 +399,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         };
 
         Ok(EnhancedExecuteResult {
+            split_txid: None,
+            split_fee: None,
             commit_txid: Some(state.commit_txid),
             reveal_txid,
             commit_fee: Some(state.commit_fee),
@@ -411,7 +467,52 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let utxo_selection = self
             .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses)
             .await?;
-        let funding_utxos = utxo_selection.outpoints;
+        let funding_utxos = utxo_selection.outpoints.clone();
+
+        // Check selected UTXOs for ordinal inscriptions based on strategy
+        let final_funding_utxos = if params.ordinals_strategy != OrdinalsStrategy::Burn {
+            let mut funding_utxos_with_txout: Vec<(OutPoint, TxOut)> = Vec::new();
+            for outpoint in &funding_utxos {
+                if let Some(txout) = self.provider.get_utxo(outpoint).await? {
+                    funding_utxos_with_txout.push((*outpoint, txout));
+                }
+            }
+
+            log::info!("🔍 Checking commit UTXOs for ordinal inscriptions (strategy: {:?})", params.ordinals_strategy);
+            match check_utxos_for_inscriptions_with_provider(
+                self.provider,
+                &funding_utxos_with_txout,
+                params.ordinals_strategy,
+                fee_rate_sat_vb,
+                params.mempool_indexer,
+            ).await {
+                Ok(None) => {
+                    log::info!("✅ No ordinal inscriptions found in commit UTXOs");
+                    funding_utxos
+                }
+                Ok(Some(plans)) => {
+                    // For commit/reveal flow with inscribed UTXOs, we need to handle this differently
+                    // Since the commit tx must be broadcast first, we can't bundle split atomically
+                    // For now, fail with a helpful message suggesting to use the single-tx flow
+                    // or to manually split the UTXOs first
+                    log::error!("❌ Inscribed UTXOs detected in commit/reveal flow");
+                    log::error!("   {} UTXOs contain inscriptions", plans.len());
+                    return Err(AlkanesError::Wallet(format!(
+                        "Cannot use commit/reveal pattern with inscribed UTXOs. \
+                        The commit transaction must be broadcast separately, which prevents atomic split.\n\
+                        Options:\n\
+                        1. Use --ordinals-strategy burn to allow spending inscribed UTXOs (destroys inscriptions)\n\
+                        2. Manually split inscribed UTXOs before executing\n\
+                        3. Use a transaction pattern that doesn't require commit/reveal"
+                    )));
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        } else {
+            funding_utxos
+        };
 
         let commit_output = TxOut {
             value: bitcoin::Amount::from_sat(required_reveal_amount),
@@ -419,7 +520,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         };
 
         let (commit_psbt, commit_fee) = self
-            .build_commit_psbt(funding_utxos, commit_output, params.fee_rate)
+            .build_commit_psbt(final_funding_utxos, commit_output, params.fee_rate)
             .await?;
 
         Ok(ExecutionState::ReadyToSignCommit(ReadyToSignCommitTx {
@@ -528,7 +629,72 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         
         final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
         let utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses).await?;
-        
+
+        // Check selected UTXOs for ordinal inscriptions based on strategy
+        // We need to get TxOut data for each selected UTXO to check for inscriptions
+        let mut funding_utxos_with_txout: Vec<(OutPoint, TxOut)> = Vec::new();
+        for outpoint in &utxo_selection.outpoints {
+            if let Some(txout) = self.provider.get_utxo(outpoint).await? {
+                funding_utxos_with_txout.push((*outpoint, txout));
+            }
+        }
+
+        // Check for inscriptions if ordinals_strategy is not Burn
+        // Returns (split_psbt, split_fee, updated_utxo_outpoints)
+        let (split_psbt, split_fee, final_funding_outpoints): (Option<Psbt>, Option<u64>, Vec<OutPoint>) =
+            if params.ordinals_strategy != OrdinalsStrategy::Burn {
+                log::info!("🔍 Checking selected UTXOs for ordinal inscriptions (strategy: {:?})", params.ordinals_strategy);
+                match check_utxos_for_inscriptions_with_provider(
+                    self.provider,
+                    &funding_utxos_with_txout,
+                    params.ordinals_strategy,
+                    fee_rate_sat_vb,
+                    params.mempool_indexer,
+                ).await {
+                    Ok(None) => {
+                        log::info!("✅ No ordinal inscriptions found in selected UTXOs");
+                        (None, None, utxo_selection.outpoints.clone())
+                    }
+                    Ok(Some(plans)) => {
+                        log::info!("📋 Building split transaction for {} inscribed UTXOs", plans.len());
+                        for plan in &plans {
+                            log::info!("   Split: {} → safe({}) + clean({})",
+                                plan.outpoint, plan.safe_amount, plan.clean_amount);
+                        }
+
+                        // Build split transaction PSBT
+                        let (split_psbt_result, split_fee_result, clean_outpoints) =
+                            self.build_split_psbt(&plans, &funding_utxos_with_txout, fee_rate_sat_vb, params).await?;
+
+                        // Replace inscribed UTXOs with clean UTXOs from split
+                        let mut new_outpoints = Vec::new();
+                        let inscribed_outpoints: std::collections::HashSet<OutPoint> =
+                            plans.iter().map(|p| p.outpoint).collect();
+
+                        // Keep non-inscribed UTXOs
+                        for outpoint in &utxo_selection.outpoints {
+                            if !inscribed_outpoints.contains(outpoint) {
+                                new_outpoints.push(*outpoint);
+                            }
+                        }
+                        // Add clean UTXOs from split
+                        new_outpoints.extend(clean_outpoints);
+
+                        log::info!("🔀 Split transaction built: {} clean UTXOs will replace {} inscribed UTXOs",
+                            plans.len(), inscribed_outpoints.len());
+
+                        (Some(split_psbt_result), Some(split_fee_result), new_outpoints)
+                    }
+                    Err(e) => {
+                        // Strategy is Exclude and inscribed UTXOs were found - fail
+                        return Err(e);
+                    }
+                }
+            } else {
+                log::debug!("🔥 Ordinals strategy is Burn - skipping inscription check");
+                (None, None, utxo_selection.outpoints.clone())
+            };
+
         // Calculate alkanes needed and check for excess
         let alkanes_needed = self.calculate_alkanes_needed(&params.input_requirements);
         let alkanes_excess = self.calculate_excess(&utxo_selection.alkanes_found, &alkanes_needed);
@@ -621,12 +787,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         for (i, output) in outputs.iter().enumerate() {
             log::info!("   Output {}: {} sats", i, output.value);
         }
-        
+
+        // Use final_funding_outpoints which may have inscribed UTXOs replaced with clean ones from split
         let runestone_script = self.construct_runestone_script(&final_protostones, outputs.len())?;
-        let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(utxo_selection.outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
+        let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
 
         // Validate the transaction before returning
-        self.validate_transaction(&psbt, &utxo_selection.outpoints, fee, params).await?;
+        self.validate_transaction(&psbt, &final_funding_outpoints, fee, params).await?;
 
         let unsigned_tx = &psbt.unsigned_tx;
         let analysis = crate::transaction::analysis::analyze_transaction(unsigned_tx);
@@ -638,6 +805,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             fee,
             estimated_vsize,
             inspection_result,
+            split_psbt,
+            split_fee,
         }))
     }
     
@@ -1525,6 +1694,127 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             }
         }
         Ok(tx)
+    }
+
+    /// Build a split PSBT to protect inscribed UTXOs
+    ///
+    /// Returns (split_psbt, split_fee, clean_outpoints)
+    /// The clean_outpoints are the UTXOs that can be used for funding after the split
+    async fn build_split_psbt(
+        &mut self,
+        plans: &[SplitPlan],
+        funding_utxos: &[(OutPoint, TxOut)],
+        fee_rate: f32,
+        params: &EnhancedExecuteParams,
+    ) -> Result<(Psbt, u64, Vec<OutPoint>)> {
+        use bitcoin::transaction::Version;
+
+        // Get safe address for split outputs
+        let safe_address_str = params.change_address.as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("p2tr:0");
+        use crate::traits::AddressResolver;
+        let resolved_addr = self.provider.resolve_all_identifiers(safe_address_str).await?;
+        let safe_address = Address::from_str(&resolved_addr)?.require_network(self.provider.get_network())?;
+
+        // Build inputs and outputs
+        let mut inputs = Vec::new();
+        let mut outputs = Vec::new();
+        let mut input_txouts = Vec::new();
+        let mut clean_outpoints = Vec::new();
+        let mut total_input_value = 0u64;
+        let mut total_output_value = 0u64;
+
+        for (idx, plan) in plans.iter().enumerate() {
+            // Find the TxOut for this input
+            let txout = funding_utxos.iter()
+                .find(|(op, _)| *op == plan.outpoint)
+                .map(|(_, txout)| txout.clone())
+                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found for split: {}", plan.outpoint)))?;
+
+            total_input_value += txout.value.to_sat();
+
+            inputs.push(bitcoin::TxIn {
+                previous_output: plan.outpoint,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            });
+            input_txouts.push(txout);
+
+            // Safe output (inscribed sats go here)
+            outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(plan.safe_amount),
+                script_pubkey: safe_address.script_pubkey(),
+            });
+            total_output_value += plan.safe_amount;
+
+            // Clean output (funding sats go here)
+            let clean_output = TxOut {
+                value: bitcoin::Amount::from_sat(plan.clean_amount),
+                script_pubkey: safe_address.script_pubkey(),
+            };
+            outputs.push(clean_output);
+            total_output_value += plan.clean_amount;
+
+            // Track the clean outpoint (will update txid after building tx)
+            clean_outpoints.push(OutPoint {
+                txid: bitcoin::Txid::from_byte_array([0u8; 32]), // Placeholder
+                vout: (idx * 2 + 1) as u32, // Clean outputs are at odd indices
+            });
+        }
+
+        // Estimate fee
+        let estimated_vsize = 10 + (inputs.len() * 68) + (outputs.len() * 43);
+        let estimated_fee = (fee_rate * estimated_vsize as f32).ceil() as u64;
+
+        // Adjust the last clean output to account for fee
+        if let Some(last_clean_output) = outputs.last_mut() {
+            if last_clean_output.value.to_sat() > estimated_fee + DUST_LIMIT {
+                last_clean_output.value = bitcoin::Amount::from_sat(
+                    last_clean_output.value.to_sat() - estimated_fee
+                );
+            } else {
+                return Err(AlkanesError::Wallet(
+                    "Not enough funds in split to cover fee".to_string()
+                ));
+            }
+        }
+
+        // Build the unsigned transaction
+        let unsigned_tx = Transaction {
+            version: Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: inputs,
+            output: outputs,
+        };
+
+        // Create PSBT
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
+
+        // Add witness_utxo and tap_internal_key for each input
+        for (i, txout) in input_txouts.iter().enumerate() {
+            psbt.inputs[i].witness_utxo = Some(txout.clone());
+            if txout.script_pubkey.is_p2tr() {
+                let (internal_key, (fingerprint, path)) = self.provider.get_internal_key().await?;
+                psbt.inputs[i].tap_internal_key = Some(internal_key);
+                psbt.inputs[i].tap_key_origins.insert(
+                    internal_key,
+                    (vec![], (fingerprint, path))
+                );
+            }
+        }
+
+        // Calculate actual txid and update clean outpoints
+        let txid = psbt.unsigned_tx.compute_txid();
+        for outpoint in &mut clean_outpoints {
+            outpoint.txid = txid;
+        }
+
+        log::info!("Built split PSBT: {} inputs → {} outputs, fee: {} sats",
+            plans.len(), psbt.unsigned_tx.output.len(), estimated_fee);
+
+        Ok((psbt, estimated_fee, clean_outpoints))
     }
 
     async fn build_commit_psbt(

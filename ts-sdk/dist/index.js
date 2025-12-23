@@ -47183,6 +47183,9 @@ var init_provider = __esm({
           );
           const nodeLoader = nodeLoaderModule.default || nodeLoaderModule;
           await nodeLoader.init();
+          if (nodeLoader.init_panic_hook) {
+            nodeLoader.init_panic_hook();
+          }
           WebProviderClass = nodeLoader.WebProvider;
         } else {
           const wasmPath = "@alkanes/ts-sdk/wasm";
@@ -47190,6 +47193,9 @@ var init_provider = __esm({
             /* @vite-ignore */
             wasmPath
           );
+          if (wasm.init_panic_hook) {
+            wasm.init_panic_hook();
+          }
           WebProviderClass = wasm.WebProvider;
         }
         const providerName = this.networkPreset === "local" ? "regtest" : this.networkPreset;

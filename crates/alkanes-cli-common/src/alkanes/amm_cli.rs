@@ -97,7 +97,7 @@ pub async fn init_pool(
     ];
     
     let protostones = parse_protostones(&calldata)?;
-    
+
     // Build execute params with alkanes_change_address set to enable auto-change
     let mut executor = EnhancedAlkanesExecutor::new(provider);
     let execute_params = EnhancedExecuteParams {
@@ -113,6 +113,8 @@ pub async fn init_pool(
         trace_enabled: params.trace,
         mine_enabled: false,
         auto_confirm: params.auto_confirm,
+        ordinals_strategy: super::types::OrdinalsStrategy::default(),
+        mempool_indexer: false,
     };
     
     // Execute
@@ -194,7 +196,7 @@ pub async fn execute_swap(
     ];
     
     let protostones = parse_protostones(&calldata)?;
-    
+
     // Build execute params
     let mut executor = EnhancedAlkanesExecutor::new(provider);
     let execute_params = EnhancedExecuteParams {
@@ -210,6 +212,8 @@ pub async fn execute_swap(
         trace_enabled: params.trace,
         mine_enabled: false,
         auto_confirm: params.auto_confirm,
+        ordinals_strategy: super::types::OrdinalsStrategy::default(),
+        mempool_indexer: false,
     };
     
     // Execute

@@ -152,6 +152,48 @@ impl Commands {
             command: WalletCommands::Info,
         }
     }
+
+    /// Check if the command requires wallet access (reading the keystore)
+    /// Read-only query commands don't need the wallet at all
+    pub fn requires_wallet(&self) -> bool {
+        match self {
+            // Wallet commands need the wallet (for info, addresses, etc.)
+            Commands::Wallet { command } => command.requires_wallet(),
+            Commands::Walletinfo { .. } => true,
+            // Bitcoin RPC queries don't need wallet
+            Commands::Bitcoind { .. } => false,
+            // Metashrew queries don't need wallet
+            Commands::Metashrew { .. } => false,
+            // Alkanes commands - only some need wallet
+            Commands::Alkanes { command } => command.requires_wallet(),
+            // BRC20-Prog commands - only some need wallet
+            Commands::Brc20Prog { command } => command.requires_wallet(),
+            // Runestone decoding doesn't need wallet
+            Commands::Runestone { .. } => false,
+            // Protorunes queries don't need wallet
+            Commands::Protorunes { .. } => false,
+            // Monitor commands don't need wallet
+            Commands::Monitor { .. } => false,
+            // Esplora queries don't need wallet
+            Commands::Esplora { .. } => false,
+            // Ord queries don't need wallet
+            Commands::Ord(_) => false,
+            // Subfrost queries don't need wallet (only queries unwrap status)
+            Commands::Subfrost { .. } => false,
+            // ESPO indexer queries don't need wallet
+            Commands::Espo { .. } => false,
+            // PSBT decoding doesn't need wallet
+            Commands::Decodepsbt { .. } => false,
+        }
+    }
+}
+
+impl WalletCommands {
+    /// Check if this wallet command requires wallet access
+    pub fn requires_wallet(&self) -> bool {
+        // All wallet commands need the wallet except Create (which creates a new one)
+        !matches!(self, WalletCommands::Create { .. })
+    }
 }/// Wallet subcommands
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
 pub enum WalletCommands {
@@ -754,6 +796,12 @@ impl AlkanesCommands {
     pub fn requires_signing(&self) -> bool {
         matches!(self, AlkanesCommands::Execute { .. } | AlkanesCommands::WrapBtc { .. })
     }
+
+    /// Check if the command requires wallet access (reading the keystore)
+    /// Only signing commands need the wallet
+    pub fn requires_wallet(&self) -> bool {
+        self.requires_signing()
+    }
 }
 
 /// BRC20-Prog contract subcommands
@@ -1083,6 +1131,12 @@ impl Brc20ProgCommands {
             // All other commands require signing
             _ => true,
         }
+    }
+
+    /// Check if the command requires wallet access (reading the keystore)
+    /// Only signing commands need the wallet
+    pub fn requires_wallet(&self) -> bool {
+        self.requires_signing()
     }
 }
 

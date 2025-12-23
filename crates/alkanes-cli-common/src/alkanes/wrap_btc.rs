@@ -96,6 +96,8 @@ impl<'a> WrapBtcExecutor<'a> {
             trace_enabled: params.trace_enabled,
             mine_enabled: params.mine_enabled,
             auto_confirm: params.auto_confirm,
+            ordinals_strategy: crate::alkanes::types::OrdinalsStrategy::default(),
+            mempool_indexer: false,
         };
 
         // Execute using the enhanced alkanes executor

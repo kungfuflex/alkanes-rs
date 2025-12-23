@@ -9,6 +9,99 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// Custom deserializer for created_at that handles both u64 and ISO date strings
+mod created_at_deserializer {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(*value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum CreatedAt {
+            Timestamp(u64),
+            IsoString(alloc::string::String),
+        }
+
+        match CreatedAt::deserialize(deserializer)? {
+            CreatedAt::Timestamp(ts) => Ok(ts),
+            CreatedAt::IsoString(s) => {
+                // Try to parse ISO 8601 date string
+                // Format: "2025-12-22T19:28:47.126Z"
+                // We'll parse it manually since chrono may not be available
+                parse_iso_date(&s).map_err(serde::de::Error::custom)
+            }
+        }
+    }
+
+    fn parse_iso_date(s: &str) -> Result<u64, &'static str> {
+        // Simple ISO 8601 parser for format: YYYY-MM-DDTHH:MM:SS.sssZ
+        // Returns Unix timestamp in seconds
+        let s = s.trim();
+
+        // Remove trailing Z if present
+        let s = s.strip_suffix('Z').unwrap_or(s);
+
+        // Split by T to get date and time parts
+        let parts: alloc::vec::Vec<&str> = s.split('T').collect();
+        if parts.len() != 2 {
+            return Err("Invalid ISO date format: missing T separator");
+        }
+
+        let date_parts: alloc::vec::Vec<&str> = parts[0].split('-').collect();
+        if date_parts.len() != 3 {
+            return Err("Invalid date format");
+        }
+
+        let year: i64 = date_parts[0].parse().map_err(|_| "Invalid year")?;
+        let month: u32 = date_parts[1].parse().map_err(|_| "Invalid month")?;
+        let day: u32 = date_parts[2].parse().map_err(|_| "Invalid day")?;
+
+        // Handle time part (may have milliseconds)
+        let time_str = parts[1].split('.').next().unwrap_or(parts[1]);
+        let time_parts: alloc::vec::Vec<&str> = time_str.split(':').collect();
+        if time_parts.len() != 3 {
+            return Err("Invalid time format");
+        }
+
+        let hour: u32 = time_parts[0].parse().map_err(|_| "Invalid hour")?;
+        let minute: u32 = time_parts[1].parse().map_err(|_| "Invalid minute")?;
+        let second: u32 = time_parts[2].parse().map_err(|_| "Invalid second")?;
+
+        // Calculate Unix timestamp
+        // Days from Unix epoch (1970-01-01) to the given date
+        let days = days_since_epoch(year, month, day);
+        let timestamp = (days as u64) * 86400 + (hour as u64) * 3600 + (minute as u64) * 60 + (second as u64);
+
+        Ok(timestamp)
+    }
+
+    fn days_since_epoch(year: i64, month: u32, day: u32) -> i64 {
+        // Calculate days since 1970-01-01
+        let mut y = year;
+        let m = month as i64;
+
+        // Adjust for months before March
+        let a = (14 - m) / 12;
+        y -= a;
+        let m = m + 12 * a - 3;
+
+        // Julian day number calculation
+        let jdn = day as i64 + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
+
+        // Unix epoch is Julian day 2440588
+        jdn - 2440588
+    }
+}
+
 /// Represents the entire JSON keystore.
 /// This structure is designed to be stored in a file, with the seed
 /// encrypted using PGP.
@@ -18,7 +111,8 @@ pub struct Keystore {
     pub encrypted_mnemonic: String,
     /// Master fingerprint for identification.
     pub master_fingerprint: String,
-    /// Creation timestamp (Unix epoch).
+    /// Creation timestamp (Unix epoch or ISO 8601 string).
+    #[serde(with = "created_at_deserializer")]
     pub created_at: u64,
     /// Version of the keystore format.
     pub version: String,

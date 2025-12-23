@@ -30,6 +30,13 @@ pub use crate::provider::WebProvider;
 use alkanes_cli_common::AlkanesProvider;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
+/// Initialize the panic hook for better error messages in WASM
+/// This should be called early in your application
+#[wasm_bindgen]
+pub fn init_panic_hook() {
+    console_error_panic_hook::set_once();
+}
+
 
 pub mod crypto;
 pub mod keystore;

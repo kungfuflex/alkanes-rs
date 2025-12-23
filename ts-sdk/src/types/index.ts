@@ -222,6 +222,7 @@ export type {
  */
 export type {
   AlkaneId as AlkanesAlkaneId,
+  OrdinalsStrategy,
   AlkanesExecuteBaseParams,
   FrbtcWrapParams,
   FrbtcUnwrapParams,

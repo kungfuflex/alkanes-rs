@@ -258,6 +258,7 @@ export const frbtc_unwrap: (a: number, b: number, c: bigint, d: bigint, e: numbe
 export const frbtc_wrap_and_execute: (a: number, b: number, c: bigint, d: number, e: number, f: number, g: number) => any;
 export const frbtc_wrap_and_execute2: (a: number, b: number, c: bigint, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => any;
 export const frbtc_get_signer_address: (a: number, b: number) => any;
+export const init_panic_hook: () => void;
 export const __wbg_keystore_free: (a: number, b: number) => void;
 export const __wbg_pbkdfparams_free: (a: number, b: number) => void;
 export const pbkdfparams_from_js: (a: any) => [number, number, number];
@@ -287,6 +288,6 @@ export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) =>
 export const __wbindgen_exn_store: (a: number) => void;
 export const __externref_table_alloc: () => number;
 export const __wbindgen_externrefs: WebAssembly.Table;
-export const __externref_table_dealloc: (a: number) => void;
 export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_table_dealloc: (a: number) => void;
 export const __wbindgen_start: () => void;

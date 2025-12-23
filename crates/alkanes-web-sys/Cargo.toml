@@ -36,6 +36,7 @@ protobuf = { workspace = true }
 pbkdf2 = { workspace = true }
 aes-gcm = { workspace = true }
 once_cell = { workspace = true }
+console_error_panic_hook = "0.1"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.34"

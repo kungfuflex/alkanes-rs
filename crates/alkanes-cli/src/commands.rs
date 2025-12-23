@@ -2462,3 +2462,102 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
     }
 }
 
+// Wallet requirement checks for commands
+
+impl Commands {
+    /// Check if the command requires wallet access (reading the keystore)
+    /// Read-only query commands don't need the wallet at all
+    pub fn requires_wallet(&self) -> bool {
+        match self {
+            // Bitcoin RPC queries don't need wallet
+            Commands::Bitcoind(_) => false,
+            // Esplora queries don't need wallet
+            Commands::Esplora(_) => false,
+            // Ord queries don't need wallet
+            Commands::Ord(_) => false,
+            // Alkanes commands - only some need wallet
+            Commands::Alkanes(cmd) => cmd.requires_wallet(),
+            // BRC20-Prog commands - only some need wallet
+            Commands::Brc20Prog(cmd) => cmd.requires_wallet(),
+            // Runestone decoding doesn't need wallet
+            Commands::Runestone(_) => false,
+            // Protorunes queries don't need wallet
+            Commands::Protorunes(_) => false,
+            // Wallet commands need the wallet
+            Commands::Wallet(cmd) => cmd.requires_wallet(),
+            // Metashrew queries don't need wallet
+            Commands::Metashrew(_) => false,
+            // Lua script execution doesn't need wallet
+            Commands::Lua(_) => false,
+            // DataAPI queries don't need wallet
+            Commands::Dataapi(_) => false,
+            // OPI queries don't need wallet
+            Commands::Opi(_) => false,
+            // Subfrost queries don't need wallet
+            Commands::Subfrost(_) => false,
+            // ESPO queries don't need wallet
+            Commands::Espo(_) => false,
+            // PSBT decoding doesn't need wallet
+            Commands::Decodepsbt { .. } => false,
+        }
+    }
+}
+
+impl Alkanes {
+    /// Check if the command requires wallet access
+    pub fn requires_wallet(&self) -> bool {
+        // Only signing commands need the wallet
+        matches!(
+            self,
+            Alkanes::Execute(_)
+                | Alkanes::WrapBtc { .. }
+                | Alkanes::InitPool { .. }
+                | Alkanes::Swap { .. }
+        )
+    }
+}
+
+impl Brc20Prog {
+    /// Check if the command requires wallet access
+    pub fn requires_wallet(&self) -> bool {
+        match self {
+            // Query commands don't require wallet
+            Brc20Prog::Unwrap { .. } => false,
+            Brc20Prog::SignerAddress { .. } => false,
+            Brc20Prog::GetContractDeploys { .. } => false,
+            Brc20Prog::GetCode { .. } => false,
+            Brc20Prog::Call { .. } => false,
+            Brc20Prog::GetBalance { .. } => false,
+            Brc20Prog::EstimateGas { .. } => false,
+            Brc20Prog::BlockNumber { .. } => false,
+            Brc20Prog::GetBlockByNumber { .. } => false,
+            Brc20Prog::GetBlockByHash { .. } => false,
+            Brc20Prog::GetTransactionCount { .. } => false,
+            Brc20Prog::GetTransaction { .. } => false,
+            Brc20Prog::GetTransactionReceipt { .. } => false,
+            Brc20Prog::GetStorageAt { .. } => false,
+            Brc20Prog::GetLogs { .. } => false,
+            Brc20Prog::ChainId { .. } => false,
+            Brc20Prog::GasPrice { .. } => false,
+            Brc20Prog::Version { .. } => false,
+            Brc20Prog::GetReceiptByInscription { .. } => false,
+            Brc20Prog::GetInscriptionByTx { .. } => false,
+            Brc20Prog::GetInscriptionByContract { .. } => false,
+            Brc20Prog::Brc20Balance { .. } => false,
+            Brc20Prog::TraceTransaction { .. } => false,
+            Brc20Prog::TxpoolContent { .. } => false,
+            Brc20Prog::ClientVersion { .. } => false,
+            // All other commands (deploy, transact, wrap, unwrap-btc) require wallet
+            _ => true,
+        }
+    }
+}
+
+impl WalletCommands {
+    /// Check if this wallet command requires wallet access
+    pub fn requires_wallet(&self) -> bool {
+        // All wallet commands need the wallet except Create (which creates a new one)
+        !matches!(self, WalletCommands::Create { .. })
+    }
+}
+

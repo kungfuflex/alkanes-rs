@@ -1869,6 +1869,8 @@ impl DeezelProvider for BrowserWalletProvider {
             trace_enabled: false,
             mine_enabled: is_regtest,
             auto_confirm: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
         };
 
         match executor.execute(params).await? {
@@ -1907,6 +1909,8 @@ impl DeezelProvider for BrowserWalletProvider {
             trace_enabled: false,
             mine_enabled: is_regtest,
             auto_confirm: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
         };
 
         match executor.execute(params).await? {

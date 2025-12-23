@@ -76,6 +76,23 @@ impl fmt::Display for AlkaneId {
     }
 }
 
+/// Strategy for handling UTXOs that contain ordinal inscriptions
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OrdinalsStrategy {
+    /// Exclude inscribed UTXOs from selection (default)
+    /// Fails if no clean UTXOs are available to satisfy requirements
+    #[default]
+    Exclude,
+    /// Preserve inscriptions by splitting UTXOs before spending
+    /// Creates a split transaction that sends inscribed sats to a safe output
+    /// Uses sendrawtransactions to atomically broadcast split + main transaction
+    Preserve,
+    /// Allow spending inscribed UTXOs without protection (burns the inscription)
+    /// Use with caution - this will destroy any inscriptions on spent UTXOs
+    Burn,
+}
+
 /// Input requirement specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InputRequirement {
@@ -300,11 +317,28 @@ pub struct EnhancedExecuteParams {
     pub trace_enabled: bool,
     pub mine_enabled: bool,
     pub auto_confirm: bool,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    /// - exclude: Fail if we must spend inscribed UTXOs (default)
+    /// - preserve: Split UTXOs to protect inscriptions, use sendrawtransactions
+    /// - burn: Allow spending inscribed UTXOs without protection
+    #[serde(default)]
+    pub ordinals_strategy: OrdinalsStrategy,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    /// When enabled, if we must use pending (unconfirmed) UTXOs, we'll trace back
+    /// through parent transactions to determine inscription state from settled UTXOs
+    #[serde(default)]
+    pub mempool_indexer: bool,
 }
 
 /// Enhanced execute result for commit/reveal pattern
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedExecuteResult {
+    /// Split transaction ID (if inscribed UTXOs were split to protect inscriptions)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_txid: Option<String>,
+    /// Split transaction fee (if split was needed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_fee: Option<u64>,
     pub commit_txid: Option<String>,
     pub reveal_txid: String,
     pub commit_fee: Option<u64>,
@@ -338,6 +372,13 @@ pub struct ReadyToSignTx {
     /// Estimated virtual size in vbytes (includes witness data)
     pub estimated_vsize: usize,
     pub inspection_result: Option<AlkanesInspectResult>,
+    /// Optional split transaction PSBT for protecting inscribed UTXOs
+    /// When present, this should be signed and broadcast atomically with the main tx
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "serde_psbt_option")]
+    pub split_psbt: Option<bitcoin::psbt::Psbt>,
+    /// Fee for the split transaction (if any)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_fee: Option<u64>,
 }
 
 /// Contains the necessary information for signing a commit transaction.
@@ -397,6 +438,33 @@ mod serde_psbt {
     {
         let bytes: Vec<u8> = serde::de::Deserialize::deserialize(deserializer)?;
         Psbt::deserialize(&bytes).map_err(Error::custom)
+    }
+}
+
+mod serde_psbt_option {
+    use bitcoin::psbt::Psbt;
+    use serde::{self, Deserializer, Serializer, de::Error};
+    use alloc::vec::Vec;
+
+    pub fn serialize<S>(psbt_opt: &Option<Psbt>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match psbt_opt {
+            Some(psbt) => serializer.serialize_some(&psbt.serialize()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Psbt>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<Vec<u8>> = serde::de::Deserialize::deserialize(deserializer)?;
+        match opt {
+            Some(bytes) => Ok(Some(Psbt::deserialize(&bytes).map_err(Error::custom)?)),
+            None => Ok(None),
+        }
     }
 }
 

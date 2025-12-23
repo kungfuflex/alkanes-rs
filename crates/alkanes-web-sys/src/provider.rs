@@ -731,6 +731,8 @@ impl WebProvider {
                 trace_enabled,
                 mine_enabled,
                 auto_confirm,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
             };
 
             provider.execute(params).await
@@ -826,6 +828,8 @@ impl WebProvider {
                 trace_enabled,
                 mine_enabled,
                 auto_confirm,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
             };
 
             // Use execute_full to handle the complete flow internally
@@ -3457,6 +3461,16 @@ impl WebProvider {
                 return Err(JsValue::from_str("Wallet not loaded. Call walletLoadMnemonic first."));
             }
 
+            // Parse ordinals_strategy
+            let ordinals_strategy = params.get("ordinals_strategy")
+                .and_then(|v| v.as_str())
+                .map(|s| match s {
+                    "preserve" => alkanes_cli_common::alkanes::types::OrdinalsStrategy::Preserve,
+                    "burn" => alkanes_cli_common::alkanes::types::OrdinalsStrategy::Burn,
+                    _ => alkanes_cli_common::alkanes::types::OrdinalsStrategy::Exclude,
+                })
+                .unwrap_or_default();
+
             let send_params = SendParams {
                 address: params.get("address")
                     .and_then(|v| v.as_str())
@@ -3477,6 +3491,8 @@ impl WebProvider {
                 use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).unwrap_or(0) as u8,
                 lock_alkanes: params.get("lock_alkanes").and_then(|v| v.as_bool()).unwrap_or(false),
+                ordinals_strategy,
+                mempool_indexer: params.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let txid = provider.send(send_params).await
@@ -5051,16 +5067,22 @@ impl JsonRpcProvider for WebProvider {
             .map_err(|e| AlkanesError::Serialization(format!("Failed to parse JSON: {e}")))?;
 
         self.logger.info(&format!("JsonRpcProvider::call <- Raw RPC response: {}", response_str));
- 
+
+        self.logger.info("[DEBUG] call: checking for error in response");
         if let Some(error) = response_json.get("error") {
+            self.logger.info("[DEBUG] call: found error field");
             if !error.is_null() {
+                self.logger.info("[DEBUG] call: error is not null, returning error");
                 return Err(AlkanesError::JsonRpc(format!("JSON-RPC error: {error}")));
             }
         }
 
-        response_json.get("result")
+        self.logger.info("[DEBUG] call: extracting result");
+        let result = response_json.get("result")
             .cloned()
-            .ok_or_else(|| AlkanesError::JsonRpc("No result in JSON-RPC response".to_string()))
+            .ok_or_else(|| AlkanesError::JsonRpc("No result in JSON-RPC response".to_string()))?;
+        self.logger.info("[DEBUG] call: returning result successfully");
+        Ok(result)
     }
 
 }
@@ -5991,7 +6013,10 @@ impl WalletProvider for WebProvider {
         } else {
             // Use bitcoind sendrawtransaction RPC instead of esplora broadcast
             // The esplora_broadcast method is not supported by Sandshrew/subfrost RPC
-            <Self as BitcoinRpcProvider>::send_raw_transaction(self, &tx_hex).await
+            self.logger.info("[DEBUG] broadcast_transaction: calling send_raw_transaction");
+            let result = <Self as BitcoinRpcProvider>::send_raw_transaction(self, &tx_hex).await;
+            self.logger.info(&format!("[DEBUG] broadcast_transaction: send_raw_transaction returned {:?}", result.is_ok()));
+            result
         }
     }
     
@@ -6296,9 +6321,13 @@ impl BitcoinRpcProvider for WebProvider {
     }
     
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
+        self.logger.info("[DEBUG] send_raw_transaction: before call");
         let params = serde_json::json!([tx_hex]);
         let result = self.call(&self.sandshrew_rpc_url(), "sendrawtransaction", params, 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
+        self.logger.info(&format!("[DEBUG] send_raw_transaction: after call, result type: {:?}", result));
+        let txid = result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))?;
+        self.logger.info(&format!("[DEBUG] send_raw_transaction: returning txid: {}", txid));
+        Ok(txid)
     }
 
     async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
@@ -7346,6 +7375,8 @@ impl DeezelProvider for WebProvider {
             trace_enabled: false,
             mine_enabled: is_regtest,
             auto_confirm: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
         };
 
         match executor.execute(params).await? {
@@ -7382,6 +7413,8 @@ impl DeezelProvider for WebProvider {
             trace_enabled: false,
             mine_enabled: is_regtest,
             auto_confirm: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
         };
 
         match executor.execute(params).await? {

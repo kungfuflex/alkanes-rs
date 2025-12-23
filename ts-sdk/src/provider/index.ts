@@ -1537,11 +1537,19 @@ export class AlkanesProvider {
       const nodeLoaderModule = await import(/* @vite-ignore */ loaderPath);
       const nodeLoader = nodeLoaderModule.default || nodeLoaderModule;
       await nodeLoader.init();
+      // Initialize panic hook for better error messages
+      if (nodeLoader.init_panic_hook) {
+        nodeLoader.init_panic_hook();
+      }
       WebProviderClass = nodeLoader.WebProvider;
     } else {
       // Browser: Use the ESM module (expects bundler support)
       const wasmPath = '@alkanes/ts-sdk' + '/wasm';
       const wasm = await import(/* @vite-ignore */ wasmPath);
+      // Initialize panic hook for better error messages
+      if (wasm.init_panic_hook) {
+        wasm.init_panic_hook();
+      }
       WebProviderClass = wasm.WebProvider;
     }
 

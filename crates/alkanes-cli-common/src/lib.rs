@@ -86,6 +86,7 @@ pub mod index_pointer;
 pub mod byte_view;
 pub mod proto;
 pub mod subfrost;
+pub mod ordinals;
 
 #[cfg(feature = "std")]
 pub mod dataapi;

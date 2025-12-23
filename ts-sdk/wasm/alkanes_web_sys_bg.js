@@ -241,6 +241,14 @@ function passArrayJsValueToWasm0(array, malloc) {
     return ptr;
 }
 /**
+ * Initialize the panic hook for better error messages in WASM
+ * This should be called early in your application
+ */
+export function init_panic_hook() {
+    wasm.init_panic_hook();
+}
+
+/**
  * @param {string} psbt_base64
  * @param {string} network_str
  * @returns {string}
@@ -4043,6 +4051,18 @@ export function __wbg_entries_e171b586f8f6bdbf(arg0) {
     return ret;
 };
 
+export function __wbg_error_7534b8e9a36f1ab4(arg0, arg1) {
+    let deferred0_0;
+    let deferred0_1;
+    try {
+        deferred0_0 = arg0;
+        deferred0_1 = arg1;
+        console.error(getStringFromWasm0(arg0, arg1));
+    } finally {
+        wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
+    }
+};
+
 export function __wbg_fetch_74a3e84ebd2c9a0e(arg0) {
     const ret = fetch(arg0);
     return ret;
@@ -4320,6 +4340,11 @@ export function __wbg_new_68651c719dcda04e() {
     return ret;
 };
 
+export function __wbg_new_8a6f238a6ece86ea() {
+    const ret = new Error();
+    return ret;
+};
+
 export function __wbg_new_9edf9838a2def39c() { return handleError(function () {
     const ret = new Headers();
     return ret;
@@ -4510,6 +4535,14 @@ export function __wbg_signal_4db5aa055bf9eb9a(arg0) {
     return ret;
 };
 
+export function __wbg_stack_0ed75d68575b0f3c(arg0, arg1) {
+    const ret = arg1.stack;
+    const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+    getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+};
+
 export function __wbg_static_accessor_GLOBAL_89e1d9ac6a1b250e() {
     const ret = typeof global === 'undefined' ? null : global;
     return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
@@ -4614,8 +4647,8 @@ export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_9a1f949948a7a762(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 4146, function: Function { arguments: [Externref], shim_idx: 4147, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+export function __wbindgen_cast_655844324c073c69(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 4157, function: Function { arguments: [Externref], shim_idx: 4158, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
@@ -4623,12 +4656,6 @@ export function __wbindgen_cast_9a1f949948a7a762(arg0, arg1) {
 export function __wbindgen_cast_9ae0607507abb057(arg0) {
     // Cast intrinsic for `I64 -> Externref`.
     const ret = arg0;
-    return ret;
-};
-
-export function __wbindgen_cast_ca142fbd1a7f63ee(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3441, function: Function { arguments: [], shim_idx: 3442, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb154d7ec25b6c414, wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925);
     return ret;
 };
 
@@ -4647,6 +4674,12 @@ export function __wbindgen_cast_d6cd19b81560fd6e(arg0) {
 export function __wbindgen_cast_e7b45dd881f38ce3(arg0, arg1) {
     // Cast intrinsic for `U128 -> Externref`.
     const ret = (BigInt.asUintN(64, arg0) | (BigInt.asUintN(64, arg1) << BigInt(64)));
+    return ret;
+};
+
+export function __wbindgen_cast_fd7003d8d11b706d(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3452, function: Function { arguments: [], shim_idx: 3453, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb154d7ec25b6c414, wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925);
     return ret;
 };
 

@@ -5,7 +5,8 @@
 
 use crate::traits::*;
 use crate::{
-    alkanes::types::{ExecutionState, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx},
+    alkanes::types::{ExecutionState, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx, OrdinalsStrategy},
+    ordinals::OrdinalsHandler,
     AlkanesError, JsonValue, Result,
 };
 use serde_json::json;
@@ -1423,7 +1424,7 @@ impl WalletProvider for ConcreteProvider {
 
         // 5. Perform coin selection
         let fee_rate = params.fee_rate.unwrap_or(1.0); // Default to 1 sat/vbyte
-        
+
         let (selected_utxos, total_input_amount) = if params.send_all {
             // For --send-all, use ALL available clean UTXOs
             log::info!("--send-all mode: selecting all {} clean UTXOs", clean_utxos.len());
@@ -1435,7 +1436,60 @@ impl WalletProvider for ConcreteProvider {
             self.select_coins(clean_utxos, target_amount)?
         };
 
-        // 5. Build the transaction skeleton
+        // 5a. Check selected UTXOs for ordinal inscriptions using the ordinals handler
+        if params.ordinals_strategy != OrdinalsStrategy::Burn {
+            let ordinals_handler = OrdinalsHandler::new(self);
+
+            // Convert selected UTXOs to (OutPoint, TxOut) format for checking
+            let mut funding_utxos: Vec<(OutPoint, TxOut)> = Vec::new();
+            for utxo in &selected_utxos {
+                let outpoint = OutPoint {
+                    txid: bitcoin::Txid::from_str(&utxo.txid)?,
+                    vout: utxo.vout,
+                };
+                // Get the script pubkey for this UTXO
+                let script_pubkey = if let Some(ref sp) = utxo.script_pubkey {
+                    sp.clone()
+                } else {
+                    // Derive from address
+                    let network = self.get_network();
+                    let addr = Address::from_str(&utxo.address)?.require_network(network)?;
+                    addr.script_pubkey()
+                };
+                let txout = TxOut {
+                    value: Amount::from_sat(utxo.amount),
+                    script_pubkey,
+                };
+                funding_utxos.push((outpoint, txout));
+            }
+
+            // Check for inscriptions
+            let check_result = ordinals_handler.check_utxos_for_inscriptions(
+                &funding_utxos,
+                params.ordinals_strategy.clone(),
+                fee_rate,
+                params.mempool_indexer,
+            ).await?;
+
+            // If Preserve strategy detected inscriptions, we need to error for wallet send
+            // (split transaction support for wallet send is not yet implemented)
+            if let Some(split_plans) = check_result {
+                if !split_plans.is_empty() {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Cannot proceed: {} UTXO(s) contain inscriptions and require splitting.\n\
+                        Wallet send does not yet support split transactions for inscription protection.\n\
+                        Options:\n\
+                        1. Use --ordinals-strategy exclude and specify --from with clean UTXOs\n\
+                        2. Use --ordinals-strategy burn to allow spending (destroys inscriptions)\n\
+                        3. Use 'alkanes execute' for complex operations with split transaction support",
+                        split_plans.len()
+                    )));
+                }
+            }
+            // If check_result is None or empty, no inscriptions found, proceed normally
+        }
+
+        // 6. Build the transaction skeleton
         let mut tx = Transaction {
             version: bitcoin::transaction::Version(2),
             lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -4025,22 +4079,66 @@ impl BitcoinRpcProvider for ConcreteProvider {
     }
 
     async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        // If only one transaction, just use the single method
+        if tx_hexes.len() == 1 {
+            let txid = self.send_raw_transaction(&tx_hexes[0]).await?;
+            return Ok(vec![txid]);
+        }
+
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let maxfeerate = 0.1;
         let maxburnamount = 0.1;
         let params = json!([tx_hexes, maxfeerate, maxburnamount]);
-        let result = self.call(&rpc_url, "sendrawtransactions", params, 1).await?;
 
-        // Parse array of txids
-        result.as_array()
-            .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransactions response".to_string()))?
-            .iter()
-            .map(|v| v.as_str()
-                .ok_or_else(|| AlkanesError::RpcError("Invalid txid in response".to_string()))
-                .map(|s| s.to_string()))
-            .collect()
+        // Try batch sendrawtransactions first
+        match self.call(&rpc_url, "sendrawtransactions", params, 1).await {
+            Ok(result) => {
+                // Parse array of txids
+                result.as_array()
+                    .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransactions response".to_string()))?
+                    .iter()
+                    .map(|v| v.as_str()
+                        .ok_or_else(|| AlkanesError::RpcError("Invalid txid in response".to_string()))
+                        .map(|s| s.to_string()))
+                    .collect()
+            }
+            Err(e) => {
+                // Check if this is a "method not found" error - fallback to iterative broadcast
+                let err_str = e.to_string().to_lowercase();
+                if err_str.contains("method not found") || err_str.contains("unknown method") || err_str.contains("-32601") {
+                    log::warn!("sendrawtransactions not available, falling back to sequential broadcast");
+                    log::warn!("⚠️ Sequential broadcast may be vulnerable to MEV/frontrunning");
+
+                    let mut txids = Vec::with_capacity(tx_hexes.len());
+                    for (i, tx_hex) in tx_hexes.iter().enumerate() {
+                        match self.send_raw_transaction(tx_hex).await {
+                            Ok(txid) => {
+                                log::info!("Broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), txid);
+                                txids.push(txid);
+                            }
+                            Err(tx_err) => {
+                                // If we've already broadcast some, log the failure but don't abort
+                                // This allows partial success tracking
+                                if !txids.is_empty() {
+                                    log::error!("Failed to broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), tx_err);
+                                    return Err(AlkanesError::RpcError(format!(
+                                        "Partial broadcast failure: {} of {} transactions broadcast. Failed at tx {}: {}",
+                                        txids.len(), tx_hexes.len(), i + 1, tx_err
+                                    )));
+                                }
+                                return Err(tx_err);
+                            }
+                        }
+                    }
+                    Ok(txids)
+                } else {
+                    // Some other error - propagate it
+                    Err(e)
+                }
+            }
+        }
     }
 
     async fn get_mempool_info(&self) -> Result<JsonValue> {

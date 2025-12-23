@@ -1329,6 +1329,9 @@ var init_provider = __esm({
           );
           const nodeLoader = nodeLoaderModule.default || nodeLoaderModule;
           await nodeLoader.init();
+          if (nodeLoader.init_panic_hook) {
+            nodeLoader.init_panic_hook();
+          }
           WebProviderClass = nodeLoader.WebProvider;
         } else {
           const wasmPath = "@alkanes/ts-sdk/wasm";
@@ -1336,6 +1339,9 @@ var init_provider = __esm({
             /* @vite-ignore */
             wasmPath
           );
+          if (wasm.init_panic_hook) {
+            wasm.init_panic_hook();
+          }
           WebProviderClass = wasm.WebProvider;
         }
         const providerName = this.networkPreset === "local" ? "regtest" : this.networkPreset;
@@ -6588,7 +6594,7 @@ function registerWalletCommands(program2) {
       process.exit(1);
     }
   });
-  wallet.command("send <address> <amount>").description("Send BTC to an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.").option("--fee-rate <sats/vB>", "Fee rate in satoshis per virtual byte", "1").option("--from <spec>", "Source addresses (e.g., p2tr:0-5)").action(async (address, amount, options, command) => {
+  wallet.command("send <address> <amount>").description("Send BTC to an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.").option("--fee-rate <sats/vB>", "Fee rate in satoshis per virtual byte", "1").option("--from <spec>", "Source addresses (e.g., p2tr:0-5)").option("--ordinals-strategy <strategy>", "How to handle inscribed UTXOs: exclude (default), preserve, burn", "exclude").option("--mempool-indexer", "Enable mempool indexer for tracing inscription state of pending UTXOs").action(async (address, amount, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const walletPath = expandPath(globalOpts.walletFile || "~/.alkanes/wallet.json");
@@ -6643,7 +6649,9 @@ function registerWalletCommands(program2) {
           amount: Math.round(parseFloat(amount) * 1e8),
           // Convert BTC to satoshis
           fee_rate: parseFloat(options.feeRate),
-          from: resolvedFrom
+          from: resolvedFrom,
+          ordinals_strategy: options.ordinalsStrategy || "exclude",
+          mempool_indexer: options.mempoolIndexer || false
         };
         const txid = await rawProvider.walletSend(JSON.stringify(sendParams));
         spinner.succeed("Transaction broadcast successfully!");
@@ -7843,7 +7851,7 @@ function registerAlkanesCommands(program2) {
       process.exit(1);
     }
   });
-  alkanes.command("execute").description("Execute an alkanes smart contract").option("--contract <id>", "Contract ID").option("--inputs <json>", "Input parameters JSON").option("--target <target>", "Target address").option("--pointer <pointer>", "Pointer value").option("--refund-pointer <pointer>", "Refund pointer").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (options, command) => {
+  alkanes.command("execute").description("Execute an alkanes smart contract").option("--contract <id>", "Contract ID").option("--inputs <json>", "Input parameters JSON").option("--target <target>", "Target address").option("--pointer <pointer>", "Pointer value").option("--refund-pointer <pointer>", "Refund pointer").option("--feeRate <rate>", "Fee rate in sat/vB").option("--ordinals-strategy <strategy>", "Strategy for inscribed UTXOs: exclude (default), preserve, burn").option("--mempool-indexer", "Enable mempool tracing for pending UTXO inscriptions").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Executing contract...").start();
@@ -7858,7 +7866,9 @@ function registerAlkanesCommands(program2) {
         target: options.target,
         pointer: options.pointer ? parseInt(options.pointer) : void 0,
         refundPointer: options.refundPointer ? parseInt(options.refundPointer) : void 0,
-        feeRate: options.feeRate ? parseFloat(options.feeRate) : void 0
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : void 0,
+        ordinalsStrategy: options.ordinalsStrategy,
+        mempoolIndexer: options.mempoolIndexer
       };
       const result = await provider._provider.alkanesExecuteWithStrings(
         JSON.stringify(params.inputs),
@@ -7866,7 +7876,9 @@ function registerAlkanesCommands(program2) {
         params.pointer || 0,
         params.refundPointer || 0,
         params.target || "",
-        params.feeRate || 1
+        params.feeRate || 1,
+        params.ordinalsStrategy,
+        params.mempoolIndexer
       );
       spinner.succeed("Contract executed");
       console.log(formatOutput(JSON.parse(result), { raw: options.raw }));
@@ -7875,7 +7887,7 @@ function registerAlkanesCommands(program2) {
       process.exit(1);
     }
   });
-  alkanes.command("wrap-btc <amount>").description("Wrap BTC to frBTC").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (amount, options, command) => {
+  alkanes.command("wrap-btc <amount>").description("Wrap BTC to frBTC").option("--feeRate <rate>", "Fee rate in sat/vB").option("--ordinals-strategy <strategy>", "Strategy for inscribed UTXOs: exclude (default), preserve, burn").option("--mempool-indexer", "Enable mempool tracing for pending UTXO inscriptions").option("--raw", "Output raw JSON").action(async (amount, options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Wrapping BTC...").start();
@@ -7886,7 +7898,9 @@ function registerAlkanesCommands(program2) {
       });
       const params = {
         amount: parseInt(amount),
-        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1,
+        ordinals_strategy: options.ordinalsStrategy,
+        mempool_indexer: options.mempoolIndexer
       };
       const result = await provider._provider.alkanesWrapBtc(JSON.stringify(params));
       spinner.succeed("BTC wrapped");
@@ -7896,7 +7910,7 @@ function registerAlkanesCommands(program2) {
       process.exit(1);
     }
   });
-  alkanes.command("init-pool").description("Initialize a new AMM liquidity pool").option("--token0 <id>", "First token ID").option("--token1 <id>", "Second token ID").option("--amount0 <amount>", "Amount of first token").option("--amount1 <amount>", "Amount of second token").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (options, command) => {
+  alkanes.command("init-pool").description("Initialize a new AMM liquidity pool").option("--token0 <id>", "First token ID").option("--token1 <id>", "Second token ID").option("--amount0 <amount>", "Amount of first token").option("--amount1 <amount>", "Amount of second token").option("--feeRate <rate>", "Fee rate in sat/vB").option("--ordinals-strategy <strategy>", "Strategy for inscribed UTXOs: exclude (default), preserve, burn").option("--mempool-indexer", "Enable mempool tracing for pending UTXO inscriptions").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Initializing pool...").start();
@@ -7910,7 +7924,9 @@ function registerAlkanesCommands(program2) {
         token1: options.token1,
         amount0: options.amount0,
         amount1: options.amount1,
-        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1,
+        ordinals_strategy: options.ordinalsStrategy,
+        mempool_indexer: options.mempoolIndexer
       };
       const txid = await provider._provider.alkanesInitPool(JSON.stringify(params));
       spinner.succeed("Pool initialized");
@@ -7924,7 +7940,7 @@ function registerAlkanesCommands(program2) {
       process.exit(1);
     }
   });
-  alkanes.command("swap").description("Execute an AMM token swap").option("--token-in <id>", "Token to swap from").option("--token-out <id>", "Token to swap to").option("--amount-in <amount>", "Amount to swap").option("--min-amount-out <amount>", "Minimum output amount").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (options, command) => {
+  alkanes.command("swap").description("Execute an AMM token swap").option("--token-in <id>", "Token to swap from").option("--token-out <id>", "Token to swap to").option("--amount-in <amount>", "Amount to swap").option("--min-amount-out <amount>", "Minimum output amount").option("--feeRate <rate>", "Fee rate in sat/vB").option("--ordinals-strategy <strategy>", "Strategy for inscribed UTXOs: exclude (default), preserve, burn").option("--mempool-indexer", "Enable mempool tracing for pending UTXO inscriptions").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Executing swap...").start();
@@ -7938,7 +7954,9 @@ function registerAlkanesCommands(program2) {
         tokenOut: options.tokenOut,
         amountIn: options.amountIn,
         minAmountOut: options.minAmountOut || "0",
-        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1,
+        ordinals_strategy: options.ordinalsStrategy,
+        mempool_indexer: options.mempoolIndexer
       };
       const txid = await provider._provider.alkanesSwap(JSON.stringify(params));
       spinner.succeed("Swap executed");
@@ -7952,7 +7970,7 @@ function registerAlkanesCommands(program2) {
       process.exit(1);
     }
   });
-  alkanes.command("tx-script").description("Execute a tx-script with WASM bytecode").option("--bytecode <hex>", "WASM bytecode hex").option("--feeRate <rate>", "Fee rate in sat/vB").option("--raw", "Output raw JSON").action(async (options, command) => {
+  alkanes.command("tx-script").description("Execute a tx-script with WASM bytecode").option("--bytecode <hex>", "WASM bytecode hex").option("--feeRate <rate>", "Fee rate in sat/vB").option("--ordinals-strategy <strategy>", "Strategy for inscribed UTXOs: exclude (default), preserve, burn").option("--mempool-indexer", "Enable mempool tracing for pending UTXO inscriptions").option("--raw", "Output raw JSON").action(async (options, command) => {
     try {
       const globalOpts = command.parent?.parent?.opts() || {};
       const spinner = (0, import_ora3.default)("Executing tx-script...").start();
@@ -7963,7 +7981,9 @@ function registerAlkanesCommands(program2) {
       });
       const params = {
         bytecode: options.bytecode,
-        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1
+        feeRate: options.feeRate ? parseFloat(options.feeRate) : 1,
+        ordinals_strategy: options.ordinalsStrategy,
+        mempool_indexer: options.mempoolIndexer
       };
       const result = await provider._provider.alkanesTxScript(JSON.stringify(params));
       spinner.succeed("tx-script executed");
