@@ -70,7 +70,7 @@ use crate::key_utils::{make_smt_node_key, PREFIXES};
 use crate::traits::{BatchLike, KeyValueStoreLike};
 use anyhow::{anyhow, Result};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Database key prefix for SMT internal and leaf nodes
 ///
@@ -261,20 +261,22 @@ pub struct BatchedSMTHelper<T: KeyValueStoreLike> {
     ///
     /// This cache stores frequently accessed nodes to reduce database I/O.
     /// It's cleared after each block to ensure deterministic behavior.
-    node_cache: HashMap<[u8; 32], SMTNode>,
+    /// Uses BTreeMap for deterministic iteration order.
+    node_cache: BTreeMap<[u8; 32], SMTNode>,
     /// Pre-computed key hashes to avoid repeated SHA-256 operations
     ///
     /// Since key hashing is expensive and keys are often reused within
     /// a block, this cache provides significant performance benefits.
-    key_hash_cache: HashMap<Vec<u8>, [u8; 32]>,
+    /// Uses BTreeMap for deterministic iteration order.
+    key_hash_cache: BTreeMap<Vec<u8>, [u8; 32]>,
 }
 
 impl<T: KeyValueStoreLike> BatchedSMTHelper<T> {
     pub fn new(storage: T) -> Self {
         Self {
             storage,
-            node_cache: HashMap::new(),
-            key_hash_cache: HashMap::new(),
+            node_cache: BTreeMap::new(),
+            key_hash_cache: BTreeMap::new(),
         }
     }
 
@@ -354,8 +356,8 @@ impl<T: KeyValueStoreLike> BatchedSMTHelper<T> {
         let mut batch = self.storage.create_batch();
         
         // Use a map to track key lengths within this batch to handle multiple
-        // updates to the same key correctly.
-        let mut key_lengths: HashMap<Vec<u8>, u32> = HashMap::new();
+        // updates to the same key correctly. BTreeMap ensures deterministic order.
+        let mut key_lengths: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
 
         for (key, value) in key_values {
             // Get the length for the key, checking our in-memory map first.
@@ -387,10 +389,10 @@ impl<T: KeyValueStoreLike> BatchedSMTHelper<T> {
             key_lengths.insert(key.clone(), new_length);
         }
         
-        // MINIMAL SMT: Only compute and store the final root, not intermediate nodes
-        let new_root = self.compute_minimal_smt_root(prev_root, key_values)?;
+        // Full SMT: Compute and store intermediate nodes for state continuity across blocks
+        let new_root = self.compute_batched_smt_root(prev_root, key_values, height, &mut batch)?;
 
-        // Store ONLY the new root (not intermediate SMT nodes)
+        // Store the new root
         let root_key = format!("{}{}", SMT_ROOT_PREFIX, height).into_bytes();
         batch.put(root_key, new_root.to_vec());
 

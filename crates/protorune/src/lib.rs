@@ -5,11 +5,6 @@ use crate::protostone::{
     add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
 };
 use crate::tables::RuneTable;
-use alkanes_support::block_traits::{BlockLike, TransactionLike};
-use alkanes_support::{
-    parcel::AlkaneTransferParcel,
-    trace::{Trace, TraceEvent},
-};
 use anyhow::{anyhow, Ok, Result};
 use balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
@@ -34,7 +29,6 @@ use protorune_support::proto;
 use protorune_support::{
     balance_sheet::{BalanceSheet, ProtoruneRuneId},
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
-    rune_transfer::RuneTransfer,
     utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,13 +48,13 @@ pub mod protoburn;
 pub mod protorune_init;
 pub mod protostone;
 pub mod tables;
-#[cfg(feature = "zcash")]
-pub mod zcash;
 #[cfg(feature = "test-utils")]
 pub mod test_helpers;
 #[cfg(test)]
 pub mod tests;
 pub mod view;
+#[cfg(feature = "zcash")]
+pub mod zcash;
 
 pub struct Protorune(());
 
@@ -71,22 +65,6 @@ pub fn default_output(tx: &Transaction) -> u32 {
         }
     }
     0
-}
-
-pub fn save_trace(outpoint: &OutPoint, height: u64, trace: Trace) -> Result<()> {
-    use once_cell::sync::Lazy;
-    static TRACES: Lazy<IndexPointer> = Lazy::new(|| IndexPointer::from_keyword("/trace/"));
-    static TRACES_BY_HEIGHT: Lazy<IndexPointer> =
-        Lazy::new(|| IndexPointer::from_keyword("/trace/"));
-
-    let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;
-    TRACES.select(&buffer).set(Arc::<Vec<u8>>::new(
-        <Trace as Into<alkanes_support::proto::alkanes::AlkanesTrace>>::into(trace).encode_to_vec(),
-    ));
-    TRACES_BY_HEIGHT
-        .select_value(height)
-        .append(Arc::new(buffer));
-    Ok(())
 }
 
 pub fn num_op_return_outputs(tx: &Transaction) -> usize {
@@ -473,8 +451,8 @@ impl Protorune {
         .into();
         if !rune_id_bytes.is_empty() {
             let rune_id = ProtoruneRuneId::try_from(rune_id_bytes)?;
-            log_warning!(
-                "Duplicate rune name {} with rune id {:?} - skipping etching",
+            println!(
+                "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
                 name, rune_id
             );
             return Ok(());
@@ -567,7 +545,7 @@ impl Protorune {
         // TODO: chain name
         let minimum_name = Rune::minimum_at_height(Network::Bitcoin, ordinals::Height(block));
         if rune.n() < minimum_name.n() {
-            log_error!("Rune name not yet unlocked at block {}", block);
+            println!("error not unlocked");
             return Err(anyhow!("Given name is not unlocked yet"));
         }
         if rune.n() >= constants::RESERVED_NAME {
@@ -602,20 +580,8 @@ impl Protorune {
         Err(anyhow!("did not find a output index"))
     }
 
-    pub fn index_unspendables<B: BlockLike, T: MessageContext>(block: &B, height: u64) -> Result<()> {
-        // Create a Bitcoin block for Runestone processing
-        // This is needed because Runestone::decipher expects bitcoin::Transaction
-        let header = block.header();
-        let bitcoin_txs: Vec<Transaction> = block.transactions()
-            .iter()
-            .map(|tx| tx.to_bitcoin_tx())
-            .collect();
-        let bitcoin_block = Block {
-            header,
-            txdata: bitcoin_txs.clone(),
-        };
-        
-        for (index, tx) in bitcoin_txs.iter().enumerate() {
+    pub fn index_unspendables<T: MessageContext>(block: &Block, height: u64) -> Result<()> {
+        for (index, tx) in block.txdata.iter().enumerate() {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
                 let mut atomic = AtomicPointer::default();
                 let runestone_output_index: u32 = Self::get_runestone_output_index(tx)?;
@@ -625,11 +591,11 @@ impl Protorune {
                     runestone,
                     height,
                     index as u32,
-                    &bitcoin_block,
+                    block,
                     runestone_output_index,
                 ) {
                     Err(e) => {
-                        log_error!("Transaction processing failed: {:?}", e);
+                        println!("err: {:?}", e);
                         atomic.rollback();
                     }
                     _ => {
@@ -645,7 +611,7 @@ impl Protorune {
         }
         Ok(())
     }
-    pub fn index_spendables<Tx: TransactionLike>(txdata: &[Tx]) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
         // Track unique addresses that have their spendable outpoints updated
         #[cfg(feature = "cache")]
         let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
@@ -654,17 +620,17 @@ impl Protorune {
         let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
-            let tx_id = transaction.txid();
+            let tx_id = transaction.compute_txid();
             tables::RUNES
                 .TXID_TO_TXINDEX
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
-            for (_index, input) in transaction.inputs().iter().enumerate() {
+            for (_index, input) in transaction.input.iter().enumerate() {
                 tables::OUTPOINT_SPENDABLE_BY
                     .select(&consensus_encode(&input.previous_output)?)
                     .nullify();
             }
-            for (index, output) in transaction.outputs().iter().enumerate() {
+            for (index, output) in transaction.output.iter().enumerate() {
                 let outpoint = OutPoint {
                     txid: tx_id.clone(),
                     vout: index as u32,
@@ -770,23 +736,22 @@ impl Protorune {
         Ok(updated_addresses)
     }
 
-    pub fn index_transaction_ids<B: BlockLike>(block: &B, height: u64) -> Result<()> {
+    pub fn index_transaction_ids(block: &Block, height: u64) -> Result<()> {
         let ptr = tables::RUNES
             .HEIGHT_TO_TRANSACTION_IDS
             .select_value::<u64>(height);
-        for tx in block.transactions() {
-            ptr.append(Arc::new(tx.txid().as_byte_array().to_vec()));
+        for tx in &block.txdata {
+            ptr.append(Arc::new(tx.compute_txid().as_byte_array().to_vec()));
         }
         Ok(())
     }
-    pub fn index_outpoints<B: BlockLike>(block: &B, height: u64) -> Result<()> {
+    pub fn index_outpoints(block: &Block, height: u64) -> Result<()> {
         let mut atomic = AtomicPointer::default();
-        for tx in block.transactions() {
-            let tx_outputs = tx.outputs();
-            for i in 0..tx_outputs.len() {
+        for tx in &block.txdata {
+            for i in 0..tx.output.len() {
                 let outpoint_bytes = outpoint_encode(
                     &(OutPoint {
-                        txid: tx.txid(),
+                        txid: tx.compute_txid(),
                         vout: i as u32,
                     }),
                 )?;
@@ -797,8 +762,8 @@ impl Protorune {
                     .derive(&tables::OUTPOINT_TO_OUTPUT.select(&outpoint_bytes))
                     .set(Arc::new(
                         (proto::protorune::Output {
-                            script: tx_outputs[i].clone().script_pubkey.into_bytes(),
-                            value: tx_outputs[i].clone().value.to_sat(),
+                            script: tx.output[i].clone().script_pubkey.into_bytes(),
+                            value: tx.output[i].clone().value.to_sat(),
                         })
                         .encode_to_vec(),
                     ));
@@ -884,7 +849,7 @@ impl Protorune {
             match tx_hex_to_txid(blacklisted_hash) {
                 std::result::Result::Ok(blacklisted_txid) => {
                     if tx_id == blacklisted_txid {
-                        log_warning!("Ignoring blacklisted transaction: {}", blacklisted_hash);
+                        println!("Ignoring blacklisted transaction: {}", blacklisted_hash);
                         return Ok(());
                     }
                 }
@@ -892,15 +857,7 @@ impl Protorune {
             }
         }
 
-        let protostones = match Protostone::from_runestone(runestone) {
-            std::result::Result::Ok(ps) => ps,
-            std::result::Result::Err(e) => {
-                let tx_id = tx.compute_txid();
-                log_error!("Failed to decode protostones from runestone in tx {}: {:?}", tx_id, e);
-                log_debug!("Runestone: {:?}", runestone);
-                panic!("Protostone::from_runestone failed for tx {}: {:?}", tx_id, e);
-            }
-        };
+        let protostones = Protostone::from_runestone(runestone)?;
 
         if protostones.len() != 0 {
             let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
@@ -971,19 +928,8 @@ impl Protorune {
                     // if there is no protomessage, all incoming runes will be available to be transferred by the edict
                     let mut prior_balance_sheet = BalanceSheet::default();
                     let mut did_message_fail_and_refund = false;
-                    let initial_sheet = proto_balances_by_output
-                        .get(&shadow_vout)
-                        .map(|v| v.clone())
-                        .unwrap_or_else(|| BalanceSheet::default());
-                    let mut trace = Trace::default();
-                    trace.clock(TraceEvent::ReceiveIntent {
-                        incoming_alkanes: AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(
-                            initial_sheet.clone(),
-                        )),
-                    });
                     if stone.is_message() && stone.protocol_tag == T::protocol_tag() {
-                        let success = stone.process_message_with_trace::<T>(
-                            trace.clone(),
+                        let success = stone.process_message::<T>(
                             &mut atomic.derive(&IndexPointer::default()),
                             tx,
                             txindex,
@@ -1028,29 +974,6 @@ impl Protorune {
                         )?;
                     }
 
-                    // Add ValueTransfer events for this protostone's outputs
-                    for (vout, sheet) in &proto_balances_by_output {
-                        let transfers =
-                            AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(sheet.clone()))
-                                .0;
-                        if transfers.iter().any(|t| t.value > 0) {
-                            trace.clock(TraceEvent::ValueTransfer {
-                                transfers,
-                                redirect_to: *vout,
-                            });
-                        }
-                    }
-
-                    // Save the trace for this protostone
-                    save_trace(
-                        &OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: shadow_vout,
-                        },
-                        height,
-                        trace,
-                    ).expect(&format!("save_trace failed for tx {} vout {}", tx.compute_txid(), shadow_vout));
-
                     Ok(())
                 })
                 .collect::<Result<()>>()?;
@@ -1087,30 +1010,28 @@ impl Protorune {
     #[cfg(not(feature = "mainnet"))]
     pub fn freeze_storage(height: u64) {}
 
-    pub fn index_block<B: BlockLike, T: MessageContext>(block: &B, height: u64) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));
         init_result?;
         add_result?;
-        
-        let block_hash = block.block_hash();
         tables::RUNES
             .HEIGHT_TO_BLOCKHASH
             .select_value::<u64>(height)
-            .set(Arc::new(consensus_encode(&block_hash)?));
+            .set(Arc::new(consensus_encode(&block.block_hash())?));
         tables::RUNES
             .BLOCKHASH_TO_HEIGHT
-            .select(&consensus_encode(&block_hash)?)
+            .select(&consensus_encode(&block.block_hash())?)
             .set_value::<u64>(height);
-        Self::index_transaction_ids(block, height)?;
-        Self::index_outpoints(block, height)?;
+        Self::index_transaction_ids(&block, height)?;
+        Self::index_outpoints(&block, height)?;
 
         // Get the set of updated addresses
-        let updated_addresses = Self::index_spendables(block.transactions())?;
+        let updated_addresses = Self::index_spendables(&block.txdata)?;
 
         Self::freeze_storage(height);
-        Self::index_unspendables::<B, T>(block, height)?;
+        Self::index_unspendables::<T>(&block, height)?;
 
         // Return the set of updated addresses
         Ok(updated_addresses)

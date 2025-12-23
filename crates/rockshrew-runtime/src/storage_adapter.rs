@@ -85,11 +85,13 @@ impl StorageAdapter for RocksDBStorageAdapter {
     }
 
     async fn rollback_to_height(&mut self, height: u32) -> SyncResult<()> {
-        info!("Starting rollback to height {}", height);
+        info!("Starting comprehensive rollback to height {}", height);
         let current_height = self.get_indexed_height().await?;
         if height >= current_height {
             return Ok(());
         }
+
+        // --- Part 1: Delete metadata for heights above rollback ---
         for h in (height + 1)..=current_height {
             let blockhash_key = format!("/__INTERNAL/height-to-hash/{}", h).into_bytes();
             if let Err(e) = self.db.delete(&blockhash_key) {
@@ -100,8 +102,104 @@ impl StorageAdapter for RocksDBStorageAdapter {
                 warn!("Failed to delete state root for height {}: {}", h, e);
             }
         }
+
+        // --- Part 2: Rollback append-only data ---
+        // Scan for all keys ending with "/length" to find base keys
+        let length_suffix = b"/length";
+        let mut base_keys_to_process = Vec::new();
+
+        let iter = self.db.iterator(rocksdb::IteratorMode::Start);
+        for item in iter {
+            if let Ok((key, _)) = item {
+                if key.ends_with(length_suffix) {
+                    // Extract base key (everything before "/length")
+                    let base_key = key[..key.len() - length_suffix.len()].to_vec();
+                    base_keys_to_process.push(base_key);
+                }
+            }
+        }
+
+        info!("Found {} append-only keys to check for rollback", base_keys_to_process.len());
+
+        for base_key in base_keys_to_process {
+            let length_key = {
+                let mut key = base_key.clone();
+                key.extend_from_slice(length_suffix);
+                key
+            };
+
+            // Get current length
+            let old_length = match self.db.get(&length_key) {
+                Ok(Some(length_bytes)) => {
+                    String::from_utf8_lossy(&length_bytes).parse::<u32>().unwrap_or(0)
+                }
+                _ => continue,
+            };
+
+            // Collect valid updates (those at or before rollback height)
+            let mut valid_updates = Vec::new();
+            for i in 0..old_length {
+                let update_key = {
+                    let mut key = base_key.clone();
+                    key.extend_from_slice(format!("/{}", i).as_bytes());
+                    key
+                };
+
+                if let Ok(Some(update_data)) = self.db.get(&update_key) {
+                    let update_str = String::from_utf8_lossy(&update_data);
+                    if let Some(colon_pos) = update_str.find(':') {
+                        let height_str = &update_str[..colon_pos];
+                        if let Ok(update_height) = height_str.parse::<u32>() {
+                            if update_height <= height {
+                                valid_updates.push(update_data.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If we removed some updates, rewrite the key
+            if valid_updates.len() < old_length as usize {
+                // Delete all old entries
+                for i in 0..old_length {
+                    let update_key = {
+                        let mut key = base_key.clone();
+                        key.extend_from_slice(format!("/{}", i).as_bytes());
+                        key
+                    };
+                    let _ = self.db.delete(&update_key);
+                }
+
+                // Reinsert valid entries
+                for (i, update_data) in valid_updates.iter().enumerate() {
+                    let update_key = {
+                        let mut key = base_key.clone();
+                        key.extend_from_slice(format!("/{}", i).as_bytes());
+                        key
+                    };
+                    let _ = self.db.put(&update_key, update_data);
+                }
+
+                // Update length
+                let new_length = valid_updates.len() as u32;
+                if new_length > 0 {
+                    let _ = self.db.put(&length_key, new_length.to_string().as_bytes());
+                } else {
+                    let _ = self.db.delete(&length_key);
+                }
+            }
+        }
+
+        // --- Part 3: Clean up orphaned SMT nodes ---
+        // Note: SMT nodes don't have height embedded, so we can't selectively delete them.
+        // The orphaned nodes will be naturally unreferenced after rollback since:
+        // 1. State roots above rollback height are deleted
+        // 2. New block processing will create new nodes from the valid root
+        // For now, we accept some orphaned data. A full GC would require tracking node creation heights.
+        info!("Note: Orphaned SMT nodes may remain but will be unreferenced");
+
         self.set_indexed_height(height).await?;
-        info!("Successfully completed rollback to height {}", height);
+        info!("Successfully completed comprehensive rollback to height {}", height);
         Ok(())
     }
 

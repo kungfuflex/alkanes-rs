@@ -867,21 +867,20 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
 
     pub async fn refresh_memory(&self) -> Result<()> {
         let mut instance_guard = self.instance.lock().await;
-        // Only refresh memory if there was actual execution or failure
-        // This reduces overhead for blocks with minimal processing
-        if instance_guard.store.data().had_failure || self.context.lock().await.state == 1 {
-            let mut wasmstore = Store::<State>::new(&self.engine, State::new());
-            wasmstore.limiter(|state| &mut state.limits);
-            let new_instance = self
-                .linker
-                .instantiate_async(&mut wasmstore, &self.module)
-                .await
-                .context("Failed to instantiate module during memory refresh")?;
-            *instance_guard = WasmInstance {
-                store: wasmstore,
-                instance: new_instance,
-            };
-        }
+        // ALWAYS refresh memory for deterministic execution across blocks.
+        // This ensures no WASM state persists between block processing,
+        // preventing non-determinism from stale memory contents.
+        let mut wasmstore = Store::<State>::new(&self.engine, State::new());
+        wasmstore.limiter(|state| &mut state.limits);
+        let new_instance = self
+            .linker
+            .instantiate_async(&mut wasmstore, &self.module)
+            .await
+            .context("Failed to instantiate module during memory refresh")?;
+        *instance_guard = WasmInstance {
+            store: wasmstore,
+            instance: new_instance,
+        };
         Ok(())
     }
 

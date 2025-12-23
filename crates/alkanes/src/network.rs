@@ -187,16 +187,26 @@ pub fn is_active(height: u64) -> bool {
     height >= genesis::GENESIS_BLOCK
 }
 
-static mut _VIEW: bool = false;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Thread-safe view mode flag.
+/// When true, allows genesis checks to pass during view/query operations.
+static VIEW_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Sets view mode to true. Called before view/query operations.
 pub fn set_view_mode() {
-    unsafe {
-        _VIEW = true;
-    }
+    VIEW_MODE.store(true, Ordering::SeqCst);
 }
 
+/// Clears view mode. Should be called at the start of block indexing
+/// to ensure deterministic behavior.
+pub fn clear_view_mode() {
+    VIEW_MODE.store(false, Ordering::SeqCst);
+}
+
+/// Gets the current view mode.
 pub fn get_view_mode() -> bool {
-    unsafe { _VIEW }
+    VIEW_MODE.load(Ordering::SeqCst)
 }
 
 pub fn is_genesis(height: u64) -> bool {
@@ -246,7 +256,6 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
         txindex: 0,
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-        trace: alkanes_support::trace::Trace::default(),
     };
     let (response2, _gas_used2) = (match simulate_parcel(&parcel3, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
@@ -311,7 +320,6 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
         txindex: 0,
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-        trace: alkanes_support::trace::Trace::default(),
     };
     let (response3, _gas_used3) = (match simulate_parcel(&parcel2, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
@@ -396,7 +404,6 @@ pub fn setup_diesel(block: &Block) -> Result<()> {
         txindex: 0,
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-        trace: alkanes_support::trace::Trace::default(),
     };
     let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),

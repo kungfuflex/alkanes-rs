@@ -1,4 +1,3 @@
-use crate::logging::{LogTree, log_tree, LogStyle};
 use crate::network::{genesis::GENESIS_BLOCK, is_active};
 use crate::trace::save_trace;
 use crate::utils::{balance_pointer, credit_balances, debit_balances, pipe_storagemap_to};
@@ -43,25 +42,27 @@ pub fn handle_message(
 ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
     let cellpack: Cellpack =
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
-
     // Log cellpack information at the beginning of transaction processing
-    let mut tree = LogTree::new(format!("Transaction Cellpack"));
-    tree.add(format!("Txid: {}", parcel.transaction.compute_txid()));
-    tree.add(format!("Height: {} │ Index: {} │ Vout: {}", parcel.height, parcel.txindex, parcel.vout));
-    tree.add(format!("Target: [{}:{}]", cellpack.target.block, cellpack.target.tx));
-
+    println!("=== TRANSACTION CELLPACK INFO ===");
+    println!(
+        "Transaction index: {}, Transaction height: {}, vout: {}, txid: {}",
+        parcel.txindex,
+        parcel.height,
+        parcel.vout,
+        parcel.transaction.compute_txid()
+    );
+    println!(
+        "Target contract: [block={}, tx={}]",
+        cellpack.target.block, cellpack.target.tx
+    );
+    println!("Input count: {}", cellpack.inputs.len());
     if !cellpack.inputs.is_empty() {
-        if cellpack.inputs.len() <= 20 {
-            tree.add_last(format!("Inputs ({}): {:?}", cellpack.inputs.len(), cellpack.inputs));
-        } else {
-            tree.add(format!("Inputs: {} total", cellpack.inputs.len()));
-            tree.add_last(format!("First opcode: {}", cellpack.inputs[0]));
-        }
-    } else {
-        tree.add_last(format!("Inputs: none"));
-    }
+        println!("First opcode: {}", cellpack.inputs[0]);
 
-    log_tree(LogStyle::TX, &tree);
+        // Print all inputs for detailed debugging
+        println!("All inputs: {:?}", cellpack.inputs);
+    }
+    println!("================================");
 
     let target = cellpack.target.clone();
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
@@ -135,7 +136,7 @@ pub fn handle_message(
                 },
                 parcel.height,
                 trace.clone(),
-            ).expect(&format!("save_trace failed for tx {} vout {}", parcel.transaction.compute_txid(), parcel.vout));
+            )?;
 
             Ok((response_alkanes.into(), combined))
         })
@@ -189,7 +190,7 @@ pub fn handle_message(
                 },
                 parcel.height,
                 cloned,
-            ).expect(&format!("save_trace on revert failed for tx {} vout {}", parcel.transaction.compute_txid(), parcel.vout));
+            )?;
             Err(e)
         })
 }
