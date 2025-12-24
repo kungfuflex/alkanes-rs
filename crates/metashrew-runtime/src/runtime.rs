@@ -1864,6 +1864,28 @@ pub async fn setup_linker_view(
                             }
                         }
 
+                        // Periodically run garbage collection on orphaned SMT nodes
+                        // Run every 100 blocks to prevent unbounded storage growth
+                        // Keep the last 6 blocks worth of nodes for reorg protection
+                        if height % 100 == 0 && height > 0 {
+                            log::info!("Running SMT garbage collection at height {}", height);
+                            let db_for_gc = context_ref.clone().lock().await.db.clone();
+                            let mut smt_helper = crate::smt::SMTHelper::new(db_for_gc);
+                            match smt_helper.gc_orphaned_smt_nodes(6) {
+                                Ok(deleted_count) => {
+                                    log::info!(
+                                        "SMT GC at height {}: deleted {} orphaned nodes",
+                                        height,
+                                        deleted_count
+                                    );
+                                }
+                                Err(e) => {
+                                    log::warn!("SMT GC failed at height {}: {:?}", height, e);
+                                    // Don't fail the block processing if GC fails
+                                }
+                            }
+                        }
+
                         // Set completion state
                         let context_clone = context_ref.clone();
                         let mut ctx = context_clone.lock().await;

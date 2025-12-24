@@ -10,4 +10,5 @@ pub mod alkanes_backtest_test;
 pub mod reorg_focused_test;
 pub mod rocksdb_optimization_test;
 pub mod snapshot_sync_test;
+pub mod smt_gc_test;
 pub mod start_block_test;

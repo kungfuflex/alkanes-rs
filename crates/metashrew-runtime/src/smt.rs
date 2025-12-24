@@ -67,6 +67,7 @@
 //! ```
 
 use crate::key_utils::{make_smt_node_key, PREFIXES};
+use crate::runtime::TIP_HEIGHT_KEY;
 use crate::traits::{BatchLike, KeyValueStoreLike};
 use anyhow::{anyhow, Result};
 use sha2::{Digest, Sha256};
@@ -2313,5 +2314,188 @@ impl<T: KeyValueStoreLike> SMTHelper<T> {
         }
 
         Ok(EMPTY_NODE_HASH)
+    }
+
+    /// Garbage collect orphaned SMT nodes using mark-and-sweep algorithm
+    ///
+    /// This function removes SMT nodes that are no longer reachable from recent
+    /// state roots, keeping only nodes needed for the last `keep_depth` blocks.
+    /// This is essential for preventing unbounded storage growth while maintaining
+    /// enough history to handle blockchain reorganizations.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. **Mark Phase**: Starting from the last `keep_depth` state roots, traverse
+    ///    each SMT tree and mark all reachable nodes.
+    /// 2. **Sweep Phase**: Scan all stored SMT nodes and delete those not marked
+    ///    as reachable.
+    ///
+    /// # Parameters
+    ///
+    /// - `keep_depth`: Number of recent blocks to preserve (typically 6 for reorg safety)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(usize)` with the number of nodes deleted, or an error if GC fails.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // After processing block 1000, clean up old nodes
+    /// let deleted = smt_helper.gc_orphaned_smt_nodes(6)?;
+    /// println!("Deleted {} orphaned SMT nodes", deleted);
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// - Marking is O(N * D) where N is keep_depth and D is average tree depth
+    /// - Sweeping scans all stored nodes once
+    /// - Recommended to run every 10-100 blocks rather than every block
+    pub fn gc_orphaned_smt_nodes(&mut self, keep_depth: u32) -> Result<usize> {
+        // Get the current tip height from storage
+        let current_height = match self.storage.get_immutable(TIP_HEIGHT_KEY.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Storage error: {:?}", e))? {
+            Some(height_bytes) => {
+                if height_bytes.len() == 4 {
+                    u32::from_le_bytes([
+                        height_bytes[0],
+                        height_bytes[1],
+                        height_bytes[2],
+                        height_bytes[3],
+                    ])
+                } else {
+                    return Err(anyhow!("Invalid tip height format"));
+                }
+            }
+            None => {
+                // No blocks processed yet, nothing to GC
+                return Ok(0);
+            }
+        };
+
+        // Don't GC if we haven't processed enough blocks
+        if current_height < keep_depth {
+            return Ok(0);
+        }
+
+        let cutoff_height = current_height.saturating_sub(keep_depth);
+
+        log::info!(
+            "Starting SMT garbage collection: current_height={}, keep_depth={}, cutoff_height={}",
+            current_height,
+            keep_depth,
+            cutoff_height
+        );
+
+        // Step 1: Mark - Traverse from recent roots and mark all reachable nodes
+        let mut reachable_nodes = std::collections::HashSet::new();
+
+        for height in cutoff_height..=current_height {
+            match self.get_smt_root_at_height(height) {
+                Ok(root) => {
+                    if root != EMPTY_NODE_HASH {
+                        self.mark_reachable_nodes(root, &mut reachable_nodes)?;
+                    }
+                }
+                Err(_) => {
+                    // Root not found for this height, skip it
+                    continue;
+                }
+            }
+        }
+
+        log::info!(
+            "Mark phase complete: {} reachable nodes from {} roots",
+            reachable_nodes.len(),
+            keep_depth + 1
+        );
+
+        // Step 2: Sweep - Delete all nodes not in the reachable set
+        let mut batch = self.storage.create_batch();
+        let mut deleted_count = 0;
+
+        for (key, _) in self.storage.scan_prefix(SMT_NODE_PREFIX.as_bytes())? {
+            // Extract hash from key "smt:node:{hash_hex}"
+            if let Some(hash_hex) = key.strip_prefix(SMT_NODE_PREFIX.as_bytes()) {
+                if let Ok(hash_bytes) = hex::decode(hash_hex) {
+                    if hash_bytes.len() == 32 {
+                        let mut hash = [0u8; 32];
+                        hash.copy_from_slice(&hash_bytes);
+
+                        if !reachable_nodes.contains(&hash) {
+                            batch.delete(&key);
+                            deleted_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Write the batch to delete orphaned nodes
+        if deleted_count > 0 {
+            self.storage.write(batch)
+                .map_err(|e| anyhow::anyhow!("Failed to write GC batch: {:?}", e))?;
+
+            log::info!(
+                "SMT GC complete: deleted {} orphaned nodes, kept {} reachable nodes",
+                deleted_count,
+                reachable_nodes.len()
+            );
+        } else {
+            log::info!("SMT GC complete: no orphaned nodes found");
+        }
+
+        Ok(deleted_count)
+    }
+
+    /// Recursively mark all nodes reachable from a given root
+    ///
+    /// This is the marking phase of the mark-and-sweep garbage collector.
+    /// It performs a depth-first traversal of the SMT starting from `node_hash`
+    /// and adds all encountered nodes to the `reachable` set.
+    ///
+    /// # Parameters
+    ///
+    /// - `node_hash`: Hash of the node to start traversal from
+    /// - `reachable`: Set to accumulate all reachable node hashes
+    ///
+    /// # Algorithm
+    ///
+    /// - If node is empty or already marked, return early
+    /// - Mark the current node as reachable
+    /// - If internal node, recursively mark both children
+    /// - If leaf node, stop (no children to traverse)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if node retrieval from storage fails
+    fn mark_reachable_nodes(
+        &self,
+        node_hash: [u8; 32],
+        reachable: &mut std::collections::HashSet<[u8; 32]>,
+    ) -> Result<()> {
+        // Skip empty nodes and already-marked nodes
+        if node_hash == EMPTY_NODE_HASH || reachable.contains(&node_hash) {
+            return Ok(());
+        }
+
+        // Mark this node as reachable
+        reachable.insert(node_hash);
+
+        // If this is an internal node, recursively mark children
+        if let Some(node) = self.get_node(&node_hash)? {
+            match node {
+                SMTNode::Internal { left_child, right_child } => {
+                    // Recursively mark left and right children
+                    self.mark_reachable_nodes(left_child, reachable)?;
+                    self.mark_reachable_nodes(right_child, reachable)?;
+                }
+                SMTNode::Leaf { .. } => {
+                    // Leaf node has no children, nothing more to mark
+                }
+            }
+        }
+
+        Ok(())
     }
 }
