@@ -80,17 +80,18 @@ pub async fn sleep_ms(ms: u64) -> Result<()> {
 /// In browser: uses localStorage
 /// In Node.js: uses in-memory storage (for tests)
 ///
-/// Uses Arc<RwLock> for thread-safe concurrent access in async contexts.
+/// Uses RefCell with try_borrow for WASM-compatible concurrent access.
+/// Operations clone data immediately to avoid holding borrows across async points.
 pub struct PlatformStorage {
-    // In-memory fallback for Node.js - thread-safe for concurrent async access
-    memory_storage: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, String>>>,
+    // In-memory fallback for Node.js - uses RefCell for single-threaded WASM
+    memory_storage: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, String>>>,
     is_browser: bool,
 }
 
 impl PlatformStorage {
     pub fn new() -> Self {
         Self {
-            memory_storage: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+            memory_storage: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             is_browser: is_browser(),
         }
     }
@@ -107,7 +108,15 @@ impl PlatformStorage {
                 .flatten()
         } else {
             // Node.js: use in-memory storage
-            self.memory_storage.read().unwrap().get(&prefixed_key).cloned()
+            // Use try_borrow to avoid panicking on concurrent access
+            match self.memory_storage.try_borrow() {
+                Ok(guard) => guard.get(&prefixed_key).cloned(),
+                Err(_) => {
+                    // If we can't borrow, the storage is being modified - return None
+                    // This is safe because we're in a single-threaded environment
+                    None
+                }
+            }
         }
     }
 
@@ -125,8 +134,16 @@ impl PlatformStorage {
                 .map_err(|e| AlkanesError::Storage(format!("Failed to set item: {:?}", e)))
         } else {
             // Node.js: use in-memory storage
-            self.memory_storage.write().unwrap().insert(prefixed_key, value.to_string());
-            Ok(())
+            // Use try_borrow_mut to avoid panicking on concurrent access
+            match self.memory_storage.try_borrow_mut() {
+                Ok(mut guard) => {
+                    guard.insert(prefixed_key, value.to_string());
+                    Ok(())
+                }
+                Err(_) => {
+                    Err(AlkanesError::Storage("Storage is currently in use".to_string()))
+                }
+            }
         }
     }
 
@@ -144,8 +161,15 @@ impl PlatformStorage {
                 .map_err(|e| AlkanesError::Storage(format!("Failed to remove item: {:?}", e)))
         } else {
             // Node.js: use in-memory storage
-            self.memory_storage.write().unwrap().remove(&prefixed_key);
-            Ok(())
+            match self.memory_storage.try_borrow_mut() {
+                Ok(mut guard) => {
+                    guard.remove(&prefixed_key);
+                    Ok(())
+                }
+                Err(_) => {
+                    Err(AlkanesError::Storage("Storage is currently in use".to_string()))
+                }
+            }
         }
     }
 
@@ -178,11 +202,15 @@ impl PlatformStorage {
             keys
         } else {
             // Node.js: iterate in-memory storage
-            self.memory_storage.read().unwrap()
-                .keys()
-                .filter(|k| k.starts_with(&full_prefix))
-                .filter_map(|k| k.strip_prefix("alkanes:").map(|s| s.to_string()))
-                .collect()
+            match self.memory_storage.try_borrow() {
+                Ok(guard) => {
+                    guard.keys()
+                        .filter(|k| k.starts_with(&full_prefix))
+                        .filter_map(|k| k.strip_prefix("alkanes:").map(|s| s.to_string()))
+                        .collect()
+                }
+                Err(_) => Vec::new()
+            }
         }
     }
 }
@@ -196,7 +224,7 @@ impl Default for PlatformStorage {
 impl Clone for PlatformStorage {
     fn clone(&self) -> Self {
         Self {
-            memory_storage: std::sync::Arc::clone(&self.memory_storage),
+            memory_storage: std::rc::Rc::clone(&self.memory_storage),
             is_browser: self.is_browser,
         }
     }
