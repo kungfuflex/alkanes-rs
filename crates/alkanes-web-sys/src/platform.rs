@@ -79,16 +79,18 @@ pub async fn sleep_ms(ms: u64) -> Result<()> {
 ///
 /// In browser: uses localStorage
 /// In Node.js: uses in-memory storage (for tests)
+///
+/// Uses Arc<RwLock> for thread-safe concurrent access in async contexts.
 pub struct PlatformStorage {
-    // In-memory fallback for Node.js
-    memory_storage: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    // In-memory fallback for Node.js - thread-safe for concurrent async access
+    memory_storage: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, String>>>,
     is_browser: bool,
 }
 
 impl PlatformStorage {
     pub fn new() -> Self {
         Self {
-            memory_storage: std::cell::RefCell::new(std::collections::HashMap::new()),
+            memory_storage: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             is_browser: is_browser(),
         }
     }
@@ -105,7 +107,7 @@ impl PlatformStorage {
                 .flatten()
         } else {
             // Node.js: use in-memory storage
-            self.memory_storage.borrow().get(&prefixed_key).cloned()
+            self.memory_storage.read().unwrap().get(&prefixed_key).cloned()
         }
     }
 
@@ -123,7 +125,7 @@ impl PlatformStorage {
                 .map_err(|e| AlkanesError::Storage(format!("Failed to set item: {:?}", e)))
         } else {
             // Node.js: use in-memory storage
-            self.memory_storage.borrow_mut().insert(prefixed_key, value.to_string());
+            self.memory_storage.write().unwrap().insert(prefixed_key, value.to_string());
             Ok(())
         }
     }
@@ -142,7 +144,7 @@ impl PlatformStorage {
                 .map_err(|e| AlkanesError::Storage(format!("Failed to remove item: {:?}", e)))
         } else {
             // Node.js: use in-memory storage
-            self.memory_storage.borrow_mut().remove(&prefixed_key);
+            self.memory_storage.write().unwrap().remove(&prefixed_key);
             Ok(())
         }
     }
@@ -176,7 +178,7 @@ impl PlatformStorage {
             keys
         } else {
             // Node.js: iterate in-memory storage
-            self.memory_storage.borrow()
+            self.memory_storage.read().unwrap()
                 .keys()
                 .filter(|k| k.starts_with(&full_prefix))
                 .filter_map(|k| k.strip_prefix("alkanes:").map(|s| s.to_string()))
@@ -194,7 +196,7 @@ impl Default for PlatformStorage {
 impl Clone for PlatformStorage {
     fn clone(&self) -> Self {
         Self {
-            memory_storage: std::cell::RefCell::new(self.memory_storage.borrow().clone()),
+            memory_storage: std::sync::Arc::clone(&self.memory_storage),
             is_browser: self.is_browser,
         }
     }
