@@ -26,6 +26,8 @@ use core::str::FromStr;
 use alloc::{vec, vec::Vec, string::{String, ToString}, format};
 #[cfg(feature = "std")]
 use std::{vec, vec::Vec, string::{String, ToString}, format, io::{self, Write}};
+// Note: tokio::time::sleep doesn't work in WASM - use provider.sleep_ms() instead
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::time::{sleep, Duration};
 pub use super::types::{
     AlkaneId, AlkanesBalance, EnhancedExecuteParams, EnhancedExecuteResult, ExecutionState,
@@ -2036,9 +2038,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
     /// Mines blocks on the regtest network if the provider is configured for it.
     async fn mine_blocks_if_regtest(&self, params: &EnhancedExecuteParams) -> Result<()> {
+        use crate::traits::TimeProvider;
+
         if self.provider.get_network() == bitcoin::Network::Regtest {
             log::info!("Mining blocks on regtest network...");
-            sleep(Duration::from_secs(2)).await;
+            // Use cross-platform sleep (works in both native and WASM)
+            self.provider.sleep_ms(2000).await;
             let address = if let Some(change_address) = &params.change_address {
                 change_address.clone()
             } else {
