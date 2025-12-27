@@ -24,9 +24,14 @@ impl TestConfig {
         Self { wasm: WASM }
     }
 
-    /// Create a new MetashrewRuntime for testing
+    /// Create a new MetashrewRuntime for testing (SMT disabled by default for speed)
     pub async fn create_runtime(&self, engine: wasmtime::Engine) -> Result<MetashrewRuntime<MemStoreAdapter>> {
-        MetashrewRuntime::new(self.wasm, MemStoreAdapter::new(), engine, None).await
+        MetashrewRuntime::new(self.wasm, MemStoreAdapter::new(), engine, None, false).await
+    }
+
+    /// Create a new MetashrewRuntime with SMT enabled for testing
+    pub async fn create_runtime_with_smt(&self, engine: wasmtime::Engine, enable_smt: bool) -> Result<MetashrewRuntime<MemStoreAdapter>> {
+        MetashrewRuntime::new(self.wasm, MemStoreAdapter::new(), engine, None, enable_smt).await
     }
 
     pub async fn create_runtime_from_adapter<T: KeyValueStoreLike + Clone + Send + Sync + 'static>(
@@ -34,7 +39,16 @@ impl TestConfig {
         store: T,
         engine: wasmtime::Engine,
     ) -> Result<MetashrewRuntime<T>> where <T as KeyValueStoreLike>::Batch: Send {
-        MetashrewRuntime::new(self.wasm, store, engine, None).await
+        MetashrewRuntime::new(self.wasm, store, engine, None, false).await
+    }
+
+    pub async fn create_runtime_from_adapter_with_smt<T: KeyValueStoreLike + Clone + Send + Sync + 'static>(
+        &self,
+        store: T,
+        engine: wasmtime::Engine,
+        enable_smt: bool,
+    ) -> Result<MetashrewRuntime<T>> where <T as KeyValueStoreLike>::Batch: Send {
+        MetashrewRuntime::new(self.wasm, store, engine, None, enable_smt).await
     }
 }
 

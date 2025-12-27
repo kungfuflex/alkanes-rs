@@ -49,7 +49,7 @@ async fn test_smt_gc_basic() -> Result<()> {
     let engine = wasmtime::Engine::new(&config_engine)?;
 
     let runtime = TestConfig::new()
-        .create_runtime_from_adapter(storage.clone(), engine)
+        .create_runtime_from_adapter_with_smt(storage.clone(), engine, true)
         .await?;
 
     let genesis_block_hash = BlockHash::from_slice(&[0; 32])?;
@@ -172,7 +172,7 @@ async fn test_smt_gc_preserves_reorg_depth() -> Result<()> {
     let engine = wasmtime::Engine::new(&config_engine)?;
 
     let runtime = TestConfig::new()
-        .create_runtime_from_adapter(storage.clone(), engine)
+        .create_runtime_from_adapter_with_smt(storage.clone(), engine, true)
         .await?;
 
     let genesis_block_hash = BlockHash::from_slice(&[0; 32])?;
@@ -256,7 +256,7 @@ async fn test_smt_gc_multiple_runs() -> Result<()> {
     let engine = wasmtime::Engine::new(&config_engine)?;
 
     let runtime = TestConfig::new()
-        .create_runtime_from_adapter(storage.clone(), engine)
+        .create_runtime_from_adapter_with_smt(storage.clone(), engine, true)
         .await?;
 
     let genesis_block_hash = BlockHash::from_slice(&[0; 32])?;
@@ -361,7 +361,7 @@ async fn test_smt_gc_with_varying_depths() -> Result<()> {
     let engine = wasmtime::Engine::new(&config_engine)?;
 
     let runtime = TestConfig::new()
-        .create_runtime_from_adapter(storage.clone(), engine)
+        .create_runtime_from_adapter_with_smt(storage.clone(), engine, true)
         .await?;
 
     let genesis_block_hash = BlockHash::from_slice(&[0; 32])?;
@@ -439,7 +439,7 @@ async fn test_smt_gc_no_op_when_insufficient_blocks() -> Result<()> {
     let engine = wasmtime::Engine::new(&config_engine)?;
 
     let runtime = TestConfig::new()
-        .create_runtime_from_adapter(storage.clone(), engine)
+        .create_runtime_from_adapter_with_smt(storage.clone(), engine, true)
         .await?;
 
     let genesis_block_hash = BlockHash::from_slice(&[0; 32])?;

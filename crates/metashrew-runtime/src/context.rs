@@ -105,6 +105,19 @@ pub struct MetashrewRuntimeContext<T: KeyValueStoreLike> {
     /// - `1`: Execution completed successfully
     /// - Other values may indicate error conditions
     pub state: u32,
+
+    /// Enable Sparse Merkle Tree (SMT) state commitments
+    ///
+    /// When `true`, the runtime computes and stores SMT state roots for
+    /// cryptographic state commitments and Merkle proofs. This adds overhead
+    /// but enables trustless state verification.
+    ///
+    /// When `false`, uses plain key-value storage with append-only history.
+    /// This is faster and uses less storage, while still supporting historical
+    /// queries and rollback/reorg handling through the append-only structure.
+    ///
+    /// Default: `false` (SMT disabled for better performance)
+    pub enable_smt: bool,
 }
 
 impl<T: KeyValueStoreLike> Clone for MetashrewRuntimeContext<T>
@@ -117,6 +130,7 @@ where
             height: self.height,
             block: self.block.clone(),
             state: self.state,
+            enable_smt: self.enable_smt,
         }
     }
 }
@@ -172,6 +186,31 @@ impl<T: KeyValueStoreLike> MetashrewRuntimeContext<T> {
             height,
             block,
             state: 0,
+            enable_smt: false, // Default to disabled for backward compatibility
+        }
+    }
+
+    /// Create a new runtime context with SMT configuration
+    ///
+    /// Like [`Self::new`] but allows specifying whether to enable SMT state commitments.
+    ///
+    /// # Parameters
+    ///
+    /// - `db`: Storage backend implementing [`KeyValueStoreLike`]
+    /// - `height`: Block height for this execution context
+    /// - `block`: Raw block data to be processed
+    /// - `enable_smt`: Whether to compute SMT state roots
+    ///
+    /// # Returns
+    ///
+    /// A new [`MetashrewRuntimeContext`] with the specified SMT configuration
+    pub fn new_with_smt(db: T, height: u32, block: Vec<u8>, enable_smt: bool) -> Self {
+        Self {
+            db,
+            height,
+            block,
+            state: 0,
+            enable_smt,
         }
     }
 }

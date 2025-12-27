@@ -32,7 +32,7 @@ mod zcash_runtime_tests {
         let engine = wasmtime::Engine::new(&config).expect("Failed to create engine");
         
         // Load the WASM
-        let runtime = MetashrewRuntime::load(wasm_path, adapter, engine, None).await;
+        let runtime = MetashrewRuntime::load(wasm_path, adapter, engine, None, false).await;
         
         match runtime {
             Ok(_) => {
@@ -85,7 +85,7 @@ mod zcash_runtime_tests {
         let engine = wasmtime::Engine::new(&config).expect("Failed to create engine");
         
         // Load the WASM
-        let runtime = MetashrewRuntime::load(wasm_path, adapter, engine, None)
+        let runtime = MetashrewRuntime::load(wasm_path, adapter, engine, None, false)
             .await
             .expect("Failed to load Zcash WASM");
         

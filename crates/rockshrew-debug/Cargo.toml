@@ -1,0 +1,28 @@
+[package]
+name = "rockshrew-debug"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# CLI
+clap = { workspace = true, features = ["derive"] }
+
+# TUI
+ratatui = "0.28"
+crossterm = "0.28"
+
+# Error handling
+anyhow = { workspace = true }
+
+# Database
+rockshrew-runtime = { path = "../rockshrew-runtime" }
+
+# Bitcoin types
+bitcoin = { workspace = true }
+
+[[bin]]
+name = "rockshrew-debug"
+path = "src/main.rs"

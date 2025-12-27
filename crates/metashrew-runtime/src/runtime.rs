@@ -433,7 +433,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
     ///     my_storage_backend
     /// )?;
     /// ```
-    pub async fn load(indexer: PathBuf, mut store: T, engine: wasmtime::Engine, intercept_logging: Option<Box<dyn FnMut(String) + Send>>) -> Result<Self> where <T as KeyValueStoreLike>::Batch: Send {
+    pub async fn load(indexer: PathBuf, mut store: T, engine: wasmtime::Engine, intercept_logging: Option<Box<dyn FnMut(String) + Send>>, enable_smt: bool) -> Result<Self> where <T as KeyValueStoreLike>::Batch: Send {
         // Configure the engine with settings for deterministic execution
         let mut config = wasmtime::Config::default();
         // Enable NaN canonicalization for deterministic floating point operations
@@ -467,7 +467,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
         let context = Arc::<Mutex<MetashrewRuntimeContext<T>>>::new(Mutex::<
             MetashrewRuntimeContext<T>,
         >::new(
-            MetashrewRuntimeContext::new(store, tip_height, vec![]),
+            MetashrewRuntimeContext::new_with_smt(store, tip_height, vec![], enable_smt),
         ));
         let intercept_logging_arc = Arc::new(Mutex::new(intercept_logging));
         {
@@ -495,7 +495,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
         })
     }
 
-    pub async fn new(indexer: &[u8], mut store: T, engine: wasmtime::Engine, intercept_logging: Option<Box<dyn FnMut(String) + Send>>) -> Result<Self> where <T as KeyValueStoreLike>::Batch: Send {
+    pub async fn new(indexer: &[u8], mut store: T, engine: wasmtime::Engine, intercept_logging: Option<Box<dyn FnMut(String) + Send>>, enable_smt: bool) -> Result<Self> where <T as KeyValueStoreLike>::Batch: Send {
         // Configure the engine with settings for deterministic execution
         let mut config = wasmtime::Config::default();
         // Enable NaN canonicalization for deterministic floating point operations
@@ -529,7 +529,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
         let context = Arc::<Mutex<MetashrewRuntimeContext<T>>>::new(Mutex::<
             MetashrewRuntimeContext<T>,
         >::new(
-            MetashrewRuntimeContext::new(store, tip_height, vec![]),
+            MetashrewRuntimeContext::new_with_smt(store, tip_height, vec![], enable_smt),
         ));
         let intercept_logging_arc = Arc::new(Mutex::new(intercept_logging));
         {
@@ -676,7 +676,7 @@ impl<T: KeyValueStoreLike + Clone + Send + Sync + 'static> MetashrewRuntime<T> {
                             let mut linker = Linker::<State>::new(&self.engine);
                             let mut wasmstore = Store::<State>::new(&self.engine, State::new());
                             let view_context = Arc::<Mutex<MetashrewRuntimeContext<T>>>::new(Mutex::new(
-                                MetashrewRuntimeContext::new(context.db.clone(), preview_height, vec![]),
+                                MetashrewRuntimeContext::new_with_smt(context.db.clone(), preview_height, vec![], context.enable_smt),
                             ));
                             let intercept_logging_arc = self.intercept_logging.clone();
                 
@@ -1815,16 +1815,14 @@ pub async fn setup_linker_view(
                             }
                         };
 
-                        // Get the database from context to use SMT operations
-                        let db = context_ref.clone().lock().await.db.clone();
-
-                        // Use optimized BatchedSMTHelper for better performance
-                        let mut batched_smt = crate::smt::BatchedSMTHelper::new(db);
+                        // Get database and check if SMT is enabled
+                        let (mut db, enable_smt) = {
+                            let context_arc = context_ref.clone();
+                            let ctx_guard = context_arc.lock().await;
+                            (ctx_guard.db.clone(), ctx_guard.enable_smt)
+                        };
 
                         // Collect all key-value pairs for batch processing
-                        // This is the new, correct flow for handling state updates.
-                        // All key-value pairs are collected and passed to a single, atomic
-                        // function that handles both the SMT update and the historical append-only storage.
                         let key_values: Vec<(Vec<u8>, Vec<u8>)> = decoded
                             .list
                             .iter()
@@ -1833,57 +1831,78 @@ pub async fn setup_linker_view(
                             .collect();
 
                         // Track key-value updates for any external listeners (like snapshotting)
-                        // Clone DB first and release lock immediately for concurrent access
                         {
-                            let mut db_for_tracking = {
-                                let context_arc = context_ref.clone();
-                                let ctx_guard = context_arc.lock().await;
-                                ctx_guard.db.clone()
-                            };
-                            // Now track updates without holding the context lock
+                            let mut db_for_tracking = db.clone();
                             for (k, v) in &key_values {
                                 db_for_tracking.track_kv_update(k.clone(), v.clone());
                             }
                         }
 
-                        // The new `calculate_and_store_state_root_batched` will handle all database writes atomically.
-                        // It will be refactored to accept key-value pairs directly.
-                        match batched_smt.calculate_and_store_state_root_batched(height, &key_values) {
-                            Ok(state_root) => {
-                                log::info!(
-                                    "indexed block {} with {} k/v pairs atomically, state root: {}",
-                                    height,
-                                    key_values.len(),
-                                    hex::encode(state_root)
-                                );
-                            },
-                            Err(e) => {
-                                log::error!("failed to calculate state root for height {}: {:?}", height, e);
+                        if enable_smt {
+                            // SMT enabled: Use optimized BatchedSMTHelper for cryptographic state commitments
+                            let mut batched_smt = crate::smt::BatchedSMTHelper::new(db.clone());
+                            match batched_smt.calculate_and_store_state_root_batched(height, &key_values) {
+                                Ok(state_root) => {
+                                    log::info!(
+                                        "indexed block {} with {} k/v pairs atomically, state root: {}",
+                                        height,
+                                        key_values.len(),
+                                        hex::encode(state_root)
+                                    );
+                                },
+                                Err(e) => {
+                                    log::error!("failed to calculate state root for height {}: {:?}", height, e);
+                                    caller.data_mut().had_failure = true;
+                                    return;
+                                }
+                            }
+
+                            // Periodically run garbage collection on orphaned SMT nodes
+                            // Run every 100 blocks to prevent unbounded storage growth
+                            if height % 100 == 0 && height > 0 {
+                                log::info!("Running SMT garbage collection at height {}", height);
+                                let db_for_gc = context_ref.clone().lock().await.db.clone();
+                                let mut smt_helper = crate::smt::SMTHelper::new(db_for_gc);
+                                match smt_helper.gc_orphaned_smt_nodes(6) {
+                                    Ok(deleted_count) => {
+                                        log::info!(
+                                            "SMT GC at height {}: deleted {} orphaned nodes",
+                                            height,
+                                            deleted_count
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::warn!("SMT GC failed at height {}: {:?}", height, e);
+                                        // Don't fail the block processing if GC fails
+                                    }
+                                }
+                            }
+                        } else {
+                            // SMT disabled: Use plain append-only storage for better performance
+                            // Store key-value pairs directly with height indexing
+                            let smt_helper = crate::smt::SMTHelper::new(db.clone());
+                            let mut batch = db.create_batch();
+
+                            for (k, v) in &key_values {
+                                if let Err(e) = smt_helper.put_to_batch(&mut batch, k, v, height) {
+                                    log::error!("failed to store k/v pair at height {}: {:?}", height, e);
+                                    caller.data_mut().had_failure = true;
+                                    return;
+                                }
+                            }
+
+                            // Write the batch atomically
+                            if let Err(e) = db.write(batch) {
+                                log::error!("failed to write batch for height {}: {:?}", height, e);
                                 caller.data_mut().had_failure = true;
                                 return;
                             }
-                        }
 
-                        // Periodically run garbage collection on orphaned SMT nodes
-                        // Run every 100 blocks to prevent unbounded storage growth
-                        // Keep the last 6 blocks worth of nodes for reorg protection
-                        if height % 100 == 0 && height > 0 {
-                            log::info!("Running SMT garbage collection at height {}", height);
-                            let db_for_gc = context_ref.clone().lock().await.db.clone();
-                            let mut smt_helper = crate::smt::SMTHelper::new(db_for_gc);
-                            match smt_helper.gc_orphaned_smt_nodes(6) {
-                                Ok(deleted_count) => {
-                                    log::info!(
-                                        "SMT GC at height {}: deleted {} orphaned nodes",
-                                        height,
-                                        deleted_count
-                                    );
-                                }
-                                Err(e) => {
-                                    log::warn!("SMT GC failed at height {}: {:?}", height, e);
-                                    // Don't fail the block processing if GC fails
-                                }
-                            }
+                            log::info!(
+                                "indexed block {} with {} k/v pairs (no SMT)",
+                                height,
+                                key_values.len()
+                            );
                         }
 
                         // Set completion state

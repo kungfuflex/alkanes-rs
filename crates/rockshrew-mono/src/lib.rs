@@ -142,6 +142,11 @@ pub struct Args {
     pub max_reorg_depth: u32,
     #[arg(long, default_value_t = 6)]
     pub reorg_check_threshold: u32,
+    /// Enable Sparse Merkle Tree (SMT) state commitments.
+    /// When disabled, uses plain key-value storage which is faster but doesn't provide
+    /// cryptographic state proofs. Rollback/reorg handling works in both modes.
+    #[arg(long, default_value_t = false)]
+    pub enable_smt: bool,
 }
 
 /// Shared application state for the JSON-RPC server.
@@ -674,7 +679,7 @@ pub async fn run_prod(args: Args) -> Result<()> {
         config_engine.async_support(true);
         let engine = wasmtime::Engine::new(&config_engine)?;
 
-        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter, engine, None).await?;
+        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter, engine, None, args.enable_smt).await?;
         let storage_adapter = match runtime.context.lock().await.db {
             ForkAdapter::Modern(ref modern_adapter) => {
                 RocksDBStorageAdapter::new(modern_adapter.db.clone())
@@ -692,7 +697,7 @@ pub async fn run_prod(args: Args) -> Result<()> {
         config_engine.async_support(true);
         let engine = wasmtime::Engine::new(&config_engine)?;
 
-        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter.clone(), engine, None).await?;
+        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter.clone(), engine, None, args.enable_smt).await?;
         let storage_adapter = RocksDBStorageAdapter::new(adapter.db.clone());
         let runtime_adapter = MetashrewRuntimeAdapter::new(Arc::new(runtime));
         run_generic(args, runtime_adapter, storage_adapter).await
