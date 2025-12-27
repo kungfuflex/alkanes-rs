@@ -1,5 +1,6 @@
 pub mod block_retry_test;
 pub mod block_serialization_test;
+pub mod chain_validation_test;
 pub mod comprehensive_e2e_test;
 pub mod concurrent_view_test;
 pub mod historical_view_test;

@@ -41,6 +41,15 @@ enum Commands {
         #[arg(long)]
         exit_at: u64,
     },
+    /// Rollback the database to a specific block height
+    Rollback {
+        /// Target height to rollback to
+        target_height: u64,
+
+        /// Actually perform the rollback (without this flag, it's a dry run)
+        #[arg(long)]
+        execute: bool,
+    },
 }
 
 struct ReorgDetector {
@@ -349,6 +358,128 @@ fn run_app(
     Ok(())
 }
 
+struct RollbackStats {
+    keys_deleted: usize,
+    keys_scanned: usize,
+    target_height: u64,
+}
+
+fn perform_rollback(db_path: String, target_height: u64, execute: bool) -> Result<RollbackStats> {
+    use rockshrew_runtime::{KeyValueStoreLike, BatchLike};
+
+    let mut adapter = RocksDBRuntimeAdapter::open_optimized(db_path)?;
+
+    println!("Opening database...");
+    println!("Target height: {}", target_height);
+    println!("Mode: {}", if execute { "EXECUTE" } else { "DRY RUN" });
+    println!();
+
+    let mut keys_to_delete = Vec::new();
+    let mut keys_scanned = 0;
+
+    // Scan all keys in the database
+    println!("Scanning database for keys with height > {}...", target_height);
+
+    // Get an iterator over all keys
+    let iter = adapter.db.iterator(rocksdb::IteratorMode::Start);
+
+    for item in iter {
+        let (key, _value) = item?;
+        keys_scanned += 1;
+
+        if keys_scanned % 10000 == 0 {
+            print!("\rScanned {} keys...", keys_scanned);
+            std::io::Write::flush(&mut std::io::stdout())?;
+        }
+
+        // Parse the key to extract height if present
+        // Keys can be in various formats:
+        // - /key/height
+        // - /blockhash/byheight/height
+        // - /state/root/height
+        // - /txids/byheight/height/...
+        let key_str = String::from_utf8_lossy(&key);
+
+        // Try to extract height from the key
+        if let Some(height) = extract_height_from_key(&key_str) {
+            if height > target_height {
+                keys_to_delete.push(key.to_vec());
+            }
+        }
+    }
+
+    println!("\r{} keys scanned", keys_scanned);
+    println!("Found {} keys to delete", keys_to_delete.len());
+
+    if execute {
+        println!("\nDeleting keys...");
+        let mut batch = adapter.create_batch();
+
+        for (i, key) in keys_to_delete.iter().enumerate() {
+            if i % 1000 == 0 && i > 0 {
+                print!("\rDeleted {}/{}...", i, keys_to_delete.len());
+                std::io::Write::flush(&mut std::io::stdout())?;
+
+                // Write batch periodically to avoid memory issues
+                adapter.write(batch)?;
+                batch = adapter.create_batch();
+            }
+            batch.delete(key);
+        }
+
+        // Write final batch
+        if keys_to_delete.len() > 0 {
+            adapter.write(batch)?;
+        }
+
+        println!("\r{} keys deleted", keys_to_delete.len());
+
+        // Update indexed height
+        let height_key = b"/indexed_height";
+        let height_bytes = target_height.to_le_bytes();
+        adapter.db.put(height_key, height_bytes)?;
+        println!("Updated indexed height to {}", target_height);
+
+    } else {
+        println!("\n⚠ DRY RUN - no changes made");
+        println!("Run with --execute to actually perform the rollback");
+    }
+
+    Ok(RollbackStats {
+        keys_deleted: keys_to_delete.len(),
+        keys_scanned,
+        target_height,
+    })
+}
+
+/// Extract height from a key path
+/// Examples:
+/// - "/key/123" -> Some(123)
+/// - "/blockhash/byheight/456" -> Some(456)
+/// - "/txids/byheight/789/0" -> Some(789)
+/// - "/state/root/100" -> Some(100)
+fn extract_height_from_key(key: &str) -> Option<u64> {
+    // Split by '/' and look for numeric segments
+    let parts: Vec<&str> = key.split('/').collect();
+
+    for (i, part) in parts.iter().enumerate() {
+        // Skip non-numeric parts
+        if let Ok(height) = part.parse::<u64>() {
+            // Basic heuristic: if the number is likely a height
+            // (reasonable range, not an index like 0, 1, 2...)
+            // Check if preceded by "byheight", "root", or if it's after a key name
+            if i > 0 {
+                let prev = parts[i - 1];
+                if prev == "byheight" || prev == "root" || prev.len() > 0 {
+                    return Some(height);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -369,6 +500,29 @@ fn main() -> Result<()> {
                 println!("  Duplicates: {}", reorg.duplicate_count);
             } else {
                 println!("\n✓ No reorgs detected in scanned range");
+            }
+        }
+        Commands::Rollback {
+            target_height,
+            execute,
+        } => {
+            println!("=== Rollback Database ===");
+            println!();
+
+            let stats = perform_rollback(cli.db_path, target_height, execute)?;
+
+            println!();
+            println!("=== Rollback Summary ===");
+            println!("Target height: {}", stats.target_height);
+            println!("Keys scanned: {}", stats.keys_scanned);
+            if execute {
+                println!("Keys deleted: {}", stats.keys_deleted);
+                println!();
+                println!("✓ Rollback complete!");
+            } else {
+                println!("Keys that would be deleted: {}", stats.keys_deleted);
+                println!();
+                println!("⚠ This was a dry run. Use --execute to perform the rollback.");
             }
         }
     }

@@ -91,6 +91,7 @@
 //! - **API services**: JSON-RPC endpoints for accessing indexed data
 
 use async_trait::async_trait;
+use bitcoin::hashes::Hash as _;
 use log::{debug, error, info, warn};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -259,11 +260,74 @@ where
         }
     }
 
-    /// Initialize the sync engine by determining the starting height
+    /// Validate that a block connects to the previous block in the chain
+    ///
+    /// This ensures chain continuity by verifying that the block's prev_blockhash
+    /// matches the stored hash of the previous block.
+    async fn validate_block_connects(&self, height: u32, block_data: &[u8]) -> SyncResult<bool> {
+        // Genesis block has no previous block
+        if height == 0 {
+            return Ok(true);
+        }
 
+        // Decode the block to get prev_blockhash
+        let block: bitcoin::Block = bitcoin::consensus::deserialize(block_data)
+            .map_err(|e| SyncError::BlockProcessing {
+                height,
+                message: format!("Failed to deserialize block: {}", e),
+            })?;
+
+        let block_prev_hash: Vec<u8> = block.header.prev_blockhash.to_byte_array().to_vec();
+
+        // Get the stored hash of the previous block
+        let storage = self.storage.read().await;
+        let stored_prev_hash = storage.get_block_hash(height - 1).await?;
+        drop(storage);
+
+        match stored_prev_hash {
+            Some(stored_hash) => {
+                if stored_hash != block_prev_hash {
+                    error!(
+                        "⚠ CHAIN DISCONTINUITY at height {}: Block's prev_blockhash {} does not match stored hash {} of block {}",
+                        height,
+                        hex::encode(&block_prev_hash),
+                        hex::encode(&stored_hash),
+                        height - 1
+                    );
+                    Ok(false)
+                } else {
+                    debug!(
+                        "✓ Block {} connects to previous block {} (hash: {})",
+                        height,
+                        height - 1,
+                        hex::encode(&block_prev_hash[..8])
+                    );
+                    Ok(true)
+                }
+            }
+            None => {
+                warn!(
+                    "No stored hash for block {} - unable to validate chain continuity for block {}",
+                    height - 1,
+                    height
+                );
+                // Allow processing to continue, but log the issue
+                Ok(true)
+            }
+        }
+    }
 
     /// Process a single block atomically
     pub async fn process_block(&self, height: u32, block_data: Vec<u8>, block_hash: Vec<u8>) -> SyncResult<()> {
+        // Validate that this block connects to the previous one
+        if !self.validate_block_connects(height, &block_data).await? {
+            return Err(SyncError::BlockProcessing {
+                height,
+                message: format!(
+                    "Block does not connect to previous block - possible reorg or chain inconsistency"
+                ),
+            });
+        }
         info!(
             "Processing block {} ({} bytes) atomically",
             height,
@@ -510,16 +574,44 @@ where
                         let mut processing_heights = self.processing_heights.lock().await;
                         processing_heights.remove(&failed_height);
                     }
-                    if error.contains("indexer exited unexpectedly") {
+
+                    // Check if this is a chain validation error
+                    if error.contains("does not connect to previous block") || error.contains("CHAIN DISCONTINUITY") {
+                        warn!("Chain discontinuity detected at height {}. Triggering reorg handling.", failed_height);
+
+                        // Trigger reorg handling to find common ancestor and rollback
+                        match handle_reorg(
+                            failed_height,
+                            self.node.clone(),
+                            self.storage.clone(),
+                            self.runtime.clone(),
+                            &self.config,
+                        )
+                        .await
+                        {
+                            Ok(rollback_height) => {
+                                info!("Rolled back to height {}. Resuming sync.", rollback_height);
+                                self.current_height.store(rollback_height, Ordering::SeqCst);
+                                rollback_height
+                            }
+                            Err(e) => {
+                                error!("Failed to handle reorg: {}", e);
+                                sleep(Duration::from_secs(5)).await;
+                                failed_height
+                            }
+                        }
+                    } else if error.contains("indexer exited unexpectedly") {
                         error!("Critical error: Indexer exited unexpectedly. Aborting.");
                         self.is_running.store(false, Ordering::SeqCst);
                         return Err(SyncError::BlockProcessing {
                             height: failed_height,
                             message: error,
                         });
+                    } else {
+                        // Other errors: retry after delay
+                        sleep(Duration::from_secs(5)).await;
+                        failed_height
                     }
-                    sleep(Duration::from_secs(5)).await;
-                    failed_height
                 }
             };
 
