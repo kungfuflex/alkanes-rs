@@ -215,9 +215,9 @@ impl Keystore {
         }
 
         // Set account_xpub for backward compatibility with old code paths
-        // Use P2TR xpub for the current network
-        let network_suffix = if network == bitcoin::Network::Bitcoin { "mainnet" } else { "testnet" };
-        let default_account_xpub = account_xpubs.get(&format!("p2tr:{}", network_suffix))
+        // Always default to mainnet p2tr for maximum portability across networks
+        // Modern code should use account_xpubs map to select network-specific xpubs
+        let default_account_xpub = account_xpubs.get("p2tr:mainnet")
             .cloned()
             .unwrap_or_default();
 
