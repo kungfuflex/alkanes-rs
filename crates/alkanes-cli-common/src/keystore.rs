@@ -178,8 +178,15 @@ impl Keystore {
         // 3. Derive account xpubs for each address type and BOTH coin types (mainnet=0, testnet=1)
         let seed = mnemonic.to_seed("");
         let secp = Secp256k1::new();
+
+        // Create separate root keys for mainnet and testnet to ensure correct xpub prefixes
+        // Mainnet uses "xpub" prefix, testnet/regtest/signet use "tpub" prefix
+        let mainnet_root = Xpriv::new_master(Network::Bitcoin, &seed)?;
+        let testnet_root = Xpriv::new_master(Network::Testnet, &seed)?;
+
+        // Use the appropriate root for fingerprint (matches the wallet's current network)
         let root = Xpriv::new_master(network, &seed)?;
-        
+
         // Derive account-level xpubs for each BIP standard and both coin types
         // This allows the same keystore to work on any network
         let mut account_xpubs = BTreeMap::new();
@@ -189,27 +196,28 @@ impl Keystore {
             ("p2sh-p2wpkh", "49"), // BIP-49: Nested SegWit
             ("p2pkh", "44"),      // BIP-44: Legacy
         ];
-        
+
         for (address_type, bip_number) in &bip_standards {
-            // Mainnet (coin_type = 0)
+            // Mainnet (coin_type = 0) - derive from mainnet root for correct "xpub" prefix
             let mainnet_path_str = format!("m/{}'/{}'/{}", bip_number, "0", "0'");
             let mainnet_path = DerivationPath::from_str(&mainnet_path_str)?;
-            let mainnet_xpriv = root.derive_priv(&secp, &mainnet_path)?;
+            let mainnet_xpriv = mainnet_root.derive_priv(&secp, &mainnet_path)?;
             let mainnet_xpub = Xpub::from_priv(&secp, &mainnet_xpriv);
             account_xpubs.insert(format!("{}:mainnet", address_type), mainnet_xpub.to_string());
-            
-            // Testnet (coin_type = 1) - used for testnet, signet, and regtest
+
+            // Testnet (coin_type = 1) - derive from testnet root for correct "tpub" prefix
+            // Used for testnet, signet, and regtest
             let testnet_path_str = format!("m/{}'/{}'/{}", bip_number, "1", "0'");
             let testnet_path = DerivationPath::from_str(&testnet_path_str)?;
-            let testnet_xpriv = root.derive_priv(&secp, &testnet_path)?;
+            let testnet_xpriv = testnet_root.derive_priv(&secp, &testnet_path)?;
             let testnet_xpub = Xpub::from_priv(&secp, &testnet_xpriv);
             account_xpubs.insert(format!("{}:testnet", address_type), testnet_xpub.to_string());
         }
 
         // Set account_xpub for backward compatibility with old code paths
-        // Use P2TR xpub for the current network
-        let network_suffix = if network == bitcoin::Network::Bitcoin { "mainnet" } else { "testnet" };
-        let default_account_xpub = account_xpubs.get(&format!("p2tr:{}", network_suffix))
+        // Always default to mainnet p2tr for maximum portability across networks
+        // Modern code should use account_xpubs map to select network-specific xpubs
+        let default_account_xpub = account_xpubs.get("p2tr:mainnet")
             .cloned()
             .unwrap_or_default();
 
