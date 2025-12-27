@@ -6126,7 +6126,9 @@ impl WalletProvider for WebProvider {
             .filter_map(|input| input.witness_utxo.clone())
             .collect();
 
-        let mut sighash_cache = SighashCache::new(&psbt.unsigned_tx);
+        // Create mutable tx clone for sighash cache
+        let mut tx = psbt.unsigned_tx.clone();
+        let mut sighash_cache = SighashCache::new(&mut tx);
 
         for i in 0..psbt.inputs.len() {
             let prev_txo = psbt.inputs[i].witness_utxo.as_ref()
@@ -6134,7 +6136,58 @@ impl WalletProvider for WebProvider {
 
             let script_pubkey = &prev_txo.script_pubkey;
 
-            // Parse the address from the script to find its derivation path
+            // Check if this is a script-path spend (tap_scripts is not empty)
+            if script_pubkey.is_p2tr() && !psbt.inputs[i].tap_scripts.is_empty() {
+                // Script-path spend for taproot (e.g., reveal transactions)
+                self.logger.info(&format!("[sign_psbt] Input {}: script-path spend", i));
+
+                let (control_block, (script, leaf_version)) = psbt.inputs[i].tap_scripts.iter().next()
+                    .ok_or_else(|| AlkanesError::Wallet("tap_scripts is empty".to_string()))?;
+                let leaf_hash = bitcoin::taproot::TapLeafHash::from_script(script, *leaf_version);
+
+                let sighash = sighash_cache.taproot_script_spend_signature_hash(
+                    i,
+                    &bitcoin::sighash::Prevouts::All(&prevouts),
+                    leaf_hash,
+                    bitcoin::sighash::TapSighashType::Default,
+                )?;
+
+                // Get the signing key from tap_key_origins
+                let (internal_pk, (_leaf_hashes, (master_fingerprint, derivation_path))) = psbt.inputs[i].tap_key_origins.iter().next()
+                    .ok_or_else(|| AlkanesError::Wallet("tap_key_origins is empty for script spend".to_string()))?;
+
+                if *master_fingerprint != bitcoin::bip32::Fingerprint::from_str(&keystore.master_fingerprint)? {
+                    return Err(AlkanesError::Wallet("Master fingerprint mismatch in tap_key_origins".to_string()));
+                }
+
+                // For script-path spend, use sign_taproot_script_spend which handles key derivation
+                // This matches the brc20-prog implementation
+                let msg = Message::from_digest_slice(&sighash[..])?;
+
+                // Use the trait method which properly handles key derivation
+                let sig = self.sign_taproot_script_spend(msg, None).await?;
+
+                let taproot_sig = bitcoin::taproot::Signature {
+                    signature: sig,
+                    sighash_type: bitcoin::sighash::TapSighashType::Default,
+                };
+
+                // Build script-path witness: [signature, script, control_block]
+                let mut final_witness = Witness::new();
+                final_witness.push(taproot_sig.to_vec());
+                final_witness.push(script.as_bytes());
+                final_witness.push(control_block.serialize());
+
+                self.logger.info(&format!(
+                    "[sign_psbt] Input {}: created script-path witness with {} items",
+                    i, final_witness.len()
+                ));
+
+                psbt.inputs[i].final_script_witness = Some(final_witness);
+                continue;
+            }
+
+            // Key-path spend - look up address in keystore
             let address = Address::from_script(script_pubkey, self.network)
                 .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {}", e)))?;
 
@@ -6182,7 +6235,7 @@ impl WalletProvider for WebProvider {
                     pubkey.to_bytes().as_slice(),
                 ]));
             } else if script_pubkey.is_p2tr() {
-                // P2TR signing - uses Schnorr with tweaked keypair
+                // P2TR key-path signing - uses Schnorr with tweaked keypair
                 let untweaked_keypair = UntweakedKeypair::from(keypair);
                 let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
 

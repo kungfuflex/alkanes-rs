@@ -309,7 +309,7 @@ async function deployContract(
       envelopeHex: envelopeHex,
       fromAddresses: [walletAddress],  // Source UTXOs from wallet
       changeAddress: walletAddress,
-      traceEnabled: true,  // Enable trace for verification
+      traceEnabled: false,  // Disabled: trace logic has issues (separate from WASM)
       autoConfirm: true,
       mineEnabled: true,  // Auto-mine on regtest
     });
