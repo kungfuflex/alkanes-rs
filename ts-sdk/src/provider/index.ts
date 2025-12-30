@@ -2067,15 +2067,19 @@ export class AlkanesProvider {
    * Execute an Alkanes contract call with full control (typed parameters)
    *
    * This method accepts TypeScript objects and handles JSON serialization internally.
+   * Automatically applies sensible defaults:
+   * - `toAddresses`: Auto-generated as p2tr:0 for each protostone vN reference if not provided
+   * - `fromAddresses`: Defaults to [p2wpkh:0, p2tr:0] if not provided
+   * - `changeAddress`: Defaults to p2wpkh:0 if not provided
+   * - `alkanesChangeAddress`: Defaults to p2tr:0 if not provided
    *
    * @param params - Execute parameters
    * @returns Execution result
    *
    * @example
    * ```typescript
-   * // Mint DIESEL tokens
+   * // Mint DIESEL tokens - only specify protostones, defaults handle the rest!
    * const result = await provider.alkanesExecuteTyped({
-   *   toAddresses: [myAddress],
    *   inputRequirements: 'B:10000',
    *   protostones: '[2,0,77]:v0:v0',
    *   feeRate: 100,
@@ -2083,7 +2087,7 @@ export class AlkanesProvider {
    * ```
    */
   async alkanesExecuteTyped(params: {
-    toAddresses: string[];
+    toAddresses?: string[];
     inputRequirements: string;
     protostones: string;
     feeRate?: number;
@@ -2098,10 +2102,20 @@ export class AlkanesProvider {
   }): Promise<any> {
     const provider = await this.getProvider();
 
+    // Parse protostones to determine how many vN outputs are referenced
+    const maxVout = this._parseMaxVoutFromProtostones(params.protostones);
+
+    // Auto-generate toAddresses if not provided
+    // Creates one p2tr:0 output for each vN reference (v0, v1, v2, etc.)
+    const toAddresses = params.toAddresses ?? Array(maxVout + 1).fill('p2tr:0');
+
     const options: Record<string, any> = {};
-    if (params.fromAddresses !== undefined) options.from_addresses = params.fromAddresses;
-    if (params.changeAddress !== undefined) options.change_address = params.changeAddress;
-    if (params.alkanesChangeAddress !== undefined) options.alkanes_change_address = params.alkanesChangeAddress;
+
+    // Apply automatic defaults
+    options.from_addresses = params.fromAddresses ?? ['p2wpkh:0', 'p2tr:0'];
+    options.change_address = params.changeAddress ?? 'p2wpkh:0';
+    options.alkanes_change_address = params.alkanesChangeAddress ?? 'p2tr:0';
+
     if (params.traceEnabled !== undefined) options.trace_enabled = params.traceEnabled;
     if (params.mineEnabled !== undefined) options.mine_enabled = params.mineEnabled;
     if (params.autoConfirm !== undefined) options.auto_confirm = params.autoConfirm;
@@ -2112,7 +2126,7 @@ export class AlkanesProvider {
     // Use alkanesExecuteFull which handles the complete flow internally
     // This avoids serialization issues when passing state between JS and Rust
     const result = await provider.alkanesExecuteFull(
-      JSON.stringify(params.toAddresses),
+      JSON.stringify(toAddresses),
       params.inputRequirements,
       params.protostones,
       params.feeRate ?? null,
@@ -2121,6 +2135,29 @@ export class AlkanesProvider {
     );
 
     return typeof result === 'string' ? JSON.parse(result) : result;
+  }
+
+  /**
+   * Parse protostones string to find the maximum vN output index referenced
+   * This is used to auto-generate the correct number of to_addresses
+   *
+   * @param protostones - Protostone specification string
+   * @returns Maximum vout index found (e.g., "v2" returns 2)
+   */
+  private _parseMaxVoutFromProtostones(protostones: string): number {
+    let maxVout = 0;
+
+    // Match all vN patterns in the protostones string
+    const voutMatches = protostones.matchAll(/v(\d+)/g);
+
+    for (const match of voutMatches) {
+      const voutIndex = parseInt(match[1], 10);
+      if (voutIndex > maxVout) {
+        maxVout = voutIndex;
+      }
+    }
+
+    return maxVout;
   }
 
   /**

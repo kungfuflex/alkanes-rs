@@ -26,10 +26,12 @@ export type OrdinalsStrategy = 'exclude' | 'preserve' | 'burn';
  * Base execution parameters for Alkanes operations
  */
 export interface AlkanesExecuteBaseParams {
-  /** Addresses to source UTXOs from (optional) */
+  /** Addresses to source UTXOs from (optional, defaults to [p2wpkh:0, p2tr:0]) */
   from_addresses?: string[];
-  /** Change address (optional, defaults to signer address) */
+  /** Change address for BTC (optional, defaults to p2wpkh:0) */
   change_address?: string;
+  /** Change address for unwanted alkanes (optional, defaults to p2tr:0) */
+  alkanes_change_address?: string;
   /** Fee rate in sat/vB (optional, defaults to 100) */
   fee_rate?: number;
   /** Use MARA Slipstream service for broadcasting (optional) */
@@ -158,8 +160,11 @@ export interface AlkanesInitPoolParams extends AlkanesExecuteBaseParams {
  * string formats as the CLI.
  */
 export interface AlkanesExecuteParams extends AlkanesExecuteBaseParams {
-  /** Recipient addresses */
-  to_addresses: string[];
+  /**
+   * Recipient addresses (optional, auto-generated from protostones if not provided)
+   * When auto-generated: creates one p2tr:0 output for each protostone v0..vN reference
+   */
+  to_addresses?: string[];
   /**
    * Input requirements string
    * Format: "B:10000" for BTC, "2:0:1000" for alkanes (block:tx:amount)
