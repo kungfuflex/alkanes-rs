@@ -1108,7 +1108,7 @@ pub enum Alkanes {
     },
     /// Simulate an alkanes transaction
     Simulate {
-        /// The alkane ID to simulate (format: block:tx:calldata_opcode, e.g., 4:65522:3)
+        /// The alkane ID to simulate (format: block:tx:arg1:arg2:..., e.g., 4:20013:2:1717855594)
         alkane_id: String,
         /// Input alkanes as comma-separated triplets (e.g., 2:1:1,2:2:100)
         #[arg(long)]

@@ -993,19 +993,22 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             use bitcoin::{Transaction as BtcTransaction, TxIn, TxOut, OutPoint, Sequence, Amount, Address};
             use bitcoin::transaction::Version;
             
-            // Parse alkane_id (format: block:tx:calldata_opcode, e.g., 4:65522:3)
+            // Parse alkane_id (format: block:tx:arg1:arg2:..., e.g., 4:20013:2:1717855594)
             let parts: Vec<&str> = alkane_id.split(':').collect();
             if parts.len() < 2 {
-                return Err(anyhow::anyhow!("Invalid alkane_id format. Expected block:tx or block:tx:calldata_opcode"));
+                return Err(anyhow::anyhow!("Invalid alkane_id format. Expected block:tx or block:tx:arg1:arg2:..."));
             }
-            
-            let target_block: u64 = parts[0].parse()?;
-            let target_tx: u64 = parts[1].parse()?;
-            let calldata_opcode: u64 = if parts.len() >= 3 {
-                parts[2].parse()?
-            } else {
-                0
-            };
+
+            let target_block: u128 = parts[0].parse()?;
+            let target_tx: u128 = parts[1].parse()?;
+
+            // Parse all remaining values as arguments
+            let mut cellpack_inputs = Vec::new();
+            for i in 2..parts.len() {
+                let arg: u128 = parts[i].parse()
+                    .map_err(|_| anyhow::anyhow!("Invalid argument at position {}: '{}'", i, parts[i]))?;
+                cellpack_inputs.push(arg);
+            }
             
             // Parse input alkanes (format: block:tx:amount,block:tx:amount,...)
             let mut alkane_transfers = Vec::new();
@@ -1094,11 +1097,18 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 Vec::new()
             };
             
-            // Build calldata: target_block, target_tx, calldata_opcode
-            let mut calldata = Vec::new();
-            leb128::write::unsigned(&mut calldata, target_block).unwrap();
-            leb128::write::unsigned(&mut calldata, target_tx).unwrap();
-            leb128::write::unsigned(&mut calldata, calldata_opcode).unwrap();
+            // Build calldata using Cellpack for proper encoding
+            use alkanes_support::cellpack::Cellpack;
+            use alkanes_support::id::AlkaneId as AlkanesAlkaneId;
+
+            let cellpack = Cellpack {
+                target: AlkanesAlkaneId {
+                    block: target_block,
+                    tx: target_tx,
+                },
+                inputs: cellpack_inputs,
+            };
+            let calldata = cellpack.encipher();
             
             // Construct MessageContextParcel
             let context = MessageContextParcel {
@@ -1114,8 +1124,9 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             };
             
             // Debug: Log the context summary
-            log::debug!("Simulating alkane {}:{} with opcode {}", target_block, target_tx, calldata_opcode);
-            log::debug!("Context: height={}, txindex={}, {} input alkanes", 
+            log::debug!("Simulating alkane {}:{} with {} arguments: {:?}",
+                target_block, target_tx, cellpack.inputs.len(), cellpack.inputs);
+            log::debug!("Context: height={}, txindex={}, {} input alkanes",
                 simulation_height, txindex, context.alkanes.len());
             
             // Run simulation
