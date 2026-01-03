@@ -1,23 +1,5 @@
 #[cfg(any(feature = "test-utils", test))]
 pub mod helpers;
-#[cfg(all(test, feature = "zcash"))]
-pub mod zcash_helpers;
-#[cfg(all(test, feature = "zcash"))]
-pub mod zcash;
-#[cfg(all(test, feature = "zcash"))]
-pub mod zcash_parse;
-#[cfg(all(test, feature = "zcash"))]
-pub mod zcash_block_0;
-#[cfg(all(test, feature = "zcash"))]
-pub mod zcash_block_250;
-#[cfg(all(test, feature = "zcash"))]
-pub mod zcash_block_286639;
-#[cfg(all(test, feature = "zcash"))]
-pub mod block_407_parse;
-#[cfg(all(test, feature = "zcash"))]
-pub mod zcash_block_349330;
-#[cfg(all(test, feature = "zcash"))]
-pub mod zcash_block_349330_indexing;
 #[cfg(test)]
 pub mod std;
 #[cfg(test)]
@@ -45,8 +27,6 @@ pub mod factory;
 pub mod forge;
 #[cfg(test)]
 pub mod fr_btc;
-#[cfg(all(test, feature = "zcash"))]
-pub mod fr_zec;
 #[cfg(test)]
 pub mod fuel;
 #[cfg(test)]
@@ -67,7 +47,3 @@ pub mod upgradeable;
 pub mod vec_input_test;
 #[cfg(test)]
 pub mod view;
-#[cfg(test)]
-pub mod trace_structure;
-#[cfg(all(test, feature = "mainnet"))]
-pub mod block_892614_mainnet;

@@ -9,7 +9,6 @@ use crate::precompiled::{
     alkanes_std_genesis_alkane_upgraded_eoa_regtest_build,
     alkanes_std_genesis_alkane_upgraded_mainnet_build,
     alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_build, fr_sigil_build,
-    ftr_btc_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -187,26 +186,16 @@ pub fn is_active(height: u64) -> bool {
     height >= genesis::GENESIS_BLOCK
 }
 
-use std::sync::atomic::{AtomicBool, Ordering};
+static mut _VIEW: bool = false;
 
-/// Thread-safe view mode flag.
-/// When true, allows genesis checks to pass during view/query operations.
-static VIEW_MODE: AtomicBool = AtomicBool::new(false);
-
-/// Sets view mode to true. Called before view/query operations.
 pub fn set_view_mode() {
-    VIEW_MODE.store(true, Ordering::SeqCst);
+    unsafe {
+        _VIEW = true;
+    }
 }
 
-/// Clears view mode. Should be called at the start of block indexing
-/// to ensure deterministic behavior.
-pub fn clear_view_mode() {
-    VIEW_MODE.store(false, Ordering::SeqCst);
-}
-
-/// Gets the current view mode.
 pub fn get_view_mode() -> bool {
-    VIEW_MODE.load(Ordering::SeqCst)
+    unsafe { _VIEW }
 }
 
 pub fn is_genesis(height: u64) -> bool {
@@ -333,17 +322,6 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
     );
     atomic.commit();
-    Ok(())
-}
-
-pub fn setup_ftrbtc(_block: &Block) -> Result<()> {
-    // ftrBTC uses alkane ID [31, 0] - reserved for futures master contract
-    let ftr_btc_id = AlkaneId { block: 31, tx: 0 };
-
-    let mut ptr = IndexPointer::from_keyword("/alkanes/").select(&ftr_btc_id.into());
-    if ptr.get().len() == 0 {
-        ptr.set(Arc::new(compress(ftr_btc_build::get_bytes())?));
-    }
     Ok(())
 }
 

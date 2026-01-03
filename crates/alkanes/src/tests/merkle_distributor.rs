@@ -5,7 +5,6 @@ use crate::tests::helpers::{
     create_multiple_cellpack_with_witness_and_in, get_last_outpoint_sheet, get_sheet_for_outpoint,
     init_with_multiple_cellpacks_with_tx,
 };
-use crate::tests::std::alkanes_std_merkle_distributor_build;
 use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
@@ -167,7 +166,10 @@ fn helper_test_merkle_distributor(
         inputs: vec![77],
     };
 
-    let merkle_testnet_build = alkanes_std_merkle_distributor_build::get_bytes();
+    let merkle_testnet_build = include_bytes!(
+        "../../target/alkanes/wasm32-unknown-unknown/release/alkanes_std_merkle_distributor_regtest.wasm"
+    )
+    .to_vec();
 
     let test_block = init_with_multiple_cellpacks_with_tx(
         vec![[].into(), merkle_testnet_build.clone()],
@@ -216,7 +218,6 @@ fn helper_test_merkle_distributor(
 }
 
 #[wasm_bindgen_test]
-#[cfg(not(feature = "zcash"))]  // TODO: Debug why merkle_distributor balance check fails with zcash
 fn test_merkle_distributor() -> Result<()> {
     clear();
     helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
@@ -224,7 +225,6 @@ fn test_merkle_distributor() -> Result<()> {
 }
 
 #[wasm_bindgen_test]
-#[cfg(not(feature = "zcash"))]  // TODO: Debug why merkle_distributor balance check fails with zcash
 fn test_merkle_distributor_admin_collect() -> Result<()> {
     clear();
     let init_block = helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;
@@ -263,7 +263,6 @@ fn test_merkle_distributor_admin_collect() -> Result<()> {
 }
 
 #[wasm_bindgen_test]
-#[cfg(not(feature = "zcash"))]  // TODO: Debug why merkle_distributor balance check fails with zcash
 fn test_merkle_distributor_admin_collect_no_auth() -> Result<()> {
     clear();
     let init_block = helper_test_merkle_distributor(840_000, 900_000, ADDRESS1(), 0)?;

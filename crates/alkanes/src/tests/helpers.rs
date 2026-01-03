@@ -176,27 +176,14 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
         .zip(cellpacks.into_iter())
         .map(|i| {
             let (binary, cellpack) = i;
-            
-            // For Zcash/Dogecoin: use scriptSig (no taproot)
-            // For Bitcoin: use witness (taproot)
-            #[cfg(feature = "zcash")]
-            let (witness, script_sig) = if binary.len() == 0 {
-                (Witness::new(), ScriptBuf::new())
+            let witness = if binary.len() == 0 {
+                Witness::new()
             } else {
-                (Witness::new(), RawEnvelope::from(binary).to_scriptsig(true))
+                RawEnvelope::from(binary).to_witness(true)
             };
-            
-            #[cfg(not(feature = "zcash"))]
-            let (witness, script_sig) = if binary.len() == 0 {
-                (Witness::new(), ScriptBuf::new())
-            } else {
-                (RawEnvelope::from(binary).to_witness(true), ScriptBuf::new())
-            };
-            
             if let Some(previous_output) = previous_out {
-                let tx = create_multiple_cellpack_with_witness_and_scriptsig_and_in(
+                let tx = create_multiple_cellpack_with_witness_and_in(
                     witness,
-                    script_sig,
                     [cellpack].into(),
                     previous_output,
                     false,
@@ -207,12 +194,7 @@ pub fn init_with_multiple_cellpacks_with_tx_w_input(
                 });
                 tx
             } else {
-                let tx = create_multiple_cellpack_with_witness_and_scriptsig(
-                    witness,
-                    script_sig,
-                    [cellpack].into(),
-                    false,
-                );
+                let tx = create_multiple_cellpack_with_witness(witness, [cellpack].into(), false);
                 previous_out = Some(OutPoint {
                     txid: tx.compute_txid(),
                     vout: 0,
@@ -231,20 +213,11 @@ pub fn init_with_multiple_cellpacks(binary: Vec<u8>, cellpacks: Vec<Cellpack>) -
     let mut test_block = create_block_with_coinbase_tx(block_height);
 
     let raw_envelope = RawEnvelope::from(binary);
-    
-    #[cfg(feature = "zcash")]
-    let (witness, script_sig) = (Witness::new(), raw_envelope.to_scriptsig(true));
-    
-    #[cfg(not(feature = "zcash"))]
-    let (witness, script_sig) = (raw_envelope.to_witness(true), ScriptBuf::new());
-    
+    let witness = raw_envelope.to_witness(true);
     test_block
         .txdata
-        .push(create_multiple_cellpack_with_witness_and_scriptsig(
-            witness,
-            script_sig,
-            cellpacks,
-            false,
+        .push(create_multiple_cellpack_with_witness(
+            witness, cellpacks, false,
         ));
     test_block
 }
@@ -301,25 +274,10 @@ pub fn create_multiple_cellpack_with_witness_and_in(
     previous_output: OutPoint,
     etch: bool,
 ) -> Transaction {
-    create_multiple_cellpack_with_witness_and_scriptsig_and_in(
-        witness,
-        ScriptBuf::new(),
-        cellpacks,
-        previous_output,
-        etch,
-    )
-}
-
-pub fn create_multiple_cellpack_with_witness_and_scriptsig_and_in(
-    witness: Witness,
-    script_sig: ScriptBuf,
-    cellpacks: Vec<Cellpack>,
-    previous_output: OutPoint,
-    etch: bool,
-) -> Transaction {
+    let input_script = ScriptBuf::new();
     let txin = TxIn {
         previous_output,
-        script_sig,
+        script_sig: input_script,
         sequence: Sequence::MAX,
         witness,
     };
@@ -415,15 +373,6 @@ pub fn create_multiple_cellpack_with_witness(
     cellpacks: Vec<Cellpack>,
     etch: bool,
 ) -> Transaction {
-    create_multiple_cellpack_with_witness_and_scriptsig(witness, ScriptBuf::new(), cellpacks, etch)
-}
-
-pub fn create_multiple_cellpack_with_witness_and_scriptsig(
-    witness: Witness,
-    script_sig: ScriptBuf,
-    cellpacks: Vec<Cellpack>,
-    etch: bool,
-) -> Transaction {
     let previous_output = OutPoint {
         txid: bitcoin::Txid::from_str(
             "0000000000000000000000000000000000000000000000000000000000000000",
@@ -431,13 +380,7 @@ pub fn create_multiple_cellpack_with_witness_and_scriptsig(
         .unwrap(),
         vout: 0,
     };
-    create_multiple_cellpack_with_witness_and_scriptsig_and_in(
-        witness,
-        script_sig,
-        cellpacks,
-        previous_output,
-        etch,
-    )
+    create_multiple_cellpack_with_witness_and_in(witness, cellpacks, previous_output, etch)
 }
 
 pub fn assert_binary_deployed_to_id(token_id: AlkaneId, binary: Vec<u8>) -> Result<()> {
@@ -545,58 +488,9 @@ fn get_trace_event_at_index(outpoint: &OutPoint, index: Option<isize>) -> Result
     Ok(event)
 }
 
-/// Find the last ReturnContext event in the trace (searching backwards)
-fn find_last_return_context(outpoint: &OutPoint) -> Result<TraceEvent> {
-    let trace_data: Trace = view::trace(outpoint)?.try_into()?;
-    let trace_events = trace_data.0.lock().expect("Mutex poisoned");
-
-    if trace_events.is_empty() {
-        panic!("No trace events found");
-    }
-
-    // Search backwards for ReturnContext
-    for event in trace_events.iter().rev() {
-        if matches!(event, TraceEvent::ReturnContext(_)) {
-            return Ok(event.clone());
-        }
-    }
-    panic!("No ReturnContext event found in trace. Events: {:?}", *trace_events);
-}
-
-/// Find the last RevertContext event in the trace (searching backwards)
-fn find_last_revert_context(outpoint: &OutPoint) -> Result<TraceEvent> {
-    let trace_data: Trace = view::trace(outpoint)?.try_into()?;
-    let trace_events = trace_data.0.lock().expect("Mutex poisoned");
-
-    if trace_events.is_empty() {
-        panic!("No trace events found");
-    }
-
-    // Search backwards for RevertContext
-    for event in trace_events.iter().rev() {
-        if matches!(event, TraceEvent::RevertContext(_)) {
-            return Ok(event.clone());
-        }
-    }
-    panic!("No RevertContext event found in trace. Events: {:?}", *trace_events);
-}
-
 pub fn assert_revert_context(outpoint: &OutPoint, expected_error_message: &str) -> Result<()> {
-    // Search for the last RevertContext event in the trace
-    let event = find_last_revert_context(outpoint)?;
-    match event {
-        TraceEvent::RevertContext(trace_response) => {
-            let data = String::from_utf8_lossy(&trace_response.inner.data);
-            assert!(
-                data.contains(expected_error_message),
-                "Expected error message '{}' not found in: '{}'",
-                expected_error_message,
-                data
-            );
-            Ok(())
-        }
-        _ => unreachable!(), // find_last_revert_context only returns RevertContext
-    }
+    // This is a convenience wrapper around assert_revert_context_at_index that checks the last event
+    assert_revert_context_at_index(outpoint, expected_error_message, None)
 }
 
 pub fn assert_revert_context_at_index(
@@ -604,10 +498,7 @@ pub fn assert_revert_context_at_index(
     expected_error_message: &str,
     index: Option<isize>,
 ) -> Result<()> {
-    let event = match index {
-        Some(_) => get_trace_event_at_index(outpoint, index)?,
-        None => find_last_revert_context(outpoint)?,
-    };
+    let event = get_trace_event_at_index(outpoint, index)?;
     match event {
         TraceEvent::RevertContext(trace_response) => {
             let data = String::from_utf8_lossy(&trace_response.inner.data);
@@ -630,12 +521,7 @@ pub fn assert_return_context<F, T>(outpoint: &OutPoint, check_function: F) -> Re
 where
     F: Fn(TraceResponse) -> Result<T>,
 {
-    // Search for the last ReturnContext event in the trace
-    let event = find_last_return_context(outpoint)?;
-    match event {
-        TraceEvent::ReturnContext(trace_response) => check_function(trace_response),
-        _ => unreachable!(), // find_last_return_context only returns ReturnContext
-    }
+    assert_return_context_at_index(outpoint, check_function, None)
 }
 
 pub fn assert_return_context_at_index<F, T>(
@@ -646,10 +532,7 @@ pub fn assert_return_context_at_index<F, T>(
 where
     F: Fn(TraceResponse) -> Result<T>,
 {
-    let event = match index {
-        Some(_) => get_trace_event_at_index(outpoint, index)?,
-        None => find_last_return_context(outpoint)?,
-    };
+    let event = get_trace_event_at_index(outpoint, index)?;
     match event {
         TraceEvent::ReturnContext(trace_response) => check_function(trace_response),
         _ => panic!(
