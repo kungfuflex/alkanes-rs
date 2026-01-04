@@ -276,7 +276,7 @@ async function fetchEsmModule(packageName, version, token, filePath = null) {
         let redirectUrl = proxyRes.headers.location;
         if (redirectUrl.startsWith('/')) {
           // Relative redirect - construct full URL
-          redirectUrl = `https://${REGISTRY_HOST}${redirectUrl}`;
+          redirectUrl = `https://${ARTIFACT_REGISTRY}${redirectUrl}`;
         }
         console.log(`Following metadata redirect to: ${redirectUrl}`);
         https.get(redirectUrl, (finalRes) => {
