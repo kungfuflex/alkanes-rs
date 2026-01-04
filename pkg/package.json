@@ -8,5 +8,8 @@
   },
   "keywords": ["proxy", "artifact-registry", "npm"],
   "author": "Alkanes Team",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "tar-stream": "^3.1.7"
+  }
 }

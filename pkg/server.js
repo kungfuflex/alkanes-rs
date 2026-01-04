@@ -1,6 +1,8 @@
 const http = require('http');
 const https = require('https');
 const url = require('url');
+const zlib = require('zlib');
+const tar = require('tar-stream');
 
 const PORT = process.env.PORT || 8080;
 const ARTIFACT_REGISTRY = 'us-central1-npm.pkg.dev';
@@ -14,6 +16,10 @@ let tokenExpiry = 0;
 // Cache for package metadata (5 minute TTL)
 const metadataCache = new Map();
 const METADATA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Cache for extracted ESM files (10 minute TTL)
+const esmCache = new Map();
+const ESM_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 // Fetch access token from metadata server
 async function getAccessToken() {
@@ -129,6 +135,151 @@ async function getPackageMetadata(packageName, token, forceRefresh = false) {
             reject(new Error(`Package not found: ${res.statusCode}`));
           }
         });
+      }
+    }).on('error', reject);
+  });
+}
+
+// Fetch and extract ESM module from tarball
+async function fetchEsmModule(packageName, version, token, filePath = null) {
+  // Get package metadata
+  const metadata = await getPackageMetadata(packageName, token);
+
+  // Determine which version to fetch
+  let targetVersion;
+  if (!version || version === 'latest') {
+    targetVersion = metadata['dist-tags']['latest-dev'] || metadata['dist-tags']['latest'];
+  } else {
+    if (!metadata.versions[version]) {
+      throw new Error(`Version ${version} not found`);
+    }
+    targetVersion = version;
+  }
+
+  const versionInfo = metadata.versions[targetVersion];
+  const cacheKey = `${packageName}@${targetVersion}:${filePath || 'main'}`;
+
+  // Check cache
+  const cached = esmCache.get(cacheKey);
+  if (cached && cached.expiry > Date.now()) {
+    return cached;
+  }
+
+  // Determine which file to extract
+  let targetFile = filePath;
+  if (!targetFile) {
+    // Use module, main, or default to index.js
+    targetFile = versionInfo.module || versionInfo.main || 'index.js';
+    // Remove leading ./
+    if (targetFile.startsWith('./')) {
+      targetFile = targetFile.substring(2);
+    }
+  }
+
+  const tarballUrl = versionInfo.dist.tarball;
+  console.log(`Fetching ESM for ${packageName}@${targetVersion}, file: ${targetFile}`);
+
+  const tarballPath = new URL(tarballUrl).pathname;
+
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: ARTIFACT_REGISTRY,
+      path: tarballPath,
+      headers: {
+        'Host': ARTIFACT_REGISTRY,
+        'Authorization': `Bearer ${token}`
+      }
+    };
+
+    const handleTarball = (tarballStream) => {
+      const extract = tar.extract();
+      const files = new Map();
+      let packageJson = null;
+
+      extract.on('entry', (header, stream, next) => {
+        const chunks = [];
+        stream.on('data', (chunk) => chunks.push(chunk));
+        stream.on('end', () => {
+          // Remove 'package/' prefix from tarball paths
+          const name = header.name.replace(/^package\//, '');
+          const content = Buffer.concat(chunks);
+          files.set(name, content);
+          if (name === 'package.json') {
+            try {
+              packageJson = JSON.parse(content.toString('utf8'));
+            } catch (e) {}
+          }
+          next();
+        });
+        stream.resume();
+      });
+
+      extract.on('finish', () => {
+        // If no specific file requested, use package.json to find entry
+        let fileToServe = targetFile;
+        if (!filePath && packageJson) {
+          fileToServe = packageJson.module || packageJson.main || 'index.js';
+          if (fileToServe.startsWith('./')) {
+            fileToServe = fileToServe.substring(2);
+          }
+        }
+
+        const content = files.get(fileToServe);
+        if (!content) {
+          // Try common variations
+          const variations = [
+            fileToServe,
+            `${fileToServe}.js`,
+            `${fileToServe}/index.js`,
+            `dist/${fileToServe}`,
+            `dist/${fileToServe}.js`,
+            `dist/index.js`,
+            'dist/index.mjs',
+            'index.mjs'
+          ];
+
+          for (const v of variations) {
+            if (files.has(v)) {
+              const result = {
+                content: files.get(v).toString('utf8'),
+                version: targetVersion,
+                file: v,
+                expiry: Date.now() + ESM_CACHE_TTL
+              };
+              esmCache.set(cacheKey, result);
+              resolve(result);
+              return;
+            }
+          }
+
+          reject(new Error(`File ${fileToServe} not found in package. Available: ${Array.from(files.keys()).join(', ')}`));
+          return;
+        }
+
+        const result = {
+          content: content.toString('utf8'),
+          version: targetVersion,
+          file: fileToServe,
+          expiry: Date.now() + ESM_CACHE_TTL
+        };
+        esmCache.set(cacheKey, result);
+        resolve(result);
+      });
+
+      extract.on('error', reject);
+      tarballStream.pipe(zlib.createGunzip()).pipe(extract);
+    };
+
+    https.get(options, (proxyRes) => {
+      if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+        // Follow redirect
+        https.get(proxyRes.headers.location, (finalRes) => {
+          handleTarball(finalRes);
+        }).on('error', reject);
+      } else if (proxyRes.statusCode === 200) {
+        handleTarball(proxyRes);
+      } else {
+        reject(new Error(`Failed to fetch tarball: ${proxyRes.statusCode}`));
       }
     }).on('error', reject);
   });
@@ -333,6 +484,65 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Handle /esm/{package} endpoint - serve JS module with correct MIME type
+    // Supports /esm/@scope/package or /esm/@scope/package/path/to/file.js
+    if (pathname.startsWith('/esm/')) {
+      const pathParts = pathname.substring(5); // Remove '/esm/'
+
+      // Parse scoped package: @scope/package/optional/file/path
+      let packageName, filePath;
+      if (pathParts.startsWith('@')) {
+        const match = pathParts.match(/^(@[^\/]+\/[^\/]+)(?:\/(.+))?$/);
+        if (match) {
+          packageName = match[1];
+          filePath = match[2] || null;
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid package path' }));
+          return;
+        }
+      } else {
+        const match = pathParts.match(/^([^\/]+)(?:\/(.+))?$/);
+        if (match) {
+          packageName = match[1];
+          filePath = match[2] || null;
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid package path' }));
+          return;
+        }
+      }
+
+      const version = query.v || query.version;
+
+      try {
+        const result = await fetchEsmModule(packageName, version, token, filePath);
+
+        // Determine MIME type based on file extension
+        let contentType = 'application/javascript';
+        if (result.file.endsWith('.mjs')) {
+          contentType = 'application/javascript';
+        } else if (result.file.endsWith('.json')) {
+          contentType = 'application/json';
+        } else if (result.file.endsWith('.wasm')) {
+          contentType = 'application/wasm';
+        }
+
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'X-Package-Version': result.version,
+          'X-Package-File': result.file,
+          'Cache-Control': 'public, max-age=300'
+        });
+        res.end(result.content);
+      } catch (err) {
+        console.error('ESM fetch error:', err);
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Module not found', details: err.message }));
+      }
+      return;
+    }
+
     // Default: proxy request to Artifact Registry (npm registry compatibility)
     const options = {
       hostname: ARTIFACT_REGISTRY,
@@ -377,9 +587,11 @@ server.listen(PORT, () => {
   console.log(`Proxying to: https://${ARTIFACT_REGISTRY}/${PROJECT}/${REPOSITORY}/`);
   console.log('');
   console.log('Endpoints:');
-  console.log('  GET /@scope/package          - Package metadata and latest version');
-  console.log('  GET /versions/@scope/package - List all available versions');
-  console.log('  GET /dist/@scope/package     - Download latest tarball');
-  console.log('  GET /dist/@scope/package?v=X - Download specific version tarball');
-  console.log('  GET /health                  - Health check');
+  console.log('  GET /@scope/package            - Package metadata and latest version');
+  console.log('  GET /versions/@scope/package   - List all available versions');
+  console.log('  GET /dist/@scope/package       - Download latest tarball');
+  console.log('  GET /dist/@scope/package?v=X   - Download specific version tarball');
+  console.log('  GET /esm/@scope/package        - Serve main JS module (browser import)');
+  console.log('  GET /esm/@scope/package/file   - Serve specific file from package');
+  console.log('  GET /health                    - Health check');
 });
