@@ -106,9 +106,9 @@ jobs:
         run: |
           cd ts-sdk
           cat > .npmrc <<EOF
-          @alkanes:registry=https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
-          //us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/:_authToken=$(gcloud auth print-access-token)
-          //us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/:always-auth=true
+          @alkanes:registry=https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
+          //us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/:_authToken=$(gcloud auth print-access-token)
+          //us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/:always-auth=true
           EOF
           echo "npm configuration created"
 
@@ -170,7 +170,7 @@ jobs:
         working-directory: ts-sdk
         run: |
           echo "Publishing @alkanes/ts-sdk@${{ steps.version.outputs.version }}..."
-          npm publish --registry=https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/ --access=public
+          npm publish --registry=https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/ --access=public
           echo "Package published successfully"
 
       - name: Tag as latest-dev
@@ -179,7 +179,7 @@ jobs:
         run: |
           echo "Tagging as latest-dev..."
           npm dist-tag add @alkanes/ts-sdk@${{ steps.version.outputs.version }} latest-dev \
-            --registry=https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+            --registry=https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
           echo "Tagged as latest-dev"
 
       - name: Purge CloudFlare cache
@@ -208,39 +208,39 @@ jobs:
 
           # Check if purge was successful
           if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✅ CloudFlare cache purged successfully"
+            echo "CloudFlare cache purged successfully"
           else
-            echo "⚠️  Cache purge failed, check CLOUDFLARE_API_TOKEN permissions"
+            echo "Cache purge failed, check CLOUDFLARE_API_TOKEN permissions"
             echo "Token needs 'Zone.Cache Purge' permission in CloudFlare dashboard"
           fi
 
       - name: Output published version
         run: |
           echo "=== Publication Summary ==="
-          echo "✅ Published: @alkanes/ts-sdk@${{ steps.version.outputs.version }}"
-          echo "📦 Registry: https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/"
+          echo "Published: @alkanes/ts-sdk@${{ steps.version.outputs.version }}"
+          echo "Registry: https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/"
           echo ""
-          echo "🔗 Install via tarball URL (recommended):"
+          echo "Install via tarball URL (recommended):"
           echo "   # Latest version"
           echo "   pnpm install --save-dev https://pkg.alkanes.build/dist/@alkanes/ts-sdk"
           echo ""
           echo "   # Specific version"
           echo "   pnpm install --save-dev 'https://pkg.alkanes.build/dist/@alkanes/ts-sdk?v=${{ steps.version.outputs.version }}'"
           echo ""
-          echo "📋 Query package info:"
+          echo "Query package info:"
           echo "   curl https://pkg.alkanes.build/@alkanes/ts-sdk"
           echo ""
-          echo "📋 List all versions:"
+          echo "List all versions:"
           echo "   curl https://pkg.alkanes.build/versions/@alkanes/ts-sdk"
 
       - name: Create summary
         run: |
           cat >> $GITHUB_STEP_SUMMARY <<EOF
-          ## 📦 TypeScript SDK Published
+          ## TypeScript SDK Published
 
           **Version:** \`${{ steps.version.outputs.version }}\`
           **Commit:** \`${{ steps.version.outputs.short_sha }}\`
-          **Registry:** [Google Artifact Registry](https://console.cloud.google.com/artifacts/npm/distributable-octet-pipeline/us-central1/npm-packages/@alkanes/ts-sdk?project=distributable-octet-pipeline)
+          **Registry:** [Google Artifact Registry](https://console.cloud.google.com/artifacts/npm/pkg-alkanes-build/us-central1/npm-packages/@alkanes/ts-sdk?project=pkg-alkanes-build)
 
           ### Installation (via tarball URL - recommended)
 
@@ -266,7 +266,7 @@ jobs:
 
           - **Version format:** \`{base-version}-{commit-hash}\` (e.g., \`0.1.1-abc1234\`)
           - **WASM built from:** \`crates/alkanes-web-sys\`
-          - **Production WASMs vendored:** ✅
-          - **TypeScript compiled:** ✅
+          - **Production WASMs vendored:** Yes
+          - **TypeScript compiled:** Yes
           - **Package size:** ~7-8MB (includes WASM + contracts)
           EOF
