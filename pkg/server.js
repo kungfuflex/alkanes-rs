@@ -272,8 +272,14 @@ async function fetchEsmModule(packageName, version, token, filePath = null) {
 
     https.get(options, (proxyRes) => {
       if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-        // Follow redirect
-        https.get(proxyRes.headers.location, (finalRes) => {
+        // Follow redirect - handle both absolute and relative redirects
+        let redirectUrl = proxyRes.headers.location;
+        if (redirectUrl.startsWith('/')) {
+          // Relative redirect - construct full URL
+          redirectUrl = `https://${REGISTRY_HOST}${redirectUrl}`;
+        }
+        console.log(`Following metadata redirect to: ${redirectUrl}`);
+        https.get(redirectUrl, (finalRes) => {
           handleTarball(finalRes);
         }).on('error', reject);
       } else if (proxyRes.statusCode === 200) {
