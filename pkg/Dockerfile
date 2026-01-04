@@ -3,8 +3,10 @@ FROM node:20-alpine
 # Create app directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files and install dependencies
 COPY package.json ./
+RUN npm install --production
+
 COPY server.js ./
 
 # Cloud Run requires listening on PORT environment variable
