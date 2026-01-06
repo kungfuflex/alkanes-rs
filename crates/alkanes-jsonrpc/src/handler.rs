@@ -2,9 +2,9 @@ use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, METHOD_NOT
 use crate::proxy::ProxyClient;
 use crate::sandshrew;
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Value, json};
 use prost::Message;
-use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128};
+use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128, SimulateResponse, KeyValuePair};
 use alkanes_cli_common::alkanes::utils::encode_varint_list;
 
 pub async fn handle_request(
@@ -213,6 +213,100 @@ fn to_uint128(value: u128) -> Uint128 {
     }
 }
 
+/// Helper to convert protobuf Uint128 to u128
+fn from_uint128(value: &Option<Uint128>) -> u128 {
+    match value {
+        Some(v) => (v.hi as u128) << 64 | (v.lo as u128),
+        None => 0,
+    }
+}
+
+/// Format a storage key for display (matches TypeScript formatKey)
+fn format_key(key: &[u8]) -> String {
+    key.split(|&c| c == b'/')
+        .map(|segment| {
+            if segment.is_empty() {
+                return String::new();
+            }
+            match String::from_utf8(segment.to_vec()) {
+                Ok(s) if s.chars().all(|c| c.is_alphanumeric() || c == '_') => s,
+                _ => hex::encode(segment),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Convert AlkaneTransfer to JSON
+fn alkane_transfer_to_json(transfer: &AlkaneTransfer) -> Value {
+    let id = transfer.id.as_ref();
+    json!({
+        "id": {
+            "block": from_uint128(&id.and_then(|i| i.block.clone())).to_string(),
+            "tx": from_uint128(&id.and_then(|i| i.tx.clone())).to_string()
+        },
+        "value": from_uint128(&transfer.value).to_string()
+    })
+}
+
+/// Convert KeyValuePair (storage slot) to JSON
+fn storage_slot_to_json(slot: &KeyValuePair) -> Value {
+    json!({
+        "key": format_key(&slot.key),
+        "value": format!("0x{}", hex::encode(&slot.value))
+    })
+}
+
+/// Decode SimulateResponse protobuf to JSON matching TypeScript format
+fn decode_simulate_response(hex_response: &str) -> Result<Value> {
+    let hex_data = hex_response.strip_prefix("0x").unwrap_or(hex_response);
+    let bytes = hex::decode(hex_data)?;
+    let response = SimulateResponse::decode(bytes.as_slice())?;
+
+    // Check for error
+    if !response.error.is_empty() {
+        return Ok(json!({
+            "status": 1, // REVERT
+            "gasUsed": 0,
+            "execution": {
+                "alkanes": [],
+                "storage": [],
+                "data": "0x",
+                "error": response.error
+            }
+        }));
+    }
+
+    // Check for missing execution
+    let execution = match &response.execution {
+        Some(exec) => exec,
+        None => {
+            return Ok(json!({
+                "status": 1, // REVERT
+                "gasUsed": 0,
+                "execution": {
+                    "alkanes": [],
+                    "storage": [],
+                    "data": "0x",
+                    "error": "No execution result"
+                }
+            }));
+        }
+    };
+
+    // Success response
+    Ok(json!({
+        "status": 0, // SUCCESS
+        "gasUsed": response.gas_used,
+        "execution": {
+            "alkanes": execution.alkanes.iter().map(alkane_transfer_to_json).collect::<Vec<_>>(),
+            "storage": execution.storage.iter().map(storage_slot_to_json).collect::<Vec<_>>(),
+            "data": format!("0x{}", hex::encode(&execution.data)),
+            "error": null
+        }
+    }))
+}
+
 /// Encode simulate request JSON to protobuf hex string
 /// JSON format: { alkanes, transaction, block, height, txindex, target: {block, tx}, inputs, vout, pointer, refundPointer }
 fn encode_simulate_request(params: &Value) -> Result<String> {
@@ -359,7 +453,8 @@ async fn handle_alkanes_method(
         .unwrap_or("latest");
 
     // For simulate method, encode JSON params to protobuf
-    let encoded_input = if method == "simulate" {
+    let is_simulate = method == "simulate";
+    let encoded_input = if is_simulate {
         match encode_simulate_request(&input) {
             Ok(hex) => Value::String(hex),
             Err(e) => {
@@ -387,7 +482,29 @@ async fn handle_alkanes_method(
         id: request_id.clone(),
     };
 
-    proxy.forward_to_metashrew(&modified_request).await
+    let response = proxy.forward_to_metashrew(&modified_request).await?;
+
+    // For simulate method, decode the protobuf response to JSON
+    if is_simulate {
+        if let JsonRpcResponse::Success { result, .. } = &response {
+            if let Some(hex_str) = result.as_str() {
+                match decode_simulate_response(hex_str) {
+                    Ok(decoded) => {
+                        return Ok(JsonRpcResponse::success(decoded, request_id.clone()));
+                    }
+                    Err(e) => {
+                        return Ok(JsonRpcResponse::error(
+                            INTERNAL_ERROR,
+                            format!("Failed to decode simulate response: {}", e),
+                            request_id.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(response)
 }
 
 async fn handle_metashrew_method(
