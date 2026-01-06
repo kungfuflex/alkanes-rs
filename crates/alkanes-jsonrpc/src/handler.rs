@@ -3,6 +3,9 @@ use crate::proxy::ProxyClient;
 use crate::sandshrew;
 use anyhow::Result;
 use serde_json::Value;
+use prost::Message;
+use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128};
+use alkanes_cli_common::alkanes::utils::encode_varint_list;
 
 pub async fn handle_request(
     request: &JsonRpcRequest,
@@ -193,6 +196,153 @@ fn convert_string_numbers(value: Value) -> Value {
     }
 }
 
+/// Helper to parse a u128 from JSON value (handles both string and number)
+fn parse_u128(value: &Value) -> Option<u128> {
+    match value {
+        Value::Number(n) => n.as_u64().map(|v| v as u128),
+        Value::String(s) => s.parse::<u128>().ok(),
+        _ => None,
+    }
+}
+
+/// Helper to convert u128 to protobuf Uint128 (lo/hi split)
+fn to_uint128(value: u128) -> Uint128 {
+    Uint128 {
+        lo: value as u64,
+        hi: (value >> 64) as u64,
+    }
+}
+
+/// Encode simulate request JSON to protobuf hex string
+/// JSON format: { alkanes, transaction, block, height, txindex, target: {block, tx}, inputs, vout, pointer, refundPointer }
+fn encode_simulate_request(params: &Value) -> Result<String> {
+    let obj = params.as_object()
+        .ok_or_else(|| anyhow::anyhow!("simulate params must be an object"))?;
+
+    // Parse alkanes transfers (optional, defaults to empty)
+    let alkanes: Vec<AlkaneTransfer> = obj.get("alkanes")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter().filter_map(|item| {
+                let id_obj = item.get("id")?;
+                let block = parse_u128(id_obj.get("block")?)?;
+                let tx = parse_u128(id_obj.get("tx")?)?;
+                let value = parse_u128(item.get("value")?)?;
+                Some(AlkaneTransfer {
+                    id: Some(AlkaneId {
+                        block: Some(to_uint128(block)),
+                        tx: Some(to_uint128(tx)),
+                    }),
+                    value: Some(to_uint128(value)),
+                })
+            }).collect()
+        })
+        .unwrap_or_default();
+
+    // Parse transaction (hex string, optional)
+    let transaction: Vec<u8> = obj.get("transaction")
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            let s = s.strip_prefix("0x").unwrap_or(s);
+            hex::decode(s).unwrap_or_default()
+        })
+        .unwrap_or_default();
+
+    // Parse block (hex string, optional)
+    let block: Vec<u8> = obj.get("block")
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            let s = s.strip_prefix("0x").unwrap_or(s);
+            hex::decode(s).unwrap_or_default()
+        })
+        .unwrap_or_default();
+
+    // Parse height
+    let height = obj.get("height")
+        .and_then(|v| match v {
+            Value::Number(n) => n.as_u64(),
+            Value::String(s) => s.parse::<u64>().ok(),
+            _ => None,
+        })
+        .unwrap_or(0);
+
+    // Parse txindex
+    let txindex = obj.get("txindex")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    // Parse target and inputs to create calldata
+    // calldata = encipher([target.block, target.tx, ...inputs])
+    let mut calldata_values: Vec<u128> = Vec::new();
+
+    if let Some(target) = obj.get("target") {
+        // Handle target as object {block, tx} or string "block:tx"
+        if let Some(target_obj) = target.as_object() {
+            if let Some(block) = parse_u128(target_obj.get("block").unwrap_or(&Value::Null)) {
+                calldata_values.push(block);
+            }
+            if let Some(tx) = parse_u128(target_obj.get("tx").unwrap_or(&Value::Null)) {
+                calldata_values.push(tx);
+            }
+        } else if let Some(target_str) = target.as_str() {
+            // Parse "block:tx" format
+            let parts: Vec<&str> = target_str.split(':').collect();
+            if parts.len() == 2 {
+                if let Ok(block) = parts[0].parse::<u128>() {
+                    calldata_values.push(block);
+                }
+                if let Ok(tx) = parts[1].parse::<u128>() {
+                    calldata_values.push(tx);
+                }
+            }
+        }
+    }
+
+    // Parse inputs array
+    if let Some(inputs) = obj.get("inputs").and_then(|v| v.as_array()) {
+        for input in inputs {
+            if let Some(val) = parse_u128(input) {
+                calldata_values.push(val);
+            }
+        }
+    }
+
+    let calldata = encode_varint_list(&calldata_values);
+
+    // Parse vout, pointer, refund_pointer
+    let vout = obj.get("vout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    let pointer = obj.get("pointer")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    let refund_pointer = obj.get("refundPointer")
+        .or_else(|| obj.get("refund_pointer"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    // Create the protobuf message
+    let parcel = MessageContextParcel {
+        alkanes,
+        transaction,
+        block,
+        height,
+        txindex,
+        calldata,
+        vout,
+        pointer,
+        refund_pointer,
+    };
+
+    // Serialize to bytes and hex-encode
+    let mut buf = Vec::new();
+    parcel.encode(&mut buf)?;
+
+    Ok(format!("0x{}", hex::encode(buf)))
+}
+
 async fn handle_alkanes_method(
     method: &str,
     params: &[Value],
@@ -201,23 +351,37 @@ async fn handle_alkanes_method(
 ) -> Result<JsonRpcResponse> {
     // The alkanes namespace methods should be forwarded to metashrew_view
     // following the same pattern as the TypeScript implementation:
-    // metashrew_view(method_name, input, block_tag)
+    // metashrew_view(method_name, protobuf_hex_input, block_tag)
 
-    // Convert string numbers to actual numbers to handle clients that send
-    // "height": "20000" instead of "height": 20000
     let input = params.get(0).cloned().unwrap_or(Value::Null);
-    let input = convert_string_numbers(input);
-
     let block_tag = params.get(1)
         .and_then(|v| v.as_str())
         .unwrap_or("latest");
+
+    // For simulate method, encode JSON params to protobuf
+    let encoded_input = if method == "simulate" {
+        match encode_simulate_request(&input) {
+            Ok(hex) => Value::String(hex),
+            Err(e) => {
+                return Ok(JsonRpcResponse::error(
+                    INTERNAL_ERROR,
+                    format!("Failed to encode simulate request: {}", e),
+                    request_id.clone(),
+                ));
+            }
+        }
+    } else {
+        // For other methods, convert string numbers and pass through
+        // Note: Other methods may also need protobuf encoding in the future
+        convert_string_numbers(input)
+    };
 
     let modified_request = JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         method: "metashrew_view".to_string(),
         params: vec![
             Value::String(method.to_string()),
-            input,
+            encoded_input,
             Value::String(block_tag.to_string()),
         ],
         id: request_id.clone(),
