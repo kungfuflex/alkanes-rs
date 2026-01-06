@@ -161,6 +161,38 @@ async fn handle_esplora_method(
     Ok(JsonRpcResponse::success(result, request_id.clone()))
 }
 
+/// Recursively convert string numbers to actual numbers in JSON values
+/// This handles cases where clients send "20000" instead of 20000
+fn convert_string_numbers(value: Value) -> Value {
+    match value {
+        Value::String(s) => {
+            // Try to parse as u64 first, then i64, then f64
+            if let Ok(n) = s.parse::<u64>() {
+                Value::Number(n.into())
+            } else if let Ok(n) = s.parse::<i64>() {
+                Value::Number(n.into())
+            } else if let Ok(n) = s.parse::<f64>() {
+                serde_json::Number::from_f64(n)
+                    .map(Value::Number)
+                    .unwrap_or(Value::String(s))
+            } else {
+                Value::String(s)
+            }
+        }
+        Value::Array(arr) => {
+            Value::Array(arr.into_iter().map(convert_string_numbers).collect())
+        }
+        Value::Object(obj) => {
+            Value::Object(
+                obj.into_iter()
+                    .map(|(k, v)| (k, convert_string_numbers(v)))
+                    .collect(),
+            )
+        }
+        other => other,
+    }
+}
+
 async fn handle_alkanes_method(
     method: &str,
     params: &[Value],
@@ -170,12 +202,16 @@ async fn handle_alkanes_method(
     // The alkanes namespace methods should be forwarded to metashrew_view
     // following the same pattern as the TypeScript implementation:
     // metashrew_view(method_name, input, block_tag)
-    
+
+    // Convert string numbers to actual numbers to handle clients that send
+    // "height": "20000" instead of "height": 20000
     let input = params.get(0).cloned().unwrap_or(Value::Null);
+    let input = convert_string_numbers(input);
+
     let block_tag = params.get(1)
         .and_then(|v| v.as_str())
         .unwrap_or("latest");
-    
+
     let modified_request = JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         method: "metashrew_view".to_string(),
