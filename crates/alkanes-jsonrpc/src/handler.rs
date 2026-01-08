@@ -999,12 +999,10 @@ async fn handle_alkanes_method(
     let block_tag = if method == "protorunesbyoutpoint" {
         let first = params.get(0);
         if first.map_or(false, |v| v.is_object()) {
-            // Object format: block_tag at index 1
             params.get(1)
                 .and_then(|v| v.as_str())
                 .unwrap_or("latest")
         } else {
-            // Positional format: block_tag at index 2
             params.get(2)
                 .and_then(|v| v.as_str())
                 .unwrap_or("latest")
@@ -1066,8 +1064,6 @@ async fn handle_alkanes_method(
             }
         }
         "protorunesbyoutpoint" => {
-            // For protorunesbyoutpoint, params are [txid, vout, block_tag, protocol_tag]
-            // block_tag is at index 2, not index 1 like other methods
             match encode_protorunesbyoutpoint_request(params) {
                 Ok(hex) => ("protorunesbyoutpoint", Value::String(hex), "protorunesbyoutpoint"),
                 Err(e) => {
@@ -1080,7 +1076,6 @@ async fn handle_alkanes_method(
             }
         }
         "protorunesbyaddress" => {
-            // Accepts: ["address_string", block_tag] or [{"address": "...", "protocolTag": N}, block_tag]
             match encode_protorunesbyaddress_request(params) {
                 Ok(hex) => ("protorunesbyaddress", Value::String(hex), "protorunesbyaddress"),
                 Err(e) => {
