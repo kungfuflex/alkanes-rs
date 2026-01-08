@@ -27,14 +27,20 @@ impl ProxyClient {
             .await?;
 
         let json_response: Value = response.json().await?;
-        
+
+        // Handle metashrew responses which may include "error": null for success cases
+        // This can't be deserialized directly into the untagged JsonRpcResponse enum
         if let Some(error) = json_response.get("error") {
-            Ok(JsonRpcResponse::Error {
-                jsonrpc: "2.0".to_string(),
-                error: serde_json::from_value(error.clone())?,
-                id: request.id.clone(),
-            })
-        } else if let Some(result) = json_response.get("result") {
+            if !error.is_null() {
+                return Ok(JsonRpcResponse::Error {
+                    jsonrpc: "2.0".to_string(),
+                    error: serde_json::from_value(error.clone())?,
+                    id: request.id.clone(),
+                });
+            }
+        }
+
+        if let Some(result) = json_response.get("result") {
             Ok(JsonRpcResponse::success(result.clone(), request.id.clone()))
         } else {
             Ok(JsonRpcResponse::error(
@@ -110,7 +116,28 @@ impl ProxyClient {
             .await?;
 
         let json_response: Value = response.json().await?;
-        Ok(serde_json::from_value(json_response)?)
+
+        // Handle bitcoind responses which include "error": null for success cases
+        // This can't be deserialized directly into the untagged JsonRpcResponse enum
+        if let Some(error) = json_response.get("error") {
+            if !error.is_null() {
+                return Ok(JsonRpcResponse::Error {
+                    jsonrpc: "2.0".to_string(),
+                    error: serde_json::from_value(error.clone())?,
+                    id: request.id.clone(),
+                });
+            }
+        }
+
+        if let Some(result) = json_response.get("result") {
+            Ok(JsonRpcResponse::success(result.clone(), request.id.clone()))
+        } else {
+            Ok(JsonRpcResponse::error(
+                INTERNAL_ERROR,
+                "Invalid response from bitcoind".to_string(),
+                request.id.clone(),
+            ))
+        }
     }
 
     pub async fn fetch_ord_endpoint(&self, path: &str) -> Result<Value> {
