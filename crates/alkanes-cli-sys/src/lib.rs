@@ -2336,11 +2336,13 @@ impl SystemBitcoind for SystemAlkanes {
               log::debug!("Calling metashrew_view simulate with hex_input: {}", hex_input);
               
               // Call metashrew_view with ["simulate", hex_encoded_parcel, "latest"]
-              let sandshrew_url = "http://localhost:18888";
+              // Use the configured metashrew URL instead of hardcoded localhost
+              let sandshrew_url = provider.get_metashrew_rpc_url()
+                  .unwrap_or_else(|| "http://localhost:18888".to_string());
               let params = serde_json::json!(["simulate", hex_input, "latest"]);
               
               let simulate_result = provider.call(
-                  sandshrew_url,
+                  &sandshrew_url,
                   "metashrew_view",
                   params,
                   1
