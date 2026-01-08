@@ -13,6 +13,8 @@ services:
     image: bitcoind:alkanes
     volumes:
       - bitcoin-data:/root/.bitcoin
+    ports:
+      - "18443:18443"
     command:
       [
         "-txindex",
@@ -94,6 +96,8 @@ services:
         condition: service_healthy
     volumes:
       - bitcoin-data:/data/bitcoin
+    ports:
+      - "50010:50010"
     environment:
       ELECTRS_AUTH: bitcoinrpc:bitcoinrpc
       ELECTRS_NETWORK: regtest
