@@ -124,7 +124,17 @@ async fn handle_esplora_method(
     request_id: &Value,
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
-    let path_parts: Vec<&str> = method.split(':').collect();
+    // Handle common underscore-based method aliases from lua scripts
+    // e.g., "addressutxo" -> "address::utxo" (becomes /address/{param}/utxo)
+    let normalized_method = match method {
+        "addressutxo" => "address::utxo",
+        "addresstxs" => "address::txs",
+        "addresstxsmempool" => "address::txs:mempool",
+        "addresstxschain" => "address::txs:chain",
+        _ => method,
+    };
+
+    let path_parts: Vec<&str> = normalized_method.split(':').collect();
     let mut path = String::from("/");
     let mut param_index = 0;
 
@@ -141,7 +151,7 @@ async fn handle_esplora_method(
         } else {
             path.push_str(part);
         }
-        
+
         if i < path_parts.len() - 1 {
             path.push('/');
         }
