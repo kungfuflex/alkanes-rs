@@ -2,7 +2,11 @@ use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, INVALID_PA
 use crate::proxy::ProxyClient;
 use crate::sandshrew;
 use anyhow::Result;
+use prost::Message;
 use serde_json::Value;
+
+// Import protobuf types for encoding alkanes RPC params
+use alkanes_cli_common::proto::protorune as protorune_pb;
 
 pub async fn handle_request(
     request: &JsonRpcRequest,
@@ -231,24 +235,74 @@ async fn handle_alkanes_method(
     // The alkanes namespace methods should be forwarded to metashrew_view
     // following the same pattern as the TypeScript implementation:
     // metashrew_view(method_name, input, block_tag)
-    
+
     let input = params.get(0).cloned().unwrap_or(Value::Null);
     let block_tag = params.get(1)
         .and_then(|v| v.as_str())
         .unwrap_or("latest");
-    
+
+    // For protorunesbyaddress, we need to encode JSON params to protobuf
+    // The input can be either:
+    // 1. Already hex-encoded protobuf (starts with "0x")
+    // 2. JSON object with { address, protocolTag } that needs encoding
+    let encoded_input = if method == "protorunesbyaddress" {
+        encode_protorunesbyaddress_input(&input)?
+    } else {
+        input
+    };
+
     let modified_request = JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         method: "metashrew_view".to_string(),
         params: vec![
             Value::String(method.to_string()),
-            input,
+            encoded_input,
             Value::String(block_tag.to_string()),
         ],
         id: request_id.clone(),
     };
 
     proxy.forward_to_metashrew(&modified_request).await
+}
+
+/// Encode protorunesbyaddress input to hex-encoded protobuf
+/// Accepts either:
+/// - Already encoded hex string (passed through)
+/// - JSON object { address: string, protocolTag: string }
+fn encode_protorunesbyaddress_input(input: &Value) -> Result<Value> {
+    // If input is already a hex string, pass it through
+    if let Some(s) = input.as_str() {
+        if s.starts_with("0x") {
+            return Ok(input.clone());
+        }
+    }
+
+    // Extract address and protocolTag from JSON object
+    let address = input.get("address")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("protorunesbyaddress requires 'address' field"))?;
+
+    let protocol_tag_str = input.get("protocolTag")
+        .and_then(|v| v.as_str())
+        .unwrap_or("1");
+
+    let protocol_tag: u128 = protocol_tag_str.parse()
+        .unwrap_or(1);
+
+    // Build protobuf request
+    let request = protorune_pb::ProtorunesWalletRequest {
+        wallet: address.as_bytes().to_vec(),
+        protocol_tag: Some(protorune_pb::Uint128 {
+            lo: protocol_tag as u64,
+            hi: (protocol_tag >> 64) as u64,
+        }),
+    };
+
+    // Encode to hex
+    let encoded = request.encode_to_vec();
+    let hex_input = format!("0x{}", hex::encode(encoded));
+
+    Ok(Value::String(hex_input))
 }
 
 async fn handle_metashrew_method(
