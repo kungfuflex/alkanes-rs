@@ -77,7 +77,8 @@ async fn handle_spendables_by_address(
     // Transform esplora UTXOs to spendables format expected by the SDK
     // esplora format: [{ txid, vout, value, status: { block_height, ... } }]
     // spendables format: { outpoints: [{ outpoint: { txid, vout }, value, height }] }
-    let utxo_array = utxos.as_array().unwrap_or(&vec![]);
+    let empty_vec = vec![];
+    let utxo_array = utxos.as_array().unwrap_or(&empty_vec);
     let outpoints: Vec<Value> = utxo_array.iter().map(|utxo| {
         serde_json::json!({
             "outpoint": {
