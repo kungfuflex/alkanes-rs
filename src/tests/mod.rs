@@ -42,6 +42,8 @@ pub mod networks;
 #[cfg(test)]
 pub mod special_extcall;
 #[cfg(test)]
+pub mod trace_structure;
+#[cfg(test)]
 pub mod upgradeable;
 #[cfg(test)]
 pub mod vec_input_test;

@@ -21,6 +21,13 @@ pub struct TraceResponse {
 
 #[derive(Debug, Clone)]
 pub enum TraceEvent {
+    ReceiveIntent {
+        incoming_alkanes: AlkaneTransferParcel,
+    },
+    ValueTransfer {
+        transfers: Vec<AlkaneTransfer>,
+        redirect_to: u32,
+    },
     EnterDelegatecall(TraceContext),
     EnterStaticcall(TraceContext),
     EnterCall(TraceContext),
@@ -100,6 +107,26 @@ impl Into<proto::alkanes::AlkanesEnterContext> for TraceContext {
 impl Into<proto::alkanes::AlkanesTraceEvent> for TraceEvent {
     fn into(self) -> proto::alkanes::AlkanesTraceEvent {
         let event = match self {
+            TraceEvent::ReceiveIntent { incoming_alkanes } => {
+                let receive_intent = proto::alkanes::AlkanesReceiveIntent {
+                    incoming_alkanes: incoming_alkanes
+                        .0
+                        .into_iter()
+                        .map(|v| v.into())
+                        .collect::<Vec<proto::alkanes::AlkaneTransfer>>(),
+                };
+                proto::alkanes::alkanes_trace_event::Event::ReceiveIntent(receive_intent)
+            }
+            TraceEvent::ValueTransfer {
+                transfers,
+                redirect_to,
+            } => {
+                let value_transfer = proto::alkanes::AlkanesValueTransfer {
+                    transfers: transfers.into_iter().map(|v| v.into()).collect(),
+                    redirect_to,
+                };
+                proto::alkanes::alkanes_trace_event::Event::ValueTransfer(value_transfer)
+            }
             TraceEvent::EnterCall(v) => {
                 let mut context: proto::alkanes::AlkanesEnterContext = v.into();
                 context.call_type = 1;
@@ -231,6 +258,22 @@ impl From<proto::alkanes::AlkanesTraceEvent> for TraceEvent {
                 },
                 proto::alkanes::alkanes_trace_event::Event::CreateAlkane(v) => {
                     TraceEvent::CreateAlkane(v.new_alkane.map_or(Default::default(), |a| a.into()))
+                }
+                proto::alkanes::alkanes_trace_event::Event::ReceiveIntent(v) => {
+                    TraceEvent::ReceiveIntent {
+                        incoming_alkanes: AlkaneTransferParcel(
+                            v.incoming_alkanes
+                                .into_iter()
+                                .map(|v| v.into())
+                                .collect::<Vec<AlkaneTransfer>>(),
+                        ),
+                    }
+                }
+                proto::alkanes::alkanes_trace_event::Event::ValueTransfer(v) => {
+                    TraceEvent::ValueTransfer {
+                        transfers: v.transfers.into_iter().map(|v| v.into()).collect(),
+                        redirect_to: v.redirect_to,
+                    }
                 }
             }
         } else {

@@ -1,4 +1,5 @@
 use crate::tables::RuneTable;
+use alkanes_support::trace::Trace;
 use anyhow::Result;
 use bitcoin::{Block, OutPoint, Transaction};
 use metashrew_core::index_pointer::AtomicPointer;
@@ -10,7 +11,7 @@ use std::u128;
 
 pub trait MessageContext {
     fn handle(
-        parcel: &MessageContextParcel,
+        parcel: &mut MessageContextParcel,
     ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)>;
     fn protocol_tag() -> u128;
     fn asset_protoburned_in_protocol(id: ProtoruneRuneId) -> bool {
@@ -36,6 +37,7 @@ pub struct MessageContextParcel {
     pub txindex: u32,
     pub vout: u32,
     pub runtime_balances: Box<BalanceSheet<AtomicPointer>>,
+    pub trace: Trace,
 }
 
 pub trait ToBytes {
@@ -64,6 +66,7 @@ impl Default for MessageContextParcel {
             txindex: 0,
             runtime_balances: Box::new(BalanceSheet::default()),
             sheets: Box::new(BalanceSheet::default()),
+            trace: Trace::default(),
         }
     }
 }

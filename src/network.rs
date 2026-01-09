@@ -243,6 +243,7 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
         txindex: 0,
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        trace: Default::default(),
     };
     let (response2, _gas_used2) = (match simulate_parcel(&parcel3, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
@@ -307,6 +308,7 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
         txindex: 0,
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        trace: Default::default(),
     };
     let (response3, _gas_used3) = (match simulate_parcel(&parcel2, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),
@@ -380,6 +382,7 @@ pub fn setup_diesel(block: &Block) -> Result<()> {
         txindex: 0,
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        trace: Default::default(),
     };
     let (response, _gas_used) = (match simulate_parcel(&parcel, u64::MAX) {
         Ok((a, b)) => Ok((a, b)),

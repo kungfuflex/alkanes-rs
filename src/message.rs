@@ -38,7 +38,7 @@ pub struct AlkaneMessageContext(());
 // TODO: import MessageContextParcel
 
 pub fn handle_message(
-    parcel: &MessageContextParcel,
+    parcel: &mut MessageContextParcel,
 ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
     let cellpack: Cellpack =
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
@@ -98,8 +98,7 @@ pub fn handle_message(
     // it could produce inconsistent indexes if the unlocking fails due to concurrency problem
     // but may pass on retry
     let inner = context.lock().unwrap().flat();
-    let trace = context.lock().unwrap().trace.clone();
-    trace.clock(TraceEvent::EnterCall(TraceContext {
+    parcel.trace.clock(TraceEvent::EnterCall(TraceContext {
         inner,
         target,
         fuel,
@@ -123,20 +122,11 @@ pub fn handle_message(
             )?;
             combined.debit_mintable(&sheet, &mut atomic)?;
             debit_balances(&mut atomic, &myself, &response.alkanes)?;
-            let cloned = context.clone().lock().unwrap().trace.clone();
             let response_alkanes = response.alkanes.clone();
-            cloned.clock(TraceEvent::ReturnContext(TraceResponse {
+            parcel.trace.clock(TraceEvent::ReturnContext(TraceResponse {
                 inner: response.into(),
                 fuel_used: gas_used,
             }));
-            save_trace(
-                &OutPoint {
-                    txid: parcel.transaction.compute_txid(),
-                    vout: parcel.vout,
-                },
-                parcel.height,
-                trace.clone(),
-            )?;
 
             Ok((response_alkanes.into(), combined))
         })
@@ -178,19 +168,10 @@ pub fn handle_message(
 
             response.data = vec![0x08, 0xc3, 0x79, 0xa0];
             response.data.extend(e.to_string().as_bytes());
-            let cloned = context.clone().lock().unwrap().trace.clone();
-            cloned.clock(TraceEvent::RevertContext(TraceResponse {
+            parcel.trace.clock(TraceEvent::RevertContext(TraceResponse {
                 inner: response,
                 fuel_used: u64::MAX,
             }));
-            save_trace(
-                &OutPoint {
-                    txid: parcel.transaction.compute_txid(),
-                    vout: parcel.vout,
-                },
-                parcel.height,
-                cloned,
-            )?;
             Err(e)
         })
 }
@@ -200,7 +181,7 @@ impl MessageContext for AlkaneMessageContext {
         1
     }
     fn handle(
-        _parcel: &MessageContextParcel,
+        _parcel: &mut MessageContextParcel,
     ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
         if is_active(_parcel.height) {
             match handle_message(_parcel) {

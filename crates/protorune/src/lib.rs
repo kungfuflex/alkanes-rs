@@ -1,16 +1,20 @@
+use crate::balance_sheet::clear_balances;
 use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
-use crate::protostone::{
-    add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
-};
+#[cfg(test)]
+use crate::protostone::Protostones;
+use crate::protostone::{add_to_indexable_protocols, initialized_protocol_index, MessageProcessor};
 use crate::tables::RuneTable;
+use alkanes_support::{
+    parcel::AlkaneTransferParcel,
+    trace::{Trace, TraceEvent},
+};
 use anyhow::{anyhow, Ok, Result};
-use balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
 use bitcoin::hashes::Hash;
 use bitcoin::script::Instruction;
-use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut, Txid};
+use bitcoin::{opcodes, Network, OutPoint, ScriptBuf, Transaction, TxOut};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -29,6 +33,7 @@ use protorune_support::proto;
 use protorune_support::{
     balance_sheet::{BalanceSheet, ProtoruneRuneId},
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
+    rune_transfer::RuneTransfer,
     utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -60,6 +65,22 @@ pub fn default_output(tx: &Transaction) -> u32 {
         }
     }
     0
+}
+
+pub fn save_trace(outpoint: &OutPoint, height: u64, trace: Trace) -> Result<()> {
+    use once_cell::sync::Lazy;
+    static TRACES: Lazy<IndexPointer> = Lazy::new(|| IndexPointer::from_keyword("/trace/"));
+    static TRACES_BY_HEIGHT: Lazy<IndexPointer> =
+        Lazy::new(|| IndexPointer::from_keyword("/trace/"));
+
+    let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;
+    TRACES.select(&buffer).set(Arc::<Vec<u8>>::new(
+        <Trace as Into<alkanes_support::proto::alkanes::AlkanesTrace>>::into(trace).encode_to_vec(),
+    ));
+    TRACES_BY_HEIGHT
+        .select_value(height)
+        .append(Arc::new(buffer));
+    Ok(())
 }
 
 pub fn num_op_return_outputs(tx: &Transaction) -> usize {
@@ -857,14 +878,6 @@ impl Protorune {
         if protostones.len() != 0 {
             let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
             let table = tables::RuneTable::for_protocol(T::protocol_tag());
-
-            // set the starting runtime balance
-            proto_balances_by_output.insert(
-                u32::MAX,
-                BalanceSheet::new_ptr_backed(atomic.derive(&table.RUNTIME_BALANCE)),
-            );
-
-            // load the balance sheets
             let sheets: Vec<BalanceSheet<AtomicPointer>> = tx
                 .input
                 .iter()
@@ -879,6 +892,13 @@ impl Protorune {
                 })
                 .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
             let mut balance_sheet = BalanceSheet::concat(sheets)?;
+
+            // set the starting runtime balance
+            proto_balances_by_output.insert(
+                u32::MAX,
+                BalanceSheet::new_ptr_backed(atomic.derive(&table.RUNTIME_BALANCE)),
+            );
+
             // TODO: Enable this at a future block when protoburns have been fully tested. For now only enabled in tests
             #[cfg(test)]
             {
@@ -907,71 +927,100 @@ impl Protorune {
                     (tx.output.len() as u32) + 1 + position as u32,
                 )?;
             }
-            protostones_iter
-                .enumerate()
-                .map(|(i, stone)| {
-                    let shadow_vout = (i as u32) + (tx.output.len() as u32) + 1;
-                    if !proto_balances_by_output.contains_key(&shadow_vout) {
-                        proto_balances_by_output.insert(shadow_vout, BalanceSheet::default());
+            for (i, stone) in protostones_iter.enumerate() {
+                let shadow_vout = (i as u32) + (tx.output.len() as u32) + 1;
+                if !proto_balances_by_output.contains_key(&shadow_vout) {
+                    proto_balances_by_output.insert(shadow_vout, BalanceSheet::default());
+                }
+                let protostone_unallocated_to = match stone.pointer {
+                    Some(v) => v,
+                    None => default_output(tx),
+                };
+                // README: now calculates the amount left over for edicts in this fashion:
+                // the protomessage is executed first, and all the runes that go to the pointer are available for the edicts to then transfer, as long as the protomessage succeeded
+                // if there is no protomessage, all incoming runes will be available to be transferred by the edict
+                let mut prior_balance_sheet = BalanceSheet::default();
+                let mut did_message_fail_and_refund = false;
+                let initial_sheet = proto_balances_by_output
+                    .get(&shadow_vout)
+                    .map(|v| v.clone())
+                    .unwrap_or_else(|| BalanceSheet::default());
+                let mut trace = Trace::default();
+                trace.clock(TraceEvent::ReceiveIntent {
+                    incoming_alkanes: AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(
+                        initial_sheet.clone(),
+                    )),
+                });
+                if stone.is_message() && stone.protocol_tag == T::protocol_tag() {
+                    let (success, protostone_trace) = stone.process_message::<T>(
+                        &mut atomic.derive(&IndexPointer::default()),
+                        tx,
+                        txindex,
+                        block,
+                        height,
+                        runestone_output_index,
+                        shadow_vout,
+                        &mut proto_balances_by_output,
+                        num_protostones,
+                        trace,
+                    )?;
+                    did_message_fail_and_refund = !success;
+                    trace = protostone_trace;
+                    if success {
+                        // Get the post-message balance to use for edicts
+                        prior_balance_sheet =
+                            match proto_balances_by_output.remove(&protostone_unallocated_to) {
+                                Some(sheet) => sheet.clone(),
+                                None => prior_balance_sheet,
+                            };
                     }
-                    let protostone_unallocated_to = match stone.pointer {
-                        Some(v) => v,
-                        None => default_output(tx),
+                } else {
+                    prior_balance_sheet = match proto_balances_by_output.remove(&shadow_vout) {
+                        Some(sheet) => sheet.clone(),
+                        None => prior_balance_sheet,
                     };
-                    // README: now calculates the amount left over for edicts in this fashion:
-                    // the protomessage is executed first, and all the runes that go to the pointer are available for the edicts to then transfer, as long as the protomessage succeeded
-                    // if there is no protomessage, all incoming runes will be available to be transferred by the edict
-                    let mut prior_balance_sheet = BalanceSheet::default();
-                    let mut did_message_fail_and_refund = false;
-                    if stone.is_message() && stone.protocol_tag == T::protocol_tag() {
-                        let success = stone.process_message::<T>(
-                            &mut atomic.derive(&IndexPointer::default()),
-                            tx,
-                            txindex,
-                            block,
-                            height,
-                            runestone_output_index,
-                            shadow_vout,
-                            &mut proto_balances_by_output,
-                            num_protostones,
-                        )?;
-                        did_message_fail_and_refund = !success;
-                        if success {
-                            // Get the post-message balance to use for edicts
-                            prior_balance_sheet =
-                                match proto_balances_by_output.remove(&protostone_unallocated_to) {
-                                    Some(sheet) => sheet.clone(),
-                                    None => prior_balance_sheet,
-                                };
-                        }
-                    } else {
-                        prior_balance_sheet = match proto_balances_by_output.remove(&shadow_vout) {
-                            Some(sheet) => sheet.clone(),
-                            None => prior_balance_sheet,
-                        };
-                    }
-                    // edicts should only transfer protostones that did not fail the protomessage (if there is one)
-                    if !did_message_fail_and_refund {
-                        // Process edicts using the current balance state
-                        Self::process_edicts(
-                            tx,
-                            &stone.edicts,
-                            &mut proto_balances_by_output,
-                            &mut prior_balance_sheet,
-                            &tx.output,
-                        )?;
+                }
+                // edicts should only transfer protostones that did not fail the protomessage (if there is one)
+                if !did_message_fail_and_refund {
+                    // Process edicts using the current balance state
+                    Self::process_edicts(
+                        tx,
+                        &stone.edicts,
+                        &mut proto_balances_by_output,
+                        &mut prior_balance_sheet,
+                        &tx.output,
+                    )?;
 
-                        // Handle any remaining balance
-                        Self::handle_leftover_runes(
-                            &mut prior_balance_sheet,
-                            &mut proto_balances_by_output,
-                            protostone_unallocated_to,
-                        )?;
+                    // Handle any remaining balance
+                    Self::handle_leftover_runes(
+                        &mut prior_balance_sheet,
+                        &mut proto_balances_by_output,
+                        protostone_unallocated_to,
+                    )?;
+                }
+                // Add ValueTransfer events for this protostone's outputs
+                for (vout, sheet) in &proto_balances_by_output {
+                    let transfers =
+                        AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(sheet.clone()))
+                            .0;
+                    if transfers.iter().any(|t| t.value > 0) {
+                        trace.clock(TraceEvent::ValueTransfer {
+                            transfers,
+                            redirect_to: *vout,
+                        });
                     }
+                }
 
-                    Ok(())
-                })
-                .collect::<Result<()>>()?;
+                // Save the trace for this protostone
+                save_trace(
+                    &OutPoint {
+                        txid: tx.compute_txid(),
+                        vout: shadow_vout,
+                    },
+                    height,
+                    trace,
+                )?;
+            }
             Self::save_balances::<T>(
                 height,
                 &mut atomic.derive(&IndexPointer::default()),
