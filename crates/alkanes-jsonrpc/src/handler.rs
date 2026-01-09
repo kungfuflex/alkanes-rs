@@ -528,10 +528,30 @@ async fn handle_bitcoind_method(
     let method_parts: Vec<&str> = request.method.split('_').collect();
     let actual_method = method_parts[method_parts.len() - 1];
 
+    // Guard for generatetoaddress: cap at 1 block
+    let params = if actual_method == "generatetoaddress" && !request.params.is_empty() {
+        let mut modified_params = request.params.clone();
+        // First parameter is number of blocks (nblocks)
+        if let Some(nblocks) = modified_params[0].as_u64() {
+            if nblocks > 1 {
+                // Cap at 1 block
+                modified_params[0] = json!(1);
+            }
+        } else if let Some(nblocks) = modified_params[0].as_i64() {
+            if nblocks > 1 {
+                // Cap at 1 block
+                modified_params[0] = json!(1);
+            }
+        }
+        modified_params
+    } else {
+        request.params.clone()
+    };
+
     let modified_request = JsonRpcRequest {
         jsonrpc: request.jsonrpc.clone(),
         method: actual_method.to_string(),
-        params: request.params.clone(),
+        params,
         id: request.id.clone(),
     };
 
