@@ -139,6 +139,9 @@ pub enum Commands {
     /// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
     #[command(subcommand)]
     Espo(EspoCommands),
+    /// MCP server management
+    #[command(subcommand)]
+    Mcp(McpCommands),
     /// Decode a PSBT (Partially Signed Bitcoin Transaction) without calling bitcoind
     Decodepsbt {
         /// PSBT as base64 string
@@ -2497,6 +2500,8 @@ impl Commands {
             Commands::Subfrost(_) => false,
             // ESPO queries don't need wallet
             Commands::Espo(_) => false,
+            // MCP commands don't need wallet
+            Commands::Mcp(_) => false,
             // PSBT decoding doesn't need wallet
             Commands::Decodepsbt { .. } => false,
         }
@@ -2561,3 +2566,38 @@ impl WalletCommands {
     }
 }
 
+/// MCP server management subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum McpCommands {
+    /// Install and build the MCP server
+    Install {
+        /// Force reinstall even if already installed
+        #[arg(long)]
+        force: bool,
+    },
+    /// Generate MCP configuration from current CLI settings
+    Configure {
+        /// Output file path (default: ~/.cursor/mcp.json)
+        #[arg(long)]
+        output: Option<String>,
+        /// Environment name (default: current provider)
+        #[arg(long)]
+        environment: Option<String>,
+    },
+    /// Start the MCP server
+    Start {
+        /// Run in background
+        #[arg(long)]
+        background: bool,
+    },
+    /// Check MCP server status
+    Status,
+    /// Stop a running MCP server
+    Stop,
+    /// Complete setup (install + configure + verify)
+    Setup {
+        /// Force reinstall
+        #[arg(long)]
+        force: bool,
+    },
+}

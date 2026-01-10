@@ -13,7 +13,8 @@ use serde_json::json;
 
 mod commands;
 mod pretty_print;
-use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands, OpiCommands};
+mod mcp;
+use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands, OpiCommands, McpCommands};
 use alkanes_cli_common::alkanes;
 use pretty_print::*;
 
@@ -80,6 +81,11 @@ async fn main() -> Result<()> {
         return execute_opi_command(&args, cmd.clone()).await;
     }
 
+    // Handle MCP commands early (they don't need the System trait)
+    if let Commands::Mcp(ref cmd) = args.command {
+        return execute_mcp_command(&args, cmd.clone()).await;
+    }
+
     // Convert DeezelCommands to Args
     let alkanes_args = alkanes_cli_common::commands::Args::from(&args);
 
@@ -122,6 +128,10 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Opi(_) => {
             // OPI is handled in main() because it doesn't need the System trait
             unreachable!("OPI commands should be handled in main()")
+        }
+        Commands::Mcp(_) => {
+            // MCP is handled in main() because it doesn't need the System trait
+            unreachable!("MCP commands should be handled in main()")
         }
         Commands::Subfrost(cmd) => execute_subfrost_command(system.provider(), cmd).await,
         Commands::Espo(cmd) => execute_espo_command(system.provider(), cmd.into()).await,
@@ -5367,6 +5377,33 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             Ok(())
         }
     }
+}
+
+async fn execute_mcp_command(args: &DeezelCommands, command: McpCommands) -> Result<()> {
+    use crate::mcp;
+    
+    match command {
+        McpCommands::Install { force } => {
+            mcp::install_mcp_server(force)?;
+        }
+        McpCommands::Configure { output, environment } => {
+            mcp::generate_mcp_config(args, output, environment)?;
+        }
+        McpCommands::Status => {
+            mcp::check_mcp_status()?;
+        }
+        McpCommands::Start { background: _ } => {
+            anyhow::bail!("MCP server start not yet implemented. The server is managed by Cursor.");
+        }
+        McpCommands::Stop => {
+            anyhow::bail!("MCP server stop not yet implemented. The server is managed by Cursor.");
+        }
+        McpCommands::Setup { force } => {
+            mcp::setup_mcp(args, force)?;
+        }
+    }
+    
+    Ok(())
 }
 
 async fn execute_espo_command(
