@@ -41,3 +41,16 @@ hex = "0.4.3"
 [features]
 default = []
 test = []
+
+# Deterministic build profile for reproducible WASM bytecode
+# This configuration ensures identical builds across different systems
+[profile.release]
+opt-level = 3              # Maximum optimization
+debug = false              # No debug symbols
+rpath = false              # No runtime path
+lto = true                 # Link-time optimization
+codegen-units = 1          # CRITICAL: Single compilation unit for determinism
+panic = "abort"            # Smaller binaries, abort on panic
+incremental = false        # Disable incremental compilation
+overflow-checks = true     # Keep overflow checks for safety
+strip = "symbols"          # Strip symbols for smaller size

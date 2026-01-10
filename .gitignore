@@ -24,3 +24,6 @@ Thumbs.db
 /wasm-pack.log
 
 src/tests/std
+
+# Deterministic build artifacts
+/artifacts/

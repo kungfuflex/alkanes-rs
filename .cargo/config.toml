@@ -3,3 +3,17 @@ target = "wasm32-unknown-unknown"
 
 [target.wasm32-unknown-unknown]
 runner = "wasm-bindgen-test-runner"
+
+# RUSTFLAGS for deterministic builds
+# These flags ensure reproducible compilation across different systems
+rustflags = [
+    "-C", "link-arg=-s",              # Strip symbols from output
+    "-C", "codegen-units=1",          # Single compilation unit (critical for determinism)
+    "-C", "opt-level=3",              # Maximum optimization
+    "-C", "lto=fat",                  # Full link-time optimization
+    "-C", "panic=abort",              # Abort on panic (smaller binaries)
+    "-C", "embed-bitcode=no",         # Don't embed LLVM bitcode (reduces non-determinism)
+    # Path remapping for reproducibility (normalizes build paths)
+    # Note: This has known issues with wasm32-unknown-unknown but included for future compatibility
+    "--remap-path-prefix", "$HOME=~",
+]

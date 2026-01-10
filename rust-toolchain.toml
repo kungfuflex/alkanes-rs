@@ -1,0 +1,14 @@
+# Rust toolchain specification for deterministic builds
+# Pinning the exact Rust version ensures consistent compilation output
+# All developers and CI systems must use this exact toolchain version
+
+[toolchain]
+channel = "1.90.0"  # Pin to exact Rust version
+targets = ["wasm32-unknown-unknown"]  # Required WASM target
+profile = "minimal"  # Only install essentials
+
+# Why this matters:
+# - Different Rust versions can produce different WASM bytecode
+# - This file ensures everyone builds with the same compiler
+# - CI/CD and local builds will match exactly
+# - Critical for bytecode verification

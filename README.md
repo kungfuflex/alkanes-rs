@@ -4,6 +4,26 @@ These are the sources for the template deployed at [4, 797].
 
 This alkane is adapted from earlier testing versions by the same name, but suitable for production usage. It enables semantics similar to what we are used to in runes ecosystem mints, but on the ALKANES metaprotocol. This template can be spawned using factory cellpacks and a data segment can be appended (such as a graphic), but other parameters can be supplied for an initial premine, a mint quantity per mint transaction, a cap, and a name/symbol, supplied with the initialization vector in the alkanes protocol message.
 
+## 🔒 Deterministic Builds & Verification
+
+This contract supports **reproducible builds** for bytecode verification (similar to Etherscan source verification). Anyone can verify that deployed bytecode matches the published source code.
+
+**Quick Start:**
+```bash
+# Build deterministically (requires Docker)
+./scripts/build-reproducible.sh
+
+# Verify against published checksum
+./scripts/verify-build.sh <sha256-hash>
+```
+
+**Documentation:**
+- 📖 [Quick Start Guide](./VERIFICATION_QUICK_START.md) - TL;DR for busy developers
+- 📚 [Complete Documentation](./DETERMINISTIC_BUILDS.md) - Technical deep-dive
+- 📋 [Changes Summary](./CHANGES_SUMMARY.md) - What was implemented
+
+---
+
 ## Overview
 
 This contract implements a token with free mint capabilities using the alkane framework. It includes security features such as:
