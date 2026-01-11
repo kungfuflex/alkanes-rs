@@ -217,7 +217,7 @@ impl AlkanesService {
 
             if let Ok(result) = self.rpc.simulate(&request).await {
                 if result.status == 0 {
-                    if let Some(parsed) = result.parsed {
+                    if let Some(parsed) = result.parsed() {
                         has_valid_result = true;
                         match opcode_names[i] {
                             "name" => {
