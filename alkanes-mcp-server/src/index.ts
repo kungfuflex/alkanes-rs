@@ -11,12 +11,18 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
   McpError,
   ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, loadConfigFromEnv, getEnvironmentConfig, type McpServerConfig } from './config.js';
 import { registerAllTools } from './tools/mod.js';
 import { getAllTools, executeTool } from './tools/registry.js';
+import { listResources, readResource } from './resources.js';
+import { listPrompts, getPrompt } from './prompts.js';
 import type { EnvironmentConfig } from './config.js';
 
 // Load configuration from environment or MCP server config
@@ -60,6 +66,8 @@ const server = new Server(
   {
     capabilities: {
       tools: {},
+      resources: {},
+      prompts: {},
     },
   }
 );
@@ -96,6 +104,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new McpError(
       ErrorCode.InternalError,
       `Error executing tool: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+});
+
+// Handle list resources request
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  return {
+    resources: listResources(),
+  };
+});
+
+// Handle read resource request
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  try {
+    const content = await readResource(request.params.uri);
+    return {
+      contents: [content],
+    };
+  } catch (error) {
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      `Resource not found: ${request.params.uri}`
+    );
+  }
+});
+
+// Handle list prompts request
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  return {
+    prompts: listPrompts(),
+  };
+});
+
+// Handle get prompt request
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  try {
+    const result = getPrompt(request.params.name, request.params.arguments);
+    return {
+      description: `Prompt for ${request.params.name}`,
+      messages: result.messages,
+    };
+  } catch (error) {
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      `Prompt not found: ${request.params.name}`
     );
   }
 });

@@ -7,6 +7,8 @@ A comprehensive Model Context Protocol (MCP) server that exposes all `alkanes-cl
 - **Complete CLI Coverage**: All `alkanes-cli` commands are available as MCP tools
 - **Multi-Environment Support**: Configure and switch between regtest, signet, and mainnet
 - **Secure Credential Management**: Environment variable support and encrypted passphrase handling
+- **Documentation Resources**: Access to comprehensive Alkanes documentation, guides, and gotchas
+- **AI-Optimized Prompts**: Pre-configured prompts with best practices for common tasks
 - **Comprehensive Tool Set**: 200+ tools covering:
   - Bitcoin Core RPC operations
   - Wallet management and transactions
@@ -16,6 +18,35 @@ A comprehensive Model Context Protocol (MCP) server that exposes all `alkanes-cl
   - Ord/Inscription operations
   - OPI indexer queries
   - And much more
+
+## MCP Capabilities
+
+### Tools
+All `alkanes-cli` commands are exposed as MCP tools that AI agents can invoke directly. This includes operations like executing contracts, checking balances, swapping tokens, and querying blockchain data.
+
+### Resources
+The server exposes comprehensive documentation as MCP resources that agents can read on-demand:
+
+- **Technical Context**: Core technologies, dependencies, and build system
+- **System Patterns**: Design patterns, AlkaneId addressing, table relationships, and critical gotchas
+- **Contract Development Guide**: How to build Alkanes contracts with common pitfalls
+- **AssemblyScript Tx-Scripts**: Building efficient batch query scripts
+- **WAT Templates**: On-chain WASM script development
+- **Common Gotchas**: Frequent mistakes and debugging tips
+- **CLI Overview**: All available commands and usage patterns
+
+Resources reduce token usage by letting agents access documentation only when needed, and ensure they always have up-to-date information from the repository.
+
+### Prompts
+Pre-configured prompts inject best practices and gotchas proactively:
+
+- **debug-alkanes-contract**: Debug failing contracts with gotcha checklist
+- **build-token-contract**: Build tokens (owned, auth, custom) following best practices
+- **deploy-contract**: Deploy contracts with proper addressing (sequential, custom, factory)
+- **optimize-swap-path**: Find optimal AMM swap paths
+- **write-txscript**: Write AssemblyScript tx-scripts for batch operations
+
+Prompts ensure agents consider common pitfalls before making mistakes, improving success rates for complex operations.
 
 ## Installation
 
