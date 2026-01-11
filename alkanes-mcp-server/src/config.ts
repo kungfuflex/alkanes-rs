@@ -146,6 +146,20 @@ function validateEnvironmentConfig(
  * MCP clients serialize nested objects to JSON strings automatically
  */
 export function loadConfigFromEnv(): McpServerConfig | null {
+  // First, check for MCP_SERVER_CONFIG (single JSON string with full config)
+  const mcpServerConfig = process.env.MCP_SERVER_CONFIG;
+  if (mcpServerConfig) {
+    try {
+      const parsedConfig = JSON.parse(mcpServerConfig);
+      return loadConfig(parsedConfig);
+    } catch (error) {
+      throw new ConfigurationError(
+        `Failed to parse MCP_SERVER_CONFIG: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // Fall back to individual environment variables
   const environmentsValue = process.env.environments;
   const defaultEnv = process.env.default_environment;
   const timeoutSeconds = process.env.timeout_seconds;
@@ -162,14 +176,14 @@ export function loadConfigFromEnv(): McpServerConfig | null {
       environments,
       default_environment: defaultEnv,
     };
-    
+
     if (timeoutSeconds) {
       const timeout = parseInt(timeoutSeconds, 10);
       if (!isNaN(timeout)) {
         config.timeout_seconds = timeout;
       }
     }
-    
+
     return loadConfig(config);
   } catch (error) {
     throw new ConfigurationError(
