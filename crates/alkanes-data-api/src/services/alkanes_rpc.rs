@@ -177,6 +177,11 @@ impl AlkanesRpcClient {
             .ok_or_else(|| anyhow::anyhow!("Invalid block count response"))
     }
 
+    /// Get metashrew block height (alias for get_block_count)
+    pub async fn get_block_height(&self) -> Result<u64> {
+        self.get_block_count().await
+    }
+
     /// Simulate alkane contract call
     pub async fn simulate(&self, request: &SimulateRequest) -> Result<SimulateResponse> {
         let result = self
