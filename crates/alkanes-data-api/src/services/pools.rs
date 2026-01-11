@@ -107,31 +107,14 @@ impl PoolService {
     }
 
     /// Get all pools for a factory using RPC simulation (alkanes-cli-sys approach)
-    /// This method bypasses the database and fetches pools directly from the blockchain state
-    /// via the factory contract's GET_ALL_POOLS opcode (3), then fetches details for each pool.
-    pub async fn get_pools_by_factory_rpc(&self, factory_id: &AlkaneId) -> Result<Vec<Pool>> {
+    /// This method fetches pools directly from the blockchain state via the factory
+    /// contract's GET_ALL_POOLS opcode (3), then fetches details for each pool in
+    /// parallel batches of 30 (matching alkanes-cli --experimental-asm-parallel).
+    async fn get_pools_by_factory_rpc(&self, factory_id: &AlkaneId) -> Result<Vec<Pool>> {
         let rpc_client = self.rpc_client.as_ref()
             .ok_or_else(|| anyhow::anyhow!("RPC client not configured"))?;
 
-        let block_height = self.get_latest_block_height().await.unwrap_or(0);
-        let cache_key = format!(
-            "pools-rpc:{}:{}:block-{}",
-            factory_id.block, factory_id.tx, block_height
-        );
-
-        // Try cache first
-        let mut conn = self.redis.get_async_connection().await?;
-        if let Ok(Some(cached)) = redis::AsyncCommands::get::<_, Option<String>>(&mut conn, &cache_key).await {
-            if let Ok(pools) = serde_json::from_str::<Vec<Pool>>(&cached) {
-                debug!("Returning {} cached pools from RPC", pools.len());
-                return Ok(pools);
-            }
-        }
-
         // Step 1: Call factory's GET_ALL_POOLS opcode via simulation
-        let factory_block: u64 = factory_id.block.parse().unwrap_or(0);
-        let factory_tx: u64 = factory_id.tx.parse().unwrap_or(0);
-
         let request = SimulateRequest {
             target: AlkaneId {
                 block: factory_id.block.clone(),
@@ -151,21 +134,27 @@ impl PoolService {
             return Ok(vec![]);
         }
 
-        // Step 2: Fetch details for each pool
+        // Step 2: Fetch details for each pool in parallel batches of 30
+        const BATCH_SIZE: usize = 30;
         let mut pools = Vec::new();
-        for pool_id in pool_ids {
-            match self.get_pool_details_rpc(rpc_client, factory_id, &pool_id).await {
-                Ok(pool) => pools.push(pool),
-                Err(e) => {
-                    warn!("Failed to get details for pool {}:{}: {}", pool_id.block, pool_id.tx, e);
+
+        for chunk in pool_ids.chunks(BATCH_SIZE) {
+            let futures: Vec<_> = chunk
+                .iter()
+                .map(|pool_id| self.get_pool_details_rpc(rpc_client, factory_id, pool_id))
+                .collect();
+
+            let results = futures::future::join_all(futures).await;
+
+            for (i, result) in results.into_iter().enumerate() {
+                match result {
+                    Ok(pool) => pools.push(pool),
+                    Err(e) => {
+                        let pool_id = &chunk[i];
+                        warn!("Failed to get details for pool {}:{}: {}", pool_id.block, pool_id.tx, e);
+                    }
                 }
             }
-        }
-
-        // Cache result
-        if !pools.is_empty() {
-            let serialized = serde_json::to_string(&pools)?;
-            let _: Result<(), _> = redis::AsyncCommands::set_ex(&mut conn, cache_key, serialized, 300).await; // 5 min cache
         }
 
         Ok(pools)
@@ -313,81 +302,33 @@ impl PoolService {
         })
     }
 
-    /// Get all pools for a factory
-    /// For mainnet: uses database only (stable, proven)
-    /// For other environments (staging, regtest, signet): tries RPC first, falls back to database
+    /// Get all pools for a factory using alkanes-cli-sys RPC simulation
+    /// Cache invalidates when metashrew block height changes
     pub async fn get_pools_by_factory(&self, factory_id: &AlkaneId) -> Result<Vec<Pool>> {
-        // Only use RPC-based approach for non-mainnet environments
-        // Mainnet database is stable and should not be changed
-        let use_rpc = self.rpc_client.is_some() && self.network_env != "mainnet";
+        let rpc_client = self.rpc_client.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("RPC client not configured"))?;
 
-        if use_rpc {
-            match self.get_pools_by_factory_rpc(factory_id).await {
-                Ok(pools) if !pools.is_empty() => {
-                    info!("Returning {} pools from RPC for {}", pools.len(), self.network_env);
-                    return Ok(pools);
-                }
-                Ok(_) => {
-                    debug!("RPC returned no pools for {}, falling back to database", self.network_env);
-                }
-                Err(e) => {
-                    warn!("RPC pool fetch failed for {}, falling back to database: {}", self.network_env, e);
-                }
-            }
-        }
-
-        // Database query (primary for mainnet, fallback for other environments)
-        let block_height = self.get_latest_block_height().await?;
+        // Get metashrew height via RPC for cache invalidation
+        let block_height = rpc_client.get_block_height().await.unwrap_or(0);
         let cache_key = format!(
-            "pools:{}:{}:block-{}",
+            "pools-rpc:{}:{}:height-{}",
             factory_id.block, factory_id.tx, block_height
         );
 
-        // Try cache
+        // Check Redis cache first
         let mut conn = self.redis.get_async_connection().await?;
         if let Ok(Some(cached)) = redis::AsyncCommands::get::<_, Option<String>>(&mut conn, &cache_key).await {
             if let Ok(pools) = serde_json::from_str::<Vec<Pool>>(&cached) {
+                debug!("Returning {} cached pools for height {}", pools.len(), block_height);
                 return Ok(pools);
             }
         }
 
-        // Query database using raw query to avoid compile-time validation
-        let pools = sqlx::query_as::<_, Pool>(
-            r#"
-            SELECT
-                p.id,
-                p."factoryBlockId" as factory_block_id,
-                p."factoryTxId" as factory_tx_id,
-                p."poolBlockId" as pool_block_id,
-                p."poolTxId" as pool_tx_id,
-                p."token0BlockId" as token0_block_id,
-                p."token0TxId" as token0_tx_id,
-                p."token1BlockId" as token1_block_id,
-                p."token1TxId" as token1_tx_id,
-                p."poolName" as pool_name,
-                ps."token0Amount" as token0_amount,
-                ps."token1Amount" as token1_amount,
-                ps."tokenSupply" as token_supply,
-                pc."creatorAddress" as creator_address,
-                pc."blockHeight" as creation_block_height
-            FROM "Pool" p
-            LEFT JOIN LATERAL (
-                SELECT "token0Amount", "token1Amount", "tokenSupply"
-                FROM "PoolState"
-                WHERE "poolId" = p.id
-                ORDER BY "blockHeight" DESC
-                LIMIT 1
-            ) ps ON true
-            LEFT JOIN "PoolCreation" pc ON pc."poolBlockId" = p."poolBlockId" AND pc."poolTxId" = p."poolTxId"
-            WHERE p."factoryBlockId" = $1 AND p."factoryTxId" = $2
-            "#
-        )
-        .bind(&factory_id.block)
-        .bind(&factory_id.tx)
-        .fetch_all(&self.db)
-        .await?;
+        // Fetch pools via RPC simulation (alkanes-cli-sys style)
+        let pools = self.get_pools_by_factory_rpc(factory_id).await?;
+        info!("Fetched {} pools via RPC at height {}", pools.len(), block_height);
 
-        // Cache result
+        // Cache result (invalidates when block height changes)
         if !pools.is_empty() {
             let serialized = serde_json::to_string(&pools)?;
             let _: Result<(), _> = redis::AsyncCommands::set_ex(&mut conn, cache_key, serialized, 86400).await;
