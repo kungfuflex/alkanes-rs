@@ -51,8 +51,17 @@ pub async fn handle_request_with_storage(
         "lua" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage).await,
         "sandshrew" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage).await,
         "btc" => handle_bitcoind_method(request, proxy).await,
+        "subfrost" => handle_subfrost_method(request, proxy).await,
         _ => handle_bitcoind_method(request, proxy).await,
     }
+}
+
+/// Forward subfrost_* methods to the subfrost-rpc service
+async fn handle_subfrost_method(
+    request: &JsonRpcRequest,
+    proxy: &ProxyClient,
+) -> Result<JsonRpcResponse> {
+    proxy.forward_to_subfrost(request).await
 }
 
 /// Handle spendablesbyaddress - returns UTXOs for an address via esplora
