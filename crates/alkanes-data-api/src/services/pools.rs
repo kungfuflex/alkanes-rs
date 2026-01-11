@@ -314,12 +314,12 @@ impl PoolService {
     }
 
     /// Get all pools for a factory
-    /// Uses alkanes-cli-sys tx-script API via RPC simulation as primary method.
-    /// Falls back to database if RPC fails.
+    /// For mainnet: uses database only (stable, proven)
+    /// For other environments (staging, regtest, signet): tries RPC first, falls back to database
     pub async fn get_pools_by_factory(&self, factory_id: &AlkaneId) -> Result<Vec<Pool>> {
-        // Use RPC-based approach (alkanes-cli-sys tx-script API) as primary method
-        // This fetches pools directly from blockchain state via the factory contract
-        let use_rpc = self.rpc_client.is_some();
+        // Only use RPC-based approach for non-mainnet environments
+        // Mainnet database is stable and should not be changed
+        let use_rpc = self.rpc_client.is_some() && self.network_env != "mainnet";
 
         if use_rpc {
             match self.get_pools_by_factory_rpc(factory_id).await {
