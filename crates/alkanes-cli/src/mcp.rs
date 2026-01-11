@@ -229,23 +229,21 @@ pub fn generate_mcp_config(
         env_config["opi_headers"] = json!(args.opi_headers);
     }
     
-    // Build MCP server configuration
+    // Build environments JSON (as string for env var)
     let env_name_for_key = env_name.clone();
-    let mcp_server_config = json!({
-        "environments": {
-            env_name_for_key: env_config
-        },
-        "default_environment": env_name,
-        "timeout_seconds": 600
+    let environments = json!({
+        env_name_for_key: env_config
     });
-    
-    // Build the MCP client configuration entry
+
+    // Build the MCP client configuration entry with individual env keys
     let mcp_client_entry = json!({
         "command": "node",
         "args": [mcp_server_path.to_string_lossy()],
         "env": {
-            "MCP_SERVER_CONFIG": mcp_server_config.to_string(),
-            "WALLET_PASSPHRASE": args.passphrase.as_ref().map(|_| "${WALLET_PASSPHRASE}".to_string()).unwrap_or_else(|| "".to_string())
+            "environments": environments.to_string(),
+            "default_environment": env_name,
+            "timeout_seconds": "600",
+            "WALLET_PASSPHRASE": args.passphrase.as_ref().map(|_| "".to_string()).unwrap_or_else(|| "".to_string())
         }
     });
     
@@ -275,9 +273,17 @@ pub fn generate_mcp_config(
         json!({ "mcpServers": {} })
     };
     
-    // Merge alkanes-cli server entry
+    // Check for and fix legacy MCP_SERVER_CONFIG format
     if let Some(mcp_servers) = config.get_mut("mcpServers") {
         if let Some(servers) = mcp_servers.as_object_mut() {
+            if let Some(existing_alkanes) = servers.get("alkanes-cli") {
+                if let Some(existing_env) = existing_alkanes.get("env") {
+                    if existing_env.get("MCP_SERVER_CONFIG").is_some() {
+                        println!("⚠ Detected legacy MCP_SERVER_CONFIG format, migrating to individual env keys...");
+                        // The new entry will replace the old one below
+                    }
+                }
+            }
             servers.insert("alkanes-cli".to_string(), mcp_client_entry);
         }
     }

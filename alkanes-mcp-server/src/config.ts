@@ -143,10 +143,41 @@ function validateEnvironmentConfig(
 
 /**
  * Load configuration from environment variables
- * MCP clients serialize nested objects to JSON strings automatically
+ * Prioritizes individual environment variables over legacy MCP_SERVER_CONFIG
  */
 export function loadConfigFromEnv(): McpServerConfig | null {
-  // First, check for MCP_SERVER_CONFIG (single JSON string with full config)
+  // First, check for individual environment variables (preferred approach)
+  const environmentsValue = process.env.environments;
+  const defaultEnv = process.env.default_environment;
+  const timeoutSeconds = process.env.timeout_seconds;
+
+  if (environmentsValue && defaultEnv) {
+    try {
+      // Parse environments from JSON string (MCP clients serialize nested objects)
+      const environments = JSON.parse(environmentsValue);
+
+      const config: Record<string, unknown> = {
+        environments,
+        default_environment: defaultEnv,
+      };
+
+      if (timeoutSeconds) {
+        const timeout = parseInt(timeoutSeconds, 10);
+        if (!isNaN(timeout)) {
+          config.timeout_seconds = timeout;
+        }
+      }
+
+      return loadConfig(config);
+    } catch (error) {
+      throw new ConfigurationError(
+        `Failed to parse environments from env var: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // Fall back to legacy MCP_SERVER_CONFIG (single JSON string with full config)
+  // This is kept for backward compatibility but not recommended
   const mcpServerConfig = process.env.MCP_SERVER_CONFIG;
   if (mcpServerConfig) {
     try {
@@ -159,37 +190,7 @@ export function loadConfigFromEnv(): McpServerConfig | null {
     }
   }
 
-  // Fall back to individual environment variables
-  const environmentsValue = process.env.environments;
-  const defaultEnv = process.env.default_environment;
-  const timeoutSeconds = process.env.timeout_seconds;
-
-  if (!environmentsValue || !defaultEnv) {
-    return null;
-  }
-
-  try {
-    // Parse environments from JSON string (MCP clients serialize nested objects)
-    const environments = JSON.parse(environmentsValue);
-
-    const config: Record<string, unknown> = {
-      environments,
-      default_environment: defaultEnv,
-    };
-
-    if (timeoutSeconds) {
-      const timeout = parseInt(timeoutSeconds, 10);
-      if (!isNaN(timeout)) {
-        config.timeout_seconds = timeout;
-      }
-    }
-
-    return loadConfig(config);
-  } catch (error) {
-    throw new ConfigurationError(
-      `Failed to parse environments from env var: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  return null;
 }
 
 /**
