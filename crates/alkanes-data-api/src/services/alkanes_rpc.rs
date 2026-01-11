@@ -103,9 +103,26 @@ pub struct SimulateRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct SimulateExecution {
+    pub alkanes: Vec<Value>,
+    pub data: Option<String>,
+    pub error: Option<String>,
+    pub storage: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SimulateResponse {
+    pub execution: SimulateExecution,
+    pub gas_used: u64,
     pub status: i32,
-    pub parsed: Option<Value>,
+}
+
+impl SimulateResponse {
+    /// Get the data as parsed JSON Value (for backward compatibility)
+    pub fn parsed(&self) -> Option<Value> {
+        self.execution.data.as_ref().map(|d| json!({"data": d}))
+    }
 }
 
 #[derive(Clone)]
@@ -185,7 +202,7 @@ impl AlkanesRpcClient {
     /// Simulate alkane contract call
     pub async fn simulate(&self, request: &SimulateRequest) -> Result<SimulateResponse> {
         let result = self
-            .call("alkanes.simulate", json!([request]))
+            .call("alkanes_simulate", json!([request]))
             .await?;
 
         serde_json::from_value(result).context("Failed to parse simulate response")

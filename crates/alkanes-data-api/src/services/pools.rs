@@ -127,7 +127,7 @@ impl PoolService {
             .context("Failed to call factory GET_ALL_POOLS")?;
 
         // Parse pool IDs from the response
-        let pool_ids = self.decode_pool_ids_from_response(&result.parsed)?;
+        let pool_ids = self.decode_pool_ids_from_response(&result.parsed())?;
         info!("Found {} pools from factory RPC", pool_ids.len());
 
         if pool_ids.is_empty() {
@@ -234,7 +234,7 @@ impl PoolService {
             .context("Failed to call pool GET_DETAILS")?;
 
         // Parse pool details from response
-        self.decode_pool_from_response(factory_id, pool_id, &result.parsed)
+        self.decode_pool_from_response(factory_id, pool_id, &result.parsed())
     }
 
     /// Decode a Pool struct from the GET_DETAILS response
