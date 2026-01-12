@@ -104,8 +104,9 @@ async fn handle_multicall(
         ));
     }
 
-    let mut results = Vec::new();
-    
+    // Parse all requests first to validate before executing
+    let mut requests = Vec::new();
+
     for call in params {
         // Each call should be a 2-element array: [method, params]
         let call_tuple = match call.as_array() {
@@ -141,26 +142,40 @@ async fn handle_multicall(
             }
         };
 
-        let req = JsonRpcRequest {
+        requests.push(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            method: method.clone(),
+            method,
             params: call_params,
             id: Value::Number(0.into()),
-        };
-
-        let response = Box::pin(crate::handler::handle_request(&req, proxy)).await?;
-        
-        let result_value = match response {
-            JsonRpcResponse::Success { result, .. } => {
-                serde_json::json!({ "result": result })
-            }
-            JsonRpcResponse::Error { error, .. } => {
-                serde_json::json!({ "error": error })
-            }
-        };
-        
-        results.push(result_value);
+        });
     }
+
+    // Execute all requests in parallel (matches production Promise.all behavior)
+    let futures: Vec<_> = requests
+        .iter()
+        .map(|req| async move {
+            match Box::pin(crate::handler::handle_request(req, proxy)).await {
+                Ok(response) => match response {
+                    JsonRpcResponse::Success { result, .. } => {
+                        serde_json::json!({ "result": result })
+                    }
+                    JsonRpcResponse::Error { error, .. } => {
+                        serde_json::json!({ "error": error })
+                    }
+                },
+                Err(e) => {
+                    serde_json::json!({
+                        "error": {
+                            "code": INTERNAL_ERROR,
+                            "message": e.to_string()
+                        }
+                    })
+                }
+            }
+        })
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
 
     Ok(JsonRpcResponse::success(
         serde_json::to_value(results)?,
