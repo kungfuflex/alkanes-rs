@@ -59,6 +59,7 @@ async fn main() -> std::io::Result<()> {
     log::info!("Memshrew: {}", config.memshrew_url);
     log::info!("Ord: {}", config.ord_url);
     log::info!("Esplora: {}", config.esplora_url);
+    log::info!("Subfrost: {}", config.subfrost_url);
 
     // Create script storage with optional disk persistence
     let script_storage = if let Some(ref path) = config.lua_script_path {

@@ -44,6 +44,7 @@ pub async fn handle_request_with_storage(
         "memshrew" => handle_memshrew_method(request, proxy).await,
         "lua" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage).await,
         "sandshrew" => sandshrew::handle_sandshrew_method(&method_name, &request.params, &request.id, proxy, script_storage).await,
+        "subfrost" => handle_subfrost_method(request, proxy).await,
         "btc" => handle_bitcoind_method(request, proxy).await,
         _ => handle_bitcoind_method(request, proxy).await,
     }
@@ -519,6 +520,13 @@ async fn handle_memshrew_method(
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
     proxy.forward_to_memshrew(request).await
+}
+
+async fn handle_subfrost_method(
+    request: &JsonRpcRequest,
+    proxy: &ProxyClient,
+) -> Result<JsonRpcResponse> {
+    proxy.forward_to_subfrost(request).await
 }
 
 async fn handle_bitcoind_method(
