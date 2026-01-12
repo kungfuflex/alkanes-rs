@@ -1,6 +1,6 @@
+mod key_builder;
+
 use anyhow::Result;
-use bitcoin::hashes::Hash;
-use bitcoin::Txid;
 use clap::{Parser, Subcommand};
 use crossterm::{
     event::{self, Event, KeyCode},
@@ -17,7 +17,6 @@ use ratatui::{
 };
 use rockshrew_runtime::adapter::RocksDBRuntimeAdapter;
 use rockshrew_runtime::KeyValueStoreLike;
-use std::collections::HashSet;
 use std::io::{stdout, Stdout};
 use std::time::{Duration, Instant};
 
@@ -35,7 +34,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Find the earliest block with a missed reorg
+    /// Find the earliest block with a missed reorg by checking append-only processing counts
     FindEarliestReorg {
         /// Stop scanning at this height
         #[arg(long)]
@@ -50,90 +49,74 @@ enum Commands {
         #[arg(long)]
         execute: bool,
     },
+    /// List sample keys from the database to understand structure
+    ListKeys {
+        /// Maximum number of keys to show
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
 }
 
 struct ReorgDetector {
     adapter: RocksDBRuntimeAdapter,
+    start_height: u64,      // Store initial height for progress calculation
     current_height: u64,
     exit_at: u64,
     earliest_reorg: Option<ReorgInfo>,
     blocks_scanned: u64,
     start_time: Instant,
+    // Stats for append-only checks
+    blocks_compared: u64,
+    hash_mismatches: u64,    // Actually "blocks processed multiple times"
+    last_local_hash: Option<String>,   // Shows process count
+    last_remote_hash: Option<String>,  // Shows "OK" or "REORG!"
 }
 
 #[derive(Clone, Debug)]
 struct ReorgInfo {
     height: u64,
-    total_txids: usize,
-    unique_txids: usize,
-    duplicate_count: usize,
+    local_hash: String,
+    remote_hash: String,
 }
 
 impl ReorgDetector {
     fn new(db_path: String, exit_at: u64) -> Result<Self> {
         let mut adapter = RocksDBRuntimeAdapter::open_optimized(db_path)?;
 
-        // Find current tip height by scanning the database
-        // We look for the key pattern "/txids/byheight/<height>"
+        // Find current indexed height from the database
+        // The key is "__INTERNAL/height" as per RocksDBStorageAdapter
         let mut current_height = 0u64;
 
-        // Scan for height keys - look for the highest one
-        for h in (exit_at..=10_000_000).rev() {
-            let key = format!("/txids/byheight/{}/length", h);
-            if let Some(_) = adapter.get(key.as_bytes())? {
-                current_height = h;
-                break;
+        if let Some(height_bytes) = adapter.get(b"__INTERNAL/height")? {
+            if height_bytes.len() >= 4 {
+                // Storage uses u32 format
+                current_height = u32::from_le_bytes([
+                    height_bytes[0], height_bytes[1], height_bytes[2], height_bytes[3],
+                ]) as u64;
+                println!("Database indexed height: {}", current_height);
             }
         }
 
         if current_height == 0 {
-            anyhow::bail!("Could not find tip height in database");
+            anyhow::bail!("Could not find indexed height in database. The __INTERNAL/height key is missing or database is empty.");
         }
+
+        println!("Will scan from height {} down to {}", current_height, exit_at);
+        println!("Checking append-only structure for blocks processed multiple times...\n");
 
         Ok(Self {
             adapter,
+            start_height: current_height,  // Store initial height
             current_height,
             exit_at,
             earliest_reorg: None,
             blocks_scanned: 0,
             start_time: Instant::now(),
+            blocks_compared: 0,
+            hash_mismatches: 0,
+            last_local_hash: None,
+            last_remote_hash: None,
         })
-    }
-
-    fn get_txids_for_height(&mut self, height: u64) -> Result<Vec<Txid>> {
-        let mut txids = Vec::new();
-
-        // Read the length
-        let length_key = format!("/txids/byheight/{}/length", height);
-        let length_bytes = match self.adapter.get(length_key.as_bytes())? {
-            Some(bytes) => bytes,
-            None => return Ok(txids), // No txids at this height
-        };
-
-        if length_bytes.len() < 4 {
-            return Ok(txids);
-        }
-
-        let length = u32::from_le_bytes([
-            length_bytes[0],
-            length_bytes[1],
-            length_bytes[2],
-            length_bytes[3],
-        ]);
-
-        // Read each txid
-        for i in 0..length {
-            let item_key = format!("/txids/byheight/{}/{}", height, i);
-            if let Some(txid_bytes) = self.adapter.get(item_key.as_bytes())? {
-                if txid_bytes.len() >= 32 {
-                    let mut txid_array = [0u8; 32];
-                    txid_array.copy_from_slice(&txid_bytes[..32]);
-                    txids.push(Txid::from_byte_array(txid_array));
-                }
-            }
-        }
-
-        Ok(txids)
     }
 
     fn scan_next_block(&mut self) -> Result<bool> {
@@ -143,24 +126,42 @@ impl ReorgDetector {
 
         let height = self.current_height;
 
-        // Get transaction IDs for this height
-        let txids = self.get_txids_for_height(height)?;
+        // Check if this height was processed multiple times (append-only structure)
+        // Use shared key builder to ensure consistency
+        let length_key = key_builder::build_txid_length_key(height);
 
-        if !txids.is_empty() {
-            let total_txids = txids.len();
-            let unique_txids: HashSet<_> = txids.iter().collect();
-            let unique_count = unique_txids.len();
-
-            // Check for duplicates
-            if unique_count < total_txids {
-                let duplicate_count = total_txids - unique_count;
-                self.earliest_reorg = Some(ReorgInfo {
-                    height,
-                    total_txids,
-                    unique_txids: unique_count,
-                    duplicate_count,
-                });
+        let process_count = match self.adapter.get(&length_key)? {
+            Some(bytes) => {
+                String::from_utf8_lossy(&bytes).parse::<u32>().unwrap_or(0)
             }
+            None => 0,
+        };
+
+        // Store for display
+        self.last_local_hash = Some(format!("{}", process_count));
+        self.last_remote_hash = Some(if process_count > 1 { "REORG!".to_string() } else { "OK".to_string() });
+
+        if process_count > 0 {
+            self.blocks_compared += 1;
+        }
+
+        // If processed more than once, this is a missed reorg!
+        if process_count > 1 {
+            self.hash_mismatches += 1;
+
+            // Get the actual txid data from first and second processing
+            let first_key = key_builder::build_txid_data_key(height, 0);
+            let second_key = key_builder::build_txid_data_key(height, 1);
+
+            let first_data = self.adapter.get(&first_key)?.unwrap_or_default();
+            let second_data = self.adapter.get(&second_key)?.unwrap_or_default();
+
+            // Update earliest reorg (we're scanning backwards, so later updates are earlier)
+            self.earliest_reorg = Some(ReorgInfo {
+                height,
+                local_hash: format!("Processed {} times", process_count),
+                remote_hash: format!("First: {} bytes, Second: {} bytes", first_data.len(), second_data.len()),
+            });
         }
 
         self.blocks_scanned += 1;
@@ -170,11 +171,13 @@ impl ReorgDetector {
     }
 
     fn progress(&self) -> f64 {
-        let total_blocks = self.current_height.saturating_sub(self.exit_at);
+        let total_blocks = self.start_height.saturating_sub(self.exit_at);
         if total_blocks == 0 {
             return 100.0;
         }
-        (self.blocks_scanned as f64 / total_blocks as f64) * 100.0
+        // Clamp to prevent overflow if blocks_scanned somehow exceeds total
+        let scanned = self.blocks_scanned.min(total_blocks);
+        (scanned as f64 / total_blocks as f64) * 100.0
     }
 
     fn blocks_per_second(&self) -> f64 {
@@ -238,7 +241,7 @@ fn run_app(
                 .constraints([
                     Constraint::Length(3),  // Title
                     Constraint::Length(3),  // Progress bar
-                    Constraint::Length(8),  // Stats
+                    Constraint::Length(11), // Stats (increased for more lines)
                     Constraint::Length(6),  // Reorg info
                     Constraint::Min(0),     // Help
                 ])
@@ -269,12 +272,33 @@ fn run_app(
                     Span::raw(format!("{}", detector.current_height)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Exit At: ", Style::default().fg(Color::Yellow)),
-                    Span::raw(format!("{}", detector.exit_at)),
+                    Span::styled("Process Count: ", Style::default().fg(Color::Yellow)),
+                    Span::raw(format!("{}", detector.last_local_hash.as_deref().unwrap_or("N/A"))),
+                ]),
+                Line::from(vec![
+                    Span::styled("Status: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{}", detector.last_remote_hash.as_deref().unwrap_or("N/A")),
+                        if detector.last_remote_hash.as_deref() == Some("REORG!") {
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Green)
+                        }
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("Blocks Scanned: ", Style::default().fg(Color::Yellow)),
-                    Span::raw(format!("{}", detector.blocks_scanned)),
+                    Span::raw(format!("{} ({} with data)",
+                        detector.blocks_scanned, detector.blocks_compared)),
+                ]),
+                Line::from(vec![
+                    Span::styled("Missed Reorgs: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(format!("{}", detector.hash_mismatches),
+                        if detector.hash_mismatches > 0 {
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Green)
+                        }),
                 ]),
                 Line::from(vec![
                     Span::styled("Speed: ", Style::default().fg(Color::Yellow)),
@@ -296,6 +320,8 @@ fn run_app(
 
             // Reorg info
             let reorg_info = if let Some(ref reorg) = detector.earliest_reorg {
+                let local_short = format!("{}...{}", &reorg.local_hash[..8], &reorg.local_hash[reorg.local_hash.len()-8..]);
+                let remote_short = format!("{}...{}", &reorg.remote_hash[..8], &reorg.remote_hash[reorg.remote_hash.len()-8..]);
                 vec![
                     Line::from(vec![
                         Span::styled("⚠ REORG DETECTED!", Style::default()
@@ -304,19 +330,16 @@ fn run_app(
                     ]),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("Height: ", Style::default().fg(Color::Yellow)),
+                        Span::styled("Earliest Height: ", Style::default().fg(Color::Yellow)),
                         Span::raw(format!("{}", reorg.height)),
                     ]),
                     Line::from(vec![
-                        Span::styled("Duplicate TXIDs: ", Style::default().fg(Color::Yellow)),
-                        Span::styled(
-                            format!("{}", reorg.duplicate_count),
-                            Style::default().fg(Color::Red)
-                        ),
+                        Span::styled("Local:  ", Style::default().fg(Color::Yellow)),
+                        Span::raw(local_short),
                     ]),
                     Line::from(vec![
-                        Span::styled("Total/Unique: ", Style::default().fg(Color::Yellow)),
-                        Span::raw(format!("{}/{}", reorg.total_txids, reorg.unique_txids)),
+                        Span::styled("Remote: ", Style::default().fg(Color::Yellow)),
+                        Span::raw(remote_short),
                     ]),
                 ]
             } else {
@@ -434,10 +457,11 @@ fn perform_rollback(db_path: String, target_height: u64, execute: bool) -> Resul
 
         println!("\r{} keys deleted", keys_to_delete.len());
 
-        // Update indexed height
-        let height_key = b"/indexed_height";
-        let height_bytes = target_height.to_le_bytes();
-        adapter.db.put(height_key, height_bytes)?;
+        // Update indexed height using the correct key and format
+        // Key is "__INTERNAL/height" and value is u32 (4 bytes)
+        let height_key = b"__INTERNAL/height";
+        let height_bytes = (target_height as u32).to_le_bytes();
+        adapter.db.put(height_key, &height_bytes)?;
         println!("Updated indexed height to {}", target_height);
 
     } else {
@@ -491,15 +515,19 @@ fn main() -> Result<()> {
             // Print final results
             println!("\n=== Scan Complete ===");
             println!("Blocks scanned: {}", detector.blocks_scanned);
+            println!("Blocks with data: {}", detector.blocks_compared);
+            println!("Missed reorgs found: {}", detector.hash_mismatches);
 
             if let Some(reorg) = detector.earliest_reorg {
-                println!("\n⚠ EARLIEST REORG DETECTED:");
+                println!("\n⚠ EARLIEST MISSED REORG DETECTED:");
                 println!("  Height: {}", reorg.height);
-                println!("  Total TXIDs: {}", reorg.total_txids);
-                println!("  Unique TXIDs: {}", reorg.unique_txids);
-                println!("  Duplicates: {}", reorg.duplicate_count);
+                println!("  {}", reorg.local_hash);
+                println!("  {}", reorg.remote_hash);
+                println!("\nThis block was processed multiple times without proper rollback.");
+                println!("You should rollback to height {} or earlier", reorg.height - 1);
             } else {
-                println!("\n✓ No reorgs detected in scanned range");
+                println!("\n✓ No missed reorgs detected in scanned range");
+                println!("Each block was processed exactly once");
             }
         }
         Commands::Rollback {
@@ -524,6 +552,28 @@ fn main() -> Result<()> {
                 println!();
                 println!("⚠ This was a dry run. Use --execute to perform the rollback.");
             }
+        }
+        Commands::ListKeys { limit } => {
+            println!("=== Database Keys Sample ===");
+            println!();
+
+            let adapter = RocksDBRuntimeAdapter::open_optimized(cli.db_path)?;
+            let mut iter = adapter.db.raw_iterator();
+            iter.seek_to_first();
+
+            let mut count = 0;
+            while iter.valid() && count < limit {
+                if let Some(key) = iter.key() {
+                    let key_str = String::from_utf8_lossy(key);
+                    let value_len = iter.value().map(|v| v.len()).unwrap_or(0);
+                    println!("{:4}. {} (value: {} bytes)", count + 1, key_str, value_len);
+                    count += 1;
+                }
+                iter.next();
+            }
+
+            println!();
+            println!("Displayed {} keys", count);
         }
     }
 

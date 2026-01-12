@@ -28,9 +28,9 @@ use tokio::sync::Mutex;
 
 pub struct SnapshotMetashrewSync<N, S, R>
 where
-    N: BitcoinNodeAdapter,
-    S: StorageAdapter,
-    R: RuntimeAdapter,
+    N: BitcoinNodeAdapter + 'static,
+    S: StorageAdapter + 'static,
+    R: RuntimeAdapter + 'static,
 {
     node: Arc<N>,
     storage: Arc<RwLock<S>>,
@@ -56,6 +56,10 @@ where
     // Timing
     last_block_time: Arc<RwLock<Option<SystemTime>>>,
     last_snapshot_check: Arc<RwLock<Option<SystemTime>>>,
+
+    // Reorg handling
+    reorg_handler: crate::reorg_handler::ReorgHandler<N, S, R>,
+    chain_validator: crate::chain_validator::ChainValidator<S>,
 }
 
 impl<N, S, R> SnapshotMetashrewSync<N, S, R>
@@ -66,10 +70,23 @@ where
 {
     /// Create a new snapshot-enabled sync engine
     pub fn new(node: N, storage: S, runtime: R, config: SyncConfig, sync_mode: SyncMode) -> Self {
+        let node = Arc::new(node);
+        let storage = Arc::new(RwLock::new(storage));
+        let runtime = Arc::new(runtime);
+
+        let reorg_config = crate::reorg_handler::ReorgConfig::from(&config);
+        let reorg_handler = crate::reorg_handler::ReorgHandler::new(
+            node.clone(),
+            storage.clone(),
+            runtime.clone(),
+            reorg_config,
+        );
+        let chain_validator = crate::chain_validator::ChainValidator::new(storage.clone());
+
         Self {
-            node: Arc::new(node),
-            storage: Arc::new(RwLock::new(storage)),
-            runtime: Arc::new(runtime),
+            node,
+            storage,
+            runtime,
             config,
             sync_mode: Arc::new(RwLock::new(sync_mode)),
 
@@ -88,6 +105,9 @@ where
 
             last_block_time: Arc::new(RwLock::new(None)),
             last_snapshot_check: Arc::new(RwLock::new(None)),
+
+            reorg_handler,
+            chain_validator,
         }
     }
 
@@ -129,16 +149,8 @@ where
         let remote_tip = self.node.get_tip_height().await?;
 
         // Check for reorgs only when close to the tip
-        if remote_tip.saturating_sub(current_height) <= self.config.reorg_check_threshold {
-             match crate::sync::handle_reorg(
-                current_height,
-                self.node.clone(),
-                self.storage.clone(),
-                self.runtime.clone(),
-                &self.config,
-            )
-            .await
-            {
+        if self.reorg_handler.should_check_for_reorg(current_height, remote_tip) {
+             match self.reorg_handler.check_and_handle_reorg(current_height).await {
                 Ok(new_height) => {
                     if new_height != current_height {
                         info!("Reorg handled. Resuming from height {}", new_height);
@@ -424,16 +436,8 @@ where
             };
 
             // Check for reorgs only when close to the tip
-            if height > 0 && remote_tip.saturating_sub(height) <= self.config.reorg_check_threshold {
-                match crate::sync::handle_reorg(
-                    height,
-                    self.node.clone(),
-                    self.storage.clone(),
-                    self.runtime.clone(),
-                    &self.config,
-                )
-                .await
-                {
+            if height > 0 && self.reorg_handler.should_check_for_reorg(height, remote_tip) {
+                match self.reorg_handler.check_and_handle_reorg(height).await {
                     Ok(reorg_height) => {
                         if reorg_height < height {
                             height = reorg_height;
@@ -626,15 +630,7 @@ where
         }
 
         if height > 0 {
-            match crate::sync::handle_reorg(
-                height,
-                self.node.clone(),
-                self.storage.clone(),
-                self.runtime.clone(),
-                &self.config,
-            )
-            .await
-            {
+            match self.reorg_handler.check_and_handle_reorg(height).await {
                 Ok(reorg_height) => {
                     if reorg_height < height {
                         self.current_height.store(reorg_height, Ordering::SeqCst);

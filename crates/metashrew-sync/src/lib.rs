@@ -1,7 +1,9 @@
 pub mod adapters;
+pub mod chain_validator;
 pub mod error;
 pub mod mock;
 pub mod mock_snapshot;
+pub mod reorg_handler;
 pub mod snapshot;
 pub mod snapshot_sync;
 pub mod sync;
@@ -9,9 +11,11 @@ pub mod traits;
 pub mod types;
 
 pub use adapters::*;
+pub use chain_validator::*;
 pub use error::*;
 pub use mock::*;
 pub use mock_snapshot::*;
+pub use reorg_handler::*;
 pub use snapshot::*;
 pub use snapshot_sync::*;
 pub use sync::*;

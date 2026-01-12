@@ -110,16 +110,10 @@ impl RocksDBRuntimeAdapter {
         }
     }
 
-    /// Create an atomic batch that includes all operations plus height update
-    /// This ensures atomicity for block processing
+    /// Create an atomic batch from operations
+    /// Note: Height is managed by SMT layer, not here
     pub fn create_atomic_batch(&self, operations: RocksDBBatch) -> WriteBatch {
         let mut atomic_batch = WriteBatch::default();
-
-        // Add the height update
-        let height_key = TIP_HEIGHT_KEY.as_bytes();
-        let height_bytes = (self.height + 1).to_le_bytes();
-        let labeled_height_key = make_labeled_key_fast(height_key);
-        atomic_batch.put(&labeled_height_key, &height_bytes);
 
         // Track operations and add them to the atomic batch
         let kv_tracker_clone = self.kv_tracker.clone();

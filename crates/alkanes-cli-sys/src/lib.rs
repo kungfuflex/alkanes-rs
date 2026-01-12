@@ -111,7 +111,8 @@ impl SystemAlkanes {
             if network_params.network == bitcoin::Network::Regtest {
                 network_params.bitcoin_rpc_url = rpc_url.clone();
                 network_params.metashrew_rpc_url = rpc_url.clone();
-                network_params.esplora_url = Some(rpc_url.clone());
+                // Note: esplora_url should only be set if the user explicitly provides --esplora-url
+                // Do NOT auto-set it to bitcoin_rpc_url, as that's a JSON-RPC endpoint, not a REST API
             }
         }
 

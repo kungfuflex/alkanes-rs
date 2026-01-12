@@ -861,73 +861,27 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
 
             let params = to_enhanced_execute_params(exec_args)?;
             let mut executor = alkanes::execute::EnhancedAlkanesExecutor::new(system.provider_mut());
-            let mut state = executor.execute(params.clone()).await?;
 
-            loop {
-                state = match state {
-                    alkanes::types::ExecutionState::ReadyToSign(s) => {
-                        let result = executor.resume_execution(s, &params).await?;
-                        println!("\n✅ Alkanes execution completed successfully!");
-                        println!("🔗 Reveal TXID: {}", result.reveal_txid);
-                        println!("💰 Reveal Fee: {} sats", result.reveal_fee);
-                        if let Some(traces) = result.traces {
-                            if !traces.is_empty() {
-                                println!("\n🔍 Execution Traces:");
-                                for (i, trace) in traces.iter().enumerate() {
-                                    println!("\n📊 Protostone #{} trace:", i + 1);
-                                    println!("{}", serde_json::to_string_pretty(&trace)?);
-                                }
-                            }
-                        }
-                        break;
-                    },
-                    alkanes::types::ExecutionState::ReadyToSignCommit(s) => {
-                        executor.resume_commit_execution(s).await?
-                    },
-                    alkanes::types::ExecutionState::ReadyToSignReveal(s) => {
-                        let result = executor.resume_reveal_execution(s).await?;
-                        println!("\n✅ Alkanes execution completed successfully!");
-                        if let Some(commit_txid) = result.commit_txid {
-                            println!("🔗 Commit TXID: {commit_txid}");
-                        }
-                        println!("🔗 Reveal TXID: {}", result.reveal_txid);
-                        if let Some(commit_fee) = result.commit_fee {
-                            println!("💰 Commit Fee: {commit_fee} sats");
-                        }
-                        println!("💰 Reveal Fee: {} sats", result.reveal_fee);
-                        if let Some(traces) = result.traces {
-                            if !traces.is_empty() {
-                                println!("\n🔍 Execution Traces:");
-                                for (i, trace) in traces.iter().enumerate() {
-                                    println!("\n📊 Protostone #{} trace:", i + 1);
-                                    println!("{}", serde_json::to_string_pretty(&trace)?);
-                                }
-                            }
-                        }
-                        break;
-                    },
-                    alkanes::types::ExecutionState::Complete(result) => {
-                        println!("\n✅ Alkanes execution completed successfully!");
-                        if let Some(commit_txid) = result.commit_txid {
-                            println!("🔗 Commit TXID: {commit_txid}");
-                        }
-                        println!("🔗 Reveal TXID: {}", result.reveal_txid);
-                        if let Some(commit_fee) = result.commit_fee {
-                            println!("💰 Commit Fee: {commit_fee} sats");
-                        }
-                        println!("💰 Reveal Fee: {} sats", result.reveal_fee);
-                        if let Some(traces) = result.traces {
-                            if !traces.is_empty() {
-                                println!("\n🔍 Execution Traces:");
-                                for (i, trace) in traces.iter().enumerate() {
-                                    println!("\n📊 Protostone #{} trace:", i + 1);
-                                    println!("{}", serde_json::to_string_pretty(&trace)?);
-                                }
-                            }
-                        }
-                        break;
+            // Use execute_full() which implements the presign pattern with atomic broadcasting
+            let result = executor.execute_full(params).await?;
+
+            println!("\n✅ Alkanes execution completed successfully!");
+            if let Some(commit_txid) = result.commit_txid {
+                println!("🔗 Commit TXID: {commit_txid}");
+            }
+            println!("🔗 Reveal TXID: {}", result.reveal_txid);
+            if let Some(commit_fee) = result.commit_fee {
+                println!("💰 Commit Fee: {commit_fee} sats");
+            }
+            println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+            if let Some(traces) = result.traces {
+                if !traces.is_empty() {
+                    println!("\n🔍 Execution Traces:");
+                    for (i, trace) in traces.iter().enumerate() {
+                        println!("\n📊 Protostone #{} trace:", i + 1);
+                        println!("{}", serde_json::to_string_pretty(&trace)?);
                     }
-                };
+                }
             }
             Ok(())
         },

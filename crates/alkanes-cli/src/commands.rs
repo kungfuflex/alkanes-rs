@@ -1138,8 +1138,11 @@ pub enum Alkanes {
         #[arg(long)]
         block_tag: Option<String>,
         /// Show raw JSON output
-        #[arg(long)]
+        #[arg(long, conflicts_with = "format")]
         raw: bool,
+        /// Format the output data as a specific type (number, u128be, u64be, u32be, u16be, u8be, string)
+        #[arg(long, conflicts_with = "raw")]
+        format: Option<String>,
     },
     /// Execute a tx-script with WASM bytecode
     TxScript {

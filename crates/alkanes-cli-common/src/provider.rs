@@ -2031,9 +2031,14 @@ impl WalletProvider for ConcreteProvider {
                 let (internal_pk, (_leaf_hashes, (master_fingerprint, derivation_path))) = psbt_input.tap_key_origins.iter().next()
                     .ok_or_else(|| AlkanesError::Wallet("tap_key_origins is empty for script spend".to_string()))?;
 
-                if *master_fingerprint != Fingerprint::from_str(&keystore.master_fingerprint)? {
+                // Allow dummy fingerprint "00000000" for ephemeral keys (anti-frontrunning)
+                let dummy_fingerprint = Fingerprint::from_str("00000000")?;
+                let wallet_fingerprint = Fingerprint::from_str(&keystore.master_fingerprint)?;
+
+                if *master_fingerprint != wallet_fingerprint && *master_fingerprint != dummy_fingerprint {
                     return Err(AlkanesError::Wallet(
-                        "Master fingerprint mismatch in tap_key_origins".to_string(),
+                        format!("Master fingerprint mismatch in tap_key_origins: expected {} or {}, got {}",
+                            wallet_fingerprint, dummy_fingerprint, master_fingerprint)
                     ));
                 }
 

@@ -1,3 +1,4 @@
+pub mod automatic_reorg_recovery_test;
 pub mod block_retry_test;
 pub mod block_serialization_test;
 pub mod chain_validation_test;
