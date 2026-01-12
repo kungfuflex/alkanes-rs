@@ -2468,8 +2468,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             });
         }
 
-        // Add OP_RETURN runestone if needed
-        // Note: Runestone handling can be added here if protostones are needed
+        // Add OP_RETURN runestone for protostones (CRITICAL FIX for alkane deployments)
+        if !params.protostones.is_empty() {
+            log::info!("Adding OP_RETURN with {} protostones for alkane deployment", params.protostones.len());
+            // Validate protostones against the actual number of outputs created
+            self.validate_protostones(&params.protostones, outputs.len())?;
+
+            let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len())?;
+            outputs.push(bitcoin::TxOut {
+                value: bitcoin::Amount::ZERO,
+                script_pubkey: runestone_script,
+            });
+            log::info!("OP_RETURN runestone added as output #{}", outputs.len() - 1);
+        }
 
         // Create unsigned reveal transaction
         let tx_input = bitcoin::TxIn {
