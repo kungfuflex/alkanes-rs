@@ -542,6 +542,9 @@ impl BitcoinRpcProvider for SystemAlkanes {
     async fn generate_future(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.generate_future(address).await
     }
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.subfrost_thieve(address, amount).await
+    }
     async fn get_blockchain_info(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_blockchain_info().await
     }

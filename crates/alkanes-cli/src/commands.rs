@@ -2239,6 +2239,19 @@ pub enum SubfrostCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Request test BTC from subfrost regtest faucet (regtest only)
+    ///
+    /// Uses the subfrost_thieve JSON-RPC method to fund an address with test Bitcoin.
+    /// Only works with subfrost regtest instances (subfrost-regtest profile).
+    Thieve {
+        /// Address or address spec (e.g., "p2tr:0", "bcrt1p...")
+        address: String,
+        /// Amount in satoshis to request
+        amount: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)

@@ -478,6 +478,10 @@ pub trait BitcoinRpcProvider {
     /// Generate a single block with future-claiming protostone (regtest only)
     async fn generate_future(&self, address: &str) -> Result<JsonValue>;
 
+    /// Request test BTC from subfrost regtest faucet (regtest only)
+    /// Calls subfrost_thieve JSON-RPC method with address and amount in satoshis
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue>;
+
     // Get the state info
     async fn get_blockchain_info(&self) -> Result<JsonValue>;
 
@@ -1255,6 +1259,9 @@ impl<T: DeezelProvider + ?Sized> BitcoinRpcProvider for Box<T> {
    }
    async fn generate_future(&self, address: &str) -> Result<serde_json::Value> {
        (**self).generate_future(address).await
+   }
+   async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+       (**self).subfrost_thieve(address, amount).await
    }
    async fn get_blockchain_info(&self) -> Result<serde_json::Value> {
         <T as BitcoinRpcProvider>::get_blockchain_info(self).await

@@ -203,6 +203,20 @@ async fn execute_subfrost_command(
             .await?;
             println!("{}", result);
         }
+        SubfrostCommands::Thieve {
+            address,
+            amount,
+            raw,
+        } => {
+            let result = subfrost::execute_thieve(
+                provider,
+                &address,
+                amount,
+                raw,
+            )
+            .await?;
+            println!("{}", result);
+        }
     }
     Ok(())
 }

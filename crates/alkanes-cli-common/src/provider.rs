@@ -4023,11 +4023,19 @@ impl BitcoinRpcProvider for ConcreteProvider {
     }
 
     async fn generate_future(&self, address: &str) -> Result<JsonValue> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([address]);
         self.call(&rpc_url, "generatefuture", params, 1).await
+    }
+
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([address, amount]);
+        self.call(&rpc_url, "subfrost_thieve", params, 1).await
     }
 
     async fn get_blockchain_info(&self) -> Result<JsonValue> {
