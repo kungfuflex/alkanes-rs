@@ -13,6 +13,7 @@ use serde_json::json;
 
 mod commands;
 mod pretty_print;
+mod format_parser;
 use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands, OpiCommands};
 use alkanes_cli_common::alkanes;
 use pretty_print::*;
@@ -87,9 +88,11 @@ async fn main() -> Result<()> {
     alkanes_args.rpc_config.validate()?;
 
     // Check if this command needs wallet access
-    let skip_wallet_init = !args.command.requires_wallet();
+    // IMPORTANT: If --wallet-file is provided, always load the wallet (even in Locked state)
+    // because address identifiers like "p2tr:0" need wallet access for address derivation
+    let skip_wallet_init = !args.command.requires_wallet() && alkanes_args.wallet_file.is_none();
 
-    // Create a new SystemAlkanes instance (skip wallet init for read-only commands)
+    // Create a new SystemAlkanes instance (skip wallet init only if not needed AND no wallet file provided)
     let mut system = SystemAlkanes::new_with_options(&alkanes_args, skip_wallet_init).await?;
 
     // Set default brc20-prog RPC URL based on network if not provided
@@ -973,18 +976,19 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         },
-        Alkanes::Simulate { 
-            alkane_id, 
-            inputs, 
-            height, 
-            block, 
+        Alkanes::Simulate {
+            alkane_id,
+            inputs,
+            height,
+            block,
             transaction,
             envelope,
-            pointer, 
-            txindex, 
-            refund, 
-            block_tag, 
-            raw 
+            pointer,
+            txindex,
+            refund,
+            block_tag,
+            raw,
+            format
         } => {
             use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128};
             use alkanes_cli_common::traits::MetashrewRpcProvider;
@@ -1140,6 +1144,37 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                     // Try to decode as SimulateResponse
                     use alkanes_cli_common::proto::alkanes::SimulateResponse;
                     if let Ok(sim_response) = SimulateResponse::decode(bytes.as_slice()) {
+                        // Check if format is specified
+                        if let Some(format_str) = format {
+                            use crate::format_parser::OutputFormat;
+                            use std::str::FromStr;
+
+                            if let Some(execution) = &sim_response.execution {
+                                // Parse format string to enum
+                                let output_format = OutputFormat::from_str(&format_str)?;
+
+                                // Parse data according to format
+                                match output_format.parse(&execution.data) {
+                                    Ok(formatted_json) => {
+                                        println!("{}", serde_json::to_string_pretty(&formatted_json)?);
+                                        return Ok(());
+                                    }
+                                    Err(e) => {
+                                        // Output error JSON with raw hex
+                                        let error_json = json!({
+                                            "error": e.to_string(),
+                                            "raw_hex": format!("0x{}", hex::encode(&execution.data)),
+                                            "byte_count": execution.data.len()
+                                        });
+                                        println!("{}", serde_json::to_string_pretty(&error_json)?);
+                                        return Err(e);
+                                    }
+                                }
+                            } else {
+                                return Err(anyhow::anyhow!("No execution data in simulation response"));
+                            }
+                        }
+
                         if raw {
                             // Convert SimulateResponse to JSON for raw output
                             let json_response = serde_json::json!({

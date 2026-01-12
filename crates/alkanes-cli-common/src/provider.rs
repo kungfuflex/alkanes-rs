@@ -3863,7 +3863,7 @@ impl AddressResolver for ConcreteProvider {
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
         // Normalize address type (handle both "p2sh-p2wpkh" and "p2sh_p2wpkh")
         let normalized_type = address_type.replace('-', "_");
-        
+
         // Map address identifiers to script types used by keystore
         let script_type = match normalized_type.to_lowercase().as_str() {
             "p2pk" => "p2pkh",  // P2PK addresses use similar derivation to P2PKH
@@ -3876,9 +3876,14 @@ impl AddressResolver for ConcreteProvider {
             "p2tr" => "p2tr",
             _ => return Err(AlkanesError::Wallet(format!("Unsupported address type: {}", address_type))),
         };
-        
-        // Get the keystore
-        let keystore = self.get_keystore()?;
+
+        // Get the keystore - allow both Locked and Unlocked states for view-only address derivation
+        // Only signing operations should require an unlocked wallet
+        let keystore = match &self.wallet_state {
+            WalletState::Unlocked { keystore, .. } => keystore,
+            WalletState::Locked(keystore) => keystore,
+            _ => return Err(AlkanesError::Wallet("No keystore available - wallet must be loaded with --wallet-file".to_string())),
+        };
         
         // Get network params from the current network
         let network = self.get_network();
