@@ -15,6 +15,8 @@ pub struct Config {
     pub ord_url: String,
     pub esplora_url: String,
 
+    pub subfrost_url: String,
+
     pub lua_script_path: Option<String>,
 }
 
@@ -43,6 +45,9 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:8090".to_string()),
             esplora_url: env::var("ESPLORA_URL")
                 .unwrap_or_else(|_| "http://localhost:50010".to_string()),
+
+            subfrost_url: env::var("SUBFROST_URL")
+                .unwrap_or_else(|_| "http://localhost:8545".to_string()),
 
             lua_script_path: env::var("LUA_SCRIPT_PATH").ok(),
         }
