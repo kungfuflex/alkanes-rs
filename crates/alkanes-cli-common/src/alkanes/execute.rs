@@ -348,6 +348,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             commit_internal_key: state.commit_internal_key,
             commit_internal_key_fingerprint: state.commit_internal_key_fingerprint,
             commit_internal_key_path: state.commit_internal_key_path,
+            ephemeral_secret: state.ephemeral_secret,
+            envelope: state.envelope,
         }))
     }
 
@@ -367,7 +369,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             )?;
         }
 
-        let reveal_tx = self.sign_and_finalize_psbt(state.psbt).await?;
+        let reveal_tx = self.sign_and_finalize_reveal_psbt(
+            state.psbt,
+            &state.envelope,
+            state.commit_internal_key,
+            state.ephemeral_secret,
+        ).await?;
         let reveal_txid = self
             .provider
             .broadcast_transaction(bitcoin::consensus::encode::serialize_hex(&reveal_tx))
@@ -410,7 +417,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     ) -> Result<ExecutionState> {
         log::info!("Building commit transaction");
 
-        let (internal_key, (fingerprint, path)) = self.provider.get_internal_key().await?;
+        let (internal_key, ephemeral_secret, (fingerprint, path)) = self.provider.get_internal_key_with_secret().await?;
         let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
         log::info!("Envelope commit address: {commit_address}");
 
@@ -523,6 +530,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             commit_internal_key: internal_key,
             commit_internal_key_fingerprint: fingerprint,
             commit_internal_key_path: path,
+            ephemeral_secret,
         }))
     }
 

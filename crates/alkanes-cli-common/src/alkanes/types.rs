@@ -397,6 +397,8 @@ pub struct ReadyToSignCommitTx {
     pub commit_internal_key_fingerprint: Fingerprint,
     #[serde(with = "serde_derivation_path")]
     pub commit_internal_key_path: DerivationPath,
+    #[serde(with = "serde_secret_key")]
+    pub ephemeral_secret: bitcoin::secp256k1::SecretKey,
 }
 
 /// Contains the necessary information for signing a reveal transaction.
@@ -418,6 +420,10 @@ pub struct ReadyToSignRevealTx {
     pub commit_internal_key_fingerprint: Fingerprint,
     #[serde(with = "serde_derivation_path")]
     pub commit_internal_key_path: DerivationPath,
+    #[serde(with = "serde_secret_key")]
+    pub ephemeral_secret: bitcoin::secp256k1::SecretKey,
+    #[serde(with = "serde_envelope")]
+    pub envelope: super::envelope::AlkanesEnvelope,
 }
 
 mod serde_psbt {
@@ -551,6 +557,27 @@ mod serde_derivation_path {
     {
         let s = alloc::string::String::deserialize(deserializer)?;
         DerivationPath::from_str(&s).map_err(Error::custom)
+    }
+}
+
+mod serde_secret_key {
+    use bitcoin::secp256k1::SecretKey;
+    use serde::{self, Deserializer, Serializer, de::Error};
+    use alloc::vec::Vec;
+
+    pub fn serialize<S>(key: &SecretKey, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(&key.secret_bytes())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = serde::de::Deserialize::deserialize(deserializer)?;
+        SecretKey::from_slice(&bytes).map_err(Error::custom)
     }
 }
 
