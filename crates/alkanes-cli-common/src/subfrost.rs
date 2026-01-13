@@ -501,6 +501,66 @@ pub fn execute_minimum_unwrap_with_fee_rate(
     }
 }
 
+/// Execute the subfrost-thieve command to request test BTC from regtest faucet
+///
+/// This calls the subfrost_thieve JSON-RPC method available on subfrost regtest instances.
+/// The address parameter can be either a raw Bitcoin address or a wallet address spec
+/// (like "p2tr:0") which will be resolved to an actual address.
+pub async fn execute_thieve<P>(
+    provider: &P,
+    address_spec: &str,
+    amount: u64,
+    raw: bool,
+) -> Result<String>
+where
+    P: crate::traits::DeezelProvider + ?Sized,
+{
+    use crate::address_resolver::AddressResolver;
+    use crate::traits::AddressResolver as AddressResolverTrait;
+
+    // Resolve address spec to actual Bitcoin address
+    let address = if address_spec.contains(':') {
+        // It's a wallet address spec like "p2tr:0", resolve it
+        let resolved = provider.resolve_all_identifiers(address_spec).await?;
+        resolved
+    } else {
+        // It's already a Bitcoin address
+        address_spec.to_string()
+    };
+
+    // Call subfrost_thieve JSON-RPC method
+    let result = provider.subfrost_thieve(&address, amount).await?;
+
+    if raw {
+        // Return raw JSON output
+        Ok(serde_json::to_string_pretty(&result)?)
+    } else {
+        // Return human-readable output
+        let txid = result.as_str()
+            .or_else(|| result.get("txid").and_then(|v| v.as_str()))
+            .unwrap_or("unknown");
+
+        Ok(format!(
+            r#"
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        SUBFROST REGTEST FAUCET (THIEVE)                      ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  Successfully requested {} sats                                   ║
+║  To address: {}                                  ║
+║                                                                              ║
+║  Transaction ID:                                                             ║
+║  {}                              ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"#,
+            amount,
+            address,
+            txid
+        ))
+    }
+}
+
 /// Format the minimum unwrap result as a human-readable string
 fn format_minimum_unwrap_result(result: &MinimumUnwrapResult) -> String {
     format!(

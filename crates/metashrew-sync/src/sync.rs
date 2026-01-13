@@ -91,7 +91,6 @@
 //! - **API services**: JSON-RPC endpoints for accessing indexed data
 
 use async_trait::async_trait;
-use bitcoin::hashes::Hash as _;
 use log::{debug, error, info, warn};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -101,6 +100,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::sleep;
 
 use crate::{
+    chain_validator::ChainValidator, reorg_handler::{ReorgConfig, ReorgHandler},
     BitcoinNodeAdapter, BlockResult, JsonRpcProvider, PreviewCall, RuntimeAdapter, StorageAdapter,
     SyncConfig, SyncEngine, SyncError, SyncResult, SyncStatus, ViewCall,
 };
@@ -108,9 +108,9 @@ use crate::{
 /// Generic Bitcoin indexer synchronization engine
 pub struct MetashrewSync<N, S, R>
 where
-    N: BitcoinNodeAdapter,
-    S: StorageAdapter,
-    R: RuntimeAdapter,
+    N: BitcoinNodeAdapter + 'static,
+    S: StorageAdapter + 'static,
+    R: RuntimeAdapter + 'static,
 {
     node: Arc<N>,
     storage: Arc<RwLock<S>>,
@@ -121,6 +121,8 @@ where
     last_block_time: Arc<RwLock<Option<SystemTime>>>,
     blocks_processed: Arc<AtomicU32>,
     processing_heights: Arc<Mutex<HashSet<u32>>>,
+    reorg_handler: ReorgHandler<N, S, R>,
+    chain_validator: ChainValidator<S>,
 }
 
 impl<N, S, R> MetashrewSync<N, S, R>
@@ -131,16 +133,31 @@ where
 {
     /// Create a new sync engine
     pub fn new(node: N, storage: S, runtime: R, config: SyncConfig) -> Self {
+        let node = Arc::new(node);
+        let storage = Arc::new(RwLock::new(storage));
+        let runtime = Arc::new(runtime);
+
+        let reorg_config = ReorgConfig::from(&config);
+        let reorg_handler = ReorgHandler::new(
+            node.clone(),
+            storage.clone(),
+            runtime.clone(),
+            reorg_config,
+        );
+        let chain_validator = ChainValidator::new(storage.clone());
+
         Self {
-            node: Arc::new(node),
-            storage: Arc::new(RwLock::new(storage)),
-            runtime: Arc::new(runtime),
+            node,
+            storage,
+            runtime,
             config,
             is_running: Arc::new(AtomicBool::new(false)),
             current_height: Arc::new(AtomicU32::new(0)),
             last_block_time: Arc::new(RwLock::new(None)),
             blocks_processed: Arc::new(AtomicU32::new(0)),
             processing_heights: Arc::new(Mutex::new(HashSet::new())),
+            reorg_handler,
+            chain_validator,
         }
     }
 
@@ -202,16 +219,8 @@ where
         let remote_tip = self.node.get_tip_height().await?;
 
         // Check for reorgs only when close to the tip
-        if remote_tip.saturating_sub(current_height) <= self.config.reorg_check_threshold {
-            match handle_reorg(
-                current_height,
-                self.node.clone(),
-                self.storage.clone(),
-                self.runtime.clone(),
-                &self.config,
-            )
-            .await
-            {
+        if self.reorg_handler.should_check_for_reorg(current_height, remote_tip) {
+            match self.reorg_handler.check_and_handle_reorg(current_height).await {
                 Ok(new_height) => {
                     if new_height != current_height {
                         info!("Reorg handled. Resuming from height {}", new_height);
@@ -264,70 +273,17 @@ where
     ///
     /// This ensures chain continuity by verifying that the block's prev_blockhash
     /// matches the stored hash of the previous block.
-    async fn validate_block_connects(&self, height: u32, block_data: &[u8]) -> SyncResult<bool> {
-        // Genesis block has no previous block
-        if height == 0 {
-            return Ok(true);
-        }
-
-        // Decode the block to get prev_blockhash
-        let block: bitcoin::Block = bitcoin::consensus::deserialize(block_data)
-            .map_err(|e| SyncError::BlockProcessing {
-                height,
-                message: format!("Failed to deserialize block: {}", e),
-            })?;
-
-        let block_prev_hash: Vec<u8> = block.header.prev_blockhash.to_byte_array().to_vec();
-
-        // Get the stored hash of the previous block
-        let storage = self.storage.read().await;
-        let stored_prev_hash = storage.get_block_hash(height - 1).await?;
-        drop(storage);
-
-        match stored_prev_hash {
-            Some(stored_hash) => {
-                if stored_hash != block_prev_hash {
-                    error!(
-                        "⚠ CHAIN DISCONTINUITY at height {}: Block's prev_blockhash {} does not match stored hash {} of block {}",
-                        height,
-                        hex::encode(&block_prev_hash),
-                        hex::encode(&stored_hash),
-                        height - 1
-                    );
-                    Ok(false)
-                } else {
-                    debug!(
-                        "✓ Block {} connects to previous block {} (hash: {})",
-                        height,
-                        height - 1,
-                        hex::encode(&block_prev_hash[..8])
-                    );
-                    Ok(true)
-                }
-            }
-            None => {
-                warn!(
-                    "No stored hash for block {} - unable to validate chain continuity for block {}",
-                    height - 1,
-                    height
-                );
-                // Allow processing to continue, but log the issue
-                Ok(true)
-            }
-        }
+    async fn validate_block_connects(&self, height: u32, block_data: &[u8]) -> SyncResult<()> {
+        // Delegate to ChainValidator
+        self.chain_validator.validate_single_block(height, block_data).await
     }
 
     /// Process a single block atomically
     pub async fn process_block(&self, height: u32, block_data: Vec<u8>, block_hash: Vec<u8>) -> SyncResult<()> {
         // Validate that this block connects to the previous one
-        if !self.validate_block_connects(height, &block_data).await? {
-            return Err(SyncError::BlockProcessing {
-                height,
-                message: format!(
-                    "Block does not connect to previous block - possible reorg or chain inconsistency"
-                ),
-            });
-        }
+        // ChainValidator will return ChainDiscontinuity error if invalid
+        self.validate_block_connects(height, &block_data).await?;
+
         info!(
             "Processing block {} ({} bytes) atomically",
             height,
@@ -446,16 +402,8 @@ where
                     };
 
                     // Check for reorgs only when close to the tip
-                    if remote_tip.saturating_sub(current_height) <= self_clone.config.reorg_check_threshold {
-                        match handle_reorg(
-                            current_height,
-                            self_clone.node.clone(),
-                            self_clone.storage.clone(),
-                            self_clone.runtime.clone(),
-                            &self_clone.config,
-                        )
-                        .await
-                        {
+                    if self_clone.reorg_handler.should_check_for_reorg(current_height, remote_tip) {
+                        match self_clone.reorg_handler.check_and_handle_reorg(current_height).await {
                             Ok(new_height) => {
                                 if new_height != current_height {
                                     info!("Reorg handled. Resuming from height {}", new_height);
@@ -568,49 +516,54 @@ where
                     }
                     processed_height + 1
                 }
-                BlockResult::Error(failed_height, error) => {
-                    error!("Failed to process block {}: {}", failed_height, error);
+                BlockResult::Error(failed_height, error_msg) => {
+                    error!("Failed to process block {}: {}", failed_height, error_msg);
                     {
                         let mut processing_heights = self.processing_heights.lock().await;
                         processing_heights.remove(&failed_height);
                     }
 
-                    // Check if this is a chain validation error
-                    if error.contains("does not connect to previous block") || error.contains("CHAIN DISCONTINUITY") {
-                        warn!("Chain discontinuity detected at height {}. Triggering reorg handling.", failed_height);
-
-                        // Trigger reorg handling to find common ancestor and rollback
-                        match handle_reorg(
-                            failed_height,
-                            self.node.clone(),
-                            self.storage.clone(),
-                            self.runtime.clone(),
-                            &self.config,
-                        )
-                        .await
-                        {
-                            Ok(rollback_height) => {
-                                info!("Rolled back to height {}. Resuming sync.", rollback_height);
-                                self.current_height.store(rollback_height, Ordering::SeqCst);
-                                rollback_height
-                            }
-                            Err(e) => {
-                                error!("Failed to handle reorg: {}", e);
-                                sleep(Duration::from_secs(5)).await;
-                                failed_height
-                            }
+                    // Convert error string to SyncError for categorization
+                    let sync_error = if error_msg.contains("does not connect to previous block") || error_msg.contains("CHAIN DISCONTINUITY") {
+                        // Chain discontinuity detected - this should trigger reorg
+                        SyncError::ChainDiscontinuity {
+                            height: failed_height,
+                            prev_height: failed_height.saturating_sub(1),
+                            expected: "unknown".to_string(),
+                            got: "unknown".to_string(),
                         }
-                    } else if error.contains("indexer exited unexpectedly") {
+                    } else if error_msg.contains("indexer exited unexpectedly") {
                         error!("Critical error: Indexer exited unexpectedly. Aborting.");
                         self.is_running.store(false, Ordering::SeqCst);
                         return Err(SyncError::BlockProcessing {
                             height: failed_height,
-                            message: error,
+                            message: error_msg,
                         });
                     } else {
-                        // Other errors: retry after delay
-                        sleep(Duration::from_secs(5)).await;
-                        failed_height
+                        SyncError::BlockProcessing {
+                            height: failed_height,
+                            message: error_msg,
+                        }
+                    };
+
+                    // Use ReorgHandler to handle the error appropriately
+                    match self.reorg_handler.handle_processing_error(sync_error, failed_height).await {
+                        Ok(Some(rollback_height)) => {
+                            // Reorg was triggered and handled
+                            self.current_height.store(rollback_height, Ordering::SeqCst);
+                            rollback_height
+                        }
+                        Ok(None) => {
+                            // Retryable error - wait and retry
+                            sleep(Duration::from_secs(5)).await;
+                            failed_height
+                        }
+                        Err(e) => {
+                            // Permanent error or reorg handling failed
+                            error!("Failed to handle error at height {}: {}", failed_height, e);
+                            sleep(Duration::from_secs(5)).await;
+                            failed_height
+                        }
                     }
                 }
             };
@@ -648,6 +601,7 @@ where
             is_running: self.is_running.clone(),
             current_height: self.current_height.clone(),
             processing_heights: self.processing_heights.clone(),
+            reorg_handler: self.reorg_handler.clone(),
         }
     }
 }
@@ -656,9 +610,9 @@ where
 #[derive(Clone)]
 struct ProcessingClone<N, S, R>
 where
-    N: BitcoinNodeAdapter,
-    S: StorageAdapter,
-    R: RuntimeAdapter,
+    N: BitcoinNodeAdapter + 'static,
+    S: StorageAdapter + 'static,
+    R: RuntimeAdapter + 'static,
 {
     node: Arc<N>,
     storage: Arc<RwLock<S>>,
@@ -667,6 +621,7 @@ where
     is_running: Arc<AtomicBool>,
     current_height: Arc<AtomicU32>,
     processing_heights: Arc<Mutex<HashSet<u32>>>,
+    reorg_handler: ReorgHandler<N, S, R>,
 }
 
 impl<N, S, R> ProcessingClone<N, S, R>

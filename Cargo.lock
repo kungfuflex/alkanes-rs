@@ -7481,6 +7481,7 @@ dependencies = [
  "bitcoin 0.32.7",
  "clap",
  "crossterm",
+ "hex",
  "ratatui",
  "rocksdb",
  "rockshrew-runtime",

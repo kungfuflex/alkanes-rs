@@ -66,6 +66,39 @@ impl ProxyClient {
         }
     }
 
+    pub async fn forward_to_subfrost(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse> {
+        let response = self
+            .client
+            .post(&self.config.subfrost_url)
+            .json(request)
+            .send()
+            .await?;
+
+        let json_response: Value = response.json().await?;
+        
+        // Check for error first (error field is not null)
+        if let Some(error) = json_response.get("error") {
+            if !error.is_null() {
+                return Ok(JsonRpcResponse::Error {
+                    jsonrpc: "2.0".to_string(),
+                    error: serde_json::from_value(error.clone())?,
+                    id: request.id.clone(),
+                });
+            }
+        }
+        
+        // Check for result
+        if let Some(result) = json_response.get("result") {
+            Ok(JsonRpcResponse::success(result.clone(), request.id.clone()))
+        } else {
+            Ok(JsonRpcResponse::error(
+                INTERNAL_ERROR,
+                "Invalid response from subfrost".to_string(),
+                request.id.clone(),
+            ))
+        }
+    }
+
     pub async fn forward_to_bitcoind(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse> {
         let response = self
             .client

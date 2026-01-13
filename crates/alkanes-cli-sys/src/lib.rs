@@ -111,7 +111,8 @@ impl SystemAlkanes {
             if network_params.network == bitcoin::Network::Regtest {
                 network_params.bitcoin_rpc_url = rpc_url.clone();
                 network_params.metashrew_rpc_url = rpc_url.clone();
-                network_params.esplora_url = Some(rpc_url.clone());
+                // Note: esplora_url should only be set if the user explicitly provides --esplora-url
+                // Do NOT auto-set it to bitcoin_rpc_url, as that's a JSON-RPC endpoint, not a REST API
             }
         }
 
@@ -540,6 +541,9 @@ impl BitcoinRpcProvider for SystemAlkanes {
     }
     async fn generate_future(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.generate_future(address).await
+    }
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.subfrost_thieve(address, amount).await
     }
     async fn get_blockchain_info(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_blockchain_info().await

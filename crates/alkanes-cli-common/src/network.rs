@@ -463,7 +463,7 @@ impl NetworkParams {
                 p2sh_prefix: 0xc4,
                 bitcoin_rpc_url: "https://regtest.subfrost.io/v4/jsonrpc".to_string(),
                 metashrew_rpc_url: "https://regtest.subfrost.io/v4/jsonrpc".to_string(),
-                esplora_url: Some("https://regtest.subfrost.io/v4/api".to_string()),
+                esplora_url: None,  // Subfrost uses JSON-RPC esplora_* methods, not REST API
             }),
             "mainnet" => Ok(Self {
                 network: Network::Bitcoin,

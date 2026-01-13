@@ -24,6 +24,9 @@ rocksdb = "0.21.0"
 # Bitcoin types
 bitcoin = { workspace = true }
 
+[dev-dependencies]
+hex = "0.4"
+
 [[bin]]
 name = "rockshrew-debug"
 path = "src/main.rs"

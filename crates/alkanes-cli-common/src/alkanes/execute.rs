@@ -172,20 +172,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             let envelope = AlkanesEnvelope::for_contract(envelope_data.clone());
             log::info!("Created AlkanesEnvelope with BIN protocol tag and gzip compression");
 
-            // Build commit transaction
-            let commit_state = match self.build_commit_reveal_pattern(params, &envelope).await? {
-                ExecutionState::ReadyToSignCommit(state) => state,
-                other => return Err(AlkanesError::Other(format!("Unexpected state after commit build: {:?}", other))),
-            };
-
-            // Execute commit
-            let reveal_state = match self.resume_commit_execution(commit_state).await? {
-                ExecutionState::ReadyToSignReveal(state) => state,
-                other => return Err(AlkanesError::Other(format!("Unexpected state after commit execution: {:?}", other))),
-            };
-
-            // Execute reveal
-            self.resume_reveal_execution(reveal_state).await
+            // Use presign pattern for atomic commit-reveal (prevents frontrunning)
+            log::info!("🔐 Using presign strategy for atomic commit-reveal deployment");
+            return self.execute_full_with_presign(params, &envelope).await;
         } else {
             log::info!("CONTRACT EXECUTION: Single transaction without envelope");
 
@@ -2180,6 +2169,413 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
 
         Ok(())
+    }
+
+    /// Execute full alkanes deployment using presign strategy (atomic commit-reveal)
+    /// This matches the brc20-prog pattern: sign all transactions first, then broadcast atomically
+    async fn execute_full_with_presign(
+        &mut self,
+        params: EnhancedExecuteParams,
+        envelope: &AlkanesEnvelope,
+    ) -> Result<EnhancedExecuteResult> {
+        log::info!("🔐 Presign Strategy: Building and signing all transactions upfront...");
+
+        // Step 1: Get internal key with secret for anti-frontrunning
+        let (internal_key, ephemeral_secret, (fingerprint, path)) =
+            self.provider.get_internal_key_with_secret().await?;
+        log::info!("📝 Step 1/5: Got internal key with ephemeral secret");
+
+        // Step 2: Build commit PSBT with FINAL sequences (for deterministic txid)
+        log::info!("📝 Step 2/5: Building commit transaction with final sequences...");
+        let commit_address = self.create_commit_address_for_envelope(envelope, internal_key).await?;
+
+        // Calculate reveal fee
+        let reveal_script = envelope.build_reveal_script();
+        let reveal_script_size = reveal_script.len();
+        let network = self.provider.get_network();
+        let default_fee_rate = match network {
+            bitcoin::Network::Bitcoin => 10.0,
+            bitcoin::Network::Testnet => 5.0,
+            bitcoin::Network::Regtest => 1.0,
+            bitcoin::Network::Signet => 5.0,
+            _ => 5.0,
+        };
+        let fee_rate_sat_vb = params.fee_rate.unwrap_or(default_fee_rate);
+
+        // Estimate reveal transaction size
+        let num_outputs = params.to_addresses.len().max(1) + 2;
+        let output_size = num_outputs * 43;
+        let witness_size = 64 + reveal_script_size + 33;
+        let non_witness_size = 10 + 41 + output_size;
+        let weight = (non_witness_size * 4) + witness_size;
+        let estimated_vsize = (weight + 3) / 4;
+        let estimated_reveal_fee = ((estimated_vsize as f32 * fee_rate_sat_vb) * 1.2).ceil() as u64;
+
+        let mut required_reveal_amount = 546u64;
+        for requirement in &params.input_requirements {
+            if let InputRequirement::Bitcoin { amount } = requirement {
+                required_reveal_amount += amount;
+            }
+        }
+        required_reveal_amount += estimated_reveal_fee;
+        required_reveal_amount += params.to_addresses.len() as u64 * 546;
+
+        // Select UTXOs for commit
+        let utxo_selection = self
+            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses)
+            .await?;
+        let funding_utxos = utxo_selection.outpoints.clone();
+
+        // Build commit PSBT with FINAL sequences (no RBF) for deterministic txid
+        let commit_output = bitcoin::TxOut {
+            value: bitcoin::Amount::from_sat(required_reveal_amount),
+            script_pubkey: commit_address.script_pubkey(),
+        };
+
+        let commit_psbt = self.build_commit_psbt_with_final_sequences(
+            funding_utxos.clone(),
+            commit_output,
+            fee_rate_sat_vb,
+        ).await?;
+
+        // Calculate commit txid from unsigned transaction
+        let commit_tx = commit_psbt.unsigned_tx.clone();
+        let commit_txid = commit_tx.compute_txid();
+        let commit_outpoint = bitcoin::OutPoint { txid: commit_txid, vout: 0 };
+        let commit_output = commit_tx.output[0].clone();
+
+        // Calculate total input value for commit fee
+        let mut total_input_value = 0u64;
+        for outpoint in &funding_utxos {
+            if let Some(txout) = self.provider.get_utxo(outpoint).await? {
+                total_input_value += txout.value.to_sat();
+            }
+        }
+        let commit_fee = total_input_value - commit_tx.output.iter().map(|o| o.value.to_sat()).sum::<u64>();
+
+        log::info!("   Commit txid (pre-calculated): {}", commit_txid);
+        log::info!("   Commit fee: {} sats", commit_fee);
+
+        // Step 3: Build reveal PSBT spending the future commit output
+        log::info!("📝 Step 3/5: Building reveal transaction...");
+        let (reveal_psbt, reveal_fee, _reveal_estimated_vsize) = self
+            .build_reveal_psbt_for_presign(
+                &params,
+                envelope,
+                commit_outpoint,
+                commit_output,
+                internal_key,
+                fingerprint,
+                path.clone(),
+                fee_rate_sat_vb,
+            )
+            .await?;
+
+        let reveal_txid = reveal_psbt.unsigned_tx.compute_txid();
+        log::info!("   Reveal txid (pre-calculated): {}", reveal_txid);
+        log::info!("   Reveal fee: {} sats", reveal_fee);
+
+        // Step 4: Sign both transactions
+        log::info!("✍️  Step 4/5: Signing both transactions...");
+        let signed_commit = self.sign_and_finalize_psbt(commit_psbt).await?;
+        let signed_reveal = self.sign_and_finalize_reveal_psbt(reveal_psbt, envelope, internal_key, ephemeral_secret).await?;
+        log::info!("   ✅ Both transactions signed");
+
+        // Step 5: Broadcast atomically
+        log::info!("📡 Step 5/5: Broadcasting commit and reveal ATOMICALLY...");
+        let commit_hex = bitcoin::consensus::encode::serialize_hex(&signed_commit);
+        let reveal_hex = bitcoin::consensus::encode::serialize_hex(&signed_reveal);
+
+        use crate::traits::BitcoinRpcProvider;
+        let txids = self.provider.send_raw_transactions(&[commit_hex, reveal_hex]).await?;
+
+        let final_commit_txid = txids.get(0)
+            .ok_or_else(|| AlkanesError::RpcError("No commit txid in batch response".to_string()))?
+            .clone();
+        let final_reveal_txid = txids.get(1)
+            .ok_or_else(|| AlkanesError::RpcError("No reveal txid in batch response".to_string()))?
+            .clone();
+
+        log::info!("   ✅ Commit broadcast: {}", final_commit_txid);
+        log::info!("   ✅ Reveal broadcast: {}", final_reveal_txid);
+
+        // Mine blocks if on regtest
+        if params.mine_enabled {
+            self.mine_blocks_if_regtest(&params).await?;
+            self.provider.sync().await?;
+        }
+
+        // Trace if requested
+        let traces = if params.trace_enabled {
+            self.trace_reveal_transaction(&final_reveal_txid, &params).await?
+        } else {
+            None
+        };
+
+        Ok(EnhancedExecuteResult {
+            split_txid: None,
+            split_fee: None,
+            commit_txid: Some(final_commit_txid),
+            reveal_txid: final_reveal_txid,
+            commit_fee: Some(commit_fee),
+            reveal_fee,
+            inputs_used: signed_reveal.input.iter().map(|i| i.previous_output.to_string()).collect(),
+            outputs_created: signed_reveal.output.iter().map(|o| o.script_pubkey.to_string()).collect(),
+            traces,
+        })
+    }
+
+    /// Build commit PSBT with final sequences (no RBF) for deterministic txid
+    async fn build_commit_psbt_with_final_sequences(
+        &mut self,
+        funding_utxos: Vec<bitcoin::OutPoint>,
+        commit_output: bitcoin::TxOut,
+        fee_rate: f32,
+    ) -> Result<bitcoin::psbt::Psbt> {
+        use bitcoin::psbt::{Psbt, Input as PsbtInput};
+
+        let mut inputs_with_txouts = Vec::new();
+        let mut total_input_value = 0u64;
+
+        for outpoint in &funding_utxos {
+            if let Some(txout) = self.provider.get_utxo(outpoint).await? {
+                total_input_value += txout.value.to_sat();
+                inputs_with_txouts.push((*outpoint, txout));
+            }
+        }
+
+        // Create unsigned transaction with FINAL sequences
+        let tx_inputs: Vec<bitcoin::TxIn> = inputs_with_txouts
+            .iter()
+            .map(|(outpoint, _)| bitcoin::TxIn {
+                previous_output: *outpoint,
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: bitcoin::Sequence::MAX, // FINAL sequence for deterministic txid
+                witness: bitcoin::Witness::new(),
+            })
+            .collect();
+
+        // Estimate fee for this transaction
+        let estimated_vsize = 100 + (inputs_with_txouts.len() * 68) + (2 * 43); // rough estimate
+        let estimated_fee = (estimated_vsize as f32 * fee_rate).ceil() as u64;
+
+        let change_value = total_input_value.saturating_sub(commit_output.value.to_sat()).saturating_sub(estimated_fee);
+        use crate::traits::WalletProvider;
+        let change_address_str: String = WalletProvider::get_address(self.provider).await?;
+        let change_script = bitcoin::Address::from_str(&change_address_str)?
+            .require_network(self.provider.get_network())?
+            .script_pubkey();
+
+        let mut outputs = vec![commit_output];
+        if change_value >= 546 {
+            outputs.push(bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(change_value),
+                script_pubkey: change_script,
+            });
+        }
+
+        let unsigned_tx = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: tx_inputs,
+            output: outputs,
+        };
+
+        // Create PSBT
+        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
+
+        // Add witness UTXOs
+        for (i, (_, txout)) in inputs_with_txouts.iter().enumerate() {
+            psbt.inputs[i].witness_utxo = Some(txout.clone());
+        }
+
+        // Sign the PSBT
+        self.provider.sign_psbt(&psbt).await
+    }
+
+    /// Build reveal PSBT for presign strategy
+    async fn build_reveal_psbt_for_presign(
+        &mut self,
+        params: &EnhancedExecuteParams,
+        envelope: &AlkanesEnvelope,
+        commit_outpoint: bitcoin::OutPoint,
+        commit_output: bitcoin::TxOut,
+        commit_internal_key: bitcoin::XOnlyPublicKey,
+        commit_internal_key_fingerprint: bitcoin::bip32::Fingerprint,
+        commit_internal_key_path: bitcoin::bip32::DerivationPath,
+        fee_rate_sat_vb: f32,
+    ) -> Result<(bitcoin::psbt::Psbt, u64, usize)> {
+        // Build reveal transaction outputs
+        let mut outputs = Vec::new();
+
+        // Add recipient outputs
+        for to_addr in &params.to_addresses {
+            let addr = bitcoin::Address::from_str(to_addr)?
+                .require_network(self.provider.get_network())?;
+            outputs.push(bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(546),
+                script_pubkey: addr.script_pubkey(),
+            });
+        }
+
+        // Calculate how much value is available for change/fee
+        let output_total: u64 = outputs.iter().map(|o| o.value.to_sat()).sum();
+        let remaining_value = commit_output.value.to_sat().saturating_sub(output_total);
+
+        // Add change output - use provided change address or wallet address
+        let change_addr_str = if let Some(ref change_addr) = params.change_address {
+            change_addr.clone()
+        } else {
+            // Get wallet address as fallback
+            use crate::traits::WalletProvider;
+            WalletProvider::get_address(self.provider).await?
+        };
+
+        let addr = bitcoin::Address::from_str(&change_addr_str)?
+            .require_network(self.provider.get_network())?;
+
+        // Calculate reveal fee based on actual transaction size
+        let reveal_script = envelope.build_reveal_script();
+        let reveal_script_size = reveal_script.len();
+
+        // Estimate reveal transaction size:
+        // - 1 input with taproot witness (signature + script + control block)
+        // - witness: 64 bytes (signature) + script_size + 33 bytes (control block)
+        // - At least 1 output (we'll add it below)
+        let num_outputs = params.to_addresses.len().max(1) + 1; // recipients + change
+        let output_size = num_outputs * 43; // P2TR outputs are ~43 bytes each
+        let witness_size = 64 + reveal_script_size + 33;
+        let non_witness_size = 10 + 41 + output_size; // version, locktime, input, outputs
+        let weight = (non_witness_size * 4) + witness_size;
+        let estimated_vsize = (weight + 3) / 4;
+        let estimated_reveal_fee = ((estimated_vsize as f32 * fee_rate_sat_vb) * 1.2).ceil() as u64;
+
+        let change_amount = remaining_value.saturating_sub(estimated_reveal_fee);
+
+        // Always add at least one output (transactions must have outputs)
+        // Even for contract deployments, we need to return the change
+        if change_amount >= 546 {
+            outputs.push(bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(change_amount),
+                script_pubkey: addr.script_pubkey(),
+            });
+        } else if outputs.is_empty() {
+            // If we have no outputs at all and change is below dust,
+            // we still need at least one output - use dust limit
+            outputs.push(bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(546),
+                script_pubkey: addr.script_pubkey(),
+            });
+        }
+
+        // Add OP_RETURN runestone for protostones (CRITICAL FIX for alkane deployments)
+        if !params.protostones.is_empty() {
+            log::info!("Adding OP_RETURN with {} protostones for alkane deployment", params.protostones.len());
+            // Validate protostones against the actual number of outputs created
+            self.validate_protostones(&params.protostones, outputs.len())?;
+
+            let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len())?;
+            outputs.push(bitcoin::TxOut {
+                value: bitcoin::Amount::ZERO,
+                script_pubkey: runestone_script,
+            });
+            log::info!("OP_RETURN runestone added as output #{}", outputs.len() - 1);
+        }
+
+        // Create unsigned reveal transaction
+        let tx_input = bitcoin::TxIn {
+            previous_output: commit_outpoint,
+            script_sig: bitcoin::ScriptBuf::new(),
+            sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: bitcoin::Witness::new(),
+        };
+
+        let unsigned_tx = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![tx_input],
+            output: outputs,
+        };
+
+        let estimated_vsize = unsigned_tx.vsize();
+        let reveal_fee = commit_output.value.to_sat() - unsigned_tx.output.iter().map(|o| o.value.to_sat()).sum::<u64>();
+
+        // Create PSBT
+        let mut psbt = bitcoin::psbt::Psbt::from_unsigned_tx(unsigned_tx)?;
+        psbt.inputs[0].witness_utxo = Some(commit_output);
+        psbt.inputs[0].tap_internal_key = Some(commit_internal_key);
+        psbt.inputs[0].tap_key_origins.insert(
+            commit_internal_key,
+            (Vec::new(), (commit_internal_key_fingerprint, commit_internal_key_path)),
+        );
+
+        Ok((psbt, reveal_fee, estimated_vsize))
+    }
+
+    /// Sign and finalize reveal PSBT using ephemeral secret
+    async fn sign_and_finalize_reveal_psbt(
+        &mut self,
+        mut psbt: bitcoin::psbt::Psbt,
+        envelope: &AlkanesEnvelope,
+        commit_internal_key: bitcoin::XOnlyPublicKey,
+        ephemeral_secret: bitcoin::secp256k1::SecretKey,
+    ) -> Result<bitcoin::Transaction> {
+        use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
+        use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder};
+
+        let unsigned_tx = psbt.unsigned_tx.clone();
+
+        // Build taproot spend info
+        let reveal_script = envelope.build_reveal_script();
+        let taproot_builder = TaprootBuilder::new()
+            .add_leaf(0, reveal_script.clone())
+            .map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
+        let taproot_spend_info = taproot_builder
+            .finalize(self.provider.secp(), commit_internal_key)
+            .map_err(|e| AlkanesError::Other(format!("{e:?}")))?;
+        let control_block = taproot_spend_info
+            .control_block(&(reveal_script.clone(), LeafVersion::TapScript))
+            .ok_or_else(|| AlkanesError::Other("Failed to create control block".to_string()))?;
+
+        // Collect prevouts
+        let prevouts: Vec<bitcoin::TxOut> = psbt
+            .inputs
+            .iter()
+            .map(|input| {
+                input
+                    .witness_utxo
+                    .clone()
+                    .ok_or_else(|| AlkanesError::Other("Missing witness UTXO".to_string()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let prevouts_all = Prevouts::All(&prevouts);
+
+        // Calculate sighash for script-path spending
+        let mut sighash_cache = SighashCache::new(&unsigned_tx);
+        let leaf_hash = TapLeafHash::from_script(&reveal_script, LeafVersion::TapScript);
+        let sighash = sighash_cache
+            .taproot_script_spend_signature_hash(0, &prevouts_all, leaf_hash, TapSighashType::Default)
+            .map_err(|e| AlkanesError::Transaction(e.to_string()))?;
+
+        // Sign with ephemeral secret
+        let signature = self
+            .provider
+            .sign_taproot_script_spend(sighash.into(), Some(ephemeral_secret))
+            .await?;
+        let taproot_signature = bitcoin::taproot::Signature {
+            signature,
+            sighash_type: TapSighashType::Default,
+        };
+        let signature_bytes = taproot_signature.to_vec();
+
+        // Create the complete witness
+        let witness = envelope.create_complete_witness(&signature_bytes, control_block)?;
+
+        // Create final transaction
+        let mut tx = unsigned_tx.clone();
+        tx.input[0].witness = witness;
+
+        Ok(tx)
     }
 }
 

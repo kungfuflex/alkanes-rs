@@ -2031,9 +2031,14 @@ impl WalletProvider for ConcreteProvider {
                 let (internal_pk, (_leaf_hashes, (master_fingerprint, derivation_path))) = psbt_input.tap_key_origins.iter().next()
                     .ok_or_else(|| AlkanesError::Wallet("tap_key_origins is empty for script spend".to_string()))?;
 
-                if *master_fingerprint != Fingerprint::from_str(&keystore.master_fingerprint)? {
+                // Allow dummy fingerprint "00000000" for ephemeral keys (anti-frontrunning)
+                let dummy_fingerprint = Fingerprint::from_str("00000000")?;
+                let wallet_fingerprint = Fingerprint::from_str(&keystore.master_fingerprint)?;
+
+                if *master_fingerprint != wallet_fingerprint && *master_fingerprint != dummy_fingerprint {
                     return Err(AlkanesError::Wallet(
-                        "Master fingerprint mismatch in tap_key_origins".to_string(),
+                        format!("Master fingerprint mismatch in tap_key_origins: expected {} or {}, got {}",
+                            wallet_fingerprint, dummy_fingerprint, master_fingerprint)
                     ));
                 }
 
@@ -3863,7 +3868,7 @@ impl AddressResolver for ConcreteProvider {
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
         // Normalize address type (handle both "p2sh-p2wpkh" and "p2sh_p2wpkh")
         let normalized_type = address_type.replace('-', "_");
-        
+
         // Map address identifiers to script types used by keystore
         let script_type = match normalized_type.to_lowercase().as_str() {
             "p2pk" => "p2pkh",  // P2PK addresses use similar derivation to P2PKH
@@ -3876,9 +3881,14 @@ impl AddressResolver for ConcreteProvider {
             "p2tr" => "p2tr",
             _ => return Err(AlkanesError::Wallet(format!("Unsupported address type: {}", address_type))),
         };
-        
-        // Get the keystore
-        let keystore = self.get_keystore()?;
+
+        // Get the keystore - allow both Locked and Unlocked states for view-only address derivation
+        // Only signing operations should require an unlocked wallet
+        let keystore = match &self.wallet_state {
+            WalletState::Unlocked { keystore, .. } => keystore,
+            WalletState::Locked(keystore) => keystore,
+            _ => return Err(AlkanesError::Wallet("No keystore available - wallet must be loaded with --wallet-file".to_string())),
+        };
         
         // Get network params from the current network
         let network = self.get_network();
@@ -4013,11 +4023,19 @@ impl BitcoinRpcProvider for ConcreteProvider {
     }
 
     async fn generate_future(&self, address: &str) -> Result<JsonValue> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([address]);
         self.call(&rpc_url, "generatefuture", params, 1).await
+    }
+
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([address, amount]);
+        self.call(&rpc_url, "subfrost_thieve", params, 1).await
     }
 
     async fn get_blockchain_info(&self) -> Result<JsonValue> {

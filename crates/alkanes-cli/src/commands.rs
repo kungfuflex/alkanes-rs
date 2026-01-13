@@ -1141,8 +1141,11 @@ pub enum Alkanes {
         #[arg(long)]
         block_tag: Option<String>,
         /// Show raw JSON output
-        #[arg(long)]
+        #[arg(long, conflicts_with = "format")]
         raw: bool,
+        /// Format the output data as a specific type (number, u128be, u64be, u32be, u16be, u8be, string)
+        #[arg(long, conflicts_with = "raw")]
+        format: Option<String>,
     },
     /// Execute a tx-script with WASM bytecode
     TxScript {
@@ -2235,6 +2238,19 @@ pub enum SubfrostCommands {
         /// Expected number of outputs in the aggregate transaction (default: 10)
         #[arg(long, default_value = "10")]
         expected_outputs: usize,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Request test BTC from subfrost regtest faucet (regtest only)
+    ///
+    /// Uses the subfrost_thieve JSON-RPC method to fund an address with test Bitcoin.
+    /// Only works with subfrost regtest instances (subfrost-regtest profile).
+    Thieve {
+        /// Address or address spec (e.g., "p2tr:0", "bcrt1p...")
+        address: String,
+        /// Amount in satoshis to request
+        amount: u64,
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,
