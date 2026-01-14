@@ -30,6 +30,7 @@ alkanes-support = { workspace = true }
 alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
 prost = { workspace = true }
 bytes = { workspace = true }
+leb128 = "0.2"
 mlua = { version = "0.9", features = ["lua54", "async", "send", "vendored"] }
 sha2 = { workspace = true }
 moka = { version = "0.12", features = ["sync"] }

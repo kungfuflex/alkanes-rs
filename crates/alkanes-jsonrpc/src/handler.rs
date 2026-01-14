@@ -42,6 +42,11 @@ pub async fn handle_request_with_storage(
         return handle_spendables_by_address(&request.params, &request.id, proxy).await;
     }
 
+    // Handle alkanes_simulate before namespace routing
+    if request.method == "alkanes_simulate" {
+        return handle_alkanes_simulate(request, proxy).await;
+    }
+
     match namespace {
         "ord" => handle_ord_method(&method_name, &request.params, &request.id, proxy).await,
         "esplora" => handle_esplora_method(&method_name, &request.params, &request.id, proxy).await,
@@ -312,6 +317,98 @@ fn encode_protorunesbyaddress_input(input: &Value) -> Result<Value> {
     let hex_input = format!("0x{}", hex::encode(encoded));
 
     Ok(Value::String(hex_input))
+}
+
+/// Handle alkanes_simulate RPC method
+/// Accepts SimulateRequest { target: { block, tx }, inputs: [...] }
+/// and converts it to metashrew_view call with MessageContextParcel
+async fn handle_alkanes_simulate(
+    request: &JsonRpcRequest,
+    proxy: &ProxyClient,
+) -> Result<JsonRpcResponse> {
+    use alkanes_cli_common::proto::alkanes as alkanes_pb;
+
+    // Parse SimulateRequest from params
+    let params = request.params.get(0)
+        .ok_or_else(|| anyhow::anyhow!("Missing simulate request parameter"))?;
+
+    // Extract target and inputs from the SimulateRequest
+    let target = params.get("target")
+        .ok_or_else(|| anyhow::anyhow!("Missing 'target' field in SimulateRequest"))?;
+    let inputs = params.get("inputs")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'inputs' field"))?;
+
+    let target_block_str = target.get("block")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing 'block' in target"))?;
+    let target_tx_str = target.get("tx")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing 'tx' in target"))?;
+
+    let target_block: u64 = target_block_str.parse()
+        .map_err(|_| anyhow::anyhow!("Invalid target block number"))?;
+    let target_tx: u64 = target_tx_str.parse()
+        .map_err(|_| anyhow::anyhow!("Invalid target tx number"))?;
+
+    // Build MessageContextParcel with LEB128-encoded calldata
+    let mut calldata = Vec::new();
+
+    // Encode target block:tx into calldata
+    leb128::write::unsigned(&mut calldata, target_block)
+        .map_err(|e| anyhow::anyhow!("Failed to encode target block: {}", e))?;
+    leb128::write::unsigned(&mut calldata, target_tx)
+        .map_err(|e| anyhow::anyhow!("Failed to encode target tx: {}", e))?;
+
+    // Encode inputs (opcodes and parameters)
+    for input in inputs {
+        let val: u64 = if let Some(val_str) = input.as_str() {
+            val_str.parse()
+                .map_err(|_| anyhow::anyhow!("Failed to parse input as u64: {}", val_str))?
+        } else if let Some(val_u64) = input.as_u64() {
+            val_u64
+        } else {
+            return Err(anyhow::anyhow!("Input must be string or number"));
+        };
+
+        leb128::write::unsigned(&mut calldata, val)
+            .map_err(|e| anyhow::anyhow!("Failed to encode input: {}", e))?;
+    }
+
+    // Build MessageContextParcel
+    let context = alkanes_pb::MessageContextParcel {
+        alkanes: vec![],
+        transaction: vec![],
+        block: vec![],
+        height: 0,
+        vout: 0,
+        txindex: 0,
+        calldata,
+        pointer: 0,
+        refund_pointer: 0,
+    };
+
+    // Encode to protobuf
+    let mut buf = Vec::new();
+    context.encode(&mut buf)?;
+
+    // Build metashrew_view request
+    let contract_id = format!("{}:{}", target_block, target_tx);
+    let params_hex = format!("0x{}", hex::encode(&buf));
+
+    let modified_request = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        method: "metashrew_view".to_string(),
+        params: vec![
+            Value::String(format!("{}/simulate", contract_id)),
+            Value::String(params_hex),
+            Value::String("latest".to_string()),
+        ],
+        id: request.id.clone(),
+    };
+
+    // Forward to metashrew
+    proxy.forward_to_metashrew(&modified_request).await
 }
 
 async fn handle_metashrew_method(
