@@ -1,3 +1,20 @@
+# alkanes-jsonrpc - Unified JSON-RPC reverse proxy server
+#
+# This service routes JSON-RPC requests to various backend services in the
+# alkanes ecosystem (ord, esplora, metashrew, bitcoind, subfrost-rpc, etc.).
+#
+# ## Key Dependencies
+# - leb128: Required for alkanes_simulate handler to encode contract call data
+#   in LEB128 format (Little Endian Base 128), the variable-length integer
+#   encoding used throughout the alkanes protocol
+# - prost: Protobuf encoding/decoding for MessageContextParcel
+# - alkanes-cli-common: Provides protobuf definitions and shared types
+#
+# ## Historical Note
+# The leb128 dependency was added to support the alkanes_simulate RPC handler,
+# which enables alkanes-data-api to query pool data via RPC simulation without
+# database indexing. This is critical for regtest environments.
+
 [package]
 name = "alkanes-jsonrpc"
 version.workspace = true

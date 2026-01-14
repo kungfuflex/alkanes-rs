@@ -1,3 +1,41 @@
+//! alkanes-jsonrpc Handler Module
+//!
+//! ## Architecture Overview
+//! This module routes JSON-RPC requests to various backend services:
+//! - `ord_*` → ord service (ordinals indexer)
+//! - `esplora_*` → esplora service (blockchain explorer)
+//! - `alkanes_*` → metashrew_view conversions OR special handlers (like alkanes_simulate)
+//! - `metashrew_*` → metashrew service (alkanes runtime)
+//! - `memshrew_*` → memshrew service (mempool runtime)
+//! - `lua_*` / `sandshrew_*` → sandshrew lua executor
+//! - `btc_*` → bitcoind
+//! - `subfrost_*` → subfrost-rpc service (FROST signing)
+//! - everything else → bitcoind (default fallback)
+//!
+//! ## Special Handlers
+//! ### alkanes_simulate
+//! The `alkanes_simulate` method is a special case that requires custom handling.
+//! Unlike other `alkanes_*` methods that simply convert to `metashrew_view` calls,
+//! this method must:
+//! 1. Parse SimulateRequest structure from alkanes-data-api
+//! 2. Build MessageContextParcel with LEB128-encoded calldata
+//! 3. Call metashrew_view("simulate", protobuf, "latest")
+//! 4. Wrap response in SimulateResponse structure expected by alkanes-data-api
+//!
+//! This handler is critical for regtest environments where database indexing
+//! may not be available, enabling pool queries via RPC simulation.
+//!
+//! ## Historical Context
+//! This implementation was developed to solve the "/get-pools 500 error" issue
+//! where alkanes-data-api couldn't query pools because:
+//! - The REST endpoint /v4/subfrost/get-pools routes through alkanes-data-api
+//! - alkanes-data-api calls alkanes_rpc.simulate() which makes alkanes_simulate RPC
+//! - This RPC method wasn't implemented in alkanes-jsonrpc
+//! - Without it, pool discovery failed, causing accidental pool creation
+//!
+//! The solution involved understanding the complete request flow:
+//! Browser → OpenResty → alkanes-data-api:3000 → alkanes-jsonrpc:18888 → metashrew
+
 use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND};
 use crate::proxy::ProxyClient;
 use crate::sandshrew;
@@ -320,8 +358,58 @@ fn encode_protorunesbyaddress_input(input: &Value) -> Result<Value> {
 }
 
 /// Handle alkanes_simulate RPC method
-/// Accepts SimulateRequest { target: { block, tx }, inputs: [...] }
-/// and converts it to metashrew_view call with MessageContextParcel
+///
+/// ## Purpose
+/// This handler enables alkanes-data-api to query pool data via RPC simulation
+/// without relying on database indexing. It's critical for regtest environments
+/// where the database indexer may not be running.
+///
+/// ## Request Format
+/// Accepts SimulateRequest from alkanes-data-api:
+/// ```json
+/// {
+///   "target": { "block": "4", "tx": "65522" },  // Contract to simulate
+///   "inputs": ["3"]                              // Opcode + params (3 = GET_ALL_POOLS)
+/// }
+/// ```
+///
+/// ## Implementation Details
+/// 1. Parses target contract ID (block:tx) and inputs (opcodes/params)
+/// 2. Builds MessageContextParcel with LEB128-encoded calldata:
+///    - Encodes: [target_block, target_tx, ...inputs]
+///    - LEB128 is variable-length integer encoding used by alkanes protocol
+/// 3. Protobuf-encodes the MessageContextParcel
+/// 4. Calls metashrew_view("simulate", hex_parcel, "latest")
+///    - CRITICAL: View function is "simulate", NOT "{contract_id}/simulate"
+///    - The contract_id is encoded IN the protobuf, not in the view path
+/// 5. Wraps the raw metashrew response in SimulateResponse structure
+///
+/// ## Response Format
+/// Returns SimulateResponse expected by alkanes-data-api:
+/// ```json
+/// {
+///   "execution": {
+///     "data": "0x...",      // Hex-encoded result
+///     "error": null,        // Error message if any
+///     "alkanes": [],        // Alkane transfers
+///     "storage": []         // Storage changes
+///   },
+///   "gasUsed": 0,
+///   "status": 1             // 1 = success
+/// }
+/// ```
+///
+/// ## Historical Context & Debugging Notes
+/// - Initially tried calling "{contract_id}/simulate" - WRONG! The simulate
+///   view function is a global metashrew runtime feature, not contract-specific.
+/// - First implementation returned raw hex string - alkanes-data-api expects
+///   SimulateResponse structure with execution.data field.
+/// - The response must match SimulateResponse in alkanes-data-api/src/services/alkanes_rpc.rs
+///
+/// ## Related Code
+/// - alkanes-data-api: src/services/alkanes_rpc.rs (SimulateResponse struct)
+/// - alkanes-cli-common: src/alkanes/amm.rs (reference implementation)
+/// - alkanes-web-sys: src/provider.rs (working WASM implementation)
 async fn handle_alkanes_simulate(
     request: &JsonRpcRequest,
     proxy: &ProxyClient,
@@ -352,15 +440,19 @@ async fn handle_alkanes_simulate(
         .map_err(|_| anyhow::anyhow!("Invalid target tx number"))?;
 
     // Build MessageContextParcel with LEB128-encoded calldata
+    // LEB128 (Little Endian Base 128) is a variable-length integer encoding
+    // used throughout the alkanes protocol for compact serialization
     let mut calldata = Vec::new();
 
     // Encode target block:tx into calldata
+    // This tells the simulator which contract to execute
     leb128::write::unsigned(&mut calldata, target_block)
         .map_err(|e| anyhow::anyhow!("Failed to encode target block: {}", e))?;
     leb128::write::unsigned(&mut calldata, target_tx)
         .map_err(|e| anyhow::anyhow!("Failed to encode target tx: {}", e))?;
 
     // Encode inputs (opcodes and parameters)
+    // For GET_ALL_POOLS: inputs = ["3"] where 3 is the opcode
     for input in inputs {
         let val: u64 = if let Some(val_str) = input.as_str() {
             val_str.parse()
@@ -376,16 +468,17 @@ async fn handle_alkanes_simulate(
     }
 
     // Build MessageContextParcel
+    // This is the protobuf message that contains all context for simulation
     let context = alkanes_pb::MessageContextParcel {
-        alkanes: vec![],
-        transaction: vec![],
-        block: vec![],
-        height: 0,
-        vout: 0,
-        txindex: 0,
-        calldata,
-        pointer: 0,
-        refund_pointer: 0,
+        alkanes: vec![],      // No alkane transfers needed for view calls
+        transaction: vec![],  // No transaction data needed
+        block: vec![],        // No block data needed
+        height: 0,            // Height not needed for simulation
+        vout: 0,              // Output index not needed
+        txindex: 0,           // TX index not needed
+        calldata,             // The LEB128-encoded contract call data
+        pointer: 0,           // Memory pointer (not used for view calls)
+        refund_pointer: 0,    // Refund pointer (not used for view calls)
     };
 
     // Encode to protobuf
@@ -393,23 +486,69 @@ async fn handle_alkanes_simulate(
     context.encode(&mut buf)?;
 
     // Build metashrew_view request
-    // Note: The view function is just "simulate", NOT "{contract_id}/simulate"
-    // The contract_id is encoded in the MessageContextParcel protobuf
+    // CRITICAL: The view function is just "simulate", NOT "{contract_id}/simulate"
+    // The contract_id is already encoded in the MessageContextParcel protobuf
+    // This was a key insight from debugging - the simulate view function is a
+    // global metashrew runtime feature that reads the contract ID from the parcel
     let params_hex = format!("0x{}", hex::encode(&buf));
 
     let modified_request = JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         method: "metashrew_view".to_string(),
         params: vec![
-            Value::String("simulate".to_string()),
-            Value::String(params_hex),
-            Value::String("latest".to_string()),
+            Value::String("simulate".to_string()),  // View function name
+            Value::String(params_hex),               // Hex-encoded protobuf parcel
+            Value::String("latest".to_string()),     // Block tag
         ],
         id: request.id.clone(),
     };
 
-    // Forward to metashrew
-    proxy.forward_to_metashrew(&modified_request).await
+    // Forward to metashrew and get raw response
+    let metashrew_response = proxy.forward_to_metashrew(&modified_request).await?;
+
+    // Transform the response into SimulateResponse format expected by alkanes-data-api
+    // metashrew_view returns: { "jsonrpc": "2.0", "result": "0x...", "id": 1 }
+    // We need to wrap this in SimulateResponse structure:
+    // { "execution": { "data": "0x...", "error": null, ... }, "gasUsed": 0, "status": 1 }
+    if let Some(result) = metashrew_response.result {
+        // Extract the hex data from metashrew response
+        let data_hex = if let Some(s) = result.as_str() {
+            s.to_string()
+        } else {
+            // If result is not a string, serialize it
+            serde_json::to_string(&result)?
+        };
+
+        // Build SimulateResponse with the structure alkanes-data-api expects
+        let simulate_response = serde_json::json!({
+            "execution": {
+                "data": data_hex,        // The hex-encoded result
+                "error": null,           // No error
+                "alkanes": [],           // No alkane transfers in view calls
+                "storage": []            // No storage changes in view calls
+            },
+            "gasUsed": 0,                // Gas not tracked for view calls
+            "status": 1                  // 1 = success
+        });
+
+        Ok(JsonRpcResponse::success(simulate_response, request.id.clone()))
+    } else if let Some(error) = metashrew_response.error {
+        // If metashrew returned an error, wrap it in SimulateResponse format
+        let simulate_response = serde_json::json!({
+            "execution": {
+                "data": null,
+                "error": error.to_string(),
+                "alkanes": [],
+                "storage": []
+            },
+            "gasUsed": 0,
+            "status": 0  // 0 = error
+        });
+
+        Ok(JsonRpcResponse::success(simulate_response, request.id.clone()))
+    } else {
+        Err(anyhow::anyhow!("No result or error in metashrew response"))
+    }
 }
 
 async fn handle_metashrew_method(
