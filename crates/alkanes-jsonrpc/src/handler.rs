@@ -393,14 +393,15 @@ async fn handle_alkanes_simulate(
     context.encode(&mut buf)?;
 
     // Build metashrew_view request
-    let contract_id = format!("{}:{}", target_block, target_tx);
+    // Note: The view function is just "simulate", NOT "{contract_id}/simulate"
+    // The contract_id is encoded in the MessageContextParcel protobuf
     let params_hex = format!("0x{}", hex::encode(&buf));
 
     let modified_request = JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         method: "metashrew_view".to_string(),
         params: vec![
-            Value::String(format!("{}/simulate", contract_id)),
+            Value::String("simulate".to_string()),
             Value::String(params_hex),
             Value::String("latest".to_string()),
         ],
