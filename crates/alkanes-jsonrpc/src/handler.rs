@@ -834,9 +834,11 @@ async fn handle_alkanes_simulate(
                                 }
                             }
 
-                            // Check if the length is reasonable (7 u128s = 112 bytes minimum for pool data)
-                            // and if we have enough bytes remaining
-                            if length >= 112 && length < 500 && i + length <= proto_bytes.len() {
+                            // Check if the length is reasonable and we have enough bytes remaining
+                            // Factory GET_ALL_POOLS returns count + pool IDs (can be as small as 16 bytes)
+                            // Pool GET_DETAILS returns 7 u128s = 112 bytes minimum
+                            // Accept anything from 16 to 500 bytes
+                            if length >= 16 && length < 500 && i + length <= proto_bytes.len() {
                                 let data = &proto_bytes[i..i + length];
                                 extracted_data = Some(format!("0x{}", hex::encode(data)));
                                 log::debug!("Found field 3 at position {}, length {} bytes", start, length);
@@ -850,16 +852,9 @@ async fn handle_alkanes_simulate(
                         None => {
                             // Last resort: if no field 3 found, try treating the whole thing
                             // as raw data (skip any protobuf framing)
-                            log::warn!("No field 3 found, checking for raw pool data format");
-
-                            // Check if the data (after stripping 0x) has at least 224 chars (7 u128s)
-                            if proto_bytes.len() >= 112 {
-                                // Just return the raw bytes as hex
-                                (format!("0x{}", hex::encode(&proto_bytes)), vec![], vec![])
-                            } else {
-                                log::warn!("Data too short for pool format, returning as-is");
-                                (raw_hex.clone(), vec![], vec![])
-                            }
+                            log::warn!("No field 3 found, returning raw protobuf bytes");
+                            // Return raw bytes - let the caller decide what to do
+                            (format!("0x{}", hex::encode(&proto_bytes)), vec![], vec![])
                         }
                     }
                 }
