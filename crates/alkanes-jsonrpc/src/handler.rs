@@ -415,13 +415,12 @@ async fn handle_protorunesbyoutpoint(
         .map(|v| v as u128)
         .unwrap_or(1);
 
-    // Parse txid hex to bytes (reverse for little-endian)
+    // Parse txid hex to bytes
+    // Testing WITHOUT reversal - esplora returns display format, checking if metashrew expects same
     let txid_bytes: Vec<u8> = if txid_hex.is_empty() {
         vec![]
     } else {
-        let mut bytes = hex::decode(txid_hex).unwrap_or_default();
-        bytes.reverse(); // Bitcoin txids are displayed in reverse byte order
-        bytes
+        hex::decode(txid_hex).unwrap_or_default()
     };
 
     // Build OutpointWithProtocol protobuf message
