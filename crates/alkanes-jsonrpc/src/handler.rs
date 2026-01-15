@@ -394,26 +394,23 @@ async fn handle_protorunesbyoutpoint(
     request_id: &Value,
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
-    // Extract txid from params[0]
-    let txid_hex = params.get(0)
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    // Extract vout from params[1]
-    let vout: u32 = params.get(1)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
-
-    // Extract block_tag from params[2], default to "latest"
-    let block_tag = params.get(2)
-        .and_then(|v| v.as_str())
-        .unwrap_or("latest");
-
-    // Extract protocol_tag from params[3], default to 1 (alkanes)
-    let protocol_tag: u128 = params.get(3)
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u128)
-        .unwrap_or(1);
+    // Support both positional params ["txid", vout] and object params [{"txid": "...", "vout": 0}]
+    let (txid_hex, vout, block_tag, protocol_tag): (&str, u32, &str, u128) =
+        if let Some(obj) = params.get(0).and_then(|v| v.as_object()) {
+            // Object format: [{"txid": "...", "vout": 0, "block_tag": "latest", "protocol_tag": 1}]
+            let txid = obj.get("txid").and_then(|v| v.as_str()).unwrap_or("");
+            let vout = obj.get("vout").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let block = obj.get("block_tag").and_then(|v| v.as_str()).unwrap_or("latest");
+            let proto = obj.get("protocol_tag").and_then(|v| v.as_u64()).map(|v| v as u128).unwrap_or(1);
+            (txid, vout, block, proto)
+        } else {
+            // Positional format: ["txid", vout, "block_tag", protocol_tag]
+            let txid = params.get(0).and_then(|v| v.as_str()).unwrap_or("");
+            let vout = params.get(1).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let block = params.get(2).and_then(|v| v.as_str()).unwrap_or("latest");
+            let proto = params.get(3).and_then(|v| v.as_u64()).map(|v| v as u128).unwrap_or(1);
+            (txid, vout, block, proto)
+        };
 
     // Parse txid hex to bytes
     // Bitcoin txids are displayed in reverse byte order (big-endian display, little-endian internal)
@@ -498,6 +495,11 @@ async fn handle_protorunesbyoutpoint(
                         for entry in balance_sheet.entries {
                             if let Some(rune) = entry.rune {
                                 if let Some(rune_id) = rune.rune_id {
+                                    // Extract values from uint128 structs
+                                    // ProtoruneRuneId has height and txindex as uint128
+                                    let block = rune_id.height.map(|h| h.lo).unwrap_or(0);
+                                    let tx = rune_id.txindex.map(|t| t.lo).unwrap_or(0);
+
                                     // Extract balance amount from uint128
                                     let amount = if let Some(balance) = entry.balance {
                                         ((balance.hi as u128) << 64) | (balance.lo as u128)
@@ -507,8 +509,8 @@ async fn handle_protorunesbyoutpoint(
                                     // Store as object with block, tx, amount fields
                                     // The Lua pairs() will give: idx, { block, tx, amount }
                                     balances_array.push(serde_json::json!({
-                                        "block": rune_id.height,
-                                        "tx": rune_id.txindex,
+                                        "block": block,
+                                        "tx": tx,
                                         "amount": amount.to_string()
                                     }));
                                 }
