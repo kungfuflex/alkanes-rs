@@ -738,25 +738,83 @@ async fn handle_alkanes_simulate(
 
     // Transform the response into SimulateResponse format expected by alkanes-data-api
     // metashrew_view returns JsonRpcResponse enum: Success { result: "0x..." } or Error { error: ... }
-    // We need to wrap this in SimulateResponse structure:
+    //
+    // CRITICAL: The metashrew "simulate" view returns a protobuf-encoded ExtendedCallResponse,
+    // NOT raw hex data. We must decode the protobuf to extract the actual `data` field.
+    //
+    // ExtendedCallResponse protobuf structure (from alkanes.proto):
+    //   message ExtendedCallResponse {
+    //     repeated AlkaneTransfer alkanes = 1;
+    //     repeated KeyValuePair storage = 2;
+    //     bytes data = 3;  <-- This is what we need to extract
+    //   }
+    //
+    // We need to wrap the extracted data in SimulateResponse structure:
     // { "execution": { "data": "0x...", "error": null, ... }, "gasUsed": 0, "status": 1 }
     match metashrew_response {
         JsonRpcResponse::Success { result, .. } => {
             // Extract the hex data from metashrew response
-            let data_hex = if let Some(s) = result.as_str() {
+            let raw_hex = if let Some(s) = result.as_str() {
                 s.to_string()
             } else {
                 // If result is not a string, serialize it
                 serde_json::to_string(&result)?
             };
 
+            // Decode the protobuf ExtendedCallResponse to extract the actual data field
+            // The raw_hex contains the full protobuf, we need to extract field 3 (data)
+            let clean_hex = raw_hex.strip_prefix("0x").unwrap_or(&raw_hex);
+            let (data_hex, alkanes_vec, storage_vec) = if let Ok(proto_bytes) = hex::decode(clean_hex) {
+                // Try to decode as ExtendedCallResponse
+                use prost::Message;
+                if let Ok(response) = alkanes_pb::ExtendedCallResponse::decode(&proto_bytes[..]) {
+                    // Extract the data field and convert back to hex
+                    let extracted_data = format!("0x{}", hex::encode(&response.data));
+
+                    // Also extract alkanes transfers for completeness
+                    let alkanes: Vec<Value> = response.alkanes.iter().map(|transfer| {
+                        let id = transfer.id.as_ref().map(|id| {
+                            let block = id.block.as_ref().map(|b| b.lo).unwrap_or(0);
+                            let tx = id.tx.as_ref().map(|t| t.lo).unwrap_or(0);
+                            serde_json::json!({ "block": block, "tx": tx })
+                        }).unwrap_or(serde_json::json!(null));
+                        let amount = transfer.value.as_ref()
+                            .map(|v| ((v.hi as u128) << 64) | (v.lo as u128))
+                            .unwrap_or(0);
+                        serde_json::json!({
+                            "id": id,
+                            "amount": amount.to_string()
+                        })
+                    }).collect();
+
+                    // Extract storage changes
+                    let storage: Vec<Value> = response.storage.iter().map(|kv| {
+                        serde_json::json!({
+                            "key": format!("0x{}", hex::encode(&kv.key)),
+                            "value": format!("0x{}", hex::encode(&kv.value))
+                        })
+                    }).collect();
+
+                    (extracted_data, alkanes, storage)
+                } else {
+                    // If protobuf decode fails, return raw data
+                    // This shouldn't happen but provides graceful fallback
+                    log::warn!("Failed to decode ExtendedCallResponse protobuf, returning raw data");
+                    (raw_hex.clone(), vec![], vec![])
+                }
+            } else {
+                // If hex decode fails, return as-is
+                log::warn!("Failed to decode hex response, returning as-is");
+                (raw_hex.clone(), vec![], vec![])
+            };
+
             // Build SimulateResponse with the structure alkanes-data-api expects
             let simulate_response = serde_json::json!({
                 "execution": {
-                    "data": data_hex,        // The hex-encoded result
+                    "data": data_hex,        // The extracted data from ExtendedCallResponse
                     "error": null,           // No error
-                    "alkanes": [],           // No alkane transfers in view calls
-                    "storage": []            // No storage changes in view calls
+                    "alkanes": alkanes_vec,  // Alkane transfers from the response
+                    "storage": storage_vec   // Storage changes from the response
                 },
                 "gasUsed": 0,                // Gas not tracked for view calls
                 "status": 1                  // 1 = success
