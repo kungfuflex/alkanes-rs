@@ -346,6 +346,10 @@ fn add_all_rpc_methods<'lua>(
     // Alkanes methods
     rpc_table.set("alkanes_getbytecode", create_rpc_function(lua, "alkanes_getbytecode", rpc_context.clone())?)?;
     rpc_table.set("alkanes_protorunesbyaddress", create_rpc_function(lua, "alkanes_protorunesbyaddress", rpc_context.clone())?)?;
+    // protorunes_by_outpoint - CRITICAL: Required by batch_utxo_balances.lua script for alkane balance lookups
+    // Without this registration, balance queries silently fail and return "have 0" even when user has balance
+    // See: lua/batch_utxo_balances.lua line 28
+    rpc_table.set("protorunes_by_outpoint", create_rpc_function(lua, "alkanes_protorunesbyoutpoint", rpc_context.clone())?)?;
 
     // Metashrew methods
     rpc_table.set("metashrew_view", create_rpc_function(lua, "metashrew_view", rpc_context.clone())?)?;
