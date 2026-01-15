@@ -450,7 +450,122 @@ async fn handle_protorunesbyoutpoint(
         id: request_id.clone(),
     };
 
-    proxy.forward_to_metashrew(&modified_request).await
+    let metashrew_response = proxy.forward_to_metashrew(&modified_request).await?;
+
+    // Decode the protobuf response to JSON for Lua scripts
+    // metashrew_view returns hex-encoded protobuf, but Lua expects JSON
+    match metashrew_response {
+        JsonRpcResponse::Success { result, .. } => {
+            // Extract hex string from result
+            let hex_str = result.as_str().unwrap_or("0x");
+            let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+
+            if hex_data.is_empty() {
+                // Empty result - return empty balance sheet
+                let json_response = serde_json::json!({
+                    "balance_sheet": {
+                        "cached": {
+                            "balances": {}
+                        }
+                    },
+                    "outpoint": {
+                        "txid": txid_hex,
+                        "vout": vout
+                    }
+                });
+                return Ok(JsonRpcResponse::success(json_response, request_id.clone()));
+            }
+
+            // Decode protobuf OutpointResponse
+            let bytes = hex::decode(hex_data).unwrap_or_default();
+            match protorune_pb::OutpointResponse::decode(bytes.as_slice()) {
+                Ok(outpoint_response) => {
+                    // Convert to JSON structure expected by Lua
+                    // The Lua script iterates: for alkane_id, amount in pairs(balances)
+                    // and accesses alkane_id.block, alkane_id.tx
+                    // This expects the VALUE (not key) to have block/tx fields
+                    // We use numeric keys (array indices) so pairs() iterates properly
+                    let mut balances_array = Vec::new();
+
+                    if let Some(balance_sheet) = outpoint_response.balances {
+                        for entry in balance_sheet.entries {
+                            if let Some(rune) = entry.rune {
+                                if let Some(rune_id) = rune.rune_id {
+                                    // Extract balance amount from uint128
+                                    let amount = if let Some(balance) = entry.balance {
+                                        ((balance.hi as u128) << 64) | (balance.lo as u128)
+                                    } else {
+                                        0u128
+                                    };
+                                    // Store as object with block, tx, amount fields
+                                    // The Lua pairs() will give: idx, { block, tx, amount }
+                                    balances_array.push(serde_json::json!({
+                                        "block": rune_id.height,
+                                        "tx": rune_id.txindex,
+                                        "amount": amount.to_string()
+                                    }));
+                                }
+                            }
+                        }
+                    }
+
+                    // CRITICAL: The Lua script expects balance_sheet.cached.balances
+                    // where iteration gives (alkane_id, amount) pairs
+                    // Since Lua pairs() on array gives (idx, table), and script accesses
+                    // alkane_id.block (where alkane_id is actually the full entry table),
+                    // we return as array - but the script logic is still wrong.
+                    //
+                    // Alternative format: return as map where value contains block/tx/amount
+                    // This matches how the script SHOULD work if it accessed value.block
+                    let mut balances_map = serde_json::Map::new();
+                    for (idx, entry) in balances_array.iter().enumerate() {
+                        balances_map.insert(idx.to_string(), entry.clone());
+                    }
+
+                    let json_response = serde_json::json!({
+                        "balance_sheet": {
+                            "cached": {
+                                "balances": balances_map
+                            }
+                        },
+                        "outpoint": {
+                            "txid": txid_hex,
+                            "vout": vout
+                        },
+                        "height": outpoint_response.height,
+                        "txindex": outpoint_response.txindex,
+                        "entries_count": balances_array.len()
+                    });
+
+                    Ok(JsonRpcResponse::success(json_response, request_id.clone()))
+                }
+                Err(e) => {
+                    // Failed to decode - return empty with error info
+                    let json_response = serde_json::json!({
+                        "balance_sheet": {
+                            "cached": {
+                                "balances": {}
+                            }
+                        },
+                        "decode_error": e.to_string()
+                    });
+                    Ok(JsonRpcResponse::success(json_response, request_id.clone()))
+                }
+            }
+        }
+        JsonRpcResponse::Error { error, .. } => {
+            // Forward error but still return valid JSON structure for Lua
+            let json_response = serde_json::json!({
+                "balance_sheet": {
+                    "cached": {
+                        "balances": {}
+                    }
+                },
+                "error": error.message
+            });
+            Ok(JsonRpcResponse::success(json_response, request_id.clone()))
+        }
+    }
 }
 
 /// Handle alkanes_simulate RPC method
