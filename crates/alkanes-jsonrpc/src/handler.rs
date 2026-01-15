@@ -763,9 +763,16 @@ async fn handle_alkanes_simulate(
 
             // Decode the protobuf ExtendedCallResponse to extract the actual data field
             // The raw_hex contains the full protobuf, we need to extract field 3 (data)
+            //
+            // ExtendedCallResponse protobuf structure:
+            //   field 1 (alkanes): repeated AlkaneTransfer, tag = 0x0a
+            //   field 2 (storage): repeated KeyValuePair, tag = 0x12
+            //   field 3 (data): bytes, tag = 0x1a
+            //
+            // We need to find field 3 and extract its value.
             let clean_hex = raw_hex.strip_prefix("0x").unwrap_or(&raw_hex);
             let (data_hex, alkanes_vec, storage_vec) = if let Ok(proto_bytes) = hex::decode(clean_hex) {
-                // Try to decode as ExtendedCallResponse
+                // Try to decode as ExtendedCallResponse using prost
                 use prost::Message;
                 if let Ok(response) = alkanes_pb::ExtendedCallResponse::decode(&proto_bytes[..]) {
                     // Extract the data field and convert back to hex
@@ -797,10 +804,59 @@ async fn handle_alkanes_simulate(
 
                     (extracted_data, alkanes, storage)
                 } else {
-                    // If protobuf decode fails, return raw data
-                    // This shouldn't happen but provides graceful fallback
-                    log::warn!("Failed to decode ExtendedCallResponse protobuf, returning raw data");
-                    (raw_hex.clone(), vec![], vec![])
+                    // Prost decode failed - manually extract field 3 (data)
+                    // Field 3 with wire type 2 (length-delimited) has tag 0x1a
+                    log::debug!("Prost decode failed, manually extracting field 3 from protobuf");
+
+                    let mut extracted_data = None;
+                    let mut i = 0;
+                    while i < proto_bytes.len() {
+                        // Read field tag
+                        let tag = proto_bytes[i];
+                        i += 1;
+
+                        if i >= proto_bytes.len() {
+                            break;
+                        }
+
+                        // Read length (varint)
+                        let mut length: usize = 0;
+                        let mut shift = 0;
+                        loop {
+                            if i >= proto_bytes.len() {
+                                break;
+                            }
+                            let b = proto_bytes[i];
+                            i += 1;
+                            length |= ((b & 0x7F) as usize) << shift;
+                            if b & 0x80 == 0 {
+                                break;
+                            }
+                            shift += 7;
+                        }
+
+                        // Check if this is field 3 (tag 0x1a)
+                        if tag == 0x1a {
+                            // This is the data field
+                            if i + length <= proto_bytes.len() {
+                                let data = &proto_bytes[i..i + length];
+                                extracted_data = Some(format!("0x{}", hex::encode(data)));
+                                log::debug!("Extracted data field: {} bytes", length);
+                            }
+                            break;
+                        }
+
+                        // Skip this field's data
+                        i += length;
+                    }
+
+                    match extracted_data {
+                        Some(data) => (data, vec![], vec![]),
+                        None => {
+                            log::warn!("Failed to extract data field from protobuf, returning raw data");
+                            (raw_hex.clone(), vec![], vec![])
+                        }
+                    }
                 }
             } else {
                 // If hex decode fails, return as-is
