@@ -42,14 +42,18 @@ for i, utxo in ipairs(utxos) do
     }
     
     -- Extract alkane balances if available
+    -- The response format from handler.rs is:
+    -- { "balance_sheet": { "cached": { "balances": { "0": { block, tx, amount }, ... } } } }
+    -- pairs() gives (key, value) where key is "0", "1", etc. and value is the balance entry
     if balance_response and balance_response.balance_sheet and balance_response.balance_sheet.cached then
         local balances = balance_response.balance_sheet.cached.balances
         if balances then
-            for alkane_id, amount in pairs(balances) do
+            for _, entry in pairs(balances) do
+                -- entry contains { block, tx, amount }
                 table.insert(utxo_entry.balances, {
-                    block = alkane_id.block,
-                    tx = alkane_id.tx,
-                    amount = amount
+                    block = entry.block,
+                    tx = entry.tx,
+                    amount = entry.amount
                 })
             end
         end
