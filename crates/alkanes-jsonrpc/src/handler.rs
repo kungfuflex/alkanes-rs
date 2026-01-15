@@ -493,6 +493,7 @@ async fn handle_protorunesbyoutpoint(
                     // We use numeric keys (array indices) so pairs() iterates properly
                     let mut balances_array = Vec::new();
 
+                    let has_balance_sheet = outpoint_response.balances.is_some();
                     if let Some(balance_sheet) = outpoint_response.balances {
                         for entry in balance_sheet.entries {
                             if let Some(rune) = entry.rune {
@@ -544,7 +545,7 @@ async fn handle_protorunesbyoutpoint(
                         "_debug": {
                             "raw_response_len": hex_data.len(),
                             "decoded_bytes_len": bytes.len(),
-                            "has_balance_sheet": outpoint_response.balances.is_some()
+                            "has_balance_sheet": has_balance_sheet
                         }
                     });
 
