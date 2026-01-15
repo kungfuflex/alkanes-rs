@@ -507,47 +507,48 @@ async fn handle_alkanes_simulate(
     let metashrew_response = proxy.forward_to_metashrew(&modified_request).await?;
 
     // Transform the response into SimulateResponse format expected by alkanes-data-api
-    // metashrew_view returns: { "jsonrpc": "2.0", "result": "0x...", "id": 1 }
+    // metashrew_view returns JsonRpcResponse enum: Success { result: "0x..." } or Error { error: ... }
     // We need to wrap this in SimulateResponse structure:
     // { "execution": { "data": "0x...", "error": null, ... }, "gasUsed": 0, "status": 1 }
-    if let Some(result) = metashrew_response.result {
-        // Extract the hex data from metashrew response
-        let data_hex = if let Some(s) = result.as_str() {
-            s.to_string()
-        } else {
-            // If result is not a string, serialize it
-            serde_json::to_string(&result)?
-        };
+    match metashrew_response {
+        JsonRpcResponse::Success { result, .. } => {
+            // Extract the hex data from metashrew response
+            let data_hex = if let Some(s) = result.as_str() {
+                s.to_string()
+            } else {
+                // If result is not a string, serialize it
+                serde_json::to_string(&result)?
+            };
 
-        // Build SimulateResponse with the structure alkanes-data-api expects
-        let simulate_response = serde_json::json!({
-            "execution": {
-                "data": data_hex,        // The hex-encoded result
-                "error": null,           // No error
-                "alkanes": [],           // No alkane transfers in view calls
-                "storage": []            // No storage changes in view calls
-            },
-            "gasUsed": 0,                // Gas not tracked for view calls
-            "status": 1                  // 1 = success
-        });
+            // Build SimulateResponse with the structure alkanes-data-api expects
+            let simulate_response = serde_json::json!({
+                "execution": {
+                    "data": data_hex,        // The hex-encoded result
+                    "error": null,           // No error
+                    "alkanes": [],           // No alkane transfers in view calls
+                    "storage": []            // No storage changes in view calls
+                },
+                "gasUsed": 0,                // Gas not tracked for view calls
+                "status": 1                  // 1 = success
+            });
 
-        Ok(JsonRpcResponse::success(simulate_response, request.id.clone()))
-    } else if let Some(error) = metashrew_response.error {
-        // If metashrew returned an error, wrap it in SimulateResponse format
-        let simulate_response = serde_json::json!({
-            "execution": {
-                "data": null,
-                "error": error.to_string(),
-                "alkanes": [],
-                "storage": []
-            },
-            "gasUsed": 0,
-            "status": 0  // 0 = error
-        });
+            Ok(JsonRpcResponse::success(simulate_response, request.id.clone()))
+        }
+        JsonRpcResponse::Error { error, .. } => {
+            // If metashrew returned an error, wrap it in SimulateResponse format
+            let simulate_response = serde_json::json!({
+                "execution": {
+                    "data": null,
+                    "error": error.message,
+                    "alkanes": [],
+                    "storage": []
+                },
+                "gasUsed": 0,
+                "status": 0  // 0 = error
+            });
 
-        Ok(JsonRpcResponse::success(simulate_response, request.id.clone()))
-    } else {
-        Err(anyhow::anyhow!("No result or error in metashrew response"))
+            Ok(JsonRpcResponse::success(simulate_response, request.id.clone()))
+        }
     }
 }
 
