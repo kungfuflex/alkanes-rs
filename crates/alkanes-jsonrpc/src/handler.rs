@@ -288,6 +288,14 @@ async fn handle_alkanes_method(
     // following the same pattern as the TypeScript implementation:
     // metashrew_view(method_name, input, block_tag)
 
+    // Special handling for protorunesbyoutpoint - called from Lua with different params format:
+    // _RPC.protorunes_by_outpoint(txid, vout, block_tag, protocol_tag)
+    // params: [txid, vout, block_tag, protocol_tag]
+    // This is used by batch_utxo_balances.lua to fetch alkane balances per UTXO
+    if method == "protorunesbyoutpoint" {
+        return handle_protorunesbyoutpoint(params, request_id, proxy).await;
+    }
+
     let input = params.get(0).cloned().unwrap_or(Value::Null);
     let block_tag = params.get(1)
         .and_then(|v| v.as_str())
@@ -355,6 +363,94 @@ fn encode_protorunesbyaddress_input(input: &Value) -> Result<Value> {
     let hex_input = format!("0x{}", hex::encode(encoded));
 
     Ok(Value::String(hex_input))
+}
+
+/// Handle protorunesbyoutpoint RPC method
+///
+/// ## Purpose
+/// This handler enables Lua scripts (batch_utxo_balances.lua) to query alkane
+/// balances for specific UTXOs. It's critical for the WASM execute flow to
+/// correctly identify which UTXOs contain the required alkanes for a transaction.
+///
+/// ## Parameter Format (from Lua)
+/// Called as: _RPC.protorunes_by_outpoint(txid, vout, block_tag, protocol_tag)
+/// - params[0]: txid (string) - transaction ID in hex
+/// - params[1]: vout (number) - output index
+/// - params[2]: block_tag (string or null) - block height or "latest"
+/// - params[3]: protocol_tag (number) - protocol ID (1 for alkanes)
+///
+/// ## Implementation
+/// 1. Parse txid, vout, and protocol_tag from params
+/// 2. Build OutpointWithProtocol protobuf message
+/// 3. Call metashrew_view("protorunesbyoutpoint", encoded_protobuf, block_tag)
+/// 4. Return the OutpointResponse which includes balance_sheet
+///
+/// ## Historical Context
+/// This was implemented to fix the "Insufficient alkanes: have 0" error where
+/// batch_utxo_balances.lua couldn't find alkane balances because the RPC method
+/// wasn't properly encoding the outpoint query into protobuf format.
+async fn handle_protorunesbyoutpoint(
+    params: &[Value],
+    request_id: &Value,
+    proxy: &ProxyClient,
+) -> Result<JsonRpcResponse> {
+    // Extract txid from params[0]
+    let txid_hex = params.get(0)
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // Extract vout from params[1]
+    let vout: u32 = params.get(1)
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    // Extract block_tag from params[2], default to "latest"
+    let block_tag = params.get(2)
+        .and_then(|v| v.as_str())
+        .unwrap_or("latest");
+
+    // Extract protocol_tag from params[3], default to 1 (alkanes)
+    let protocol_tag: u128 = params.get(3)
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u128)
+        .unwrap_or(1);
+
+    // Parse txid hex to bytes (reverse for little-endian)
+    let txid_bytes: Vec<u8> = if txid_hex.is_empty() {
+        vec![]
+    } else {
+        let mut bytes = hex::decode(txid_hex).unwrap_or_default();
+        bytes.reverse(); // Bitcoin txids are displayed in reverse byte order
+        bytes
+    };
+
+    // Build OutpointWithProtocol protobuf message
+    let request = protorune_pb::OutpointWithProtocol {
+        txid: txid_bytes,
+        vout,
+        protocol: Some(protorune_pb::Uint128 {
+            lo: protocol_tag as u64,
+            hi: (protocol_tag >> 64) as u64,
+        }),
+    };
+
+    // Encode to hex
+    let encoded = request.encode_to_vec();
+    let hex_input = format!("0x{}", hex::encode(encoded));
+
+    // Forward to metashrew_view
+    let modified_request = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        method: "metashrew_view".to_string(),
+        params: vec![
+            Value::String("protorunesbyoutpoint".to_string()),
+            Value::String(hex_input),
+            Value::String(block_tag.to_string()),
+        ],
+        id: request_id.clone(),
+    };
+
+    proxy.forward_to_metashrew(&modified_request).await
 }
 
 /// Handle alkanes_simulate RPC method
