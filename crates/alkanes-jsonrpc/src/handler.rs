@@ -416,11 +416,14 @@ async fn handle_protorunesbyoutpoint(
         .unwrap_or(1);
 
     // Parse txid hex to bytes
-    // Testing WITHOUT reversal - esplora returns display format, checking if metashrew expects same
+    // Bitcoin txids are displayed in reverse byte order (big-endian display, little-endian internal)
+    // Esplora returns display format, metashrew stores in internal format, so we reverse
     let txid_bytes: Vec<u8> = if txid_hex.is_empty() {
         vec![]
     } else {
-        hex::decode(txid_hex).unwrap_or_default()
+        let mut bytes = hex::decode(txid_hex).unwrap_or_default();
+        bytes.reverse(); // Convert display format -> internal format
+        bytes
     };
 
     // Build OutpointWithProtocol protobuf message
@@ -460,7 +463,7 @@ async fn handle_protorunesbyoutpoint(
             let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
 
             if hex_data.is_empty() {
-                // Empty result - return empty balance sheet
+                // Empty result - return empty balance sheet with debug info
                 let json_response = serde_json::json!({
                     "balance_sheet": {
                         "cached": {
@@ -470,6 +473,10 @@ async fn handle_protorunesbyoutpoint(
                     "outpoint": {
                         "txid": txid_hex,
                         "vout": vout
+                    },
+                    "_debug": {
+                        "raw_response": "empty",
+                        "note": "metashrew returned empty response"
                     }
                 });
                 return Ok(JsonRpcResponse::success(json_response, request_id.clone()));
@@ -533,7 +540,12 @@ async fn handle_protorunesbyoutpoint(
                         },
                         "height": outpoint_response.height,
                         "txindex": outpoint_response.txindex,
-                        "entries_count": balances_array.len()
+                        "entries_count": balances_array.len(),
+                        "_debug": {
+                            "raw_response_len": hex_data.len(),
+                            "decoded_bytes_len": bytes.len(),
+                            "has_balance_sheet": outpoint_response.balances.is_some()
+                        }
                     });
 
                     Ok(JsonRpcResponse::success(json_response, request_id.clone()))
@@ -546,7 +558,12 @@ async fn handle_protorunesbyoutpoint(
                                 "balances": {}
                             }
                         },
-                        "decode_error": e.to_string()
+                        "decode_error": e.to_string(),
+                        "_debug": {
+                            "raw_response_len": hex_data.len(),
+                            "raw_response_preview": if hex_data.len() > 100 { &hex_data[..100] } else { hex_data },
+                            "decoded_bytes_len": bytes.len()
+                        }
                     });
                     Ok(JsonRpcResponse::success(json_response, request_id.clone()))
                 }
