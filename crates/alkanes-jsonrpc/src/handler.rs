@@ -805,56 +805,61 @@ async fn handle_alkanes_simulate(
                     (extracted_data, alkanes, storage)
                 } else {
                     // Prost decode failed - manually extract field 3 (data)
-                    // Field 3 with wire type 2 (length-delimited) has tag 0x1a
-                    log::debug!("Prost decode failed, manually extracting field 3 from protobuf");
+                    // The protobuf structure is: 0a <len> (field 1 - outer wrapper) 1a <len> (field 3 - data)
+                    // We need to find 0x1a tag and extract the length-delimited data
+                    log::debug!("Prost decode failed, manually extracting data from protobuf. Raw bytes len: {}", proto_bytes.len());
 
                     let mut extracted_data = None;
-                    let mut i = 0;
-                    while i < proto_bytes.len() {
-                        // Read field tag
-                        let tag = proto_bytes[i];
-                        i += 1;
 
-                        if i >= proto_bytes.len() {
-                            break;
-                        }
+                    // Scan for field 3 tag (0x1a = field 3, wire type 2)
+                    // It may appear at various positions in the byte stream
+                    for start in 0..proto_bytes.len().saturating_sub(2) {
+                        if proto_bytes[start] == 0x1a {
+                            // Found potential field 3 tag, read length varint
+                            let mut i = start + 1;
+                            let mut length: usize = 0;
+                            let mut shift = 0;
 
-                        // Read length (varint)
-                        let mut length: usize = 0;
-                        let mut shift = 0;
-                        loop {
-                            if i >= proto_bytes.len() {
-                                break;
+                            while i < proto_bytes.len() {
+                                let b = proto_bytes[i];
+                                i += 1;
+                                length |= ((b & 0x7F) as usize) << shift;
+                                if b & 0x80 == 0 {
+                                    break;
+                                }
+                                shift += 7;
+                                if shift > 28 {
+                                    // Varint too large, probably not a real tag
+                                    break;
+                                }
                             }
-                            let b = proto_bytes[i];
-                            i += 1;
-                            length |= ((b & 0x7F) as usize) << shift;
-                            if b & 0x80 == 0 {
-                                break;
-                            }
-                            shift += 7;
-                        }
 
-                        // Check if this is field 3 (tag 0x1a)
-                        if tag == 0x1a {
-                            // This is the data field
-                            if i + length <= proto_bytes.len() {
+                            // Check if the length is reasonable (7 u128s = 112 bytes minimum for pool data)
+                            // and if we have enough bytes remaining
+                            if length >= 112 && length < 500 && i + length <= proto_bytes.len() {
                                 let data = &proto_bytes[i..i + length];
                                 extracted_data = Some(format!("0x{}", hex::encode(data)));
-                                log::debug!("Extracted data field: {} bytes", length);
+                                log::debug!("Found field 3 at position {}, length {} bytes", start, length);
+                                break;
                             }
-                            break;
                         }
-
-                        // Skip this field's data
-                        i += length;
                     }
 
                     match extracted_data {
                         Some(data) => (data, vec![], vec![]),
                         None => {
-                            log::warn!("Failed to extract data field from protobuf, returning raw data");
-                            (raw_hex.clone(), vec![], vec![])
+                            // Last resort: if no field 3 found, try treating the whole thing
+                            // as raw data (skip any protobuf framing)
+                            log::warn!("No field 3 found, checking for raw pool data format");
+
+                            // Check if the data (after stripping 0x) has at least 224 chars (7 u128s)
+                            if proto_bytes.len() >= 112 {
+                                // Just return the raw bytes as hex
+                                (format!("0x{}", hex::encode(&proto_bytes)), vec![], vec![])
+                            } else {
+                                log::warn!("Data too short for pool format, returning as-is");
+                                (raw_hex.clone(), vec![], vec![])
+                            }
                         }
                     }
                 }
