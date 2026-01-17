@@ -2,6 +2,7 @@
 name = "alkanes-web-sys"
 version.workspace = true
 edition = "2021"
+# Rebuild trigger: fix string amount parsing in batch_utxo_balances
 
 [lib]
 crate-type = ["cdylib", "rlib"]
