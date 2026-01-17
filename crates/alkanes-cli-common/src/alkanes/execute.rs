@@ -1012,19 +1012,33 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         if !alkanes_needed.is_empty() {
             log::info!("Querying alkane balances using protorunes_by_address (direct method)...");
 
-            // Group UTXOs by address
-            let mut utxos_by_address: alloc::collections::BTreeMap<String, Vec<(OutPoint, UtxoInfo)>> = alloc::collections::BTreeMap::new();
-            for (outpoint, utxo) in spendable_utxos.clone() {
-                utxos_by_address.entry(utxo.address.clone()).or_insert_with(Vec::new).push((outpoint, utxo));
-            }
+            // IMPORTANT: Get addresses from from_addresses parameter, NOT from spendable_utxos
+            // The alkane UTXOs may be on addresses that have no Bitcoin UTXOs (esplora doesn't know about them)
+            // So we must query ALL addresses specified by the user, not just ones with existing UTXOs
+            let addresses_to_query: Vec<String> = if let Some(addrs) = from_addresses {
+                // Re-resolve addresses (in case they're descriptors like p2tr:0)
+                let mut resolved = Vec::new();
+                for addr in addrs {
+                    if let Ok(resolved_addr) = self.provider.resolve_all_identifiers(addr).await {
+                        resolved.push(resolved_addr);
+                    }
+                }
+                resolved
+            } else {
+                // Fall back to addresses from existing UTXOs
+                let mut addrs: Vec<String> = spendable_utxos.iter().map(|(_, u)| u.address.clone()).collect();
+                addrs.sort();
+                addrs.dedup();
+                addrs
+            };
 
-            log::info!("Fetching balances for {} addresses (1 RPC call per address)", utxos_by_address.len());
+            log::info!("Fetching balances for {} addresses (1 RPC call per address): {:?}", addresses_to_query.len(), addresses_to_query);
 
             // Create a map of (txid:vout) -> balance data for quick lookup
             let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
 
             // Use protorunes_by_address directly for each address (bypasses problematic lua batch script)
-            for (address, _utxos) in &utxos_by_address {
+            for address in &addresses_to_query {
                 match self.provider.protorunes_by_address(address, None, 1).await {
                     Ok(wallet_response) => {
                         log::info!("Found {} alkane outpoints for address {}", wallet_response.balances.len(), address);
