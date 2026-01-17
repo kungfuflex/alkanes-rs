@@ -4,7 +4,13 @@ use crate::sandshrew;
 use anyhow::Result;
 use serde_json::{Value, json};
 use prost::Message;
-use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128, SimulateResponse, KeyValuePair};
+use alkanes_cli_common::proto::alkanes::{
+    MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128, SimulateResponse, KeyValuePair,
+    AlkaneIdToOutpointRequest, AlkaneIdToOutpointResponse,
+    AlkanesTrace, AlkanesTraceEvent,
+    alkanes_trace_event::Event as TraceEventEnum,
+    Outpoint,
+};
 use alkanes_cli_common::proto::protorune::{OutpointResponse, Uint128 as ProtoruneUint128};
 use alkanes_cli_common::alkanes::utils::encode_varint_list;
 
@@ -382,6 +388,232 @@ fn decode_outpoint_response(hex_response: &str) -> Result<Value> {
     }))
 }
 
+/// Decode meta response (raw UTF-8 JSON string, not protobuf)
+fn decode_meta_response(hex_response: &str) -> Result<Value> {
+    let hex_data = hex_response.strip_prefix("0x").unwrap_or(hex_response);
+    if hex_data.is_empty() {
+        return Ok(Value::Null);
+    }
+    let bytes = hex::decode(hex_data)?;
+    let utf8_str = String::from_utf8(bytes)?;
+    if utf8_str.is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str(&utf8_str)
+        .map_err(|e| anyhow::anyhow!("Invalid JSON in meta response: {}", e))
+}
+
+/// Encode meta request: just {target: {block, tx}} -> protobuf hex
+fn encode_meta_request(params: &Value) -> Result<String> {
+    let obj = params.as_object()
+        .ok_or_else(|| anyhow::anyhow!("meta params must be an object"))?;
+
+    // Parse target (required)
+    let target_obj = obj.get("target")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'target' parameter"))?;
+
+    let block = parse_u128(target_obj.get("block")
+        .ok_or_else(|| anyhow::anyhow!("Missing 'target.block' parameter"))?)
+        .ok_or_else(|| anyhow::anyhow!("Invalid 'target.block' parameter"))?;
+
+    let tx = parse_u128(target_obj.get("tx")
+        .ok_or_else(|| anyhow::anyhow!("Missing 'target.tx' parameter"))?)
+        .ok_or_else(|| anyhow::anyhow!("Invalid 'target.tx' parameter"))?;
+
+    let alkane_id = AlkaneId {
+        block: Some(to_uint128(block)),
+        tx: Some(to_uint128(tx)),
+    };
+
+    // Serialize just the AlkaneId directly
+    let mut buf = Vec::new();
+    alkane_id.encode(&mut buf)?;
+    Ok(format!("0x{}", hex::encode(buf)))
+}
+
+/// Encode alkanes_id_to_outpoint request: {block, tx, protocolTag?} -> protobuf hex
+/// Note: protocolTag is accepted but currently not used in encoding
+fn encode_alkanes_id_to_outpoint_request(params: &Value) -> Result<String> {
+    let obj = params.as_object()
+        .ok_or_else(|| anyhow::anyhow!("alkanesidtooutpoint params must be an object"))?;
+
+    let block = parse_u128(obj.get("block")
+        .ok_or_else(|| anyhow::anyhow!("Missing 'block' parameter"))?)
+        .ok_or_else(|| anyhow::anyhow!("Invalid 'block' parameter"))?;
+
+    let tx = parse_u128(obj.get("tx")
+        .ok_or_else(|| anyhow::anyhow!("Missing 'tx' parameter"))?)
+        .ok_or_else(|| anyhow::anyhow!("Invalid 'tx' parameter"))?;
+
+    // protocolTag is accepted but not currently used in the protobuf encoding
+    // let _protocol_tag = obj.get("protocolTag");
+
+    let alkane_id = AlkaneId {
+        block: Some(to_uint128(block)),
+        tx: Some(to_uint128(tx)),
+    };
+
+    let request = AlkaneIdToOutpointRequest {
+        id: Some(alkane_id),
+    };
+
+    let mut buf = Vec::new();
+    request.encode(&mut buf)?;
+    Ok(format!("0x{}", hex::encode(buf)))
+}
+
+/// Decode AlkaneIdToOutpointResponse protobuf to JSON
+fn decode_alkanes_id_to_outpoint_response(hex_response: &str) -> Result<Value> {
+    let hex_data = hex_response.strip_prefix("0x").unwrap_or(hex_response);
+
+    if hex_data.is_empty() {
+        return Ok(json!({"outpoint": {}}));
+    }
+
+    let bytes = hex::decode(hex_data)?;
+    let response = AlkaneIdToOutpointResponse::decode(bytes.as_slice())?;
+
+    if response.txid.is_empty() {
+        return Ok(json!({"outpoint": {}}));
+    }
+
+    let txid_hex = hex::encode(&response.txid);
+
+    Ok(json!({
+        "outpoint": {
+            "txid": txid_hex,
+            "vout": response.vout
+        }
+    }))
+}
+
+/// Encode trace request: {txid, vout} -> protobuf hex
+fn encode_trace_request(params: &Value) -> Result<String> {
+    let obj = params.as_object()
+        .ok_or_else(|| anyhow::anyhow!("trace params must be an object"))?;
+
+    let txid_str = obj.get("txid")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'txid' parameter"))?;
+
+    let txid_hex = txid_str.strip_prefix("0x").unwrap_or(txid_str);
+    let txid_bytes = hex::decode(txid_hex)
+        .map_err(|e| anyhow::anyhow!("Invalid txid hex: {}", e))?;
+
+    let vout = obj.get("vout")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'vout' parameter"))? as u32;
+
+    let outpoint = Outpoint {
+        txid: txid_bytes,
+        vout,
+    };
+
+    let mut buf = Vec::new();
+    outpoint.encode(&mut buf)?;
+    Ok(format!("0x{}", hex::encode(buf)))
+}
+
+/// Convert call type enum to string (matches TypeScript fromCallType)
+fn call_type_to_string(call_type: i32) -> &'static str {
+    match call_type {
+        1 => "call",
+        2 => "delegatecall",
+        3 => "staticcall",
+        _ => "unknowncall",
+    }
+}
+
+/// Convert AlkanesTraceEvent to JSON (matches TypeScript toEvent)
+fn trace_event_to_json(event: &AlkanesTraceEvent) -> Value {
+    match &event.event {
+        Some(TraceEventEnum::EnterContext(enter)) => {
+            let context = enter.context.as_ref().and_then(|tc| tc.inner.as_ref());
+            match context {
+                Some(ctx) => json!({
+                    "event": "invoke",
+                    "data": {
+                        "type": call_type_to_string(enter.call_type),
+                        "context": {
+                            "myself": {
+                                "block": from_uint128(&ctx.myself.as_ref()
+                                    .and_then(|m| m.block.clone())).to_string(),
+                                "tx": from_uint128(&ctx.myself.as_ref()
+                                    .and_then(|m| m.tx.clone())).to_string()
+                            },
+                            "caller": {
+                                "block": from_uint128(&ctx.caller.as_ref()
+                                    .and_then(|c| c.block.clone())).to_string(),
+                                "tx": from_uint128(&ctx.caller.as_ref()
+                                    .and_then(|c| c.tx.clone())).to_string()
+                            },
+                            "inputs": ctx.inputs.iter()
+                                .map(|i| from_uint128(&Some(i.clone())).to_string())
+                                .collect::<Vec<_>>(),
+                            "incomingAlkanes": ctx.incoming_alkanes.iter()
+                                .map(alkane_transfer_to_json)
+                                .collect::<Vec<_>>(),
+                            "vout": ctx.vout
+                        },
+                        "fuel": enter.context.as_ref().map(|tc| tc.fuel).unwrap_or(0)
+                    }
+                }),
+                None => json!({"event": "invoke", "data": {"type": "unknowncall", "context": {}, "fuel": 0}})
+            }
+        }
+        Some(TraceEventEnum::ExitContext(exit)) => {
+            let response = exit.response.as_ref();
+            json!({
+                "event": "return",
+                "data": {
+                    "status": if exit.status == 0 { "success" } else { "revert" },
+                    "response": match response {
+                        Some(resp) => json!({
+                            "alkanes": resp.alkanes.iter().map(alkane_transfer_to_json).collect::<Vec<_>>(),
+                            "storage": resp.storage.iter().map(storage_slot_to_json).collect::<Vec<_>>(),
+                            "data": format!("0x{}", hex::encode(&resp.data))
+                        }),
+                        None => json!({"alkanes": [], "storage": [], "data": "0x"})
+                    }
+                }
+            })
+        }
+        Some(TraceEventEnum::CreateAlkane(create)) => {
+            let new_alkane = create.new_alkane.as_ref();
+            match new_alkane {
+                Some(id) => json!({
+                    "event": "create",
+                    "data": {
+                        "block": from_uint128(&id.block).to_string(),
+                        "tx": from_uint128(&id.tx).to_string()
+                    }
+                }),
+                None => json!({"event": "create", "data": {"block": "0", "tx": "0"}})
+            }
+        }
+        _ => json!({"event": "unknown", "data": {}})
+    }
+}
+
+/// Decode AlkanesTrace protobuf to JSON array
+fn decode_trace_response(hex_response: &str) -> Result<Value> {
+    let hex_data = hex_response.strip_prefix("0x").unwrap_or(hex_response);
+
+    if hex_data.is_empty() {
+        return Ok(json!([]));
+    }
+
+    let bytes = hex::decode(hex_data)?;
+    let trace = AlkanesTrace::decode(bytes.as_slice())?;
+
+    let events: Vec<Value> = trace.events.iter()
+        .map(trace_event_to_json)
+        .collect();
+
+    Ok(json!(events))
+}
+
 /// Encode simulate request JSON to protobuf hex string
 /// JSON format: { alkanes, transaction, block, height, txindex, target: {block, tx}, inputs, vout, pointer, refundPointer }
 fn encode_simulate_request(params: &Value) -> Result<String> {
@@ -527,30 +759,65 @@ async fn handle_alkanes_method(
         .and_then(|v| v.as_str())
         .unwrap_or("latest");
 
-    // For simulate method, encode JSON params to protobuf
-    let is_simulate = method == "simulate";
-    let encoded_input = if is_simulate {
-        match encode_simulate_request(&input) {
-            Ok(hex) => Value::String(hex),
-            Err(e) => {
-                return Ok(JsonRpcResponse::error(
-                    INTERNAL_ERROR,
-                    format!("Failed to encode simulate request: {}", e),
-                    request_id.clone(),
-                ));
+    // Encode request based on method type
+    let (method_name, encoded_input, needs_decode) = match method {
+        "simulate" => {
+            match encode_simulate_request(&input) {
+                Ok(hex) => ("simulate", Value::String(hex), "simulate"),
+                Err(e) => {
+                    return Ok(JsonRpcResponse::error(
+                        INTERNAL_ERROR,
+                        format!("Failed to encode simulate request: {}", e),
+                        request_id.clone(),
+                    ));
+                }
             }
         }
-    } else {
-        // For other methods, convert string numbers and pass through
-        // Note: Other methods may also need protobuf encoding in the future
-        convert_string_numbers(input)
+        "meta" => {
+            match encode_meta_request(&input) {
+                Ok(hex) => ("meta", Value::String(hex), "meta"),
+                Err(e) => {
+                    return Ok(JsonRpcResponse::error(
+                        INTERNAL_ERROR,
+                        format!("Failed to encode meta request: {}", e),
+                        request_id.clone(),
+                    ));
+                }
+            }
+        }
+        "alkanesidtooutpoint" | "alkanes_id_to_outpoint" => {
+            match encode_alkanes_id_to_outpoint_request(&input) {
+                Ok(hex) => ("alkanes_id_to_outpoint", Value::String(hex), "alkanesidtooutpoint"),
+                Err(e) => {
+                    return Ok(JsonRpcResponse::error(
+                        INTERNAL_ERROR,
+                        format!("Failed to encode alkanesidtooutpoint request: {}", e),
+                        request_id.clone(),
+                    ));
+                }
+            }
+        }
+        "trace" => {
+            match encode_trace_request(&input) {
+                Ok(hex) => ("trace", Value::String(hex), "trace"),
+                Err(e) => {
+                    return Ok(JsonRpcResponse::error(
+                        INTERNAL_ERROR,
+                        format!("Failed to encode trace request: {}", e),
+                        request_id.clone(),
+                    ));
+                }
+            }
+        }
+        "protorunesbyoutpoint" => (method, convert_string_numbers(input), "protorunesbyoutpoint"),
+        _ => (method, convert_string_numbers(input), "none")
     };
 
     let modified_request = JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         method: "metashrew_view".to_string(),
         params: vec![
-            Value::String(method.to_string()),
+            Value::String(method_name.to_string()),
             encoded_input,
             Value::String(block_tag.to_string()),
         ],
@@ -559,38 +826,29 @@ async fn handle_alkanes_method(
 
     let response = proxy.forward_to_metashrew(&modified_request).await?;
 
-    // For simulate method, decode the protobuf response to JSON
-    if is_simulate {
+    // Decode response if needed
+    if needs_decode != "none" {
         if let JsonRpcResponse::Success { result, .. } = &response {
             if let Some(hex_str) = result.as_str() {
-                match decode_simulate_response(hex_str) {
-                    Ok(decoded) => {
-                        return Ok(JsonRpcResponse::success(decoded, request_id.clone()));
+                let decoded = match needs_decode {
+                    "simulate" => decode_simulate_response(hex_str),
+                    "meta" => decode_meta_response(hex_str),
+                    "alkanesidtooutpoint" => decode_alkanes_id_to_outpoint_response(hex_str),
+                    "trace" => decode_trace_response(hex_str),
+                    "protorunesbyoutpoint" => decode_outpoint_response(hex_str),
+                    _ => unreachable!()
+                };
+
+                match decoded {
+                    Ok(json_result) => {
+                        return Ok(JsonRpcResponse::success(json_result, request_id.clone()));
                     }
                     Err(e) => {
                         return Ok(JsonRpcResponse::error(
                             INTERNAL_ERROR,
-                            format!("Failed to decode simulate response: {}", e),
+                            format!("Failed to decode {} response: {}", method, e),
                             request_id.clone(),
                         ));
-                    }
-                }
-            }
-        }
-    }
-
-    // For protorunesbyoutpoint, decode the protobuf response to JSON
-    // This is critical for lua scripts like batch_utxo_balances.lua that call _RPC.protorunes_by_outpoint()
-    if method == "protorunesbyoutpoint" {
-        if let JsonRpcResponse::Success { result, .. } = &response {
-            if let Some(hex_str) = result.as_str() {
-                match decode_outpoint_response(hex_str) {
-                    Ok(decoded) => {
-                        return Ok(JsonRpcResponse::success(decoded, request_id.clone()));
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to decode protorunesbyoutpoint response: {}", e);
-                        // Return raw response on decode failure (fallback)
                     }
                 }
             }
