@@ -64,10 +64,12 @@ for i, utxo in ipairs(utxos) do
                 end
 
                 if block_val ~= nil and tx_val ~= nil and amount_val ~= nil then
+                    -- Convert amount from string to number (protobuf u128 is serialized as string)
+                    local amount_num = tonumber(amount_val) or 0
                     table.insert(utxo_entry.balances, {
                         block = block_val,
                         tx = tx_val,
-                        amount = amount_val
+                        amount = amount_num
                     })
                 end
             end

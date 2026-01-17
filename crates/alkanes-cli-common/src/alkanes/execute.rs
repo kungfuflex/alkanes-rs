@@ -1131,11 +1131,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 
                 if let Some(utxo_data) = utxo_balances.get(&key) {
                     // Parse balance data from batch result
+                    // Note: amounts may come as strings (from lua/protobuf) or numbers
                     let balances = utxo_data.get("balances").and_then(|v| v.as_array()).map(|arr| {
                         arr.iter().filter_map(|b| {
                             let block = b.get("block").and_then(|v| v.as_u64())?;
                             let tx = b.get("tx").and_then(|v| v.as_u64())?;
-                            let amount = b.get("amount").and_then(|v| v.as_u64())?;
+                            // Handle amount as either number or string
+                            let amount = b.get("amount").and_then(|v| {
+                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                            })?;
                             Some(((block, tx), amount))
                         }).collect::<Vec<_>>()
                     }).unwrap_or_default();
