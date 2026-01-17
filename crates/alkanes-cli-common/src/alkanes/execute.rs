@@ -1025,6 +1025,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             
             // Batch fetch for each address
             for (address, _utxos) in &utxos_by_address {
+                let mut found_any_balances = false;
+
                 match self.provider.batch_fetch_utxo_balances(address, Some(1), None).await {
                     Ok(result) => {
                         // Parse the result and index by txid:vout
@@ -1034,8 +1036,63 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                     utxo_entry.get("txid").and_then(|v| v.as_str()),
                                     utxo_entry.get("vout").and_then(|v| v.as_u64())
                                 ) {
+                                    // Check if this UTXO has any non-empty balances
+                                    if let Some(balances) = utxo_entry.get("balances").and_then(|v| v.as_array()) {
+                                        if !balances.is_empty() {
+                                            found_any_balances = true;
+                                        }
+                                    }
                                     let key = format!("{}:{}", txid, vout);
                                     utxo_balances.insert(key, utxo_entry.clone());
+                                }
+                            }
+                        }
+
+                        // If batch succeeded but found no balances, fall back to protorunes_by_address
+                        // This handles the case where batch_utxo_balances returns empty balances
+                        // but protorunes_by_address has the correct data
+                        if !found_any_balances && !alkanes_needed.is_empty() {
+                            log::info!("Batch fetch returned no balances for {}, falling back to protorunes_by_address", address);
+                            if let Ok(wallet_response) = self.provider.protorunes_by_address(address, None, 1).await {
+                                log::info!("Found {} alkane outpoints via protorunes_by_address fallback", wallet_response.balances.len());
+                                for outpoint_response in &wallet_response.balances {
+                                    let mut balances_array = Vec::new();
+                                    for (alkane_id, amount) in &outpoint_response.balance_sheet.cached.balances {
+                                        balances_array.push(serde_json::json!({
+                                            "block": alkane_id.block,
+                                            "tx": alkane_id.tx,
+                                            "amount": amount
+                                        }));
+                                    }
+                                    let key = format!("{}:{}", outpoint_response.outpoint.txid, outpoint_response.outpoint.vout);
+                                    utxo_balances.insert(key.clone(), serde_json::json!({
+                                        "txid": outpoint_response.outpoint.txid.to_string(),
+                                        "vout": outpoint_response.outpoint.vout,
+                                        "value": outpoint_response.output.value.to_sat(),
+                                        "balances": balances_array
+                                    }));
+                                    // Also add these alkane UTXOs to spendable_utxos if not already present
+                                    let outpoint = bitcoin::OutPoint {
+                                        txid: outpoint_response.outpoint.txid,
+                                        vout: outpoint_response.outpoint.vout,
+                                    };
+                                    if !spendable_utxos.iter().any(|(op, _)| op == &outpoint) {
+                                        spendable_utxos.push((outpoint, UtxoInfo {
+                                            txid: outpoint_response.outpoint.txid.to_string(),
+                                            vout: outpoint_response.outpoint.vout,
+                                            amount: outpoint_response.output.value.to_sat(),
+                                            address: address.clone(),
+                                            script_pubkey: Some(outpoint_response.output.script_pubkey.clone()),
+                                            confirmations: 100, // Assume confirmed
+                                            frozen: false,
+                                            freeze_reason: None,
+                                            block_height: None,
+                                            has_inscriptions: false,
+                                            has_runes: false,
+                                            has_alkanes: true,
+                                            is_coinbase: false,
+                                        }));
+                                    }
                                 }
                             }
                         }
