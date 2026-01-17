@@ -1348,6 +1348,44 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         },
+        Alkanes::Meta { alkane_id, block_tag, raw } => {
+            let meta_bytes = AlkanesProvider::meta(system.provider(), &alkane_id, block_tag).await?;
+
+            if raw {
+                let json_result = serde_json::json!({
+                    "alkane_id": alkane_id,
+                    "meta": format!("0x{}", hex::encode(&meta_bytes)),
+                    "meta_utf8": String::from_utf8_lossy(&meta_bytes).to_string()
+                });
+                println!("{}", serde_json::to_string_pretty(&json_result)?);
+            } else {
+                println!("📋 Alkanes Contract Metadata (ABI)");
+                println!("═══════════════════════════════════");
+                println!("🏷️  Alkane ID: {alkane_id}");
+
+                if meta_bytes.is_empty() {
+                    println!("❌ No metadata found for this contract");
+                } else {
+                    println!("📦 Metadata:");
+                    println!("   Length: {} bytes", meta_bytes.len());
+                    println!("   Hex: 0x{}", hex::encode(&meta_bytes));
+
+                    // Try to decode as UTF-8 for display
+                    if let Ok(meta_str) = String::from_utf8(meta_bytes.clone()) {
+                        println!("   UTF-8: {meta_str}");
+
+                        // Try to parse as JSON ABI
+                        if let Ok(abi_json) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                            println!("\n🔍 Parsed ABI:");
+                            println!("{}", serde_json::to_string_pretty(&abi_json)?);
+                        }
+                    } else {
+                        println!("   (Binary data, not valid UTF-8)");
+                    }
+                }
+            }
+            Ok(())
+        },
         Alkanes::GetBalance { address, raw } => {
             let resolved_address = if let Some(addr) = &address {
                 Some(system.provider().resolve_all_identifiers(addr).await?)

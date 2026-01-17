@@ -2100,6 +2100,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     fn validate_envelope_cellpack_usage(&self, params: &EnhancedExecuteParams) -> Result<()> {
         let has_envelope = params.envelope_data.is_some();
         let has_cellpacks = params.protostones.iter().any(|p| p.cellpack.is_some());
+        let has_edicts = params.protostones.iter().any(|p| !p.edicts.is_empty());
 
         if has_envelope && !has_cellpacks {
             return Err(AlkanesError::Other(anyhow!(
@@ -2110,13 +2111,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         if !has_envelope && has_cellpacks {
             return Ok(());
         }
-        
-        if !has_envelope && !has_cellpacks && !params.protostones.is_empty() {
+
+        if !has_envelope && !has_cellpacks && !has_edicts && !params.protostones.is_empty() {
              return Err(AlkanesError::Other(anyhow!(
-                "No operation: Protostones provided without envelope or cellpack."
+                "No operation: Protostones provided without envelope, cellpack, or edicts."
             ).to_string()));
         }
-        
+
         Ok(())
     }
 

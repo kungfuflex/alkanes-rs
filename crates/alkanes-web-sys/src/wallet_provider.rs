@@ -1246,7 +1246,11 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
     async fn generate_future(&self, address: &str) -> Result<JsonValue> {
         <WebProvider as BitcoinRpcProvider>::generate_future(&self.web_provider, address).await
     }
-    
+
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+        <WebProvider as BitcoinRpcProvider>::subfrost_thieve(&self.web_provider, address, amount).await
+    }
+
     async fn get_new_address(&self) -> Result<JsonValue> {
         self.web_provider.get_new_address().await
     }
@@ -1648,6 +1652,10 @@ impl AlkanesProvider for BrowserWalletProvider {
 
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         AlkanesProvider::get_bytecode(&self.web_provider, alkane_id, block_tag).await
+    }
+
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        AlkanesProvider::meta(&self.web_provider, alkane_id, block_tag).await
     }
 
     async fn inspect(&self, target: &str, config: AlkanesInspectConfig) -> Result<AlkanesInspectResult> {

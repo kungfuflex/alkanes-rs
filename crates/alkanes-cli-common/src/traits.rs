@@ -924,6 +924,7 @@ pub trait AlkanesProvider {
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue>;
     async fn trace_block(&self, height: u64) -> Result<alkanes_pb::AlkanesBlockTraceEvent>;
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String>;
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>>;
     async fn inspect(&self, target: &str, config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult>;
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>>;
     async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>>;
@@ -1699,6 +1700,9 @@ impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         AlkanesProvider::get_bytecode(&**self, alkane_id, block_tag).await
+    }
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        AlkanesProvider::meta(&**self, alkane_id, block_tag).await
     }
     async fn inspect(&self, target: &str, config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult> {
         (**self).inspect(target, config).await

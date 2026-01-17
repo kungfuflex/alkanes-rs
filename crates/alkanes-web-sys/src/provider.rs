@@ -6351,6 +6351,11 @@ impl BitcoinRpcProvider for WebProvider {
         self.call(&self.sandshrew_rpc_url(), "generatetoaddress", params, 1).await
     }
 
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+        let params = serde_json::json!([address, amount]);
+        self.call(&self.sandshrew_rpc_url(), "subfrost_thieve", params, 1).await
+    }
+
     async fn get_new_address(&self) -> Result<JsonValue> {
         self.call(&self.sandshrew_rpc_url(), "getnewaddress", serde_json::json!([]), 1).await
     }
@@ -7005,6 +7010,45 @@ impl AlkanesProvider for WebProvider {
         let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid bytecode response: not a string".to_string()))?;
         let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
         Ok(format!("0x{}", hex::encode(bytes)))
+    }
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        use alkanes_cli_common::proto::alkanes::MessageContextParcel;
+        use alkanes_support::cellpack::Cellpack;
+        use alkanes_support::id::AlkaneId;
+        use prost::Message;
+
+        let parts: Vec<&str> = alkane_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::InvalidParameters("Invalid alkane_id format".to_string()));
+        }
+        let block = parts[0].parse::<u128>()?;
+        let tx = parts[1].parse::<u128>()?;
+
+        // Create a cellpack with the alkane ID
+        let cellpack = Cellpack {
+            target: AlkaneId { block, tx },
+            inputs: vec![],
+        };
+
+        let parcel = MessageContextParcel {
+            height: 0,
+            block: vec![],
+            transaction: vec![],
+            vout: 0,
+            calldata: cellpack.encipher(),
+            alkanes: vec![],
+            pointer: 0,
+            refund_pointer: 0,
+            txindex: 0,
+        };
+
+        let hex_input = hex::encode(parcel.encode_to_vec());
+        let params = serde_json::json!(["meta", format!("0x{}", hex_input), block_tag.as_deref().unwrap_or("latest")]);
+        let result = self.call(&self.sandshrew_rpc_url(), "metashrew_view", params, 1).await?;
+
+        let hex_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Invalid meta response: not a string".to_string()))?;
+        let bytes = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))?;
+        Ok(bytes)
     }
     async fn inspect(&self, target: &str, config: AlkanesInspectConfig) -> Result<AlkanesInspectResult> {
         let params = serde_json::json!([target, config]);

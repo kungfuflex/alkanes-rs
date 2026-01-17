@@ -1197,6 +1197,17 @@ pub enum Alkanes {
         #[arg(long)]
         raw: bool,
     },
+    /// Get the metadata (ABI) for an alkane
+    Meta {
+        /// The alkane ID to get the metadata for
+        alkane_id: String,
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
     /// Get the balance of an address
     #[command(name = "getbalance")]
     GetBalance {

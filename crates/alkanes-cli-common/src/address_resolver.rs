@@ -1187,6 +1187,10 @@ impl AlkanesProvider for StandaloneAddressResolver {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
+    async fn meta(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<Vec<u8>> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
+    }
+
     async fn inspect(&self, _target: &str, _config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }

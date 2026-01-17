@@ -904,6 +904,9 @@ impl AlkanesProvider for SystemAlkanes {
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         <ConcreteProvider as AlkanesProvider>::get_bytecode(&self.provider, alkane_id, block_tag).await
     }
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        <ConcreteProvider as AlkanesProvider>::meta(&self.provider, alkane_id, block_tag).await
+    }
     async fn inspect(&self, target: &str, config: alkanes_cli_common::alkanes::AlkanesInspectConfig) -> Result<alkanes_cli_common::alkanes::AlkanesInspectResult> {
         self.provider.inspect(target, config).await
     }
@@ -2910,6 +2913,44 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                         // Show first few bytes for quick inspection
                         if clean_bytecode.len() >= 8 {
                             println!("   First 4 bytes: {}", &clean_bytecode[..8]);
+                        }
+                    }
+                }
+                Ok(())
+            }
+            AlkanesCommands::Meta { alkane_id, raw, block_tag } => {
+                let meta_bytes = AlkanesProvider::meta(&provider, &alkane_id, block_tag).await?;
+
+                if raw {
+                    let json_result = serde_json::json!({
+                        "alkane_id": alkane_id,
+                        "meta": format!("0x{}", hex::encode(&meta_bytes)),
+                        "meta_utf8": String::from_utf8_lossy(&meta_bytes).to_string()
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json_result)?);
+                } else {
+                    println!("📋 Alkanes Contract Metadata (ABI)");
+                    println!("═══════════════════════════════════");
+                    println!("🏷️  Alkane ID: {alkane_id}");
+
+                    if meta_bytes.is_empty() {
+                        println!("❌ No metadata found for this contract");
+                    } else {
+                        println!("📦 Metadata:");
+                        println!("   Length: {} bytes", meta_bytes.len());
+                        println!("   Hex: 0x{}", hex::encode(&meta_bytes));
+
+                        // Try to decode as UTF-8 for display
+                        if let Ok(meta_str) = String::from_utf8(meta_bytes.clone()) {
+                            println!("   UTF-8: {meta_str}");
+
+                            // Try to parse as JSON ABI
+                            if let Ok(abi_json) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                                println!("\n🔍 Parsed ABI:");
+                                println!("{}", serde_json::to_string_pretty(&abi_json)?);
+                            }
+                        } else {
+                            println!("   (Binary data, not valid UTF-8)");
                         }
                     }
                 }

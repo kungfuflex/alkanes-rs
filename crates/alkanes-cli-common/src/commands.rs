@@ -789,6 +789,17 @@ pub enum AlkanesCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Get metadata (ABI) for an alkane contract (maps to metashrew_view meta)
+    Meta {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl AlkanesCommands {

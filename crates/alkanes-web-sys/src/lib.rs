@@ -145,6 +145,43 @@ pub fn get_alkane_bytecode(network: &str, block: f64, tx: f64, block_tag: &str) 
     })
 }
 
+#[wasm_bindgen]
+pub fn get_alkane_meta(network: &str, block: f64, tx: f64, block_tag: &str) -> Promise {
+    let network_str = network.to_string();
+    let alkane_id = format!("{}:{}", block as u64, tx as u32);
+    let block_tag_opt = if block_tag.is_empty() {
+        None
+    } else {
+        Some(block_tag.to_string())
+    };
+
+    future_to_promise(async move {
+        let provider = WebProvider::new(network_str).await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create provider: {:?}", e)))?;
+
+        match provider.meta(&alkane_id, block_tag_opt).await {
+            Ok(meta_bytes) => {
+                // Try to parse as UTF-8 JSON
+                if let Ok(meta_str) = String::from_utf8(meta_bytes.clone()) {
+                    // Try to parse as JSON
+                    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                        // Return the JSON string
+                        Ok(JsValue::from_str(&serde_json::to_string(&json_value)
+                            .unwrap_or_else(|_| meta_str.clone())))
+                    } else {
+                        // Not JSON, return as hex
+                        Ok(JsValue::from_str(&format!("0x{}", hex::encode(&meta_bytes))))
+                    }
+                } else {
+                    // Binary data, return as hex
+                    Ok(JsValue::from_str(&format!("0x{}", hex::encode(&meta_bytes))))
+                }
+            }
+            Err(e) => Err(JsValue::from_str(&format!("get_alkane_meta failed: {:?}", e))),
+        }
+    })
+}
+
 /// Analyze a transaction's runestone to extract Protostones
 ///
 /// This function takes a raw transaction hex string, decodes it, and extracts

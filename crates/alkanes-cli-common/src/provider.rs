@@ -3449,6 +3449,49 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(format!("0x{}", hex::encode(response_bytes)))
     }
 
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        // Parse the alkane_id into block:tx format
+        let parts: Vec<&str> = alkane_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::InvalidParameters("Invalid alkane_id format. Expected 'block:tx'".to_string()));
+        }
+        let block = parts[0].parse::<u128>()?;
+        let tx = parts[1].parse::<u128>()?;
+
+        // Create a MessageContextParcel with the cellpack calling the target contract
+        let mut parcel = alkanes_pb::MessageContextParcel::default();
+        parcel.height = 0;
+        parcel.block = vec![];
+        parcel.transaction = vec![];
+        parcel.vout = 0;
+
+        // Encode the calldata as a cellpack: [block, tx] (varint encoded)
+        use protorune_support::utils::encode_varint_list;
+        parcel.calldata = encode_varint_list(&vec![block, tx]);
+        parcel.alkanes = vec![];
+        parcel.pointer = 0;
+        parcel.refund_pointer = 0;
+
+        // Encode the parcel to protobuf
+        use prost::Message;
+        let hex_input = format!("0x{}", hex::encode(parcel.encode_to_vec()));
+
+        self.info(&format!(
+            "[meta] Calling metashrew_view with view_fn: meta, params: {}",
+            hex_input
+        ));
+
+        // Call metashrew_view with "meta" view function
+        let response_bytes = self.metashrew_view_call("meta", &hex_input, block_tag.as_deref().unwrap_or("latest")).await?;
+
+        self.info(&format!(
+            "[meta] Received response: {} bytes",
+            response_bytes.len()
+        ));
+
+        Ok(response_bytes)
+    }
+
     #[cfg(feature = "wasm-inspection")]
     async fn inspect(
   &self,
