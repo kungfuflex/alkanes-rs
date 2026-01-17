@@ -346,6 +346,9 @@ fn add_all_rpc_methods<'lua>(
     // Alkanes methods
     rpc_table.set("alkanes_getbytecode", create_rpc_function(lua, "alkanes_getbytecode", rpc_context.clone())?)?;
     rpc_table.set("alkanes_protorunesbyaddress", create_rpc_function(lua, "alkanes_protorunesbyaddress", rpc_context.clone())?)?;
+    rpc_table.set("alkanes_protorunesbyoutpoint", create_rpc_function(lua, "alkanes_protorunesbyoutpoint", rpc_context.clone())?)?;
+    // Alias for Lua script compatibility (protorunes_by_outpoint is used in batch_utxo_balances.lua)
+    rpc_table.set("protorunes_by_outpoint", create_rpc_function(lua, "alkanes_protorunesbyoutpoint", rpc_context.clone())?)?;
 
     // Metashrew methods
     rpc_table.set("metashrew_view", create_rpc_function(lua, "metashrew_view", rpc_context.clone())?)?;

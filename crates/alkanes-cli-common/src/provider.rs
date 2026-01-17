@@ -2851,10 +2851,16 @@ impl EsploraProvider for ConcreteProvider {
             log::info!("[EsploraProvider] get_tx_hex response: {}", text);
             return Ok(text);
         }
-        
-        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::TX_HEX);
-        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_HEX, crate::esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tx hex response".to_string()))
+
+        // For JSON-RPC mode (no esplora_url configured), use bitcoind_getrawtransaction
+        // This is the standard path for hosted environments like subfrost-regtest
+        log::info!("[EsploraProvider] Using bitcoind_getrawtransaction via JSON-RPC");
+        let bitcoind_rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = serde_json::json!([txid, false]);
+        let result = self.call(&bitcoind_rpc_url, "getrawtransaction", params, 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tx hex response from bitcoind".to_string()))
     }
 
     async fn get_tx_raw(&self, txid: &str) -> Result<String> {
@@ -2869,9 +2875,15 @@ impl EsploraProvider for ConcreteProvider {
             let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return Ok(hex::encode(bytes));
         }
-        
-        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_RAW, crate::esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw tx response".to_string()))
+
+        // For JSON-RPC mode (no esplora_url configured), use bitcoind_getrawtransaction
+        log::info!("[EsploraProvider] Using bitcoind_getrawtransaction via JSON-RPC");
+        let bitcoind_rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = serde_json::json!([txid, false]);
+        let result = self.call(&bitcoind_rpc_url, "getrawtransaction", params, 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw tx response from bitcoind".to_string()))
     }
 
     async fn get_tx_status(&self, txid: &str) -> Result<serde_json::Value> {

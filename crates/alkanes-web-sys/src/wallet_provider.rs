@@ -1326,6 +1326,10 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
     async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue> {
         self.web_provider.decode_psbt(psbt).await
     }
+
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+        <WebProvider as BitcoinRpcProvider>::subfrost_thieve(&self.web_provider, address, amount).await
+    }
 }
 
 #[async_trait(?Send)]

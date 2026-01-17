@@ -466,6 +466,11 @@ async fn handle_alkanes_method(
                 ));
             }
         }
+    // For protorunesbyaddress and protorunesbyoutpoint, we need to encode JSON params to protobuf
+    } else if method == "protorunesbyaddress" {
+        encode_protorunesbyaddress_input(&input)?
+    } else if method == "protorunesbyoutpoint" {
+        encode_protorunesbyoutpoint_input(params)?
     } else {
         // For other methods, convert string numbers and pass through
         // Note: Other methods may also need protobuf encoding in the future
