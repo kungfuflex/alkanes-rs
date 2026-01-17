@@ -45,12 +45,31 @@ for i, utxo in ipairs(utxos) do
     if balance_response and balance_response.balance_sheet and balance_response.balance_sheet.cached then
         local balances = balance_response.balance_sheet.cached.balances
         if balances then
-            for alkane_id, amount in pairs(balances) do
-                table.insert(utxo_entry.balances, {
-                    block = alkane_id.block,
-                    tx = alkane_id.tx,
-                    amount = amount
-                })
+            for key, value in pairs(balances) do
+                -- Handle both formats:
+                -- 1. Map format: {alkane_id_table -> amount_string}
+                -- 2. Array format: {index -> {block, tx, amount}}
+                local block_val, tx_val, amount_val
+
+                if type(key) == "table" and key.block ~= nil then
+                    -- Map format: key is alkane_id table, value is amount string
+                    block_val = key.block
+                    tx_val = key.tx
+                    amount_val = value
+                elseif type(value) == "table" then
+                    -- Array format: key is index, value contains {block, tx, amount}
+                    block_val = value.block
+                    tx_val = value.tx
+                    amount_val = value.amount
+                end
+
+                if block_val ~= nil and tx_val ~= nil and amount_val ~= nil then
+                    table.insert(utxo_entry.balances, {
+                        block = block_val,
+                        tx = tx_val,
+                        amount = amount_val
+                    })
+                end
             end
         end
     end
