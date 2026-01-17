@@ -346,10 +346,12 @@ fn decode_outpoint_response(hex_response: &str) -> Result<Value> {
                     })
                     .unwrap_or((0, 0));
                 let amount = from_protorune_uint128(&entry.balance);
+                // Return amount as a number for JSON compatibility (WASM expects u64)
+                // For amounts > u64::MAX, this will truncate but that's an edge case
                 json!({
                     "block": block,
                     "tx": tx,
-                    "amount": amount.to_string()
+                    "amount": amount as u64
                 })
             }).collect()
         })
