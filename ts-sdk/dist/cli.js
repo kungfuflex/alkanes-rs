@@ -729,6 +729,22 @@ var init_provider = __esm({
         return this.provider.alkanesBytecode(alkaneId, blockTag);
       }
       /**
+       * Get metadata (ABI) for an alkanes contract
+       *
+       * @param alkaneId - Alkane ID in "block:tx" format (e.g., "2:0")
+       * @param blockTag - Optional block tag for historical queries
+       * @returns Contract metadata as JSON string or hex
+       *
+       * @example
+       * ```typescript
+       * const meta = await provider.alkanes.getMeta('2:0');
+       * console.log('Contract metadata:', meta);
+       * ```
+       */
+      async getMeta(alkaneId, blockTag) {
+        return this.provider.alkanesMeta(alkaneId, blockTag);
+      }
+      /**
        * Simulate an Alkanes contract call (read-only)
        *
        * @param contractId - Contract ID in "block:tx" format (e.g., "2:0")
@@ -3387,6 +3403,32 @@ function registerAlkanesCommands(program2) {
       console.log(formatOutput(bytecode, { raw: options.raw }));
     } catch (err) {
       error(`Failed to get bytecode: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  alkanes.command("meta <alkane-id>").description("Get metadata (ABI) for an alkanes contract").option("--block-tag <tag>", 'Block tag (e.g., "latest" or height)').option("--raw", "Output raw JSON").action(async (alkaneId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora3.default)("Getting metadata...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider,
+        jsonrpcUrl: globalOpts.jsonrpcUrl,
+        metashrewUrl: globalOpts.metashrewUrl
+      });
+      const result = await provider.alkanes.getMeta(alkaneId, options.blockTag);
+      spinner.succeed();
+      if (options.raw) {
+        console.log(result);
+      } else {
+        try {
+          const parsed = JSON.parse(result);
+          console.log(formatOutput(parsed, { raw: false }));
+        } catch {
+          console.log(result);
+        }
+      }
+    } catch (err) {
+      error(`Failed to get metadata: ${err.message}`);
       process.exit(1);
     }
   });

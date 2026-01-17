@@ -53,6 +53,45 @@ export function registerAlkanesCommands(program: Command): void {
       }
     });
 
+  // meta
+  alkanes
+    .command('meta <alkane-id>')
+    .description('Get metadata (ABI) for an alkanes contract')
+    .option('--block-tag <tag>', 'Block tag (e.g., "latest" or height)')
+    .option('--raw', 'Output raw JSON')
+    .action(async (alkaneId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting metadata...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        const result = await provider.alkanes.getMeta(alkaneId, options.blockTag);
+
+        spinner.succeed();
+
+        if (options.raw) {
+          console.log(result);
+        } else {
+          // Try to parse as JSON for pretty printing
+          try {
+            const parsed = JSON.parse(result);
+            console.log(formatOutput(parsed, { raw: false }));
+          } catch {
+            // Not JSON, display as is (might be hex)
+            console.log(result);
+          }
+        }
+      } catch (err: any) {
+        error(`Failed to get metadata: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
   // balance
   alkanes
     .command('balance')

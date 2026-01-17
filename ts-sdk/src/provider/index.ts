@@ -653,6 +653,23 @@ export class AlkanesRpcClient {
   }
 
   /**
+   * Get metadata (ABI) for an alkanes contract
+   *
+   * @param alkaneId - Alkane ID in "block:tx" format (e.g., "2:0")
+   * @param blockTag - Optional block tag for historical queries
+   * @returns Contract metadata as JSON string or hex
+   *
+   * @example
+   * ```typescript
+   * const meta = await provider.alkanes.getMeta('2:0');
+   * console.log('Contract metadata:', meta);
+   * ```
+   */
+  async getMeta(alkaneId: string, blockTag?: string): Promise<string> {
+    return this.provider.alkanesMeta(alkaneId, blockTag);
+  }
+
+  /**
    * Simulate an Alkanes contract call (read-only)
    *
    * @param contractId - Contract ID in "block:tx" format (e.g., "2:0")

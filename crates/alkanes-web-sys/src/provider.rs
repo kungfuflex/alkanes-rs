@@ -1741,6 +1741,36 @@ impl WebProvider {
         })
     }
 
+    /// Get metadata (ABI) for an alkanes contract
+    #[wasm_bindgen(js_name = alkanesMeta)]
+    pub fn alkanes_meta_js(&self, alkane_id: String, block_tag: Option<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::AlkanesProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            match provider.meta(&alkane_id, block_tag).await {
+                Ok(meta_bytes) => {
+                    // Try to parse as UTF-8 JSON
+                    if let Ok(meta_str) = String::from_utf8(meta_bytes.clone()) {
+                        // Try to parse as JSON
+                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                            // Return the JSON string
+                            Ok(JsValue::from_str(&serde_json::to_string(&json_value)
+                                .unwrap_or_else(|_| meta_str.clone())))
+                        } else {
+                            // Not JSON, return as hex
+                            Ok(JsValue::from_str(&format!("0x{}", hex::encode(&meta_bytes))))
+                        }
+                    } else {
+                        // Binary data, return as hex
+                        Ok(JsValue::from_str(&format!("0x{}", hex::encode(&meta_bytes))))
+                    }
+                }
+                Err(e) => Err(JsValue::from_str(&format!("Meta query failed: {}", e))),
+            }
+        })
+    }
+
     /// Get all pools with details from an AMM factory (parallel optimized for browser)
     #[wasm_bindgen(js_name = alkanesGetAllPoolsWithDetails)]
     pub fn alkanes_get_all_pools_with_details_js(
