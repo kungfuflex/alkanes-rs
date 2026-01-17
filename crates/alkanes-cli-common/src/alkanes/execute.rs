@@ -1007,177 +1007,69 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u64> = alloc::collections::BTreeMap::new();
         let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
 
-        // If we need alkanes, we must query each UTXO to find ones that contain the required alkanes
+        // If we need alkanes, query protorunes_by_address directly to find UTXOs with balances
+        // This bypasses the lua batch script which has issues with individual outpoint queries
         if !alkanes_needed.is_empty() {
-            log::info!("Querying UTXOs for alkane balances using batched approach...");
-            
-            // Group UTXOs by address for batch fetching
+            log::info!("Querying alkane balances using protorunes_by_address (direct method)...");
+
+            // Group UTXOs by address
             let mut utxos_by_address: alloc::collections::BTreeMap<String, Vec<(OutPoint, UtxoInfo)>> = alloc::collections::BTreeMap::new();
             for (outpoint, utxo) in spendable_utxos.clone() {
                 utxos_by_address.entry(utxo.address.clone()).or_insert_with(Vec::new).push((outpoint, utxo));
             }
-            
-            log::info!("Fetching balances for {} addresses (batch mode - 1 RPC call per address instead of {} calls)", 
-                       utxos_by_address.len(), spendable_utxos.len());
-            
+
+            log::info!("Fetching balances for {} addresses (1 RPC call per address)", utxos_by_address.len());
+
             // Create a map of (txid:vout) -> balance data for quick lookup
             let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
-            
-            // Batch fetch for each address
+
+            // Use protorunes_by_address directly for each address (bypasses problematic lua batch script)
             for (address, _utxos) in &utxos_by_address {
-                let mut found_any_balances = false;
-
-                match self.provider.batch_fetch_utxo_balances(address, Some(1), None).await {
-                    Ok(result) => {
-                        // Parse the result and index by txid:vout
-                        if let Some(utxos_array) = result.get("utxos").and_then(|v| v.as_array()) {
-                            for utxo_entry in utxos_array {
-                                if let (Some(txid), Some(vout)) = (
-                                    utxo_entry.get("txid").and_then(|v| v.as_str()),
-                                    utxo_entry.get("vout").and_then(|v| v.as_u64())
-                                ) {
-                                    // Check if this UTXO has any non-empty balances
-                                    if let Some(balances) = utxo_entry.get("balances").and_then(|v| v.as_array()) {
-                                        if !balances.is_empty() {
-                                            found_any_balances = true;
-                                        }
-                                    }
-                                    let key = format!("{}:{}", txid, vout);
-                                    utxo_balances.insert(key, utxo_entry.clone());
-                                }
+                match self.provider.protorunes_by_address(address, None, 1).await {
+                    Ok(wallet_response) => {
+                        log::info!("Found {} alkane outpoints for address {}", wallet_response.balances.len(), address);
+                        for outpoint_response in &wallet_response.balances {
+                            let mut balances_array = Vec::new();
+                            for (alkane_id, amount) in &outpoint_response.balance_sheet.cached.balances {
+                                balances_array.push(serde_json::json!({
+                                    "block": alkane_id.block,
+                                    "tx": alkane_id.tx,
+                                    "amount": amount
+                                }));
                             }
-                        }
-
-                        // If batch succeeded but found no balances, fall back to protorunes_by_address
-                        // This handles the case where batch_utxo_balances returns empty balances
-                        // but protorunes_by_address has the correct data
-                        if !found_any_balances && !alkanes_needed.is_empty() {
-                            log::info!("Batch fetch returned no balances for {}, falling back to protorunes_by_address", address);
-                            if let Ok(wallet_response) = self.provider.protorunes_by_address(address, None, 1).await {
-                                log::info!("Found {} alkane outpoints via protorunes_by_address fallback", wallet_response.balances.len());
-                                for outpoint_response in &wallet_response.balances {
-                                    let mut balances_array = Vec::new();
-                                    for (alkane_id, amount) in &outpoint_response.balance_sheet.cached.balances {
-                                        balances_array.push(serde_json::json!({
-                                            "block": alkane_id.block,
-                                            "tx": alkane_id.tx,
-                                            "amount": amount
-                                        }));
-                                    }
-                                    let key = format!("{}:{}", outpoint_response.outpoint.txid, outpoint_response.outpoint.vout);
-                                    utxo_balances.insert(key.clone(), serde_json::json!({
-                                        "txid": outpoint_response.outpoint.txid.to_string(),
-                                        "vout": outpoint_response.outpoint.vout,
-                                        "value": outpoint_response.output.value.to_sat(),
-                                        "balances": balances_array
-                                    }));
-                                    // Also add these alkane UTXOs to spendable_utxos if not already present
-                                    let outpoint = bitcoin::OutPoint {
-                                        txid: outpoint_response.outpoint.txid,
-                                        vout: outpoint_response.outpoint.vout,
-                                    };
-                                    if !spendable_utxos.iter().any(|(op, _)| op == &outpoint) {
-                                        spendable_utxos.push((outpoint, UtxoInfo {
-                                            txid: outpoint_response.outpoint.txid.to_string(),
-                                            vout: outpoint_response.outpoint.vout,
-                                            amount: outpoint_response.output.value.to_sat(),
-                                            address: address.clone(),
-                                            script_pubkey: Some(outpoint_response.output.script_pubkey.clone()),
-                                            confirmations: 100, // Assume confirmed
-                                            frozen: false,
-                                            freeze_reason: None,
-                                            block_height: None,
-                                            has_inscriptions: false,
-                                            has_runes: false,
-                                            has_alkanes: true,
-                                            is_coinbase: false,
-                                        }));
-                                    }
-                                }
+                            let key = format!("{}:{}", outpoint_response.outpoint.txid, outpoint_response.outpoint.vout);
+                            utxo_balances.insert(key.clone(), serde_json::json!({
+                                "txid": outpoint_response.outpoint.txid.to_string(),
+                                "vout": outpoint_response.outpoint.vout,
+                                "value": outpoint_response.output.value.to_sat(),
+                                "balances": balances_array
+                            }));
+                            // Also add these alkane UTXOs to spendable_utxos if not already present
+                            let outpoint = bitcoin::OutPoint {
+                                txid: outpoint_response.outpoint.txid,
+                                vout: outpoint_response.outpoint.vout,
+                            };
+                            if !spendable_utxos.iter().any(|(op, _)| op == &outpoint) {
+                                spendable_utxos.push((outpoint, UtxoInfo {
+                                    txid: outpoint_response.outpoint.txid.to_string(),
+                                    vout: outpoint_response.outpoint.vout,
+                                    amount: outpoint_response.output.value.to_sat(),
+                                    address: address.clone(),
+                                    script_pubkey: Some(outpoint_response.output.script_pubkey.clone()),
+                                    confirmations: 100, // Assume confirmed
+                                    frozen: false,
+                                    freeze_reason: None,
+                                    block_height: None,
+                                    has_inscriptions: false,
+                                    has_runes: false,
+                                    has_alkanes: true,
+                                    is_coinbase: false,
+                                }));
                             }
                         }
                     }
                     Err(e) => {
-                        log::warn!("Failed to batch fetch UTXOs for address {}: {}", address, e);
-                        // Fall back to protorunes_by_address to get alkane-bearing UTXOs directly
-                        // This is more reliable than iterating esplora UTXOs which may not include alkane outputs
-                        match self.provider.protorunes_by_address(address, None, 1).await {
-                            Ok(wallet_response) => {
-                                log::info!("Found {} alkane outpoints via protorunes_by_address", wallet_response.balances.len());
-                                for outpoint_response in &wallet_response.balances {
-                                    let mut balances_array = Vec::new();
-                                    for (alkane_id, amount) in &outpoint_response.balance_sheet.cached.balances {
-                                        balances_array.push(serde_json::json!({
-                                            "block": alkane_id.block,
-                                            "tx": alkane_id.tx,
-                                            "amount": amount
-                                        }));
-                                    }
-                                    let key = format!("{}:{}", outpoint_response.outpoint.txid, outpoint_response.outpoint.vout);
-                                    utxo_balances.insert(key.clone(), serde_json::json!({
-                                        "txid": outpoint_response.outpoint.txid.to_string(),
-                                        "vout": outpoint_response.outpoint.vout,
-                                        "value": outpoint_response.output.value.to_sat(),
-                                        "balances": balances_array
-                                    }));
-                                    // Also add these alkane UTXOs to spendable_utxos if not already present
-                                    let outpoint = bitcoin::OutPoint {
-                                        txid: outpoint_response.outpoint.txid,
-                                        vout: outpoint_response.outpoint.vout,
-                                    };
-                                    if !spendable_utxos.iter().any(|(op, _)| op == &outpoint) {
-                                        spendable_utxos.push((outpoint, UtxoInfo {
-                                            txid: outpoint_response.outpoint.txid.to_string(),
-                                            vout: outpoint_response.outpoint.vout,
-                                            amount: outpoint_response.output.value.to_sat(),
-                                            address: address.clone(),
-                                            script_pubkey: Some(outpoint_response.output.script_pubkey.clone()),
-                                            confirmations: 100, // Assume confirmed
-                                            frozen: false,
-                                            freeze_reason: None,
-                                            block_height: None,
-                                            has_inscriptions: false,
-                                            has_runes: false,
-                                            has_alkanes: true,
-                                            is_coinbase: false,
-                                        }));
-                                    }
-                                }
-                            }
-                            Err(e2) => {
-                                log::warn!("Failed to fetch protorunes_by_address for {}: {}, falling back to individual queries", address, e2);
-                                // Last resort: individual queries for esplora UTXOs
-                                for (outpoint, _) in _utxos {
-                                    match self.provider.protorunes_by_outpoint(
-                                        &outpoint.txid.to_string(),
-                                        outpoint.vout,
-                                        None, // block_tag
-                                        1,    // protocol_tag for alkanes
-                                    ).await {
-                                        Ok(response) => {
-                                            // Convert to same format as batch result
-                                            let mut balances_array = Vec::new();
-                                            for (alkane_id, amount) in &response.balance_sheet.cached.balances {
-                                                balances_array.push(serde_json::json!({
-                                                    "block": alkane_id.block,
-                                                    "tx": alkane_id.tx,
-                                                    "amount": amount
-                                                }));
-                                            }
-                                            let key = format!("{}:{}", outpoint.txid, outpoint.vout);
-                                            utxo_balances.insert(key, serde_json::json!({
-                                                "txid": outpoint.txid.to_string(),
-                                                "vout": outpoint.vout,
-                                                "balances": balances_array
-                                            }));
-                                        }
-                                        Err(e) => {
-                                            log::warn!("Failed to query alkanes for UTXO {}:{}: {}", outpoint.txid, outpoint.vout, e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        log::warn!("Failed to fetch protorunes_by_address for {}: {}", address, e);
                     }
                 }
             }
