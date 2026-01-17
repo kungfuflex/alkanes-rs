@@ -5,6 +5,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use prost::Message;
 use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128, SimulateResponse, KeyValuePair};
+use alkanes_cli_common::proto::protorune::{OutpointResponse, BalanceSheet, BalanceSheetItem, Outpoint, Output, Uint128 as ProtoruneUint128};
 use alkanes_cli_common::alkanes::utils::encode_varint_list;
 
 pub async fn handle_request(
@@ -222,6 +223,14 @@ fn from_uint128(value: &Option<Uint128>) -> u128 {
     }
 }
 
+/// Helper to convert protorune's Uint128 to u128
+fn from_protorune_uint128(value: &Option<ProtoruneUint128>) -> u128 {
+    match value {
+        Some(v) => (v.hi as u128) << 64 | (v.lo as u128),
+        None => 0,
+    }
+}
+
 /// Format a storage key for display (matches TypeScript formatKey)
 fn format_key(key: &[u8]) -> String {
     key.split(|&c| c == b'/')
@@ -304,6 +313,71 @@ fn decode_simulate_response(hex_response: &str) -> Result<Value> {
             "storage": execution.storage.iter().map(storage_slot_to_json).collect::<Vec<_>>(),
             "data": format!("0x{}", hex::encode(&execution.data)),
             "error": null
+        }
+    }))
+}
+
+/// Decode OutpointResponse protobuf to JSON for protorunesbyoutpoint
+/// Returns format compatible with lua script expectations:
+/// { balance_sheet: { cached: { balances: [{block, tx, amount}, ...] } }, outpoint: {txid, vout}, output: {value} }
+fn decode_outpoint_response(hex_response: &str) -> Result<Value> {
+    let hex_data = hex_response.strip_prefix("0x").unwrap_or(hex_response);
+    let bytes = hex::decode(hex_data)?;
+    let response = OutpointResponse::decode(bytes.as_slice())?;
+
+    // Convert balances to the format expected by lua script
+    // Protorune uses Rune.runeId with height/txindex which maps to block/tx
+    let balances: Vec<Value> = response.balances.as_ref()
+        .map(|bs| {
+            bs.entries.iter().map(|entry| {
+                let (block, tx) = entry.rune.as_ref()
+                    .and_then(|r| r.rune_id.as_ref())
+                    .map(|id| {
+                        // ProtoruneRuneId uses protorune's Uint128 for height/txindex
+                        let height = from_protorune_uint128(&id.height);
+                        let txindex = from_protorune_uint128(&id.txindex);
+                        (height as u64, txindex as u64)
+                    })
+                    .unwrap_or((0, 0));
+                let amount = from_protorune_uint128(&entry.balance);
+                json!({
+                    "block": block,
+                    "tx": tx,
+                    "amount": amount.to_string()
+                })
+            }).collect()
+        })
+        .unwrap_or_default();
+
+    // Format txid as hex string (reversed for display)
+    let txid = response.outpoint.as_ref()
+        .map(|op| {
+            let mut txid_bytes = op.txid.clone();
+            txid_bytes.reverse(); // Bitcoin txids are displayed reversed
+            hex::encode(&txid_bytes)
+        })
+        .unwrap_or_default();
+
+    let vout = response.outpoint.as_ref()
+        .map(|op| op.vout)
+        .unwrap_or(0);
+
+    let value = response.output.as_ref()
+        .map(|o| o.value)
+        .unwrap_or(0);
+
+    Ok(json!({
+        "balance_sheet": {
+            "cached": {
+                "balances": balances
+            }
+        },
+        "outpoint": {
+            "txid": txid,
+            "vout": vout
+        },
+        "output": {
+            "value": value
         }
     }))
 }
@@ -504,6 +578,24 @@ async fn handle_alkanes_method(
                             format!("Failed to decode simulate response: {}", e),
                             request_id.clone(),
                         ));
+                    }
+                }
+            }
+        }
+    }
+
+    // For protorunesbyoutpoint, decode the protobuf response to JSON
+    // This is critical for lua scripts like batch_utxo_balances.lua that call _RPC.protorunes_by_outpoint()
+    if method == "protorunesbyoutpoint" {
+        if let JsonRpcResponse::Success { result, .. } = &response {
+            if let Some(hex_str) = result.as_str() {
+                match decode_outpoint_response(hex_str) {
+                    Ok(decoded) => {
+                        return Ok(JsonRpcResponse::success(decoded, request_id.clone()));
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to decode protorunesbyoutpoint response: {}", e);
+                        // Return raw response on decode failure (fallback)
                     }
                 }
             }
