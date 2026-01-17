@@ -11,7 +11,7 @@ use alkanes_cli_common::proto::alkanes::{
     alkanes_trace_event::Event as TraceEventEnum,
     Outpoint,
 };
-use alkanes_cli_common::proto::protorune::{OutpointResponse, Uint128 as ProtoruneUint128};
+use alkanes_cli_common::proto::protorune::{OutpointResponse, OutpointWithProtocol, Uint128 as ProtoruneUint128};
 use alkanes_cli_common::alkanes::utils::encode_varint_list;
 
 pub async fn handle_request(
@@ -515,6 +515,44 @@ fn encode_trace_request(params: &Value) -> Result<String> {
     Ok(format!("0x{}", hex::encode(buf)))
 }
 
+/// Encode protorunesbyoutpoint request from params to protobuf hex string
+/// Params format: [txid_hex, vout, block_tag (optional), protocol_tag (optional)]
+/// Returns the hex-encoded OutpointWithProtocol protobuf
+fn encode_protorunesbyoutpoint_request(params: &[Value]) -> Result<String> {
+    // Get txid (required) - convert from hex string to bytes (little-endian)
+    let txid_hex = params.get(0)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("protorunesbyoutpoint requires txid parameter"))?;
+
+    // Bitcoin txids are displayed in reverse byte order, so we need to reverse to get internal format
+    let mut txid_bytes = hex::decode(txid_hex)
+        .map_err(|e| anyhow::anyhow!("Invalid txid hex: {}", e))?;
+    txid_bytes.reverse(); // Convert from display format to internal little-endian format
+
+    // Get vout (required)
+    let vout = params.get(1)
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    // Get protocol_tag (optional, defaults to 1 for alkanes)
+    // Note: params order is [txid, vout, block_tag, protocol_tag]
+    let protocol_tag = params.get(3)
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as u128;
+
+    // Build OutpointWithProtocol
+    let request = OutpointWithProtocol {
+        txid: txid_bytes,
+        vout,
+        protocol: Some(ProtoruneUint128 {
+            lo: protocol_tag as u64,
+            hi: 0,
+        }),
+    };
+
+    Ok(format!("0x{}", hex::encode(request.encode_to_vec())))
+}
+
 /// Convert call type enum to string (matches TypeScript fromCallType)
 fn call_type_to_string(call_type: i32) -> &'static str {
     match call_type {
@@ -755,9 +793,18 @@ async fn handle_alkanes_method(
     // metashrew_view(method_name, protobuf_hex_input, block_tag)
 
     let input = params.get(0).cloned().unwrap_or(Value::Null);
-    let block_tag = params.get(1)
-        .and_then(|v| v.as_str())
-        .unwrap_or("latest");
+
+    // For protorunesbyoutpoint, block_tag is at index 2 (after txid and vout)
+    // For other methods, block_tag is at index 1
+    let block_tag = if method == "protorunesbyoutpoint" {
+        params.get(2)
+            .and_then(|v| v.as_str())
+            .unwrap_or("latest")
+    } else {
+        params.get(1)
+            .and_then(|v| v.as_str())
+            .unwrap_or("latest")
+    };
 
     // Encode request based on method type
     let (method_name, encoded_input, needs_decode) = match method {
@@ -809,7 +856,20 @@ async fn handle_alkanes_method(
                 }
             }
         }
-        "protorunesbyoutpoint" => (method, convert_string_numbers(input), "protorunesbyoutpoint"),
+        "protorunesbyoutpoint" => {
+            // For protorunesbyoutpoint, params are [txid, vout, block_tag, protocol_tag]
+            // block_tag is at index 2, not index 1 like other methods
+            match encode_protorunesbyoutpoint_request(params) {
+                Ok(hex) => ("protorunesbyoutpoint", Value::String(hex), "protorunesbyoutpoint"),
+                Err(e) => {
+                    return Ok(JsonRpcResponse::error(
+                        INTERNAL_ERROR,
+                        format!("Failed to encode protorunesbyoutpoint request: {}", e),
+                        request_id.clone(),
+                    ));
+                }
+            }
+        }
         _ => (method, convert_string_numbers(input), "none")
     };
 
