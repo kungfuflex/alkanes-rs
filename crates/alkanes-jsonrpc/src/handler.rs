@@ -5,7 +5,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use prost::Message;
 use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128, SimulateResponse, KeyValuePair};
-use alkanes_cli_common::proto::protorune::{OutpointResponse, BalanceSheet, BalanceSheetItem, Outpoint, Output, Uint128 as ProtoruneUint128};
+use alkanes_cli_common::proto::protorune::{OutpointResponse, Uint128 as ProtoruneUint128};
 use alkanes_cli_common::alkanes::utils::encode_varint_list;
 
 pub async fn handle_request(
@@ -540,11 +540,6 @@ async fn handle_alkanes_method(
                 ));
             }
         }
-    // For protorunesbyaddress and protorunesbyoutpoint, we need to encode JSON params to protobuf
-    } else if method == "protorunesbyaddress" {
-        encode_protorunesbyaddress_input(&input)?
-    } else if method == "protorunesbyoutpoint" {
-        encode_protorunesbyoutpoint_input(params)?
     } else {
         // For other methods, convert string numbers and pass through
         // Note: Other methods may also need protobuf encoding in the future
