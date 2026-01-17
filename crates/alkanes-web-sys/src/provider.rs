@@ -6465,11 +6465,6 @@ impl BitcoinRpcProvider for WebProvider {
         let params = serde_json::json!([psbt]);
         self.call(&self.bitcoin_rpc_url(), "decodepsbt", params, 1).await
     }
-
-    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
-        let params = serde_json::json!([address, amount]);
-        self.call(&self.sandshrew_rpc_url(), "subfrost_thieve", params, 1).await
-    }
 }
 
 #[async_trait(?Send)]

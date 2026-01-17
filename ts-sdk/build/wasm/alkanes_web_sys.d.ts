@@ -1,6 +1,10 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
+/**
  * Initialize the panic hook for better error messages in WASM
  * This should be called early in your application
  */
@@ -8,6 +12,7 @@ export function init_panic_hook(): void;
 export function analyze_psbt(psbt_base64: string, network_str: string): string;
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
 export function get_alkane_bytecode(network: string, block: number, tx: number, block_tag: string): Promise<any>;
+export function get_alkane_meta(network: string, block: number, tx: number, block_tag: string): Promise<any>;
 /**
  * Analyze a transaction's runestone to extract Protostones
  *
@@ -271,10 +276,6 @@ export function frbtc_wrap_and_execute2(network: string, amount: bigint, target_
  * - `signer_address`: The Bitcoin p2tr address for the signer
  */
 export function frbtc_get_signer_address(network: string): Promise<any>;
-/**
- * Asynchronously encrypts data using the Web Crypto API.
- */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;
