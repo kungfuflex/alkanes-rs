@@ -44,8 +44,11 @@ RUN apt-get update && apt-get install -y \
 # Build argument (must be redeclared in each stage)
 ARG PACKAGE=alkanes-jsonrpc
 
-# Copy the built binary from builder stage
-COPY --from=builder /app/target/release/${PACKAGE} /usr/local/bin/app
+# Copy the built binary from builder stage with its actual name
+COPY --from=builder /app/target/release/${PACKAGE} /usr/local/bin/${PACKAGE}
+
+# Create symlink for backwards compatibility with ENTRYPOINT
+RUN ln -sf /usr/local/bin/${PACKAGE} /usr/local/bin/app
 
 # For alkanes-contract-indexer: copy dbctl
 RUN --mount=type=bind,from=builder,source=/app/target/release,target=/mnt/release \
