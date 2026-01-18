@@ -1,15 +1,73 @@
 -- Batch UTXO balance fetching for optimized alkanes execution
 -- This script fetches UTXOs for an address and their alkane balances in a single evalscript call
 -- Args: address, protocol_tag (default: 1 for alkanes), block_tag (optional)
+--
+-- IMPORTANT: Uses alkanes_protorunesbyaddress instead of protorunes_by_outpoint
+-- because the per-outpoint lookup only works for outpoints that are already in
+-- the alkane index, not for all esplora UTXOs.
 
 local address = args[1]
-local protocol_tag = args[2] or 1
+local protocol_tag = args[2] or "1"
 local block_tag = args[3]
 
--- Fetch all UTXOs for the address
+-- Fetch all UTXOs for the address from esplora
 local utxos = _RPC.esplora_addressutxo(address)
 if not utxos then
     return { utxos = {}, error = "Failed to fetch UTXOs" }
+end
+
+-- Fetch alkane balances for the address using protorunesbyaddress
+-- This returns all outpoints with their alkane balances
+local protorunes = _RPC.alkanes_protorunesbyaddress({
+    address = address,
+    protocolTag = protocol_tag
+}) or {}
+
+-- Build a lookup map from alkane outpoints
+-- Key format: "txid:vout" -> balances array
+local alkane_balances_map = {}
+if protorunes.outpoints then
+    for _, outpoint_response in ipairs(protorunes.outpoints) do
+        if outpoint_response.outpoint then
+            local txid = outpoint_response.outpoint.txid
+            local vout = outpoint_response.outpoint.vout
+            local key = txid .. ":" .. tostring(vout)
+
+            -- Extract balances from the response
+            local balances = {}
+            if outpoint_response.balances then
+                for _, balance in ipairs(outpoint_response.balances) do
+                    if balance.block ~= nil and balance.tx ~= nil and balance.amount ~= nil then
+                        table.insert(balances, {
+                            block = balance.block,
+                            tx = balance.tx,
+                            amount = tonumber(balance.amount) or 0
+                        })
+                    end
+                end
+            end
+
+            -- Also check balance_sheet format (older response format)
+            if outpoint_response.balance_sheet and outpoint_response.balance_sheet.cached then
+                local cached_balances = outpoint_response.balance_sheet.cached.balances
+                if cached_balances then
+                    for _, balance in ipairs(cached_balances) do
+                        if balance.block ~= nil and balance.tx ~= nil and balance.amount ~= nil then
+                            table.insert(balances, {
+                                block = balance.block,
+                                tx = balance.tx,
+                                amount = tonumber(balance.amount) or 0
+                            })
+                        end
+                    end
+                end
+            end
+
+            if #balances > 0 then
+                alkane_balances_map[key] = balances
+            end
+        end
+    end
 end
 
 -- Result table
@@ -18,64 +76,22 @@ local result = {
     count = 0
 }
 
--- For each UTXO, fetch its alkane balances
+-- For each esplora UTXO, look up any alkane balances from the map
 for i, utxo in ipairs(utxos) do
     local txid = utxo.txid
     local vout = utxo.vout
     local value = utxo.value
-    
-    -- Query protorunes balance for this UTXO
-    local balance_response = _RPC.protorunes_by_outpoint(
-        txid,
-        vout,
-        block_tag,
-        protocol_tag
-    )
-    
+    local key = txid .. ":" .. tostring(vout)
+
     -- Build UTXO entry with balance info
     local utxo_entry = {
         txid = txid,
         vout = vout,
         value = value,
         status = utxo.status,
-        balances = {}
+        balances = alkane_balances_map[key] or {}
     }
-    
-    -- Extract alkane balances if available
-    if balance_response and balance_response.balance_sheet and balance_response.balance_sheet.cached then
-        local balances = balance_response.balance_sheet.cached.balances
-        if balances then
-            for key, value in pairs(balances) do
-                -- Handle both formats:
-                -- 1. Map format: {alkane_id_table -> amount_string}
-                -- 2. Array format: {index -> {block, tx, amount}}
-                local block_val, tx_val, amount_val
 
-                if type(key) == "table" and key.block ~= nil then
-                    -- Map format: key is alkane_id table, value is amount string
-                    block_val = key.block
-                    tx_val = key.tx
-                    amount_val = value
-                elseif type(value) == "table" then
-                    -- Array format: key is index, value contains {block, tx, amount}
-                    block_val = value.block
-                    tx_val = value.tx
-                    amount_val = value.amount
-                end
-
-                if block_val ~= nil and tx_val ~= nil and amount_val ~= nil then
-                    -- Convert amount from string to number (protobuf u128 is serialized as string)
-                    local amount_num = tonumber(amount_val) or 0
-                    table.insert(utxo_entry.balances, {
-                        block = block_val,
-                        tx = tx_val,
-                        amount = amount_num
-                    })
-                end
-            end
-        end
-    end
-    
     table.insert(result.utxos, utxo_entry)
     result.count = result.count + 1
 end
