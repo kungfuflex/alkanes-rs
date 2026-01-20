@@ -114,11 +114,13 @@ pub fn handle_transfer_runes_to_vout(
             let mut remaining = max_amount;
             if count != 0 {
                 for i in 0..tx.output.len() as u32 {
-                    let amount_outpoint = std::cmp::min(remaining, amount);
-                    remaining -= amount_outpoint;
+                    // Skip OP_RETURN outputs before calculating/decrementing
                     if tx.output[i as usize].script_pubkey.is_op_return() {
                         continue;
                     }
+                    // Now calculate and decrement for non-OP_RETURN outputs only
+                    let amount_outpoint = std::cmp::min(remaining, amount);
+                    remaining -= amount_outpoint;
                     output.insert(i, amount_outpoint);
                 }
             }
