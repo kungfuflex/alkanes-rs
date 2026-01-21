@@ -3670,6 +3670,7 @@ impl WebProvider {
                 use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                mint_diesel: params.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);
@@ -3709,6 +3710,7 @@ impl WebProvider {
                 use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                mint_diesel: params.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);
@@ -3744,6 +3746,7 @@ impl WebProvider {
                 mine_enabled: params.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                 auto_confirm: params.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
                 use_slipstream: params.get("use_slipstream").and_then(|v| v.as_bool()).unwrap_or(false),
+                mint_diesel: params.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
                 use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
@@ -3783,6 +3786,7 @@ impl WebProvider {
                 trace_enabled: params.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                 mine_enabled: params.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                 auto_confirm: params.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                mint_diesel: params.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
                 use_slipstream: params.get("use_slipstream").and_then(|v| v.as_bool()).unwrap_or(false),
                 use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),

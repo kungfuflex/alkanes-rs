@@ -541,7 +541,10 @@ impl<'a> Brc20ProgExecutor<'a> {
         dummy_reveal_tx.input[0].witness.push(control_block.serialize());
 
         // Get EXACT vsize
-        let reveal_vsize = dummy_reveal_tx.vsize();
+        let mut reveal_vsize = dummy_reveal_tx.vsize();
+        if params.mint_diesel {
+            reveal_vsize += 90; // ~43 bytes (P2TR output) + ~50 bytes (OP_RETURN)
+        }
         let reveal_fee = (fee_rate * reveal_vsize as f32).ceil() as u64;
 
         // Commit output = reveal output value + reveal fee (like reference: postage + reveal_fee)
@@ -567,6 +570,15 @@ impl<'a> Brc20ProgExecutor<'a> {
         let estimated_commit_vsize = 10 + (funding_utxos.len() * 107) + (2 * 43); // base + inputs + 2 outputs
         let rebar_payment = self.calculate_rebar_payment(estimated_commit_vsize, params).await?;
 
+        // Get change address for DIESEL minting
+        let change_address_str = if let Some(ref addr) = params.change_address {
+            addr.clone()
+        } else {
+            WalletProvider::get_address(self.provider).await?
+        };
+        let change_addr = Address::from_str(&change_address_str)?
+            .require_network(self.provider.get_network())?;
+
         let (commit_psbt, commit_fee) = self
             .build_commit_psbt(
                 funding_utxos,
@@ -574,6 +586,8 @@ impl<'a> Brc20ProgExecutor<'a> {
                 params.fee_rate,
                 &params.change_address,
                 rebar_payment,
+                params.mint_diesel,
+                &change_addr,
             )
             .await?;
 
@@ -623,29 +637,43 @@ impl<'a> Brc20ProgExecutor<'a> {
             .require_network(self.provider.get_network())?;
 
         // Create outputs based on activation mode
-        let outputs = if params.use_activation {
-            // 3-tx pattern: Create 546-sat inscription UTXO for later activation, NO change
+        let mut outputs = Vec::new();
+
+        if params.use_activation {
+            // 3-tx pattern: inscription output first
             log::info!("Creating 546-sat inscription output (will be spent to OP_RETURN in activation tx, no change)");
 
-            let inscription_output = TxOut {
+            outputs.push(TxOut {
                 value: bitcoin::Amount::from_sat(546),
                 script_pubkey: change_address.script_pubkey(),
-            };
+            });
 
-            // NO change output - commit output is sized exactly to cover inscription + fee
-            vec![inscription_output]
+            // Add DIESEL outputs (pointer = 1, after inscription at 0)
+            if params.mint_diesel {
+                let (diesel_output, diesel_script) = self.create_diesel_mint_outputs(&change_address, 1)?;
+                outputs.push(diesel_output);
+                outputs.push(TxOut {
+                    value: bitcoin::Amount::ZERO,
+                    script_pubkey: diesel_script,
+                });
+            }
         } else {
-            // 2-tx pattern: Output directly to OP_RETURN with 1 sat, NO change output
+            // 2-tx pattern: DIESEL first (if enabled), then BRC20PROG OP_RETURN
+            if params.mint_diesel {
+                let (diesel_output, diesel_script) = self.create_diesel_mint_outputs(&change_address, 0)?;
+                outputs.push(diesel_output);
+                outputs.push(TxOut {
+                    value: bitcoin::Amount::ZERO,
+                    script_pubkey: diesel_script,
+                });
+            }
+
+            // BRC20PROG OP_RETURN
             log::info!("Creating OP_RETURN output directly in reveal tx (2-tx pattern, no change)");
-
-            let op_return_script = self.create_brc20prog_op_return();
-            let op_return_output = TxOut {
+            outputs.push(TxOut {
                 value: bitcoin::Amount::from_sat(1),
-                script_pubkey: op_return_script,
-            };
-
-            // NO change output - commit output is sized exactly to cover fee
-            vec![op_return_output]
+                script_pubkey: self.create_brc20prog_op_return(),
+            });
         };
 
         // Fetch the TxOut data for the additional UTXOs
@@ -918,6 +946,49 @@ impl<'a> Brc20ProgExecutor<'a> {
             .into_script()
     }
 
+    /// Create DIESEL mint outputs for commit/reveal transactions
+    /// Returns: (recipient_output, op_return_script)
+    fn create_diesel_mint_outputs(
+        &self,
+        recipient_address: &Address,
+        pointer_index: u32,
+    ) -> Result<(TxOut, ScriptBuf)> {
+        use ordinals::Runestone;
+        use protorune_support::protostone::{Protostone, ProtostoneEdict, Protostones};
+
+        // DIESEL contract: block 2, tx 0, opcode 77 (mint)
+        let message = vec![2u8, 0u8, 77u8];
+
+        let protostone = Protostone {
+            protocol_tag: 1,  // ALKANES
+            message,
+            pointer: Some(pointer_index),
+            refund: Some(pointer_index),
+            burn: None,
+            from: None,
+            edicts: vec![],
+        };
+
+        // Encode protostone into Runestone protocol field
+        let protocol_values = vec![protostone].encipher()?;
+
+        let runestone = Runestone {
+            protocol: Some(protocol_values),
+            pointer: Some(pointer_index),
+            ..Default::default()
+        };
+
+        let op_return_script = runestone.encipher();
+
+        // Create recipient output (dust amount to receive DIESEL)
+        let recipient_output = TxOut {
+            value: bitcoin::Amount::from_sat(546),
+            script_pubkey: recipient_address.script_pubkey(),
+        };
+
+        Ok((recipient_output, op_return_script))
+    }
+
     /// Build commit PSBT for presign strategy (uses final sequences for deterministic txid)
     /// Returns: (split_psbt, split_fee, commit_psbt, commit_fee, internal_key, ephemeral_secret)
     async fn build_commit_psbt_for_presign(
@@ -973,7 +1044,10 @@ impl<'a> Brc20ProgExecutor<'a> {
         dummy_reveal_tx.input[0].witness.push(control_block.serialize());
 
         // Get EXACT vsize
-        let reveal_vsize = dummy_reveal_tx.vsize();
+        let mut reveal_vsize = dummy_reveal_tx.vsize();
+        if params.mint_diesel {
+            reveal_vsize += 90; // ~43 bytes (P2TR output) + ~50 bytes (OP_RETURN)
+        }
         let reveal_fee = (fee_rate * reveal_vsize as f32).ceil() as u64;
 
         // Commit output = reveal output value + reveal fee (like reference: postage + reveal_fee)
@@ -1090,6 +1164,8 @@ impl<'a> Brc20ProgExecutor<'a> {
             commit_output,
             params.fee_rate,
             &params.change_address,
+            params.mint_diesel,
+            &change_addr,
         ).await?;
 
         Ok((split_psbt, split_fee, commit_psbt, commit_fee, internal_key, ephemeral_secret))
@@ -1190,6 +1266,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         commit_output: TxOut,
         fee_rate: Option<f32>,
         change_address: &Option<String>,
+        mint_diesel: bool,
+        change_addr: &Address,
     ) -> Result<(Psbt, u64)> {
         use bitcoin::psbt::Input as PsbtInput;
 
@@ -1203,19 +1281,23 @@ impl<'a> Brc20ProgExecutor<'a> {
             outpoints.push(*outpoint);
         }
 
-        let change_address_str = if let Some(ref addr) = change_address {
-            addr.clone()
-        } else {
-            WalletProvider::get_address(self.provider).await?
-        };
-        let change_addr = Address::from_str(&change_address_str)?
-            .require_network(self.provider.get_network())?;
-
         // Estimate fee
-        let temp_outputs = vec![commit_output.clone(), TxOut {
+        let mut temp_outputs = vec![commit_output.clone()];
+
+        // Add DIESEL outputs if requested
+        if mint_diesel {
+            let (diesel_output, diesel_script) = self.create_diesel_mint_outputs(change_addr, 1)?;
+            temp_outputs.push(diesel_output);
+            temp_outputs.push(TxOut {
+                value: bitcoin::Amount::ZERO,
+                script_pubkey: diesel_script,
+            });
+        }
+
+        temp_outputs.push(TxOut {
             value: bitcoin::Amount::from_sat(0),
             script_pubkey: change_addr.script_pubkey(),
-        }];
+        });
 
         let temp_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,
@@ -1231,22 +1313,38 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
         let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
-        let change_value = total_input_value.saturating_sub(commit_output.value.to_sat()).saturating_sub(fee);
+
+        // Subtract commit output, fee, and DIESEL output if minting
+        let diesel_cost = if mint_diesel { 546 } else { 0 };
+        let change_value = total_input_value
+            .saturating_sub(commit_output.value.to_sat())
+            .saturating_sub(fee)
+            .saturating_sub(diesel_cost);
 
         if change_value < 546 {
             return Err(AlkanesError::Wallet(format!(
-                "Not enough funds for commit and change: have {} sats, need {} for commit + {} fee, leaving {} for change (min 546)",
-                total_input_value, commit_output.value.to_sat(), fee, change_value
+                "Not enough funds for commit and change: have {} sats, need {} for commit + {} fee + {} diesel, leaving {} for change (min 546)",
+                total_input_value, commit_output.value.to_sat(), fee, diesel_cost, change_value
             )));
         }
 
-        let final_outputs = vec![
-            commit_output,
-            TxOut {
-                value: bitcoin::Amount::from_sat(change_value),
-                script_pubkey: change_addr.script_pubkey(),
-            },
-        ];
+        let mut final_outputs = vec![commit_output];
+
+        // Add DIESEL outputs if requested
+        if mint_diesel {
+            let (diesel_output, diesel_script) = self.create_diesel_mint_outputs(change_addr, 1)?;
+            final_outputs.push(diesel_output);
+            final_outputs.push(TxOut {
+                value: bitcoin::Amount::ZERO,
+                script_pubkey: diesel_script,
+            });
+        }
+
+        // Add change output
+        final_outputs.push(TxOut {
+            value: bitcoin::Amount::from_sat(change_value),
+            script_pubkey: change_addr.script_pubkey(),
+        });
 
         let unsigned_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,
@@ -1291,24 +1389,42 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // NO CHANGE OUTPUT - commit is sized exactly for reveal fee + dust output
         // This ensures all excess value goes to miners as fee
-        let outputs = if params.use_activation {
-            // 3-tx pattern: ONLY inscription output (546 sats), no change
+        let mut outputs = Vec::new();
+
+        if params.use_activation {
+            // 3-tx pattern: inscription output first
             log::info!("Creating 546-sat inscription output (no change - exact fee calculation)");
-            vec![
-                TxOut {
-                    value: bitcoin::Amount::from_sat(546),
-                    script_pubkey: change_address.script_pubkey(),
-                },
-            ]
+            outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(546),
+                script_pubkey: change_address.script_pubkey(),
+            });
+
+            // Add DIESEL outputs (pointer = 1, after inscription at 0)
+            if params.mint_diesel {
+                let (diesel_output, diesel_script) = self.create_diesel_mint_outputs(&change_address, 1)?;
+                outputs.push(diesel_output);
+                outputs.push(TxOut {
+                    value: bitcoin::Amount::ZERO,
+                    script_pubkey: diesel_script,
+                });
+            }
         } else {
-            // 2-tx pattern: ONLY OP_RETURN output, no change
+            // 2-tx pattern: DIESEL first (if enabled), then BRC20PROG OP_RETURN
+            if params.mint_diesel {
+                let (diesel_output, diesel_script) = self.create_diesel_mint_outputs(&change_address, 0)?;
+                outputs.push(diesel_output);
+                outputs.push(TxOut {
+                    value: bitcoin::Amount::ZERO,
+                    script_pubkey: diesel_script,
+                });
+            }
+
+            // BRC20PROG OP_RETURN
             log::info!("Creating OP_RETURN output (no change - exact fee calculation)");
-            vec![
-                TxOut {
-                    value: bitcoin::Amount::from_sat(0),
-                    script_pubkey: self.create_brc20prog_op_return(),
-                },
-            ]
+            outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(0),
+                script_pubkey: self.create_brc20prog_op_return(),
+            });
         };
 
         let (reveal_psbt, reveal_fee) = self.build_reveal_psbt(
@@ -1817,12 +1933,23 @@ impl<'a> Brc20ProgExecutor<'a> {
         let funding_utxos: Vec<OutPoint> = old_tx.input.iter().map(|i| i.previous_output).collect();
         let commit_output = old_tx.output[0].clone();
 
+        // Get change address
+        let change_address_str = if let Some(ref addr) = params.change_address {
+            addr.clone()
+        } else {
+            WalletProvider::get_address(self.provider).await?
+        };
+        let change_addr = Address::from_str(&change_address_str)?
+            .require_network(self.provider.get_network())?;
+
         let (new_psbt, _new_fee) = self.build_commit_psbt(
             funding_utxos,
             commit_output,
             Some(new_fee_rate),
             &params.change_address,
             None, // No rebar for RBF
+            params.mint_diesel,
+            &change_addr,
         ).await?;
 
         // Sign and broadcast
@@ -2485,6 +2612,8 @@ impl<'a> Brc20ProgExecutor<'a> {
         fee_rate: Option<f32>,
         change_address: &Option<String>,
         rebar_payment: Option<RebarPaymentInfo>,
+        mint_diesel: bool,
+        change_addr: &Address,
     ) -> Result<(Psbt, u64)> {
         let mut total_input_value = 0;
         let mut input_txouts = Vec::new();
@@ -2498,28 +2627,30 @@ impl<'a> Brc20ProgExecutor<'a> {
             input_txouts.push(utxo);
         }
 
-        let change_address_str = if let Some(ref addr) = change_address {
-            addr.clone()
-        } else {
-            WalletProvider::get_address(self.provider).await?
-        };
-        let change_addr = Address::from_str(&change_address_str)?
-            .require_network(self.provider.get_network())?;
-
-        let temp_change_output = TxOut {
-            value: bitcoin::Amount::from_sat(0),
-            script_pubkey: change_addr.script_pubkey(),
-        };
-
-        // Build temp outputs list including Rebar payment if needed
+        // Build temp outputs list including Rebar payment and DIESEL if needed
         let mut temp_outputs = vec![commit_output.clone()];
+
+        // Add DIESEL outputs if requested
+        if mint_diesel {
+            let (diesel_output, diesel_script) = self.create_diesel_mint_outputs(change_addr, 1)?;
+            temp_outputs.push(diesel_output);
+            temp_outputs.push(TxOut {
+                value: bitcoin::Amount::ZERO,
+                script_pubkey: diesel_script,
+            });
+        }
+
         if let Some(ref rebar) = rebar_payment {
             temp_outputs.push(TxOut {
                 value: bitcoin::Amount::from_sat(rebar.payment_amount),
                 script_pubkey: rebar.payment_address.script_pubkey(),
             });
         }
-        temp_outputs.push(temp_change_output);
+
+        temp_outputs.push(TxOut {
+            value: bitcoin::Amount::from_sat(0),
+            script_pubkey: change_addr.script_pubkey(),
+        });
 
         let mut temp_tx_for_size = Transaction {
             version: bitcoin::transaction::Version::TWO,
@@ -2548,31 +2679,43 @@ impl<'a> Brc20ProgExecutor<'a> {
         };
 
         let rebar_payment_amount = rebar_payment.as_ref().map(|r| r.payment_amount).unwrap_or(0);
+        let diesel_cost = if mint_diesel { 546 } else { 0 };
 
         let change_value = total_input_value
             .saturating_sub(commit_output.value.to_sat())
             .saturating_sub(rebar_payment_amount)
-            .saturating_sub(fee);
+            .saturating_sub(fee)
+            .saturating_sub(diesel_cost);
         if change_value < 546 {
             return Err(AlkanesError::Wallet(
                 "Not enough funds for commit and change".to_string(),
             ));
         }
 
-        let final_change_output = TxOut {
-            value: bitcoin::Amount::from_sat(change_value),
-            script_pubkey: change_addr.script_pubkey(),
-        };
-
-        // Build final outputs list including Rebar payment if needed
+        // Build final outputs list including DIESEL and Rebar payment if needed
         let mut final_outputs = vec![commit_output];
+
+        // Add DIESEL outputs if requested
+        if mint_diesel {
+            let (diesel_output, diesel_script) = self.create_diesel_mint_outputs(change_addr, 1)?;
+            final_outputs.push(diesel_output);
+            final_outputs.push(TxOut {
+                value: bitcoin::Amount::ZERO,
+                script_pubkey: diesel_script,
+            });
+        }
+
         if let Some(rebar) = rebar_payment {
             final_outputs.push(TxOut {
                 value: bitcoin::Amount::from_sat(rebar.payment_amount),
                 script_pubkey: rebar.payment_address.script_pubkey(),
             });
         }
-        final_outputs.push(final_change_output);
+
+        final_outputs.push(TxOut {
+            value: bitcoin::Amount::from_sat(change_value),
+            script_pubkey: change_addr.script_pubkey(),
+        });
 
         let unsigned_tx = Transaction {
             version: bitcoin::transaction::Version::TWO,

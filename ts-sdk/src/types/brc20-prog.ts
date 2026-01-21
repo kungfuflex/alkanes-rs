@@ -43,6 +43,8 @@ export interface Brc20ProgExecuteParams {
    * through parent transactions to determine inscription state from settled UTXOs.
    */
   mempool_indexer?: boolean;
+  /** Mint DIESEL tokens (contract 2:0) in commit and reveal transactions */
+  mint_diesel?: boolean;
 }
 
 /**
@@ -83,6 +85,8 @@ export interface Brc20ProgWrapBtcParams {
   change_address?: string;
   /** Fee rate in sat/vB (optional, defaults to 100) */
   fee_rate?: number;
+  /** Mint DIESEL tokens in commit and reveal transactions */
+  mint_diesel?: boolean;
 }
 
 /**

@@ -4340,7 +4340,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
     let provider = system.provider_mut();
 
     match command {
-        Brc20Prog::DeployContract { foundry_json_path, from, change, fee_rate, raw, trace, mine, auto_confirm, no_activation, use_slipstream, use_rebar, rebar_tier, strategy, resume } => {
+        Brc20Prog::DeployContract { foundry_json_path, from, change, fee_rate, raw, trace, mine, auto_confirm, no_activation, use_slipstream, use_rebar, rebar_tier, strategy, resume, mint_diesel } => {
             let contract_data = parse_foundry_json(&foundry_json_path)?;
             let bytecode = extract_deployment_bytecode(&contract_data)?;
 
@@ -4395,6 +4395,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 additional_outputs: None, // Not used for deploy
                 mempool_indexer: false, // TODO: Add CLI flag when needed
+                mint_diesel,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4417,7 +4418,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::Transact { address, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, strategy, resume } => {
+        Brc20Prog::Transact { address, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, strategy, resume, mint_diesel } => {
             let calldata_hex = encode_function_call(&signature, &calldata)?; // calldata.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>())?;
 
             let inscription = Brc20ProgCallInscription::new(address, calldata_hex);
@@ -4471,6 +4472,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 additional_outputs: None, // Not used for transact
                 mempool_indexer: false, // TODO: Add CLI flag when needed
+                mint_diesel,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4487,7 +4489,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::WrapBtc { amount, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume } => {
+        Brc20Prog::WrapBtc { amount, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume, mint_diesel } => {
             use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapParams};
 
             // Resolve address identifiers before creating params
@@ -4520,6 +4522,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 use_rebar,
                 rebar_tier,
                 resume_from_commit: resume,
+                mint_diesel,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
@@ -4536,7 +4539,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::UnwrapBtc { amount, vout, to, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume } => {
+        Brc20Prog::UnwrapBtc { amount, vout, to, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume, mint_diesel } => {
             use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcUnwrapParams};
 
             // Resolve address identifiers
@@ -4573,6 +4576,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 use_rebar,
                 rebar_tier,
                 resume_from_commit: resume,
+                mint_diesel,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
@@ -4590,7 +4594,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::WrapAndExecute { amount, script, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume } => {
+        Brc20Prog::WrapAndExecute { amount, script, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume, mint_diesel } => {
             use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapAndExecuteParams};
 
             // Resolve address identifiers
@@ -4624,6 +4628,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 use_rebar,
                 rebar_tier,
                 resume_from_commit: resume,
+                mint_diesel,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
@@ -4640,7 +4645,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::WrapAndExecute2 { amount, target, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume } => {
+        Brc20Prog::WrapAndExecute2 { amount, target, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume, mint_diesel } => {
             use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapAndExecute2Params};
 
             // Resolve address identifiers
@@ -4676,6 +4681,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 use_rebar,
                 rebar_tier,
                 resume_from_commit: resume,
+                mint_diesel,
             };
 
             let mut executor = FrBtcExecutor::new(provider);

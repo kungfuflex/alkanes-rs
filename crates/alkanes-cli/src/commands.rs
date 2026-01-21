@@ -600,6 +600,9 @@ pub enum Brc20Prog {
         /// Resume from existing commit transaction (provide commit txid)
         #[arg(long, value_name = "TXID")]
         resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
     },
     /// Call a BRC20-prog contract function
     Transact {
@@ -649,6 +652,9 @@ pub enum Brc20Prog {
         /// Resume from existing commit transaction (provide commit txid)
         #[arg(long, value_name = "TXID")]
         resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
     },
     /// Wrap BTC to frBTC (simple wrap without execution)
     #[command(name = "wrap-btc")]
@@ -688,6 +694,9 @@ pub enum Brc20Prog {
         /// Resume from existing commit transaction
         #[arg(long, value_name = "TXID")]
         resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
     },
     /// Unwrap frBTC to BTC (burns frBTC and queues BTC payment)
     #[command(name = "unwrap-btc")]
@@ -733,6 +742,9 @@ pub enum Brc20Prog {
         /// Resume from existing commit transaction
         #[arg(long, value_name = "TXID")]
         resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
     },
     /// Wrap BTC and deploy+execute a script (wrapAndExecute)
     #[command(name = "wrap-and-execute")]
@@ -775,6 +787,9 @@ pub enum Brc20Prog {
         /// Resume from existing commit transaction
         #[arg(long, value_name = "TXID")]
         resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
     },
     /// Wrap BTC and call an existing contract (wrapAndExecute2)
     #[command(name = "wrap-and-execute2")]
@@ -823,6 +838,9 @@ pub enum Brc20Prog {
         /// Resume from existing commit transaction
         #[arg(long, value_name = "TXID")]
         resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
     },
     /// Get FrBTC signer address for the current network
     #[command(name = "signer-address")]

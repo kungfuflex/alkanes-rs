@@ -488,6 +488,7 @@ pub fn brc20_prog_wrap_btc(
             from_addresses: Option<Vec<String>>,
             change_address: Option<String>,
             fee_rate: Option<f32>,
+            mint_diesel: Option<bool>,
         }
         let base_params: BaseParams = serde_json::from_str(&params_json)
             .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
@@ -504,6 +505,7 @@ pub fn brc20_prog_wrap_btc(
             trace_enabled: false,
             mine_enabled: false,
             auto_confirm: true, // WASM should auto-confirm
+            mint_diesel: base_params.mint_diesel.unwrap_or(false),
         };
 
         // Create provider and executor
@@ -564,6 +566,7 @@ pub fn frbtc_wrap(
             use_rebar: Option<bool>,
             rebar_tier: Option<u8>,
             resume_from_commit: Option<String>,
+            mint_diesel: Option<bool>,
         }
         let base_params: BaseParams = serde_json::from_str(&params_json).unwrap_or_default();
 
@@ -580,6 +583,7 @@ pub fn frbtc_wrap(
             use_rebar: base_params.use_rebar.unwrap_or(false),
             rebar_tier: base_params.rebar_tier,
             resume_from_commit: base_params.resume_from_commit,
+            mint_diesel: base_params.mint_diesel.unwrap_or(false),
         };
 
         let mut provider = WebProvider::new(network_str).await
@@ -634,6 +638,7 @@ pub fn frbtc_unwrap(
             use_rebar: Option<bool>,
             rebar_tier: Option<u8>,
             resume_from_commit: Option<String>,
+            mint_diesel: Option<bool>,
         }
         let base_params: BaseParams = serde_json::from_str(&params_json).unwrap_or_default();
 
@@ -652,6 +657,7 @@ pub fn frbtc_unwrap(
             use_rebar: base_params.use_rebar.unwrap_or(false),
             rebar_tier: base_params.rebar_tier,
             resume_from_commit: base_params.resume_from_commit,
+            mint_diesel: base_params.mint_diesel.unwrap_or(false),
         };
 
         let mut provider = WebProvider::new(network_str).await
@@ -704,6 +710,7 @@ pub fn frbtc_wrap_and_execute(
             use_rebar: Option<bool>,
             rebar_tier: Option<u8>,
             resume_from_commit: Option<String>,
+            mint_diesel: Option<bool>,
         }
         let base_params: BaseParams = serde_json::from_str(&params_json).unwrap_or_default();
 
@@ -721,6 +728,7 @@ pub fn frbtc_wrap_and_execute(
             use_rebar: base_params.use_rebar.unwrap_or(false),
             rebar_tier: base_params.rebar_tier,
             resume_from_commit: base_params.resume_from_commit,
+            mint_diesel: base_params.mint_diesel.unwrap_or(false),
         };
 
         let mut provider = WebProvider::new(network_str).await
@@ -779,6 +787,7 @@ pub fn frbtc_wrap_and_execute2(
             use_rebar: Option<bool>,
             rebar_tier: Option<u8>,
             resume_from_commit: Option<String>,
+            mint_diesel: Option<bool>,
         }
         let base_params: BaseParams = serde_json::from_str(&params_json).unwrap_or_default();
 
@@ -798,6 +807,7 @@ pub fn frbtc_wrap_and_execute2(
             use_rebar: base_params.use_rebar.unwrap_or(false),
             rebar_tier: base_params.rebar_tier,
             resume_from_commit: base_params.resume_from_commit,
+            mint_diesel: base_params.mint_diesel.unwrap_or(false),
         };
 
         let mut provider = WebProvider::new(network_str).await

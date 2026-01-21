@@ -36,6 +36,8 @@ pub struct Brc20ProgWrapBtcParams {
     pub mine_enabled: bool,
     /// Automatically confirm the transaction preview
     pub auto_confirm: bool,
+    /// Mint DIESEL tokens in commit and reveal transactions
+    pub mint_diesel: bool,
 }
 
 /// Default FrBTC contract addresses for different networks
@@ -112,6 +114,7 @@ impl<'a> Brc20ProgWrapBtcExecutor<'a> {
             resume_from_commit: None,
             additional_outputs: None,
             mempool_indexer: false,
+            mint_diesel: false,
         };
 
         let mut brc20_executor = Brc20ProgExecutor::new(self.provider);

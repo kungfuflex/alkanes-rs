@@ -71,6 +71,9 @@ pub struct FrBtcWrapParams {
     pub rebar_tier: Option<u8>,
     /// Resume from existing commit transaction
     pub resume_from_commit: Option<String>,
+    /// Mint DIESEL tokens in commit and reveal transactions
+    #[serde(default)]
+    pub mint_diesel: bool,
 }
 
 /// Parameters for unwrap (burn frBTC to get BTC)
@@ -104,6 +107,9 @@ pub struct FrBtcUnwrapParams {
     pub rebar_tier: Option<u8>,
     /// Resume from existing commit transaction
     pub resume_from_commit: Option<String>,
+    /// Mint DIESEL tokens in commit and reveal transactions
+    #[serde(default)]
+    pub mint_diesel: bool,
 }
 
 /// Parameters for wrapAndExecute (wrap BTC and deploy+execute a script)
@@ -135,6 +141,9 @@ pub struct FrBtcWrapAndExecuteParams {
     pub rebar_tier: Option<u8>,
     /// Resume from existing commit transaction
     pub resume_from_commit: Option<String>,
+    /// Mint DIESEL tokens in commit and reveal transactions
+    #[serde(default)]
+    pub mint_diesel: bool,
 }
 
 /// Parameters for wrapAndExecute2 (wrap BTC and call existing contract)
@@ -170,6 +179,9 @@ pub struct FrBtcWrapAndExecute2Params {
     pub rebar_tier: Option<u8>,
     /// Resume from existing commit transaction
     pub resume_from_commit: Option<String>,
+    /// Mint DIESEL tokens in commit and reveal transactions
+    #[serde(default)]
+    pub mint_diesel: bool,
 }
 
 // ============================================================================
@@ -265,6 +277,7 @@ impl<'a> FrBtcExecutor<'a> {
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
             mempool_indexer: false,
+            mint_diesel: params.mint_diesel,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -354,6 +367,7 @@ impl<'a> FrBtcExecutor<'a> {
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
             mempool_indexer: false,
+            mint_diesel: params.mint_diesel,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -431,6 +445,7 @@ impl<'a> FrBtcExecutor<'a> {
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
             mempool_indexer: false,
+            mint_diesel: params.mint_diesel,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -509,6 +524,7 @@ impl<'a> FrBtcExecutor<'a> {
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
             mempool_indexer: false,
+            mint_diesel: params.mint_diesel,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);

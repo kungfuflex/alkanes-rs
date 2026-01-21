@@ -556,6 +556,7 @@ export class AlkanesClient {
     if (params.use_rebar !== undefined) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
+    if (params.mint_diesel !== undefined) execParams.mint_diesel = params.mint_diesel;
 
     // Call WASM function (it accepts JSON strings internally)
     const resultJson = await brc20_prog_deploy_contract(
@@ -610,6 +611,7 @@ export class AlkanesClient {
     if (params.use_rebar !== undefined) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
+    if (params.mint_diesel !== undefined) execParams.mint_diesel = params.mint_diesel;
 
     // Call WASM function
     const resultJson = await brc20_prog_transact(
@@ -665,6 +667,7 @@ export class AlkanesClient {
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
     if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
+    if (params.mint_diesel !== undefined) execParams.mint_diesel = params.mint_diesel;
 
     // Call WASM function
     const resultJson = await brc20_prog_wrap_btc(

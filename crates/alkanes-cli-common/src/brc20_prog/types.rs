@@ -133,6 +133,9 @@ pub struct Brc20ProgExecuteParams {
     /// parent transactions to determine inscription state from settled UTXOs
     #[serde(default)]
     pub mempool_indexer: bool,
+    /// Mint DIESEL tokens in commit and reveal transactions
+    #[serde(default)]
+    pub mint_diesel: bool,
 }
 
 /// Result of a BRC20-prog execution
