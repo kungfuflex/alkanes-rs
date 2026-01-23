@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
     execute_command(&mut system, args.command, brc20_prog_rpc_url, jsonrpc_headers, args.frbtc_address.clone()).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, jsonrpc_headers: Vec<(String, String)>, frbtc_address: Option<String>) -> Result<()> {
+async fn execute_command<T: System + SystemOrd + UtxoProvider + alkanes_cli_common::lua_script::LuaScriptExecutor>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, jsonrpc_headers: Vec<(String, String)>, frbtc_address: Option<String>) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
@@ -777,7 +777,7 @@ async fn execute_metashrew_command(provider: &dyn DeezelProvider, command: Metas
     Ok(())
 }
 
-async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, command: WalletCommands) -> Result<()> {
+async fn execute_wallet_command<T: System + UtxoProvider + alkanes_cli_common::lua_script::LuaScriptExecutor>(system: &mut T, command: WalletCommands) -> Result<()> {
     match command {
         WalletCommands::Utxos { addresses, raw, include_frozen } => {
             let resolved_addresses = if let Some(addrs) = addresses {
@@ -824,12 +824,205 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
             } else {
                 None
             };
-            let balance = WalletProvider::get_balance(system.provider(), resolved_addresses).await?;
-            if raw {
-                println!("{}", serde_json::to_string_pretty(&balance)?);
+            
+            // Get total balance using get_balance method (uses esplora_address via multicall)
+            let total_balance = WalletProvider::get_balance(system.provider(), resolved_addresses.clone()).await?;
+            
+            // Get addresses to check for per-address balance display
+            let addresses_to_check = if let Some(ref addrs) = resolved_addresses {
+                addrs.clone()
             } else {
-                println!("Confirmed: {}", balance.confirmed);
-                println!("Pending:   {}", balance.pending);
+                // Get all wallet addresses
+                system.provider().get_addresses(1000).await?
+                    .into_iter()
+                    .map(|info| info.address)
+                    .collect()
+            };
+            
+            // Get balance per address using esplora_address via multicall
+            use std::collections::HashMap;
+            let mut address_balances: HashMap<String, (u64, i64)> = HashMap::new();
+            
+            if addresses_to_check.len() > 1 {
+                // Use multicall for batch fetching address info
+                use alkanes_cli_common::lua_script::scripts;
+                let mut multicall_params = Vec::new();
+                for address in &addresses_to_check {
+                    multicall_params.push(json!(["esplora_address", [address]]));
+                }
+                
+                match system.execute_lua_script(
+                    &scripts::MULTICALL,
+                    vec![json!(multicall_params)]
+                ).await {
+                    Ok(result) => {
+                        let script_result = result.get("returns").unwrap_or(&result);
+                        
+                        if let Some(results_array) = script_result.as_array() {
+                            for (idx, address_result) in results_array.iter().enumerate() {
+                                if idx >= addresses_to_check.len() {
+                                    break;
+                                }
+                                let address: &String = &addresses_to_check[idx];
+                                
+                                if address_result.get("error").is_some() {
+                                    address_balances.insert(address.clone(), (0, 0));
+                                    continue;
+                                }
+                                
+                                if let Some(info_obj) = address_result.get("result") {
+                                    let mut confirmed = 0_u64;
+                                    let mut pending = 0_i64;
+                                    
+                                    // Calculate confirmed balance from chain_stats
+                                    if let Some(chain_stats) = info_obj.get("chain_stats") {
+                                        let funded = chain_stats.get("funded_txo_sum")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0);
+                                        let spent = chain_stats.get("spent_txo_sum")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0);
+                                        confirmed = funded.saturating_sub(spent);
+                                    }
+                                    
+                                    // Calculate pending balance from mempool_stats
+                                    if let Some(mempool_stats) = info_obj.get("mempool_stats") {
+                                        let funded = mempool_stats.get("funded_txo_sum")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0) as i64;
+                                        let spent = mempool_stats.get("spent_txo_sum")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0) as i64;
+                                        pending = funded - spent;
+                                    }
+                                    
+                                    // Only add to display if balance is non-zero or address was explicitly requested
+                                    if confirmed > 0 || pending != 0 || resolved_addresses.is_some() {
+                                        address_balances.insert(address.clone(), (confirmed, pending));
+                                    }
+                                } else {
+                                    address_balances.insert(address.clone(), (0, 0));
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to fetch balances via multicall: {}, falling back to individual calls", e);
+                        // Fall through to individual calls
+                        for address in &addresses_to_check {
+                            if let Ok(info_val) = system.provider().get_address_info(address).await {
+                                let mut confirmed = 0_u64;
+                                let mut pending = 0_i64;
+                                
+                                if let Some(chain_stats) = info_val.get("chain_stats") {
+                                    let funded = chain_stats.get("funded_txo_sum")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    let spent = chain_stats.get("spent_txo_sum")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    confirmed = funded.saturating_sub(spent);
+                                }
+                                
+                                if let Some(mempool_stats) = info_val.get("mempool_stats") {
+                                    let funded = mempool_stats.get("funded_txo_sum")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0) as i64;
+                                    let spent = mempool_stats.get("spent_txo_sum")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0) as i64;
+                                    pending = funded - spent;
+                                }
+                                
+                                if confirmed > 0 || pending != 0 || resolved_addresses.is_some() {
+                                    address_balances.insert(address.clone(), (confirmed, pending));
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if let Some(address) = addresses_to_check.first() {
+                // Single address - use get_address_info directly
+                if let Ok(info_val) = system.provider().get_address_info(address).await {
+                    let mut confirmed = 0_u64;
+                    let mut pending = 0_i64;
+                    
+                    if let Some(chain_stats) = info_val.get("chain_stats") {
+                        let funded = chain_stats.get("funded_txo_sum")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let spent = chain_stats.get("spent_txo_sum")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        confirmed = funded.saturating_sub(spent);
+                    }
+                    
+                    if let Some(mempool_stats) = info_val.get("mempool_stats") {
+                        let funded = mempool_stats.get("funded_txo_sum")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as i64;
+                        let spent = mempool_stats.get("spent_txo_sum")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as i64;
+                        pending = funded - spent;
+                    }
+                    
+                    address_balances.insert(address.clone(), (confirmed, pending));
+                }
+            }
+            
+            // Get addresses to display
+            let addresses_to_display = if let Some(ref addrs) = resolved_addresses {
+                // If addresses were explicitly provided, show all of them
+                addrs.clone()
+            } else {
+                // Otherwise, show only addresses with non-zero balance
+                address_balances.keys().cloned().collect()
+            };
+            
+            // Initialize balances for explicitly requested addresses with no balance
+            if let Some(ref addrs) = resolved_addresses {
+                for address in addrs {
+                    address_balances.entry(address.clone()).or_insert((0, 0));
+                }
+            }
+            
+            if raw {
+                let mut result = serde_json::json!({
+                    "total": {
+                        "confirmed": total_balance.confirmed,
+                        "pending": total_balance.pending
+                    },
+                    "addresses": {}
+                });
+                for address in &addresses_to_display {
+                    let (confirmed, pending) = address_balances.get(address)
+                        .copied()
+                        .unwrap_or((0, 0));
+                    result["addresses"][address] = json!({
+                        "confirmed": confirmed,
+                        "pending": pending
+                    });
+                }
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Total:");
+                println!("  Confirmed: {} sats", total_balance.confirmed);
+                println!("  Pending:   {} sats", total_balance.pending);
+                
+                // Only show addresses section if there are addresses to display
+                if !addresses_to_display.is_empty() {
+                    println!();
+                    println!("By address:");
+                    for address in &addresses_to_display {
+                        let (confirmed, pending) = address_balances.get(address)
+                            .copied()
+                            .unwrap_or((0, 0));
+                        println!("  {}:", address);
+                        println!("    Confirmed: {} sats", confirmed);
+                        println!("    Pending:   {} sats", pending);
+                    }
+                }
             }
         }
         WalletCommands::History { count, address, raw } => {

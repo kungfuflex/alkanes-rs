@@ -714,8 +714,8 @@ impl JsonRpcProvider for ConcreteProvider {
         params: serde_json::Value,
         id: u64,
     ) -> Result<serde_json::Value> {
-        // Info logging for JsonRpcProvider call - logs all RPC payloads sent
-        log::info!(
+        // Debug logging for JsonRpcProvider call - logs all RPC payloads sent
+        log::debug!(
             "JsonRpcProvider::call -> URL: {}, Method: {}, Params: {}",
             url,
             method,
@@ -766,7 +766,7 @@ impl JsonRpcProvider for ConcreteProvider {
                 .map_err(|e| AlkanesError::Network(e.to_string()))?;
             let response_text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             
-            log::info!("JsonRpcProvider::call <- Raw RPC response: {response_text}");
+            log::debug!("JsonRpcProvider::call <- Raw RPC response: {response_text}");
             
             if response_text.starts_with("Json deserialize error") {
                 return Err(AlkanesError::RpcError(format!("Server-side JSON deserialization error: {}", response_text)));
@@ -1012,44 +1012,187 @@ impl WalletProvider for ConcreteProvider {
     
     async fn get_balance(&self, addresses: Option<Vec<String>>) -> Result<WalletBalance> {
         log::info!("[WalletProvider] Calling get_balance for addresses: {:?}", addresses);
-        let addrs_to_check = if let Some(provided_addresses) = addresses {
-            provided_addresses
+        
+        // Get addresses to check
+        let addresses_to_check = if let Some(ref addrs) = addresses {
+            if addrs.is_empty() {
+                // If empty list provided, get all wallet addresses
+                match &self.wallet_state {
+                    WalletState::AddressOnly { address, .. } | WalletState::ExternalKey { address, .. } => {
+                        vec![address.clone()]
+                    }
+                    _ => {
+                        let mut all_addresses = Vec::new();
+                        if let Ok(keystore) = self.get_keystore() {
+                            let network = self.get_network();
+                            if let Ok(addrs) = keystore.get_addresses(network, "p2tr", 0, 0, 20) {
+                                for addr_info in addrs {
+                                    all_addresses.push(addr_info.address);
+                                }
+                            }
+                            if let Ok(addrs) = keystore.get_addresses(network, "p2wpkh", 0, 0, 20) {
+                                for addr_info in addrs {
+                                    all_addresses.push(addr_info.address);
+                                }
+                            }
+                        }
+                        all_addresses
+                    }
+                }
+            } else {
+                addrs.clone()
+            }
         } else {
-            // If no addresses are provided, derive the first 20 from the public key.
-            let derived_infos = self.get_addresses(20).await?;
-            derived_infos.into_iter().map(|info| info.address).collect()
+            // No addresses provided, get all wallet addresses
+            match &self.wallet_state {
+                WalletState::AddressOnly { address, .. } | WalletState::ExternalKey { address, .. } => {
+                    vec![address.clone()]
+                }
+                _ => {
+                    let mut all_addresses = Vec::new();
+                    if let Ok(keystore) = self.get_keystore() {
+                        let network = self.get_network();
+                        if let Ok(addrs) = keystore.get_addresses(network, "p2tr", 0, 0, 20) {
+                            for addr_info in addrs {
+                                all_addresses.push(addr_info.address);
+                            }
+                        }
+                        if let Ok(addrs) = keystore.get_addresses(network, "p2wpkh", 0, 0, 20) {
+                            for addr_info in addrs {
+                                all_addresses.push(addr_info.address);
+                            }
+                        }
+                    }
+                    all_addresses
+                }
+            }
         };
 
-        if addrs_to_check.is_empty() {
-            return Ok(WalletBalance { confirmed: 0, pending: 0 });
+        if addresses_to_check.is_empty() {
+            return Ok(WalletBalance {
+                confirmed: 0,
+                pending: 0,
+            });
         }
 
-        let _total_confirmed_balance = 0_u64;
-        let _total_pending_balance = 0_i64;
+        let mut total_confirmed = 0_u64;
+        let mut total_pending = 0_i64;
 
-        // TODO: This is a placeholder implementation after removing the direct esplora calls.
-        // The correct balance calculation will happen in the frontend after fetching enriched UTXOs.
-        for _address in addrs_to_check {
-            // let info = self.get_address_info(&address).await?;
-            //
-            // // Confirmed balance
-            // if let Some(chain_stats) = info.get("chain_stats") {
-            //     let funded = chain_stats.get("funded_txo_sum").and_then(|v| v.as_u64()).unwrap_or(0);
-            //     let spent = chain_stats.get("spent_txo_sum").and_then(|v| v.as_u64()).unwrap_or(0);
-            //     total_confirmed_balance += funded.saturating_sub(spent);
-            // }
-            //
-            // // Pending balance (can be negative)
-            // if let Some(mempool_stats) = info.get("mempool_stats") {
-            //     let funded = mempool_stats.get("funded_txo_sum").and_then(|v| v.as_i64()).unwrap_or(0);
-            //     let spent = mempool_stats.get("spent_txo_sum").and_then(|v| v.as_i64()).unwrap_or(0);
-            //     total_pending_balance += funded - spent;
-            // }
+        // Use multicall to batch fetch address info for all addresses
+        if addresses_to_check.len() > 1 {
+            log::info!("[WalletProvider] Batching balance fetch for {} addresses using multicall", addresses_to_check.len());
+            
+            // Build multicall requests for all addresses
+            let mut multicall_params = Vec::new();
+            for address in &addresses_to_check {
+                multicall_params.push(json!(["esplora_address", [address]]));
+            }
+            
+            // Execute multicall
+            match self.execute_lua_script(
+                &crate::lua_script::scripts::MULTICALL,
+                vec![json!(multicall_params)]
+            ).await {
+                Ok(result) => {
+                    let script_result = result.get("returns").unwrap_or(&result);
+                    
+                    // Check if multicall returned an error
+                    if let Some(error_obj) = script_result.get("error") {
+                        log::warn!("[WalletProvider] Multicall returned error: {:?}, falling back to individual calls", error_obj);
+                        // Fall through to individual address processing
+                    } else if let Some(results_array) = script_result.as_array() {
+                        log::info!("[WalletProvider] Successfully fetched balances for all addresses via multicall");
+                        
+                        // Process multicall results
+                        for (idx, address_result) in results_array.iter().enumerate() {
+                            if idx >= addresses_to_check.len() {
+                                break;
+                            }
+                            
+                            // Check if this result has an error
+                            if address_result.get("error").is_some() {
+                                log::warn!("[WalletProvider] Error fetching balance for address {}: {:?}", 
+                                    addresses_to_check[idx], address_result.get("error"));
+                                continue;
+                            }
+                            
+                            // Extract balance from address info
+                            if let Some(info_obj) = address_result.get("result") {
+                                // Calculate confirmed balance from chain_stats
+                                if let Some(chain_stats) = info_obj.get("chain_stats") {
+                                    let funded = chain_stats.get("funded_txo_sum")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    let spent = chain_stats.get("spent_txo_sum")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    total_confirmed += funded.saturating_sub(spent);
+                                }
+                                
+                                // Calculate pending balance from mempool_stats
+                                if let Some(mempool_stats) = info_obj.get("mempool_stats") {
+                                    let funded = mempool_stats.get("funded_txo_sum")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0) as i64;
+                                    let spent = mempool_stats.get("spent_txo_sum")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0) as i64;
+                                    total_pending += funded - spent;
+                                }
+                            }
+                        }
+                        
+                        return Ok(WalletBalance {
+                            confirmed: total_confirmed,
+                            pending: total_pending,
+                        });
+                    } else {
+                        log::warn!("[WalletProvider] Multicall returned unexpected format: {:?}, falling back to individual calls", script_result);
+                        // Fall through to individual address processing
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[WalletProvider] Multicall failed, falling back to individual calls: {}", e);
+                    // Fall through to individual address processing
+                }
+            }
+        }
+
+        // Fallback: process addresses individually
+        for address in &addresses_to_check {
+            match self.get_address_info(address).await {
+                Ok(info_val) => {
+                    // Calculate confirmed balance from chain_stats
+                    if let Some(chain_stats) = info_val.get("chain_stats") {
+                        let funded = chain_stats.get("funded_txo_sum")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let spent = chain_stats.get("spent_txo_sum")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        total_confirmed += funded.saturating_sub(spent);
+                    }
+                    
+                    // Calculate pending balance from mempool_stats
+                    if let Some(mempool_stats) = info_val.get("mempool_stats") {
+                        let funded = mempool_stats.get("funded_txo_sum")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as i64;
+                        let spent = mempool_stats.get("spent_txo_sum")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as i64;
+                        total_pending += funded - spent;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[WalletProvider] Failed to get address info for {}: {}", address, e);
+                }
+            }
         }
 
         Ok(WalletBalance {
-            confirmed: 0,
-            pending: 0,
+            confirmed: total_confirmed,
+            pending: total_pending,
         })
     }
     
@@ -1163,6 +1306,103 @@ impl WalletProvider for ConcreteProvider {
         let mut all_utxos = Vec::new();
         let current_height = self.get_block_count().await.unwrap_or(0);
 
+        // Batch fetch UTXOs for all addresses using multicall
+        if addresses_to_check.len() > 1 {
+            log::info!("[WalletProvider] Batching UTXO fetch for {} addresses using multicall", addresses_to_check.len());
+            
+            // Build multicall requests for all addresses
+            // Format: [["esplora_addressutxo", ["address1"]], ["esplora_addressutxo", ["address2"]]]
+            let mut multicall_params = Vec::new();
+            for address in &addresses_to_check {
+                multicall_params.push(json!(["esplora_addressutxo", [address]]));
+            }
+            
+            // Execute multicall - pass the array directly as the first argument
+            match self.execute_lua_script(
+                &crate::lua_script::scripts::MULTICALL,
+                vec![json!(multicall_params)]
+            ).await {
+                Ok(result) => {
+                    let script_result = result.get("returns").unwrap_or(&result);
+                    
+                    // Check if multicall returned an error
+                    if let Some(error_obj) = script_result.get("error") {
+                        log::warn!("[WalletProvider] Multicall returned error: {:?}, falling back to individual calls", error_obj);
+                        // Fall through to individual address processing
+                    } else if let Some(results_array) = script_result.as_array() {
+                        log::info!("[WalletProvider] Successfully fetched UTXOs for all addresses via multicall");
+                        
+                        // Process multicall results - each result corresponds to one address
+                        for (idx, address_result) in results_array.iter().enumerate() {
+                            if idx >= addresses_to_check.len() {
+                                break;
+                            }
+                            let address = &addresses_to_check[idx];
+                            
+                            // Check if this result has an error
+                            if address_result.get("error").is_some() {
+                                log::warn!("[WalletProvider] Error fetching UTXOs for address {}: {:?}", address, address_result.get("error"));
+                                continue;
+                            }
+                            
+                            // Extract UTXOs from this address's result
+                            if let Some(result_obj) = address_result.get("result") {
+                                if let Some(utxos_array) = result_obj.as_array() {
+                                    for utxo_json in utxos_array {
+                                        let txid = utxo_json.get("txid").and_then(|t| t.as_str()).unwrap_or("");
+                                        let vout = utxo_json.get("vout").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                                        let value = utxo_json.get("value").and_then(|v| v.as_u64()).unwrap_or(0);
+                                        let status = utxo_json.get("status");
+                                        let block_height = status.and_then(|s| s.get("block_height")).and_then(|h| h.as_u64());
+                                        
+                                        let outpoint = OutPoint::from_str(&format!("{}:{}", txid, vout))?;
+                                        let confirmations = if let Some(bh) = block_height {
+                                            if current_height > 0 {
+                                                (current_height.saturating_sub(bh) + 1) as u32
+                                            } else {
+                                                0
+                                            }
+                                        } else {
+                                            0
+                                        };
+                                        
+                                        let utxo_info = UtxoInfo {
+                                            txid: txid.to_string(),
+                                            vout,
+                                            amount: value,
+                                            address: address.clone(),
+                                            script_pubkey: None,
+                                            confirmations,
+                                            frozen: false,
+                                            freeze_reason: None,
+                                            block_height,
+                                            has_inscriptions: false,
+                                            has_runes: false,
+                                            has_alkanes: false,
+                                            is_coinbase: false,
+                                        };
+                                        
+                                        all_utxos.push((outpoint, utxo_info));
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Return early since we got all UTXOs in one call
+                        return Ok(all_utxos);
+                    } else {
+                        log::warn!("[WalletProvider] Multicall returned unexpected format: {:?}, falling back to individual calls", script_result);
+                        // Fall through to individual address processing
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[WalletProvider] Multicall failed, falling back to individual calls: {}", e);
+                    // Fall through to individual address processing
+                }
+            }
+        }
+
+        // Fallback: process addresses individually (for single address or if multicall failed)
         for address in addresses_to_check {
             log::info!("[WalletProvider] Batching UTXO+transaction fetch for address: {}", address);
             

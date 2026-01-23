@@ -2,10 +2,18 @@
 -- Args: array of [method, params] tuples
 -- Example: [["btc_getblockcount", []], ["btc_getblockhash", [100]]]
 
--- Each element in args should be a table with [method, params]
+-- Get the calls array from args[1]
+local calls = args[1]
+if not calls or type(calls) ~= "table" then
+    return {
+        error = "First argument must be an array of [method, params] tuples"
+    }
+end
+
+-- Each element in calls should be a table with [method, params]
 local results = {}
 
-for i, call in ipairs(args) do
+for i, call in ipairs(calls) do
     -- Each call should be a 2-element array: [method, params]
     if type(call) ~= "table" or #call ~= 2 then
         return {
