@@ -6,7 +6,7 @@ const tar = require('tar-stream');
 
 const PORT = process.env.PORT || 8080;
 const ARTIFACT_REGISTRY = 'us-central1-npm.pkg.dev';
-const PROJECT = 'distributable-octet-pipeline';
+const PROJECT = 'pkg-alkanes-build';
 const REPOSITORY = 'npm-packages';
 
 // Cache for access token
