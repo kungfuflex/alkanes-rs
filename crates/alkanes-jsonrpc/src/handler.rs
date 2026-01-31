@@ -11,7 +11,7 @@ use alkanes_cli_common::proto::alkanes::{
     alkanes_trace_event::Event as TraceEventEnum,
     Outpoint,
 };
-use alkanes_cli_common::proto::protorune::{OutpointResponse, OutpointWithProtocol, Uint128 as ProtoruneUint128};
+use alkanes_cli_common::proto::protorune::{OutpointResponse, OutpointWithProtocol, ProtorunesWalletRequest, WalletResponse, Uint128 as ProtoruneUint128};
 use alkanes_cli_common::alkanes::utils::encode_varint_list;
 
 pub async fn handle_request(
@@ -555,6 +555,125 @@ fn encode_protorunesbyoutpoint_request(params: &[Value]) -> Result<String> {
     Ok(format!("0x{}", hex::encode(request.encode_to_vec())))
 }
 
+/// Encode protorunesbyaddress request from params to protobuf hex string.
+///
+/// Accepts either:
+///   - A plain string address: params[0] = "bcrt1p..."
+///   - A JSON object: params[0] = {"address": "bcrt1p...", "protocolTag": "1"}
+///
+/// protocol_tag defaults to 1 (alkanes) if not provided.
+/// Returns the hex-encoded ProtorunesWalletRequest protobuf.
+fn encode_protorunesbyaddress_request(params: &[Value]) -> Result<String> {
+    let input = params.get(0).ok_or_else(|| anyhow::anyhow!("protorunesbyaddress requires an address parameter"))?;
+
+    let (address, protocol_tag) = if let Some(addr_str) = input.as_str() {
+        // Plain string address, protocol_tag from params[2] or default 1
+        let pt = params.get(2)
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+            .unwrap_or(1) as u128;
+        (addr_str.to_string(), pt)
+    } else if let Some(obj) = input.as_object() {
+        // JSON object: {"address": "...", "protocolTag": "1"}
+        let addr = obj.get("address")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("protorunesbyaddress object must have 'address' field"))?;
+        let pt = obj.get("protocolTag")
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+            .unwrap_or(1) as u128;
+        (addr.to_string(), pt)
+    } else {
+        return Err(anyhow::anyhow!("protorunesbyaddress: first param must be an address string or {{address, protocolTag}} object"));
+    };
+
+    let request = ProtorunesWalletRequest {
+        wallet: address.into_bytes(),
+        protocol_tag: Some(ProtoruneUint128 {
+            lo: protocol_tag as u64,
+            hi: 0,
+        }),
+    };
+
+    Ok(format!("0x{}", hex::encode(request.encode_to_vec())))
+}
+
+/// Decode WalletResponse protobuf into JSON.
+///
+/// Returns an object with:
+///   - outpoints: array of {balances, outpoint, output, height, txindex}
+///   - balances: aggregated balance sheet {entries: [{block, tx, amount}]}
+fn decode_wallet_response(hex_response: &str) -> Result<Value> {
+    let hex_data = hex_response.strip_prefix("0x").unwrap_or(hex_response);
+    if hex_data.is_empty() {
+        return Ok(json!({ "outpoints": [], "balances": { "entries": [] } }));
+    }
+    let bytes = hex::decode(hex_data)?;
+    if bytes.is_empty() {
+        return Ok(json!({ "outpoints": [], "balances": { "entries": [] } }));
+    }
+    let response = WalletResponse::decode(bytes.as_slice())?;
+
+    // Decode each outpoint (reuse the same logic as decode_outpoint_response)
+    let outpoints: Vec<Value> = response.outpoints.iter().map(|op| {
+        let balances: Vec<Value> = op.balances.as_ref()
+            .map(|bs| {
+                bs.entries.iter().map(|entry| {
+                    let (block, tx) = entry.rune.as_ref()
+                        .and_then(|r| r.rune_id.as_ref())
+                        .map(|id| {
+                            let height = from_protorune_uint128(&id.height);
+                            let txindex = from_protorune_uint128(&id.txindex);
+                            (height as u64, txindex as u64)
+                        })
+                        .unwrap_or((0, 0));
+                    let amount = from_protorune_uint128(&entry.balance);
+                    json!({ "block": block, "tx": tx, "amount": amount as u64 })
+                }).collect()
+            })
+            .unwrap_or_default();
+
+        let txid = op.outpoint.as_ref()
+            .map(|o| {
+                let mut txid_bytes = o.txid.clone();
+                txid_bytes.reverse();
+                hex::encode(&txid_bytes)
+            })
+            .unwrap_or_default();
+        let vout = op.outpoint.as_ref().map(|o| o.vout).unwrap_or(0);
+        let value = op.output.as_ref().map(|o| o.value).unwrap_or(0);
+
+        json!({
+            "balance_sheet": { "cached": { "balances": balances } },
+            "outpoint": { "txid": txid, "vout": vout },
+            "output": { "value": value },
+            "height": op.height,
+            "txindex": op.txindex,
+        })
+    }).collect();
+
+    // Aggregate balance sheet
+    let balances: Vec<Value> = response.balances.as_ref()
+        .map(|bs| {
+            bs.entries.iter().map(|entry| {
+                let (block, tx) = entry.rune.as_ref()
+                    .and_then(|r| r.rune_id.as_ref())
+                    .map(|id| {
+                        let height = from_protorune_uint128(&id.height);
+                        let txindex = from_protorune_uint128(&id.txindex);
+                        (height as u64, txindex as u64)
+                    })
+                    .unwrap_or((0, 0));
+                let amount = from_protorune_uint128(&entry.balance);
+                json!({ "block": block, "tx": tx, "amount": amount as u64 })
+            }).collect()
+        })
+        .unwrap_or_default();
+
+    Ok(json!({
+        "outpoints": outpoints,
+        "balances": { "entries": balances },
+    }))
+}
+
 /// Convert call type enum to string (matches TypeScript fromCallType)
 fn call_type_to_string(call_type: i32) -> &'static str {
     match call_type {
@@ -872,6 +991,19 @@ async fn handle_alkanes_method(
                 }
             }
         }
+        "protorunesbyaddress" => {
+            // Accepts: ["address_string", block_tag] or [{"address": "...", "protocolTag": N}, block_tag]
+            match encode_protorunesbyaddress_request(params) {
+                Ok(hex) => ("protorunesbyaddress", Value::String(hex), "protorunesbyaddress"),
+                Err(e) => {
+                    return Ok(JsonRpcResponse::error(
+                        INTERNAL_ERROR,
+                        format!("Failed to encode protorunesbyaddress request: {}", e),
+                        request_id.clone(),
+                    ));
+                }
+            }
+        }
         _ => (method, convert_string_numbers(input), "none")
     };
 
@@ -898,6 +1030,7 @@ async fn handle_alkanes_method(
                     "alkanesidtooutpoint" => decode_alkanes_id_to_outpoint_response(hex_str),
                     "trace" => decode_trace_response(hex_str),
                     "protorunesbyoutpoint" => decode_outpoint_response(hex_str),
+                    "protorunesbyaddress" => decode_wallet_response(hex_str),
                     _ => unreachable!()
                 };
 
