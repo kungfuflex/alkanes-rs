@@ -3070,6 +3070,18 @@ impl WebProvider {
         })
     }
 
+    #[wasm_bindgen(js_name = waitForIndexer)]
+    pub fn wait_for_indexer_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider.sync().await
+                .map(|_| JsValue::UNDEFINED)
+                .map_err(|e| JsValue::from_str(&format!("Indexer sync failed: {}", e)))
+        })
+    }
+
     #[wasm_bindgen(js_name = metashrewStateRoot)]
     pub fn metashrew_state_root_js(&self, height: Option<f64>) -> js_sys::Promise {
         use alkanes_cli_common::traits::MetashrewRpcProvider;
@@ -6083,10 +6095,30 @@ impl WalletProvider for WebProvider {
     }
     
     async fn sync(&self) -> Result<()> {
-        // Syncing is a complex process involving checking all derived addresses for activity.
-        // For a web provider, this might be a lighter operation, perhaps just updating balances.
-        // For now, we'll consider it a no-op.
-        Ok(())
+        use alkanes_cli_common::traits::{BitcoinRpcProvider, MetashrewRpcProvider};
+
+        for i in 0..60u32 {
+            let bitcoind_height = self.get_block_count().await?;
+            let metashrew_height = self.get_metashrew_height().await?;
+            if metashrew_height >= bitcoind_height {
+                if i > 0 {
+                    self.logger.info(&format!("Indexer synced to height {} after {} retries", metashrew_height, i));
+                }
+                return Ok(());
+            }
+            self.logger.info(&format!(
+                "Waiting for indexer to sync: metashrew at {}, bitcoind at {} (attempt {}/60)",
+                metashrew_height, bitcoind_height, i + 1
+            ));
+            gloo_timers::future::TimeoutFuture::new(500).await;
+        }
+
+        let bitcoind_height = self.get_block_count().await.unwrap_or(0);
+        let metashrew_height = self.get_metashrew_height().await.unwrap_or(0);
+        Err(AlkanesError::Other(format!(
+            "Indexer sync timed out: metashrew at {}, bitcoind at {} after 30s",
+            metashrew_height, bitcoind_height
+        )))
     }
     
     async fn backup(&self) -> Result<String> {

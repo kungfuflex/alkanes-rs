@@ -1,10 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Asynchronously encrypts data using the Web Crypto API.
- */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
-/**
  * Initialize the panic hook for better error messages in WASM
  * This should be called early in your application
  */
@@ -276,6 +272,10 @@ export function frbtc_wrap_and_execute2(network: string, amount: bigint, target_
  * - `signer_address`: The Bitcoin p2tr address for the signer
  */
 export function frbtc_get_signer_address(network: string): Promise<any>;
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;
@@ -820,6 +820,7 @@ export class WebProvider {
   brc20progGetLogs(filter: any): Promise<any>;
   brc20progWeb3ClientVersion(): Promise<any>;
   metashrewHeight(): Promise<any>;
+  waitForIndexer(): Promise<any>;
   metashrewStateRoot(height?: number | null): Promise<any>;
   metashrewGetBlockHash(height: number): Promise<any>;
   /**

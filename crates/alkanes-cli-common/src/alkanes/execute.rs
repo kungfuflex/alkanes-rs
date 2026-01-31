@@ -1003,6 +1003,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         log::info!("Need {} sats Bitcoin and {} different alkanes tokens", bitcoin_needed, alkanes_needed.len());
 
+        if !alkanes_needed.is_empty() {
+            log::info!("Alkane inputs required -- syncing indexer before balance query");
+            self.provider.sync().await?;
+        }
+
         let mut bitcoin_collected = 0u64;
         let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u64> = alloc::collections::BTreeMap::new();
         let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();

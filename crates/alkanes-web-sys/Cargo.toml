@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2021"
 # Rebuild trigger: fix string amount parsing in batch_utxo_balances
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
