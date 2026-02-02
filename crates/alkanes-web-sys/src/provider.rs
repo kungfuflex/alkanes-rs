@@ -4753,19 +4753,19 @@ impl WebProvider {
         let params = alkanes_cli_common::network::NetworkParams::from_network_str(&network_str)?;
         let logger = WebLogger::new();
         logger.info(&format!(
-            "WebProvider initialized with: Metashrew RPC URL: {}, Esplora URL: {:?}, Network: {}",
+            "WebProvider initialized with: Metashrew RPC URL: {:?}, Esplora URL: {:?}, Network: {}",
             &params.metashrew_rpc_url, &params.esplora_url, &params.network
         ));
  
         // Convert NetworkParams to RpcConfig
         let mut rpc_config = alkanes_cli_common::network::RpcConfig {
             provider: network_str.clone(),
-            bitcoin_rpc_url: Some(params.bitcoin_rpc_url.clone()),
-            jsonrpc_url: Some(params.metashrew_rpc_url.clone()),
+            bitcoin_rpc_url: params.bitcoin_rpc_url.clone(),
+            jsonrpc_url: params.metashrew_rpc_url.clone(),
             titan_api_url: None,
             esplora_url: params.esplora_url.clone(),
             ord_url: None,
-            metashrew_rpc_url: Some(params.metashrew_rpc_url.clone()),
+            metashrew_rpc_url: params.metashrew_rpc_url.clone(),
             brc20_prog_rpc_url: None,
             data_api_url: None,
             espo_rpc_url: None,
@@ -4791,12 +4791,12 @@ impl WebProvider {
        // Convert NetworkParams to RpcConfig
        let rpc_config = alkanes_cli_common::network::RpcConfig {
            provider: "custom".to_string(),
-           bitcoin_rpc_url: Some(params.bitcoin_rpc_url.clone()),
-           jsonrpc_url: Some(params.metashrew_rpc_url.clone()),
+           bitcoin_rpc_url: params.bitcoin_rpc_url.clone(),
+           jsonrpc_url: params.metashrew_rpc_url.clone(),
            titan_api_url: None,
            esplora_url: params.esplora_url.clone(),
            ord_url: None,
-           metashrew_rpc_url: Some(params.metashrew_rpc_url.clone()),
+           metashrew_rpc_url: params.metashrew_rpc_url.clone(),
            brc20_prog_rpc_url: None,
            data_api_url: None,
            espo_rpc_url: None,
@@ -4899,7 +4899,7 @@ impl WebProvider {
 
     pub fn network_params(&self) -> Result<alkanes_cli_common::network::NetworkParams> {
         let mut params = alkanes_cli_common::network::NetworkParams::from_network_str(self.network.to_string().as_str())?;
-        params.metashrew_rpc_url = self.sandshrew_rpc_url();
+        params.metashrew_rpc_url = Some(self.sandshrew_rpc_url());
         params.esplora_url = self.esplora_rpc_url();
         Ok(params)
     }

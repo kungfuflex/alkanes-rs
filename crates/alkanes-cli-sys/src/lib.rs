@@ -109,8 +109,8 @@ impl SystemAlkanes {
         // If a bitcoin_rpc_url is provided and the network is regtest, override the default.
         if let Some(rpc_url) = &args.rpc_config.bitcoin_rpc_url {
             if network_params.network == bitcoin::Network::Regtest {
-                network_params.bitcoin_rpc_url = rpc_url.clone();
-                network_params.metashrew_rpc_url = rpc_url.clone();
+                network_params.bitcoin_rpc_url = Some(rpc_url.clone());
+                network_params.metashrew_rpc_url = Some(rpc_url.clone());
                 // Note: esplora_url should only be set if the user explicitly provides --esplora-url
                 // Do NOT auto-set it to bitcoin_rpc_url, as that's a JSON-RPC endpoint, not a REST API
             }
@@ -162,7 +162,7 @@ impl SystemAlkanes {
             .clone()
             .or_else(|| {
                 if jsonrpc_url.is_none() {
-                    Some(network_params.bitcoin_rpc_url.clone())
+                    network_params.bitcoin_rpc_url.clone()
                 } else {
                     None
                 }
@@ -173,7 +173,8 @@ impl SystemAlkanes {
             .metashrew_rpc_url
             .clone()
             .or_else(|| jsonrpc_url.clone())
-            .unwrap_or_else(|| network_params.metashrew_rpc_url.clone());
+            .or_else(|| network_params.metashrew_rpc_url.clone())
+            .unwrap_or_else(|| "http://localhost:18888".to_string());
 
         let esplora_url = args
             .rpc_config

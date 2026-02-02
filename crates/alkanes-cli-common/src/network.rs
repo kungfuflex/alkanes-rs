@@ -34,8 +34,8 @@ pub struct NetworkParams {
     pub bech32_prefix: String,
     pub p2pkh_prefix: u8,
     pub p2sh_prefix: u8,
-    pub bitcoin_rpc_url: String,
-    pub metashrew_rpc_url: String,
+    pub bitcoin_rpc_url: Option<String>,
+    pub metashrew_rpc_url: Option<String>,
     pub esplora_url: Option<String>,
 }
 
@@ -443,8 +443,8 @@ impl NetworkParams {
             bech32_prefix: "bcrt".to_string(),
             p2pkh_prefix: 0x6f,
             p2sh_prefix: 0xc4,
-            bitcoin_rpc_url: "http://localhost:18443".to_string(),
-            metashrew_rpc_url: "http://localhost:18888".to_string(),
+            bitcoin_rpc_url: Some("http://localhost:18443".to_string()),
+            metashrew_rpc_url: Some("http://localhost:18888".to_string()),
             esplora_url: None,
         }
     }
@@ -461,8 +461,8 @@ impl NetworkParams {
                 bech32_prefix: "bcrt".to_string(),
                 p2pkh_prefix: 0x6f,
                 p2sh_prefix: 0xc4,
-                bitcoin_rpc_url: "https://regtest.subfrost.io/v4/jsonrpc".to_string(),
-                metashrew_rpc_url: "https://regtest.subfrost.io/v4/jsonrpc".to_string(),
+                bitcoin_rpc_url: Some("https://regtest.subfrost.io/v4/jsonrpc".to_string()),
+                metashrew_rpc_url: Some("https://regtest.subfrost.io/v4/jsonrpc".to_string()),
                 esplora_url: None,  // Subfrost uses JSON-RPC esplora_* methods, not REST API
             }),
             "mainnet" => Ok(Self {
@@ -474,8 +474,8 @@ impl NetworkParams {
                 bech32_prefix: "bc".to_string(),
                 p2pkh_prefix: 0x00,
                 p2sh_prefix: 0x05,
-                bitcoin_rpc_url: "http://localhost:8332".to_string(),
-                metashrew_rpc_url: "http://localhost:8888".to_string(),
+                bitcoin_rpc_url: None,
+                metashrew_rpc_url: None,
                 esplora_url: None,
             }),
             "testnet" => Ok(Self {
@@ -487,8 +487,8 @@ impl NetworkParams {
                 bech32_prefix: "tb".to_string(),
                 p2pkh_prefix: 0x6f,
                 p2sh_prefix: 0xc4,
-                bitcoin_rpc_url: "http://localhost:18332".to_string(),
-                metashrew_rpc_url: "http://localhost:18888".to_string(),
+                bitcoin_rpc_url: None,
+                metashrew_rpc_url: None,
                 esplora_url: None,
             }),
             "signet" => Ok(Self {
@@ -500,8 +500,8 @@ impl NetworkParams {
                 bech32_prefix: "tb".to_string(),
                 p2pkh_prefix: 0x6f,
                 p2sh_prefix: 0xc4,
-                bitcoin_rpc_url: "http://localhost:38332".to_string(),
-                metashrew_rpc_url: "http://localhost:18888".to_string(),
+                bitcoin_rpc_url: None,
+                metashrew_rpc_url: None,
                 esplora_url: None,
             }),
             _ => Err(AlkanesError::InvalidParameters(format!("Unknown network: {}", network))),

@@ -124,6 +124,10 @@ export interface AlkanesProviderConfig {
   network: string;
   /** Custom RPC URL (overrides preset) */
   rpcUrl?: string;
+  /** Custom Bitcoin RPC URL (overrides rpcUrl for Bitcoin Core calls) */
+  bitcoinRpcUrl?: string;
+  /** Custom Metashrew RPC URL (overrides rpcUrl for Metashrew calls) */
+  metashrewRpcUrl?: string;
   /** Custom Data API URL (overrides preset, defaults to rpcUrl) */
   dataApiUrl?: string;
   /** bitcoinjs-lib network (auto-detected if not provided) */
@@ -1494,6 +1498,8 @@ export class AlkanesProvider {
   public readonly network: bitcoin.Network;
   public readonly networkType: NetworkType;
   public readonly rpcUrl: string;
+  public readonly bitcoinRpcUrl?: string;
+  public readonly metashrewRpcUrl?: string;
   public readonly dataApiUrl: string;
   public readonly logLevel: LogLevel;
   private readonly networkPreset: string;
@@ -1504,6 +1510,8 @@ export class AlkanesProvider {
     this.networkPreset = config.network;
     this.networkType = preset.networkType;
     this.rpcUrl = config.rpcUrl || preset.rpcUrl;
+    this.bitcoinRpcUrl = config.bitcoinRpcUrl;
+    this.metashrewRpcUrl = config.metashrewRpcUrl;
     this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
 
     // Resolve log level: config > env > off
@@ -1575,7 +1583,9 @@ export class AlkanesProvider {
 
     // Always pass rpcUrl as config override to ensure it's used
     const configOverride: any = {
-      jsonrpc_url: this.rpcUrl
+      jsonrpc_url: this.rpcUrl,
+      ...(this.bitcoinRpcUrl && { bitcoin_rpc_url: this.bitcoinRpcUrl }),
+      ...(this.metashrewRpcUrl && { metashrew_rpc_url: this.metashrewRpcUrl }),
     };
 
     this._provider = new WebProviderClass(
