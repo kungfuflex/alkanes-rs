@@ -517,30 +517,47 @@ fn encode_trace_request(params: &Value) -> Result<String> {
     Ok(format!("0x{}", hex::encode(buf)))
 }
 
-/// Encode protorunesbyoutpoint request from params to protobuf hex string
-/// Params format: [txid_hex, vout, block_tag (optional), protocol_tag (optional)]
-/// Returns the hex-encoded OutpointWithProtocol protobuf
+/// Encode protorunesbyoutpoint request from params to protobuf hex string.
+///
+/// Accepts either:
+///   - Positional params: [txid_hex, vout, block_tag?, protocol_tag?]
+///   - Object param: [{ txid: "...", vout: N, protocolTag?: "1" }, block_tag?]
+///
+/// protocol_tag defaults to 1 (alkanes) if not provided.
+/// Returns the hex-encoded OutpointWithProtocol protobuf.
 fn encode_protorunesbyoutpoint_request(params: &[Value]) -> Result<String> {
-    // Get txid (required) - convert from hex string to bytes (little-endian)
-    let txid_hex = params.get(0)
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("protorunesbyoutpoint requires txid parameter"))?;
+    let input = params.get(0)
+        .ok_or_else(|| anyhow::anyhow!("protorunesbyoutpoint requires at least one parameter"))?;
+
+    let (txid_hex, vout, protocol_tag) = if let Some(txid_str) = input.as_str() {
+        // Positional format: [txid, vout, block_tag?, protocol_tag?]
+        let vout = params.get(1)
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let pt = params.get(3)
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+            .unwrap_or(1) as u128;
+        (txid_str.to_string(), vout, pt)
+    } else if let Some(obj) = input.as_object() {
+        // Object format: { txid: "...", vout: N, protocolTag?: "1" }
+        let txid = obj.get("txid")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("protorunesbyoutpoint object must have 'txid' field"))?;
+        let vout = obj.get("vout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let pt = obj.get("protocolTag")
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+            .unwrap_or(1) as u128;
+        (txid.to_string(), vout, pt)
+    } else {
+        return Err(anyhow::anyhow!("protorunesbyoutpoint: first param must be a txid string or {{txid, vout, protocolTag?}} object"));
+    };
 
     // Bitcoin txids are displayed in reverse byte order, so we need to reverse to get internal format
-    let mut txid_bytes = hex::decode(txid_hex)
+    let mut txid_bytes = hex::decode(&txid_hex)
         .map_err(|e| anyhow::anyhow!("Invalid txid hex: {}", e))?;
     txid_bytes.reverse(); // Convert from display format to internal little-endian format
-
-    // Get vout (required)
-    let vout = params.get(1)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
-
-    // Get protocol_tag (optional, defaults to 1 for alkanes)
-    // Note: params order is [txid, vout, block_tag, protocol_tag]
-    let protocol_tag = params.get(3)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1) as u128;
 
     // Build OutpointWithProtocol
     let request = OutpointWithProtocol {
@@ -915,12 +932,22 @@ async fn handle_alkanes_method(
 
     let input = params.get(0).cloned().unwrap_or(Value::Null);
 
-    // For protorunesbyoutpoint, block_tag is at index 2 (after txid and vout)
-    // For other methods, block_tag is at index 1
+    // For protorunesbyoutpoint with positional params [txid, vout, block_tag, protocol_tag],
+    // block_tag is at index 2. With object params [{txid, vout, protocolTag?}, block_tag],
+    // block_tag is at index 1 (same as other methods).
     let block_tag = if method == "protorunesbyoutpoint" {
-        params.get(2)
-            .and_then(|v| v.as_str())
-            .unwrap_or("latest")
+        let first = params.get(0);
+        if first.map_or(false, |v| v.is_object()) {
+            // Object format: block_tag at index 1
+            params.get(1)
+                .and_then(|v| v.as_str())
+                .unwrap_or("latest")
+        } else {
+            // Positional format: block_tag at index 2
+            params.get(2)
+                .and_then(|v| v.as_str())
+                .unwrap_or("latest")
+        }
     } else {
         params.get(1)
             .and_then(|v| v.as_str())
