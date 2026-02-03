@@ -450,6 +450,7 @@ __export(provider_exports, {
   MetashrewClient: () => MetashrewClient,
   NETWORK_PRESETS: () => NETWORK_PRESETS,
   OrdClient: () => OrdClient,
+  OylApiClient: () => OylApiClient,
   createProvider: () => createProvider
 });
 function mapToObject(value) {
@@ -482,7 +483,7 @@ function getLogLevelFromEnv() {
 function createProvider(config) {
   return new AlkanesProvider(config);
 }
-var bitcoin, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, EspoClient, Logger, logger, AlkanesProvider;
+var bitcoin, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, OylApiClient, EspoClient, Logger, logger, AlkanesProvider;
 var init_provider = __esm({
   "src/provider/index.ts"() {
     "use strict";
@@ -1080,6 +1081,251 @@ var init_provider = __esm({
         return this.provider.dataApiGetBitcoinMarketChart(days);
       }
     };
+    OylApiClient = class {
+      constructor(baseUrl) {
+        this.baseUrl = baseUrl;
+      }
+      /** Parse alkane ID string "block:tx" into object format */
+      parseAlkaneId(id) {
+        const parts = id.split(":");
+        if (parts.length !== 2) {
+          throw new Error(`Invalid alkane ID format: ${id}. Expected "block:tx"`);
+        }
+        return { block: parts[0], tx: parts[1] };
+      }
+      async post(endpoint, body = {}) {
+        const response = await fetch(`${this.baseUrl}/${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+          throw new Error(`OylAPI error: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      }
+      async get(endpoint) {
+        const response = await fetch(`${this.baseUrl}/${endpoint}`);
+        if (!response.ok) {
+          throw new Error(`OylAPI error: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      }
+      // ============================================================================
+      // ALKANES & TOKENS
+      // ============================================================================
+      /** Get all alkanes with pagination */
+      async getAlkanes(page, limit) {
+        return this.post("get-alkanes", { page, limit });
+      }
+      /** Get alkane details by ID */
+      async getAlkaneDetails(alkaneId) {
+        return this.post("get-alkane-details", { alkaneId: this.parseAlkaneId(alkaneId) });
+      }
+      /** Get alkanes UTXOs for address */
+      async getAlkanesUtxo(address) {
+        return this.post("get-alkanes-utxo", { address });
+      }
+      /** Global search for alkanes */
+      async globalAlkanesSearch(searchQuery, limit, offset) {
+        return this.post("global-alkanes-search", { searchQuery, limit, offset });
+      }
+      // ============================================================================
+      // POOLS & AMM
+      // ============================================================================
+      /** Get pool by ID */
+      async getPoolById(poolId) {
+        return this.post("get-pool-by-id", { poolId: this.parseAlkaneId(poolId) });
+      }
+      /** Get pool details */
+      async getPoolDetails(poolId) {
+        return this.post("get-pool-details", { poolId: this.parseAlkaneId(poolId) });
+      }
+      /** Get all pools details with pagination */
+      async getAllPoolsDetails(factoryId, page, limit) {
+        return this.post("get-all-pools-details", { factoryId: this.parseAlkaneId(factoryId), page, limit });
+      }
+      /** Get AMM UTXOs for address */
+      async getAmmUtxos(address) {
+        return this.post("get-amm-utxos", { address });
+      }
+      /** Find swap path between tokens */
+      async pathfind(tokenIn, tokenOut, amountIn, maxHops) {
+        return this.post("pathfind", { token_in: tokenIn, token_out: tokenOut, amount_in: amountIn, max_hops: maxHops ?? 3 });
+      }
+      /** Get address LP positions */
+      async getAddressPositions(address, factoryId) {
+        return this.post("address-positions", { address, factoryId: this.parseAlkaneId(factoryId) });
+      }
+      // ============================================================================
+      // TOKEN PAIRS
+      // ============================================================================
+      /** Get token pairs for a specific token */
+      async getTokenPairs(alkaneId, factoryId, page, limit) {
+        return this.post("get-token-pairs", { tokenId: this.parseAlkaneId(alkaneId), factoryId: this.parseAlkaneId(factoryId), page, limit });
+      }
+      /** Get all token pairs */
+      async getAllTokenPairs(factoryId, page, limit) {
+        return this.post("get-all-token-pairs", { factoryId: this.parseAlkaneId(factoryId), page, limit });
+      }
+      /** Get alkane swap pair details */
+      async getAlkaneSwapPairDetails(alkaneId, factoryId, page, limit) {
+        return this.post("get-alkane-swap-pair-details", { tokenId: this.parseAlkaneId(alkaneId), factoryId: this.parseAlkaneId(factoryId), page, limit });
+      }
+      // ============================================================================
+      // SWAP HISTORY
+      // ============================================================================
+      /** Get pool swap history */
+      async getPoolSwapHistory(poolId, page, limit) {
+        return this.post("get-pool-swap-history", { poolId: this.parseAlkaneId(poolId), page, limit });
+      }
+      /** Get token swap history */
+      async getTokenSwapHistory(alkaneId, page, limit) {
+        return this.post("get-token-swap-history", { tokenId: this.parseAlkaneId(alkaneId), page, limit });
+      }
+      /** Get address swap history for pool */
+      async getAddressSwapHistoryForPool(address, poolId, page, limit) {
+        return this.post("get-address-swap-history-for-pool", { address, poolId: this.parseAlkaneId(poolId), page, limit });
+      }
+      /** Get address swap history for token */
+      async getAddressSwapHistoryForToken(address, alkaneId, page, limit) {
+        return this.post("get-address-swap-history-for-token", { address, tokenId: this.parseAlkaneId(alkaneId), page, limit });
+      }
+      // ============================================================================
+      // LIQUIDITY HISTORY (MINT/BURN)
+      // ============================================================================
+      /** Get pool mint history */
+      async getPoolMintHistory(poolId, page, limit) {
+        return this.post("get-pool-mint-history", { poolId: this.parseAlkaneId(poolId), page, limit });
+      }
+      /** Get pool burn history */
+      async getPoolBurnHistory(poolId, page, limit) {
+        return this.post("get-pool-burn-history", { poolId: this.parseAlkaneId(poolId), page, limit });
+      }
+      /** Get address pool creation history */
+      async getAddressPoolCreationHistory(address, page, limit) {
+        return this.post("get-address-pool-creation-history", { address, page, limit });
+      }
+      /** Get address pool mint history */
+      async getAddressPoolMintHistory(address, page, limit) {
+        return this.post("get-address-pool-mint-history", { address, page, limit });
+      }
+      /** Get address pool burn history */
+      async getAddressPoolBurnHistory(address, page, limit) {
+        return this.post("get-address-pool-burn-history", { address, page, limit });
+      }
+      // ============================================================================
+      // WRAP/UNWRAP HISTORY
+      // ============================================================================
+      /** Get address wrap history */
+      async getAddressWrapHistory(address, page, limit) {
+        return this.post("get-address-wrap-history", { address, page, limit });
+      }
+      /** Get address unwrap history */
+      async getAddressUnwrapHistory(address, page, limit) {
+        return this.post("get-address-unwrap-history", { address, page, limit });
+      }
+      /** Get all wrap history */
+      async getAllWrapHistory(page, limit) {
+        return this.post("get-all-wrap-history", { page, limit });
+      }
+      /** Get all unwrap history */
+      async getAllUnwrapHistory(page, limit) {
+        return this.post("get-all-unwrap-history", { page, limit });
+      }
+      /** Get total unwrap amount */
+      async getTotalUnwrapAmount() {
+        return this.post("get-total-unwrap-amount");
+      }
+      // ============================================================================
+      // ALL AMM TX HISTORY
+      // ============================================================================
+      /** Get all address AMM transaction history */
+      async getAllAddressAmmTxHistory(address, page, limit) {
+        return this.post("get-all-address-amm-tx-history", { address, page, limit });
+      }
+      /** Get all AMM transaction history */
+      async getAllAmmTxHistory(page, limit) {
+        return this.post("get-all-amm-tx-history", { page, limit });
+      }
+      // ============================================================================
+      // BITCOIN BALANCE & UTXOS
+      // ============================================================================
+      /** Get address BTC balance */
+      async getAddressBalance(address) {
+        return this.post("get-address-balance", { address });
+      }
+      /** Get taproot address balance */
+      async getTaprootBalance(address) {
+        return this.post("get-taproot-balance", { address });
+      }
+      /** Get address UTXOs */
+      async getAddressUtxos(address) {
+        return this.post("get-address-utxos", { address });
+      }
+      /** Get account UTXOs */
+      async getAccountUtxos(account) {
+        return this.post("get-account-utxos", { account });
+      }
+      /** Get account balance */
+      async getAccountBalance(account) {
+        return this.post("get-account-balance", { account });
+      }
+      /** Get taproot address history */
+      async getTaprootHistory(taprootAddress, totalTxs) {
+        return this.post("get-taproot-history", { taprootAddress, totalTxs });
+      }
+      /** Get intent history */
+      async getIntentHistory(address, page, limit) {
+        return this.post("get-intent-history", { address, page, limit });
+      }
+      // ============================================================================
+      // OUTPOINTS
+      // ============================================================================
+      /** Get outpoint balances */
+      async getOutpointBalances(outpoint) {
+        return this.post("get-outpoint-balances", { outpoint });
+      }
+      /** Get address outpoints */
+      async getAddressOutpoints(address) {
+        return this.post("get-address-outpoints", { address });
+      }
+      // ============================================================================
+      // MARKET DATA
+      // ============================================================================
+      /** Get Bitcoin weekly market data */
+      async getBitcoinMarketWeekly() {
+        return this.post("get-bitcoin-market-weekly");
+      }
+      /** Get Bitcoin markets */
+      async getBitcoinMarkets() {
+        return this.post("get-bitcoin-markets");
+      }
+      // ============================================================================
+      // INDEXER STATE
+      // ============================================================================
+      /** Get current block height */
+      async getBlockHeight() {
+        return this.post("blockheight");
+      }
+      /** Get current block hash */
+      async getBlockHash() {
+        return this.post("blockhash");
+      }
+      /** Get indexer position (height and hash) */
+      async getIndexerPosition() {
+        return this.post("indexer-position");
+      }
+      /** Health check */
+      async health() {
+        try {
+          await this.get("health");
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    };
     EspoClient = class {
       constructor(provider) {
         this.provider = provider;
@@ -1300,10 +1546,13 @@ var init_provider = __esm({
         this._metashrew = null;
         this._ord = null;
         this._brc20prog = null;
+        this._oylApi = null;
         const preset = NETWORK_PRESETS[config.network] || NETWORK_PRESETS["mainnet"];
         this.networkPreset = config.network;
         this.networkType = preset.networkType;
         this.rpcUrl = config.rpcUrl || preset.rpcUrl;
+        this.bitcoinRpcUrl = config.bitcoinRpcUrl;
+        this.metashrewRpcUrl = config.metashrewRpcUrl;
         this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
         this.logLevel = config.logLevel || getLogLevelFromEnv() || "off";
         logger.setLevel(this.logLevel);
@@ -1359,7 +1608,9 @@ var init_provider = __esm({
         }
         const providerName = this.networkPreset === "local" ? "regtest" : this.networkPreset;
         const configOverride = {
-          jsonrpc_url: this.rpcUrl
+          jsonrpc_url: this.rpcUrl,
+          ...this.bitcoinRpcUrl && { bitcoin_rpc_url: this.bitcoinRpcUrl },
+          ...this.metashrewRpcUrl && { metashrew_rpc_url: this.metashrewRpcUrl }
         };
         this._provider = new WebProviderClass(
           providerName,
@@ -1507,6 +1758,22 @@ var init_provider = __esm({
           this._brc20prog = new Brc20ProgClient(this._provider);
         }
         return this._brc20prog;
+      }
+      /**
+       * OylApi REST client
+       *
+       * Provides direct HTTP access to oylapi endpoints for:
+       * - Alkanes and token data
+       * - Pool and AMM data
+       * - Swap and liquidity history
+       * - Bitcoin balance and UTXO data
+       * - Market data
+       */
+      get oylApi() {
+        if (!this._oylApi) {
+          this._oylApi = new OylApiClient(this.dataApiUrl);
+        }
+        return this._oylApi;
       }
       // ============================================================================
       // CONVENIENCE METHODS
@@ -5331,12 +5598,11 @@ function registerDataapiCommands(program2) {
       const provider = await createProvider2({
         network: globalOpts.provider
       });
-      const page = options.page ? parseInt(options.page) : null;
-      const limit = options.limit ? parseInt(options.limit) : null;
-      const result = await provider.dataApiGetAlkanes(page, limit);
-      const alkanes = JSON.parse(result);
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAlkanes(page, limit);
       spinner.succeed();
-      console.log(formatOutput(alkanes, globalOpts));
+      console.log(formatOutput(result, globalOpts));
     } catch (err) {
       error(`Failed to get alkanes: ${err.message}`);
       process.exit(1);
@@ -5349,10 +5615,9 @@ function registerDataapiCommands(program2) {
       const provider = await createProvider2({
         network: globalOpts.provider
       });
-      const result = await provider.dataApiGetAlkaneDetails(alkaneId);
-      const details = JSON.parse(result);
+      const result = await provider.oylApi.getAlkaneDetails(alkaneId);
       spinner.succeed();
-      console.log(formatOutput(details, globalOpts));
+      console.log(formatOutput(result, globalOpts));
     } catch (err) {
       error(`Failed to get alkane details: ${err.message}`);
       process.exit(1);
@@ -5365,10 +5630,9 @@ function registerDataapiCommands(program2) {
       const provider = await createProvider2({
         network: globalOpts.provider
       });
-      const result = await provider.dataApiGetPoolById(poolId);
-      const pool = JSON.parse(result);
+      const result = await provider.oylApi.getPoolById(poolId);
       spinner.succeed();
-      console.log(formatOutput(pool, globalOpts));
+      console.log(formatOutput(result, globalOpts));
     } catch (err) {
       error(`Failed to get pool: ${err.message}`);
       process.exit(1);
@@ -5381,10 +5645,9 @@ function registerDataapiCommands(program2) {
       const provider = await createProvider2({
         network: globalOpts.provider
       });
-      const result = await provider.dataApiGetOutpointBalances(outpoint);
-      const balances = JSON.parse(result);
+      const result = await provider.oylApi.getOutpointBalances(outpoint);
       spinner.succeed();
-      console.log(formatOutput(balances, globalOpts));
+      console.log(formatOutput(result, globalOpts));
     } catch (err) {
       error(`Failed to get outpoint balances: ${err.message}`);
       process.exit(1);
@@ -5397,10 +5660,9 @@ function registerDataapiCommands(program2) {
       const provider = await createProvider2({
         network: globalOpts.provider
       });
-      const result = await provider.dataApiGetBlockHeight();
-      const height = JSON.parse(result);
+      const result = await provider.oylApi.getBlockHeight();
       spinner.succeed();
-      console.log(formatOutput(height, globalOpts));
+      console.log(formatOutput(result, globalOpts));
     } catch (err) {
       error(`Failed to get block height: ${err.message}`);
       process.exit(1);
@@ -5413,10 +5675,9 @@ function registerDataapiCommands(program2) {
       const provider = await createProvider2({
         network: globalOpts.provider
       });
-      const result = await provider.dataApiGetBlockHash();
-      const hash = JSON.parse(result);
+      const result = await provider.oylApi.getBlockHash();
       spinner.succeed();
-      console.log(formatOutput(hash, globalOpts));
+      console.log(formatOutput(result, globalOpts));
     } catch (err) {
       error(`Failed to get block hash: ${err.message}`);
       process.exit(1);
@@ -5429,12 +5690,594 @@ function registerDataapiCommands(program2) {
       const provider = await createProvider2({
         network: globalOpts.provider
       });
-      const result = await provider.dataApiGetIndexerPosition();
-      const position = JSON.parse(result);
+      const result = await provider.oylApi.getIndexerPosition();
       spinner.succeed();
-      console.log(formatOutput(position, globalOpts));
+      console.log(formatOutput(result, globalOpts));
     } catch (err) {
       error(`Failed to get indexer position: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-alkanes-utxo <address>").description("Get alkanes UTXOs for address").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting alkanes UTXOs...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getAlkanesUtxo(address);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get alkanes UTXOs: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-amm-utxos <address>").description("Get AMM UTXOs for address").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting AMM UTXOs...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getAmmUtxos(address);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get AMM UTXOs: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("global-search <query>").description("Global search for alkanes").option("--limit <number>", "Limit results", "100").option("--offset <number>", "Offset for pagination", "0").action(async (query, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Searching alkanes...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const offset = options.offset ? parseInt(options.offset) : void 0;
+      const result = await provider.oylApi.globalAlkanesSearch(query, limit, offset);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to search: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-outpoints <address>").description("Get outpoints for address").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address outpoints...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getAddressOutpoints(address);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address outpoints: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("pathfind <token-in> <token-out> <amount-in>").description("Find swap path between tokens").option("--max-hops <number>", "Maximum swap hops", "3").action(async (tokenIn, tokenOut, amountIn, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Finding swap path...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const maxHops = options.maxHops ? parseInt(options.maxHops) : void 0;
+      const result = await provider.oylApi.pathfind(tokenIn, tokenOut, amountIn, maxHops);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to find path: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-pool-details <pool-id>").description("Get detailed pool information").action(async (poolId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting pool details...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getPoolDetails(poolId);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get pool details: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-all-pools-details <factory-id>").description("Get all pools details for factory").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (factoryId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting all pools details...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAllPoolsDetails(factoryId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get pools details: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-positions <address> <factory-id>").description("Get LP positions for address").action(async (address, factoryId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address positions...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getAddressPositions(address, factoryId);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address positions: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-token-pairs <alkane-id> <factory-id>").description("Get token pairs for specific token").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (alkaneId, factoryId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting token pairs...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getTokenPairs(alkaneId, factoryId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get token pairs: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-all-token-pairs <factory-id>").description("Get all token pairs").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (factoryId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting all token pairs...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAllTokenPairs(factoryId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get all token pairs: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-alkane-swap-pair-details <alkane-id> <factory-id>").description("Get swap pair details for alkane").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (alkaneId, factoryId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting swap pair details...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAlkaneSwapPairDetails(alkaneId, factoryId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get swap pair details: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-pool-swap-history <pool-id>").description("Get swap history for pool").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (poolId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting pool swap history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getPoolSwapHistory(poolId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get pool swap history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-token-swap-history <alkane-id>").description("Get swap history for token").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (alkaneId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting token swap history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getTokenSwapHistory(alkaneId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get token swap history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-pool-mint-history <pool-id>").description("Get mint history for pool").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (poolId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting pool mint history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getPoolMintHistory(poolId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get pool mint history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-pool-burn-history <pool-id>").description("Get burn history for pool").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (poolId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting pool burn history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getPoolBurnHistory(poolId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get pool burn history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-swap-history-for-pool <address> <pool-id>").description("Get swap history for address in pool").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (address, poolId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address swap history for pool...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAddressSwapHistoryForPool(address, poolId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address swap history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-swap-history-for-token <address> <alkane-id>").description("Get swap history for address with token").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (address, alkaneId, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address swap history for token...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAddressSwapHistoryForToken(address, alkaneId, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address swap history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-wrap-history <address>").description("Get wrap history for address").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address wrap history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAddressWrapHistory(address, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address wrap history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-unwrap-history <address>").description("Get unwrap history for address").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address unwrap history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAddressUnwrapHistory(address, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address unwrap history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-all-wrap-history").description("Get all wrap history").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting all wrap history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAllWrapHistory(page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get all wrap history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-all-unwrap-history").description("Get all unwrap history").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting all unwrap history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAllUnwrapHistory(page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get all unwrap history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-total-unwrap-amount").description("Get total unwrap amount").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting total unwrap amount...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getTotalUnwrapAmount();
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get total unwrap amount: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-pool-creation-history <address>").description("Get pool creation history for address").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address pool creation history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAddressPoolCreationHistory(address, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address pool creation history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-pool-mint-history <address>").description("Get pool mint history for address").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address pool mint history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAddressPoolMintHistory(address, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address pool mint history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-pool-burn-history <address>").description("Get pool burn history for address").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address pool burn history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAddressPoolBurnHistory(address, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address pool burn history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-all-address-amm-tx-history <address>").description("Get all AMM transaction history for address").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting all address AMM tx history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAllAddressAmmTxHistory(address, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get all address AMM tx history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-all-amm-tx-history").description("Get all AMM transaction history").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting all AMM tx history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getAllAmmTxHistory(page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get all AMM tx history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-balance <address>").description("Get BTC balance for address").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address balance...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getAddressBalance(address);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address balance: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-taproot-balance <address>").description("Get taproot address balance").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting taproot balance...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getTaprootBalance(address);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get taproot balance: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-address-utxos <address>").description("Get UTXOs for address").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting address UTXOs...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getAddressUtxos(address);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get address UTXOs: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-account-utxos <account>").description("Get UTXOs for account").action(async (account, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting account UTXOs...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getAccountUtxos(account);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get account UTXOs: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-account-balance <account>").description("Get balance for account").action(async (account, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting account balance...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getAccountBalance(account);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get account balance: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-taproot-history <address> <total-txs>").description("Get taproot address history").action(async (address, totalTxs, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting taproot history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getTaprootHistory(address, parseInt(totalTxs));
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get taproot history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-intent-history <address>").description("Get intent history for address").option("--page <number>", "Page number", "0").option("--limit <number>", "Results per page", "100").action(async (address, options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting intent history...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const page = options.page ? parseInt(options.page) : void 0;
+      const limit = options.limit ? parseInt(options.limit) : void 0;
+      const result = await provider.oylApi.getIntentHistory(address, page, limit);
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get intent history: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-bitcoin-market-weekly").description("Get Bitcoin weekly market data").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting Bitcoin weekly market data...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getBitcoinMarketWeekly();
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get Bitcoin market weekly: ${err.message}`);
+      process.exit(1);
+    }
+  });
+  dataapi.command("get-bitcoin-markets").description("Get Bitcoin markets data").action(async (options, command) => {
+    try {
+      const globalOpts = command.parent?.parent?.opts() || {};
+      const spinner = (0, import_ora10.default)("Getting Bitcoin markets...").start();
+      const provider = await createProvider2({
+        network: globalOpts.provider
+      });
+      const result = await provider.oylApi.getBitcoinMarkets();
+      spinner.succeed();
+      console.log(formatOutput(result, globalOpts));
+    } catch (err) {
+      error(`Failed to get Bitcoin markets: ${err.message}`);
       process.exit(1);
     }
   });

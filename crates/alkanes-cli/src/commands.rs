@@ -1638,6 +1638,398 @@ pub enum DataApiCommand {
         #[arg(long)]
         raw_http: bool,
     },
+    /// Get 52-week Bitcoin market data
+    GetBitcoinMarketWeekly {
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get Bitcoin markets data
+    GetBitcoinMarkets {
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get alkanes UTXOs for an address
+    GetAlkanesUtxo {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get AMM UTXOs for an address
+    GetAmmUtxos {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Search alkanes and pools globally
+    GlobalSearch {
+        query: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get outpoints for an address
+    GetAddressOutpoints {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Find optimal swap path between tokens
+    Pathfind {
+        /// Input token in format BLOCK:TX
+        token_in: String,
+        /// Output token in format BLOCK:TX
+        token_out: String,
+        /// Amount to swap
+        amount_in: String,
+        #[arg(long, default_value = "3")]
+        max_hops: i32,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get detailed pool information
+    GetPoolDetails {
+        /// Pool ID in format BLOCK:TX
+        pool_id: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all pools with details
+    GetAllPoolsDetails {
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get LP positions for an address
+    GetAddressPositions {
+        address: String,
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get token pairs for a factory
+    GetTokenPairs {
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        #[arg(long)]
+        alkane: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all token pairs for a factory
+    GetAllTokenPairs {
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get swap pair details between two tokens
+    GetSwapPairDetails {
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        /// Token A ID in format BLOCK:TX
+        token_a: String,
+        /// Token B ID in format BLOCK:TX
+        token_b: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get pool swap history
+    GetPoolSwapHistory {
+        #[arg(long)]
+        pool_id: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get token swap history
+    GetTokenSwapHistory {
+        /// Alkane ID in format BLOCK:TX
+        alkane: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get pool mint history
+    GetPoolMintHistory {
+        #[arg(long)]
+        pool_id: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get pool burn history
+    GetPoolBurnHistory {
+        #[arg(long)]
+        pool_id: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address swap history for a specific pool
+    GetAddressSwapHistoryForPool {
+        address: String,
+        /// Pool ID in format BLOCK:TX
+        pool_id: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address swap history for a specific token
+    GetAddressSwapHistoryForToken {
+        address: String,
+        /// Alkane ID in format BLOCK:TX
+        alkane: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address wrap history
+    GetAddressWrapHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address unwrap history
+    GetAddressUnwrapHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all wrap history
+    GetAllWrapHistory {
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all unwrap history
+    GetAllUnwrapHistory {
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get total unwrap amount
+    GetTotalUnwrapAmount {
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address pool creation history
+    GetAddressPoolCreationHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address pool mint history
+    GetAddressPoolMintHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address pool burn history
+    GetAddressPoolBurnHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all AMM transaction history for an address
+    GetAllAddressAmmTxHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all AMM transaction history
+    GetAllAmmTxHistory {
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get Bitcoin balance for an address
+    GetAddressBalance {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get taproot balance for an address
+    GetTaprootBalance {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get UTXOs for an address
+    GetAddressUtxos {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get UTXOs for an account
+    GetAccountUtxos {
+        account: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get balance for an account
+    GetAccountBalance {
+        account: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get taproot transaction history
+    GetTaprootHistory {
+        taproot_address: String,
+        #[arg(long, default_value = "100")]
+        total_txs: i32,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get intent history for an address
+    GetIntentHistory {
+        address: String,
+        #[arg(long)]
+        total_txs: Option<i32>,
+        #[arg(long)]
+        last_seen_tx_id: Option<String>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
 }
 
 /// OPI (Open Protocol Indexer) subcommands

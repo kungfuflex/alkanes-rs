@@ -1158,6 +1158,314 @@ export class DataApiClient {
 }
 
 /**
+ * OylApi REST client
+ *
+ * Provides direct HTTP access to oylapi endpoints.
+ * Used for methods that don't have WASM bindings.
+ */
+export class OylApiClient {
+  constructor(private baseUrl: string) {}
+
+  /** Parse alkane ID string "block:tx" into object format */
+  private parseAlkaneId(id: string): { block: string; tx: string } {
+    const parts = id.split(':');
+    if (parts.length !== 2) {
+      throw new Error(`Invalid alkane ID format: ${id}. Expected "block:tx"`);
+    }
+    return { block: parts[0], tx: parts[1] };
+  }
+
+  private async post<T = any>(endpoint: string, body: Record<string, any> = {}): Promise<T> {
+    const response = await fetch(`${this.baseUrl}/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new Error(`OylAPI error: ${response.status} ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  private async get<T = any>(endpoint: string): Promise<T> {
+    const response = await fetch(`${this.baseUrl}/${endpoint}`);
+    if (!response.ok) {
+      throw new Error(`OylAPI error: ${response.status} ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  // ============================================================================
+  // ALKANES & TOKENS
+  // ============================================================================
+
+  /** Get all alkanes with pagination */
+  async getAlkanes(page?: number, limit?: number): Promise<any> {
+    return this.post('get-alkanes', { page, limit });
+  }
+
+  /** Get alkane details by ID */
+  async getAlkaneDetails(alkaneId: string): Promise<any> {
+    return this.post('get-alkane-details', { alkaneId: this.parseAlkaneId(alkaneId) });
+  }
+
+  /** Get alkanes UTXOs for address */
+  async getAlkanesUtxo(address: string): Promise<any> {
+    return this.post('get-alkanes-utxo', { address });
+  }
+
+  /** Global search for alkanes */
+  async globalAlkanesSearch(searchQuery: string, limit?: number, offset?: number): Promise<any> {
+    return this.post('global-alkanes-search', { searchQuery, limit, offset });
+  }
+
+  // ============================================================================
+  // POOLS & AMM
+  // ============================================================================
+
+  /** Get pool by ID */
+  async getPoolById(poolId: string): Promise<any> {
+    return this.post('get-pool-by-id', { poolId: this.parseAlkaneId(poolId) });
+  }
+
+  /** Get pool details */
+  async getPoolDetails(poolId: string): Promise<any> {
+    return this.post('get-pool-details', { poolId: this.parseAlkaneId(poolId) });
+  }
+
+  /** Get all pools details with pagination */
+  async getAllPoolsDetails(factoryId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-all-pools-details', { factoryId: this.parseAlkaneId(factoryId), page, limit });
+  }
+
+  /** Get AMM UTXOs for address */
+  async getAmmUtxos(address: string): Promise<any> {
+    return this.post('get-amm-utxos', { address });
+  }
+
+  /** Find swap path between tokens */
+  async pathfind(tokenIn: string, tokenOut: string, amountIn: string, maxHops?: number): Promise<any> {
+    return this.post('pathfind', { token_in: tokenIn, token_out: tokenOut, amount_in: amountIn, max_hops: maxHops ?? 3 });
+  }
+
+  /** Get address LP positions */
+  async getAddressPositions(address: string, factoryId: string): Promise<any> {
+    return this.post('address-positions', { address, factoryId: this.parseAlkaneId(factoryId) });
+  }
+
+  // ============================================================================
+  // TOKEN PAIRS
+  // ============================================================================
+
+  /** Get token pairs for a specific token */
+  async getTokenPairs(alkaneId: string, factoryId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-token-pairs', { tokenId: this.parseAlkaneId(alkaneId), factoryId: this.parseAlkaneId(factoryId), page, limit });
+  }
+
+  /** Get all token pairs */
+  async getAllTokenPairs(factoryId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-all-token-pairs', { factoryId: this.parseAlkaneId(factoryId), page, limit });
+  }
+
+  /** Get alkane swap pair details */
+  async getAlkaneSwapPairDetails(alkaneId: string, factoryId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-alkane-swap-pair-details', { tokenId: this.parseAlkaneId(alkaneId), factoryId: this.parseAlkaneId(factoryId), page, limit });
+  }
+
+  // ============================================================================
+  // SWAP HISTORY
+  // ============================================================================
+
+  /** Get pool swap history */
+  async getPoolSwapHistory(poolId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-pool-swap-history', { poolId: this.parseAlkaneId(poolId), page, limit });
+  }
+
+  /** Get token swap history */
+  async getTokenSwapHistory(alkaneId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-token-swap-history', { tokenId: this.parseAlkaneId(alkaneId), page, limit });
+  }
+
+  /** Get address swap history for pool */
+  async getAddressSwapHistoryForPool(address: string, poolId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-address-swap-history-for-pool', { address, poolId: this.parseAlkaneId(poolId), page, limit });
+  }
+
+  /** Get address swap history for token */
+  async getAddressSwapHistoryForToken(address: string, alkaneId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-address-swap-history-for-token', { address, tokenId: this.parseAlkaneId(alkaneId), page, limit });
+  }
+
+  // ============================================================================
+  // LIQUIDITY HISTORY (MINT/BURN)
+  // ============================================================================
+
+  /** Get pool mint history */
+  async getPoolMintHistory(poolId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-pool-mint-history', { poolId: this.parseAlkaneId(poolId), page, limit });
+  }
+
+  /** Get pool burn history */
+  async getPoolBurnHistory(poolId: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-pool-burn-history', { poolId: this.parseAlkaneId(poolId), page, limit });
+  }
+
+  /** Get address pool creation history */
+  async getAddressPoolCreationHistory(address: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-address-pool-creation-history', { address, page, limit });
+  }
+
+  /** Get address pool mint history */
+  async getAddressPoolMintHistory(address: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-address-pool-mint-history', { address, page, limit });
+  }
+
+  /** Get address pool burn history */
+  async getAddressPoolBurnHistory(address: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-address-pool-burn-history', { address, page, limit });
+  }
+
+  // ============================================================================
+  // WRAP/UNWRAP HISTORY
+  // ============================================================================
+
+  /** Get address wrap history */
+  async getAddressWrapHistory(address: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-address-wrap-history', { address, page, limit });
+  }
+
+  /** Get address unwrap history */
+  async getAddressUnwrapHistory(address: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-address-unwrap-history', { address, page, limit });
+  }
+
+  /** Get all wrap history */
+  async getAllWrapHistory(page?: number, limit?: number): Promise<any> {
+    return this.post('get-all-wrap-history', { page, limit });
+  }
+
+  /** Get all unwrap history */
+  async getAllUnwrapHistory(page?: number, limit?: number): Promise<any> {
+    return this.post('get-all-unwrap-history', { page, limit });
+  }
+
+  /** Get total unwrap amount */
+  async getTotalUnwrapAmount(): Promise<any> {
+    return this.post('get-total-unwrap-amount');
+  }
+
+  // ============================================================================
+  // ALL AMM TX HISTORY
+  // ============================================================================
+
+  /** Get all address AMM transaction history */
+  async getAllAddressAmmTxHistory(address: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-all-address-amm-tx-history', { address, page, limit });
+  }
+
+  /** Get all AMM transaction history */
+  async getAllAmmTxHistory(page?: number, limit?: number): Promise<any> {
+    return this.post('get-all-amm-tx-history', { page, limit });
+  }
+
+  // ============================================================================
+  // BITCOIN BALANCE & UTXOS
+  // ============================================================================
+
+  /** Get address BTC balance */
+  async getAddressBalance(address: string): Promise<any> {
+    return this.post('get-address-balance', { address });
+  }
+
+  /** Get taproot address balance */
+  async getTaprootBalance(address: string): Promise<any> {
+    return this.post('get-taproot-balance', { address });
+  }
+
+  /** Get address UTXOs */
+  async getAddressUtxos(address: string): Promise<any> {
+    return this.post('get-address-utxos', { address });
+  }
+
+  /** Get account UTXOs */
+  async getAccountUtxos(account: string): Promise<any> {
+    return this.post('get-account-utxos', { account });
+  }
+
+  /** Get account balance */
+  async getAccountBalance(account: string): Promise<any> {
+    return this.post('get-account-balance', { account });
+  }
+
+  /** Get taproot address history */
+  async getTaprootHistory(taprootAddress: string, totalTxs: number): Promise<any> {
+    return this.post('get-taproot-history', { taprootAddress, totalTxs });
+  }
+
+  /** Get intent history */
+  async getIntentHistory(address: string, page?: number, limit?: number): Promise<any> {
+    return this.post('get-intent-history', { address, page, limit });
+  }
+
+  // ============================================================================
+  // OUTPOINTS
+  // ============================================================================
+
+  /** Get outpoint balances */
+  async getOutpointBalances(outpoint: string): Promise<any> {
+    return this.post('get-outpoint-balances', { outpoint });
+  }
+
+  /** Get address outpoints */
+  async getAddressOutpoints(address: string): Promise<any> {
+    return this.post('get-address-outpoints', { address });
+  }
+
+  // ============================================================================
+  // MARKET DATA
+  // ============================================================================
+
+  /** Get Bitcoin weekly market data */
+  async getBitcoinMarketWeekly(): Promise<any> {
+    return this.post('get-bitcoin-market-weekly');
+  }
+
+  /** Get Bitcoin markets */
+  async getBitcoinMarkets(): Promise<any> {
+    return this.post('get-bitcoin-markets');
+  }
+
+  // ============================================================================
+  // INDEXER STATE
+  // ============================================================================
+
+  /** Get current block height */
+  async getBlockHeight(): Promise<any> {
+    return this.post('blockheight');
+  }
+
+  /** Get current block hash */
+  async getBlockHash(): Promise<any> {
+    return this.post('blockhash');
+  }
+
+  /** Get indexer position (height and hash) */
+  async getIndexerPosition(): Promise<any> {
+    return this.post('indexer-position');
+  }
+
+  /** Health check */
+  async health(): Promise<boolean> {
+    try {
+      await this.get('health');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
  * Convert Map objects (from serde_wasm_bindgen) to plain objects recursively.
  * This is needed because serde_wasm_bindgen serializes JSON as JavaScript Maps.
  */
@@ -1494,6 +1802,7 @@ export class AlkanesProvider {
   private _metashrew: MetashrewClient | null = null;
   private _ord: OrdClient | null = null;
   private _brc20prog: Brc20ProgClient | null = null;
+  private _oylApi: OylApiClient | null = null;
 
   public readonly network: bitcoin.Network;
   public readonly networkType: NetworkType;
@@ -1745,6 +2054,23 @@ export class AlkanesProvider {
       this._brc20prog = new Brc20ProgClient(this._provider);
     }
     return this._brc20prog;
+  }
+
+  /**
+   * OylApi REST client
+   *
+   * Provides direct HTTP access to oylapi endpoints for:
+   * - Alkanes and token data
+   * - Pool and AMM data
+   * - Swap and liquidity history
+   * - Bitcoin balance and UTXO data
+   * - Market data
+   */
+  get oylApi(): OylApiClient {
+    if (!this._oylApi) {
+      this._oylApi = new OylApiClient(this.dataApiUrl);
+    }
+    return this._oylApi;
   }
 
   // ============================================================================

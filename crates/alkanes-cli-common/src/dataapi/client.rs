@@ -393,4 +393,402 @@ impl DataApiClient {
     pub async fn get_indexer_position(&self) -> Result<IndexerPositionResponse> {
         self.get("indexer-position").await
     }
+
+    // Additional price endpoints
+    pub async fn get_bitcoin_market_weekly(&self) -> Result<serde_json::Value> {
+        self.post::<_, serde_json::Value>("get-bitcoin-market-weekly", &json!({})).await
+    }
+
+    pub async fn get_bitcoin_markets(&self) -> Result<serde_json::Value> {
+        self.post::<_, serde_json::Value>("get-bitcoin-markets", &json!({})).await
+    }
+
+    // Alkanes UTXO endpoints
+    pub async fn get_alkanes_utxo(&self, address: &str) -> Result<serde_json::Value> {
+        let body = json!({ "address": address });
+        self.post::<_, serde_json::Value>("get-alkanes-utxo", &body).await
+    }
+
+    pub async fn get_amm_utxos(&self, address: &str) -> Result<serde_json::Value> {
+        let body = json!({ "address": address });
+        self.post::<_, serde_json::Value>("get-amm-utxos", &body).await
+    }
+
+    // Search endpoint
+    pub async fn global_alkanes_search(&self, query: &str, limit: Option<i32>, offset: Option<i32>) -> Result<serde_json::Value> {
+        let body = json!({
+            "searchQuery": query,
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("global-alkanes-search", &body).await
+    }
+
+    // Address outpoints endpoint
+    pub async fn get_address_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        let body = json!({ "address": address });
+        self.post::<_, serde_json::Value>("get-address-outpoints", &body).await
+    }
+
+    // Pathfind endpoint
+    pub async fn pathfind(&self, token_in: &str, token_out: &str, amount_in: &str, max_hops: Option<i32>) -> Result<serde_json::Value> {
+        let body = json!({
+            "token_in": token_in,
+            "token_out": token_out,
+            "amount_in": amount_in,
+            "max_hops": max_hops.unwrap_or(3)
+        });
+        self.post::<_, serde_json::Value>("pathfind", &body).await
+    }
+
+    // Pool detail endpoints
+    pub async fn get_pool_details(&self, pool_id: &AlkaneId) -> Result<serde_json::Value> {
+        let body = json!({
+            "poolId": { "block": pool_id.block.to_string(), "tx": pool_id.tx.to_string() }
+        });
+        self.post::<_, serde_json::Value>("get-pool-details", &body).await
+    }
+
+    pub async fn get_all_pools_details(
+        &self,
+        factory_id: &AlkaneId,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "factoryId": { "block": factory_id.block.to_string(), "tx": factory_id.tx.to_string() },
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-all-pools-details", &body).await
+    }
+
+    // Position endpoints
+    pub async fn get_address_positions(&self, address: &str, factory_id: &AlkaneId) -> Result<serde_json::Value> {
+        let body = json!({
+            "address": address,
+            "factoryId": { "block": factory_id.block.to_string(), "tx": factory_id.tx.to_string() }
+        });
+        self.post::<_, serde_json::Value>("address-positions", &body).await
+    }
+
+    // Token pairs endpoints
+    pub async fn get_token_pairs(
+        &self,
+        factory_id: &AlkaneId,
+        alkane_id: Option<&AlkaneId>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let mut body = json!({
+            "factoryId": { "block": factory_id.block.to_string(), "tx": factory_id.tx.to_string() },
+            "limit": limit,
+            "offset": offset
+        });
+        if let Some(id) = alkane_id {
+            body["alkaneId"] = json!({ "block": id.block.to_string(), "tx": id.tx.to_string() });
+        }
+        self.post::<_, serde_json::Value>("get-token-pairs", &body).await
+    }
+
+    pub async fn get_all_token_pairs(
+        &self,
+        factory_id: &AlkaneId,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "factoryId": { "block": factory_id.block.to_string(), "tx": factory_id.tx.to_string() },
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-all-token-pairs", &body).await
+    }
+
+    pub async fn get_alkane_swap_pair_details(
+        &self,
+        factory_id: &AlkaneId,
+        token_a_id: &AlkaneId,
+        token_b_id: &AlkaneId,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "factoryId": { "block": factory_id.block.to_string(), "tx": factory_id.tx.to_string() },
+            "tokenAId": { "block": token_a_id.block.to_string(), "tx": token_a_id.tx.to_string() },
+            "tokenBId": { "block": token_b_id.block.to_string(), "tx": token_b_id.tx.to_string() }
+        });
+        self.post::<_, serde_json::Value>("get-alkane-swap-pair-details", &body).await
+    }
+
+    // Additional history endpoints
+    pub async fn get_pool_swap_history(
+        &self,
+        pool_id: Option<&AlkaneId>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let mut body = json!({
+            "limit": limit,
+            "offset": offset
+        });
+        if let Some(id) = pool_id {
+            body["poolId"] = json!({ "block": id.block.to_string(), "tx": id.tx.to_string() });
+        }
+        self.post::<_, serde_json::Value>("get-pool-swap-history", &body).await
+    }
+
+    pub async fn get_token_swap_history(
+        &self,
+        alkane_id: &AlkaneId,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "alkaneId": { "block": alkane_id.block.to_string(), "tx": alkane_id.tx.to_string() },
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-token-swap-history", &body).await
+    }
+
+    pub async fn get_pool_mint_history(
+        &self,
+        pool_id: Option<&AlkaneId>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let mut body = json!({
+            "limit": limit,
+            "offset": offset
+        });
+        if let Some(id) = pool_id {
+            body["poolId"] = json!({ "block": id.block.to_string(), "tx": id.tx.to_string() });
+        }
+        self.post::<_, serde_json::Value>("get-pool-mint-history", &body).await
+    }
+
+    pub async fn get_pool_burn_history(
+        &self,
+        pool_id: Option<&AlkaneId>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let mut body = json!({
+            "limit": limit,
+            "offset": offset
+        });
+        if let Some(id) = pool_id {
+            body["poolId"] = json!({ "block": id.block.to_string(), "tx": id.tx.to_string() });
+        }
+        self.post::<_, serde_json::Value>("get-pool-burn-history", &body).await
+    }
+
+    // Address-specific history endpoints
+    pub async fn get_address_swap_history_for_pool(
+        &self,
+        address: &str,
+        pool_id: &AlkaneId,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "address": address,
+            "poolId": { "block": pool_id.block.to_string(), "tx": pool_id.tx.to_string() },
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-address-swap-history-for-pool", &body).await
+    }
+
+    pub async fn get_address_swap_history_for_token(
+        &self,
+        address: &str,
+        alkane_id: &AlkaneId,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "address": address,
+            "alkaneId": { "block": alkane_id.block.to_string(), "tx": alkane_id.tx.to_string() },
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-address-swap-history-for-token", &body).await
+    }
+
+    // Wrap/unwrap history endpoints
+    pub async fn get_address_wrap_history(
+        &self,
+        address: &str,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "address": address,
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-address-wrap-history", &body).await
+    }
+
+    pub async fn get_address_unwrap_history(
+        &self,
+        address: &str,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "address": address,
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-address-unwrap-history", &body).await
+    }
+
+    pub async fn get_all_wrap_history(
+        &self,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-all-wrap-history", &body).await
+    }
+
+    pub async fn get_all_unwrap_history(
+        &self,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-all-unwrap-history", &body).await
+    }
+
+    pub async fn get_total_unwrap_amount(&self) -> Result<serde_json::Value> {
+        self.post::<_, serde_json::Value>("get-total-unwrap-amount", &json!({})).await
+    }
+
+    // Address pool history endpoints
+    pub async fn get_address_pool_creation_history(
+        &self,
+        address: &str,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "address": address,
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-address-pool-creation-history", &body).await
+    }
+
+    pub async fn get_address_pool_mint_history(
+        &self,
+        address: &str,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "address": address,
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-address-pool-mint-history", &body).await
+    }
+
+    pub async fn get_address_pool_burn_history(
+        &self,
+        address: &str,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "address": address,
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-address-pool-burn-history", &body).await
+    }
+
+    // All AMM transaction history
+    pub async fn get_all_address_amm_tx_history(
+        &self,
+        address: &str,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "address": address,
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-all-address-amm-tx-history", &body).await
+    }
+
+    pub async fn get_all_amm_tx_history(
+        &self,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<serde_json::Value> {
+        let body = json!({
+            "limit": limit,
+            "offset": offset
+        });
+        self.post::<_, serde_json::Value>("get-all-amm-tx-history", &body).await
+    }
+
+    // Bitcoin/UTXO endpoints
+    pub async fn get_address_balance(&self, address: &str) -> Result<serde_json::Value> {
+        let body = json!({ "address": address });
+        self.post::<_, serde_json::Value>("get-address-balance", &body).await
+    }
+
+    pub async fn get_taproot_balance(&self, address: &str) -> Result<serde_json::Value> {
+        let body = json!({ "address": address });
+        self.post::<_, serde_json::Value>("get-taproot-balance", &body).await
+    }
+
+    pub async fn get_address_utxos(&self, address: &str) -> Result<serde_json::Value> {
+        let body = json!({ "address": address });
+        self.post::<_, serde_json::Value>("get-address-utxos", &body).await
+    }
+
+    pub async fn get_account_utxos(&self, account: &str) -> Result<serde_json::Value> {
+        let body = json!({ "account": account });
+        self.post::<_, serde_json::Value>("get-account-utxos", &body).await
+    }
+
+    pub async fn get_account_balance(&self, account: &str) -> Result<serde_json::Value> {
+        let body = json!({ "account": account });
+        self.post::<_, serde_json::Value>("get-account-balance", &body).await
+    }
+
+    pub async fn get_taproot_history(&self, taproot_address: &str, total_txs: i32) -> Result<serde_json::Value> {
+        let body = json!({
+            "taprootAddress": taproot_address,
+            "totalTxs": total_txs
+        });
+        self.post::<_, serde_json::Value>("get-taproot-history", &body).await
+    }
+
+    pub async fn get_intent_history(
+        &self,
+        address: &str,
+        total_txs: Option<i32>,
+        last_seen_tx_id: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let mut body = json!({ "address": address });
+        if let Some(txs) = total_txs {
+            body["totalTxs"] = json!(txs);
+        }
+        if let Some(tx_id) = last_seen_tx_id {
+            body["lastSeenTxId"] = json!(tx_id);
+        }
+        self.post::<_, serde_json::Value>("get-intent-history", &body).await
+    }
 }

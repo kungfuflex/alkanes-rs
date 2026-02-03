@@ -46307,6 +46307,7 @@ __export(provider_exports, {
   MetashrewClient: () => MetashrewClient,
   NETWORK_PRESETS: () => NETWORK_PRESETS,
   OrdClient: () => OrdClient,
+  OylApiClient: () => OylApiClient,
   createProvider: () => createProvider
 });
 function mapToObject(value) {
@@ -46339,7 +46340,7 @@ function getLogLevelFromEnv() {
 function createProvider(config) {
   return new AlkanesProvider(config);
 }
-var bitcoin3, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, EspoClient, Logger, logger, AlkanesProvider;
+var bitcoin3, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, OylApiClient, EspoClient, Logger, logger, AlkanesProvider;
 var init_provider = __esm({
   "src/provider/index.ts"() {
     "use strict";
@@ -46937,6 +46938,251 @@ var init_provider = __esm({
         return this.provider.dataApiGetBitcoinMarketChart(days);
       }
     };
+    OylApiClient = class {
+      constructor(baseUrl) {
+        this.baseUrl = baseUrl;
+      }
+      /** Parse alkane ID string "block:tx" into object format */
+      parseAlkaneId(id) {
+        const parts = id.split(":");
+        if (parts.length !== 2) {
+          throw new Error(`Invalid alkane ID format: ${id}. Expected "block:tx"`);
+        }
+        return { block: parts[0], tx: parts[1] };
+      }
+      async post(endpoint, body = {}) {
+        const response = await fetch(`${this.baseUrl}/${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+          throw new Error(`OylAPI error: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      }
+      async get(endpoint) {
+        const response = await fetch(`${this.baseUrl}/${endpoint}`);
+        if (!response.ok) {
+          throw new Error(`OylAPI error: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      }
+      // ============================================================================
+      // ALKANES & TOKENS
+      // ============================================================================
+      /** Get all alkanes with pagination */
+      async getAlkanes(page, limit) {
+        return this.post("get-alkanes", { page, limit });
+      }
+      /** Get alkane details by ID */
+      async getAlkaneDetails(alkaneId) {
+        return this.post("get-alkane-details", { alkaneId: this.parseAlkaneId(alkaneId) });
+      }
+      /** Get alkanes UTXOs for address */
+      async getAlkanesUtxo(address2) {
+        return this.post("get-alkanes-utxo", { address: address2 });
+      }
+      /** Global search for alkanes */
+      async globalAlkanesSearch(searchQuery, limit, offset) {
+        return this.post("global-alkanes-search", { searchQuery, limit, offset });
+      }
+      // ============================================================================
+      // POOLS & AMM
+      // ============================================================================
+      /** Get pool by ID */
+      async getPoolById(poolId) {
+        return this.post("get-pool-by-id", { poolId: this.parseAlkaneId(poolId) });
+      }
+      /** Get pool details */
+      async getPoolDetails(poolId) {
+        return this.post("get-pool-details", { poolId: this.parseAlkaneId(poolId) });
+      }
+      /** Get all pools details with pagination */
+      async getAllPoolsDetails(factoryId, page, limit) {
+        return this.post("get-all-pools-details", { factoryId: this.parseAlkaneId(factoryId), page, limit });
+      }
+      /** Get AMM UTXOs for address */
+      async getAmmUtxos(address2) {
+        return this.post("get-amm-utxos", { address: address2 });
+      }
+      /** Find swap path between tokens */
+      async pathfind(tokenIn, tokenOut, amountIn, maxHops) {
+        return this.post("pathfind", { token_in: tokenIn, token_out: tokenOut, amount_in: amountIn, max_hops: maxHops ?? 3 });
+      }
+      /** Get address LP positions */
+      async getAddressPositions(address2, factoryId) {
+        return this.post("address-positions", { address: address2, factoryId: this.parseAlkaneId(factoryId) });
+      }
+      // ============================================================================
+      // TOKEN PAIRS
+      // ============================================================================
+      /** Get token pairs for a specific token */
+      async getTokenPairs(alkaneId, factoryId, page, limit) {
+        return this.post("get-token-pairs", { tokenId: this.parseAlkaneId(alkaneId), factoryId: this.parseAlkaneId(factoryId), page, limit });
+      }
+      /** Get all token pairs */
+      async getAllTokenPairs(factoryId, page, limit) {
+        return this.post("get-all-token-pairs", { factoryId: this.parseAlkaneId(factoryId), page, limit });
+      }
+      /** Get alkane swap pair details */
+      async getAlkaneSwapPairDetails(alkaneId, factoryId, page, limit) {
+        return this.post("get-alkane-swap-pair-details", { tokenId: this.parseAlkaneId(alkaneId), factoryId: this.parseAlkaneId(factoryId), page, limit });
+      }
+      // ============================================================================
+      // SWAP HISTORY
+      // ============================================================================
+      /** Get pool swap history */
+      async getPoolSwapHistory(poolId, page, limit) {
+        return this.post("get-pool-swap-history", { poolId: this.parseAlkaneId(poolId), page, limit });
+      }
+      /** Get token swap history */
+      async getTokenSwapHistory(alkaneId, page, limit) {
+        return this.post("get-token-swap-history", { tokenId: this.parseAlkaneId(alkaneId), page, limit });
+      }
+      /** Get address swap history for pool */
+      async getAddressSwapHistoryForPool(address2, poolId, page, limit) {
+        return this.post("get-address-swap-history-for-pool", { address: address2, poolId: this.parseAlkaneId(poolId), page, limit });
+      }
+      /** Get address swap history for token */
+      async getAddressSwapHistoryForToken(address2, alkaneId, page, limit) {
+        return this.post("get-address-swap-history-for-token", { address: address2, tokenId: this.parseAlkaneId(alkaneId), page, limit });
+      }
+      // ============================================================================
+      // LIQUIDITY HISTORY (MINT/BURN)
+      // ============================================================================
+      /** Get pool mint history */
+      async getPoolMintHistory(poolId, page, limit) {
+        return this.post("get-pool-mint-history", { poolId: this.parseAlkaneId(poolId), page, limit });
+      }
+      /** Get pool burn history */
+      async getPoolBurnHistory(poolId, page, limit) {
+        return this.post("get-pool-burn-history", { poolId: this.parseAlkaneId(poolId), page, limit });
+      }
+      /** Get address pool creation history */
+      async getAddressPoolCreationHistory(address2, page, limit) {
+        return this.post("get-address-pool-creation-history", { address: address2, page, limit });
+      }
+      /** Get address pool mint history */
+      async getAddressPoolMintHistory(address2, page, limit) {
+        return this.post("get-address-pool-mint-history", { address: address2, page, limit });
+      }
+      /** Get address pool burn history */
+      async getAddressPoolBurnHistory(address2, page, limit) {
+        return this.post("get-address-pool-burn-history", { address: address2, page, limit });
+      }
+      // ============================================================================
+      // WRAP/UNWRAP HISTORY
+      // ============================================================================
+      /** Get address wrap history */
+      async getAddressWrapHistory(address2, page, limit) {
+        return this.post("get-address-wrap-history", { address: address2, page, limit });
+      }
+      /** Get address unwrap history */
+      async getAddressUnwrapHistory(address2, page, limit) {
+        return this.post("get-address-unwrap-history", { address: address2, page, limit });
+      }
+      /** Get all wrap history */
+      async getAllWrapHistory(page, limit) {
+        return this.post("get-all-wrap-history", { page, limit });
+      }
+      /** Get all unwrap history */
+      async getAllUnwrapHistory(page, limit) {
+        return this.post("get-all-unwrap-history", { page, limit });
+      }
+      /** Get total unwrap amount */
+      async getTotalUnwrapAmount() {
+        return this.post("get-total-unwrap-amount");
+      }
+      // ============================================================================
+      // ALL AMM TX HISTORY
+      // ============================================================================
+      /** Get all address AMM transaction history */
+      async getAllAddressAmmTxHistory(address2, page, limit) {
+        return this.post("get-all-address-amm-tx-history", { address: address2, page, limit });
+      }
+      /** Get all AMM transaction history */
+      async getAllAmmTxHistory(page, limit) {
+        return this.post("get-all-amm-tx-history", { page, limit });
+      }
+      // ============================================================================
+      // BITCOIN BALANCE & UTXOS
+      // ============================================================================
+      /** Get address BTC balance */
+      async getAddressBalance(address2) {
+        return this.post("get-address-balance", { address: address2 });
+      }
+      /** Get taproot address balance */
+      async getTaprootBalance(address2) {
+        return this.post("get-taproot-balance", { address: address2 });
+      }
+      /** Get address UTXOs */
+      async getAddressUtxos(address2) {
+        return this.post("get-address-utxos", { address: address2 });
+      }
+      /** Get account UTXOs */
+      async getAccountUtxos(account) {
+        return this.post("get-account-utxos", { account });
+      }
+      /** Get account balance */
+      async getAccountBalance(account) {
+        return this.post("get-account-balance", { account });
+      }
+      /** Get taproot address history */
+      async getTaprootHistory(taprootAddress, totalTxs) {
+        return this.post("get-taproot-history", { taprootAddress, totalTxs });
+      }
+      /** Get intent history */
+      async getIntentHistory(address2, page, limit) {
+        return this.post("get-intent-history", { address: address2, page, limit });
+      }
+      // ============================================================================
+      // OUTPOINTS
+      // ============================================================================
+      /** Get outpoint balances */
+      async getOutpointBalances(outpoint) {
+        return this.post("get-outpoint-balances", { outpoint });
+      }
+      /** Get address outpoints */
+      async getAddressOutpoints(address2) {
+        return this.post("get-address-outpoints", { address: address2 });
+      }
+      // ============================================================================
+      // MARKET DATA
+      // ============================================================================
+      /** Get Bitcoin weekly market data */
+      async getBitcoinMarketWeekly() {
+        return this.post("get-bitcoin-market-weekly");
+      }
+      /** Get Bitcoin markets */
+      async getBitcoinMarkets() {
+        return this.post("get-bitcoin-markets");
+      }
+      // ============================================================================
+      // INDEXER STATE
+      // ============================================================================
+      /** Get current block height */
+      async getBlockHeight() {
+        return this.post("blockheight");
+      }
+      /** Get current block hash */
+      async getBlockHash() {
+        return this.post("blockhash");
+      }
+      /** Get indexer position (height and hash) */
+      async getIndexerPosition() {
+        return this.post("indexer-position");
+      }
+      /** Health check */
+      async health() {
+        try {
+          await this.get("health");
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    };
     EspoClient = class {
       constructor(provider) {
         this.provider = provider;
@@ -47157,10 +47403,13 @@ var init_provider = __esm({
         this._metashrew = null;
         this._ord = null;
         this._brc20prog = null;
+        this._oylApi = null;
         const preset = NETWORK_PRESETS[config.network] || NETWORK_PRESETS["mainnet"];
         this.networkPreset = config.network;
         this.networkType = preset.networkType;
         this.rpcUrl = config.rpcUrl || preset.rpcUrl;
+        this.bitcoinRpcUrl = config.bitcoinRpcUrl;
+        this.metashrewRpcUrl = config.metashrewRpcUrl;
         this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
         this.logLevel = config.logLevel || getLogLevelFromEnv() || "off";
         logger.setLevel(this.logLevel);
@@ -47216,7 +47465,9 @@ var init_provider = __esm({
         }
         const providerName = this.networkPreset === "local" ? "regtest" : this.networkPreset;
         const configOverride = {
-          jsonrpc_url: this.rpcUrl
+          jsonrpc_url: this.rpcUrl,
+          ...this.bitcoinRpcUrl && { bitcoin_rpc_url: this.bitcoinRpcUrl },
+          ...this.metashrewRpcUrl && { metashrew_rpc_url: this.metashrewRpcUrl }
         };
         this._provider = new WebProviderClass(
           providerName,
@@ -47364,6 +47615,22 @@ var init_provider = __esm({
           this._brc20prog = new Brc20ProgClient(this._provider);
         }
         return this._brc20prog;
+      }
+      /**
+       * OylApi REST client
+       *
+       * Provides direct HTTP access to oylapi endpoints for:
+       * - Alkanes and token data
+       * - Pool and AMM data
+       * - Swap and liquidity history
+       * - Bitcoin balance and UTXO data
+       * - Market data
+       */
+      get oylApi() {
+        if (!this._oylApi) {
+          this._oylApi = new OylApiClient(this.dataApiUrl);
+        }
+        return this._oylApi;
       }
       // ============================================================================
       // CONVENIENCE METHODS

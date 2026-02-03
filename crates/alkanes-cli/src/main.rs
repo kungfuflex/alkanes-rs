@@ -514,6 +514,364 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 }
             }
         }
+        DataApiCommand::GetBitcoinMarketWeekly { raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-bitcoin-market-weekly", &serde_json::json!({})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_bitcoin_market_weekly(&client).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetBitcoinMarkets { raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-bitcoin-markets", &serde_json::json!({})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_bitcoin_markets(&client).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAlkanesUtxo { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-alkanes-utxo", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_alkanes_utxo(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAmmUtxos { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-amm-utxos", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_amm_utxos(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GlobalSearch { query, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("global-alkanes-search", &serde_json::json!({"searchQuery": query, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_global_search(&client, &query, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressOutpoints { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-outpoints", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_outpoints(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::Pathfind { token_in, token_out, amount_in, max_hops, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("pathfind", &serde_json::json!({"token_in": token_in, "token_out": token_out, "amount_in": amount_in, "max_hops": max_hops})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_pathfind(&client, &token_in, &token_out, &amount_in, Some(max_hops)).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetPoolDetails { pool_id, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&pool_id)?;
+                let text = client.post_raw("get-pool-details", &serde_json::json!({"poolId": {"block": id.block.to_string(), "tx": id.tx.to_string()}})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_pool_details(&client, &pool_id).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllPoolsDetails { factory, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let text = client.post_raw("get-all-pools-details", &serde_json::json!({"factoryId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_pools_details(&client, &factory, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressPositions { address, factory, raw: _, raw_http } => {
+            if raw_http {
+                let fid = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let text = client.post_raw("address-positions", &serde_json::json!({"address": address, "factoryId": {"block": fid.block.to_string(), "tx": fid.tx.to_string()}})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_positions(&client, &address, &factory).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTokenPairs { factory, alkane, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let mut body = serde_json::json!({"factoryId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset});
+                if let Some(ref a) = alkane {
+                    let aid = alkanes_cli_common::dataapi::commands::parse_alkane_id(a)?;
+                    body["alkaneId"] = serde_json::json!({"block": aid.block.to_string(), "tx": aid.tx.to_string()});
+                }
+                let text = client.post_raw("get-token-pairs", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_token_pairs(&client, &factory, alkane, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllTokenPairs { factory, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let text = client.post_raw("get-all-token-pairs", &serde_json::json!({"factoryId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_token_pairs(&client, &factory, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetSwapPairDetails { factory, token_a, token_b, raw: _, raw_http } => {
+            if raw_http {
+                let fid = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let aid = alkanes_cli_common::dataapi::commands::parse_alkane_id(&token_a)?;
+                let bid = alkanes_cli_common::dataapi::commands::parse_alkane_id(&token_b)?;
+                let text = client.post_raw("get-alkane-swap-pair-details", &serde_json::json!({"factoryId": {"block": fid.block.to_string(), "tx": fid.tx.to_string()}, "tokenAId": {"block": aid.block.to_string(), "tx": aid.tx.to_string()}, "tokenBId": {"block": bid.block.to_string(), "tx": bid.tx.to_string()}})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_alkane_swap_pair_details(&client, &factory, &token_a, &token_b).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetPoolSwapHistory { pool_id, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let mut body = serde_json::json!({"limit": limit, "offset": offset});
+                if let Some(ref pid) = pool_id {
+                    let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(pid)?;
+                    body["poolId"] = serde_json::json!({"block": id.block.to_string(), "tx": id.tx.to_string()});
+                }
+                let text = client.post_raw("get-pool-swap-history", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_pool_swap_history(&client, pool_id, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTokenSwapHistory { alkane, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&alkane)?;
+                let text = client.post_raw("get-token-swap-history", &serde_json::json!({"alkaneId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_token_swap_history(&client, &alkane, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetPoolMintHistory { pool_id, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let mut body = serde_json::json!({"limit": limit, "offset": offset});
+                if let Some(ref pid) = pool_id {
+                    let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(pid)?;
+                    body["poolId"] = serde_json::json!({"block": id.block.to_string(), "tx": id.tx.to_string()});
+                }
+                let text = client.post_raw("get-pool-mint-history", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_pool_mint_history(&client, pool_id, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetPoolBurnHistory { pool_id, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let mut body = serde_json::json!({"limit": limit, "offset": offset});
+                if let Some(ref pid) = pool_id {
+                    let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(pid)?;
+                    body["poolId"] = serde_json::json!({"block": id.block.to_string(), "tx": id.tx.to_string()});
+                }
+                let text = client.post_raw("get-pool-burn-history", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_pool_burn_history(&client, pool_id, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressSwapHistoryForPool { address, pool_id, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&pool_id)?;
+                let text = client.post_raw("get-address-swap-history-for-pool", &serde_json::json!({"address": address, "poolId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_swap_history_for_pool(&client, &address, &pool_id, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressSwapHistoryForToken { address, alkane, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&alkane)?;
+                let text = client.post_raw("get-address-swap-history-for-token", &serde_json::json!({"address": address, "alkaneId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_swap_history_for_token(&client, &address, &alkane, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressWrapHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-wrap-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_wrap_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressUnwrapHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-unwrap-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_unwrap_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllWrapHistory { limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-all-wrap-history", &serde_json::json!({"limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_wrap_history(&client, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllUnwrapHistory { limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-all-unwrap-history", &serde_json::json!({"limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_unwrap_history(&client, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTotalUnwrapAmount { raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-total-unwrap-amount", &serde_json::json!({})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_total_unwrap_amount(&client).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressPoolCreationHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-pool-creation-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_pool_creation_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressPoolMintHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-pool-mint-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_pool_mint_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressPoolBurnHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-pool-burn-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_pool_burn_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllAddressAmmTxHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-all-address-amm-tx-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_address_amm_tx_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllAmmTxHistory { limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-all-amm-tx-history", &serde_json::json!({"limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_amm_tx_history(&client, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressBalance { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-balance", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_balance(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTaprootBalance { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-taproot-balance", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_taproot_balance(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressUtxos { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-utxos", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_utxos(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAccountUtxos { account, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-account-utxos", &serde_json::json!({"account": account})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_account_utxos(&client, &account).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAccountBalance { account, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-account-balance", &serde_json::json!({"account": account})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_account_balance(&client, &account).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTaprootHistory { taproot_address, total_txs, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-taproot-history", &serde_json::json!({"taprootAddress": taproot_address, "totalTxs": total_txs})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_taproot_history(&client, &taproot_address, total_txs).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetIntentHistory { address, total_txs, last_seen_tx_id, raw: _, raw_http } => {
+            if raw_http {
+                let mut body = serde_json::json!({"address": address});
+                if let Some(txs) = total_txs { body["totalTxs"] = serde_json::json!(txs); }
+                if let Some(ref tx_id) = last_seen_tx_id { body["lastSeenTxId"] = serde_json::json!(tx_id); }
+                let text = client.post_raw("get-intent-history", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_intent_history(&client, &address, total_txs, last_seen_tx_id.as_deref()).await?;
+                println!("{}", result);
+            }
+        }
     }
     Ok(())
 }
