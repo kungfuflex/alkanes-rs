@@ -50879,24 +50879,21 @@ var AlkanesClient = class _AlkanesClient {
    * ```
    */
   async wrapBtc(params) {
-    const {
-      brc20_prog_wrap_btc
-    } = await import("../wasm/alkanes_web_sys");
+    const rawProvider = this.provider.rawProvider;
     const calldataStr = Array.isArray(params.calldata) ? params.calldata.join(",") : params.calldata;
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
     if (params.fee_rate !== void 0) execParams.fee_rate = params.fee_rate;
     if (params.mint_diesel !== void 0) execParams.mint_diesel = params.mint_diesel;
-    const resultJson = await brc20_prog_wrap_btc(
-      this.provider.networkType,
+    const result = await rawProvider.frbtcWrapAndExecute2(
       BigInt(params.amount),
       params.target_contract,
       params.function_signature,
       calldataStr,
       JSON.stringify(execParams)
     );
-    return JSON.parse(resultJson);
+    return result;
   }
   // ==========================================================================
   // frBTC Wrap/Unwrap Operations
@@ -50917,7 +50914,7 @@ var AlkanesClient = class _AlkanesClient {
    * ```
    */
   async frbtcWrap(params) {
-    const { frbtc_wrap } = await import("../wasm/alkanes_web_sys");
+    const rawProvider = this.provider.rawProvider;
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
@@ -50927,12 +50924,11 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
-    const resultJson = await frbtc_wrap(
-      this.provider.networkType,
+    const result = await rawProvider.frbtcWrap(
       BigInt(params.amount),
       JSON.stringify(execParams)
     );
-    return JSON.parse(resultJson);
+    return result;
   }
   /**
    * Unwrap frBTC to BTC
@@ -50954,7 +50950,7 @@ var AlkanesClient = class _AlkanesClient {
    * ```
    */
   async frbtcUnwrap(params) {
-    const { frbtc_unwrap } = await import("../wasm/alkanes_web_sys");
+    const rawProvider = this.provider.rawProvider;
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
@@ -50964,14 +50960,13 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
-    const resultJson = await frbtc_unwrap(
-      this.provider.networkType,
+    const result = await rawProvider.frbtcUnwrap(
       BigInt(params.amount),
       BigInt(params.vout ?? 0),
       params.recipient_address,
       JSON.stringify(execParams)
     );
-    return JSON.parse(resultJson);
+    return result;
   }
   /**
    * Wrap BTC and deploy+execute a script
@@ -50980,7 +50975,7 @@ var AlkanesClient = class _AlkanesClient {
    * @returns Transaction result
    */
   async frbtcWrapAndExecute(params) {
-    const { frbtc_wrap_and_execute } = await import("../wasm/alkanes_web_sys");
+    const rawProvider = this.provider.rawProvider;
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
@@ -50990,13 +50985,12 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
-    const resultJson = await frbtc_wrap_and_execute(
-      this.provider.networkType,
+    const result = await rawProvider.frbtcWrapAndExecute(
       BigInt(params.amount),
       params.script_bytecode,
       JSON.stringify(execParams)
     );
-    return JSON.parse(resultJson);
+    return result;
   }
   /**
    * Wrap BTC and call a contract function
@@ -51007,7 +51001,7 @@ var AlkanesClient = class _AlkanesClient {
    * @returns Transaction result
    */
   async frbtcWrapAndExecute2(params) {
-    const { frbtc_wrap_and_execute2 } = await import("../wasm/alkanes_web_sys");
+    const rawProvider = this.provider.rawProvider;
     const calldataStr = Array.isArray(params.calldata) ? params.calldata.join(",") : params.calldata;
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
@@ -51018,15 +51012,14 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
-    const resultJson = await frbtc_wrap_and_execute2(
-      this.provider.networkType,
+    const result = await rawProvider.frbtcWrapAndExecute2(
       BigInt(params.amount),
       params.target_address,
       params.function_signature,
       calldataStr,
       JSON.stringify(execParams)
     );
-    return JSON.parse(resultJson);
+    return result;
   }
   /**
    * Get the frBTC signer address for the current network
@@ -51034,9 +51027,8 @@ var AlkanesClient = class _AlkanesClient {
    * @returns The p2tr address where BTC should be sent for wrapping
    */
   async getFrbtcSignerAddress() {
-    const { frbtc_get_signer_address } = await import("../wasm/alkanes_web_sys");
-    const resultJson = await frbtc_get_signer_address(this.provider.networkType);
-    const result = JSON.parse(resultJson);
+    const rawProvider = this.provider.rawProvider;
+    const result = await rawProvider.frbtcGetSignerAddress();
     return result.signer_address;
   }
   // ==========================================================================

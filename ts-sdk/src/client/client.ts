@@ -653,9 +653,7 @@ export class AlkanesClient {
   async wrapBtc(
     params: import('../types').Brc20ProgWrapBtcParams
   ): Promise<import('../types').Brc20ProgExecuteResult> {
-    const {
-      brc20_prog_wrap_btc
-    } = await import('../wasm/alkanes_web_sys');
+    const rawProvider = this.provider.rawProvider;
 
     // Convert calldata array to comma-separated string if needed
     const calldataStr = Array.isArray(params.calldata)
@@ -669,9 +667,8 @@ export class AlkanesClient {
     if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
     if (params.mint_diesel !== undefined) execParams.mint_diesel = params.mint_diesel;
 
-    // Call WASM function
-    const resultJson = await brc20_prog_wrap_btc(
-      this.provider.networkType,
+    // Call provider method (uses configured RPC URLs)
+    const result = await rawProvider.frbtcWrapAndExecute2(
       BigInt(params.amount),
       params.target_contract,
       params.function_signature,
@@ -679,7 +676,7 @@ export class AlkanesClient {
       JSON.stringify(execParams)
     );
 
-    return JSON.parse(resultJson);
+    return result;
   }
 
   // ==========================================================================
@@ -704,7 +701,7 @@ export class AlkanesClient {
   async frbtcWrap(
     params: import('../types').FrbtcWrapParams
   ): Promise<import('../types').AlkanesExecuteResult> {
-    const { frbtc_wrap } = await import('../wasm/alkanes_web_sys');
+    const rawProvider = this.provider.rawProvider;
 
     // Build execution params
     const execParams: any = {};
@@ -717,13 +714,13 @@ export class AlkanesClient {
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
 
-    const resultJson = await frbtc_wrap(
-      this.provider.networkType,
+    // Call provider method (uses configured RPC URLs)
+    const result = await rawProvider.frbtcWrap(
       BigInt(params.amount),
       JSON.stringify(execParams)
     );
 
-    return JSON.parse(resultJson);
+    return result;
   }
 
   /**
@@ -748,7 +745,7 @@ export class AlkanesClient {
   async frbtcUnwrap(
     params: import('../types').FrbtcUnwrapParams
   ): Promise<import('../types').AlkanesExecuteResult> {
-    const { frbtc_unwrap } = await import('../wasm/alkanes_web_sys');
+    const rawProvider = this.provider.rawProvider;
 
     // Build execution params
     const execParams: any = {};
@@ -761,15 +758,15 @@ export class AlkanesClient {
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
 
-    const resultJson = await frbtc_unwrap(
-      this.provider.networkType,
+    // Call provider method (uses configured RPC URLs)
+    const result = await rawProvider.frbtcUnwrap(
       BigInt(params.amount),
       BigInt(params.vout ?? 0),
       params.recipient_address,
       JSON.stringify(execParams)
     );
 
-    return JSON.parse(resultJson);
+    return result;
   }
 
   /**
@@ -781,7 +778,7 @@ export class AlkanesClient {
   async frbtcWrapAndExecute(
     params: import('../types').FrbtcWrapAndExecuteParams
   ): Promise<import('../types').AlkanesExecuteResult> {
-    const { frbtc_wrap_and_execute } = await import('../wasm/alkanes_web_sys');
+    const rawProvider = this.provider.rawProvider;
 
     const execParams: any = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
@@ -793,14 +790,14 @@ export class AlkanesClient {
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
 
-    const resultJson = await frbtc_wrap_and_execute(
-      this.provider.networkType,
+    // Call provider method (uses configured RPC URLs)
+    const result = await rawProvider.frbtcWrapAndExecute(
       BigInt(params.amount),
       params.script_bytecode,
       JSON.stringify(execParams)
     );
 
-    return JSON.parse(resultJson);
+    return result;
   }
 
   /**
@@ -814,7 +811,7 @@ export class AlkanesClient {
   async frbtcWrapAndExecute2(
     params: import('../types').FrbtcWrapAndExecute2Params
   ): Promise<import('../types').AlkanesExecuteResult> {
-    const { frbtc_wrap_and_execute2 } = await import('../wasm/alkanes_web_sys');
+    const rawProvider = this.provider.rawProvider;
 
     const calldataStr = Array.isArray(params.calldata)
       ? params.calldata.join(',')
@@ -830,8 +827,8 @@ export class AlkanesClient {
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
 
-    const resultJson = await frbtc_wrap_and_execute2(
-      this.provider.networkType,
+    // Call provider method (uses configured RPC URLs)
+    const result = await rawProvider.frbtcWrapAndExecute2(
       BigInt(params.amount),
       params.target_address,
       params.function_signature,
@@ -839,7 +836,7 @@ export class AlkanesClient {
       JSON.stringify(execParams)
     );
 
-    return JSON.parse(resultJson);
+    return result;
   }
 
   /**
@@ -848,9 +845,8 @@ export class AlkanesClient {
    * @returns The p2tr address where BTC should be sent for wrapping
    */
   async getFrbtcSignerAddress(): Promise<string> {
-    const { frbtc_get_signer_address } = await import('../wasm/alkanes_web_sys');
-    const resultJson = await frbtc_get_signer_address(this.provider.networkType);
-    const result = JSON.parse(resultJson);
+    const rawProvider = this.provider.rawProvider;
+    const result = await rawProvider.frbtcGetSignerAddress();
     return result.signer_address;
   }
 
