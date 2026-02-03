@@ -115,4 +115,29 @@ export interface Brc20ProgExecuteResult {
   outputs_created: string[];
   /** Trace results if tracing was enabled */
   traces?: any[];
+
+  // === EXTERNAL SIGNER SUPPORT ===
+  // When return_unsigned=true, these fields contain PSBTs/transactions for external signing.
+  // NOTE: The reveal transaction is signed INTERNALLY with the ephemeral key (the SDK
+  // generates this key and only it knows the secret). External signers (browser wallets)
+  // only need to sign: split (if any), commit, and activation (if any).
+
+  /** Unsigned split PSBT (base64, if split was needed) - sign with user wallet */
+  unsigned_split_psbt?: string;
+  /** Unsigned commit PSBT (base64) - sign with user wallet */
+  unsigned_commit_psbt?: string;
+  /**
+   * DEPRECATED: Reveal is now signed internally with ephemeral key
+   * This field is kept for backwards compatibility but will always be undefined
+   */
+  unsigned_reveal_psbt?: string;
+  /**
+   * Signed reveal transaction hex - ready to broadcast after commit confirms
+   * The reveal is signed internally with the ephemeral key (user wallet cannot sign it)
+   */
+  signed_reveal_tx_hex?: string;
+  /** Unsigned activation PSBT (base64, if activation is used) - sign with user wallet */
+  unsigned_activation_psbt?: string;
+  /** Whether this result contains unsigned PSBTs (for external signing) */
+  requires_signing?: boolean;
 }

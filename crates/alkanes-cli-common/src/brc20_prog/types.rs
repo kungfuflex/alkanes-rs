@@ -136,6 +136,11 @@ pub struct Brc20ProgExecuteParams {
     /// Mint DIESEL tokens in commit and reveal transactions
     #[serde(default)]
     pub mint_diesel: bool,
+    /// Return unsigned PSBTs instead of signing and broadcasting
+    /// When true, the execute method will return unsigned PSBTs that can be signed
+    /// by an external signer (e.g., browser wallet)
+    #[serde(default)]
+    pub return_unsigned: bool,
 }
 
 /// Result of a BRC20-prog execution
@@ -167,6 +172,33 @@ pub struct Brc20ProgExecuteResult {
     pub outputs_created: Vec<String>,
     /// Trace results (if tracing was enabled)
     pub traces: Option<Vec<serde_json::Value>>,
+
+    // === EXTERNAL SIGNER SUPPORT ===
+    // When return_unsigned=true, these fields contain PSBTs/transactions for external signing.
+    // NOTE: The reveal transaction is signed INTERNALLY with the ephemeral key (the SDK
+    // generates this key and only it knows the secret). External signers (browser wallets)
+    // only need to sign: split (if any), commit, and activation (if any).
+
+    /// Unsigned split PSBT (base64, if split was needed) - sign with user wallet
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsigned_split_psbt: Option<String>,
+    /// Unsigned commit PSBT (base64) - sign with user wallet
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsigned_commit_psbt: Option<String>,
+    /// Unsigned reveal PSBT (base64) - DEPRECATED: reveal is now signed internally
+    /// This field is kept for backwards compatibility but will always be None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsigned_reveal_psbt: Option<String>,
+    /// Signed reveal transaction hex - ready to broadcast after commit confirms
+    /// The reveal is signed internally with the ephemeral key (user wallet cannot sign it)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signed_reveal_tx_hex: Option<String>,
+    /// Unsigned activation PSBT (base64, if activation is used) - sign with user wallet
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsigned_activation_psbt: Option<String>,
+    /// Whether this result contains unsigned PSBTs (for external signing)
+    #[serde(default)]
+    pub requires_signing: bool,
 }
 
 /// Type of BRC20-prog inscription

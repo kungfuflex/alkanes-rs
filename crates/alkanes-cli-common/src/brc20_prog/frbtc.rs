@@ -74,6 +74,9 @@ pub struct FrBtcWrapParams {
     /// Mint DIESEL tokens in commit and reveal transactions
     #[serde(default)]
     pub mint_diesel: bool,
+    /// Return unsigned PSBTs for external signer (e.g., browser wallet)
+    #[serde(default)]
+    pub return_unsigned: bool,
 }
 
 /// Parameters for unwrap (burn frBTC to get BTC)
@@ -110,6 +113,9 @@ pub struct FrBtcUnwrapParams {
     /// Mint DIESEL tokens in commit and reveal transactions
     #[serde(default)]
     pub mint_diesel: bool,
+    /// Return unsigned PSBTs for external signer (e.g., browser wallet)
+    #[serde(default)]
+    pub return_unsigned: bool,
 }
 
 /// Parameters for wrapAndExecute (wrap BTC and deploy+execute a script)
@@ -144,6 +150,9 @@ pub struct FrBtcWrapAndExecuteParams {
     /// Mint DIESEL tokens in commit and reveal transactions
     #[serde(default)]
     pub mint_diesel: bool,
+    /// Return unsigned PSBTs for external signer (e.g., browser wallet)
+    #[serde(default)]
+    pub return_unsigned: bool,
 }
 
 /// Parameters for wrapAndExecute2 (wrap BTC and call existing contract)
@@ -182,6 +191,9 @@ pub struct FrBtcWrapAndExecute2Params {
     /// Mint DIESEL tokens in commit and reveal transactions
     #[serde(default)]
     pub mint_diesel: bool,
+    /// Return unsigned PSBTs for external signer (e.g., browser wallet)
+    #[serde(default)]
+    pub return_unsigned: bool,
 }
 
 // ============================================================================
@@ -278,10 +290,16 @@ impl<'a> FrBtcExecutor<'a> {
             additional_outputs: Some(additional_outputs),
             mempool_indexer: false,
             mint_diesel: params.mint_diesel,
+            return_unsigned: params.return_unsigned,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
         let result = executor.execute(execute_params).await?;
+
+        if params.return_unsigned {
+            log::info!("📤 Returning unsigned PSBTs for external signer");
+            return Ok(result);
+        }
 
         log::info!("✅ FrBTC wrap completed");
         log::info!("   Commit TXID: {}", result.commit_txid);
@@ -368,10 +386,16 @@ impl<'a> FrBtcExecutor<'a> {
             additional_outputs: Some(additional_outputs),
             mempool_indexer: false,
             mint_diesel: params.mint_diesel,
+            return_unsigned: params.return_unsigned,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
         let result = executor.execute(execute_params).await?;
+
+        if params.return_unsigned {
+            log::info!("📤 Returning unsigned PSBTs for external signer");
+            return Ok(result);
+        }
 
         log::info!("✅ FrBTC unwrap queued");
         log::info!("   Commit TXID: {}", result.commit_txid);
@@ -446,10 +470,16 @@ impl<'a> FrBtcExecutor<'a> {
             additional_outputs: Some(additional_outputs),
             mempool_indexer: false,
             mint_diesel: params.mint_diesel,
+            return_unsigned: params.return_unsigned,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
         let result = executor.execute(execute_params).await?;
+
+        if params.return_unsigned {
+            log::info!("📤 Returning unsigned PSBTs for external signer");
+            return Ok(result);
+        }
 
         log::info!("✅ FrBTC wrapAndExecute completed");
         log::info!("   Commit TXID: {}", result.commit_txid);
@@ -525,6 +555,7 @@ impl<'a> FrBtcExecutor<'a> {
             additional_outputs: Some(additional_outputs),
             mempool_indexer: false,
             mint_diesel: params.mint_diesel,
+            return_unsigned: params.return_unsigned,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);

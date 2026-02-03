@@ -3683,6 +3683,7 @@ impl WebProvider {
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 mint_diesel: params.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
+                return_unsigned: params.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);
@@ -3723,6 +3724,7 @@ impl WebProvider {
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 mint_diesel: params.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
+                return_unsigned: params.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);
@@ -3762,6 +3764,7 @@ impl WebProvider {
                 use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                return_unsigned: params.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);
@@ -3803,6 +3806,7 @@ impl WebProvider {
                 use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                return_unsigned: params.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);

@@ -31,7 +31,7 @@ import { AlkanesProvider, AlkanesProviderConfig, NETWORK_PRESETS } from '../prov
 import { AlkanesSigner, SignPsbtOptions, SignMessageOptions, SignedPsbt, SignerAccount } from './signer';
 import { KeystoreSigner, KeystoreSignerConfig } from './keystore-signer';
 import { BrowserWalletSigner, BrowserWalletSignerConfig, getWalletOptions } from './browser-wallet-signer';
-import { NetworkType, AlkaneId, AlkaneBalance, UTXO, Keystore } from '../types';
+import { NetworkType, AlkaneId, AlkaneBalance, UTXO, Keystore, Brc20ProgExecuteResult } from '../types';
 import { AddressType } from '../wallet';
 import * as bitcoin from 'bitcoinjs-lib';
 
@@ -229,6 +229,76 @@ export class AlkanesClient {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Check if the signer requires external PSBT signing (e.g., browser wallets)
+   *
+   * Browser wallets don't provide mnemonics, so the WASM provider can't sign internally.
+   * This method detects when we need to use the return_unsigned flow.
+   */
+  requiresExternalSigning(): boolean {
+    return this.signer.getSignerType() === 'browser';
+  }
+
+  /**
+   * Sign and broadcast PSBTs from a BRC20-prog execution result
+   *
+   * When return_unsigned=true, the WASM returns unsigned PSBTs that need to be
+   * signed by an external signer (browser wallet). This method handles that flow.
+   *
+   * @param result - Execution result containing unsigned PSBTs
+   * @returns Updated result with transaction IDs
+   */
+  private async signAndBroadcastPsbts(result: Brc20ProgExecuteResult): Promise<Brc20ProgExecuteResult> {
+    if (!result.requires_signing) {
+      return result;
+    }
+
+    const signedResult = { ...result };
+
+    // Sign and broadcast split transaction if present (user wallet signs)
+    if (result.unsigned_split_psbt) {
+      const signed = await this.signer.signPsbt(result.unsigned_split_psbt, {
+        finalize: true,
+        extractTx: true,
+      });
+      if (signed.txHex) {
+        signedResult.split_txid = await this.provider.broadcastTransaction(signed.txHex);
+      }
+    }
+
+    // Sign and broadcast commit transaction (user wallet signs)
+    if (result.unsigned_commit_psbt) {
+      const signed = await this.signer.signPsbt(result.unsigned_commit_psbt, {
+        finalize: true,
+        extractTx: true,
+      });
+      if (signed.txHex) {
+        signedResult.commit_txid = await this.provider.broadcastTransaction(signed.txHex);
+      }
+    }
+
+    // Broadcast reveal transaction (already signed internally with ephemeral key)
+    // The reveal uses Taproot script-path spending with an ephemeral key that only
+    // the SDK knows. The user's wallet cannot sign it - we broadcast the pre-signed tx.
+    if (result.signed_reveal_tx_hex) {
+      signedResult.reveal_txid = await this.provider.broadcastTransaction(result.signed_reveal_tx_hex);
+    }
+
+    // Sign and broadcast activation transaction if present (user wallet signs)
+    if (result.unsigned_activation_psbt) {
+      const signed = await this.signer.signPsbt(result.unsigned_activation_psbt, {
+        finalize: true,
+        extractTx: true,
+      });
+      if (signed.txHex) {
+        signedResult.activation_txid = await this.provider.broadcastTransaction(signed.txHex);
+      }
+    }
+
+    signedResult.requires_signing = false;
+    return signedResult;
   }
 
   // ============================================================================
@@ -667,6 +737,11 @@ export class AlkanesClient {
     if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
     if (params.mint_diesel !== undefined) execParams.mint_diesel = params.mint_diesel;
 
+    // When using browser wallet, request unsigned PSBTs for external signing
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
+
     // Call provider method (uses configured RPC URLs)
     const result = await rawProvider.frbtcWrapAndExecute2(
       BigInt(params.amount),
@@ -675,6 +750,11 @@ export class AlkanesClient {
       calldataStr,
       JSON.stringify(execParams)
     );
+
+    // If we got unsigned PSBTs back, sign and broadcast them
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
 
     return result;
   }
@@ -714,11 +794,21 @@ export class AlkanesClient {
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
 
+    // When using browser wallet, request unsigned PSBTs for external signing
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
+
     // Call provider method (uses configured RPC URLs)
     const result = await rawProvider.frbtcWrap(
       BigInt(params.amount),
       JSON.stringify(execParams)
     );
+
+    // If we got unsigned PSBTs back, sign and broadcast them
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
 
     return result;
   }
@@ -758,6 +848,11 @@ export class AlkanesClient {
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
 
+    // When using browser wallet, request unsigned PSBTs for external signing
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
+
     // Call provider method (uses configured RPC URLs)
     const result = await rawProvider.frbtcUnwrap(
       BigInt(params.amount),
@@ -765,6 +860,11 @@ export class AlkanesClient {
       params.recipient_address,
       JSON.stringify(execParams)
     );
+
+    // If we got unsigned PSBTs back, sign and broadcast them
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
 
     return result;
   }
@@ -790,12 +890,22 @@ export class AlkanesClient {
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
 
+    // When using browser wallet, request unsigned PSBTs for external signing
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
+
     // Call provider method (uses configured RPC URLs)
     const result = await rawProvider.frbtcWrapAndExecute(
       BigInt(params.amount),
       params.script_bytecode,
       JSON.stringify(execParams)
     );
+
+    // If we got unsigned PSBTs back, sign and broadcast them
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
 
     return result;
   }
@@ -827,6 +937,11 @@ export class AlkanesClient {
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
 
+    // When using browser wallet, request unsigned PSBTs for external signing
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
+
     // Call provider method (uses configured RPC URLs)
     const result = await rawProvider.frbtcWrapAndExecute2(
       BigInt(params.amount),
@@ -835,6 +950,11 @@ export class AlkanesClient {
       calldataStr,
       JSON.stringify(execParams)
     );
+
+    // If we got unsigned PSBTs back, sign and broadcast them
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
 
     return result;
   }

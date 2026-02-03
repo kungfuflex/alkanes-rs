@@ -158,6 +158,68 @@ impl<'a> Brc20ProgExecutor<'a> {
             (None, None)
         };
 
+        // === EXTERNAL SIGNER SUPPORT ===
+        // If return_unsigned is true, return PSBTs for external signing
+        // NOTE: The reveal transaction is signed INTERNALLY with the ephemeral key
+        // because only we know the ephemeral secret. User wallet signs split, commit, and activation.
+        if params.return_unsigned {
+            log::info!("📤 Returning PSBTs for external signer (reveal signed internally)...");
+
+            // Serialize PSBTs to base64 for user wallet to sign
+            let unsigned_split_psbt = split_psbt_opt.as_ref().map(|psbt| {
+                use bitcoin::psbt::Psbt;
+                let serialized = psbt.serialize();
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.encode(&serialized)
+            });
+
+            let unsigned_commit_psbt = {
+                let serialized = commit_psbt.serialize();
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.encode(&serialized)
+            };
+
+            // Sign the reveal transaction INTERNALLY with the ephemeral key
+            // The user's wallet cannot sign this - only we have the ephemeral secret
+            let signed_reveal = self.sign_and_finalize_reveal_psbt_simple(
+                reveal_psbt,
+                &envelope,
+                commit_internal_key,
+                Some(ephemeral_secret)
+            ).await?;
+            let signed_reveal_tx_hex = bitcoin::consensus::encode::serialize_hex(&signed_reveal);
+            log::info!("   ✅ Reveal transaction signed internally with ephemeral key");
+
+            let unsigned_activation_psbt = activation_psbt_opt.as_ref().map(|psbt| {
+                let serialized = psbt.serialize();
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.encode(&serialized)
+            });
+
+            // Return result with unsigned PSBTs + signed reveal
+            // txids are pre-calculated from unsigned tx (SegWit txids don't include witness)
+            return Ok(Brc20ProgExecuteResult {
+                split_txid: split_psbt_opt.as_ref().map(|p| p.unsigned_tx.txid().to_string()),
+                split_fee: split_fee_opt,
+                commit_txid: commit_txid.to_string(),
+                reveal_txid: reveal_txid.to_string(),
+                activation_txid: activation_psbt_opt.as_ref().map(|p| p.unsigned_tx.txid().to_string()),
+                commit_fee,
+                reveal_fee,
+                activation_fee: activation_fee_opt,
+                inputs_used: vec![],
+                outputs_created: vec![],
+                traces: None,
+                unsigned_split_psbt,
+                unsigned_commit_psbt: Some(unsigned_commit_psbt),
+                // Reveal is already signed - return the signed tx hex, not unsigned PSBT
+                unsigned_reveal_psbt: None,
+                signed_reveal_tx_hex: Some(signed_reveal_tx_hex),
+                unsigned_activation_psbt,
+                requires_signing: true,
+            });
+        }
+
         // Step 4: Sign all transactions
         log::info!("✍️  Step 4/7: Signing all transactions...");
 
@@ -266,6 +328,13 @@ impl<'a> Brc20ProgExecutor<'a> {
             inputs_used: vec![],
             outputs_created: vec![],
             traces: None,
+            // No unsigned PSBTs - transactions were signed and broadcast
+            unsigned_split_psbt: None,
+            unsigned_commit_psbt: None,
+            unsigned_reveal_psbt: None,
+            signed_reveal_tx_hex: None,
+            unsigned_activation_psbt: None,
+            requires_signing: false,
         })
     }
 
@@ -406,6 +475,13 @@ impl<'a> Brc20ProgExecutor<'a> {
             inputs_used: vec![],
             outputs_created: vec![],
             traces: None,
+            // No unsigned PSBTs - transactions were signed and broadcast
+            unsigned_split_psbt: None,
+            unsigned_commit_psbt: None,
+            unsigned_reveal_psbt: None,
+            signed_reveal_tx_hex: None,
+            unsigned_activation_psbt: None,
+            requires_signing: false,
         })
     }
 

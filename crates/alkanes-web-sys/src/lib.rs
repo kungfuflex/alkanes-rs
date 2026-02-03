@@ -584,6 +584,7 @@ pub fn frbtc_wrap(
             rebar_tier: base_params.rebar_tier,
             resume_from_commit: base_params.resume_from_commit,
             mint_diesel: base_params.mint_diesel.unwrap_or(false),
+            return_unsigned: false,
         };
 
         let mut provider = WebProvider::new(network_str).await
@@ -658,6 +659,7 @@ pub fn frbtc_unwrap(
             rebar_tier: base_params.rebar_tier,
             resume_from_commit: base_params.resume_from_commit,
             mint_diesel: base_params.mint_diesel.unwrap_or(false),
+            return_unsigned: false,
         };
 
         let mut provider = WebProvider::new(network_str).await
@@ -729,6 +731,7 @@ pub fn frbtc_wrap_and_execute(
             rebar_tier: base_params.rebar_tier,
             resume_from_commit: base_params.resume_from_commit,
             mint_diesel: base_params.mint_diesel.unwrap_or(false),
+            return_unsigned: false,
         };
 
         let mut provider = WebProvider::new(network_str).await
@@ -808,6 +811,7 @@ pub fn frbtc_wrap_and_execute2(
             rebar_tier: base_params.rebar_tier,
             resume_from_commit: base_params.resume_from_commit,
             mint_diesel: base_params.mint_diesel.unwrap_or(false),
+            return_unsigned: false,
         };
 
         let mut provider = WebProvider::new(network_str).await
