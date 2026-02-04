@@ -1092,6 +1092,20 @@ export class DataApiClient {
     return this.provider.dataApiGetPools(factoryId);
   }
 
+  async getAllPoolsDetails(factoryId: string, options?: { limit?: number; offset?: number; sortBy?: string; order?: string }): Promise<any> {
+    return this.provider.dataApiGetAllPoolsDetails(
+      factoryId,
+      options?.limit ? BigInt(options.limit) : undefined,
+      options?.offset ? BigInt(options.offset) : undefined,
+      options?.sortBy,
+      options?.order
+    );
+  }
+
+  async getPoolDetails(factoryId: string, poolId: string): Promise<any> {
+    return this.provider.dataApiGetPoolDetails(factoryId, poolId);
+  }
+
   async getPoolHistory(poolId: string, category?: string, limit?: number, offset?: number): Promise<DataApiPoolHistoryEvent[]> {
     return this.provider.dataApiGetPoolHistory(poolId, category, limit ? BigInt(limit) : undefined, offset ? BigInt(offset) : undefined);
   }

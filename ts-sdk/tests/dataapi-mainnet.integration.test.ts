@@ -112,6 +112,105 @@ describe.skipIf(!INTEGRATION)('DataApi Integration Tests (Mainnet)', () => {
   });
 });
 
+describe.skipIf(!INTEGRATION)('DataApi Pool History Endpoints', () => {
+  let provider: AlkanesProvider;
+  let samplePoolId: string;
+
+  beforeAll(async () => {
+    provider = new AlkanesProvider({
+      network: 'mainnet',
+      rpcUrl: 'https://mainnet.subfrost.io/v4/subfrost',
+      dataApiUrl: 'https://mainnet.subfrost.io/v4/subfrost',
+    });
+    await provider.initialize();
+
+    // Get a sample pool ID for testing
+    const poolsResult = await provider.dataApi.getPools(MAINNET_FACTORY_ID);
+    const pools = poolsResult.pools || poolsResult.data || [];
+    if (pools.length > 0) {
+      const pool = pools[0];
+      samplePoolId = pool.id || `${pool.block}:${pool.tx}`;
+    }
+  });
+
+  it('should return swap history for a pool', async () => {
+    if (!samplePoolId) {
+      console.log('No sample pool available, skipping');
+      return;
+    }
+
+    console.log(`\n=== Testing getSwapHistory for pool ${samplePoolId} ===`);
+    const result = await provider.dataApi.getSwapHistory(samplePoolId, 10, 0);
+
+    console.log('getSwapHistory result:', JSON.stringify(result, null, 2).slice(0, 1000));
+    expect(result).toBeDefined();
+  });
+
+  it('should return mint history for a pool', async () => {
+    if (!samplePoolId) {
+      console.log('No sample pool available, skipping');
+      return;
+    }
+
+    console.log(`\n=== Testing getMintHistory for pool ${samplePoolId} ===`);
+    const result = await provider.dataApi.getMintHistory(samplePoolId, 10, 0);
+
+    console.log('getMintHistory result:', JSON.stringify(result, null, 2).slice(0, 1000));
+    expect(result).toBeDefined();
+  });
+
+  it('should return burn history for a pool', async () => {
+    if (!samplePoolId) {
+      console.log('No sample pool available, skipping');
+      return;
+    }
+
+    console.log(`\n=== Testing getBurnHistory for pool ${samplePoolId} ===`);
+    const result = await provider.dataApi.getBurnHistory(samplePoolId, 10, 0);
+
+    console.log('getBurnHistory result:', JSON.stringify(result, null, 2).slice(0, 1000));
+    expect(result).toBeDefined();
+  });
+});
+
+describe.skipIf(!INTEGRATION)('DataApi getAllPoolsDetails', () => {
+  let provider: AlkanesProvider;
+
+  beforeAll(async () => {
+    provider = new AlkanesProvider({
+      network: 'mainnet',
+      rpcUrl: 'https://mainnet.subfrost.io/v4/subfrost',
+      dataApiUrl: 'https://mainnet.subfrost.io/v4/subfrost',
+    });
+    await provider.initialize();
+  });
+
+  it('should return all pools with details', async () => {
+    console.log('\n=== Testing getAllPoolsDetails ===');
+    const result = await provider.dataApi.getAllPoolsDetails(MAINNET_FACTORY_ID);
+
+    console.log('getAllPoolsDetails response keys:', Object.keys(result || {}));
+
+    // Extract pools from various possible response structures
+    const pools = result?.data?.pools || result?.pools || result?.data || [];
+    console.log('Number of pools with details:', Array.isArray(pools) ? pools.length : 'N/A');
+
+    if (Array.isArray(pools) && pools.length > 0) {
+      console.log('First pool structure:', JSON.stringify(pools[0], null, 2).slice(0, 1000));
+    }
+
+    expect(result).toBeDefined();
+  });
+
+  it('should support pagination', async () => {
+    console.log('\n=== Testing getAllPoolsDetails with pagination ===');
+    const result = await provider.dataApi.getAllPoolsDetails(MAINNET_FACTORY_ID, { limit: 5, offset: 0 });
+
+    console.log('Paginated result:', JSON.stringify(result, null, 2).slice(0, 500));
+    expect(result).toBeDefined();
+  });
+});
+
 describe.skipIf(!INTEGRATION)('DataApi Response Structure Verification', () => {
   let provider: AlkanesProvider;
 

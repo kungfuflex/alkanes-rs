@@ -43,8 +43,10 @@ declare module '@alkanes/ts-sdk/wasm' {
     alkanesGetAllPoolsWithDetails(factoryId: string, chunkSize?: number, maxConcurrent?: number): Promise<any[]>;
     alkanesPendingUnwraps(blockTag?: string): Promise<any>;
 
-    // Data API methods
+    // Data API methods (oylapi REST endpoints)
     dataApiGetPools(factoryId: string): Promise<any>;
+    dataApiGetAllPoolsDetails(factoryId: string, limit?: bigint, offset?: bigint, sortBy?: string, order?: string): Promise<any>;
+    dataApiGetPoolDetails(factoryId: string, poolId: string): Promise<any>;
     dataApiGetPoolHistory(poolId: string, category?: string, limit?: bigint, offset?: bigint): Promise<any>;
     dataApiGetAllHistory(poolId: string, limit?: bigint, offset?: bigint): Promise<any>;
     dataApiGetSwapHistory(poolId: string, limit?: bigint, offset?: bigint): Promise<any>;

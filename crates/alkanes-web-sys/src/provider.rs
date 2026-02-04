@@ -3887,6 +3887,74 @@ impl WebProvider {
         })
     }
 
+    #[wasm_bindgen(js_name = dataApiGetAllPoolsDetails)]
+    pub fn data_api_get_all_pools_details_js(&self, factory_id: String, limit: Option<i64>, offset: Option<i64>, sort_by: Option<String>, order: Option<String>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let base_url = provider.rpc_config.get_data_api_target().url;
+            // Parse factory_id like "4:65522" into block and tx
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "factoryId": { "block": parts[0], "tx": parts[1] },
+                    "limit": limit,
+                    "offset": offset,
+                    "sortBy": sort_by,
+                    "order": order
+                })
+            } else {
+                serde_json::json!({
+                    "factoryId": factory_id,
+                    "limit": limit,
+                    "offset": offset,
+                    "sortBy": sort_by,
+                    "order": order
+                })
+            };
+
+            let response = provider.rest_call(&base_url, "get-all-pools-details", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get all pools details failed: {}", e)))?;
+
+            let json_str = serde_json::to_string(&response)
+                .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+            js_sys::JSON::parse(&json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetPoolDetails)]
+    pub fn data_api_get_pool_details_js(&self, factory_id: String, pool_id: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let base_url = provider.rpc_config.get_data_api_target().url;
+            // Parse factory_id and pool_id like "4:65522" into block and tx
+            let factory_parts: Vec<&str> = factory_id.split(':').collect();
+            let pool_parts: Vec<&str> = pool_id.split(':').collect();
+
+            let body = if factory_parts.len() == 2 && pool_parts.len() == 2 {
+                serde_json::json!({
+                    "factoryId": { "block": factory_parts[0], "tx": factory_parts[1] },
+                    "poolId": { "block": pool_parts[0], "tx": pool_parts[1] }
+                })
+            } else {
+                serde_json::json!({
+                    "factoryId": factory_id,
+                    "poolId": pool_id
+                })
+            };
+
+            let response = provider.rest_call(&base_url, "get-pool-details", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get pool details failed: {}", e)))?;
+
+            let json_str = serde_json::to_string(&response)
+                .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+            js_sys::JSON::parse(&json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
+        })
+    }
+
     #[wasm_bindgen(js_name = dataApiGetAddressBalances)]
     pub fn data_api_get_address_balances_js(&self, address: String, include_outpoints: bool) -> js_sys::Promise {
         use wasm_bindgen_futures::future_to_promise;
@@ -3932,14 +4000,24 @@ impl WebProvider {
         let provider = self.clone();
         future_to_promise(async move {
             let url = provider.rpc_config.get_data_api_target().url;
-            let body = serde_json::json!({
-                "pool_id": pool_id,
-                "limit": limit.unwrap_or(100),
-                "offset": offset.unwrap_or(0)
-            });
-            
-            let response = provider.rest_call(&url, "get-swap-history", body).await
-                .map_err(|e| JsValue::from_str(&format!("Get swap history failed: {}", e)))?;
+            // Parse pool_id like "123:456" into block and tx
+            let parts: Vec<&str> = pool_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "poolId": { "block": parts[0], "tx": parts[1] },
+                    "count": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            } else {
+                serde_json::json!({
+                    "poolId": pool_id,
+                    "count": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            };
+
+            let response = provider.rest_call(&url, "get-pool-swap-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get pool swap history failed: {}", e)))?;
 
             let json_str = serde_json::to_string(&response)
                 .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
@@ -3954,15 +4032,25 @@ impl WebProvider {
         let provider = self.clone();
         future_to_promise(async move {
             let url = provider.rpc_config.get_data_api_target().url;
-            let body = serde_json::json!({
-                "pool_id": pool_id,
-                "limit": limit.unwrap_or(100),
-                "offset": offset.unwrap_or(0)
-            });
-            
-            let response = provider.rest_call(&url, "get-mint-history", body).await
-                .map_err(|e| JsValue::from_str(&format!("Get mint history failed: {}", e)))?;
-            
+            // Parse pool_id like "123:456" into block and tx
+            let parts: Vec<&str> = pool_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "poolId": { "block": parts[0], "tx": parts[1] },
+                    "count": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            } else {
+                serde_json::json!({
+                    "poolId": pool_id,
+                    "count": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            };
+
+            let response = provider.rest_call(&url, "get-pool-mint-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get pool mint history failed: {}", e)))?;
+
             serde_wasm_bindgen::to_value(&response)
                 .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
         })
@@ -3974,15 +4062,25 @@ impl WebProvider {
         let provider = self.clone();
         future_to_promise(async move {
             let url = provider.rpc_config.get_data_api_target().url;
-            let body = serde_json::json!({
-                "pool_id": pool_id,
-                "limit": limit.unwrap_or(100),
-                "offset": offset.unwrap_or(0)
-            });
-            
-            let response = provider.rest_call(&url, "get-burn-history", body).await
-                .map_err(|e| JsValue::from_str(&format!("Get burn history failed: {}", e)))?;
-            
+            // Parse pool_id like "123:456" into block and tx
+            let parts: Vec<&str> = pool_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "poolId": { "block": parts[0], "tx": parts[1] },
+                    "count": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            } else {
+                serde_json::json!({
+                    "poolId": pool_id,
+                    "count": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            };
+
+            let response = provider.rest_call(&url, "get-pool-burn-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get pool burn history failed: {}", e)))?;
+
             serde_wasm_bindgen::to_value(&response)
                 .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
         })
@@ -4179,7 +4277,15 @@ impl WebProvider {
         let provider = self.clone();
         future_to_promise(async move {
             let url = provider.rpc_config.get_data_api_target().url;
-            let body = serde_json::json!({ "id": alkane_id });
+            // Parse alkane_id like "123:456" into block and tx
+            let parts: Vec<&str> = alkane_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "alkaneId": { "block": parts[0], "tx": parts[1] }
+                })
+            } else {
+                serde_json::json!({ "alkaneId": alkane_id })
+            };
 
             let response = provider.rest_call(&url, "get-alkane-details", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get alkane details failed: {}", e)))?;
