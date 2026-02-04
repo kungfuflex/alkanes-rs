@@ -5807,9 +5807,17 @@ impl WalletProvider for WebProvider {
     
     async fn send(&mut self, params: SendParams) -> Result<String> {
         self.logger.info(&format!("[WalletProvider] Calling send with params: {:?}", params));
+        let use_rebar = params.use_rebar;
         let psbt_str = self.create_transaction(params).await?;
         let signed_tx_hex = self.sign_transaction(psbt_str).await?;
-        self.broadcast_transaction(signed_tx_hex).await
+
+        // Only use Rebar Shield if explicitly requested
+        if use_rebar && self.network == Network::Bitcoin {
+            self.logger.info("[WalletProvider] Using Rebar Shield for broadcast (explicitly requested)");
+            self.broadcast_via_rebar_shield(&signed_tx_hex).await
+        } else {
+            self.broadcast_transaction(signed_tx_hex).await
+        }
     }
     
     async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(bitcoin::OutPoint, UtxoInfo)>> {
@@ -6172,16 +6180,12 @@ impl WalletProvider for WebProvider {
     
     async fn broadcast_transaction(&self, tx_hex: String) -> Result<String> {
         self.logger.info("[WalletProvider] Calling broadcast_transaction");
-        if self.network == Network::Bitcoin {
-            self.broadcast_via_rebar_shield(&tx_hex).await
-        } else {
-            // Use bitcoind sendrawtransaction RPC instead of esplora broadcast
-            // The esplora_broadcast method is not supported by Sandshrew/subfrost RPC
-            self.logger.info("[DEBUG] broadcast_transaction: calling send_raw_transaction");
-            let result = <Self as BitcoinRpcProvider>::send_raw_transaction(self, &tx_hex).await;
-            self.logger.info(&format!("[DEBUG] broadcast_transaction: send_raw_transaction returned {:?}", result.is_ok()));
-            result
-        }
+        // Always use standard RPC broadcast by default
+        // Rebar Shield should only be used when explicitly requested via broadcast_via_rebar_shield()
+        self.logger.info("[DEBUG] broadcast_transaction: calling send_raw_transaction");
+        let result = <Self as BitcoinRpcProvider>::send_raw_transaction(self, &tx_hex).await;
+        self.logger.info(&format!("[DEBUG] broadcast_transaction: send_raw_transaction returned {:?}", result.is_ok()));
+        result
     }
     
     async fn estimate_fee(&self, target: u32) -> Result<FeeEstimate> {

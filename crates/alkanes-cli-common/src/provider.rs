@@ -1100,6 +1100,9 @@ impl WalletProvider for ConcreteProvider {
     
     async fn send(&mut self, params: SendParams) -> Result<String> {
         log::info!("[WalletProvider] Calling send with params: {:?}", params);
+        let use_rebar = params.use_rebar;
+        let rebar_tier = params.rebar_tier;
+
         // 1. Create the transaction
         let tx_hex = self.create_transaction(params).await?;
 
@@ -1113,7 +1116,15 @@ impl WalletProvider for ConcreteProvider {
         let signed_tx_hex = self.sign_transaction(tx_hex).await?;
 
         // 3. Broadcast the transaction
-        self.broadcast_transaction(signed_tx_hex).await
+        // Only use Rebar Shield if explicitly requested AND on mainnet
+        let network = crate::network::get_network().network;
+        if use_rebar && network == bitcoin::Network::Bitcoin {
+            log::info!("[WalletProvider] Using Rebar Shield for broadcast (explicitly requested, tier {})", rebar_tier);
+            rebar::submit_transaction(&signed_tx_hex).await
+                .map_err(|e| AlkanesError::Other(format!("Rebar Shield error: {}", e)))
+        } else {
+            self.broadcast_transaction(signed_tx_hex).await
+        }
     }
     
     async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
