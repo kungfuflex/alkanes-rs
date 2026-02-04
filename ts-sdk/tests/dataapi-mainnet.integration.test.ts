@@ -347,6 +347,80 @@ describe.skipIf(!INTEGRATION)('DataApi Usage Pattern for subfrost-app', () => {
   });
 });
 
+describe.skipIf(!INTEGRATION)('Espo Client Integration Tests', () => {
+  let provider: AlkanesProvider;
+
+  beforeAll(async () => {
+    provider = new AlkanesProvider({
+      network: 'mainnet',
+      rpcUrl: 'https://mainnet.subfrost.io/v4/subfrost',
+      dataApiUrl: 'https://mainnet.subfrost.io/v4/subfrost',
+      // espoRpcUrl should default to https://mainnet.subfrost.io/v4/subfrost/espo
+    });
+    await provider.initialize();
+  });
+
+  it('espo.getHeight() should return current indexer height', async () => {
+    console.log('\n=== Testing espo.getHeight() ===');
+    const height = await provider.espo.getHeight();
+
+    console.log('Espo height:', height);
+    expect(typeof height).toBe('number');
+    expect(height).toBeGreaterThan(0);
+  });
+
+  it('espo.ping() should return pong', async () => {
+    console.log('\n=== Testing espo.ping() ===');
+    const result = await provider.espo.ping();
+
+    console.log('Espo ping result:', result);
+    expect(result).toBeDefined();
+  });
+
+  it('espo.getHolders() should return token holders', async () => {
+    console.log('\n=== Testing espo.getHolders() for DIESEL ===');
+    const result = await provider.espo.getHolders(DIESEL_ID, 0, 10);
+
+    console.log('Holders response:', JSON.stringify(result, null, 2).slice(0, 1000));
+    expect(result).toBeDefined();
+  });
+
+  it('espo.getHoldersCount() should return holder count', async () => {
+    console.log('\n=== Testing espo.getHoldersCount() for DIESEL ===');
+    const count = await provider.espo.getHoldersCount(DIESEL_ID);
+
+    console.log('DIESEL holder count:', count);
+    expect(typeof count).toBe('number');
+  });
+
+  it('espo.getCandles() should return OHLCV data', async () => {
+    // Get a pool ID first
+    const poolsResult = await provider.dataApi.getPools(MAINNET_FACTORY_ID);
+    const pools = poolsResult.pools || poolsResult.data || [];
+
+    if (pools.length > 0) {
+      const pool = pools[0];
+      const poolId = `${pool.block}:${pool.tx}`;
+
+      console.log(`\n=== Testing espo.getCandles() for pool ${poolId} ===`);
+      const result = await provider.espo.getCandles(poolId, '1h', 'base', 10, 0);
+
+      console.log('Candles response:', JSON.stringify(result, null, 2).slice(0, 1000));
+      expect(result).toBeDefined();
+    } else {
+      console.log('No pools available for candle test');
+    }
+  });
+
+  it('espo.getPools() should return pools via JSON-RPC', async () => {
+    console.log('\n=== Testing espo.getPools() via JSON-RPC ===');
+    const result = await provider.espo.getPools(10, 0);
+
+    console.log('Espo getPools response:', JSON.stringify(result, null, 2).slice(0, 1000));
+    expect(result).toBeDefined();
+  });
+});
+
 describe.skipIf(!INTEGRATION)('WebProvider Direct Methods (Alternative)', () => {
   let provider: AlkanesProvider;
 

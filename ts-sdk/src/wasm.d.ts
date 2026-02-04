@@ -69,6 +69,24 @@ declare module '@alkanes/ts-sdk/wasm' {
     getAddressTxsWithTraces(address: string, excludeCoinbase?: boolean): Promise<any[]>;
     metashrewHeight(): Promise<number>;
     broadcastTransaction(txHex: string): Promise<string>;
+
+    // Espo JSON-RPC methods (essentials module)
+    espoGetHeight(): Promise<number>;
+    espoPing(): Promise<string>;
+    espoGetAddressBalances(address: string, includeOutpoints: boolean): Promise<any>;
+    espoGetAddressOutpoints(address: string): Promise<any>;
+    espoGetOutpointBalances(outpoint: string): Promise<any>;
+    espoGetHolders(alkaneId: string, page: number, limit: number): Promise<any>;
+    espoGetHoldersCount(alkaneId: string): Promise<number>;
+    espoGetKeys(alkaneId: string, page: number, limit: number): Promise<any>;
+
+    // Espo JSON-RPC methods (ammdata module)
+    espoAmmdataPing(): Promise<string>;
+    espoGetCandles(pool: string, timeframe?: string, side?: string, limit?: number, page?: number): Promise<any>;
+    espoGetTrades(pool: string, limit?: number, page?: number, side?: string, filterSide?: string, sort?: string, dir?: string): Promise<any>;
+    espoGetPools(limit?: number, page?: number): Promise<any>;
+    espoFindBestSwapPath(tokenIn: string, tokenOut: string, mode?: string, amountIn?: string, amountOut?: string, amountOutMin?: string, amountInMax?: string, availableIn?: string, feeBps?: number, maxHops?: number): Promise<any>;
+    espoGetBestMevSwap(token: string, feeBps?: number, maxHops?: number): Promise<any>;
   }
 
   export default function init(): Promise<void>;
