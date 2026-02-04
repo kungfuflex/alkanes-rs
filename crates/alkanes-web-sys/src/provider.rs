@@ -3554,18 +3554,26 @@ impl WebProvider {
             let utxos = provider.get_utxos(false, addresses).await
                 .map_err(|e| JsValue::from_str(&format!("Get UTXOs failed: {}", e)))?;
 
-            let utxo_list: Vec<_> = utxos.iter().map(|(outpoint, info)| {
-                serde_json::json!({
-                    "txid": outpoint.txid.to_string(),
-                    "vout": outpoint.vout,
-                    "amount": info.amount,
-                    "confirmations": info.confirmations,
-                    "address": info.address,
-                })
-            }).collect();
+            // Convert to JS array using js_sys for reliable serialization
+            let js_array = js_sys::Array::new();
+            for (outpoint, info) in utxos {
+                let obj = js_sys::Object::new();
+                js_sys::Reflect::set(&obj, &JsValue::from_str("txid"), &JsValue::from_str(&outpoint.txid.to_string()))
+                    .map_err(|e| JsValue::from_str(&format!("Failed to set txid: {:?}", e)))?;
+                js_sys::Reflect::set(&obj, &JsValue::from_str("vout"), &JsValue::from_f64(outpoint.vout as f64))
+                    .map_err(|e| JsValue::from_str(&format!("Failed to set vout: {:?}", e)))?;
+                js_sys::Reflect::set(&obj, &JsValue::from_str("amount"), &JsValue::from_f64(info.amount as f64))
+                    .map_err(|e| JsValue::from_str(&format!("Failed to set amount: {:?}", e)))?;
+                js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &JsValue::from_f64(info.amount as f64))
+                    .map_err(|e| JsValue::from_str(&format!("Failed to set value: {:?}", e)))?;
+                js_sys::Reflect::set(&obj, &JsValue::from_str("confirmations"), &JsValue::from_f64(info.confirmations as f64))
+                    .map_err(|e| JsValue::from_str(&format!("Failed to set confirmations: {:?}", e)))?;
+                js_sys::Reflect::set(&obj, &JsValue::from_str("address"), &JsValue::from_str(&info.address))
+                    .map_err(|e| JsValue::from_str(&format!("Failed to set address: {:?}", e)))?;
+                js_array.push(&obj);
+            }
 
-            serde_wasm_bindgen::to_value(&utxo_list)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Ok(js_array.into())
         })
     }
 
@@ -6395,9 +6403,11 @@ impl WalletProvider for WebProvider {
                 // P2WPKH signing - uses ECDSA
                 let pubkey = bitcoin::PublicKey::new(keypair.public_key());
 
+                // Note: p2wpkh_signature_hash expects the P2WPKH script_pubkey directly,
+                // it internally calls p2wpkh_script_code() to get the script code
                 let sighash = sighash_cache.p2wpkh_signature_hash(
                     i,
-                    &script_pubkey.p2wpkh_script_code().ok_or(AlkanesError::Wallet("Failed to get p2wpkh script code".to_string()))?,
+                    script_pubkey,
                     prev_txo.value,
                     EcdsaSighashType::All,
                 )?;
