@@ -1,6 +1,10 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
+ * Asynchronously encrypts data using the Web Crypto API.
+ */
+export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
+/**
  * Initialize the panic hook for better error messages in WASM
  * This should be called early in your application
  */
@@ -272,10 +276,6 @@ export function frbtc_wrap_and_execute2(network: string, amount: bigint, target_
  * - `signer_address`: The Bitcoin p2tr address for the signer
  */
 export function frbtc_get_signer_address(network: string): Promise<any>;
-/**
- * Asynchronously encrypts data using the Web Crypto API.
- */
-export function encryptMnemonic(mnemonic: string, passphrase: string): Promise<any>;
 export interface PoolWithDetails {
     pool_id_block: number;
     pool_id_tx: number;
@@ -945,6 +945,8 @@ export class WebProvider {
   dataApiGetPoolHistory(pool_id: string, category?: string | null, limit?: bigint | null, offset?: bigint | null): Promise<any>;
   dataApiGetPools(factory_id: string): Promise<any>;
   dataApiGetAlkanesByAddress(address: string): Promise<any>;
+  dataApiGetAllPoolsDetails(factory_id: string, limit?: bigint | null, offset?: bigint | null, sort_by?: string | null, order?: string | null): Promise<any>;
+  dataApiGetPoolDetails(factory_id: string, pool_id: string): Promise<any>;
   dataApiGetAddressBalances(address: string, include_outpoints: boolean): Promise<any>;
   dataApiGetAllHistory(pool_id: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
   dataApiGetSwapHistory(pool_id: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;

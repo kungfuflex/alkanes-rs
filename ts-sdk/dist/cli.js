@@ -1031,6 +1031,18 @@ var init_provider = __esm({
       async getPools(factoryId) {
         return this.provider.dataApiGetPools(factoryId);
       }
+      async getAllPoolsDetails(factoryId, options) {
+        return this.provider.dataApiGetAllPoolsDetails(
+          factoryId,
+          options?.limit ? BigInt(options.limit) : void 0,
+          options?.offset ? BigInt(options.offset) : void 0,
+          options?.sortBy,
+          options?.order
+        );
+      }
+      async getPoolDetails(factoryId, poolId) {
+        return this.provider.dataApiGetPoolDetails(factoryId, poolId);
+      }
       async getPoolHistory(poolId, category, limit, offset) {
         return this.provider.dataApiGetPoolHistory(poolId, category, limit ? BigInt(limit) : void 0, offset ? BigInt(offset) : void 0);
       }

@@ -46886,6 +46886,18 @@ var init_provider = __esm({
       async getPools(factoryId) {
         return this.provider.dataApiGetPools(factoryId);
       }
+      async getAllPoolsDetails(factoryId, options) {
+        return this.provider.dataApiGetAllPoolsDetails(
+          factoryId,
+          options?.limit ? BigInt(options.limit) : void 0,
+          options?.offset ? BigInt(options.offset) : void 0,
+          options?.sortBy,
+          options?.order
+        );
+      }
+      async getPoolDetails(factoryId, poolId) {
+        return this.provider.dataApiGetPoolDetails(factoryId, poolId);
+      }
       async getPoolHistory(poolId, category, limit, offset) {
         return this.provider.dataApiGetPoolHistory(poolId, category, limit ? BigInt(limit) : void 0, offset ? BigInt(offset) : void 0);
       }
@@ -50529,6 +50541,62 @@ var AlkanesClient = class _AlkanesClient {
       return false;
     }
   }
+  /**
+   * Check if the signer requires external PSBT signing (e.g., browser wallets)
+   *
+   * Browser wallets don't provide mnemonics, so the WASM provider can't sign internally.
+   * This method detects when we need to use the return_unsigned flow.
+   */
+  requiresExternalSigning() {
+    return this.signer.getSignerType() === "browser";
+  }
+  /**
+   * Sign and broadcast PSBTs from a BRC20-prog execution result
+   *
+   * When return_unsigned=true, the WASM returns unsigned PSBTs that need to be
+   * signed by an external signer (browser wallet). This method handles that flow.
+   *
+   * @param result - Execution result containing unsigned PSBTs
+   * @returns Updated result with transaction IDs
+   */
+  async signAndBroadcastPsbts(result) {
+    if (!result.requires_signing) {
+      return result;
+    }
+    const signedResult = { ...result };
+    if (result.unsigned_split_psbt) {
+      const signed = await this.signer.signPsbt(result.unsigned_split_psbt, {
+        finalize: true,
+        extractTx: true
+      });
+      if (signed.txHex) {
+        signedResult.split_txid = await this.provider.broadcastTransaction(signed.txHex);
+      }
+    }
+    if (result.unsigned_commit_psbt) {
+      const signed = await this.signer.signPsbt(result.unsigned_commit_psbt, {
+        finalize: true,
+        extractTx: true
+      });
+      if (signed.txHex) {
+        signedResult.commit_txid = await this.provider.broadcastTransaction(signed.txHex);
+      }
+    }
+    if (result.signed_reveal_tx_hex) {
+      signedResult.reveal_txid = await this.provider.broadcastTransaction(result.signed_reveal_tx_hex);
+    }
+    if (result.unsigned_activation_psbt) {
+      const signed = await this.signer.signPsbt(result.unsigned_activation_psbt, {
+        finalize: true,
+        extractTx: true
+      });
+      if (signed.txHex) {
+        signedResult.activation_txid = await this.provider.broadcastTransaction(signed.txHex);
+      }
+    }
+    signedResult.requires_signing = false;
+    return signedResult;
+  }
   // ============================================================================
   // ACCOUNT METHODS (from Signer)
   // ============================================================================
@@ -50886,6 +50954,9 @@ var AlkanesClient = class _AlkanesClient {
     if (params.change_address) execParams.change_address = params.change_address;
     if (params.fee_rate !== void 0) execParams.fee_rate = params.fee_rate;
     if (params.mint_diesel !== void 0) execParams.mint_diesel = params.mint_diesel;
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
     const result = await rawProvider.frbtcWrapAndExecute2(
       BigInt(params.amount),
       params.target_contract,
@@ -50893,6 +50964,9 @@ var AlkanesClient = class _AlkanesClient {
       calldataStr,
       JSON.stringify(execParams)
     );
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
     return result;
   }
   // ==========================================================================
@@ -50924,10 +50998,16 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
     const result = await rawProvider.frbtcWrap(
       BigInt(params.amount),
       JSON.stringify(execParams)
     );
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
     return result;
   }
   /**
@@ -50960,12 +51040,18 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
     const result = await rawProvider.frbtcUnwrap(
       BigInt(params.amount),
       BigInt(params.vout ?? 0),
       params.recipient_address,
       JSON.stringify(execParams)
     );
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
     return result;
   }
   /**
@@ -50985,11 +51071,17 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
     const result = await rawProvider.frbtcWrapAndExecute(
       BigInt(params.amount),
       params.script_bytecode,
       JSON.stringify(execParams)
     );
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
     return result;
   }
   /**
@@ -51012,6 +51104,9 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
+    if (this.requiresExternalSigning()) {
+      execParams.return_unsigned = true;
+    }
     const result = await rawProvider.frbtcWrapAndExecute2(
       BigInt(params.amount),
       params.target_address,
@@ -51019,6 +51114,9 @@ var AlkanesClient = class _AlkanesClient {
       calldataStr,
       JSON.stringify(execParams)
     );
+    if (result.requires_signing) {
+      return this.signAndBroadcastPsbts(result);
+    }
     return result;
   }
   /**
