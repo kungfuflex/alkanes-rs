@@ -238,7 +238,7 @@ export class AlkanesClient {
    * This method detects when we need to use the return_unsigned flow.
    */
   requiresExternalSigning(): boolean {
-    return this.signer.getSignerType() === 'browser';
+    return this.signer.getSignerType().startsWith('browser');
   }
 
   /**
@@ -787,12 +787,15 @@ export class AlkanesClient {
     const execParams: any = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
+    if (params.alkanes_change_address) execParams.alkanes_change_address = params.alkanes_change_address;
     if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
     if (params.use_slipstream !== undefined) execParams.use_slipstream = params.use_slipstream;
     if (params.use_rebar !== undefined) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
+    if (params.ordinals_strategy !== undefined) execParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== undefined) execParams.mempool_indexer = params.mempool_indexer;
 
     // When using browser wallet, request unsigned PSBTs for external signing
     if (this.requiresExternalSigning()) {
@@ -841,12 +844,15 @@ export class AlkanesClient {
     const execParams: any = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
+    if (params.alkanes_change_address) execParams.alkanes_change_address = params.alkanes_change_address;
     if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
     if (params.use_slipstream !== undefined) execParams.use_slipstream = params.use_slipstream;
     if (params.use_rebar !== undefined) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
+    if (params.ordinals_strategy !== undefined) execParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== undefined) execParams.mempool_indexer = params.mempool_indexer;
 
     // When using browser wallet, request unsigned PSBTs for external signing
     if (this.requiresExternalSigning()) {
@@ -883,12 +889,15 @@ export class AlkanesClient {
     const execParams: any = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
+    if (params.alkanes_change_address) execParams.alkanes_change_address = params.alkanes_change_address;
     if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
     if (params.use_slipstream !== undefined) execParams.use_slipstream = params.use_slipstream;
     if (params.use_rebar !== undefined) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
+    if (params.ordinals_strategy !== undefined) execParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== undefined) execParams.mempool_indexer = params.mempool_indexer;
 
     // When using browser wallet, request unsigned PSBTs for external signing
     if (this.requiresExternalSigning()) {
@@ -930,12 +939,15 @@ export class AlkanesClient {
     const execParams: any = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
+    if (params.alkanes_change_address) execParams.alkanes_change_address = params.alkanes_change_address;
     if (params.fee_rate !== undefined) execParams.fee_rate = params.fee_rate;
     if (params.use_slipstream !== undefined) execParams.use_slipstream = params.use_slipstream;
     if (params.use_rebar !== undefined) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
+    if (params.ordinals_strategy !== undefined) execParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== undefined) execParams.mempool_indexer = params.mempool_indexer;
 
     // When using browser wallet, request unsigned PSBTs for external signing
     if (this.requiresExternalSigning()) {
