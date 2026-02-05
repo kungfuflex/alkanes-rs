@@ -585,6 +585,8 @@ pub fn frbtc_wrap(
             resume_from_commit: base_params.resume_from_commit,
             mint_diesel: base_params.mint_diesel.unwrap_or(false),
             return_unsigned: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
         };
 
         let mut provider = WebProvider::new(network_str).await
@@ -660,6 +662,8 @@ pub fn frbtc_unwrap(
             resume_from_commit: base_params.resume_from_commit,
             mint_diesel: base_params.mint_diesel.unwrap_or(false),
             return_unsigned: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
         };
 
         let mut provider = WebProvider::new(network_str).await
@@ -732,6 +736,8 @@ pub fn frbtc_wrap_and_execute(
             resume_from_commit: base_params.resume_from_commit,
             mint_diesel: base_params.mint_diesel.unwrap_or(false),
             return_unsigned: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
         };
 
         let mut provider = WebProvider::new(network_str).await
@@ -812,6 +818,8 @@ pub fn frbtc_wrap_and_execute2(
             resume_from_commit: base_params.resume_from_commit,
             mint_diesel: base_params.mint_diesel.unwrap_or(false),
             return_unsigned: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
         };
 
         let mut provider = WebProvider::new(network_str).await

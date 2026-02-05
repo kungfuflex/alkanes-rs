@@ -3675,6 +3675,10 @@ impl WebProvider {
             let params: serde_json::Value = serde_json::from_str(&params_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
 
+            let ordinals_strategy = params.get("ordinals_strategy").and_then(|v| v.as_str())
+                .map(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).unwrap_or_default())
+                .unwrap_or_default();
+
             let wrap_params = FrBtcWrapParams {
                 amount,
                 from_addresses: params.get("from_addresses").and_then(|v| v.as_array()).map(|arr| {
@@ -3692,6 +3696,8 @@ impl WebProvider {
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 mint_diesel: params.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
                 return_unsigned: params.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
+                ordinals_strategy,
+                mempool_indexer: params.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);
@@ -3714,6 +3720,10 @@ impl WebProvider {
             let params: serde_json::Value = serde_json::from_str(&params_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
 
+            let ordinals_strategy = params.get("ordinals_strategy").and_then(|v| v.as_str())
+                .map(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).unwrap_or_default())
+                .unwrap_or_default();
+
             let unwrap_params = FrBtcUnwrapParams {
                 amount,
                 vout,
@@ -3733,6 +3743,8 @@ impl WebProvider {
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 mint_diesel: params.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
                 return_unsigned: params.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
+                ordinals_strategy,
+                mempool_indexer: params.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);
@@ -3755,6 +3767,10 @@ impl WebProvider {
             let params: serde_json::Value = serde_json::from_str(&params_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
 
+            let ordinals_strategy = params.get("ordinals_strategy").and_then(|v| v.as_str())
+                .map(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).unwrap_or_default())
+                .unwrap_or_default();
+
             let wrap_params = FrBtcWrapAndExecuteParams {
                 amount,
                 script_bytecode,
@@ -3773,6 +3789,8 @@ impl WebProvider {
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 return_unsigned: params.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
+                ordinals_strategy,
+                mempool_indexer: params.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);
@@ -3795,6 +3813,10 @@ impl WebProvider {
             let params: serde_json::Value = serde_json::from_str(&params_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
 
+            let ordinals_strategy = params.get("ordinals_strategy").and_then(|v| v.as_str())
+                .map(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).unwrap_or_default())
+                .unwrap_or_default();
+
             let wrap_params = FrBtcWrapAndExecute2Params {
                 amount,
                 target_address,
@@ -3815,6 +3837,8 @@ impl WebProvider {
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
                 resume_from_commit: params.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 return_unsigned: params.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
+                ordinals_strategy,
+                mempool_indexer: params.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false),
             };
 
             let mut executor = FrBtcExecutor::new(&mut provider);

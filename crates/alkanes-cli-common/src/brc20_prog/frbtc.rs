@@ -14,6 +14,7 @@ use alloc::{vec, vec::Vec, string::{String, ToString}, format};
 #[cfg(feature = "std")]
 use std::{vec, vec::Vec, string::{String, ToString}, format};
 
+use crate::alkanes::types::OrdinalsStrategy;
 use serde::{Serialize, Deserialize};
 
 // ============================================================================
@@ -77,6 +78,12 @@ pub struct FrBtcWrapParams {
     /// Return unsigned PSBTs for external signer (e.g., browser wallet)
     #[serde(default)]
     pub return_unsigned: bool,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    #[serde(default)]
+    pub ordinals_strategy: OrdinalsStrategy,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    #[serde(default)]
+    pub mempool_indexer: bool,
 }
 
 /// Parameters for unwrap (burn frBTC to get BTC)
@@ -116,6 +123,12 @@ pub struct FrBtcUnwrapParams {
     /// Return unsigned PSBTs for external signer (e.g., browser wallet)
     #[serde(default)]
     pub return_unsigned: bool,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    #[serde(default)]
+    pub ordinals_strategy: OrdinalsStrategy,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    #[serde(default)]
+    pub mempool_indexer: bool,
 }
 
 /// Parameters for wrapAndExecute (wrap BTC and deploy+execute a script)
@@ -153,6 +166,12 @@ pub struct FrBtcWrapAndExecuteParams {
     /// Return unsigned PSBTs for external signer (e.g., browser wallet)
     #[serde(default)]
     pub return_unsigned: bool,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    #[serde(default)]
+    pub ordinals_strategy: OrdinalsStrategy,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    #[serde(default)]
+    pub mempool_indexer: bool,
 }
 
 /// Parameters for wrapAndExecute2 (wrap BTC and call existing contract)
@@ -194,6 +213,12 @@ pub struct FrBtcWrapAndExecute2Params {
     /// Return unsigned PSBTs for external signer (e.g., browser wallet)
     #[serde(default)]
     pub return_unsigned: bool,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    #[serde(default)]
+    pub ordinals_strategy: OrdinalsStrategy,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    #[serde(default)]
+    pub mempool_indexer: bool,
 }
 
 // ============================================================================
@@ -288,7 +313,8 @@ impl<'a> FrBtcExecutor<'a> {
             strategy: None,
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
-            mempool_indexer: false,
+            ordinals_strategy: params.ordinals_strategy,
+            mempool_indexer: params.mempool_indexer,
             mint_diesel: params.mint_diesel,
             return_unsigned: params.return_unsigned,
         };
@@ -384,7 +410,8 @@ impl<'a> FrBtcExecutor<'a> {
             strategy: None,
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
-            mempool_indexer: false,
+            ordinals_strategy: params.ordinals_strategy,
+            mempool_indexer: params.mempool_indexer,
             mint_diesel: params.mint_diesel,
             return_unsigned: params.return_unsigned,
         };
@@ -468,7 +495,8 @@ impl<'a> FrBtcExecutor<'a> {
             strategy: None,
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
-            mempool_indexer: false,
+            ordinals_strategy: params.ordinals_strategy,
+            mempool_indexer: params.mempool_indexer,
             mint_diesel: params.mint_diesel,
             return_unsigned: params.return_unsigned,
         };
@@ -553,7 +581,8 @@ impl<'a> FrBtcExecutor<'a> {
             strategy: None,
             resume_from_commit: params.resume_from_commit,
             additional_outputs: Some(additional_outputs),
-            mempool_indexer: false,
+            ordinals_strategy: params.ordinals_strategy,
+            mempool_indexer: params.mempool_indexer,
             mint_diesel: params.mint_diesel,
             return_unsigned: params.return_unsigned,
         };

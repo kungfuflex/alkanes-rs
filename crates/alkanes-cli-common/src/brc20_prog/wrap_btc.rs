@@ -113,6 +113,7 @@ impl<'a> Brc20ProgWrapBtcExecutor<'a> {
             strategy: None,
             resume_from_commit: None,
             additional_outputs: None,
+            ordinals_strategy: Default::default(),
             mempool_indexer: false,
             mint_diesel: false,
             return_unsigned: false,

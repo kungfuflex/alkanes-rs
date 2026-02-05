@@ -1,5 +1,6 @@
 // Types for BRC20-Prog functionality
 
+use crate::alkanes::types::OrdinalsStrategy;
 use serde::{Deserialize, Serialize};
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
@@ -128,6 +129,12 @@ pub struct Brc20ProgExecuteParams {
     /// Additional outputs to include in the activation transaction
     /// Used for FrBTC wrap (send BTC to signer) or unwrap (dust to signer)
     pub additional_outputs: Option<Vec<AdditionalOutput>>,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    /// - exclude: Fail if inscribed UTXOs must be spent (default)
+    /// - preserve: Split inscribed UTXOs to protect inscriptions
+    /// - burn: Allow spending inscribed UTXOs without protection
+    #[serde(default)]
+    pub ordinals_strategy: OrdinalsStrategy,
     /// Enable mempool indexer for tracing inscription state of pending UTXOs
     /// When enabled, if we must use pending (unconfirmed) UTXOs, we'll trace back through
     /// parent transactions to determine inscription state from settled UTXOs

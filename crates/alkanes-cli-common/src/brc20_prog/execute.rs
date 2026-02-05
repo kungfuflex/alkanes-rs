@@ -1182,6 +1182,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             &change_addr,
             fee_rate,
             params.mempool_indexer,
+            params.ordinals_strategy,
         ).await?;
 
         // Determine which UTXOs to use for commit
@@ -2539,13 +2540,27 @@ impl<'a> Brc20ProgExecutor<'a> {
     ///
     /// If mempool_indexer is true, pending UTXOs will be traced back through parent
     /// transactions to determine inscription state.
+    ///
+    /// ordinals_strategy controls behavior:
+    /// - Exclude: fail if any selected UTXO contains inscriptions
+    /// - Preserve: split inscribed UTXOs to protect inscriptions (default)
+    /// - Burn: skip inscription check entirely (allows spending inscribed UTXOs)
     async fn build_split_psbt_if_needed(
         &mut self,
         funding_utxos: &[OutPoint],
         change_address: &Address,
         fee_rate: f32,
         mempool_indexer: bool,
+        ordinals_strategy: crate::alkanes::types::OrdinalsStrategy,
     ) -> Result<Option<SplitResult>> {
+        use crate::alkanes::types::OrdinalsStrategy;
+
+        // Burn strategy: skip inscription check entirely
+        if ordinals_strategy == OrdinalsStrategy::Burn {
+            log::info!("🔥 Ordinals strategy is 'burn' - skipping inscription check");
+            return Ok(None);
+        }
+
         let mut split_plans: Vec<SplitPlan> = Vec::new();
         let mut utxo_info: Vec<(OutPoint, TxOut)> = Vec::new();
 
@@ -2554,6 +2569,16 @@ impl<'a> Brc20ProgExecutor<'a> {
             let inscriptions = self.get_utxo_inscriptions(outpoint, mempool_indexer).await?;
 
             if !inscriptions.is_empty() {
+                // Exclude strategy: fail immediately if inscriptions found
+                if ordinals_strategy == OrdinalsStrategy::Exclude {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Cannot proceed: UTXO {} contains inscriptions and ordinals_strategy is 'exclude'. \
+                        Use ordinals_strategy 'preserve' to protect inscriptions, or 'burn' to allow spending them.",
+                        outpoint
+                    )));
+                }
+
+                // Preserve strategy: split inscribed UTXOs
                 // Get UTXO value
                 let utxo = self.provider.get_utxo(outpoint).await?
                     .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", outpoint)))?;

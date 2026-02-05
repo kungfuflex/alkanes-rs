@@ -4752,8 +4752,10 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 strategy: parsed_strategy,
                 resume_from_commit: resume,
                 additional_outputs: None, // Not used for deploy
+                ordinals_strategy: Default::default(),
                 mempool_indexer: false, // TODO: Add CLI flag when needed
                 mint_diesel,
+                return_unsigned: false,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4829,8 +4831,10 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 strategy: parsed_strategy,
                 resume_from_commit: resume,
                 additional_outputs: None, // Not used for transact
+                ordinals_strategy: Default::default(),
                 mempool_indexer: false, // TODO: Add CLI flag when needed
                 mint_diesel,
+                return_unsigned: false,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4881,6 +4885,9 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 rebar_tier,
                 resume_from_commit: resume,
                 mint_diesel,
+                return_unsigned: false,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
@@ -4935,6 +4942,9 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 rebar_tier,
                 resume_from_commit: resume,
                 mint_diesel,
+                return_unsigned: false,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
@@ -4987,6 +4997,9 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 rebar_tier,
                 resume_from_commit: resume,
                 mint_diesel,
+                return_unsigned: false,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
@@ -5040,6 +5053,9 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 rebar_tier,
                 resume_from_commit: resume,
                 mint_diesel,
+                return_unsigned: false,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
