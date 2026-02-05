@@ -774,12 +774,12 @@ export function frbtc_get_signer_address(network) {
     return ret;
 }
 
-function wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925(arg0, arg1);
-}
-
 function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2) {
     wasm.wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2);
+}
+
+function wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925(arg0, arg1);
 }
 
 function wasm_bindgen__convert__closures_____invoke__h01405c57635d3c55(arg0, arg1) {

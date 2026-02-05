@@ -27976,7 +27976,7 @@ var require_address = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.toOutputScript = exports.fromOutputScript = exports.toBech32 = exports.toBase58Check = exports.fromBech32 = exports.fromBase58Check = void 0;
-    var networks7 = require_networks();
+    var networks8 = require_networks();
     var payments3 = require_payments();
     var bscript = require_script();
     var types_1 = require_types();
@@ -28000,29 +28000,29 @@ var require_address = __commonJS({
       console.warn(FUTURE_SEGWIT_VERSION_WARNING);
       return toBech32(data, version, network.bech32);
     }
-    function fromBase58Check(address2) {
-      const payload = Buffer.from(bs58check.decode(address2));
-      if (payload.length < 21) throw new TypeError(address2 + " is too short");
-      if (payload.length > 21) throw new TypeError(address2 + " is too long");
+    function fromBase58Check(address3) {
+      const payload = Buffer.from(bs58check.decode(address3));
+      if (payload.length < 21) throw new TypeError(address3 + " is too short");
+      if (payload.length > 21) throw new TypeError(address3 + " is too long");
       const version = payload.readUInt8(0);
       const hash = payload.slice(1);
       return { version, hash };
     }
     exports.fromBase58Check = fromBase58Check;
-    function fromBech32(address2) {
+    function fromBech32(address3) {
       let result;
       let version;
       try {
-        result = bech32_1.bech32.decode(address2);
+        result = bech32_1.bech32.decode(address3);
       } catch (e) {
       }
       if (result) {
         version = result.words[0];
-        if (version !== 0) throw new TypeError(address2 + " uses wrong encoding");
+        if (version !== 0) throw new TypeError(address3 + " uses wrong encoding");
       } else {
-        result = bech32_1.bech32m.decode(address2);
+        result = bech32_1.bech32m.decode(address3);
         version = result.words[0];
-        if (version === 0) throw new TypeError(address2 + " uses wrong encoding");
+        if (version === 0) throw new TypeError(address3 + " uses wrong encoding");
       }
       const data = bech32_1.bech32.fromWords(result.words.slice(1));
       return {
@@ -28050,7 +28050,7 @@ var require_address = __commonJS({
     }
     exports.toBech32 = toBech32;
     function fromOutputScript(output, network) {
-      network = network || networks7.bitcoin;
+      network = network || networks8.bitcoin;
       try {
         return payments3.p2pkh({ output, network }).address;
       } catch (e) {
@@ -28078,12 +28078,12 @@ var require_address = __commonJS({
       throw new Error(bscript.toASM(output) + " has no matching Address");
     }
     exports.fromOutputScript = fromOutputScript;
-    function toOutputScript(address2, network) {
-      network = network || networks7.bitcoin;
+    function toOutputScript(address3, network) {
+      network = network || networks8.bitcoin;
       let decodeBase58;
       let decodeBech32;
       try {
-        decodeBase58 = fromBase58Check(address2);
+        decodeBase58 = fromBase58Check(address3);
       } catch (e) {
       }
       if (decodeBase58) {
@@ -28093,12 +28093,12 @@ var require_address = __commonJS({
           return payments3.p2sh({ hash: decodeBase58.hash }).output;
       } else {
         try {
-          decodeBech32 = fromBech32(address2);
+          decodeBech32 = fromBech32(address3);
         } catch (e) {
         }
         if (decodeBech32) {
           if (decodeBech32.prefix !== network.bech32)
-            throw new Error(address2 + " has an invalid prefix");
+            throw new Error(address3 + " has an invalid prefix");
           if (decodeBech32.version === 0) {
             if (decodeBech32.data.length === 20)
               return payments3.p2wpkh({ hash: decodeBech32.data }).output;
@@ -28116,7 +28116,7 @@ var require_address = __commonJS({
           }
         }
       }
-      throw new Error(address2 + " has no matching Script");
+      throw new Error(address3 + " has no matching Script");
     }
     exports.toOutputScript = toOutputScript;
   }
@@ -31310,9 +31310,9 @@ var require_psbt2 = __commonJS({
       }
       get txOutputs() {
         return this.__CACHE.__TX.outs.map((output) => {
-          let address2;
+          let address3;
           try {
-            address2 = (0, address_1.fromOutputScript)(
+            address3 = (0, address_1.fromOutputScript)(
               output.script,
               this.opts.network
             );
@@ -31321,7 +31321,7 @@ var require_psbt2 = __commonJS({
           return {
             script: (0, bufferutils_1.cloneBuffer)(output.script),
             value: output.value,
-            address: address2
+            address: address3
           };
         });
       }
@@ -31403,10 +31403,10 @@ var require_psbt2 = __commonJS({
           );
         }
         checkInputsForPartialSig(this.data.inputs, "addOutput");
-        const { address: address2 } = outputData;
-        if (typeof address2 === "string") {
+        const { address: address3 } = outputData;
+        if (typeof address3 === "string") {
           const { network } = this.opts;
-          const script = (0, address_1.toOutputScript)(address2, network);
+          const script = (0, address_1.toOutputScript)(address3, network);
           outputData = Object.assign({}, outputData, { script });
         }
         (0, bip371_1.checkTaprootOutputFields)(outputData, outputData, "addOutput");
@@ -32715,12 +32715,12 @@ var require_src3 = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.initEccLib = exports.Transaction = exports.opcodes = exports.Psbt = exports.Block = exports.script = exports.payments = exports.networks = exports.crypto = exports.address = void 0;
-    var address2 = require_address();
-    exports.address = address2;
+    var address3 = require_address();
+    exports.address = address3;
     var crypto3 = require_crypto2();
     exports.crypto = crypto3;
-    var networks7 = require_networks();
-    exports.networks = networks7;
+    var networks8 = require_networks();
+    exports.networks = networks8;
     var payments3 = require_payments();
     exports.payments = payments3;
     var script = require_script();
@@ -45817,8 +45817,8 @@ var require_ecpair = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ECPairFactory = exports.networks = void 0;
-    var networks7 = require_networks2();
-    exports.networks = networks7;
+    var networks8 = require_networks2();
+    exports.networks = networks8;
     var types = require_types2();
     var randomBytes = require_browser3();
     var wif = require_wif();
@@ -45856,7 +45856,7 @@ var require_ecpair = __commonJS({
           }).pop();
           if (!network) throw new Error("Unknown network version");
         } else {
-          network = network || networks7.bitcoin;
+          network = network || networks8.bitcoin;
           if (version !== network.wif) throw new Error("Invalid network version");
         }
         return fromPrivateKey(decoded.privateKey, {
@@ -45887,7 +45887,7 @@ var require_ecpair = __commonJS({
           this.lowR = false;
           if (options === void 0) options = {};
           this.compressed = options.compressed === void 0 ? true : options.compressed;
-          this.network = options.network || networks7.bitcoin;
+          this.network = options.network || networks8.bitcoin;
           if (__Q !== void 0)
             this.__Q = Buffer.from(ecc4.pointCompress(__Q, this.compressed));
         }
@@ -46137,16 +46137,16 @@ var init_wallet = __esm({
         const accountNode = this.root.derivePath(accountPath);
         const node = accountNode.derive(change).derive(index);
         const pubkey = node.publicKey;
-        let address2;
+        let address3;
         let payment;
         switch (type) {
           case "p2pkh" /* P2PKH */:
             payment = bitcoin2.payments.p2pkh({ pubkey, network: this.network });
-            address2 = payment.address;
+            address3 = payment.address;
             break;
           case "p2wpkh" /* P2WPKH */:
             payment = bitcoin2.payments.p2wpkh({ pubkey, network: this.network });
-            address2 = payment.address;
+            address3 = payment.address;
             break;
           case "p2tr" /* P2TR */:
             const internalPubkey = pubkey.slice(1, 33);
@@ -46154,14 +46154,14 @@ var init_wallet = __esm({
               internalPubkey,
               network: this.network
             });
-            address2 = payment.address;
+            address3 = payment.address;
             break;
           default:
             throw new Error(`Unsupported address type: ${type}`);
         }
         const path = `${basePath}/${change}/${index}`;
         return {
-          address: address2,
+          address: address3,
           path,
           publicKey: pubkey.toString("hex"),
           index
@@ -46414,12 +46414,12 @@ var init_provider = __esm({
         const result = await this.provider.bitcoindEstimateSmartFee(target);
         return mapToObject(result);
       }
-      async generateToAddress(nblocks, address2) {
-        const result = await this.provider.bitcoindGenerateToAddress(nblocks, address2);
+      async generateToAddress(nblocks, address3) {
+        const result = await this.provider.bitcoindGenerateToAddress(nblocks, address3);
         return mapToObject(result);
       }
-      async generateFuture(address2) {
-        const result = await this.provider.bitcoindGenerateFuture(address2);
+      async generateFuture(address3) {
+        const result = await this.provider.bitcoindGenerateFuture(address3);
         return mapToObject(result);
       }
       async getBlockHeader(hash) {
@@ -46455,16 +46455,16 @@ var init_provider = __esm({
       constructor(provider) {
         this.provider = provider;
       }
-      async getAddressInfo(address2) {
-        const result = await this.provider.esploraGetAddressInfo(address2);
+      async getAddressInfo(address3) {
+        const result = await this.provider.esploraGetAddressInfo(address3);
         return mapToObject(result);
       }
-      async getAddressUtxos(address2) {
-        const result = await this.provider.esploraGetAddressUtxo(address2);
+      async getAddressUtxos(address3) {
+        const result = await this.provider.esploraGetAddressUtxo(address3);
         return mapToObject(result);
       }
-      async getAddressTxs(address2) {
-        const result = await this.provider.esploraGetAddressTxs(address2);
+      async getAddressTxs(address3) {
+        const result = await this.provider.esploraGetAddressTxs(address3);
         return mapToObject(result);
       }
       async getTx(txid) {
@@ -46524,12 +46524,12 @@ var init_provider = __esm({
         const result = await this.provider.esploraGetBlockTxs(hash, startIndex);
         return mapToObject(result);
       }
-      async getAddressTxsChain(address2, lastSeenTxid) {
-        const result = await this.provider.esploraGetAddressTxsChain(address2, lastSeenTxid);
+      async getAddressTxsChain(address3, lastSeenTxid) {
+        const result = await this.provider.esploraGetAddressTxsChain(address3, lastSeenTxid);
         return mapToObject(result);
       }
-      async getAddressTxsMempool(address2) {
-        const result = await this.provider.esploraGetAddressTxsMempool(address2);
+      async getAddressTxsMempool(address3) {
+        const result = await this.provider.esploraGetAddressTxsMempool(address3);
         return mapToObject(result);
       }
       async getAddressPrefix(prefix) {
@@ -46571,12 +46571,12 @@ var init_provider = __esm({
       constructor(provider) {
         this.provider = provider;
       }
-      async getBalance(address2) {
-        const result = await this.provider.alkanesBalance(address2);
+      async getBalance(address3) {
+        const result = await this.provider.alkanesBalance(address3);
         return mapToObject(result);
       }
-      async getByAddress(address2, blockTag, protocolTag) {
-        const result = await this.provider.alkanesByAddress(address2, blockTag, protocolTag);
+      async getByAddress(address3, blockTag, protocolTag) {
+        const result = await this.provider.alkanesByAddress(address3, blockTag, protocolTag);
         return mapToObject(result);
       }
       async getByOutpoint(outpoint, blockTag, protocolTag) {
@@ -46683,8 +46683,8 @@ var init_provider = __esm({
         const result = await this.provider.alkanesSequence(blockTag);
         return mapToObject(result);
       }
-      async getSpendables(address2) {
-        const result = await this.provider.alkanesSpendables(address2);
+      async getSpendables(address3) {
+        const result = await this.provider.alkanesSpendables(address3);
         return mapToObject(result);
       }
       async getPoolDetails(poolId) {
@@ -46761,8 +46761,8 @@ var init_provider = __esm({
         const result = await this.provider.ordInscriptions(page);
         return mapToObject(result);
       }
-      async getOutputs(address2) {
-        const result = await this.provider.ordOutputs(address2);
+      async getOutputs(address3) {
+        const result = await this.provider.ordOutputs(address3);
         return mapToObject(result);
       }
       async getRune(name) {
@@ -46777,8 +46777,8 @@ var init_provider = __esm({
         const result = await this.provider.ordFind(sat);
         return mapToObject(result);
       }
-      async getAddressInfo(address2) {
-        const result = await this.provider.ordAddressInfo(address2);
+      async getAddressInfo(address3) {
+        const result = await this.provider.ordAddressInfo(address3);
         return mapToObject(result);
       }
       async getBlockInfo(query) {
@@ -46813,12 +46813,12 @@ var init_provider = __esm({
       constructor(provider) {
         this.provider = provider;
       }
-      async getBalance(address2) {
-        const result = await this.provider.brc20progGetBalance(address2);
+      async getBalance(address3) {
+        const result = await this.provider.brc20progGetBalance(address3);
         return mapToObject(result);
       }
-      async getCode(address2) {
-        const result = await this.provider.brc20progGetCode(address2);
+      async getCode(address3) {
+        const result = await this.provider.brc20progGetCode(address3);
         return mapToObject(result);
       }
       async getBlockNumber() {
@@ -46926,11 +46926,11 @@ var init_provider = __esm({
         return this.provider.dataApiGetReserves(pool);
       }
       // Balance operations
-      async getAlkanesByAddress(address2) {
-        return this.provider.dataApiGetAlkanesByAddress(address2);
+      async getAlkanesByAddress(address3) {
+        return this.provider.dataApiGetAlkanesByAddress(address3);
       }
-      async getAddressBalances(address2, includeOutpoints = false) {
-        return this.provider.dataApiGetAddressBalances(address2, includeOutpoints);
+      async getAddressBalances(address3, includeOutpoints = false) {
+        return this.provider.dataApiGetAddressBalances(address3, includeOutpoints);
       }
       // Token operations
       async getHolders(alkane, page = 0, limit = 100) {
@@ -46992,8 +46992,8 @@ var init_provider = __esm({
         return this.post("get-alkane-details", { alkaneId: this.parseAlkaneId(alkaneId) });
       }
       /** Get alkanes UTXOs for address */
-      async getAlkanesUtxo(address2) {
-        return this.post("get-alkanes-utxo", { address: address2 });
+      async getAlkanesUtxo(address3) {
+        return this.post("get-alkanes-utxo", { address: address3 });
       }
       /** Global search for alkanes */
       async globalAlkanesSearch(searchQuery, limit, offset) {
@@ -47015,16 +47015,16 @@ var init_provider = __esm({
         return this.post("get-all-pools-details", { factoryId: this.parseAlkaneId(factoryId), page, limit });
       }
       /** Get AMM UTXOs for address */
-      async getAmmUtxos(address2) {
-        return this.post("get-amm-utxos", { address: address2 });
+      async getAmmUtxos(address3) {
+        return this.post("get-amm-utxos", { address: address3 });
       }
       /** Find swap path between tokens */
       async pathfind(tokenIn, tokenOut, amountIn, maxHops) {
         return this.post("pathfind", { token_in: tokenIn, token_out: tokenOut, amount_in: amountIn, max_hops: maxHops ?? 3 });
       }
       /** Get address LP positions */
-      async getAddressPositions(address2, factoryId) {
-        return this.post("address-positions", { address: address2, factoryId: this.parseAlkaneId(factoryId) });
+      async getAddressPositions(address3, factoryId) {
+        return this.post("address-positions", { address: address3, factoryId: this.parseAlkaneId(factoryId) });
       }
       // ============================================================================
       // TOKEN PAIRS
@@ -47053,12 +47053,12 @@ var init_provider = __esm({
         return this.post("get-token-swap-history", { tokenId: this.parseAlkaneId(alkaneId), page, limit });
       }
       /** Get address swap history for pool */
-      async getAddressSwapHistoryForPool(address2, poolId, page, limit) {
-        return this.post("get-address-swap-history-for-pool", { address: address2, poolId: this.parseAlkaneId(poolId), page, limit });
+      async getAddressSwapHistoryForPool(address3, poolId, page, limit) {
+        return this.post("get-address-swap-history-for-pool", { address: address3, poolId: this.parseAlkaneId(poolId), page, limit });
       }
       /** Get address swap history for token */
-      async getAddressSwapHistoryForToken(address2, alkaneId, page, limit) {
-        return this.post("get-address-swap-history-for-token", { address: address2, tokenId: this.parseAlkaneId(alkaneId), page, limit });
+      async getAddressSwapHistoryForToken(address3, alkaneId, page, limit) {
+        return this.post("get-address-swap-history-for-token", { address: address3, tokenId: this.parseAlkaneId(alkaneId), page, limit });
       }
       // ============================================================================
       // LIQUIDITY HISTORY (MINT/BURN)
@@ -47072,27 +47072,27 @@ var init_provider = __esm({
         return this.post("get-pool-burn-history", { poolId: this.parseAlkaneId(poolId), page, limit });
       }
       /** Get address pool creation history */
-      async getAddressPoolCreationHistory(address2, page, limit) {
-        return this.post("get-address-pool-creation-history", { address: address2, page, limit });
+      async getAddressPoolCreationHistory(address3, page, limit) {
+        return this.post("get-address-pool-creation-history", { address: address3, page, limit });
       }
       /** Get address pool mint history */
-      async getAddressPoolMintHistory(address2, page, limit) {
-        return this.post("get-address-pool-mint-history", { address: address2, page, limit });
+      async getAddressPoolMintHistory(address3, page, limit) {
+        return this.post("get-address-pool-mint-history", { address: address3, page, limit });
       }
       /** Get address pool burn history */
-      async getAddressPoolBurnHistory(address2, page, limit) {
-        return this.post("get-address-pool-burn-history", { address: address2, page, limit });
+      async getAddressPoolBurnHistory(address3, page, limit) {
+        return this.post("get-address-pool-burn-history", { address: address3, page, limit });
       }
       // ============================================================================
       // WRAP/UNWRAP HISTORY
       // ============================================================================
       /** Get address wrap history */
-      async getAddressWrapHistory(address2, page, limit) {
-        return this.post("get-address-wrap-history", { address: address2, page, limit });
+      async getAddressWrapHistory(address3, page, limit) {
+        return this.post("get-address-wrap-history", { address: address3, page, limit });
       }
       /** Get address unwrap history */
-      async getAddressUnwrapHistory(address2, page, limit) {
-        return this.post("get-address-unwrap-history", { address: address2, page, limit });
+      async getAddressUnwrapHistory(address3, page, limit) {
+        return this.post("get-address-unwrap-history", { address: address3, page, limit });
       }
       /** Get all wrap history */
       async getAllWrapHistory(page, limit) {
@@ -47110,8 +47110,8 @@ var init_provider = __esm({
       // ALL AMM TX HISTORY
       // ============================================================================
       /** Get all address AMM transaction history */
-      async getAllAddressAmmTxHistory(address2, page, limit) {
-        return this.post("get-all-address-amm-tx-history", { address: address2, page, limit });
+      async getAllAddressAmmTxHistory(address3, page, limit) {
+        return this.post("get-all-address-amm-tx-history", { address: address3, page, limit });
       }
       /** Get all AMM transaction history */
       async getAllAmmTxHistory(page, limit) {
@@ -47121,16 +47121,16 @@ var init_provider = __esm({
       // BITCOIN BALANCE & UTXOS
       // ============================================================================
       /** Get address BTC balance */
-      async getAddressBalance(address2) {
-        return this.post("get-address-balance", { address: address2 });
+      async getAddressBalance(address3) {
+        return this.post("get-address-balance", { address: address3 });
       }
       /** Get taproot address balance */
-      async getTaprootBalance(address2) {
-        return this.post("get-taproot-balance", { address: address2 });
+      async getTaprootBalance(address3) {
+        return this.post("get-taproot-balance", { address: address3 });
       }
       /** Get address UTXOs */
-      async getAddressUtxos(address2) {
-        return this.post("get-address-utxos", { address: address2 });
+      async getAddressUtxos(address3) {
+        return this.post("get-address-utxos", { address: address3 });
       }
       /** Get account UTXOs */
       async getAccountUtxos(account) {
@@ -47145,8 +47145,8 @@ var init_provider = __esm({
         return this.post("get-taproot-history", { taprootAddress, totalTxs });
       }
       /** Get intent history */
-      async getIntentHistory(address2, page, limit) {
-        return this.post("get-intent-history", { address: address2, page, limit });
+      async getIntentHistory(address3, page, limit) {
+        return this.post("get-intent-history", { address: address3, page, limit });
       }
       // ============================================================================
       // OUTPOINTS
@@ -47156,8 +47156,8 @@ var init_provider = __esm({
         return this.post("get-outpoint-balances", { outpoint });
       }
       /** Get address outpoints */
-      async getAddressOutpoints(address2) {
-        return this.post("get-address-outpoints", { address: address2 });
+      async getAddressOutpoints(address3) {
+        return this.post("get-address-outpoints", { address: address3 });
       }
       // ============================================================================
       // MARKET DATA
@@ -47219,16 +47219,16 @@ var init_provider = __esm({
        * @param address - Bitcoin address
        * @param includeOutpoints - Include detailed outpoint information
        */
-      async getAddressBalances(address2, includeOutpoints = false) {
-        const result = await this.provider.espoGetAddressBalances(address2, includeOutpoints);
+      async getAddressBalances(address3, includeOutpoints = false) {
+        const result = await this.provider.espoGetAddressBalances(address3, includeOutpoints);
         return mapToObject(result);
       }
       /**
        * Get outpoints containing alkanes for an address
        * @param address - Bitcoin address
        */
-      async getAddressOutpoints(address2) {
-        const result = await this.provider.espoGetAddressOutpoints(address2);
+      async getAddressOutpoints(address3) {
+        const result = await this.provider.espoGetAddressOutpoints(address3);
         return mapToObject(result);
       }
       /**
@@ -47650,12 +47650,12 @@ var init_provider = __esm({
       /**
        * Get BTC balance for an address
        */
-      async getBalance(address2) {
+      async getBalance(address3) {
         const provider = await this.getProvider();
-        const info = await provider.esploraGetAddressInfo(address2);
-        const utxos = await provider.esploraGetAddressUtxo(address2);
+        const info = await provider.esploraGetAddressInfo(address3);
+        const utxos = await provider.esploraGetAddressUtxo(address3);
         return {
-          address: address2,
+          address: address3,
           confirmed: info.chain_stats?.funded_txo_sum - info.chain_stats?.spent_txo_sum || 0,
           unconfirmed: info.mempool_stats?.funded_txo_sum - info.mempool_stats?.spent_txo_sum || 0,
           utxos
@@ -47664,16 +47664,16 @@ var init_provider = __esm({
       /**
        * Get enriched balances (BTC + alkanes) for an address
        */
-      async getEnrichedBalances(address2, protocolTag) {
+      async getEnrichedBalances(address3, protocolTag) {
         const provider = await this.getProvider();
-        return provider.getEnrichedBalances(address2, protocolTag);
+        return provider.getEnrichedBalances(address3, protocolTag);
       }
       /**
        * Get alkane token balance for an address
        */
-      async getAlkaneBalance(address2, alkaneId) {
+      async getAlkaneBalance(address3, alkaneId) {
         const provider = await this.getProvider();
-        const balances = await provider.alkanesBalance(address2);
+        const balances = await provider.alkanesBalance(address3);
         if (alkaneId) {
           return balances.filter(
             (b) => b.id?.block === alkaneId.block && b.id?.tx === alkaneId.tx
@@ -47702,25 +47702,25 @@ var init_provider = __esm({
       /**
        * Get transaction history for an address (first page, max 25 transactions)
        */
-      async getAddressHistory(address2) {
+      async getAddressHistory(address3) {
         const provider = await this.getProvider();
-        return provider.getAddressTxs(address2);
+        return provider.getAddressTxs(address3);
       }
       /**
        * Get transaction history for an address from Esplora (first page, max 25 transactions)
        */
-      async getAddressTxs(address2) {
+      async getAddressTxs(address3) {
         const provider = await this.getProvider();
-        return provider.esploraGetAddressTxs(address2);
+        return provider.esploraGetAddressTxs(address3);
       }
       /**
        * Get next page of transaction history for an address
        * @param address The address to fetch transactions for
        * @param lastSeenTxid The last transaction ID from the previous page (undefined for first page)
        */
-      async getAddressTxsChain(address2, lastSeenTxid) {
+      async getAddressTxsChain(address3, lastSeenTxid) {
         const provider = await this.getProvider();
-        return provider.esploraGetAddressTxsChain(address2, lastSeenTxid);
+        return provider.esploraGetAddressTxsChain(address3, lastSeenTxid);
       }
       /**
        * Get storage value at a specific path for an alkane
@@ -47736,9 +47736,9 @@ var init_provider = __esm({
       /**
        * Get address history with alkane traces
        */
-      async getAddressHistoryWithTraces(address2, excludeCoinbase) {
+      async getAddressHistoryWithTraces(address3, excludeCoinbase) {
         const provider = await this.getProvider();
-        return provider.getAddressTxsWithTraces(address2, excludeCoinbase);
+        return provider.getAddressTxsWithTraces(address3, excludeCoinbase);
       }
       /**
        * Get current block height
@@ -48267,7 +48267,9 @@ var init_adapter = __esm({
         return {
           address: this.wallet.address,
           public_key: this.wallet.publicKey,
-          address_type: this.wallet.account.addressType || "unknown"
+          address_type: this.wallet.account.addressType || "unknown",
+          payment_address: this.wallet.paymentAddress,
+          payment_public_key: this.wallet.paymentPublicKey
         };
       }
       async disconnect() {
@@ -48278,7 +48280,9 @@ var init_adapter = __esm({
           {
             address: this.wallet.address,
             public_key: this.wallet.publicKey,
-            address_type: this.wallet.account.addressType || "unknown"
+            address_type: this.wallet.account.addressType || "unknown",
+            payment_address: this.wallet.paymentAddress,
+            payment_public_key: this.wallet.paymentPublicKey
           }
         ];
       }
@@ -48288,7 +48292,7 @@ var init_adapter = __esm({
       async switchNetwork(network) {
         throw new Error(`${this.wallet.info.name} does not support programmatic network switching`);
       }
-      async signMessage(message, address2) {
+      async signMessage(message, address3) {
         return this.wallet.signMessage(message);
       }
       async signPsbt(psbtHex, options) {
@@ -48383,13 +48387,27 @@ var init_adapter = __esm({
       get xverse() {
         return window.XverseProviders?.BitcoinProvider;
       }
+      /**
+       * Get the Bitcoin network for address derivation
+       */
+      getBitcoinNetwork() {
+        const addr = this.wallet.address.toLowerCase();
+        if (addr.startsWith("bc1") || addr.startsWith("1") || addr.startsWith("3")) {
+          return bitcoin5.networks.bitcoin;
+        }
+        if (addr.startsWith("tb1") || addr.startsWith("m") || addr.startsWith("n") || addr.startsWith("2")) {
+          return bitcoin5.networks.testnet;
+        }
+        return bitcoin5.networks.bitcoin;
+      }
       async signPsbt(psbtHex, options) {
         if (!this.xverse) throw new Error("Xverse not available");
         const psbt = bitcoin5.Psbt.fromHex(psbtHex);
         const psbtBase64 = psbt.toBase64();
+        const signInputs = this.buildXverseSignInputs(psbt, options);
         const response = await this.xverse.request("signPsbt", {
           psbt: psbtBase64,
-          signInputs: this.buildXverseSignInputs(psbt, options),
+          signInputs,
           broadcast: false
         });
         if (response.status === "success") {
@@ -48398,6 +48416,16 @@ var init_adapter = __esm({
         }
         throw new Error(response.error?.message || "Xverse signing failed");
       }
+      /**
+       * Build signInputs mapping for Xverse PSBT signing.
+       *
+       * For dual-address wallets like Xverse, we need to:
+       * 1. Get both the ordinals (taproot) and payment (segwit) addresses
+       * 2. For each PSBT input, derive the address from witnessUtxo.script
+       * 3. Map each input to the correct address
+       *
+       * Based on lasereyes-mono implementation.
+       */
       buildXverseSignInputs(psbt, options) {
         if (options?.to_sign_inputs) {
           return options.to_sign_inputs.reduce(
@@ -48409,11 +48437,51 @@ var init_adapter = __esm({
             {}
           );
         }
-        const inputIndexes = [];
-        for (let i = 0; i < psbt.data.inputs.length; i++) {
-          inputIndexes.push(i);
+        const ordinalsAddress = this.wallet.address;
+        const paymentAddress = this.wallet.paymentAddress;
+        const inputs = psbt.data.inputs;
+        const network = this.getBitcoinNetwork();
+        const ordinalAddressData = {
+          [ordinalsAddress]: []
+        };
+        const paymentsAddressData = paymentAddress ? { [paymentAddress]: [] } : {};
+        for (let i = 0; i < inputs.length; i++) {
+          const input = inputs[i];
+          if (input.witnessUtxo === void 0) {
+            if (paymentAddress) {
+              paymentsAddressData[paymentAddress].push(i);
+            } else {
+              ordinalAddressData[ordinalsAddress].push(i);
+            }
+            continue;
+          }
+          const { script } = input.witnessUtxo;
+          try {
+            const addressFromScript = bitcoin5.address.fromOutputScript(script, network);
+            if (paymentAddress && addressFromScript === paymentAddress) {
+              paymentsAddressData[paymentAddress].push(i);
+            } else if (addressFromScript === ordinalsAddress) {
+              ordinalAddressData[ordinalsAddress].push(i);
+            } else {
+              const isSegwit = addressFromScript.toLowerCase().startsWith("bc1q") || addressFromScript.toLowerCase().startsWith("tb1q") || addressFromScript.startsWith("3") || addressFromScript.startsWith("2");
+              if (isSegwit && paymentAddress) {
+                paymentsAddressData[paymentAddress].push(i);
+              } else {
+                ordinalAddressData[ordinalsAddress].push(i);
+              }
+            }
+          } catch (e) {
+            ordinalAddressData[ordinalsAddress].push(i);
+          }
         }
-        return { [this.wallet.address]: inputIndexes };
+        const signInputs = {};
+        if (ordinalAddressData[ordinalsAddress].length > 0) {
+          signInputs[ordinalsAddress] = ordinalAddressData[ordinalsAddress];
+        }
+        if (paymentAddress && paymentsAddressData[paymentAddress]?.length > 0) {
+          signInputs[paymentAddress] = paymentsAddressData[paymentAddress];
+        }
+        return signInputs;
       }
       async switchNetwork(network) {
         if (!this.xverse) throw new Error("Xverse not available");
@@ -48469,16 +48537,58 @@ var init_adapter = __esm({
       get leather() {
         return window.LeatherProvider;
       }
+      /**
+       * Get the Bitcoin network for address derivation
+       */
+      getBitcoinNetwork() {
+        const addr = this.wallet.address.toLowerCase();
+        if (addr.startsWith("bc1") || addr.startsWith("1") || addr.startsWith("3")) {
+          return bitcoin5.networks.bitcoin;
+        }
+        if (addr.startsWith("tb1") || addr.startsWith("m") || addr.startsWith("n") || addr.startsWith("2")) {
+          return bitcoin5.networks.testnet;
+        }
+        return bitcoin5.networks.bitcoin;
+      }
       async signPsbt(psbtHex, options) {
         if (!this.leather) throw new Error("Leather wallet not available");
+        let signAtIndex;
+        if (options?.to_sign_inputs) {
+          signAtIndex = options.to_sign_inputs.map((i) => i.index);
+        } else {
+          const psbt = bitcoin5.Psbt.fromHex(psbtHex);
+          const inputs = psbt.data.inputs;
+          const network = this.getBitcoinNetwork();
+          const ordinalsAddress = this.wallet.address;
+          const paymentAddress = this.wallet.paymentAddress;
+          signAtIndex = [];
+          for (let i = 0; i < inputs.length; i++) {
+            const input = inputs[i];
+            if (input.witnessUtxo) {
+              try {
+                const addressFromScript = bitcoin5.address.fromOutputScript(
+                  input.witnessUtxo.script,
+                  network
+                );
+                if (addressFromScript === ordinalsAddress || paymentAddress && addressFromScript === paymentAddress) {
+                  signAtIndex.push(i);
+                }
+              } catch {
+                signAtIndex.push(i);
+              }
+            } else {
+              signAtIndex.push(i);
+            }
+          }
+        }
         const response = await this.leather.request("signPsbt", {
           hex: psbtHex,
-          signAtIndex: options?.to_sign_inputs?.map((i) => i.index),
+          signAtIndex,
           broadcast: false
         });
         return response.result.hex;
       }
-      async signMessage(message, address2) {
+      async signMessage(message, address3) {
         if (!this.leather) throw new Error("Leather wallet not available");
         const response = await this.leather.request("signMessage", {
           message,
@@ -48503,10 +48613,10 @@ var init_adapter = __esm({
         });
         return bytesToHex2(signedPsbt);
       }
-      async signMessage(message, address2) {
+      async signMessage(message, address3) {
         if (!this.phantom) throw new Error("Phantom Bitcoin not available");
         const { signature } = await this.phantom.signMessage(
-          address2 || this.wallet.address,
+          address3 || this.wallet.address,
           new TextEncoder().encode(message)
         );
         return signature;
@@ -48516,14 +48626,58 @@ var init_adapter = __esm({
       get magicEden() {
         return window.magicEden?.bitcoin;
       }
+      /**
+       * Get the Bitcoin network for address derivation
+       */
+      getBitcoinNetwork() {
+        const addr = this.wallet.address.toLowerCase();
+        if (addr.startsWith("bc1") || addr.startsWith("1") || addr.startsWith("3")) {
+          return bitcoin5.networks.bitcoin;
+        }
+        if (addr.startsWith("tb1") || addr.startsWith("m") || addr.startsWith("n") || addr.startsWith("2")) {
+          return bitcoin5.networks.testnet;
+        }
+        return bitcoin5.networks.bitcoin;
+      }
       async signPsbt(psbtHex, options) {
         if (!this.magicEden) throw new Error("Magic Eden wallet not available");
+        let toSignInputs = options?.to_sign_inputs;
+        if (!toSignInputs) {
+          const psbt = bitcoin5.Psbt.fromHex(psbtHex);
+          const inputs = psbt.data.inputs;
+          const network = this.getBitcoinNetwork();
+          const ordinalsAddress = this.wallet.address;
+          const paymentAddress = this.wallet.paymentAddress;
+          toSignInputs = [];
+          for (let i = 0; i < inputs.length; i++) {
+            const input = inputs[i];
+            if (input.witnessUtxo) {
+              try {
+                const addressFromScript = bitcoin5.address.fromOutputScript(
+                  input.witnessUtxo.script,
+                  network
+                );
+                if (addressFromScript === ordinalsAddress) {
+                  toSignInputs.push({ index: i, address: ordinalsAddress });
+                } else if (paymentAddress && addressFromScript === paymentAddress) {
+                  toSignInputs.push({ index: i, address: paymentAddress });
+                } else {
+                  toSignInputs.push({ index: i, address: ordinalsAddress });
+                }
+              } catch {
+                toSignInputs.push({ index: i, address: ordinalsAddress });
+              }
+            } else {
+              toSignInputs.push({ index: i, address: paymentAddress || ordinalsAddress });
+            }
+          }
+        }
         return this.magicEden.signPsbt(psbtHex, {
           autoFinalized: options?.auto_finalized ?? true,
-          toSignInputs: options?.to_sign_inputs
+          toSignInputs
         });
       }
-      async signMessage(message, address2) {
+      async signMessage(message, address3) {
         if (!this.magicEden) throw new Error("Magic Eden wallet not available");
         return this.magicEden.signMessage(message);
       }
@@ -48598,7 +48752,7 @@ var init_adapter = __esm({
       async switchNetwork(network) {
         this.mockNetwork = network;
       }
-      async signMessage(message, address2) {
+      async signMessage(message, address3) {
         const mockSig = Buffer.from(`mock_sig_${message.substring(0, 10)}`).toString("base64");
         return mockSig;
       }
@@ -48812,7 +48966,7 @@ var init_browser_wallets = __esm({
         this.account = account;
       }
       /**
-       * Get the wallet's address
+       * Get the wallet's address (ordinals/taproot address for dual-address wallets)
        */
       get address() {
         return this.account.address;
@@ -48822,6 +48976,19 @@ var init_browser_wallets = __esm({
        */
       get publicKey() {
         return this.account.publicKey;
+      }
+      /**
+       * Get the payment address for dual-address wallets (Xverse, Leather, etc.)
+       * Returns undefined for single-address wallets
+       */
+      get paymentAddress() {
+        return this.account.paymentAddress;
+      }
+      /**
+       * Get the payment public key for dual-address wallets
+       */
+      get paymentPublicKey() {
+        return this.account.paymentPublicKey;
       }
       /**
        * Sign a message
@@ -49013,11 +49180,18 @@ var init_browser_wallets = __esm({
             const response = await provider.BitcoinProvider.request("getAccounts", {
               purposes: ["ordinals", "payment"]
             });
-            const firstAccount = response.result[0];
+            const ordinalsAccount = response.result.find(
+              (acc) => acc.purpose === "ordinals"
+            ) || response.result[0];
+            const paymentAccount = response.result.find(
+              (acc) => acc.purpose === "payment"
+            );
             account = {
-              address: firstAccount.address,
-              publicKey: firstAccount.publicKey,
-              addressType: firstAccount.addressType
+              address: ordinalsAccount.address,
+              publicKey: ordinalsAccount.publicKey,
+              addressType: ordinalsAccount.addressType,
+              paymentAddress: paymentAccount?.address,
+              paymentPublicKey: paymentAccount?.publicKey
             };
             break;
           }
@@ -49048,13 +49222,22 @@ var init_browser_wallets = __esm({
           }
           case "leather": {
             const response = await provider.request("getAddresses");
-            const bitcoinAddress = response.result.addresses.find(
+            const taprootAddress = response.result.addresses.find(
+              (addr) => addr.symbol === "BTC" && addr.type === "p2tr"
+            );
+            const segwitAddress = response.result.addresses.find(
+              (addr) => addr.symbol === "BTC" && addr.type === "p2wpkh"
+            );
+            const fallbackAddress = response.result.addresses.find(
               (addr) => addr.symbol === "BTC"
             );
+            const ordinalsAddr = taprootAddress || fallbackAddress;
             account = {
-              address: bitcoinAddress.address,
-              publicKey: bitcoinAddress.publicKey,
-              addressType: bitcoinAddress.type
+              address: ordinalsAddr.address,
+              publicKey: ordinalsAddr.publicKey,
+              addressType: ordinalsAddr.type,
+              paymentAddress: segwitAddress?.address,
+              paymentPublicKey: segwitAddress?.publicKey
             };
             break;
           }
@@ -49064,9 +49247,18 @@ var init_browser_wallets = __esm({
               throw new Error("Magic Eden Bitcoin provider not available");
             }
             const accounts = await bitcoinProvider.connect();
+            const ordinalsAccount = accounts.find(
+              (acc) => acc.purpose === "ordinals" || acc.addressType === "p2tr"
+            ) || accounts[0];
+            const paymentAccount = accounts.find(
+              (acc) => acc.purpose === "payment" || acc.addressType === "p2wpkh"
+            );
             account = {
-              address: accounts[0].address,
-              publicKey: accounts[0].publicKey
+              address: ordinalsAccount.address,
+              publicKey: ordinalsAccount.publicKey,
+              addressType: ordinalsAccount.addressType,
+              paymentAddress: paymentAccount?.address,
+              paymentPublicKey: paymentAccount?.publicKey
             };
             break;
           }
@@ -49793,9 +49985,9 @@ function getNetwork(networkType) {
       throw new Error(`Unknown network type: ${networkType}`);
   }
 }
-function validateAddress(address2, network) {
+function validateAddress(address3, network) {
   try {
-    bitcoin4.address.toOutputScript(address2, network);
+    bitcoin4.address.toOutputScript(address3, network);
     return true;
   } catch {
     return false;
@@ -50044,12 +50236,12 @@ var KeystoreSigner = class _KeystoreSigner extends AlkanesSigner {
     if (this.cachedAccount) {
       return this.cachedAccount;
     }
-    const { address: address2, publicKey, addressType } = this.deriveAddressInfo(
+    const { address: address3, publicKey, addressType } = this.deriveAddressInfo(
       this.addressType,
       this.addressIndex
     );
     this.cachedAccount = {
-      address: address2,
+      address: address3,
       publicKey,
       addressType
     };
@@ -50177,31 +50369,31 @@ var KeystoreSigner = class _KeystoreSigner extends AlkanesSigner {
     const basePath = this.getDerivationPath(addressType);
     const node = this.root.derivePath(`${basePath}/${change}/${index}`);
     const pubkey = node.publicKey;
-    let address2;
+    let address3;
     switch (addressType) {
       case "p2pkh" /* P2PKH */:
-        address2 = bitcoin7.payments.p2pkh({ pubkey, network: this.bitcoinNetwork }).address;
+        address3 = bitcoin7.payments.p2pkh({ pubkey, network: this.bitcoinNetwork }).address;
         break;
       case "p2wpkh" /* P2WPKH */:
-        address2 = bitcoin7.payments.p2wpkh({ pubkey, network: this.bitcoinNetwork }).address;
+        address3 = bitcoin7.payments.p2wpkh({ pubkey, network: this.bitcoinNetwork }).address;
         break;
       case "p2tr" /* P2TR */:
         const internalPubkey = pubkey.slice(1, 33);
-        address2 = bitcoin7.payments.p2tr({
+        address3 = bitcoin7.payments.p2tr({
           internalPubkey,
           network: this.bitcoinNetwork
         }).address;
         break;
       default:
-        address2 = bitcoin7.payments.p2wpkh({ pubkey, network: this.bitcoinNetwork }).address;
+        address3 = bitcoin7.payments.p2wpkh({ pubkey, network: this.bitcoinNetwork }).address;
     }
     return {
-      address: address2,
+      address: address3,
       publicKey: pubkey.toString("hex"),
       addressType
     };
   }
-  getSigningNode(address2) {
+  getSigningNode(address3) {
     const basePath = this.getDerivationPath(this.addressType);
     return this.root.derivePath(`${basePath}/0/${this.addressIndex}`);
   }
@@ -50367,8 +50559,8 @@ var BrowserWalletSigner = class _BrowserWalletSigner extends EventEmittingSigner
     return this.adapter.getPublicKey();
   }
   async signMessage(message, options) {
-    const address2 = options?.address || await this.getAddress();
-    return this.adapter.signMessage(message, address2);
+    const address3 = options?.address || await this.getAddress();
+    return this.adapter.signMessage(message, address3);
   }
   async signPsbt(psbt, options) {
     let psbtHex = psbt;
@@ -50725,8 +50917,8 @@ var AlkanesClient = class _AlkanesClient {
   /**
    * Get BTC balance for the current address
    */
-  async getBalance(address2) {
-    const addr = address2 || await this.getAddress();
+  async getBalance(address3) {
+    const addr = address3 || await this.getAddress();
     const result = await this.provider.getBalance(addr);
     return {
       confirmed: result.confirmed,
@@ -50738,22 +50930,22 @@ var AlkanesClient = class _AlkanesClient {
   /**
    * Get enriched balances (BTC + alkanes) for the current address
    */
-  async getEnrichedBalances(address2) {
-    const addr = address2 || await this.getAddress();
+  async getEnrichedBalances(address3) {
+    const addr = address3 || await this.getAddress();
     return this.provider.getEnrichedBalances(addr);
   }
   /**
    * Get alkane token balances for the current address
    */
-  async getAlkaneBalances(address2) {
-    const addr = address2 || await this.getAddress();
+  async getAlkaneBalances(address3) {
+    const addr = address3 || await this.getAddress();
     return this.provider.getAlkaneBalance(addr);
   }
   /**
    * Get UTXOs for the current address
    */
-  async getUtxos(address2) {
-    const addr = address2 || await this.getAddress();
+  async getUtxos(address3) {
+    const addr = address3 || await this.getAddress();
     const balance = await this.provider.getBalance(addr);
     return balance.utxos;
   }
@@ -50831,15 +51023,15 @@ var AlkanesClient = class _AlkanesClient {
   /**
    * Get transaction history for the current address
    */
-  async getTransactionHistory(address2) {
-    const addr = address2 || await this.getAddress();
+  async getTransactionHistory(address3) {
+    const addr = address3 || await this.getAddress();
     return this.provider.getAddressHistory(addr);
   }
   /**
    * Get transaction history with alkane traces
    */
-  async getTransactionHistoryWithTraces(address2) {
-    const addr = address2 || await this.getAddress();
+  async getTransactionHistoryWithTraces(address3) {
+    const addr = address3 || await this.getAddress();
     return this.provider.getAddressHistoryWithTraces(addr);
   }
   /**

@@ -97,6 +97,10 @@ export interface WalletAccountForWasm {
   public_key?: string;
   compressed_public_key?: string;
   address_type: string;
+  /** Payment address for dual-address wallets */
+  payment_address?: string;
+  /** Payment public key for dual-address wallets */
+  payment_public_key?: string;
 }
 
 /**
@@ -144,6 +148,8 @@ export class BaseWalletAdapter implements JsWalletAdapter {
       address: this.wallet.address,
       public_key: this.wallet.publicKey,
       address_type: this.wallet.account.addressType || 'unknown',
+      payment_address: this.wallet.paymentAddress,
+      payment_public_key: this.wallet.paymentPublicKey,
     };
   }
 
@@ -158,6 +164,8 @@ export class BaseWalletAdapter implements JsWalletAdapter {
         address: this.wallet.address,
         public_key: this.wallet.publicKey,
         address_type: this.wallet.account.addressType || 'unknown',
+        payment_address: this.wallet.paymentAddress,
+        payment_public_key: this.wallet.paymentPublicKey,
       },
     ];
   }
@@ -292,10 +300,29 @@ export class UnisatAdapter extends BaseWalletAdapter {
 
 /**
  * Xverse-specific wallet adapter
+ *
+ * Xverse is a dual-address wallet with separate ordinals (taproot) and payment (segwit) addresses.
+ * Based on the lasereyes-mono implementation: https://github.com/omnisat/lasereyes-mono
  */
 export class XverseAdapter extends BaseWalletAdapter {
   private get xverse(): any {
     return (window as any).XverseProviders?.BitcoinProvider;
+  }
+
+  /**
+   * Get the Bitcoin network for address derivation
+   */
+  private getBitcoinNetwork(): bitcoin.Network {
+    // Detect from address prefix
+    const addr = this.wallet.address.toLowerCase();
+    if (addr.startsWith('bc1') || addr.startsWith('1') || addr.startsWith('3')) {
+      return bitcoin.networks.bitcoin;
+    }
+    if (addr.startsWith('tb1') || addr.startsWith('m') || addr.startsWith('n') || addr.startsWith('2')) {
+      return bitcoin.networks.testnet;
+    }
+    // Default to mainnet
+    return bitcoin.networks.bitcoin;
   }
 
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
@@ -305,9 +332,11 @@ export class XverseAdapter extends BaseWalletAdapter {
     const psbt = bitcoin.Psbt.fromHex(psbtHex);
     const psbtBase64 = psbt.toBase64();
 
+    const signInputs = this.buildXverseSignInputs(psbt, options);
+
     const response = await this.xverse.request('signPsbt', {
       psbt: psbtBase64,
-      signInputs: this.buildXverseSignInputs(psbt, options),
+      signInputs,
       broadcast: false,
     });
 
@@ -320,10 +349,21 @@ export class XverseAdapter extends BaseWalletAdapter {
     throw new Error(response.error?.message || 'Xverse signing failed');
   }
 
+  /**
+   * Build signInputs mapping for Xverse PSBT signing.
+   *
+   * For dual-address wallets like Xverse, we need to:
+   * 1. Get both the ordinals (taproot) and payment (segwit) addresses
+   * 2. For each PSBT input, derive the address from witnessUtxo.script
+   * 3. Map each input to the correct address
+   *
+   * Based on lasereyes-mono implementation.
+   */
   private buildXverseSignInputs(
     psbt: bitcoin.Psbt,
     options?: PsbtSigningOptionsForWasm
   ): Record<string, number[]> {
+    // If explicit inputs are provided, use them
     if (options?.to_sign_inputs) {
       return options.to_sign_inputs.reduce(
         (acc: Record<string, number[]>, input) => {
@@ -335,12 +375,76 @@ export class XverseAdapter extends BaseWalletAdapter {
       );
     }
 
-    // Default: sign all inputs with the connected address
-    const inputIndexes: number[] = [];
-    for (let i = 0; i < psbt.data.inputs.length; i++) {
-      inputIndexes.push(i);
+    // Get both addresses (ordinals = taproot, payment = segwit)
+    const ordinalsAddress = this.wallet.address;
+    const paymentAddress = this.wallet.paymentAddress;
+
+    const inputs = psbt.data.inputs;
+    const network = this.getBitcoinNetwork();
+
+    // Initialize address data maps
+    const ordinalAddressData: Record<string, number[]> = {
+      [ordinalsAddress]: [],
+    };
+    const paymentsAddressData: Record<string, number[]> = paymentAddress
+      ? { [paymentAddress]: [] }
+      : {};
+
+    // Analyze each input and determine which address it belongs to
+    for (let i = 0; i < inputs.length; i++) {
+      const input = inputs[i];
+
+      // If no witnessUtxo, default to payment address (like lasereyes-mono)
+      if (input.witnessUtxo === undefined) {
+        if (paymentAddress) {
+          paymentsAddressData[paymentAddress].push(i);
+        } else {
+          // Single-address mode: use the ordinals address
+          ordinalAddressData[ordinalsAddress].push(i);
+        }
+        continue;
+      }
+
+      // Derive address from the witnessUtxo script
+      const { script } = input.witnessUtxo;
+      try {
+        const addressFromScript = bitcoin.address.fromOutputScript(script, network);
+
+        if (paymentAddress && addressFromScript === paymentAddress) {
+          paymentsAddressData[paymentAddress].push(i);
+        } else if (addressFromScript === ordinalsAddress) {
+          ordinalAddressData[ordinalsAddress].push(i);
+        } else {
+          // Unknown address - try to match by address type
+          const isSegwit = addressFromScript.toLowerCase().startsWith('bc1q') ||
+                           addressFromScript.toLowerCase().startsWith('tb1q') ||
+                           addressFromScript.startsWith('3') ||
+                           addressFromScript.startsWith('2');
+
+          if (isSegwit && paymentAddress) {
+            paymentsAddressData[paymentAddress].push(i);
+          } else {
+            ordinalAddressData[ordinalsAddress].push(i);
+          }
+        }
+      } catch (e) {
+        // Failed to derive address - default to ordinals address
+        ordinalAddressData[ordinalsAddress].push(i);
+      }
     }
-    return { [this.wallet.address]: inputIndexes };
+
+    // Build the final signInputs object
+    const signInputs: Record<string, number[]> = {};
+
+    if (ordinalAddressData[ordinalsAddress].length > 0) {
+      signInputs[ordinalsAddress] = ordinalAddressData[ordinalsAddress];
+    }
+
+    if (paymentAddress && paymentsAddressData[paymentAddress]?.length > 0) {
+      signInputs[paymentAddress] = paymentsAddressData[paymentAddress];
+    }
+
+    return signInputs;
   }
 
   async switchNetwork(network: string): Promise<void> {
@@ -407,18 +511,72 @@ export class OkxAdapter extends BaseWalletAdapter {
 
 /**
  * Leather-specific wallet adapter
+ *
+ * Leather is a dual-address wallet with separate taproot and segwit addresses.
  */
 export class LeatherAdapter extends BaseWalletAdapter {
   private get leather(): any {
     return (window as any).LeatherProvider;
   }
 
+  /**
+   * Get the Bitcoin network for address derivation
+   */
+  private getBitcoinNetwork(): bitcoin.Network {
+    const addr = this.wallet.address.toLowerCase();
+    if (addr.startsWith('bc1') || addr.startsWith('1') || addr.startsWith('3')) {
+      return bitcoin.networks.bitcoin;
+    }
+    if (addr.startsWith('tb1') || addr.startsWith('m') || addr.startsWith('n') || addr.startsWith('2')) {
+      return bitcoin.networks.testnet;
+    }
+    return bitcoin.networks.bitcoin;
+  }
+
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.leather) throw new Error('Leather wallet not available');
 
+    // Leather uses signAtIndex - we need to determine which inputs to sign
+    let signAtIndex: number[] | undefined;
+
+    if (options?.to_sign_inputs) {
+      signAtIndex = options.to_sign_inputs.map((i) => i.index);
+    } else {
+      // Auto-detect inputs to sign based on addresses
+      const psbt = bitcoin.Psbt.fromHex(psbtHex);
+      const inputs = psbt.data.inputs;
+      const network = this.getBitcoinNetwork();
+      const ordinalsAddress = this.wallet.address;
+      const paymentAddress = this.wallet.paymentAddress;
+
+      signAtIndex = [];
+      for (let i = 0; i < inputs.length; i++) {
+        const input = inputs[i];
+        if (input.witnessUtxo) {
+          try {
+            const addressFromScript = bitcoin.address.fromOutputScript(
+              input.witnessUtxo.script,
+              network
+            );
+            // Include input if it matches either address
+            if (addressFromScript === ordinalsAddress ||
+                (paymentAddress && addressFromScript === paymentAddress)) {
+              signAtIndex.push(i);
+            }
+          } catch {
+            // If we can't determine, include by default
+            signAtIndex.push(i);
+          }
+        } else {
+          // No witnessUtxo - include by default
+          signAtIndex.push(i);
+        }
+      }
+    }
+
     const response = await this.leather.request('signPsbt', {
       hex: psbtHex,
-      signAtIndex: options?.to_sign_inputs?.map((i) => i.index),
+      signAtIndex,
       broadcast: false,
     });
 
@@ -474,17 +632,72 @@ export class PhantomAdapter extends BaseWalletAdapter {
 
 /**
  * Magic Eden-specific wallet adapter
+ *
+ * Magic Eden is a dual-address wallet with separate ordinals and payment addresses.
  */
 export class MagicEdenAdapter extends BaseWalletAdapter {
   private get magicEden(): any {
     return (window as any).magicEden?.bitcoin;
   }
 
+  /**
+   * Get the Bitcoin network for address derivation
+   */
+  private getBitcoinNetwork(): bitcoin.Network {
+    const addr = this.wallet.address.toLowerCase();
+    if (addr.startsWith('bc1') || addr.startsWith('1') || addr.startsWith('3')) {
+      return bitcoin.networks.bitcoin;
+    }
+    if (addr.startsWith('tb1') || addr.startsWith('m') || addr.startsWith('n') || addr.startsWith('2')) {
+      return bitcoin.networks.testnet;
+    }
+    return bitcoin.networks.bitcoin;
+  }
+
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.magicEden) throw new Error('Magic Eden wallet not available');
+
+    // Build toSignInputs based on addresses if not explicitly provided
+    let toSignInputs = options?.to_sign_inputs;
+
+    if (!toSignInputs) {
+      const psbt = bitcoin.Psbt.fromHex(psbtHex);
+      const inputs = psbt.data.inputs;
+      const network = this.getBitcoinNetwork();
+      const ordinalsAddress = this.wallet.address;
+      const paymentAddress = this.wallet.paymentAddress;
+
+      toSignInputs = [];
+      for (let i = 0; i < inputs.length; i++) {
+        const input = inputs[i];
+        if (input.witnessUtxo) {
+          try {
+            const addressFromScript = bitcoin.address.fromOutputScript(
+              input.witnessUtxo.script,
+              network
+            );
+            // Assign to the correct address
+            if (addressFromScript === ordinalsAddress) {
+              toSignInputs.push({ index: i, address: ordinalsAddress });
+            } else if (paymentAddress && addressFromScript === paymentAddress) {
+              toSignInputs.push({ index: i, address: paymentAddress });
+            } else {
+              // Default to ordinals address
+              toSignInputs.push({ index: i, address: ordinalsAddress });
+            }
+          } catch {
+            toSignInputs.push({ index: i, address: ordinalsAddress });
+          }
+        } else {
+          // Default to payment address if available, otherwise ordinals
+          toSignInputs.push({ index: i, address: paymentAddress || ordinalsAddress });
+        }
+      }
+    }
+
     return this.magicEden.signPsbt(psbtHex, {
       autoFinalized: options?.auto_finalized ?? true,
-      toSignInputs: options?.to_sign_inputs,
+      toSignInputs,
     });
   }
 

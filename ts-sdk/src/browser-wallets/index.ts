@@ -43,6 +43,10 @@ export interface WalletAccount {
   address: string;
   publicKey?: string;
   addressType?: string;
+  /** Payment address for dual-address wallets (Xverse, Leather, Magic Eden) */
+  paymentAddress?: string;
+  /** Payment public key for dual-address wallets */
+  paymentPublicKey?: string;
 }
 
 /**
@@ -219,7 +223,7 @@ export class ConnectedWallet {
   }
 
   /**
-   * Get the wallet's address
+   * Get the wallet's address (ordinals/taproot address for dual-address wallets)
    */
   get address(): string {
     return this.account.address;
@@ -230,6 +234,21 @@ export class ConnectedWallet {
    */
   get publicKey(): string | undefined {
     return this.account.publicKey;
+  }
+
+  /**
+   * Get the payment address for dual-address wallets (Xverse, Leather, etc.)
+   * Returns undefined for single-address wallets
+   */
+  get paymentAddress(): string | undefined {
+    return this.account.paymentAddress;
+  }
+
+  /**
+   * Get the payment public key for dual-address wallets
+   */
+  get paymentPublicKey(): string | undefined {
+    return this.account.paymentPublicKey;
   }
 
   /**
@@ -455,11 +474,19 @@ export class WalletConnector {
         const response = await provider.BitcoinProvider.request('getAccounts', {
           purposes: ['ordinals', 'payment'],
         });
-        const firstAccount = response.result[0];
+        // Find ordinals (taproot) and payment (segwit) addresses
+        const ordinalsAccount = response.result.find(
+          (acc: any) => acc.purpose === 'ordinals'
+        ) || response.result[0];
+        const paymentAccount = response.result.find(
+          (acc: any) => acc.purpose === 'payment'
+        );
         account = {
-          address: firstAccount.address,
-          publicKey: firstAccount.publicKey,
-          addressType: firstAccount.addressType,
+          address: ordinalsAccount.address,
+          publicKey: ordinalsAccount.publicKey,
+          addressType: ordinalsAccount.addressType,
+          paymentAddress: paymentAccount?.address,
+          paymentPublicKey: paymentAccount?.publicKey,
         };
         break;
       }
@@ -493,13 +520,24 @@ export class WalletConnector {
 
       case 'leather': {
         const response = await provider.request('getAddresses');
-        const bitcoinAddress = response.result.addresses.find(
+        // Find taproot (ordinals) and native segwit (payment) addresses
+        const taprootAddress = response.result.addresses.find(
+          (addr: any) => addr.symbol === 'BTC' && addr.type === 'p2tr'
+        );
+        const segwitAddress = response.result.addresses.find(
+          (addr: any) => addr.symbol === 'BTC' && addr.type === 'p2wpkh'
+        );
+        // Fall back to first BTC address if specific types not found
+        const fallbackAddress = response.result.addresses.find(
           (addr: any) => addr.symbol === 'BTC'
         );
+        const ordinalsAddr = taprootAddress || fallbackAddress;
         account = {
-          address: bitcoinAddress.address,
-          publicKey: bitcoinAddress.publicKey,
-          addressType: bitcoinAddress.type,
+          address: ordinalsAddr.address,
+          publicKey: ordinalsAddr.publicKey,
+          addressType: ordinalsAddr.type,
+          paymentAddress: segwitAddress?.address,
+          paymentPublicKey: segwitAddress?.publicKey,
         };
         break;
       }
@@ -510,9 +548,19 @@ export class WalletConnector {
           throw new Error('Magic Eden Bitcoin provider not available');
         }
         const accounts = await bitcoinProvider.connect();
+        // Magic Eden may return multiple accounts (ordinals and payment)
+        const ordinalsAccount = accounts.find(
+          (acc: any) => acc.purpose === 'ordinals' || acc.addressType === 'p2tr'
+        ) || accounts[0];
+        const paymentAccount = accounts.find(
+          (acc: any) => acc.purpose === 'payment' || acc.addressType === 'p2wpkh'
+        );
         account = {
-          address: accounts[0].address,
-          publicKey: accounts[0].publicKey,
+          address: ordinalsAccount.address,
+          publicKey: ordinalsAccount.publicKey,
+          addressType: ordinalsAccount.addressType,
+          paymentAddress: paymentAccount?.address,
+          paymentPublicKey: paymentAccount?.publicKey,
         };
         break;
       }
