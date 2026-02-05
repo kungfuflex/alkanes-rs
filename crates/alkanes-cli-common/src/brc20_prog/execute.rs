@@ -80,6 +80,19 @@ impl<'a> Brc20ProgExecutor<'a> {
         Self { provider }
     }
 
+    /// Resolve fee rate: use the provided rate if Some, otherwise fetch the medium
+    /// (6-block target) rate from esplora fee estimates
+    async fn resolve_fee_rate(&mut self, fee_rate: Option<f32>) -> Result<f32> {
+        match fee_rate {
+            Some(rate) => Ok(rate),
+            None => {
+                let rates = self.provider.get_fee_rates().await?;
+                log::info!("Using esplora medium fee rate: {} sat/vB", rates.medium);
+                Ok(rates.medium)
+            }
+        }
+    }
+
     /// Execute BRC20-prog with Presign+RBF hybrid strategy
     /// This strategy:
     /// 1. Pre-builds and signs all transactions (split, commit, reveal, activation) with RBF-enabled sequences
@@ -575,7 +588,7 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Calculate EXACT commit output using reference implementation approach:
         // Build a dummy reveal transaction with REAL script and control block to get exact vsize
-        let fee_rate = params.fee_rate.unwrap_or(600.0);
+        let fee_rate = self.resolve_fee_rate(params.fee_rate).await?;
 
         // Build the reveal script and taproot structures NOW (before commit)
         // The reveal script includes <pubkey> CHECKSIG to prevent frontrunning
@@ -916,7 +929,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         let fee = if rebar_payment.is_some() {
             0
         } else {
-            let fee_rate_sat_vb = params.fee_rate.unwrap_or(600.0);
+            let fee_rate_sat_vb = self.resolve_fee_rate(params.fee_rate).await?;
             (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64
         };
 
@@ -1078,7 +1091,7 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         // Calculate EXACT commit output using reference implementation approach:
         // Build a dummy reveal transaction with REAL script and control block to get exact vsize
-        let fee_rate = params.fee_rate.unwrap_or(600.0);
+        let fee_rate = self.resolve_fee_rate(params.fee_rate).await?;
 
         // Build the reveal script and taproot structures NOW (before commit)
         // The reveal script includes <pubkey> CHECKSIG to prevent frontrunning
@@ -1296,7 +1309,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             output: temp_outputs,
         };
 
-        let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+        let fee_rate_sat_vb = self.resolve_fee_rate(fee_rate).await?;
         let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
         let change_value = total_input_value.saturating_sub(commit_output.value.to_sat()).saturating_sub(fee);
 
@@ -1388,7 +1401,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             output: temp_outputs,
         };
 
-        let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+        let fee_rate_sat_vb = self.resolve_fee_rate(fee_rate).await?;
         let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
 
         // Subtract commit output, fee, and DIESEL output if minting
@@ -1595,7 +1608,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             output: temp_outputs,
         };
 
-        let fee_rate_sat_vb = params.fee_rate.unwrap_or(600.0);
+        let fee_rate_sat_vb = self.resolve_fee_rate(params.fee_rate).await?;
         let fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
 
         // Total inputs: inscription (546) + commit change
@@ -1689,7 +1702,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         let max_rbf_bumps = 3; // Maximum number of fee bumps
         let mut rbf_bump_count = 0;
         let mut current_txid = commit_txid.to_string();
-        let mut current_fee_rate = params.fee_rate.unwrap_or(600.0);
+        let mut current_fee_rate = self.resolve_fee_rate(params.fee_rate).await?;
 
         for attempt in 1..=max_monitoring_attempts {
             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
@@ -1824,7 +1837,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         let max_rbf_bumps = 3;
         let mut rbf_bump_count = 0;
         let mut current_commit_txid = commit_txid.to_string();
-        let mut current_fee_rate = params.fee_rate.unwrap_or(600.0);
+        let mut current_fee_rate = self.resolve_fee_rate(params.fee_rate).await?;
 
         for attempt in 1..=max_monitoring_attempts {
             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
@@ -2775,7 +2788,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         let fee = if rebar_payment.is_some() {
             0
         } else {
-            let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+            let fee_rate_sat_vb = self.resolve_fee_rate(fee_rate).await?;
             (fee_rate_sat_vb * temp_tx_for_size.vsize() as f32).ceil() as u64
         };
 
@@ -2918,7 +2931,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         let capped_fee = if rebar_payment.is_some() {
             0
         } else {
-            let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+            let fee_rate_sat_vb = self.resolve_fee_rate(fee_rate).await?;
             let estimated_fee = (fee_rate_sat_vb * temp_tx.vsize() as f32).ceil() as u64;
             estimated_fee.min(MAX_FEE_SATS)
         };

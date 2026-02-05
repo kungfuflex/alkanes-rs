@@ -63,6 +63,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Self { provider }
     }
 
+    /// Resolve fee rate: use the provided rate if Some, otherwise fetch the medium
+    /// (6-block target) rate from esplora fee estimates
+    async fn resolve_fee_rate(&mut self, fee_rate: Option<f32>) -> Result<f32> {
+        match fee_rate {
+            Some(rate) => Ok(rate),
+            None => {
+                let rates = self.provider.get_fee_rates().await?;
+                log::info!("Using esplora medium fee rate: {} sat/vB", rates.medium);
+                Ok(rates.medium)
+            }
+        }
+    }
+
     /// Estimate transaction virtual size (vsize) in vbytes
     /// 
     /// This is used for fee calculation before UTXO selection.
@@ -1864,9 +1877,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             input.witness.push([0u8; 65]);
         }
     
-        let fee_rate_sat_vb = fee_rate.unwrap_or(600.0);
+        let fee_rate_sat_vb = self.resolve_fee_rate(fee_rate).await?;
         let fee = (fee_rate_sat_vb * temp_tx_for_size.vsize() as f32).ceil() as u64;
-    
+
         let change_value = total_input_value.saturating_sub(commit_output.value.to_sat()).saturating_sub(fee);
         if change_value < 546 {
             return Err(AlkanesError::Wallet("Not enough funds for commit and change".to_string()));
