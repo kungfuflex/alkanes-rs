@@ -216,8 +216,13 @@ async fn handle_balances(
 
     let unique_addresses: Vec<String> = addresses.into_iter().collect();
 
+    // Addresses that are too expensive to query for protorunes - bypass metashrew call
+    const PROTORUNES_BYPASS_ADDRESSES: &[&str] = &[
+        "bc1p5lushqjk7kxpqa87ppwn0dealucyqa6t40ppdkhpqm3grcpqvw9s3wdsx7",
+    ];
+
     let mut rpc_calls = Vec::new();
-    
+
     for addr in &unique_addresses {
         rpc_calls.push(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -226,15 +231,26 @@ async fn handle_balances(
             id: Value::Number(0.into()),
         });
 
-        rpc_calls.push(JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            method: "alkanes_protorunesbyaddress".to_string(),
-            params: vec![serde_json::json!({
-                "address": addr,
-                "protocolTag": protocol_tag
-            })],
-            id: Value::Number(0.into()),
-        });
+        // Check if this address should bypass the expensive protorunes call
+        if PROTORUNES_BYPASS_ADDRESSES.contains(&addr.as_str()) {
+            // Push a placeholder - we'll inject empty result later
+            rpc_calls.push(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                method: "_bypass_protorunes".to_string(),
+                params: vec![],
+                id: Value::Number(0.into()),
+            });
+        } else {
+            rpc_calls.push(JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                method: "alkanes_protorunesbyaddress".to_string(),
+                params: vec![serde_json::json!({
+                    "address": addr,
+                    "protocolTag": protocol_tag
+                })],
+                id: Value::Number(0.into()),
+            });
+        }
 
         rpc_calls.push(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -260,6 +276,15 @@ async fn handle_balances(
 
     let mut results = Vec::new();
     for req in rpc_calls {
+        // Handle bypassed protorunes calls with empty result
+        if req.method == "_bypass_protorunes" {
+            results.push(serde_json::json!({
+                "outpoints": [],
+                "balances": { "entries": [] }
+            }));
+            continue;
+        }
+
         let response = Box::pin(crate::handler::handle_request(&req, proxy)).await?;
         match response {
             JsonRpcResponse::Success { result, .. } => results.push(result),
