@@ -147,6 +147,7 @@ export type {
   AddressBalance,
   ExportOptions,
   ImportOptions,
+  FeeEstimation,
   // BRC20-Prog types
   AntiFrontrunningStrategy,
   Brc20ProgExecuteParams,
@@ -264,6 +265,13 @@ export {
   formatTimestamp,
   calculateWeight,
   weightToVsize,
+  // Fee estimation
+  DUST_THRESHOLD,
+  INPUT_VSIZE,
+  OUTPUT_VSIZE,
+  TX_OVERHEAD_VSIZE,
+  computeSendFee,
+  estimateSelectionFee,
   // WASM utilities
   analyzeRunestone,
 } from './utils';

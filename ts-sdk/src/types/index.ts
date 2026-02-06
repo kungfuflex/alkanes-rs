@@ -206,6 +206,17 @@ export interface ImportOptions {
 }
 
 /**
+ * Fee estimation result for BTC send transactions
+ */
+export interface FeeEstimation {
+  fee: number;              // Total fee in satoshis
+  numOutputs: number;       // 1 (no change) or 2 (with change)
+  change: number;           // Change amount in sats (0 if absorbed into fee)
+  vsize: number;            // Estimated vsize in vbytes
+  effectiveFeeRate: number; // Actual sat/vB (higher than requested when dust is absorbed)
+}
+
+/**
  * BRC20-Prog types
  */
 export type {

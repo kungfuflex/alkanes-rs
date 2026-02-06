@@ -48199,6 +48199,7 @@ var init_icons = __esm({
       leather: `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MiIgaGVpZ2h0PSI0MiIgdmlld0JveD0iMCAwIDEyOCAxMjgiIGZpbGw9Im5vbmUiPjxyZWN0IHdpZHRoPSIxMjgiIGhlaWdodD0iMTI4IiByeD0iMjYuODM4NyIgZmlsbD0iIzEyMTAwRiIvPjxwYXRoIGQ9Ik03NC45MTcxIDUyLjcxMTRDODIuNDc2NiA1MS41NDA4IDkzLjQwODcgNDMuNTgwNCA5My40MDg3IDM3LjM3NjFDOTMuNDA4NyAzNS41MDMxIDkxLjg5NjggMzQuMjE1NCA4OS42ODcxIDM0LjIxNTRDODUuNTAwNCAzNC4yMTU0IDc4LjQwNjEgNDAuNTM2OCA3NC45MTcxIDUyLjcxMTRaTTM5LjkxMSA4My40OTkxQzMwLjAyNTYgODMuNDk5MSAyOS4yMTE1IDkzLjMzMjQgMzkuMDk2OSA5My4zMzI0QzQzLjUxNjMgOTMuMzMyNCA0OC44NjYxIDkxLjU3NjQgNTEuNjU3MyA4OC40MTU3QzQ3LjU4NjggODQuOTAzOCA0NC4yMTQxIDgzLjQ5OTEgMzkuOTExIDgzLjQ5OTFaTTEwMi44MjkgNzkuMjg0OEMxMDMuNDEgOTUuNzkwNyA5NS4wMzY5IDEwNS4wMzkgODAuODQ4NCAxMDUuMDM5QzcyLjQ3NDggMTA1LjAzOSA2OC4yODgxIDEwMS44NzggNTkuMzMzIDk2LjAyNDlDNTQuNjgxIDEwMS4xNzYgNDUuODQyMyAxMDUuMDM5IDM4LjUxNTQgMTA1LjAzOUMxMy4yNzg1IDEwNS4wMzkgMTQuMzI1MiA3Mi44NDYzIDQwLjAyNzMgNzIuODQ2M0M0NS4zNzcxIDcyLjg0NjMgNDkuOTEyOCA3NC4yNTExIDU1LjcyNzcgNzcuODhMNTkuNTY1NiA2NC40MTc3QzQzLjc0ODkgNjAuMDg2NCAzNS44NDA1IDQ3LjkxMTggNDMuNjMyNiAzMC40NjkzSDU2LjE5MjlDNDkuMjE1IDQyLjA1ODYgNTMuOTgzMiA1MS42NTc4IDYyLjgyMiA1Mi43MTE0QzY3LjU5MDMgMzUuNzM3MiA3Ny44MjQ2IDIyLjUwOSA5MS40MzE2IDIyLjUwOUM5OS4xMDc0IDIyLjUwOSAxMDUuMTU1IDI3LjU0MjggMTA1LjE1NSAzNi42NzM3QzEwNS4xNTUgNTEuMzA2NiA4Ni4wODE5IDYzLjI0NzEgNzEuNjYwNyA2NC40MTc3TDY1LjcyOTUgODUuMzcyMUM3Mi40NzQ4IDkzLjIxNTMgOTEuMTk5IDEwMC44MjQgOTEuMTk5IDc5LjI4NDhIMTAyLjgyOVoiIGZpbGw9IiNGNUYxRUQiLz48L3N2Zz4=`,
       "magic-eden": `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MiIgaGVpZ2h0PSI0MiIgdmlld0JveD0iMCAwIDQyIDQyIiBmaWxsPSJub25lIj48ZyBjbGlwLXBhdGg9InVybCgjYSkiPjxwYXRoIGZpbGw9IiMwNzBDMzQiIGQ9Ik0zMiAwSDEwQzQuNDc3IDAgMCA0LjQ3NyAwIDEwdjIyYzAgNS41MjMgNC40NzcgMTAgMTAgMTBoMjJjNS41MjMgMCAxMC00LjQ3NyAxMC0xMFYxMGMwLTUuNTIzLTQuNDc3LTEwLTEwLTEwWiIvPjxwYXRoIGZpbGw9InVybCgjYikiIGQ9Im0yNy42NjYgMTYuODM3IDEuODc0IDIuMTc3Yy4yMTUuMjQ1LjQwNC40NDYuNDgzLjU2Mi41Ni41NS44NzQgMS4yOTMuODc0IDIuMDctLjA1My45MTUtLjY1NyAxLjU0LTEuMjEzIDIuMjA1bC0xLjMxMSAxLjUyMS0uNjg1Ljc5YS4xODQuMTg0IDAgMCAwIC4wNDYuMjgxYy4wMzMuMDIuMDcuMDI4LjEwNy4wMjZoNi44MzVjMS4wNDUgMCAyLjM2Ljg2OCAyLjI4MyAyLjE4NCAwIC41OTctLjI0NyAxLjE3MS0uNjggMS41OTVhMi4zNiAyLjM2IDAgMCAxLTEuNjM3LjY2NEgyMy45MzZjLS43MDQgMC0yLjU5OC4wNzYtMy4xMjgtMS41MjFhMS44NDEgMS44NDEgMCAwIDEtLjA0My0xLjAzNSA0LjUgNC41IDAgMCAxIC43Mi0xLjQwNCA2NS41NDMgNjUuNTQzIDAgMCAxIDEuNjk1LTIuMzQzYy43NDEtMS4wMDIgMS41MDMtMS45NzEgMi4yNTEtMi45OTJhLjE5LjE5IDAgMCAwIC4wNC0uMTE2LjE5LjE5IDAgMCAwLS4wNC0uMTE2bC0yLjcyLTMuMTU2YS4xOTIuMTkyIDAgMCAwLS4xNTMtLjA3My4xOTIuMTkyIDAgMCAwLS4xNTIuMDczYy0uNzI4Ljk2LTMuOTE3IDUuMjAzLTQuNTk4IDYuMDYzLS42OC44Ni0yLjM1NS45MDctMy4yODMgMGwtNC4yNTUtNC4xNjFhLjE5Ny4xOTcgMCAwIDAtLjEtLjA1My4xOTUuMTk1IDAgMCAwLS4yLjA4Mi4xOTIuMTkyIDAgMCAwLS4wMzIuMTA2djhhMi42NzggMi42NzggMCAwIDEtLjQ5NCAxLjU5NGMtLjMzLjQ2Ni0uODA0LjgyMy0xLjM1MiAxLjAxNGEyLjM3NSAyLjM3NSAwIDAgMS0yLjExMS0uMjkzIDIuMjcxIDIuMjcxIDAgMCAxLS43Mi0uODA1QTIuMjIgMi4yMiAwIDAgMSA1IDI4LjczNlYxNC4zNDlhMi40MTYgMi40MTYgMCAwIDEgLjU0OC0xLjQyMmMuMzMtLjQwNi43ODUtLjcgMS4yOTgtLjg0MWEyLjYzMiAyLjYzMiAwIDAgMSAyLjUwMi42NjRsNi41NCA2LjM4MWMuMDE5LjAyLjA0My4wMzQuMDcuMDQzYS4xOTcuMTk3IDAgMCAwIC4xNjEtLjAxMy4xODguMTg4IDAgMCAwIC4wNjEtLjA1NGw0LjY0Ni02LjI3Yy4yMTUtLjI1NC40ODUtLjQ2Ljc5LS42MDEuMzA0LS4xNDIuNjM2LS4yMTcuOTc2LS4yMjFIMzQuNjhjLjMzIDAgLjY1Ny4wNy45NTkuMjA0YTIuMzEgMi4zMSAwIDAgMSAxLjI2MyAxLjQwOWMuMDk2LjMwOS4xMjIuNjMzLjA3OS45NTJhMi4yODggMi4yODggMCAwIDEtLjgxMyAxLjQyYy0uNDM5LjM2NC0uOTk2LjU2LTEuNTcyLjU1MWgtNi43NjhhLjE4OC4xODggMCAwIDAtLjE2My4wOTkuMTg3LjE4NyAwIDAgMC0uMDIyLjA5NWMwIC4wMzIuMDEzLjA2NS4wMzIuMDkzaC0uMDA4WiIvPjwvZz48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImIiIHgxPSItLjMxNSIgeDI9IjM1LjM2NiIgeTE9IjkuMzQzIiB5Mj0iMzAuMTc2IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIuMjMiIHN0b3AtY29sb3I9IiNGRjAwNzQiLz48c3RvcCBvZmZzZXQ9Ii4yNiIgc3RvcC1jb2xvcj0iI0ZGMDA2OCIvPjxzdG9wIG9mZnNldD0iLjMyIiBzdG9wLWNvbG9yPSIjRkYwMDQ4Ii8+PHN0b3Agb2Zmc2V0PSIuMzkiIHN0b3AtY29sb3I9IiNGRjAwMTUiLz48c3RvcCBvZmZzZXQ9Ii40MSIgc3RvcC1jb2xvcj0iI0ZGMDAwOSIvPjxzdG9wIG9mZnNldD0iLjQzIiBzdG9wLWNvbG9yPSIjRkYwOTA4Ii8+PHN0b3Agb2Zmc2V0PSIuNTQiIHN0b3AtY29sb3I9IiNGRjQwMDMiLz48c3RvcCBvZmZzZXQ9Ii42MiIgc3RvcC1jb2xvcj0iI0ZGNjIwMSIvPjxzdG9wIG9mZnNldD0iLjY2IiBzdG9wLWNvbG9yPSIjRkY2RjAwIi8+PHN0b3Agb2Zmc2V0PSIuNzIiIHN0b3AtY29sb3I9IiNGRjg3MDAiLz48c3RvcCBvZmZzZXQ9Ii44MyIgc3RvcC1jb2xvcj0iI0ZGQUIwMCIvPjxzdG9wIG9mZnNldD0iLjkyIiBzdG9wLWNvbG9yPSIjRkZDMTAwIi8+PHN0b3Agb2Zmc2V0PSIuOTgiIHN0b3AtY29sb3I9IiNGRkNBMDAiLz48L2xpbmVhckdyYWRpZW50PjxjbGlwUGF0aCBpZD0iYSI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGg0MnY0MkgweiIvPjwvY2xpcFBhdGg+PC9kZWZzPjwvc3ZnPg==`,
       wizz: `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MiIgaGVpZ2h0PSI0MiIgdmlld0JveD0iMCAwIDQyIDQyIiBmaWxsPSJub25lIj48ZyBjbGlwLXBhdGg9InVybCgjYSkiPjxwYXRoIGZpbGw9IiMwMDAiIGQ9Ik0zMiAwSDEwQzQuNDc3IDAgMCA0LjQ3NyAwIDEwdjIyYzAgNS41MjMgNC40NzcgMTAgMTAgMTBoMjJjNS41MjMgMCAxMC00LjQ3NyAxMC0xMFYxMGMwLTUuNTIzLTQuNDc3LTEwLTEwLTEwWiIvPjxnIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1wYXRoPSJ1cmwoI2IpIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGZpbGw9IiNGRkQ4MTUiIGQ9Im0yNi41MDcgMTcuNzQtMS42MjMtMS42MjMtMS42MjQgMS42MjMgMS42MjMgMS42MjMgMS42MjQgMS42MjQgMS42MjMtMS42MjQtMS42MjMtMS42MjNaIi8+PHBhdGggZmlsbD0iI0ZGOTgxMyIgZD0ibTI2LjUwNyA4LTEuNjI0IDEuNjIzIDEuNjI0IDEuNjI0IDEuNjIzLTEuNjI0TDI2LjUwNyA4Wk0zMyAxNC40OTNsLTEuNjIzLTEuNjIzLTEuNjI0IDEuNjIzIDEuNjI0IDEuNjIzTDMzIDE0LjQ5M1pNMjMuMjYgMjcuNDhsMS42MjMgMS42MjMgMS42MjQtMS42MjMtMS42MjMtMS42MjQtMS42MjQgMS42MjRaTTExLjg5NyAxNi4xMTdsMS42MjMgMS42MjMgMS42MjMtMS42MjMtMS42MjMtMS42MjQtMS42MjMgMS42MjRaTTIwLjAxNCA4IDE4LjM5IDkuNjIzbDEuNjI0IDEuNjI0IDEuNjIzLTEuNjI0TDIwLjAxNCA4Wk0xMy41MiAxMS4yNDdsMS42MjQgMS42MjMgMS42MjMtMS42MjMtMS42MjMtMS42MjQtMS42MjQgMS42MjRaTTMxLjM3NyAxOS4zNjNsLTEuNjI0IDEuNjIzIDEuNjI0IDEuNjI0TDMzIDIwLjk4N2wtMS42MjMtMS42MjRaTTI4LjEzIDI1Ljg1NmwxLjYyMyAxLjYyNCAxLjYyNC0xLjYyNC0xLjYyNC0xLjYyMy0xLjYyMyAxLjYyM1oiLz48cGF0aCBmaWxsPSIjNUI1QjcyIiBkPSJtMjYuNTA3IDIwLjk4Ni0xLjYyNC0xLjYyMy0xLjYyMyAxLjYyMy0xLjYyMy0xLjYyMy0xLjYyMy0xLjYyMyAxLjYyMy0xLjYyNC0xLjYyMy0xLjYyMy0xLjYyNC0xLjYyMy0xLjYyMyAxLjYyMyAxLjYyMyAxLjYyMy0xLjYyMyAxLjYyNCAxLjYyMyAxLjYyMy0xLjYyMyAxLjYyMy0uODEyLS44MTEtMS42MjMgMS42MjMgMS42MjMgMS42MjMtMS42MjMgMS42MjQtMS41NDMgMS41NDItMS41NDIgMS41NDMtMS42MjQgMS42MjNMOCAzMS4zNzcgOS42MjMgMzNsMS42MjQtMS42MjMgMS42MjMtMS42MjQgMS41NDMtMS41NDIuMDgtLjA4IDEuNDYyLTEuNDYzLjA4LS4wOCAxLjU0NC0xLjU0MyAxLjYyMyAxLjYyMyAxLjYyMy0xLjYyMy0uODExLS44MTIgMS42MjMtMS42MjMgMS42MjMgMS42MjMgMS42MjMtMS42MjMgMS42MjQgMS42MjMgMS42MjMtMS42MjMtMS42MjMtMS42MjRaIi8+PHBhdGggZmlsbD0iI0ZGOTgxMyIgZD0ibTI2LjUwNyAxNC40OTMtMS42MjQtMS42MjMtMS42MjMgMS42MjMtMS42MjMtMS42MjMtMS42MjMgMS42MjMgMS42MjMgMS42MjMtMS42MjMgMS42MjQgMS42MjMgMS42MjMgMS42MjMgMS42MjMgMS42MjMtMS42MjMtMS42MjMtMS42MjMgMS42MjMtMS42MjMgMS42MjQgMS42MjMgMS42MjMtMS42MjMtMS42MjMtMS42MjRaIi8+PC9nPjwvZz48ZGVmcz48Y2xpcFBhdGggaWQ9ImEiPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik0wIDBoNDJ2NDJIMHoiLz48L2NsaXBQYXRoPjxjbGlwUGF0aCBpZD0iYiI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTggOGgyNXYyNUg4eiIvPjwvY2xpcFBhdGg+PC9kZWZzPjwvc3ZnPg==`,
+      oyl: `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MiIgaGVpZ2h0PSI0MiIgdmlld0JveD0iMCAwIDQyIDQyIiBmaWxsPSJub25lIj48cmVjdCB3aWR0aD0iNDIiIGhlaWdodD0iNDIiIHJ4PSIxMCIgZmlsbD0iIzEyMTIxMiIvPjxwYXRoIGQ9Ik0yMSAzMmM2LjA3NSAwIDExLTQuOTI1IDExLTExUzI3LjA3NSAxMCAyMSAxMCAxMCAxNC45MjUgMTAgMjFzNC45MjUgMTEgMTEgMTFabTAtNWMzLjMxNCAwIDYtMi42ODYgNi02cy0yLjY4Ni02LTYtNi02IDIuNjg2LTYgNiAyLjY4NiA2IDYgNloiIGZpbGw9IiNmZmYiLz48L3N2Zz4=`,
       orange: `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MiIgaGVpZ2h0PSI0MiIgdmlld0JveD0iMCAwIDQyIDQyIj48cmVjdCB3aWR0aD0iNDIiIGhlaWdodD0iNDIiIHJ4PSI5LjQzNCIgZmlsbD0iIzBkMGUxMiIvPjxjaXJjbGUgY3g9IjIxIiBjeT0iMjEiIHI9IjE0IiBmaWxsPSIjZjU4NTAwIi8+PHRleHQgeD0iMjEiIHk9IjI2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjE0IiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZmlsbD0iI2ZmZiI+TzwvdGV4dD48L3N2Zz4=`,
       keplr: `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MiIgaGVpZ2h0PSI0MiIgdmlld0JveD0iMCAwIDM4LjY4NyAzOC4wMDIiIGZpbGw9Im5vbmUiPjxnIGNsaXAtcGF0aD0idXJsKCNhKSI+PHBhdGggZmlsbD0idXJsKCNiKSIgZD0iTTI5Ljg5NSAwSDguNzkxQzMuOTM3IDAgMCAzLjg2NyAwIDguNjM3djIwLjcyOGMwIDQuNzcgMy45MzcgOC42MzcgOC43OTIgOC42MzdoMjEuMTAyYzQuODU2IDAgOC43OTMtMy44NjcgOC43OTMtOC42MzdWOC42MzdDMzguNjg3IDMuODY3IDM0Ljc1IDAgMjkuODk1IDBaIi8+PHBhdGggZmlsbD0idXJsKCNjKSIgZD0iTTI5Ljg5NSAwSDguNzkxQzMuOTM3IDAgMCAzLjg2NyAwIDguNjM3djIwLjcyOGMwIDQuNzcgMy45MzcgOC42MzcgOC43OTIgOC42MzdoMjEuMTAyYzQuODU2IDAgOC43OTMtMy44NjcgOC43OTMtOC42MzdWOC42MzdDMzguNjg3IDMuODY3IDM0Ljc1IDAgMjkuODk1IDBaIi8+PHBhdGggZmlsbD0idXJsKCNkKSIgZD0iTTI5Ljg5NSAwSDguNzkxQzMuOTM3IDAgMCAzLjg2NyAwIDguNjM3djIwLjcyOGMwIDQuNzcgMy45MzcgOC42MzcgOC43OTIgOC42MzdoMjEuMTAyYzQuODU2IDAgOC43OTMtMy44NjcgOC43OTMtOC42MzdWOC42MzdDMzguNjg3IDMuODY3IDM0Ljc1IDAgMjkuODk1IDBaIi8+PHBhdGggZmlsbD0idXJsKCNlKSIgZD0iTTI5Ljg5NSAwSDguNzkxQzMuOTM3IDAgMCAzLjg2NyAwIDguNjM3djIwLjcyOGMwIDQuNzcgMy45MzcgOC42MzcgOC43OTIgOC42MzdoMjEuMTAyYzQuODU2IDAgOC43OTMtMy44NjcgOC43OTMtOC42MzdWOC42MzdDMzguNjg3IDMuODY3IDM0Ljc1IDAgMjkuODk1IDBaIi8+PHBhdGggZmlsbD0iI0Y1RjVGNSIgZD0iTTE1Ljg5MiAyOS4xOXYtOC44MTRsOC43MTkgOC44MTVoNC44NXYtLjIzbC0xMC4wMjktMTAuMDQgOS4yNTgtOS41MjR2LS4xMTJoLTQuODgzTDE1Ljg5MiAxNy43VjkuMjg1SDExLjk2VjI5LjE5aDMuOTMxWiIvPjwvZz48ZGVmcz48cmFkaWFsR3JhZGllbnQgaWQ9ImMiIGN4PSIwIiBjeT0iMCIgcj0iMSIgZ3JhZGllbnRUcmFuc2Zvcm09Im1hdHJpeCg0My43NTA4IC00My4yMTA0OCA0My44NTQxNSA0NC40MDI1MyAxLjg0OCAzNi41NjIpIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agc3RvcC1jb2xvcj0iIzIzMkRFMyIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzIzMkRFMyIgc3RvcC1vcGFjaXR5PSIwIi8+PC9yYWRpYWxHcmFkaWVudD48cmFkaWFsR3JhZGllbnQgaWQ9ImQiIGN4PSIwIiBjeT0iMCIgcj0iMSIgZ3JhZGllbnRUcmFuc2Zvcm09Im1hdHJpeCgtMjkuMDMwNjQgLTI1LjI3NDIzIDM4LjQ0NzUgLTQ0LjE2MTgyIDM2LjYwMyAzNy43ODUpIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agc3RvcC1jb2xvcj0iIzhCNERGRiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzhCNERGRiIgc3RvcC1vcGFjaXR5PSIwIi8+PC9yYWRpYWxHcmFkaWVudD48cmFkaWFsR3JhZGllbnQgaWQ9ImUiIGN4PSIwIiBjeT0iMCIgcj0iMSIgZ3JhZGllbnRUcmFuc2Zvcm09Im1hdHJpeCgwIDI5Ljk2MTUgLTc0LjAwNDcgMCAxOS4wMjEgLjI4MikiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBzdG9wLWNvbG9yPSIjMjRENUZGIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMUJCOEZGIiBzdG9wLW9wYWNpdHk9IjAiLz48L3JhZGlhbEdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iYiIgeDE9IjE5LjM0MyIgeDI9IjE5LjM0MyIgeTE9IjAiIHkyPSIzOC4wMDIiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBzdG9wLWNvbG9yPSIjMUZEMUZGIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMUJCOEZGIi8+PC9saW5lYXJHcmFkaWVudD48Y2xpcFBhdGggaWQ9ImEiPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik0wIDBoMzguNjg3djM4LjAwMkgweiIvPjwvY2xpcFBhdGg+PC9kZWZzPjwvc3ZnPg==`
     };
@@ -48222,6 +48223,8 @@ function createWalletAdapter(wallet) {
       return new MagicEdenAdapter(wallet);
     case "wizz":
       return new WizzAdapter(wallet);
+    case "oyl":
+      return new OylAdapter(wallet);
     default:
       return new BaseWalletAdapter(wallet);
   }
@@ -48237,7 +48240,7 @@ function hexToBytes2(hex) {
 function bytesToHex2(bytes) {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-var bitcoin5, BaseWalletAdapter, UnisatAdapter, XverseAdapter, OkxAdapter, LeatherAdapter, PhantomAdapter, MagicEdenAdapter, WizzAdapter, MockWalletAdapter;
+var bitcoin5, BaseWalletAdapter, UnisatAdapter, XverseAdapter, OkxAdapter, LeatherAdapter, PhantomAdapter, MagicEdenAdapter, WizzAdapter, OylAdapter, MockWalletAdapter;
 var init_adapter = __esm({
   "src/browser-wallets/adapter.ts"() {
     "use strict";
@@ -48712,6 +48715,44 @@ var init_adapter = __esm({
         }
       }
     };
+    OylAdapter = class extends BaseWalletAdapter {
+      get oyl() {
+        return window.oyl;
+      }
+      async signPsbt(psbtHex, options) {
+        if (!this.oyl) throw new Error("Oyl wallet not available");
+        const result = await this.oyl.signPsbt({
+          psbt: psbtHex,
+          finalize: options?.auto_finalized,
+          broadcast: false
+        });
+        return result.psbt;
+      }
+      async signPsbts(psbtHexs, options) {
+        if (!this.oyl) throw new Error("Oyl wallet not available");
+        const psbtsToSign = psbtHexs.map((psbt) => ({
+          psbt,
+          finalize: options?.auto_finalized,
+          broadcast: false
+        }));
+        const results = await this.oyl.signPsbts(psbtsToSign);
+        return results.map((r) => r.psbt);
+      }
+      async signMessage(message, address3) {
+        if (!this.oyl) throw new Error("Oyl wallet not available");
+        const result = await this.oyl.signMessage({ address: address3, message });
+        return result.signature;
+      }
+      async pushPsbt(psbtHex) {
+        if (!this.oyl) throw new Error("Oyl wallet not available");
+        const result = await this.oyl.pushPsbt({ psbt: psbtHex });
+        return result.txid;
+      }
+      async switchNetwork(network) {
+        if (!this.oyl) throw new Error("Oyl wallet not available");
+        await this.oyl.switchNetwork(network);
+      }
+    };
     MockWalletAdapter = class {
       constructor(options) {
         this.signedPsbts = [];
@@ -48801,6 +48842,7 @@ __export(browser_wallets_exports, {
   MagicEdenAdapter: () => MagicEdenAdapter,
   MockWalletAdapter: () => MockWalletAdapter,
   OkxAdapter: () => OkxAdapter,
+  OylAdapter: () => OylAdapter,
   PhantomAdapter: () => PhantomAdapter,
   UnisatAdapter: () => UnisatAdapter,
   WALLET_ICONS: () => WALLET_ICONS,
@@ -48934,6 +48976,17 @@ var init_browser_wallets = __esm({
         mobileSupport: false
       },
       {
+        id: "oyl",
+        name: "Oyl Wallet",
+        icon: WALLET_ICONS.oyl,
+        website: "https://oyl.app/",
+        injectionKey: "oyl",
+        supportsPsbt: true,
+        supportsTaproot: true,
+        supportsOrdinals: true,
+        mobileSupport: false
+      },
+      {
         id: "orange",
         name: "Orange Wallet",
         icon: WALLET_ICONS.orange,
@@ -49026,6 +49079,13 @@ var init_browser_wallets = __esm({
             const bitcoinProvider = this.provider.bitcoin;
             return await bitcoinProvider.signMessage(message);
           }
+          case "oyl": {
+            const result = await this.provider.signMessage({
+              address: this.account.address,
+              message
+            });
+            return result.signature;
+          }
           default:
             throw new Error(`signMessage not supported for ${this.info.name}`);
         }
@@ -49079,6 +49139,14 @@ var init_browser_wallets = __esm({
           case "magic-eden": {
             const bitcoinProvider = this.provider.bitcoin;
             return await bitcoinProvider.signPsbt(psbtHex, options);
+          }
+          case "oyl": {
+            const result = await this.provider.signPsbt({
+              psbt: psbtHex,
+              finalize: options?.autoFinalized,
+              broadcast: false
+            });
+            return result.psbt;
           }
           default:
             throw new Error(`signPsbt not supported for ${this.info.name}`);
@@ -49257,6 +49325,18 @@ var init_browser_wallets = __esm({
               addressType: ordinalsAccount.addressType,
               paymentAddress: paymentAccount?.address,
               paymentPublicKey: paymentAccount?.publicKey
+            };
+            break;
+          }
+          case "oyl": {
+            const addresses = await provider.getAddresses();
+            if (!addresses?.taproot) throw new Error("No addresses returned from OYL");
+            account = {
+              address: addresses.taproot.address,
+              publicKey: addresses.taproot.publicKey,
+              addressType: "p2tr",
+              paymentAddress: addresses.nativeSegwit?.address,
+              paymentPublicKey: addresses.nativeSegwit?.publicKey
             };
             break;
           }
@@ -49999,6 +50079,52 @@ function calculateWeight(baseSize, witnessSize) {
 function weightToVsize(weight) {
   return Math.ceil(weight / 4);
 }
+var DUST_THRESHOLD = 546;
+var INPUT_VSIZE = {
+  legacy: 148,
+  segwit: 68,
+  taproot: 57.5
+};
+var OUTPUT_VSIZE = {
+  legacy: 34,
+  segwit: 31,
+  taproot: 43
+};
+var TX_OVERHEAD_VSIZE = 10.5;
+function computeSendFee(params) {
+  const {
+    inputCount,
+    sendAmount,
+    totalInputValue,
+    feeRate,
+    inputType = "segwit",
+    recipientType = "segwit",
+    dustThreshold = DUST_THRESHOLD
+  } = params;
+  const changeType = params.changeType ?? inputType;
+  const inVsize = INPUT_VSIZE[inputType] ?? INPUT_VSIZE.segwit;
+  const recipientOutVsize = OUTPUT_VSIZE[recipientType] ?? OUTPUT_VSIZE.segwit;
+  const changeOutVsize = OUTPUT_VSIZE[changeType] ?? OUTPUT_VSIZE.segwit;
+  const vsize2 = inputCount * inVsize + recipientOutVsize + changeOutVsize + TX_OVERHEAD_VSIZE;
+  const fee2 = Math.ceil(vsize2 * feeRate);
+  const change = totalInputValue - sendAmount - fee2;
+  if (change > dustThreshold) {
+    return { fee: fee2, numOutputs: 2, change, vsize: vsize2, effectiveFeeRate: feeRate };
+  }
+  const vsize1 = inputCount * inVsize + recipientOutVsize + TX_OVERHEAD_VSIZE;
+  const minFee1 = Math.ceil(vsize1 * feeRate);
+  const remainder = totalInputValue - sendAmount;
+  if (remainder < minFee1) {
+    return { fee: minFee1, numOutputs: 1, change: 0, vsize: vsize1, effectiveFeeRate: feeRate };
+  }
+  return { fee: remainder, numOutputs: 1, change: 0, vsize: vsize1, effectiveFeeRate: remainder / vsize1 };
+}
+function estimateSelectionFee(inputCount, feeRate, inputType = "segwit", outputCount = 2, outputType = "segwit") {
+  const inVsize = INPUT_VSIZE[inputType] ?? INPUT_VSIZE.segwit;
+  const outVsize = OUTPUT_VSIZE[outputType] ?? OUTPUT_VSIZE.segwit;
+  const vsize = inputCount * inVsize + outputCount * outVsize + TX_OVERHEAD_VSIZE;
+  return Math.ceil(vsize * feeRate);
+}
 
 // src/index.ts
 init_browser_wallets();
@@ -50740,7 +50866,7 @@ var AlkanesClient = class _AlkanesClient {
    * This method detects when we need to use the return_unsigned flow.
    */
   requiresExternalSigning() {
-    return this.signer.getSignerType() === "browser";
+    return this.signer.getSignerType().startsWith("browser");
   }
   /**
    * Sign and broadcast PSBTs from a BRC20-prog execution result
@@ -51184,12 +51310,15 @@ var AlkanesClient = class _AlkanesClient {
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
+    if (params.alkanes_change_address) execParams.alkanes_change_address = params.alkanes_change_address;
     if (params.fee_rate !== void 0) execParams.fee_rate = params.fee_rate;
     if (params.use_slipstream !== void 0) execParams.use_slipstream = params.use_slipstream;
     if (params.use_rebar !== void 0) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
+    if (params.ordinals_strategy !== void 0) execParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== void 0) execParams.mempool_indexer = params.mempool_indexer;
     if (this.requiresExternalSigning()) {
       execParams.return_unsigned = true;
     }
@@ -51226,12 +51355,15 @@ var AlkanesClient = class _AlkanesClient {
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
+    if (params.alkanes_change_address) execParams.alkanes_change_address = params.alkanes_change_address;
     if (params.fee_rate !== void 0) execParams.fee_rate = params.fee_rate;
     if (params.use_slipstream !== void 0) execParams.use_slipstream = params.use_slipstream;
     if (params.use_rebar !== void 0) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
+    if (params.ordinals_strategy !== void 0) execParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== void 0) execParams.mempool_indexer = params.mempool_indexer;
     if (this.requiresExternalSigning()) {
       execParams.return_unsigned = true;
     }
@@ -51257,12 +51389,15 @@ var AlkanesClient = class _AlkanesClient {
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
+    if (params.alkanes_change_address) execParams.alkanes_change_address = params.alkanes_change_address;
     if (params.fee_rate !== void 0) execParams.fee_rate = params.fee_rate;
     if (params.use_slipstream !== void 0) execParams.use_slipstream = params.use_slipstream;
     if (params.use_rebar !== void 0) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
+    if (params.ordinals_strategy !== void 0) execParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== void 0) execParams.mempool_indexer = params.mempool_indexer;
     if (this.requiresExternalSigning()) {
       execParams.return_unsigned = true;
     }
@@ -51290,12 +51425,15 @@ var AlkanesClient = class _AlkanesClient {
     const execParams = {};
     if (params.from_addresses) execParams.from_addresses = params.from_addresses;
     if (params.change_address) execParams.change_address = params.change_address;
+    if (params.alkanes_change_address) execParams.alkanes_change_address = params.alkanes_change_address;
     if (params.fee_rate !== void 0) execParams.fee_rate = params.fee_rate;
     if (params.use_slipstream !== void 0) execParams.use_slipstream = params.use_slipstream;
     if (params.use_rebar !== void 0) execParams.use_rebar = params.use_rebar;
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
+    if (params.ordinals_strategy !== void 0) execParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== void 0) execParams.mempool_indexer = params.mempool_indexer;
     if (this.requiresExternalSigning()) {
       execParams.return_unsigned = true;
     }
@@ -51599,11 +51737,13 @@ export {
   ConnectedWallet,
   DEFAULT_DECIMALS,
   DERIVATION_PATHS,
+  DUST_THRESHOLD,
   DataApiClient,
   EsploraClient,
   EspoClient,
   EventEmittingSigner,
   GoogleDriveBackup,
+  INPUT_VSIZE,
   KeystoreManager,
   KeystoreSigner,
   KeystoreStorage,
@@ -51613,8 +51753,10 @@ export {
   MetashrewClient,
   MockWalletAdapter,
   NETWORK_PRESETS,
+  OUTPUT_VSIZE,
   OkxAdapter,
   PhantomAdapter,
+  TX_OVERHEAD_VSIZE,
   UnisatAdapter,
   VERSION,
   WalletConnector,
@@ -51626,6 +51768,7 @@ export {
   bytesToHex,
   calculateFee,
   calculateWeight,
+  computeSendFee,
   connectAnyWallet,
   connectWallet,
   createKeystore,
@@ -51636,6 +51779,7 @@ export {
   createWalletFromMnemonic,
   getAlkanesSDK as default,
   delay,
+  estimateSelectionFee,
   estimateTxSize,
   formatAlkaneId,
   formatAmount,

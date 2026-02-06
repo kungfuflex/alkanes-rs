@@ -288,6 +288,14 @@ declare module '@alkanes/ts-sdk' {
     [key: string]: any;
   }
 
+  export interface FeeEstimation {
+    fee: number;
+    numOutputs: number;
+    change: number;
+    vsize: number;
+    effectiveFeeRate: number;
+  }
+
   // ============================================================================
   // RESPONSE TYPES
   // ============================================================================
@@ -1594,6 +1602,29 @@ declare module '@alkanes/ts-sdk' {
   export function formatTimestamp(timestamp: number): string;
   export function calculateWeight(vbytes: number): number;
   export function weightToVsize(weight: number): number;
+
+  // Fee estimation
+  export const DUST_THRESHOLD: number;
+  export const INPUT_VSIZE: Record<string, number>;
+  export const OUTPUT_VSIZE: Record<string, number>;
+  export const TX_OVERHEAD_VSIZE: number;
+  export function computeSendFee(params: {
+    inputCount: number;
+    sendAmount: number;
+    totalInputValue: number;
+    feeRate: number;
+    inputType?: 'legacy' | 'segwit' | 'taproot';
+    recipientType?: 'legacy' | 'segwit' | 'taproot';
+    changeType?: 'legacy' | 'segwit' | 'taproot';
+    dustThreshold?: number;
+  }): FeeEstimation;
+  export function estimateSelectionFee(
+    inputCount: number,
+    feeRate: number,
+    inputType?: 'legacy' | 'segwit' | 'taproot',
+    outputCount?: number,
+    outputType?: 'legacy' | 'segwit' | 'taproot',
+  ): number;
 
   // Network presets
   export const NETWORK_PRESETS: {

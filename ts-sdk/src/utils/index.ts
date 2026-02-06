@@ -3,7 +3,7 @@
  */
 
 import * as bitcoin from 'bitcoinjs-lib';
-import { NetworkType, AlkaneId } from '../types';
+import { NetworkType, AlkaneId, FeeEstimation } from '../types';
 
 /**
  * Convert network type string to bitcoinjs-lib network object
@@ -212,6 +212,110 @@ export function calculateWeight(baseSize: number, witnessSize: number): number {
  */
 export function weightToVsize(weight: number): number {
   return Math.ceil(weight / 4);
+}
+
+/**
+ * Dust threshold in satoshis. Outputs below this value are non-standard
+ * and will be rejected by most Bitcoin nodes.
+ */
+export const DUST_THRESHOLD = 546;
+
+/**
+ * Typical input vsize by address type (in vbytes).
+ */
+export const INPUT_VSIZE: Record<string, number> = {
+  legacy: 148,
+  segwit: 68,
+  taproot: 57.5,
+};
+
+/**
+ * Typical output vsize by address type (in vbytes).
+ */
+export const OUTPUT_VSIZE: Record<string, number> = {
+  legacy: 34,
+  segwit: 31,
+  taproot: 43,
+};
+
+/**
+ * Transaction overhead vsize (version, locktime, segwit marker/flag, varint counts).
+ */
+export const TX_OVERHEAD_VSIZE = 10.5;
+
+/**
+ * Compute accurate BTC send fee accounting for dust threshold on the change output.
+ *
+ * When change would be below the dust threshold, it is absorbed into the miner fee,
+ * which raises the effective fee rate above the requested rate. This function handles
+ * both cases (2-output with change, 1-output with dust absorbed) and returns full
+ * details for UI display.
+ */
+export function computeSendFee(params: {
+  inputCount: number;
+  sendAmount: number;
+  totalInputValue: number;
+  feeRate: number;
+  inputType?: 'legacy' | 'segwit' | 'taproot';
+  recipientType?: 'legacy' | 'segwit' | 'taproot';
+  changeType?: 'legacy' | 'segwit' | 'taproot';
+  dustThreshold?: number;
+}): FeeEstimation {
+  const {
+    inputCount,
+    sendAmount,
+    totalInputValue,
+    feeRate,
+    inputType = 'segwit',
+    recipientType = 'segwit',
+    dustThreshold = DUST_THRESHOLD,
+  } = params;
+  const changeType = params.changeType ?? inputType;
+
+  const inVsize = INPUT_VSIZE[inputType] ?? INPUT_VSIZE.segwit;
+  const recipientOutVsize = OUTPUT_VSIZE[recipientType] ?? OUTPUT_VSIZE.segwit;
+  const changeOutVsize = OUTPUT_VSIZE[changeType] ?? OUTPUT_VSIZE.segwit;
+
+  // Try with 2 outputs (recipient + change)
+  const vsize2 = inputCount * inVsize + recipientOutVsize + changeOutVsize + TX_OVERHEAD_VSIZE;
+  const fee2 = Math.ceil(vsize2 * feeRate);
+  const change = totalInputValue - sendAmount - fee2;
+
+  if (change > dustThreshold) {
+    return { fee: fee2, numOutputs: 2, change, vsize: vsize2, effectiveFeeRate: feeRate };
+  }
+
+  // Change is dust or negative — use 1 output, remainder becomes fee
+  const vsize1 = inputCount * inVsize + recipientOutVsize + TX_OVERHEAD_VSIZE;
+  const minFee1 = Math.ceil(vsize1 * feeRate);
+  const remainder = totalInputValue - sendAmount;
+
+  if (remainder < minFee1) {
+    // Not enough to cover even 1-output fee
+    return { fee: minFee1, numOutputs: 1, change: 0, vsize: vsize1, effectiveFeeRate: feeRate };
+  }
+
+  // Dust absorbed into fee — effective rate is higher than selected
+  return { fee: remainder, numOutputs: 1, change: 0, vsize: vsize1, effectiveFeeRate: remainder / vsize1 };
+}
+
+/**
+ * Lightweight fee estimate for UTXO selection loops.
+ *
+ * Returns just the fee number (no dust logic). Use this while accumulating UTXOs
+ * to estimate when you have enough, then call `computeSendFee` for the final result.
+ */
+export function estimateSelectionFee(
+  inputCount: number,
+  feeRate: number,
+  inputType: 'legacy' | 'segwit' | 'taproot' = 'segwit',
+  outputCount: number = 2,
+  outputType: 'legacy' | 'segwit' | 'taproot' = 'segwit',
+): number {
+  const inVsize = INPUT_VSIZE[inputType] ?? INPUT_VSIZE.segwit;
+  const outVsize = OUTPUT_VSIZE[outputType] ?? OUTPUT_VSIZE.segwit;
+  const vsize = inputCount * inVsize + outputCount * outVsize + TX_OVERHEAD_VSIZE;
+  return Math.ceil(vsize * feeRate);
 }
 
 // Re-export WASM utilities
