@@ -154,7 +154,7 @@ describe('getWalletById', () => {
 });
 
 describe('WALLET_ICONS', () => {
-  const expectedWalletIds = ['unisat', 'xverse', 'phantom', 'okx', 'leather', 'magic-eden', 'wizz', 'orange', 'keplr'];
+  const expectedWalletIds = ['unisat', 'xverse', 'phantom', 'okx', 'leather', 'magic-eden', 'wizz', 'oyl', 'orange', 'keplr'];
 
   it('should have icons for all expected wallets', () => {
     for (const id of expectedWalletIds) {

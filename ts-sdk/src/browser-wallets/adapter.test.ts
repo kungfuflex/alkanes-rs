@@ -237,6 +237,12 @@ describe('createWalletAdapter', () => {
     expect(adapter.getInfo().id).toBe('wizz');
   });
 
+  it('should create OylAdapter for oyl wallet', () => {
+    const wallet = createMockConnectedWallet('oyl');
+    const adapter = createWalletAdapter(wallet);
+    expect(adapter.getInfo().id).toBe('oyl');
+  });
+
   it('should create BaseWalletAdapter for unknown wallet', () => {
     const wallet = createMockConnectedWallet('unknown-wallet');
     const adapter = createWalletAdapter(wallet);

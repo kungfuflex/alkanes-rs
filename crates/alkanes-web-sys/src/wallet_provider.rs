@@ -604,6 +604,18 @@ impl WalletConnector {
                 deep_link_scheme: None,
             },
             WalletInfo {
+                id: "oyl".to_string(),
+                name: "Oyl Wallet".to_string(),
+                icon: "/assets/wallets/oyl.svg".to_string(),
+                website: "https://oyl.app/".to_string(),
+                injection_key: "oyl".to_string(),
+                supports_psbt: true,
+                supports_taproot: true,
+                supports_ordinals: true,
+                mobile_support: false,
+                deep_link_scheme: None,
+            },
+            WalletInfo {
                 id: "orange".to_string(),
                 name: "Orange Wallet".to_string(),
                 icon: "/assets/wallets/orange.svg".to_string(),

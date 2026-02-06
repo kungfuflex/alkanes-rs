@@ -748,6 +748,56 @@ export class WizzAdapter extends BaseWalletAdapter {
 }
 
 /**
+ * Oyl-specific wallet adapter
+ *
+ * OYL's API uses object parameters for signPsbt ({psbt, finalize, broadcast})
+ * rather than plain hex strings like Unisat-style wallets.
+ */
+export class OylAdapter extends BaseWalletAdapter {
+  private get oyl(): any {
+    return (window as any).oyl;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.oyl) throw new Error("Oyl wallet not available");
+    const result = await this.oyl.signPsbt({
+      psbt: psbtHex,
+      finalize: options?.auto_finalized,
+      broadcast: false,
+    });
+    return result.psbt;
+  }
+
+  async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
+    if (!this.oyl) throw new Error("Oyl wallet not available");
+    const psbtsToSign = psbtHexs.map(psbt => ({
+      psbt,
+      finalize: options?.auto_finalized,
+      broadcast: false,
+    }));
+    const results = await this.oyl.signPsbts(psbtsToSign);
+    return results.map((r: { psbt: string }) => r.psbt);
+  }
+
+  async signMessage(message: string, address: string): Promise<string> {
+    if (!this.oyl) throw new Error("Oyl wallet not available");
+    const result = await this.oyl.signMessage({ address, message });
+    return result.signature;
+  }
+
+  async pushPsbt(psbtHex: string): Promise<string> {
+    if (!this.oyl) throw new Error("Oyl wallet not available");
+    const result = await this.oyl.pushPsbt({ psbt: psbtHex });
+    return result.txid;
+  }
+
+  async switchNetwork(network: string): Promise<void> {
+    if (!this.oyl) throw new Error("Oyl wallet not available");
+    await this.oyl.switchNetwork(network);
+  }
+}
+
+/**
  * Create a wallet adapter for a connected wallet
  *
  * @param wallet - The connected wallet instance
@@ -769,6 +819,8 @@ export function createWalletAdapter(wallet: ConnectedWallet): JsWalletAdapter {
       return new MagicEdenAdapter(wallet);
     case 'wizz':
       return new WizzAdapter(wallet);
+    case 'oyl':
+      return new OylAdapter(wallet);
     default:
       // Use base adapter for unknown wallets
       return new BaseWalletAdapter(wallet);

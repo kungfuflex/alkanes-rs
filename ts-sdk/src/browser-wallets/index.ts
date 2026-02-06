@@ -148,6 +148,17 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
     mobileSupport: false,
   },
   {
+    id: 'oyl',
+    name: 'Oyl Wallet',
+    icon: WALLET_ICONS.oyl,
+    website: 'https://oyl.app/',
+    injectionKey: 'oyl',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: true,
+    mobileSupport: false,
+  },
+  {
     id: 'orange',
     name: 'Orange Wallet',
     icon: WALLET_ICONS.orange,
@@ -295,6 +306,14 @@ export class ConnectedWallet {
         return await bitcoinProvider.signMessage(message);
       }
 
+      case 'oyl': {
+        const result = await this.provider.signMessage({
+          address: this.account.address,
+          message,
+        });
+        return result.signature;
+      }
+
       default:
         throw new Error(`signMessage not supported for ${this.info.name}`);
     }
@@ -355,6 +374,15 @@ export class ConnectedWallet {
       case 'magic-eden': {
         const bitcoinProvider = this.provider.bitcoin;
         return await bitcoinProvider.signPsbt(psbtHex, options);
+      }
+
+      case 'oyl': {
+        const result = await this.provider.signPsbt({
+          psbt: psbtHex,
+          finalize: options?.autoFinalized,
+          broadcast: false,
+        });
+        return result.psbt;
       }
 
       default:
@@ -565,6 +593,19 @@ export class WalletConnector {
         break;
       }
 
+      case 'oyl': {
+        const addresses = await provider.getAddresses();
+        if (!addresses?.taproot) throw new Error('No addresses returned from OYL');
+        account = {
+          address: addresses.taproot.address,
+          publicKey: addresses.taproot.publicKey,
+          addressType: 'p2tr',
+          paymentAddress: addresses.nativeSegwit?.address,
+          paymentPublicKey: addresses.nativeSegwit?.publicKey,
+        };
+        break;
+      }
+
       default:
         throw new Error(`Connection not implemented for ${wallet.name}`);
     }
@@ -626,6 +667,7 @@ export {
   PhantomAdapter,
   MagicEdenAdapter,
   WizzAdapter,
+  OylAdapter,
 } from './adapter';
 
 export type {
