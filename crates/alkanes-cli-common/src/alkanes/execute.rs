@@ -38,6 +38,7 @@ use super::envelope::AlkanesEnvelope;
 use anyhow::anyhow;
 use ordinals::Runestone;
 use protorune_support::protostone::{Protostones, Protostone, ProtostoneEdict as ProtoruneEdict};
+use protorune_support::balance_sheet::ProtoruneRuneId;
 
 const MAX_FEE_SATS: u64 = 100_000; // 0.001 BTC. Cap to avoid "absurdly high fee rate" errors.
 const DUST_LIMIT: u64 = 546;
@@ -47,8 +48,10 @@ const DUST_LIMIT: u64 = 546;
 struct UtxoSelectionResult {
     /// Selected outpoints
     outpoints: Vec<OutPoint>,
-    /// Actual alkanes balances found in the selected UTXOs
+    /// Actual alkanes balances found in the selected UTXOs (aggregate)
     alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64>,
+    /// Per-UTXO alkane balances (for alkane-aware ordinals splitting)
+    per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
 }
 
 
@@ -632,7 +635,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                    total_bitcoin_needed, fee_with_buffer, bitcoin_requirement);
         
         final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
-        let utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses).await?;
+        let mut utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses).await?;
 
         // Check selected UTXOs for ordinal inscriptions based on strategy
         // We need to get TxOut data for each selected UTXO to check for inscriptions
@@ -666,9 +669,26 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 plan.outpoint, plan.safe_amount, plan.clean_amount);
                         }
 
-                        // Build split transaction PSBT
-                        let (split_psbt_result, split_fee_result, clean_outpoints) =
-                            self.build_split_psbt(&plans, &funding_utxos_with_txout, fee_rate_sat_vb, params).await?;
+                        // Collect alkane data for inscribed UTXOs being split
+                        let split_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = plans.iter()
+                            .filter_map(|plan| {
+                                utxo_selection.per_utxo_alkanes.get(&plan.outpoint)
+                                    .map(|alkanes| (plan.outpoint, alkanes.clone()))
+                            })
+                            .collect();
+
+                        if !split_utxo_alkanes.is_empty() {
+                            log::info!("🔗 Alkane-aware split: {} inscribed UTXOs carry alkanes", split_utxo_alkanes.len());
+                            for (op, alkanes) in &split_utxo_alkanes {
+                                for (alkane_id, amount) in alkanes {
+                                    log::info!("   {} has {}:{} = {} units", op, alkane_id.block, alkane_id.tx, amount);
+                                }
+                            }
+                        }
+
+                        // Build split transaction PSBT (alkane-aware)
+                        let (split_psbt_result, split_fee_result, clean_outpoints, alkane_outpoints) =
+                            self.build_split_psbt(&plans, &funding_utxos_with_txout, fee_rate_sat_vb, params, &split_utxo_alkanes).await?;
 
                         // Replace inscribed UTXOs with clean UTXOs from split
                         let mut new_outpoints = Vec::new();
@@ -681,11 +701,35 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 new_outpoints.push(*outpoint);
                             }
                         }
-                        // Add clean UTXOs from split
+                        // Add clean BTC UTXOs from split (for fee funding)
                         new_outpoints.extend(clean_outpoints);
+                        // Add clean alkane UTXOs from split (for alkane spending)
+                        new_outpoints.extend(alkane_outpoints.iter().map(|(op, _)| *op));
 
-                        log::info!("🔀 Split transaction built: {} clean UTXOs will replace {} inscribed UTXOs",
-                            plans.len(), inscribed_outpoints.len());
+                        // Update alkanes_found: remove alkanes from inscribed UTXOs, add from alkane outpoints
+                        for plan in &plans {
+                            if let Some(alkanes) = utxo_selection.per_utxo_alkanes.get(&plan.outpoint) {
+                                for (alkane_id, _amount) in alkanes {
+                                    if let Some(_found) = utxo_selection.alkanes_found.get_mut(alkane_id) {
+                                        // The alkanes are still there, just on new outpoints now
+                                        // No need to subtract/re-add — the aggregate total is unchanged
+                                        log::debug!("Alkane {}:{} moved from inscribed UTXO {} to clean alkane output",
+                                            alkane_id.block, alkane_id.tx, plan.outpoint);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Update per_utxo_alkanes: remove inscribed UTXOs, add alkane outpoints
+                        for plan in &plans {
+                            utxo_selection.per_utxo_alkanes.remove(&plan.outpoint);
+                        }
+                        for (outpoint, alkanes) in &alkane_outpoints {
+                            utxo_selection.per_utxo_alkanes.insert(*outpoint, alkanes.clone());
+                        }
+
+                        log::info!("🔀 Split transaction built: {} clean BTC UTXOs + {} clean alkane UTXOs replace {} inscribed UTXOs",
+                            plans.len(), alkane_outpoints.len(), inscribed_outpoints.len());
 
                         (Some(split_psbt_result), Some(split_fee_result), new_outpoints)
                     }
@@ -1022,6 +1066,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut bitcoin_collected = 0u64;
         let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u64> = alloc::collections::BTreeMap::new();
         let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
+        let mut per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = alloc::collections::BTreeMap::new();
 
         // If we need alkanes, query protorunes_by_address directly to find UTXOs with balances
         // This bypasses the lua batch script which has issues with individual outpoint queries
@@ -1150,12 +1195,17 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     
                     // Track ALL alkanes found in selected UTXOs (for change calculation)
                     if utxo_selected {
+                        let mut utxo_alkane_list = Vec::new();
                         for ((block, tx), amount) in &balances {
                             let alkane_key = AlkaneId {
                                 block: *block,
                                 tx: *tx,
                             };
-                            *alkanes_found.entry(alkane_key).or_insert(0) += amount;
+                            *alkanes_found.entry(alkane_key.clone()).or_insert(0) += amount;
+                            utxo_alkane_list.push((alkane_key, *amount));
+                        }
+                        if !utxo_alkane_list.is_empty() {
+                            per_utxo_alkanes.insert(outpoint, utxo_alkane_list);
                         }
                     }
                     
@@ -1221,6 +1271,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Ok(UtxoSelectionResult {
             outpoints: selected_outpoints,
             alkanes_found,
+            per_utxo_alkanes,
         })
     }
 
@@ -1740,13 +1791,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     ///
     /// Returns (split_psbt, split_fee, clean_outpoints)
     /// The clean_outpoints are the UTXOs that can be used for funding after the split
+    /// Build a split PSBT that separates inscribed sats from clean sats.
+    /// When UTXOs being split carry alkanes, adds a protostone OP_RETURN to route
+    /// alkanes to dedicated clean alkane outputs (preventing alkane loss during split).
+    ///
+    /// Returns: (psbt, fee, clean_btc_outpoints, clean_alkane_outpoints_with_balances)
     async fn build_split_psbt(
         &mut self,
         plans: &[SplitPlan],
         funding_utxos: &[(OutPoint, TxOut)],
         fee_rate: f32,
         params: &EnhancedExecuteParams,
-    ) -> Result<(Psbt, u64, Vec<OutPoint>)> {
+        split_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
+    ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u64)>)>)> {
         use bitcoin::transaction::Version;
 
         // Get safe address for split outputs
@@ -1757,13 +1814,20 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let resolved_addr = self.provider.resolve_all_identifiers(safe_address_str).await?;
         let safe_address = Address::from_str(&resolved_addr)?.require_network(self.provider.get_network())?;
 
+        // Get alkane change address for alkane outputs
+        let alkane_change_addr_str = params.alkanes_change_address.as_ref()
+            .or(params.change_address.as_ref())
+            .map(|s| s.as_str())
+            .unwrap_or("p2tr:0");
+        let resolved_alkane_addr = self.provider.resolve_all_identifiers(alkane_change_addr_str).await?;
+        let alkane_change_address = Address::from_str(&resolved_alkane_addr)?.require_network(self.provider.get_network())?;
+
         // Build inputs and outputs
         let mut inputs = Vec::new();
         let mut outputs = Vec::new();
         let mut input_txouts = Vec::new();
         let mut clean_outpoints = Vec::new();
         let mut total_input_value = 0u64;
-        let mut total_output_value = 0u64;
 
         for (idx, plan) in plans.iter().enumerate() {
             // Find the TxOut for this input
@@ -1787,15 +1851,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 value: bitcoin::Amount::from_sat(plan.safe_amount),
                 script_pubkey: safe_address.script_pubkey(),
             });
-            total_output_value += plan.safe_amount;
 
             // Clean output (funding sats go here)
-            let clean_output = TxOut {
+            outputs.push(TxOut {
                 value: bitcoin::Amount::from_sat(plan.clean_amount),
                 script_pubkey: safe_address.script_pubkey(),
-            };
-            outputs.push(clean_output);
-            total_output_value += plan.clean_amount;
+            });
 
             // Track the clean outpoint (will update txid after building tx)
             clean_outpoints.push(OutPoint {
@@ -1804,12 +1865,92 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             });
         }
 
-        // Estimate fee
+        // Alkane-aware split: if any inscribed UTXOs carry alkanes, add a dedicated
+        // clean alkane output and a protostone OP_RETURN to route alkanes there.
+        // This prevents alkanes from being lost when their UTXO is split for inscriptions.
+        let has_alkanes = !split_utxo_alkanes.is_empty();
+        let mut alkane_outpoints_with_balances: Vec<(OutPoint, Vec<(AlkaneId, u64)>)> = Vec::new();
+
+        if has_alkanes {
+            // Add a clean alkane output at the end (before OP_RETURN)
+            let alkane_output_index = outputs.len() as u32;
+            outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(DUST_LIMIT),
+                script_pubkey: alkane_change_address.script_pubkey(),
+            });
+
+            // Aggregate all alkanes from inscribed UTXOs
+            let mut aggregated_alkanes: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
+            for (_outpoint, alkanes) in split_utxo_alkanes {
+                for (alkane_id, amount) in alkanes {
+                    *aggregated_alkanes.entry(alkane_id.clone()).or_insert(0) += amount;
+                }
+            }
+
+            // Build protostone edicts to route each alkane to the clean alkane output
+            let mut protostone_edicts = Vec::new();
+            let mut alkane_output_balances = Vec::new();
+            for (alkane_id, amount) in &aggregated_alkanes {
+                // Edict: send all of this alkane to the clean alkane output (vN)
+                protostone_edicts.push(ProtoruneEdict {
+                    id: ProtoruneRuneId {
+                        block: alkane_id.block as u128,
+                        tx: alkane_id.tx as u128,
+                    },
+                    amount: *amount as u128,
+                    output: alkane_output_index as u128,
+                });
+                alkane_output_balances.push((alkane_id.clone(), *amount));
+                log::info!("  Split alkane edict: {}:{} × {} → v{}",
+                    alkane_id.block, alkane_id.tx, amount, alkane_output_index);
+            }
+
+            // Build the protostone (protocol_tag 1 for alkanes)
+            let split_protostone = Protostone {
+                protocol_tag: 1u128,
+                message: vec![],
+                pointer: Some(alkane_output_index),
+                refund: Some(alkane_output_index),
+                edicts: protostone_edicts,
+                from: None,
+                burn: None,
+            };
+
+            // Encode the protostone into a Runestone OP_RETURN script
+            let protocol_values = vec![split_protostone].encipher()?;
+            let runestone = Runestone {
+                protocol: Some(protocol_values),
+                pointer: Some(alkane_output_index),
+                ..Default::default()
+            };
+            let runestone_script = runestone.encipher();
+
+            outputs.push(TxOut {
+                value: bitcoin::Amount::ZERO,
+                script_pubkey: runestone_script,
+            });
+
+            // Track that the clean alkane output will carry these alkanes
+            alkane_outpoints_with_balances.push((
+                OutPoint {
+                    txid: bitcoin::Txid::from_byte_array([0u8; 32]), // Placeholder, updated below
+                    vout: alkane_output_index,
+                },
+                alkane_output_balances,
+            ));
+
+            log::info!("🔗 Added alkane routing: {} alkane types → clean output v{} with OP_RETURN protostone",
+                aggregated_alkanes.len(), alkane_output_index);
+        }
+
+        // Estimate fee (account for extra outputs if alkane-aware)
         let estimated_vsize = 10 + (inputs.len() * 68) + (outputs.len() * 43);
         let estimated_fee = (fee_rate * estimated_vsize as f32).ceil() as u64;
 
-        // Adjust the last clean output to account for fee
-        if let Some(last_clean_output) = outputs.last_mut() {
+        // Adjust the last clean BTC output to account for fee
+        // The last clean BTC output is at index (plans.len() * 2 - 1), before any alkane/OP_RETURN outputs
+        let last_clean_btc_idx = plans.len() * 2 - 1;
+        if let Some(last_clean_output) = outputs.get_mut(last_clean_btc_idx) {
             if last_clean_output.value.to_sat() > estimated_fee + DUST_LIMIT {
                 last_clean_output.value = bitcoin::Amount::from_sat(
                     last_clean_output.value.to_sat() - estimated_fee
@@ -1845,16 +1986,22 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             }
         }
 
-        // Calculate actual txid and update clean outpoints
+        // Calculate actual txid and update all placeholder outpoints
         let txid = psbt.unsigned_tx.compute_txid();
         for outpoint in &mut clean_outpoints {
             outpoint.txid = txid;
         }
+        for (outpoint, _) in &mut alkane_outpoints_with_balances {
+            outpoint.txid = txid;
+        }
 
-        log::info!("Built split PSBT: {} inputs → {} outputs, fee: {} sats",
-            plans.len(), psbt.unsigned_tx.output.len(), estimated_fee);
+        log::info!("Built split PSBT: {} inputs → {} outputs ({}+alkane:{}, fee: {} sats)",
+            plans.len(), psbt.unsigned_tx.output.len(),
+            plans.len() * 2, // safe+clean pairs
+            if has_alkanes { "1+OP_RETURN" } else { "0" },
+            estimated_fee);
 
-        Ok((psbt, estimated_fee, clean_outpoints))
+        Ok((psbt, estimated_fee, clean_outpoints, alkane_outpoints_with_balances))
     }
 
     async fn build_commit_psbt(
