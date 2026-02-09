@@ -55,8 +55,8 @@ var require_utils = __commonJS({
     exports.ahash = ahash;
     exports.aexists = aexists;
     exports.aoutput = aoutput;
-    exports.u8 = u8;
-    exports.u32 = u32;
+    exports.u8 = u83;
+    exports.u32 = u323;
     exports.clean = clean;
     exports.createView = createView;
     exports.rotr = rotr;
@@ -109,10 +109,10 @@ var require_utils = __commonJS({
         throw new Error("digestInto() expects output buffer of length at least " + min);
       }
     }
-    function u8(arr) {
+    function u83(arr) {
       return new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
     }
-    function u32(arr) {
+    function u323(arr) {
       return new Uint32Array(arr.buffer, arr.byteOffset, Math.floor(arr.byteLength / 4));
     }
     function clean(...arrays) {
@@ -531,7 +531,7 @@ var require_u64 = __commonJS({
     exports.add5L = add5L;
     var add5H = (low, Ah, Bh, Ch, Dh, Eh) => Ah + Bh + Ch + Dh + Eh + (low / 2 ** 32 | 0) | 0;
     exports.add5H = add5H;
-    var u64 = {
+    var u643 = {
       fromBig,
       split,
       toBig,
@@ -555,7 +555,7 @@ var require_u64 = __commonJS({
       add5H,
       add5L
     };
-    exports.default = u64;
+    exports.default = u643;
   }
 });
 
@@ -566,7 +566,7 @@ var require_sha2 = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.sha512_224 = exports.sha512_256 = exports.sha384 = exports.sha512 = exports.sha224 = exports.sha256 = exports.SHA512_256 = exports.SHA512_224 = exports.SHA384 = exports.SHA512 = exports.SHA224 = exports.SHA256 = void 0;
     var _md_ts_1 = require_md();
-    var u64 = require_u64();
+    var u643 = require_u64();
     var utils_ts_1 = require_utils();
     var SHA256_K = /* @__PURE__ */ Uint32Array.from([
       1116352408,
@@ -720,7 +720,7 @@ var require_sha2 = __commonJS({
       }
     };
     exports.SHA224 = SHA224;
-    var K512 = /* @__PURE__ */ (() => u64.split([
+    var K512 = /* @__PURE__ */ (() => u643.split([
       "0x428a2f98d728ae22",
       "0x7137449123ef65cd",
       "0xb5c0fbcfec4d3b2f",
@@ -858,28 +858,28 @@ var require_sha2 = __commonJS({
         for (let i = 16; i < 80; i++) {
           const W15h = SHA512_W_H[i - 15] | 0;
           const W15l = SHA512_W_L[i - 15] | 0;
-          const s0h = u64.rotrSH(W15h, W15l, 1) ^ u64.rotrSH(W15h, W15l, 8) ^ u64.shrSH(W15h, W15l, 7);
-          const s0l = u64.rotrSL(W15h, W15l, 1) ^ u64.rotrSL(W15h, W15l, 8) ^ u64.shrSL(W15h, W15l, 7);
+          const s0h = u643.rotrSH(W15h, W15l, 1) ^ u643.rotrSH(W15h, W15l, 8) ^ u643.shrSH(W15h, W15l, 7);
+          const s0l = u643.rotrSL(W15h, W15l, 1) ^ u643.rotrSL(W15h, W15l, 8) ^ u643.shrSL(W15h, W15l, 7);
           const W2h = SHA512_W_H[i - 2] | 0;
           const W2l = SHA512_W_L[i - 2] | 0;
-          const s1h = u64.rotrSH(W2h, W2l, 19) ^ u64.rotrBH(W2h, W2l, 61) ^ u64.shrSH(W2h, W2l, 6);
-          const s1l = u64.rotrSL(W2h, W2l, 19) ^ u64.rotrBL(W2h, W2l, 61) ^ u64.shrSL(W2h, W2l, 6);
-          const SUMl = u64.add4L(s0l, s1l, SHA512_W_L[i - 7], SHA512_W_L[i - 16]);
-          const SUMh = u64.add4H(SUMl, s0h, s1h, SHA512_W_H[i - 7], SHA512_W_H[i - 16]);
+          const s1h = u643.rotrSH(W2h, W2l, 19) ^ u643.rotrBH(W2h, W2l, 61) ^ u643.shrSH(W2h, W2l, 6);
+          const s1l = u643.rotrSL(W2h, W2l, 19) ^ u643.rotrBL(W2h, W2l, 61) ^ u643.shrSL(W2h, W2l, 6);
+          const SUMl = u643.add4L(s0l, s1l, SHA512_W_L[i - 7], SHA512_W_L[i - 16]);
+          const SUMh = u643.add4H(SUMl, s0h, s1h, SHA512_W_H[i - 7], SHA512_W_H[i - 16]);
           SHA512_W_H[i] = SUMh | 0;
           SHA512_W_L[i] = SUMl | 0;
         }
         let { Ah, Al, Bh, Bl, Ch, Cl, Dh, Dl, Eh, El, Fh, Fl, Gh, Gl, Hh, Hl } = this;
         for (let i = 0; i < 80; i++) {
-          const sigma1h = u64.rotrSH(Eh, El, 14) ^ u64.rotrSH(Eh, El, 18) ^ u64.rotrBH(Eh, El, 41);
-          const sigma1l = u64.rotrSL(Eh, El, 14) ^ u64.rotrSL(Eh, El, 18) ^ u64.rotrBL(Eh, El, 41);
+          const sigma1h = u643.rotrSH(Eh, El, 14) ^ u643.rotrSH(Eh, El, 18) ^ u643.rotrBH(Eh, El, 41);
+          const sigma1l = u643.rotrSL(Eh, El, 14) ^ u643.rotrSL(Eh, El, 18) ^ u643.rotrBL(Eh, El, 41);
           const CHIh = Eh & Fh ^ ~Eh & Gh;
           const CHIl = El & Fl ^ ~El & Gl;
-          const T1ll = u64.add5L(Hl, sigma1l, CHIl, SHA512_Kl[i], SHA512_W_L[i]);
-          const T1h = u64.add5H(T1ll, Hh, sigma1h, CHIh, SHA512_Kh[i], SHA512_W_H[i]);
+          const T1ll = u643.add5L(Hl, sigma1l, CHIl, SHA512_Kl[i], SHA512_W_L[i]);
+          const T1h = u643.add5H(T1ll, Hh, sigma1h, CHIh, SHA512_Kh[i], SHA512_W_H[i]);
           const T1l = T1ll | 0;
-          const sigma0h = u64.rotrSH(Ah, Al, 28) ^ u64.rotrBH(Ah, Al, 34) ^ u64.rotrBH(Ah, Al, 39);
-          const sigma0l = u64.rotrSL(Ah, Al, 28) ^ u64.rotrBL(Ah, Al, 34) ^ u64.rotrBL(Ah, Al, 39);
+          const sigma0h = u643.rotrSH(Ah, Al, 28) ^ u643.rotrBH(Ah, Al, 34) ^ u643.rotrBH(Ah, Al, 39);
+          const sigma0l = u643.rotrSL(Ah, Al, 28) ^ u643.rotrBL(Ah, Al, 34) ^ u643.rotrBL(Ah, Al, 39);
           const MAJh = Ah & Bh ^ Ah & Ch ^ Bh & Ch;
           const MAJl = Al & Bl ^ Al & Cl ^ Bl & Cl;
           Hh = Gh | 0;
@@ -888,25 +888,25 @@ var require_sha2 = __commonJS({
           Gl = Fl | 0;
           Fh = Eh | 0;
           Fl = El | 0;
-          ({ h: Eh, l: El } = u64.add(Dh | 0, Dl | 0, T1h | 0, T1l | 0));
+          ({ h: Eh, l: El } = u643.add(Dh | 0, Dl | 0, T1h | 0, T1l | 0));
           Dh = Ch | 0;
           Dl = Cl | 0;
           Ch = Bh | 0;
           Cl = Bl | 0;
           Bh = Ah | 0;
           Bl = Al | 0;
-          const All = u64.add3L(T1l, sigma0l, MAJl);
-          Ah = u64.add3H(All, T1h, sigma0h, MAJh);
+          const All = u643.add3L(T1l, sigma0l, MAJl);
+          Ah = u643.add3H(All, T1h, sigma0h, MAJh);
           Al = All | 0;
         }
-        ({ h: Ah, l: Al } = u64.add(this.Ah | 0, this.Al | 0, Ah | 0, Al | 0));
-        ({ h: Bh, l: Bl } = u64.add(this.Bh | 0, this.Bl | 0, Bh | 0, Bl | 0));
-        ({ h: Ch, l: Cl } = u64.add(this.Ch | 0, this.Cl | 0, Ch | 0, Cl | 0));
-        ({ h: Dh, l: Dl } = u64.add(this.Dh | 0, this.Dl | 0, Dh | 0, Dl | 0));
-        ({ h: Eh, l: El } = u64.add(this.Eh | 0, this.El | 0, Eh | 0, El | 0));
-        ({ h: Fh, l: Fl } = u64.add(this.Fh | 0, this.Fl | 0, Fh | 0, Fl | 0));
-        ({ h: Gh, l: Gl } = u64.add(this.Gh | 0, this.Gl | 0, Gh | 0, Gl | 0));
-        ({ h: Hh, l: Hl } = u64.add(this.Hh | 0, this.Hl | 0, Hh | 0, Hl | 0));
+        ({ h: Ah, l: Al } = u643.add(this.Ah | 0, this.Al | 0, Ah | 0, Al | 0));
+        ({ h: Bh, l: Bl } = u643.add(this.Bh | 0, this.Bl | 0, Bh | 0, Bl | 0));
+        ({ h: Ch, l: Cl } = u643.add(this.Ch | 0, this.Cl | 0, Ch | 0, Cl | 0));
+        ({ h: Dh, l: Dl } = u643.add(this.Dh | 0, this.Dl | 0, Dh | 0, Dl | 0));
+        ({ h: Eh, l: El } = u643.add(this.Eh | 0, this.El | 0, Eh | 0, El | 0));
+        ({ h: Fh, l: Fl } = u643.add(this.Fh | 0, this.Fl | 0, Fh | 0, Fl | 0));
+        ({ h: Gh, l: Gl } = u643.add(this.Gh | 0, this.Gl | 0, Gh | 0, Gl | 0));
+        ({ h: Hh, l: Hl } = u643.add(this.Hh | 0, this.Hl | 0, Hh | 0, Hl | 0));
         this.set(Ah, Al, Bh, Bl, Ch, Cl, Dh, Dl, Eh, El, Fh, Fl, Gh, Gl, Hh, Hl);
       }
       roundClean() {
@@ -27722,9 +27722,9 @@ var require_p2tr = __commonJS({
         if (w && w.length > 1) {
           const controlBlock = w[w.length - 1];
           const leafVersion = controlBlock[0] & types_1.TAPLEAF_VERSION_MASK;
-          const script = w[w.length - 2];
+          const script2 = w[w.length - 2];
           const leafHash = (0, bip341_1.tapleafHash)({
-            output: script,
+            output: script2,
             version: leafVersion
           });
           return (0, bip341_1.rootHashFromPath)(controlBlock, leafHash);
@@ -27881,9 +27881,9 @@ var require_p2tr = __commonJS({
             if (!(0, ecc_lib_1.getEccLib)().isXOnlyPoint(internalPubkey))
               throw new TypeError("Invalid internalPubkey for p2tr witness");
             const leafVersion = controlBlock[0] & types_1.TAPLEAF_VERSION_MASK;
-            const script = witness[witness.length - 2];
+            const script2 = witness[witness.length - 2];
             const leafHash = (0, bip341_1.tapleafHash)({
-              output: script,
+              output: script2,
               version: leafVersion
             });
             const hash = (0, bip341_1.rootHashFromPath)(controlBlock, leafHash);
@@ -28399,7 +28399,7 @@ var require_transaction = __commonJS({
         const outputType = hashType === _Transaction.SIGHASH_DEFAULT ? _Transaction.SIGHASH_ALL : hashType & _Transaction.SIGHASH_OUTPUT_MASK;
         const inputType = hashType & _Transaction.SIGHASH_INPUT_MASK;
         const isAnyoneCanPay = inputType === _Transaction.SIGHASH_ANYONECANPAY;
-        const isNone = outputType === _Transaction.SIGHASH_NONE;
+        const isNone2 = outputType === _Transaction.SIGHASH_NONE;
         const isSingle = outputType === _Transaction.SIGHASH_SINGLE;
         let hashPrevouts = EMPTY_BUFFER;
         let hashAmounts = EMPTY_BUFFER;
@@ -28433,7 +28433,7 @@ var require_transaction = __commonJS({
           this.ins.forEach((txIn) => bufferWriter.writeUInt32(txIn.sequence));
           hashSequences = bcrypto.sha256(bufferWriter.end());
         }
-        if (!(isNone || isSingle)) {
+        if (!(isNone2 || isSingle)) {
           const txOutsSize = this.outs.map((output) => 8 + varSliceSize(output.script)).reduce((a, b) => a + b);
           const bufferWriter = bufferutils_1.BufferWriter.withCapacity(txOutsSize);
           this.outs.forEach((out) => {
@@ -28451,7 +28451,7 @@ var require_transaction = __commonJS({
           hashOutputs = bcrypto.sha256(bufferWriter.end());
         }
         const spendType = (leafHash ? 2 : 0) + (annex ? 1 : 0);
-        const sigMsgSize = 174 - (isAnyoneCanPay ? 49 : 0) - (isNone ? 32 : 0) + (annex ? 32 : 0) + (leafHash ? 37 : 0);
+        const sigMsgSize = 174 - (isAnyoneCanPay ? 49 : 0) - (isNone2 ? 32 : 0) + (annex ? 32 : 0) + (leafHash ? 37 : 0);
         const sigMsgWriter = bufferutils_1.BufferWriter.withCapacity(sigMsgSize);
         sigMsgWriter.writeUInt8(hashType);
         sigMsgWriter.writeInt32(this.version);
@@ -28460,7 +28460,7 @@ var require_transaction = __commonJS({
         sigMsgWriter.writeSlice(hashAmounts);
         sigMsgWriter.writeSlice(hashScriptPubKeys);
         sigMsgWriter.writeSlice(hashSequences);
-        if (!(isNone || isSingle)) {
+        if (!(isNone2 || isSingle)) {
           sigMsgWriter.writeSlice(hashOutputs);
         }
         sigMsgWriter.writeUInt8(spendType);
@@ -29274,9 +29274,9 @@ var require_tapLeafScript = __commonJS({
           "Decode Error: tapLeafScript bad leaf version in key 0x" + keyVal.key.toString("hex")
         );
       }
-      const script = keyVal.value.slice(0, -1);
+      const script2 = keyVal.value.slice(0, -1);
       const controlBlock = keyVal.key.slice(1);
-      return { controlBlock, script, leafVersion };
+      return { controlBlock, script: script2, leafVersion };
     }
     exports.decode = decode;
     function encode(tScript) {
@@ -29548,23 +29548,23 @@ var require_witnessUtxo = __commonJS({
       let _offset = 8;
       const scriptLen = varuint.decode(keyVal.value, _offset);
       _offset += varuint.encodingLength(scriptLen);
-      const script = keyVal.value.slice(_offset);
-      if (script.length !== scriptLen) {
+      const script2 = keyVal.value.slice(_offset);
+      if (script2.length !== scriptLen) {
         throw new Error("Decode Error: WITNESS_UTXO script is not proper length");
       }
       return {
-        script,
+        script: script2,
         value
       };
     }
     exports.decode = decode;
     function encode(data) {
-      const { script, value } = data;
-      const varintLen = varuint.encodingLength(script.length);
-      const result = Buffer.allocUnsafe(8 + varintLen + script.length);
+      const { script: script2, value } = data;
+      const varintLen = varuint.encodingLength(script2.length);
+      const result = Buffer.allocUnsafe(8 + varintLen + script2.length);
       tools_1.writeUInt64LE(result, value, 0);
-      varuint.encode(script.length, result, 8);
-      script.copy(result, 8 + varintLen);
+      varuint.encode(script2.length, result, 8);
+      script2.copy(result, 8 + varintLen);
       return {
         key: Buffer.from([typeFields_1.InputTypes.WITNESS_UTXO]),
         value: result
@@ -30841,9 +30841,9 @@ var require_psbtutils = __commonJS({
     var crypto_1 = require_crypto2();
     var payments3 = require_payments();
     function isPaymentFactory(payment) {
-      return (script) => {
+      return (script2) => {
         try {
-          payment({ output: script });
+          payment({ output: script2 });
           return true;
         } catch (err) {
           return false;
@@ -30880,10 +30880,10 @@ var require_psbtutils = __commonJS({
       return buffer;
     }
     exports.witnessStackToScriptWitness = witnessStackToScriptWitness;
-    function pubkeyPositionInScript(pubkey, script) {
+    function pubkeyPositionInScript(pubkey, script2) {
       const pubkeyHash = (0, crypto_1.hash160)(pubkey);
       const pubkeyXOnly = pubkey.slice(1, 33);
-      const decompiled = bscript.decompile(script);
+      const decompiled = bscript.decompile(script2);
       if (decompiled === null) throw new Error("Unknown script error");
       return decompiled.findIndex((element) => {
         if (typeof element === "number") return false;
@@ -30891,8 +30891,8 @@ var require_psbtutils = __commonJS({
       });
     }
     exports.pubkeyPositionInScript = pubkeyPositionInScript;
-    function pubkeyInScript(pubkey, script) {
-      return pubkeyPositionInScript(pubkey, script) !== -1;
+    function pubkeyInScript(pubkey, script2) {
+      return pubkeyPositionInScript(pubkey, script2) !== -1;
     }
     exports.pubkeyInScript = pubkeyInScript;
     function checkInputForSig(input, action) {
@@ -30983,8 +30983,8 @@ var require_bip371 = __commonJS({
       return input && !!(input.tapInternalKey || input.tapMerkleRoot || input.tapLeafScript && input.tapLeafScript.length || input.tapBip32Derivation && input.tapBip32Derivation.length || input.witnessUtxo && (0, psbtutils_1.isP2TR)(input.witnessUtxo.script));
     }
     exports.isTaprootInput = isTaprootInput;
-    function isTaprootOutput(output, script) {
-      return output && !!(output.tapInternalKey || output.tapTree || output.tapBip32Derivation && output.tapBip32Derivation.length || script && (0, psbtutils_1.isP2TR)(script));
+    function isTaprootOutput(output, script2) {
+      return output && !!(output.tapInternalKey || output.tapTree || output.tapBip32Derivation && output.tapBip32Derivation.length || script2 && (0, psbtutils_1.isP2TR)(script2));
     }
     exports.isTaprootOutput = isTaprootOutput;
     function checkTaprootInputFields(inputData, newInputData, action) {
@@ -31003,8 +31003,8 @@ var require_bip371 = __commonJS({
       const tapTree = newOutputData.tapTree || outputData.tapTree;
       if (tapInternalKey) {
         const { script: scriptPubkey } = outputData;
-        const script = getTaprootScripPubkey(tapInternalKey, tapTree);
-        if (scriptPubkey && !scriptPubkey.equals(script))
+        const script2 = getTaprootScripPubkey(tapInternalKey, tapTree);
+        if (scriptPubkey && !scriptPubkey.equals(script2))
           throw new Error("Error adding output. Script or address missmatch.");
       }
     }
@@ -31172,12 +31172,12 @@ var require_bip371 = __commonJS({
       });
       return (input.tapScriptSig || []).filter((tss) => tss.leafHash.equals(leafHash)).map((tss) => addPubkeyPositionInScript(tapLeaf.script, tss)).sort((t1, t2) => t2.positionInScript - t1.positionInScript).map((t) => t.signature);
     }
-    function addPubkeyPositionInScript(script, tss) {
+    function addPubkeyPositionInScript(script2, tss) {
       return Object.assign(
         {
           positionInScript: (0, psbtutils_1.pubkeyPositionInScript)(
             tss.pubkey,
-            script
+            script2
           )
         },
         tss
@@ -31404,8 +31404,8 @@ var require_psbt2 = __commonJS({
         const { address: address3 } = outputData;
         if (typeof address3 === "string") {
           const { network } = this.opts;
-          const script = (0, address_1.toOutputScript)(address3, network);
-          outputData = Object.assign({}, outputData, { script });
+          const script2 = (0, address_1.toOutputScript)(address3, network);
+          outputData = Object.assign({}, outputData, { script: script2 });
         }
         (0, bip371_1.checkTaprootOutputFields)(outputData, outputData, "addOutput");
         const c = this.__CACHE;
@@ -31465,17 +31465,17 @@ var require_psbt2 = __commonJS({
         throw new Error(`Cannot finalize input #${inputIndex}. Not Taproot.`);
       }
       _finalizeInput(inputIndex, input, finalScriptsFunc = getFinalScripts) {
-        const { script, isP2SH, isP2WSH, isSegwit } = getScriptFromInput(
+        const { script: script2, isP2SH, isP2WSH, isSegwit } = getScriptFromInput(
           inputIndex,
           input,
           this.__CACHE
         );
-        if (!script) throw new Error(`No script found for input #${inputIndex}`);
+        if (!script2) throw new Error(`No script found for input #${inputIndex}`);
         checkPartialSigSighashes(input);
         const { finalScriptSig, finalScriptWitness } = finalScriptsFunc(
           inputIndex,
           input,
-          script,
+          script2,
           isSegwit,
           isP2SH,
           isP2WSH
@@ -31515,9 +31515,9 @@ var require_psbt2 = __commonJS({
       }
       getInputType(inputIndex) {
         const input = (0, utils_1.checkForInput)(this.data.inputs, inputIndex);
-        const script = getScriptFromUtxo(inputIndex, input, this.__CACHE);
+        const script2 = getScriptFromUtxo(inputIndex, input, this.__CACHE);
         const result = getMeaningfulScript(
-          script,
+          script2,
           inputIndex,
           "input",
           input.redeemScript || redeemFromFinalScriptSig(input.finalScriptSig),
@@ -31577,7 +31577,7 @@ var require_psbt2 = __commonJS({
         let sighashCache;
         for (const pSig of mySigs) {
           const sig = bscript.signature.decode(pSig.signature);
-          const { hash, script } = sighashCache !== sig.hashType ? getHashForSig(
+          const { hash, script: script2 } = sighashCache !== sig.hashType ? getHashForSig(
             inputIndex,
             Object.assign({}, input, { sighashType: sig.hashType }),
             this.__CACHE,
@@ -31585,8 +31585,8 @@ var require_psbt2 = __commonJS({
           ) : { hash: hashCache, script: scriptCache };
           sighashCache = sig.hashType;
           hashCache = hash;
-          scriptCache = script;
-          checkScriptForPubkey(pSig.pubkey, script, "verify");
+          scriptCache = script2;
+          checkScriptForPubkey(pSig.pubkey, script2, "verify");
           results.push(validator(pSig.pubkey, hash, sig.signature));
         }
         return results.every((res) => res === true);
@@ -32040,14 +32040,14 @@ var require_psbt2 = __commonJS({
         return this.tx.toBuffer();
       }
     };
-    function canFinalize(input, script, scriptType) {
+    function canFinalize(input, script2, scriptType) {
       switch (scriptType) {
         case "pubkey":
         case "pubkeyhash":
         case "witnesspubkeyhash":
           return hasSigs(1, input.partialSig);
         case "multisig":
-          const p2ms = payments3.p2ms({ output: script });
+          const p2ms = payments3.p2ms({ output: script2 });
           return hasSigs(p2ms.m, input.partialSig, p2ms.pubkeys);
         default:
           return false;
@@ -32114,8 +32114,8 @@ var require_psbt2 = __commonJS({
         }
       });
     }
-    function checkScriptForPubkey(pubkey, script, action) {
-      if (!(0, psbtutils_1.pubkeyInScript)(pubkey, script)) {
+    function checkScriptForPubkey(pubkey, script2, action) {
+      if (!(0, psbtutils_1.pubkeyInScript)(pubkey, script2)) {
         throw new Error(
           `Can not ${action} for this input with the key ${pubkey.toString("hex")}`
         );
@@ -32173,12 +32173,12 @@ var require_psbt2 = __commonJS({
       if (key === "__FEE_RATE") return c.__FEE_RATE;
       else if (key === "__FEE") return c.__FEE;
     }
-    function getFinalScripts(inputIndex, input, script, isSegwit, isP2SH, isP2WSH) {
-      const scriptType = classifyScript(script);
-      if (!canFinalize(input, script, scriptType))
+    function getFinalScripts(inputIndex, input, script2, isSegwit, isP2SH, isP2WSH) {
+      const scriptType = classifyScript(script2);
+      if (!canFinalize(input, script2, scriptType))
         throw new Error(`Can not finalize input #${inputIndex}`);
       return prepareFinalScripts(
-        script,
+        script2,
         scriptType,
         input.partialSig,
         isSegwit,
@@ -32186,10 +32186,10 @@ var require_psbt2 = __commonJS({
         isP2WSH
       );
     }
-    function prepareFinalScripts(script, scriptType, partialSig, isSegwit, isP2SH, isP2WSH) {
+    function prepareFinalScripts(script2, scriptType, partialSig, isSegwit, isP2SH, isP2WSH) {
       let finalScriptSig;
       let finalScriptWitness;
-      const payment = getPayment(script, scriptType, partialSig);
+      const payment = getPayment(script2, scriptType, partialSig);
       const p2wsh = !isP2WSH ? null : payments3.p2wsh({ redeem: payment });
       const p2sh = !isP2SH ? null : payments3.p2sh({ redeem: p2wsh || payment });
       if (isSegwit) {
@@ -32219,14 +32219,14 @@ var require_psbt2 = __commonJS({
     }
     function getHashAndSighashType(inputs, inputIndex, pubkey, cache, sighashTypes) {
       const input = (0, utils_1.checkForInput)(inputs, inputIndex);
-      const { hash, sighashType, script } = getHashForSig(
+      const { hash, sighashType, script: script2 } = getHashForSig(
         inputIndex,
         input,
         cache,
         false,
         sighashTypes
       );
-      checkScriptForPubkey(pubkey, script, "sign");
+      checkScriptForPubkey(pubkey, script2, "sign");
       return {
         hash,
         sighashType
@@ -32321,8 +32321,8 @@ var require_psbt2 = __commonJS({
       return allHashes.flat();
     }
     function getPrevoutTaprootKey(inputIndex, input, cache) {
-      const { script } = getScriptAndAmountFromUtxo(inputIndex, input, cache);
-      return (0, psbtutils_1.isP2TR)(script) ? script.subarray(2, 34) : null;
+      const { script: script2 } = getScriptAndAmountFromUtxo(inputIndex, input, cache);
+      return (0, psbtutils_1.isP2TR)(script2) ? script2.subarray(2, 34) : null;
     }
     function trimTaprootSig(signature) {
       return signature.length === 64 ? signature : signature.subarray(0, 64);
@@ -32381,32 +32381,32 @@ var require_psbt2 = __commonJS({
         );
       }
     }
-    function getPayment(script, scriptType, partialSig) {
+    function getPayment(script2, scriptType, partialSig) {
       let payment;
       switch (scriptType) {
         case "multisig":
-          const sigs = getSortedSigs(script, partialSig);
+          const sigs = getSortedSigs(script2, partialSig);
           payment = payments3.p2ms({
-            output: script,
+            output: script2,
             signatures: sigs
           });
           break;
         case "pubkey":
           payment = payments3.p2pk({
-            output: script,
+            output: script2,
             signature: partialSig[0].signature
           });
           break;
         case "pubkeyhash":
           payment = payments3.p2pkh({
-            output: script,
+            output: script2,
             pubkey: partialSig[0].pubkey,
             signature: partialSig[0].signature
           });
           break;
         case "witnesspubkeyhash":
           payment = payments3.p2wpkh({
-            output: script,
+            output: script2,
             pubkey: partialSig[0].pubkey,
             signature: partialSig[0].signature
           });
@@ -32472,8 +32472,8 @@ var require_psbt2 = __commonJS({
       });
       return signers;
     }
-    function getSortedSigs(script, partialSig) {
-      const p2ms = payments3.p2ms({ output: script });
+    function getSortedSigs(script2, partialSig) {
+      const p2ms = payments3.p2ms({ output: script2 });
       return p2ms.pubkeys.map((pk) => {
         return (partialSig.filter((ps) => {
           return ps.pubkey.equals(pk);
@@ -32580,8 +32580,8 @@ var require_psbt2 = __commonJS({
       return c[inputIndex];
     }
     function getScriptFromUtxo(inputIndex, input, cache) {
-      const { script } = getScriptAndAmountFromUtxo(inputIndex, input, cache);
-      return script;
+      const { script: script2 } = getScriptAndAmountFromUtxo(inputIndex, input, cache);
+      return script2;
     }
     function getScriptAndAmountFromUtxo(inputIndex, input, cache) {
       if (input.witnessUtxo !== void 0) {
@@ -32602,9 +32602,9 @@ var require_psbt2 = __commonJS({
       }
     }
     function pubkeyInInput(pubkey, input, inputIndex, cache) {
-      const script = getScriptFromUtxo(inputIndex, input, cache);
+      const script2 = getScriptFromUtxo(inputIndex, input, cache);
       const { meaningfulScript } = getMeaningfulScript(
-        script,
+        script2,
         inputIndex,
         "input",
         input.redeemScript,
@@ -32613,9 +32613,9 @@ var require_psbt2 = __commonJS({
       return (0, psbtutils_1.pubkeyInScript)(pubkey, meaningfulScript);
     }
     function pubkeyInOutput(pubkey, output, outputIndex, cache) {
-      const script = cache.__TX.outs[outputIndex].script;
+      const script2 = cache.__TX.outs[outputIndex].script;
       const { meaningfulScript } = getMeaningfulScript(
-        script,
+        script2,
         outputIndex,
         "output",
         output.redeemScript,
@@ -32658,10 +32658,10 @@ var require_psbt2 = __commonJS({
     function isSigLike(buf) {
       return bscript.isCanonicalScriptSignature(buf);
     }
-    function getMeaningfulScript(script, index, ioType, redeemScript, witnessScript) {
-      const isP2SH = (0, psbtutils_1.isP2SHScript)(script);
+    function getMeaningfulScript(script2, index, ioType, redeemScript, witnessScript) {
+      const isP2SH = (0, psbtutils_1.isP2SHScript)(script2);
       const isP2SHP2WSH = isP2SH && redeemScript && (0, psbtutils_1.isP2WSHScript)(redeemScript);
-      const isP2WSH = (0, psbtutils_1.isP2WSHScript)(script);
+      const isP2WSH = (0, psbtutils_1.isP2WSHScript)(script2);
       if (isP2SH && redeemScript === void 0)
         throw new Error("scriptPubkey is P2SH but redeemScript missing");
       if ((isP2WSH || isP2SHP2WSH) && witnessScript === void 0)
@@ -32671,34 +32671,34 @@ var require_psbt2 = __commonJS({
       let meaningfulScript;
       if (isP2SHP2WSH) {
         meaningfulScript = witnessScript;
-        checkRedeemScript(index, script, redeemScript, ioType);
+        checkRedeemScript(index, script2, redeemScript, ioType);
         checkWitnessScript(index, redeemScript, witnessScript, ioType);
         checkInvalidP2WSH(meaningfulScript);
       } else if (isP2WSH) {
         meaningfulScript = witnessScript;
-        checkWitnessScript(index, script, witnessScript, ioType);
+        checkWitnessScript(index, script2, witnessScript, ioType);
         checkInvalidP2WSH(meaningfulScript);
       } else if (isP2SH) {
         meaningfulScript = redeemScript;
-        checkRedeemScript(index, script, redeemScript, ioType);
+        checkRedeemScript(index, script2, redeemScript, ioType);
       } else {
-        meaningfulScript = script;
+        meaningfulScript = script2;
       }
       return {
         meaningfulScript,
         type: isP2SHP2WSH ? "p2sh-p2wsh" : isP2SH ? "p2sh" : isP2WSH ? "p2wsh" : "raw"
       };
     }
-    function checkInvalidP2WSH(script) {
-      if ((0, psbtutils_1.isP2WPKH)(script) || (0, psbtutils_1.isP2SHScript)(script)) {
+    function checkInvalidP2WSH(script2) {
+      if ((0, psbtutils_1.isP2WPKH)(script2) || (0, psbtutils_1.isP2SHScript)(script2)) {
         throw new Error("P2WPKH or P2SH can not be contained within P2WSH");
       }
     }
-    function classifyScript(script) {
-      if ((0, psbtutils_1.isP2WPKH)(script)) return "witnesspubkeyhash";
-      if ((0, psbtutils_1.isP2PKH)(script)) return "pubkeyhash";
-      if ((0, psbtutils_1.isP2MS)(script)) return "multisig";
-      if ((0, psbtutils_1.isP2PK)(script)) return "pubkey";
+    function classifyScript(script2) {
+      if ((0, psbtutils_1.isP2WPKH)(script2)) return "witnesspubkeyhash";
+      if ((0, psbtutils_1.isP2PKH)(script2)) return "pubkeyhash";
+      if ((0, psbtutils_1.isP2MS)(script2)) return "multisig";
+      if ((0, psbtutils_1.isP2PK)(script2)) return "pubkey";
       return "nonstandard";
     }
     function range(n) {
@@ -32721,8 +32721,8 @@ var require_src3 = __commonJS({
     exports.networks = networks8;
     var payments3 = require_payments();
     exports.payments = payments3;
-    var script = require_script();
-    exports.script = script;
+    var script2 = require_script();
+    exports.script = script2;
     var block_1 = require_block();
     Object.defineProperty(exports, "Block", {
       enumerable: true,
@@ -34766,7 +34766,7 @@ var require_to_buffer = __commonJS({
     var useUint8Array = typeof Uint8Array !== "undefined";
     var useArrayBuffer = typeof ArrayBuffer !== "undefined" && typeof Uint8Array !== "undefined";
     var useFromArrayBuffer = useArrayBuffer && (Buffer2.prototype instanceof Uint8Array || Buffer2.TYPED_ARRAY_SUPPORT);
-    module.exports = function toBuffer(data, encoding) {
+    module.exports = function toBuffer2(data, encoding) {
       if (Buffer2.isBuffer(data)) {
         if (data.constructor && !("isBuffer" in data)) {
           return Buffer2.from(data);
@@ -34817,13 +34817,13 @@ var require_to_buffer2 = __commonJS({
   "node_modules/hash-base/to-buffer.js"(exports, module) {
     "use strict";
     var Buffer2 = require_safe_buffer().Buffer;
-    var toBuffer = require_to_buffer();
+    var toBuffer2 = require_to_buffer();
     var useUint8Array = typeof Uint8Array !== "undefined";
     var useArrayBuffer = useUint8Array && typeof ArrayBuffer !== "undefined";
     var isView = useArrayBuffer && ArrayBuffer.isView;
     module.exports = function(thing, encoding) {
       if (typeof thing === "string" || Buffer2.isBuffer(thing) || useUint8Array && thing instanceof Uint8Array || isView && isView(thing)) {
-        return toBuffer(thing, encoding);
+        return toBuffer2(thing, encoding);
       }
       throw new TypeError('The "data" argument must be a string, a Buffer, a Uint8Array, or a DataView');
     };
@@ -37221,7 +37221,7 @@ var require_hash_base = __commonJS({
   "node_modules/hash-base/index.js"(exports, module) {
     "use strict";
     var Buffer2 = require_safe_buffer().Buffer;
-    var toBuffer = require_to_buffer2();
+    var toBuffer2 = require_to_buffer2();
     var Transform = require_readable_browser().Transform;
     var inherits = require_inherits_browser();
     function HashBase(blockSize) {
@@ -37255,7 +37255,7 @@ var require_hash_base = __commonJS({
       if (this._finalized) {
         throw new Error("Digest already called");
       }
-      var dataBuffer = toBuffer(data, encoding);
+      var dataBuffer = toBuffer2(data, encoding);
       var block = this._block;
       var offset = 0;
       while (this._blockOffset + dataBuffer.length - offset >= this._blockSize) {
@@ -37882,7 +37882,7 @@ var require_hash = __commonJS({
   "node_modules/sha.js/hash.js"(exports, module) {
     "use strict";
     var Buffer2 = require_safe_buffer().Buffer;
-    var toBuffer = require_to_buffer();
+    var toBuffer2 = require_to_buffer();
     function Hash(blockSize, finalSize) {
       this._block = Buffer2.alloc(blockSize);
       this._finalSize = finalSize;
@@ -37890,7 +37890,7 @@ var require_hash = __commonJS({
       this._len = 0;
     }
     Hash.prototype.update = function(data, enc) {
-      data = toBuffer(data, enc || "utf8");
+      data = toBuffer2(data, enc || "utf8");
       var block = this._block;
       var blockSize = this._blockSize;
       var length = data.length;
@@ -41307,7 +41307,7 @@ var require_cipher_base = __commonJS({
     var Transform = require_stream_browserify().Transform;
     var StringDecoder = require_string_decoder2().StringDecoder;
     var inherits = require_inherits_browser();
-    var toBuffer = require_to_buffer();
+    var toBuffer2 = require_to_buffer();
     function CipherBase(hashMode) {
       Transform.call(this);
       this.hashMode = typeof hashMode === "string";
@@ -41325,7 +41325,7 @@ var require_cipher_base = __commonJS({
     }
     inherits(CipherBase, Transform);
     CipherBase.prototype.update = function(data, inputEnc, outputEnc) {
-      var bufferData = toBuffer(data, inputEnc);
+      var bufferData = toBuffer2(data, inputEnc);
       var outData = this._update(bufferData);
       if (this.hashMode) {
         return this;
@@ -46862,8 +46862,8 @@ var init_provider = __esm({
        * @param args - Arguments to pass to the script
        * @returns The script execution result
        */
-      async eval(script, args = []) {
-        return this.provider.luaEval(script, args);
+      async eval(script2, args = []) {
+        return this.provider.luaEval(script2, args);
       }
       /**
        * Execute a Lua script directly (no caching)
@@ -46874,8 +46874,8 @@ var init_provider = __esm({
        * @param script - The Lua script content
        * @returns The script execution result
        */
-      async evalScript(script) {
-        return this.provider.luaEvalScript(script);
+      async evalScript(script2) {
+        return this.provider.luaEvalScript(script2);
       }
     };
     DataApiClient = class {
@@ -48456,9 +48456,9 @@ var init_adapter = __esm({
             }
             continue;
           }
-          const { script } = input.witnessUtxo;
+          const { script: script2 } = input.witnessUtxo;
           try {
-            const addressFromScript = bitcoin5.address.fromOutputScript(script, network);
+            const addressFromScript = bitcoin5.address.fromOutputScript(script2, network);
             if (paymentAddress && addressFromScript === paymentAddress) {
               paymentsAddressData[paymentAddress].push(i);
             } else if (addressFromScript === ordinalsAddress) {
@@ -51605,6 +51605,732 @@ function createReadOnlyProvider(network = "mainnet") {
 
 // src/index.ts
 init_storage();
+
+// src/protostone/monads.ts
+var OptionType = {
+  Some: /* @__PURE__ */ Symbol(":some"),
+  None: /* @__PURE__ */ Symbol(":none")
+};
+var SomeImpl = class {
+  constructor(val) {
+    this.val = val;
+  }
+  get type() {
+    return OptionType.Some;
+  }
+  isSome() {
+    return true;
+  }
+  isNone() {
+    return false;
+  }
+  match(fn) {
+    return fn.some(this.val);
+  }
+  map(fn) {
+    return Some(fn(this.val));
+  }
+  andThen(fn) {
+    return fn(this.val);
+  }
+  or(_optb) {
+    return this;
+  }
+  orElse(_optb) {
+    return this;
+  }
+  and(optb) {
+    return optb;
+  }
+  unwrapOr(_def) {
+    return this.val;
+  }
+  unwrap() {
+    return this.val;
+  }
+};
+var NoneImpl = class _NoneImpl {
+  get type() {
+    return OptionType.None;
+  }
+  isSome() {
+    return false;
+  }
+  isNone() {
+    return true;
+  }
+  match({ none }) {
+    return typeof none === "function" ? none() : none;
+  }
+  map(_fn) {
+    return new _NoneImpl();
+  }
+  andThen(_fn) {
+    return new _NoneImpl();
+  }
+  or(optb) {
+    return optb;
+  }
+  orElse(optb) {
+    return optb();
+  }
+  and(_optb) {
+    return new _NoneImpl();
+  }
+  unwrapOr(def) {
+    return def;
+  }
+  unwrap() {
+    throw new ReferenceError("Trying to unwrap None.");
+  }
+};
+function Some(val) {
+  return new SomeImpl(val);
+}
+var None = new NoneImpl();
+
+// src/protostone/integer.ts
+function u128(value) {
+  return BigInt(value);
+}
+((u1282) => {
+  u1282.MAX = (1n << 128n) - 1n;
+  function checkedAdd(a, b) {
+    const result = BigInt(a) + BigInt(b);
+    if (result > BigInt(u1282.MAX)) return None;
+    return Some(result);
+  }
+  u1282.checkedAdd = checkedAdd;
+  function checkedSub(a, b) {
+    const result = BigInt(a) - BigInt(b);
+    if (result < 0n) return None;
+    return Some(result);
+  }
+  u1282.checkedSub = checkedSub;
+  function tryIntoU32(value) {
+    if (BigInt(value) > BigInt(u32.MAX)) return None;
+    return Some(Number(value));
+  }
+  u1282.tryIntoU32 = tryIntoU32;
+  function encodeVarInt2(value) {
+    const v = [];
+    let val = BigInt(value);
+    while (val >> 7n > 0n) {
+      v.push(Number(val & 0xffn) | 128);
+      val = val >> 7n;
+    }
+    v.push(Number(val & 0xffn));
+    return Buffer.from(v);
+  }
+  u1282.encodeVarInt = encodeVarInt2;
+})(u128 || (u128 = {}));
+function u64(value) {
+  return BigInt(value);
+}
+((u643) => {
+  u643.MAX = (1n << 64n) - 1n;
+})(u64 || (u64 = {}));
+function u32(value) {
+  return Number(value);
+}
+((u323) => {
+  u323.MAX = 4294967295;
+})(u32 || (u32 = {}));
+function u8(value) {
+  return Number(value);
+}
+((u83) => {
+  u83.MAX = 255;
+})(u8 || (u8 = {}));
+
+// src/protostone/seekbuffer.ts
+var SeekBuffer = class {
+  constructor(buffer) {
+    this.buffer = buffer;
+    this.seekIndex = 0;
+  }
+  readUInt8() {
+    if (this.isFinished()) {
+      return void 0;
+    }
+    return this.buffer.readUInt8(this.seekIndex++);
+  }
+  isFinished() {
+    return this.seekIndex >= this.buffer.length;
+  }
+};
+
+// src/protostone/bytes.ts
+function encodeVarInt(value) {
+  const v = [];
+  while (value >> 7n > 0n) {
+    v.push(Number(value & 0xffn) | 128);
+    value = BigInt(value >> 7n);
+  }
+  v.push(Number(value & 0xffn));
+  return Buffer.from(v);
+}
+function decodeVarInt(seekBuffer) {
+  try {
+    return tryDecodeVarInt(seekBuffer);
+  } catch (e) {
+    return BigInt(-1);
+  }
+}
+function tryDecodeVarInt(seekBuffer) {
+  let result = BigInt(0);
+  for (let i = 0; i <= 18; i++) {
+    const byte = seekBuffer.readUInt8();
+    if (byte === void 0) {
+      throw new Error("Unterminated");
+    }
+    const value = BigInt(byte) & 0b01111111n;
+    if (i === 18 && (value & 0b01111100n) !== 0n) {
+      throw new Error("Overflow");
+    }
+    result = BigInt(result | value << BigInt(7 * i));
+    if ((byte & 128) === 0) {
+      return result;
+    }
+  }
+  throw new Error("Overlong");
+}
+function encipher(values) {
+  return Buffer.concat(values.map((v) => encodeVarInt(v)));
+}
+function decipher(values) {
+  const seekBuffer = new SeekBuffer(values);
+  let v = null;
+  const result = [];
+  while ((v = decodeVarInt(seekBuffer)) !== BigInt(-1)) {
+    result.push(v);
+  }
+  return result;
+}
+function leftPad15(v) {
+  if (v.length > 30) throw Error("varint in encoding cannot exceed 15 bytes");
+  return "0".repeat(30 - v.length) + v;
+}
+function leftPadByte(v) {
+  if (v.length % 2) {
+    return "0" + v;
+  }
+  return v;
+}
+function pack(v) {
+  return Buffer.concat(
+    v.map((segment) => {
+      return Buffer.from(
+        leftPad15(
+          Buffer.from(
+            Array.from(
+              Buffer.from(leftPadByte(segment.toString(16)), "hex")
+            ).reverse()
+          ).toString("hex")
+        ),
+        "hex"
+      );
+    })
+  );
+}
+function unpack(v) {
+  return Array.from(v).reduce((r, v2, i) => {
+    if (i % 15 === 0) {
+      r.push([]);
+    }
+    r[r.length - 1].push(v2);
+    return r;
+  }, []).map((v2) => BigInt("0x" + Buffer.from(v2.reverse()).toString("hex")));
+}
+
+// src/protostone/tag.ts
+var Tag = /* @__PURE__ */ ((Tag2) => {
+  Tag2[Tag2["BODY"] = 0] = "BODY";
+  Tag2[Tag2["PROTOCOL"] = 16383] = "PROTOCOL";
+  Tag2[Tag2["MESSAGE"] = 81] = "MESSAGE";
+  Tag2[Tag2["BURN"] = 83] = "BURN";
+  Tag2[Tag2["SPLIT"] = 85] = "SPLIT";
+  Tag2[Tag2["POINTER"] = 91] = "POINTER";
+  Tag2[Tag2["REFUND"] = 93] = "REFUND";
+  Tag2[Tag2["FROM"] = 95] = "FROM";
+  Tag2[Tag2["CENOTAPH"] = 126] = "CENOTAPH";
+  Tag2[Tag2["NOP"] = 127] = "NOP";
+  return Tag2;
+})(Tag || {});
+((Tag2) => {
+  function take(tag, fields, n, withFn) {
+    const field = fields.get(u128(tag));
+    if (field === void 0) {
+      return None;
+    }
+    const values = [];
+    for (const i of [...Array(n).keys()]) {
+      if (field[i] === void 0) {
+        return None;
+      }
+      values[i] = field[i];
+    }
+    const optionValue = withFn(values);
+    if (optionValue.isNone()) {
+      return None;
+    }
+    field.splice(0, n);
+    if (field.length === 0) {
+      fields.delete(u128(tag));
+    }
+    return Some(optionValue.unwrap());
+  }
+  Tag2.take = take;
+  function encode(tag, values) {
+    return Buffer.concat(
+      values.map((value) => [
+        u128.encodeVarInt(u128(tag)),
+        u128.encodeVarInt(value)
+      ]).flat()
+    );
+  }
+  Tag2.encode = encode;
+  function encodeOptionInt2(tag, value) {
+    return value.map((value2) => Tag2.encode(tag, [u128(value2)])).unwrapOr(Buffer.alloc(0));
+  }
+  Tag2.encodeOptionInt = encodeOptionInt2;
+})(Tag || (Tag = {}));
+
+// src/protostone/protoruneruneid.ts
+var ProtoruneRuneId = class _ProtoruneRuneId {
+  constructor(block, tx) {
+    this.block = block;
+    this.tx = tx;
+  }
+  static new(block, tx) {
+    const id = new _ProtoruneRuneId(block, tx);
+    if (id.block === u128(0) && id.tx > u128(0)) {
+      return None;
+    }
+    return Some(id);
+  }
+  static sort(runeIds) {
+    return [...runeIds].sort(
+      (x, y) => Number(x.block - y.block || x.tx - y.tx)
+    );
+  }
+  delta(next) {
+    const optionBlock = u128.checkedSub(next.block, this.block);
+    if (optionBlock.isNone()) {
+      return None;
+    }
+    const block = optionBlock.unwrap();
+    let tx;
+    if (block === 0n) {
+      const optionTx = u128.checkedSub(next.tx, this.tx);
+      if (optionTx.isNone()) {
+        return None;
+      }
+      tx = optionTx.unwrap();
+    } else {
+      tx = next.tx;
+    }
+    return Some([u128(block), u128(tx)]);
+  }
+  next(block, tx) {
+    const nextBlock = u128.checkedAdd(this.block, block);
+    if (nextBlock.isNone()) {
+      return None;
+    }
+    let nextTx;
+    if (block === 0n) {
+      const optionAdd = u128.checkedAdd(this.tx, tx);
+      if (optionAdd.isNone()) {
+        return None;
+      }
+      nextTx = optionAdd.unwrap();
+    } else {
+      nextTx = tx;
+    }
+    return _ProtoruneRuneId.new(nextBlock.unwrap(), nextTx);
+  }
+  toString() {
+    return `${this.block}:${this.tx}`;
+  }
+  static fromString(s) {
+    const parts = s.split(":");
+    if (parts.length !== 2) {
+      throw new Error(`invalid rune ID: ${s}`);
+    }
+    const [block, tx] = parts;
+    if (!/^\d+$/.test(block) || !/^\d+$/.test(tx)) {
+      throw new Error(`invalid rune ID: ${s}`);
+    }
+    return new _ProtoruneRuneId(u128(BigInt(block)), u128(BigInt(tx)));
+  }
+};
+
+// src/protostone/protoruneedict.ts
+var ProtoruneEdict;
+((ProtoruneEdict2) => {
+  function fromIntegers(numOutputs, id, amount, output) {
+    if (id.block === 0n && id.tx > 0n) {
+      return None;
+    }
+    const optionOutputU32 = u128.tryIntoU32(output);
+    if (optionOutputU32.isNone()) {
+      return None;
+    }
+    const outputU32 = optionOutputU32.unwrap();
+    if (outputU32 > numOutputs) {
+      return None;
+    }
+    return Some({ id, amount, output: outputU32 });
+  }
+  ProtoruneEdict2.fromIntegers = fromIntegers;
+})(ProtoruneEdict || (ProtoruneEdict = {}));
+
+// src/protostone/protostone.ts
+var ProtoStone = class _ProtoStone {
+  constructor({
+    burn,
+    message,
+    protocolTag,
+    edicts
+  }) {
+    this.protocolTag = u128(protocolTag);
+    this.edicts = edicts;
+    if (burn) {
+      this.burn = {
+        pointer: Some(u32(burn.pointer)),
+        from: burn.from
+      };
+    }
+    if (message) {
+      this.message = {
+        calldata: message.calldata,
+        pointer: Some(u32(message.pointer)),
+        refundPointer: Some(u32(message.refundPointer))
+      };
+    }
+  }
+  encipher_payloads() {
+    let payloads = [];
+    if (this.burn) {
+      payloads.push(u128(91 /* POINTER */));
+      payloads.push(this.burn.pointer.map(u128).unwrap());
+      if (this.burn.from) {
+        payloads.push(u128(95 /* FROM */));
+        payloads.push(this.burn.from.map(u128)[0]);
+      }
+    } else if (this.message) {
+      if (this.message.pointer.isSome()) {
+        payloads.push(u128(91 /* POINTER */));
+        payloads.push(u128(this.message.pointer.map(u128).unwrap()));
+      }
+      if (this.message.refundPointer.isSome()) {
+        payloads.push(u128(93 /* REFUND */));
+        payloads.push(u128(this.message.refundPointer.map(u128).unwrap()));
+      }
+      if (this.message.calldata.length) {
+        unpack(this.message.calldata).forEach((v) => {
+          payloads.push(u128(81 /* MESSAGE */));
+          payloads.push(u128(v));
+        });
+      }
+    }
+    if (this.edicts && this.edicts.length) {
+      payloads.push(u128(0 /* BODY */));
+      const edicts = [...this.edicts].sort(
+        (x, y) => Number(x.id.block - y.id.block || x.id.tx - y.id.tx)
+      );
+      let previous = new ProtoruneRuneId(u128(0), u128(0));
+      for (const edict of edicts) {
+        const [block, tx] = previous.delta(edict.id).unwrap();
+        payloads.push(block);
+        payloads.push(tx);
+        payloads.push(edict.amount);
+        payloads.push(u128(edict.output));
+        previous = edict.id;
+      }
+    }
+    const length_payload = payloads.length;
+    payloads.unshift(u128(length_payload));
+    payloads.unshift(u128(this.protocolTag));
+    return payloads;
+  }
+  static burn({
+    protocolTag,
+    edicts,
+    ...burn
+  }) {
+    return new _ProtoStone({ burn, protocolTag, edicts });
+  }
+  static message({
+    protocolTag,
+    edicts,
+    ...message
+  }) {
+    return new _ProtoStone({ message, protocolTag, edicts });
+  }
+  static edicts({
+    protocolTag,
+    edicts
+  }) {
+    return new _ProtoStone({ edicts, protocolTag });
+  }
+};
+
+// src/protostone/runestone.ts
+var bitcoin8 = __toESM(require_src3());
+var OP_RETURN = 106;
+var MAGIC_NUMBER = 93;
+var MAX_SCRIPT_ELEMENT_SIZE = 520;
+var RuneTag = {
+  BODY: 0n,
+  FLAGS: 2n,
+  RUNE: 4n,
+  PREMINE: 6n,
+  CAP: 8n,
+  AMOUNT: 10n,
+  HEIGHT_START: 12n,
+  HEIGHT_END: 14n,
+  OFFSET_START: 16n,
+  OFFSET_END: 18n,
+  MINT: 20n,
+  POINTER: 22n,
+  CENOTAPH: 126n,
+  DIVISIBILITY: 1n,
+  SPACERS: 3n,
+  SYMBOL: 5n,
+  NOP: 127n
+};
+var Flag = {
+  ETCHING: 0n,
+  TERMS: 1n,
+  TURBO: 2n,
+  CENOTAPH: 3n
+};
+function setFlag(flags, flag) {
+  return flags | 1n << flag;
+}
+function encodeOptionInt(payloads, tag, opt) {
+  if (opt.isSome()) {
+    payloads.push(tag);
+    payloads.push(u128(opt.unwrap()));
+  }
+}
+function encodeRuneName(name) {
+  const stripped = name.replace(/[.\u2022\u00B7]/g, "");
+  let value = 0n;
+  for (let i = 0; i < stripped.length; i++) {
+    const c = stripped.charCodeAt(i);
+    if (c < 65 || c > 90) throw new Error(`Invalid rune character: ${stripped[i]}`);
+    if (i > 0) value += 1n;
+    value *= 26n;
+    value += BigInt(c - 65);
+  }
+  return value;
+}
+function parseSpacers(name) {
+  let spacers = 0;
+  let charIndex = 0;
+  for (let i = 0; i < name.length; i++) {
+    const c = name[i];
+    if (c === "." || c === "\u2022" || c === "\xB7") {
+      if (charIndex > 0) {
+        spacers |= 1 << charIndex - 1;
+      }
+    } else {
+      charIndex++;
+    }
+  }
+  return spacers;
+}
+function runeCommitment(runeValue) {
+  const bytes = [];
+  let v = runeValue;
+  while (v > 0n) {
+    bytes.push(Number(v & 0xffn));
+    v >>= 8n;
+  }
+  return Buffer.from(bytes);
+}
+var RunestoneProtostoneUpgrade = class {
+  constructor(mint, pointer, edicts, etching, protostones) {
+    this.mint = mint;
+    this.pointer = pointer;
+    this.edicts = edicts;
+    this.etching = etching;
+    this.protostones = protostones;
+  }
+  encipher() {
+    const payloads = [];
+    if (this.etching.isSome()) {
+      const etching = this.etching.unwrap();
+      payloads.push(RuneTag.FLAGS);
+      payloads.push(etching.flags);
+      encodeOptionInt(payloads, RuneTag.RUNE, etching.rune);
+      encodeOptionInt(payloads, RuneTag.DIVISIBILITY, etching.divisibility);
+      encodeOptionInt(payloads, RuneTag.SPACERS, etching.spacers);
+      encodeOptionInt(
+        payloads,
+        RuneTag.SYMBOL,
+        etching.symbol.map((s) => BigInt(s.codePointAt(0)))
+      );
+      encodeOptionInt(payloads, RuneTag.PREMINE, etching.premine);
+      if (etching.terms.isSome()) {
+        const terms = etching.terms.unwrap();
+        encodeOptionInt(payloads, RuneTag.AMOUNT, terms.amount);
+        encodeOptionInt(payloads, RuneTag.CAP, terms.cap);
+        encodeOptionInt(payloads, RuneTag.HEIGHT_START, terms.height[0]);
+        encodeOptionInt(payloads, RuneTag.HEIGHT_END, terms.height[1]);
+        encodeOptionInt(payloads, RuneTag.OFFSET_START, terms.offset[0]);
+        encodeOptionInt(payloads, RuneTag.OFFSET_END, terms.offset[1]);
+      }
+    }
+    if (this.mint.isSome()) {
+      const claim = this.mint.unwrap();
+      payloads.push(RuneTag.MINT);
+      payloads.push(u128(claim.block));
+      payloads.push(RuneTag.MINT);
+      payloads.push(u128(claim.tx));
+    }
+    encodeOptionInt(payloads, RuneTag.POINTER, this.pointer.map(u128));
+    if (this.protostones.length) {
+      let all_protostone_payloads = [];
+      this.protostones.forEach((protostone) => {
+        protostone.encipher_payloads().forEach((v) => all_protostone_payloads.push(v));
+      });
+      unpack(encipher(all_protostone_payloads)).forEach((v) => {
+        payloads.push(u128(16383 /* PROTOCOL */));
+        payloads.push(u128(v));
+      });
+    }
+    if (this.edicts.length) {
+      payloads.push(u128(RuneTag.BODY));
+      const edicts = [...this.edicts].sort(
+        (x, y) => Number(x.id.block - y.id.block || x.id.tx - y.id.tx)
+      );
+      let previous = new ProtoruneRuneId(u128(0), u128(0));
+      for (const edict of edicts) {
+        const [block, tx] = previous.delta(edict.id).unwrap();
+        payloads.push(block);
+        payloads.push(tx);
+        payloads.push(edict.amount);
+        payloads.push(u128(edict.output));
+        previous = edict.id;
+      }
+    }
+    const stack = [];
+    stack.push(OP_RETURN);
+    stack.push(MAGIC_NUMBER);
+    const payload = encipher(payloads);
+    for (let i = 0; i < payload.length; i += MAX_SCRIPT_ELEMENT_SIZE) {
+      stack.push(payload.subarray(i, i + MAX_SCRIPT_ELEMENT_SIZE));
+    }
+    return bitcoin8.script.compile(stack);
+  }
+};
+function encodeRunestoneProtostone(runestone) {
+  const mint = runestone.mint ? Some(
+    new ProtoruneRuneId(
+      u128(runestone.mint.block),
+      u128(runestone.mint.tx)
+    )
+  ) : None;
+  const pointer = runestone.pointer !== void 0 ? Some(u32(runestone.pointer)) : None;
+  const edicts = (runestone.edicts ?? []).map((edict) => ({
+    id: new ProtoruneRuneId(u128(edict.id.block), u128(edict.id.tx)),
+    amount: u128(edict.amount),
+    output: edict.output
+  }));
+  const protostones = runestone.protostones ?? [];
+  let etching = None;
+  let etchingCommitment = void 0;
+  if (runestone.etching) {
+    const spec = runestone.etching;
+    let flags = 0n;
+    flags = setFlag(flags, Flag.ETCHING);
+    if (spec.terms) flags = setFlag(flags, Flag.TERMS);
+    if (spec.turbo) flags = setFlag(flags, Flag.TURBO);
+    let runeValue = None;
+    let spacers = None;
+    if (spec.runeName) {
+      const spacerVal = parseSpacers(spec.runeName);
+      runeValue = Some(encodeRuneName(spec.runeName));
+      if (spacerVal !== 0) spacers = Some(spacerVal);
+      etchingCommitment = runeCommitment(runeValue.unwrap());
+    }
+    const divisibility = spec.divisibility !== void 0 ? Some(spec.divisibility) : None;
+    const premine = spec.premine !== void 0 ? Some(spec.premine) : None;
+    const symbol = spec.symbol ? Some(spec.symbol) : None;
+    let terms = None;
+    if (spec.terms) {
+      const t = spec.terms;
+      terms = Some({
+        amount: t.amount !== void 0 ? Some(t.amount) : None,
+        cap: t.cap !== void 0 ? Some(t.cap) : None,
+        height: [
+          t.height?.start !== void 0 ? Some(t.height.start) : None,
+          t.height?.end !== void 0 ? Some(t.height.end) : None
+        ],
+        offset: [
+          t.offset?.start !== void 0 ? Some(t.offset.start) : None,
+          t.offset?.end !== void 0 ? Some(t.offset.end) : None
+        ]
+      });
+    }
+    etching = Some({ flags, rune: runeValue, divisibility, spacers, symbol, premine, terms });
+  }
+  return {
+    encodedRunestone: new RunestoneProtostoneUpgrade(
+      mint,
+      pointer,
+      edicts,
+      etching,
+      protostones
+    ).encipher(),
+    etchingCommitment
+  };
+}
+
+// src/protostone/alkane.ts
+var CALLDATA_MAGIC = 1;
+var CalldataWrapper = class {
+  serialize() {
+    throw new Error("Method not implemented");
+  }
+  serializeToCalldata() {
+    const magic = Buffer.alloc(1);
+    magic[0] = CALLDATA_MAGIC;
+    return Buffer.concat([magic, this.serialize(), magic]);
+  }
+};
+function lebEncodeU128(inputs) {
+  return Buffer.concat(inputs.map((v) => encodeVarInt(v)));
+}
+var AlkaneId = class {
+  constructor(block, tx) {
+    this.block = block;
+    this.tx = tx;
+  }
+  /** Serialize into LEB128 encoded buffer. First value is block, second is tx. */
+  serialize() {
+    return lebEncodeU128([this.block, this.tx]);
+  }
+};
+var Cellpack = class extends CalldataWrapper {
+  constructor(block, tx, inputs) {
+    super();
+    this.target = new AlkaneId(block, tx);
+    this.inputs = inputs;
+  }
+  /** Serialize target AlkaneId + inputs as LEB128 encoded buffer */
+  serialize() {
+    return Buffer.concat([
+      this.target.serialize(),
+      lebEncodeU128(this.inputs)
+    ]);
+  }
+};
+
+// src/index.ts
 var VERSION = "0.1.0";
 async function initSDK() {
   const { KeystoreManager: KeystoreManager2, createKeystore: createKeystore2, unlockKeystore: unlockKeystore2 } = await Promise.resolve().then(() => (init_keystore(), keystore_exports));
@@ -51725,6 +52451,7 @@ async function getAlkanesSDK() {
 }
 export {
   AddressType,
+  AlkaneId as AlkaneIdEncoder,
   AlkanesClient,
   AlkanesProvider,
   AlkanesRpcClient,
@@ -51734,6 +52461,9 @@ export {
   BaseWalletAdapter,
   BitcoinRpcClient,
   BrowserWalletSigner,
+  CALLDATA_MAGIC,
+  CalldataWrapper,
+  Cellpack,
   ConnectedWallet,
   DEFAULT_DECIMALS,
   DERIVATION_PATHS,
@@ -51753,10 +52483,17 @@ export {
   MetashrewClient,
   MockWalletAdapter,
   NETWORK_PRESETS,
+  None,
   OUTPUT_VSIZE,
   OkxAdapter,
   PhantomAdapter,
+  ProtoStone,
+  ProtoruneEdict,
+  ProtoruneRuneId,
+  RunestoneProtostoneUpgrade,
+  Some,
   TX_OVERHEAD_VSIZE,
+  Tag,
   UnisatAdapter,
   VERSION,
   WalletConnector,
@@ -51777,8 +52514,12 @@ export {
   createWallet,
   createWalletAdapter,
   createWalletFromMnemonic,
+  decipher,
   getAlkanesSDK as default,
   delay,
+  encipher,
+  encodeRunestoneProtostone,
+  encodeVarInt,
   estimateSelectionFee,
   estimateTxSize,
   formatAlkaneId,
@@ -51796,6 +52537,8 @@ export {
   isBrowser,
   isNode,
   isWalletInstalled,
+  lebEncodeU128,
+  pack,
   parseAlkaneBalance,
   parseAlkaneBalances,
   parseAlkaneId,
@@ -51810,7 +52553,10 @@ export {
   satoshisToBTC,
   satsToBtc,
   toRawAmount,
+  u128,
+  u32,
   unlockKeystore,
+  unpack,
   validateAddress,
   weightToVsize
 };

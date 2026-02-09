@@ -360,6 +360,46 @@ export type {
   RestoreWalletResult,
 } from './storage';
 
+// Protostone encoding module
+export {
+  // Protostone core
+  ProtoStone,
+  Tag,
+  ProtoruneRuneId,
+  ProtoruneEdict,
+  // Runestone encoding
+  RunestoneProtostoneUpgrade,
+  encodeRunestoneProtostone,
+  // Alkane types
+  AlkaneId as AlkaneIdEncoder,
+  Cellpack,
+  CalldataWrapper,
+  lebEncodeU128,
+  CALLDATA_MAGIC,
+  // Binary encoding utilities
+  encodeVarInt,
+  encipher,
+  decipher,
+  pack,
+  unpack,
+  // Monads
+  Some,
+  None,
+  // Integer types
+  u128,
+  u32,
+} from './protostone';
+
+export type {
+  ProtoBurn,
+  ProtoMessage,
+  RunestoneProtostoneSpec,
+  RuneEtchingSpec,
+  EtchingTermsSpec,
+  AlkaneTransfer,
+  Option,
+} from './protostone';
+
 // Version
 export const VERSION = '0.1.0';
 
