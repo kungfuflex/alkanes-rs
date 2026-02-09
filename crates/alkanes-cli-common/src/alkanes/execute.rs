@@ -715,29 +715,27 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             
             log::info!("Alkanes change will be sent to: {}", alkanes_change_addr);
             
-            // Create alkanes change output
-            // This will be the FIRST identifier output (v0) if we're generating automatic protostone
-            // Or it could be a separate output - we need to determine the index
-            let alkanes_change_output_index = if outputs.is_empty() {
-                // No outputs yet, alkanes change will be v0
-                0
+            // Resolve the alkanes change address to find or create the correct output
+            use crate::traits::AddressResolver;
+            let resolved_change_addr = self.provider.resolve_all_identifiers(alkanes_change_addr).await?;
+            let change_address = Address::from_str(&resolved_change_addr)?.require_network(self.provider.get_network())?;
+            let change_script_pubkey = change_address.script_pubkey();
+
+            // Find existing output matching the alkanes change address, or append a new one
+            let alkanes_change_output_index = if let Some(idx) = outputs.iter().position(|o| o.script_pubkey == change_script_pubkey) {
+                log::info!("Found existing output at index {} matching alkanes change address", idx);
+                idx as u32
             } else {
-                // Alkanes change goes to first identifier output (v0)
-                0
-            };
-            
-            // Ensure we have an output at the alkanes change index
-            // If outputs is empty or we need a specific output, create it
-            if outputs.len() <= alkanes_change_output_index as usize {
-                use crate::traits::AddressResolver;
-                let resolved_addr = self.provider.resolve_all_identifiers(alkanes_change_addr).await?;
-                let address = Address::from_str(&resolved_addr)?.require_network(self.provider.get_network())?;
-                outputs.insert(alkanes_change_output_index as usize, TxOut {
+                // No matching output exists — create one at the end
+                // Appending avoids shifting existing output references (v0, v1, etc.)
+                let new_idx = outputs.len() as u32;
+                outputs.push(TxOut {
                     value: bitcoin::Amount::from_sat(DUST_LIMIT),
-                    script_pubkey: address.script_pubkey(),
+                    script_pubkey: change_script_pubkey,
                 });
-                log::info!("Created alkanes change output at index {}", alkanes_change_output_index);
-            }
+                log::info!("Created new alkanes change output at index {} (appended)", new_idx);
+                new_idx
+            };
             
             // Generate automatic protostone to split alkanes
             // Sends needed amounts to p1 (first user protostone) and excess to change output
@@ -1361,15 +1359,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u64>,
         alkanes_change_output_index: u32,
     ) -> Result<ProtostoneSpec> {
-        log::info!("Generating automatic split protostone for {} alkane types", alkanes_needed.len());
-        
+        log::info!("Generating automatic split protostone for {} needed alkane types, {} found alkane types",
+                   alkanes_needed.len(), alkanes_found.len());
+
         // Create edicts to send needed amounts to p1 (first user protostone)
         // and true excess (found - needed) to the change output
         let mut edicts = Vec::new();
-        
+
         for (alkane_id, needed) in alkanes_needed {
             let found = alkanes_found.get(alkane_id).copied().unwrap_or(0);
-            
+
             if found > 0 {
                 // Send needed amount to p1 (the first user protostone that will execute after this auto-change)
                 edicts.push(ProtostoneEdict {
@@ -1377,9 +1376,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     amount: *needed,
                     target: OutputTarget::Protostone(1), // p1
                 });
-                log::debug!("  Edict: Send {} units of {}:{} to p1", 
+                log::debug!("  Edict: Send {} units of {}:{} to p1",
                            needed, alkane_id.block, alkane_id.tx);
-                
+
                 // If there's true excess (found > needed), send it back to change output
                 let excess = found - needed;
                 if excess > 0 {
@@ -1388,15 +1387,31 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         amount: excess,
                         target: OutputTarget::Output(alkanes_change_output_index),
                     });
-                    log::debug!("  Edict: Send {} units of {}:{} (excess) to v{}", 
+                    log::debug!("  Edict: Send {} units of {}:{} (excess) to v{}",
                                excess, alkane_id.block, alkane_id.tx, alkanes_change_output_index);
                 }
             }
         }
-        
+
+        // Also handle alkanes found in UTXOs that are NOT in input_requirements at all.
+        // These are "collateral" alkanes that happen to be on the same UTXOs.
+        // Without explicit edicts, they would follow the pointer chain and could end up
+        // at the wrong output (e.g., the recipient instead of the sender's change).
+        for (alkane_id, found_amount) in alkanes_found {
+            if !alkanes_needed.contains_key(alkane_id) && *found_amount > 0 {
+                edicts.push(ProtostoneEdict {
+                    alkane_id: alkane_id.clone(),
+                    amount: *found_amount,
+                    target: OutputTarget::Output(alkanes_change_output_index),
+                });
+                log::info!("  Edict: Send {} units of {}:{} (unrequested collateral) to v{}",
+                           found_amount, alkane_id.block, alkane_id.tx, alkanes_change_output_index);
+            }
+        }
+
         // Create the protostone
         // This protostone will:
-        // - Split alkanes: send needed amounts to p1, send excess to change output
+        // - Split alkanes: send needed amounts to p1, send excess + collateral to change output
         // - Point to p1 (the first user protostone after this auto-change protostone)
         // - Refund to the change output
         Ok(ProtostoneSpec {
